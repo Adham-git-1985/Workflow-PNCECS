@@ -1,0 +1,22 @@
+{% extends "layout.html" %}
+{% block title %}مستخدم جديد{% endblock %}
+
+{% block content %}
+<h3>إنشاء مستخدم جديد</h3>
+
+<form method="POST">
+  <label>Email:</label>
+  <input type="email" name="email" required><br><br>
+
+  <label>Password:</label>
+  <input type="password" name="password" required><br><br>
+
+  <label>Role:</label>
+  <select name="role">
+    <option value="user">User</option>
+    <option value="admin">Admin</option>
+  </select><br><br>
+
+  <button type="submit">حفظ</button>
+</form>
+{% endblock %}

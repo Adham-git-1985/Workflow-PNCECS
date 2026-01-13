@@ -1,0 +1,54 @@
+{% extends "layout.html" %}
+
+{% block title %}لوحة تدقيق النظام{% endblock %}
+
+{% block content %}
+
+<h3>لوحة إحصائيات Audit Log</h3>
+
+<hr>
+
+<!-- عدد العمليات -->
+<div style="display:flex; gap:20px; margin-bottom:20px">
+    <div class="admin-area">
+        <h4>عدد العمليات</h4>
+        <strong>{{ total_logs }}</strong>
+    </div>
+</div>
+<p><strong>{{ total_logs }}</strong> عملية مسجلة</p>
+
+<hr>
+
+<!-- أكثر المستخدمين نشاطًا -->
+<h4>👤 أكثر المستخدمين نشاطًا</h4>
+<table border="1" width="50%">
+  <tr>
+    <th>المستخدم</th>
+    <th>عدد العمليات</th>
+  </tr>
+  {% for user, count in top_users %}
+  <tr>
+    <td>{{ user }}</td>
+    <td>{{ count }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<hr>
+
+<!-- أكثر الإجراءات -->
+<h4>⚙️ أكثر الإجراءات</h4>
+<table border="1" width="50%">
+  <tr>
+    <th>الإجراء</th>
+    <th>عدد التكرار</th>
+  </tr>
+  {% for action, count in top_actions %}
+  <tr>
+    <td>{{ action }}</td>
+    <td>{{ count }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% endblock %}

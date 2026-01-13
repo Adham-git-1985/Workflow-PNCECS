@@ -1,0 +1,35 @@
+{% extends "layout.html" %}
+{% block title %}إدارة المستخدمين{% endblock %}
+
+{% block content %}
+<h3>إدارة المستخدمين</h3>
+
+<a href="{{ url_for('users.create_user') }}">➕ مستخدم جديد</a>
+
+<table border="1" width="100%" style="margin-top:10px">
+  <tr>
+    <th>ID</th>
+    <th>Email</th>
+    <th>Role</th>
+    <th>تغيير الدور</th>
+  </tr>
+
+  {% for user in users %}
+  <tr>
+    <td>{{ user.id }}</td>
+    <td>{{ user.email }}</td>
+    <td>{{ user.role }}</td>
+    <td>
+      <form method="POST"
+            action="{{ url_for('users.change_role', user_id=user.id) }}">
+        <select name="role">
+          <option value="user" {% if user.role=="user" %}selected{% endif %}>User</option>
+          <option value="admin" {% if user.role=="admin" %}selected{% endif %}>Admin</option>
+        </select>
+        <button type="submit">تحديث</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+
+{% block title %}التفويضات{% endblock %}
+
+{% block content %}
+
+<h3>التفويضات النشطة</h3>
+
+<table border="1">
+  <tr>
+    <th>المفوَّض له</th>
+    <th>الدور</th>
+    <th>حتى</th>
+    <th>إجراء</th>
+  </tr>
+
+  {% for d in active %}
+  <tr>
+    <td>{{ d.to_user.name }}</td>
+    <td>{{ d.role }}</td>
+    <td>{{ d.end_date }}</td>
+    <td>
+      <form method="POST"
+            action="{{ url_for('delegation.cancel_delegation', id=d.id) }}">
+        {{ csrf_token() }}
+        <button type="submit">إلغاء</button>
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "layout.html" %}
+{% block title %}طلباتي{% endblock %}
+
+{% block content %}
+
+<h3>📂 طلباتي</h3>
+
+<p style="color:gray; font-size:13px">
+🕒 آخر تحديث: {{ last_update.strftime("%Y-%m-%d %H:%M") }}
+</p>
+
+
+{% if requests %}
+<div style="display:flex; gap:15px; margin-bottom:20px; flex-wrap:wrap">
+
+  <a href="{{ url_for('my_requests', status='all') }}"
+     class="counter counter-total">
+      <h4>📄 الكل</h4>
+      <strong>{{ counters.total }}</strong>
+  </a>
+
+  <a href="{{ url_for('my_requests', status='in_progress') }}"
+     class="counter counter-progress">
+      <h4>🕓 قيد المعالجة</h4>
+      <strong>{{ counters.in_progress }}</strong>
+  </a>
+
+  <a href="{{ url_for('my_requests', status='draft') }}"
+     class="counter counter-draft">
+      <h4>💾 مسودة</h4>
+      <strong>{{ counters.draft }}</strong>
+  </a>
+
+  <a href="{{ url_for('my_requests', status='approved') }}"
+     class="counter counter-approved">
+      <h4>✅ موافق</h4>
+      <strong>{{ counters.approved }}</strong>
+  </a>
+
+  <a href="{{ url_for('my_requests', status='rejected') }}"
+     class="counter counter-rejected">
+      <h4>❌ مرفوض</h4>
+      <strong>{{ counters.rejected }}</strong>
+  </a>
+
+</div>
+
+<canvas id="requestsChart" height="120"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const ctx = document.getElementById('requestsChart');
+
+new Chart(ctx, {
+    type: 'pie',
+    data: {
+        labels: ['قيد المعالجة', 'مسودة', 'موافق', 'مرفوض'],
+        datasets: [{
+            data: [
+                {{ counters.in_progress }},
+                {{ counters.draft }},
+                {{ counters.approved }},
+                {{ counters.rejected }}
+            ],
+            backgroundColor: [
+                '#f4a261',
+                '#adb5bd',
+                '#2a9d8f',
+                '#e63946'
+            ]
+        }]
+    }
+});
+</script>
+
+
+<table>
+    <tr>
+        <th>#</th>
+        <th>العنوان</th>
+        <th>الحالة</th>
+        <th>إجراءات</th>
+    </tr>
+
+    {% for req in requests %}
+    <tr>
+        <td>{{ req.id }}</td>
+        <td>{{ req.title }}</td>
+        <td>{{ req.status }}</td>
+        <td style="display:flex; gap:6px; justify-content:center">
+            <a href="{{ url_for('review_request', request_id=req.id) }}"
+               class="btn btn-secondary">
+                👁 عرض
+            </a>
+
+            <a href="{{ url_for('request_pdf', request_id=req.id) }}"
+               class="btn btn-secondary">
+                📄 PDF
+            </a>
+
+            <a href="{{ url_for('request_audit', request_id=req.id) }}"
+               class="btn btn-secondary">
+                🧾 Audit
+            </a>
+        </td>
+    </tr>
+    {% endfor %}
+</table>
+{% else %}
+<p style="color:gray">لا يوجد طلبات قمت بإنشائها بعد.</p>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}Workflow System{% endblock %}</title>
+
+    <!-- الخط -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <!-- CSS العام -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
+
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<!-- Header -->
+<header class="main-header">
+    <div class="container">
+        <h2 class="logo">اللجنة الوطنية الفلسطينية</h2>
+
+        <nav class="main-nav">
+            <a href="/inbox" class="{% if request.path.startswith('/inbox') %}active{% endif %}">
+                Inbox</a>
+            <a href="{{ url_for('my_requests') }}">📂 طلباتي</a>
+
+            {% if current_user.is_authenticated and current_user.role == "admin" %}
+                <a href="/audit-dashboard">Audit</a>
+                <a href="/users">Users</a>
+            {% endif %}
+            <a href="/logout">Logout</a>
+        </nav>
+    </div>
+</header>
+
+<!-- Content -->
+<main class="container admin-wrapper">
+
+    {% if current_user.is_authenticated and current_user.role == "admin" %}
+    <!-- Sidebar -->
+<aside class="admin-sidebar">
+    <h4 class="sidebar-title">الإدارة</h4>
+
+    <a href="/audit-dashboard"
+       class="{% if request.path.startswith('/audit-dashboard') %}active{% endif %}">
+       📊 Audit Dashboard
+    </a>
+
+    <a href="/audit-logs"
+       class="{% if request.path.startswith('/audit-logs') %}active{% endif %}">
+       📑 Audit Logs
+    </a>
+
+    <a href="/users"
+       class="{% if request.path.startswith('/users') %}active{% endif %}">
+       👤 Users
+    </a>
+
+    <a href="#"
+       class="{% if request.path.startswith('/reports') %}active{% endif %}">
+       📁 Reports
+    </a>
+</aside>
+
+    {% endif %}
+
+    <!-- Content -->
+    <section class="admin-content">
+        {% if breadcrumb %}
+            <nav class="breadcrumb">
+                {% for item in breadcrumb %}
+                    {% if not loop.last %}
+                        <a href="{{ item.url }}">{{ item.label }}</a>
+                        <span class="sep">›</span>
+                    {% else %}
+                        <span class="current">{{ item.label }}</span>
+                    {% endif %}
+                {% endfor %}
+            </nav>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </section>
+
+</main>
+
+
+<footer class="main-footer">
+    <div class="container">
+        <small>© اللجنة الوطنية الفلسطينية</small>
+    </div>
+</footer>
+
+</body>
+</html>

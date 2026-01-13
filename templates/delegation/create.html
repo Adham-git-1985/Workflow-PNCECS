@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+
+{% block title %}
+إنشاء تفويض
+{% endblock %}
+
+{% block content %}
+
+<h3>إنشاء تفويض</h3>
+
+<form method="POST">
+  {{ csrf_token() }}
+
+  <div>
+    <label>المستخدم المفوَّض له</label>
+    <select name="to_user_id" required>
+      {% for user in users %}
+        <option value="{{ user.id }}">{{ user.name }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <br>
+
+  <div>
+    <label>الصلاحية</label>
+    <select name="role" required>
+      <option value="approver">Approver</option>
+      <option value="reviewer">Reviewer</option>
+    </select>
+  </div>
+
+  <br>
+
+  <div>
+    <label>تاريخ البداية</label>
+    <input type="date" name="start_date" required>
+  </div>
+
+  <br>
+
+  <div>
+    <label>تاريخ النهاية</label>
+    <input type="date" name="end_date" required>
+  </div>
+
+  <br>
+
+  <button type="submit">حفظ التفويض</button>
+
+</form>
+
+{% endblock %}

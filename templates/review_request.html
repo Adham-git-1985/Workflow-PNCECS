@@ -18,21 +18,29 @@
             <p><strong>الوصف:</strong> {{ req.description }}</p>
             <p><strong>الحالة الحالية:</strong> {{ req.status }}</p>
 
-            <form method="POST" action="{{ url_for('request_action', request_id=req.id) }}">
-                <div class="mb-3">
-                    <label class="form-label">ملاحظات</label>
-                    <textarea name="note" class="form-control" rows="3"></textarea>
-                </div>
+          <form method="POST" action="{{ url_for('request_action', request_id=req.id) }}">
 
-                <div class="d-flex gap-2">
-                    <button name="action" value="approve" class="btn btn-success">
-                        موافقة
-                    </button>
-                    <button name="action" value="reject" class="btn btn-danger">
-                        رفض
-                    </button>
-                </div>
-            </form>
+            <textarea name="note" placeholder="ملاحظة (اختياري)" rows="3"
+                      style="width:100%; margin-bottom:10px"></textarea>
+
+            <div style="display:flex; gap:10px">
+                <button type="submit"
+                        name="action"
+                        value="approve"
+                        class="btn btn-approve">
+                    ✔️ موافقة
+                </button>
+
+                <button type="submit"
+                        name="action"
+                        value="reject"
+                        class="btn btn-reject"
+                        onclick="return confirm('هل أنت متأكد من رفض الطلب؟')">
+                    ✖️ رفض
+                </button>
+            </div>
+        </form>
+
         </div>
     </div>
 </div>

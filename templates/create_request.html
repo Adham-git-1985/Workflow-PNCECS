@@ -1,49 +1,36 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <title>إنشاء طلب جديد</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
+{% extends "layout.html" %}
+{% block title %}طلب جديد{% endblock %}
 
-<div class="container mt-5">
-    <div class="card shadow">
-        <div class="card-header bg-primary text-white">
-            <h5 class="mb-0">إنشاء طلب جديد</h5>
-        </div>
+{% block content %}
 
-        <div class="card-body">
-            <form method="POST" enctype="multipart/form-data">
+<h3>📝 إنشاء طلب جديد</h3>
 
-                <div class="mb-3">
-                    <label class="form-label">عنوان الطلب</label>
-                    <input type="text" name="title" class="form-control" required>
-                </div>
+<form method="POST">
 
-                <div class="mb-3">
-                    <label class="form-label">وصف الطلب</label>
-                    <textarea name="description" rows="4" class="form-control" required></textarea>
-                </div>
+    <label>العنوان</label>
+    <input type="text" name="title" required
+           style="width:100%; margin-bottom:10px">
 
-                <div class="mb-3">
-                    <label class="form-label">إرفاق ملف</label>
-                    <input type="file" name="attachment" class="form-control">
-                </div>
+    <label>الوصف</label>
+    <textarea name="description" rows="4"
+              style="width:100%; margin-bottom:15px"></textarea>
 
-                <div class="d-flex gap-2">
-                    <button name="action" value="save" class="btn btn-secondary">
-                        حفظ كمسودة
-                    </button>
-                    <button name="action" value="submit" class="btn btn-success">
-                        إرسال الطلب
-                    </button>
-                </div>
+    <div style="display:flex; gap:10px">
+        <button type="submit"
+                name="action"
+                value="save"
+                class="btn btn-secondary">
+            💾 حفظ كمسودة
+        </button>
 
-            </form>
-        </div>
+        <button type="submit"
+                name="action"
+                value="submit"
+                class="btn btn-approve">
+            📤 إرسال
+        </button>
     </div>
-</div>
 
-</body>
-</html>
+</form>
+
+{% endblock %}

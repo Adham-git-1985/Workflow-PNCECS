@@ -1,0 +1,234 @@
+body {
+    font-family: "Cairo", sans-serif;
+    background-color: #f5f6f8;
+    margin: 0;
+}
+
+/* Header */
+.main-header {
+    background: #0d3b66;
+    color: #fff;
+    padding: 12px 0;
+}
+
+.main-header .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.logo {
+    margin: 0;
+    font-size: 20px;
+}
+
+.main-nav a {
+    color: #fff;
+    margin-right: 15px;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+/* Container */
+.container {
+    width: 95%;
+    max-width: 1200px;
+    margin: auto;
+}
+
+/* Admin Area */
+.admin-area {
+    background: #fff;
+    padding: 20px;
+    margin-top: 20px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.05);
+}
+
+/* Tables */
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    background: #0d3b66;
+    color: #fff;
+}
+
+th, td {
+    padding: 10px;
+    border: 1px solid #ddd;
+    text-align: center;
+}
+
+/* Buttons */
+button, .btn {
+    background: #f4a261;
+    color: #000;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+button:hover {
+    opacity: 0.9;
+}
+
+/* Footer */
+.main-footer {
+    margin-top: 40px;
+    padding: 10px;
+    text-align: center;
+    background: #eee;
+}
+
+
+/* Admin Layout */
+.admin-wrapper {
+    display: flex;
+    gap: 20px;
+}
+
+/* Sidebar */
+.admin-sidebar {
+    width: 220px;
+    background: #0d3b66;
+    color: #fff;
+    padding: 15px;
+    border-radius: 6px;
+    height: fit-content;
+}
+
+.sidebar-title {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 16px;
+    border-bottom: 1px solid rgba(255,255,255,.3);
+    padding-bottom: 8px;
+}
+
+.admin-sidebar a {
+    display: block;
+    color: #fff;
+    text-decoration: none;
+    padding: 8px 6px;
+    border-radius: 4px;
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+
+.admin-sidebar a:hover {
+    background: rgba(255,255,255,.15);
+}
+
+/* Content */
+.admin-content {
+    flex: 1;
+    background: #fff;
+    padding: 20px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.05);
+}
+
+
+.admin-sidebar a.active {
+    background: #f4a261;
+    color: #000;
+    font-weight: 700;
+}
+
+/* Breadcrumb */
+.breadcrumb {
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+
+.breadcrumb a {
+    color: #0d3b66;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb .sep {
+    margin: 0 6px;
+    color: #999;
+}
+
+.breadcrumb .current {
+    color: #555;
+    font-weight: 600;
+}
+
+/* Action Buttons */
+.btn {
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.btn-approve {
+    background-color: #2a9d8f;
+    color: #fff;
+}
+
+.btn-approve:hover {
+    background-color: #21867a;
+}
+
+.btn-reject {
+    background-color: #e63946;
+    color: #fff;
+}
+
+.btn-reject:hover {
+    background-color: #c5303a;
+}
+
+.btn-secondary {
+    background-color: #adb5bd;
+    color: #000;
+}
+
+/* Status Counters */
+.counter {
+    flex: 1;
+    text-align: center;
+    padding: 15px;
+    border-radius: 6px;
+    color: #fff;
+}
+
+.counter-total {
+    background: #6c757d;
+}
+
+.counter-progress {
+    background: #f4a261;
+}
+
+.counter-draft {
+    background: #adb5bd;
+    color: #000;
+}
+
+.counter-approved {
+    background: #2a9d8f;
+}
+
+.counter-rejected {
+    background: #e63946;
+}
+
+.counter strong {
+    font-size: 22px;
+}
+

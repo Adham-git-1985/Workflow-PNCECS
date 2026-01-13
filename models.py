@@ -1,13 +1,15 @@
 from datetime import datetime
 from extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
+from flask_login import UserMixin
 
-class User(db.Model):
+
+
+class User(UserMixin, db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(150))
-    email = db.Column(db.String(150), unique=True)
-    password_hash = db.Column(db.String(255))
-    role = db.Column(db.String(50))  # employee, dept_head, finance, secretary_general
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(255), nullable=False)
+    role = db.Column(db.String(50), default="user")  # admin / user
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -40,15 +42,17 @@ class Approval(db.Model):
 
 class AuditLog(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"))
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True)
 
-    action = db.Column(db.String(50))
+    request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"))
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True, index=True)
+
+    action = db.Column(db.String(50), index=True)
     old_status = db.Column(db.String(50))
     new_status = db.Column(db.String(50))
     note = db.Column(db.Text)
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
 
     user = db.relationship("User")
     request = db.relationship("WorkflowRequest")
+

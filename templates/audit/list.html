@@ -1,0 +1,235 @@
+{% extends "layout.html" %}
+
+{% block title %}سجل التدقيق{% endblock %}
+
+{% block content %}
+
+<h3>سجل التدقيق (Audit Log)</h3>
+
+<form method="GET" class="mb-3">
+
+    <label>بحث:</label>
+<input type="text" name="search"
+       placeholder="بحث في الإجراء أو التفاصيل"
+       value="{{ request.args.get('search','') }}">
+
+  <!-- المستخدم -->
+  <label>المستخدم:</label>
+  <select name="user_id">
+    <option value="">-- الكل --</option>
+    {% for u in users %}
+      <option value="{{ u.id }}"
+        {% if request.args.get('user_id') == u.id|string %}selected{% endif %}>
+        {{ u.name }}
+      </option>
+    {% endfor %}
+  </select>
+
+  &nbsp;&nbsp;
+
+  <!-- الإجراء -->
+  <label>الإجراء:</label>
+  <select name="action">
+    <option value="">-- الكل --</option>
+    {% for a in [
+      "CREATE_REQUEST",
+      "APPROVE_REQUEST",
+      "REJECT_REQUEST",
+      "CREATE_DELEGATION",
+      "CANCEL_DELEGATION"
+    ] %}
+      <option value="{{ a }}"
+        {% if request.args.get('action') == a %}selected{% endif %}>
+        {{ a }}
+      </option>
+    {% endfor %}
+  </select>
+
+  &nbsp;&nbsp;
+
+  <!-- التاريخ -->
+  <label>من:</label>
+  <input type="date" name="date_from"
+         value="{{ request.args.get('date_from','') }}">
+
+  <label>إلى:</label>
+  <input type="date" name="date_to"
+         value="{{ request.args.get('date_to','') }}">
+
+  &nbsp;&nbsp;
+
+  <button type="submit">فلترة</button>
+  <a href="{{ url_for('audit.list_audit_logs') }}">إعادة تعيين</a>
+
+</form>
+
+<table border="1" width="100%">
+  <tr>
+    <th>التاريخ</th>
+    <th>المستخدم</th>
+    <th>الإجراء</th>
+    <th>التفاصيل</th>
+    <th>رقم المعاملة</th>
+  </tr>
+
+  {% for log in logs %}
+  <tr>
+    <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+    <td>{{ highlight(log.user.name if log.user else "-", search_terms) }}</td>
+    <td>{{ highlight(log.action, search_terms) }}</td>
+    <td>{{ highlight(log.note or "-", search_terms) }}</td>
+    <td>{{ log.request.id if log.request else "-" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% if pagination.pages > 1 %}
+<div style="margin-top:20px; text-align:center;">
+
+  <!-- زر السابق -->
+  {% if pagination.has_prev %}
+    <a href="{{ url_for(
+        'audit.list_audit_logs',
+        page=pagination.prev_num,
+        user_id=request.args.get('user_id'),
+        action=request.args.get('action'),
+        date_from=request.args.get('date_from'),
+        date_to=request.args.get('date_to'),
+        search=request.args.get('search')
+    ) }}">⬅️ السابق</a>
+  {% endif %}
+
+  &nbsp;&nbsp;
+
+  <!-- أرقام الصفحات -->
+  {% for p in range(1, pagination.pages + 1) %}
+    {% if p == pagination.page %}
+      <strong>[{{ p }}]</strong>
+    {% else %}
+      <a href="{{ url_for(
+          'audit.list_audit_logs',
+          page=p,
+          user_id=request.args.get('user_id'),
+          action=request.args.get('action'),
+          date_from=request.args.get('date_from'),
+          date_to=request.args.get('date_to'),
+          search=request.args.get('search')
+      ) }}">{{ p }}</a>
+    {% endif %}
+    &nbsp;
+  {% endfor %}
+
+  &nbsp;&nbsp;
+
+  <!-- زر التالي -->
+  {% if pagination.has_next %}
+    <a href="{{ url_for(
+        'audit.list_audit_logs',
+        page=pagination.next_num,
+        user_id=request.args.get('user_id'),
+        action=request.args.get('action'),
+        date_from=request.args.get('date_from'),
+        date_to=request.args.get('date_to'),
+        search=request.args.get('search')
+    ) }}">التالي ➡️</a>
+  {% endif %}
+
+</div>
+{% endif %}
+
+
+{% if pagination.pages > 1 %}
+<div style="margin-top:20px; text-align:center;">
+
+  <!-- زر السابق -->
+  {% if pagination.has_prev %}
+    <a href="{{ url_for(
+        'audit.list_audit_logs',
+        page=pagination.prev_num,
+        user_id=request.args.get('user_id'),
+        action=request.args.get('action'),
+        date_from=request.args.get('date_from'),
+        date_to=request.args.get('date_to'),
+        search=request.args.get('search')
+    ) }}">⬅️ السابق</a>
+  {% endif %}
+
+  &nbsp;&nbsp;
+
+  <!-- أرقام الصفحات -->
+  {% for p in range(1, pagination.pages + 1) %}
+    {% if p == pagination.page %}
+      <strong>[{{ p }}]</strong>
+    {% else %}
+      <a href="{{ url_for(
+          'audit.list_audit_logs',
+          page=p,
+          user_id=request.args.get('user_id'),
+          action=request.args.get('action'),
+          date_from=request.args.get('date_from'),
+          date_to=request.args.get('date_to'),
+          search=request.args.get('search')
+      ) }}">{{ p }}</a>
+    {% endif %}
+    &nbsp;
+  {% endfor %}
+
+  &nbsp;&nbsp;
+
+  <!-- زر التالي -->
+  {% if pagination.has_next %}
+    <a href="{{ url_for(
+        'audit.list_audit_logs',
+        page=pagination.next_num,
+        user_id=request.args.get('user_id'),
+        action=request.args.get('action'),
+        date_from=request.args.get('date_from'),
+        date_to=request.args.get('date_to'),
+        search=request.args.get('search')
+    ) }}">التالي ➡️</a>
+  {% endif %}
+
+</div>
+{% endif %}
+
+
+{% if not logs %}
+  <p style="color: gray;">لا توجد نتائج مطابقة للفلترة.</p>
+{% endif %}
+
+{% if pagination.pages > 1 %}
+<div style="margin-top:15px">
+
+  {% if pagination.has_prev %}
+    <a href="{{ url_for('audit.list_audit_logs',
+        page=pagination.prev_num,
+        **request.args) }}">السابق</a>
+  {% endif %}
+
+  &nbsp; صفحة {{ pagination.page }} من {{ pagination.pages }} &nbsp;
+
+  {% if pagination.has_next %}
+    <a href="{{ url_for('audit.list_audit_logs',
+        page=pagination.next_num,
+        **request.args) }}">التالي</a>
+  {% endif %}
+
+</div>
+{% endif %}
+
+
+{% endblock %}
+
+{% macro highlight(text, terms) %}
+  {% if text and terms %}
+    {% set result = text %}
+    {% for term in terms %}
+      {% set result = result | replace(
+        term,
+        '<span style="background-color:yellow;font-weight:bold;">' ~ term ~ '</span>'
+      ) %}
+    {% endfor %}
+    {{ result | safe }}
+  {% else %}
+    {{ text }}
+  {% endif %}
+{% endmacro %}

@@ -8,10 +8,24 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from flask import send_file
 import io
+from routes.audit import audit_bp
+from flask_migrate import Migrate
+from extensions import db, login_manager
+from models import User
+from flask import request
+from urllib.parse import urlparse
+from werkzeug.security import check_password_hash, generate_password_hash
+from flask_login import login_user, login_required, current_user, logout_user, UserMixin
+from routes.users import users_bp
+from sqlalchemy import func
+from datetime import datetime
+
+
 
 
 app = Flask(__name__)
-app.secret_key = "secret"
+app.config["SECRET_KEY"] = "super-secret-key-change-this"
+
 
 STATUS_ROLE_MAP = {
     "SUBMITTED": "dept_head",
@@ -31,47 +45,52 @@ REJECT_STATUS = "REJECTED"
 app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///workflow.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+app.register_blueprint(audit_bp)
+app.register_blueprint(users_bp)
+
 db.init_app(app)
+login_manager.init_app(app)
+login_manager.login_view = "login"  # أو اسم صفحة تسجيل الدخول عندك
+
+
+migrate = Migrate(app, db)
+
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
 
 
-@app.route("/login", methods=["GET", "POST"])
+@app.route("/login", methods=["GET", "POST"], strict_slashes=False)
 def login():
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
+        email = request.form["email"]
+        password = request.form["password"]
 
         user = User.query.filter_by(email=email).first()
 
-        if not user or not user.check_password(password):
-            flash("بيانات الدخول غير صحيحة", "danger")
-            return redirect(url_for("login"))
+        if user and check_password_hash(user.password_hash, password):
+            login_user(user, remember=True)
 
-        session["user_id"] = user.id
-        session["role"] = user.role
 
-        return redirect(url_for("inbox"))
+            next_page = request.args.get("next")
+
+            # حماية من open redirect
+            if not next_page or urlparse(next_page).netloc != "":
+                next_page = url_for("inbox")
+
+            return redirect(next_page)
+
+        flash("بيانات الدخول غير صحيحة", "danger")
 
     return render_template("login.html")
 
 @app.route("/logout")
+@login_required
 def logout():
-    session.clear()
+    logout_user()
     return redirect(url_for("login"))
 
-def get_current_user():
-    user_id = session.get("user_id")
-    if not user_id:
-        return None
-    return User.query.get(user_id)
-
-def login_required(f):
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if not session.get("user_id"):
-            return redirect(url_for("login"))
-        return f(*args, **kwargs)
-    return wrapper
 
 @app.route("/request/new", methods=["GET", "POST"])
 def create_request():
@@ -99,7 +118,7 @@ def create_request():
 
         log_action(
             request_obj=new_request,
-            user=get_current_user(),
+            user=current_user,
             action="CREATE_REQUEST",
             old_status=old_status,
             new_status=new_status,
@@ -111,12 +130,86 @@ def create_request():
         flash("تم حفظ الطلب بنجاح")
         return redirect(url_for("create_request"))
 
-    return render_template("create_request.html")
+    return render_template(
+        "create_request.html",
+        breadcrumb=[
+            {"label": "Inbox", "url": url_for("inbox")},
+            {"label": "طلب جديد"}
+        ]
+    )
+
+
+@app.route("/my-requests")
+@login_required
+def my_requests():
+
+    status = request.args.get("status")
+
+    # 🔹 Query أساسي لكل طلبات المستخدم
+    base_query = WorkflowRequest.query.filter_by(
+        requester_id=current_user.id
+    )
+
+    # 🔹 حساب العدّادات (بدون فلترة)
+    total = base_query.count()
+
+    approved = base_query.filter(
+        WorkflowRequest.status == "APPROVED"
+    ).count()
+
+    rejected = base_query.filter(
+        WorkflowRequest.status == "REJECTED"
+    ).count()
+
+    draft = base_query.filter(
+        WorkflowRequest.status == "DRAFT"
+    ).count()
+
+    in_progress = base_query.filter(
+        WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "DRAFT"])
+    ).count()
+
+    # 🔹 فلترة الجدول فقط حسب الضغط على الـ Counter
+    if status == "approved":
+        base_query = base_query.filter(WorkflowRequest.status == "APPROVED")
+
+    elif status == "rejected":
+        base_query = base_query.filter(WorkflowRequest.status == "REJECTED")
+
+    elif status == "draft":
+        base_query = base_query.filter(WorkflowRequest.status == "DRAFT")
+
+    elif status == "in_progress":
+        base_query = base_query.filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "DRAFT"])
+        )
+
+    requests = base_query.order_by(
+        WorkflowRequest.id.desc()
+    ).all()
+
+    return render_template(
+        "my_requests.html",
+        requests=requests,
+        counters={
+            "total": total,
+            "approved": approved,
+            "rejected": rejected,
+            "draft": draft,
+            "in_progress": in_progress
+        },
+        last_update=datetime.utcnow(),
+        breadcrumb=[
+            {"label": "Inbox", "url": url_for("inbox")},
+            {"label": "طلباتي"}
+        ]
+    )
+
 
 @app.route("/inbox")
 @login_required
 def inbox():
-    current_user = get_current_user()
+    #current_user = get_current_user()
 
     allowed_statuses = [
         status for status, role in STATUS_ROLE_MAP.items()
@@ -130,14 +223,25 @@ def inbox():
     return render_template(
         "inbox.html",
         requests=requests,
-        user=current_user
+        breadcrumb=[
+            {"label": "Inbox", "url": url_for("inbox")}
+        ]
     )
 
 
 @app.route("/request/<int:request_id>")
 def review_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
-    return render_template("review_request.html", req=req)
+    return render_template(
+        "review_request.html",
+        req=req,
+        breadcrumb=[
+            {"label": "Inbox", "url": url_for("inbox")},
+            {"label": f"Request #{req.id}", "url": url_for("review_request", request_id=req.id)},
+            {"label": "Review"}
+        ]
+    )
+
 
 @app.route("/request/<int:request_id>/action", methods=["POST"])
 @login_required
@@ -204,8 +308,14 @@ def request_audit(request_id):
     return render_template(
         "audit_log.html",
         logs=logs,
-        req=req
+        req=req,
+        breadcrumb=[
+            {"label": "Inbox", "url": url_for("inbox")},
+            {"label": f"Request #{req.id}", "url": url_for("review_request", request_id=req.id)},
+            {"label": "Audit Log"}
+        ]
     )
+
 
 @app.route("/request/<int:request_id>/pdf")
 @login_required
