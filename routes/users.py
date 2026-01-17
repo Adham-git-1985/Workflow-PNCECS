@@ -1,12 +1,16 @@
-from flask import render_template, request, redirect, url_for, flash
-from flask_login import login_required
 from werkzeug.security import generate_password_hash
-
+from utils.permissions import admin_required
+from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask_login import login_required
 from models import User
 from extensions import db
-from utils.permissions import admin_required
-from . import users_bp
 
+
+users_bp = Blueprint(
+    "users",
+    __name__,
+    url_prefix="/users"
+)
 
 @users_bp.route("/users")
 @login_required

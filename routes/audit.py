@@ -1,14 +1,18 @@
 from flask import render_template, request
 from flask_login import login_required
 from models import AuditLog, User
-from . import audit_bp
 from datetime import datetime, timedelta
 from sqlalchemy import or_
 from extensions import db
 from utils.permissions import admin_required
+from flask import Blueprint
 
 
-
+audit_bp = Blueprint(
+    "audit",
+    __name__,
+    url_prefix="/audit"
+)
 
 @audit_bp.route("/audit-logs")
 @login_required
@@ -133,3 +137,6 @@ def audit_dashboard():
         top_users=top_users,
         top_actions=top_actions
     )
+
+
+

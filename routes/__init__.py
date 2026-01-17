@@ -1,5 +1,3 @@
-from flask import Blueprint
-
-audit_bp = Blueprint("audit", __name__)
-
-users_bp = Blueprint("users", __name__)
+from .admin import admin_bp
+from .audit import audit_bp
+from .users import users_bp

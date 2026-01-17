@@ -1,32 +1,69 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session
-from extensions import db
-from models import Approval, WorkflowRequest, User
-from functools import wraps
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from flask import send_file
-import io
-from routes.audit import audit_bp
-from flask_migrate import Migrate
-from extensions import db, login_manager
-from models import User
-from flask import request
+from flask import (
+    Flask, render_template, request,
+    redirect, url_for, flash, send_file
+)
+from flask_login import (
+    login_user, login_required,
+    current_user, logout_user
+)
+from werkzeug.security import check_password_hash
 from urllib.parse import urlparse
-from werkzeug.security import check_password_hash, generate_password_hash
-from flask_login import login_user, login_required, current_user, logout_user, UserMixin
-from routes.users import users_bp
+from flask_migrate import Migrate
 from sqlalchemy import func
 from datetime import datetime
+import io
 
+# ======================
+# Extensions
+# ======================
+from extensions import db, login_manager
 
+# ======================
+# Models
+# ======================
+from models import (
+    User, WorkflowRequest,
+    Approval, AuditLog
+)
 
+# ======================
+# Blueprints
+# ======================
+from routes import admin_bp, audit_bp, users_bp
 
+# ======================
+# App Init
+# ======================
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "super-secret-key-change-this"
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///workflow.db"
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+# ======================
+# Extensions Init
+# ======================
+db.init_app(app)
+login_manager.init_app(app)
+login_manager.login_view = "login"
+migrate = Migrate(app, db)
 
+# ======================
+# Register Blueprints
+# ======================
+app.register_blueprint(admin_bp)
+app.register_blueprint(audit_bp)
+app.register_blueprint(users_bp)
+
+# ======================
+# Login Manager
+# ======================
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
+
+# ======================
+# Constants
+# ======================
 STATUS_ROLE_MAP = {
     "SUBMITTED": "dept_head",
     "DEPT_REVIEW": "finance",
@@ -41,27 +78,10 @@ NEXT_STATUS_MAP = {
 
 REJECT_STATUS = "REJECTED"
 
-
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///workflow.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-app.register_blueprint(audit_bp)
-app.register_blueprint(users_bp)
-
-db.init_app(app)
-login_manager.init_app(app)
-login_manager.login_view = "login"  # أو اسم صفحة تسجيل الدخول عندك
-
-
-migrate = Migrate(app, db)
-
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
-
-
-
-@app.route("/login", methods=["GET", "POST"], strict_slashes=False)
+# ======================
+# Auth Routes
+# ======================
+@app.route("/login", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
         email = request.form["email"]
@@ -72,10 +92,7 @@ def login():
         if user and check_password_hash(user.password_hash, password):
             login_user(user, remember=True)
 
-
             next_page = request.args.get("next")
-
-            # حماية من open redirect
             if not next_page or urlparse(next_page).netloc != "":
                 next_page = url_for("inbox")
 
@@ -85,14 +102,18 @@ def login():
 
     return render_template("login.html")
 
+
 @app.route("/logout")
 @login_required
 def logout():
     logout_user()
     return redirect(url_for("login"))
 
-
+# ======================
+# Requests
+# ======================
 @app.route("/request/new", methods=["GET", "POST"])
+@login_required
 def create_request():
     if request.method == "POST":
         title = request.form.get("title")
@@ -101,17 +122,12 @@ def create_request():
 
         status = "DRAFT" if action == "save" else "SUBMITTED"
 
-        requester = User.query.first()
-
         new_request = WorkflowRequest(
             title=title,
             description=description,
             status=status,
-            requester_id=requester.id
+            requester_id=current_user.id
         )
-
-        old_status = None
-        new_status = status
 
         db.session.add(new_request)
         db.session.flush()
@@ -120,144 +136,92 @@ def create_request():
             request_obj=new_request,
             user=current_user,
             action="CREATE_REQUEST",
-            old_status=old_status,
-            new_status=new_status,
+            old_status=None,
+            new_status=status,
             note="تم إنشاء الطلب"
         )
 
         db.session.commit()
-
-        flash("تم حفظ الطلب بنجاح")
+        flash("تم حفظ الطلب بنجاح", "success")
         return redirect(url_for("create_request"))
 
-    return render_template(
-        "create_request.html",
-        breadcrumb=[
-            {"label": "Inbox", "url": url_for("inbox")},
-            {"label": "طلب جديد"}
-        ]
-    )
+    return render_template("create_request.html")
 
 
 @app.route("/my-requests")
 @login_required
 def my_requests():
-
     status = request.args.get("status")
 
-    # 🔹 Query أساسي لكل طلبات المستخدم
     base_query = WorkflowRequest.query.filter_by(
         requester_id=current_user.id
     )
 
-    # 🔹 حساب العدّادات (بدون فلترة)
-    total = base_query.count()
-
-    approved = base_query.filter(
-        WorkflowRequest.status == "APPROVED"
-    ).count()
-
-    rejected = base_query.filter(
-        WorkflowRequest.status == "REJECTED"
-    ).count()
-
-    draft = base_query.filter(
-        WorkflowRequest.status == "DRAFT"
-    ).count()
-
-    in_progress = base_query.filter(
-        WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "DRAFT"])
-    ).count()
-
-    # 🔹 فلترة الجدول فقط حسب الضغط على الـ Counter
-    if status == "approved":
-        base_query = base_query.filter(WorkflowRequest.status == "APPROVED")
-
-    elif status == "rejected":
-        base_query = base_query.filter(WorkflowRequest.status == "REJECTED")
-
-    elif status == "draft":
-        base_query = base_query.filter(WorkflowRequest.status == "DRAFT")
-
-    elif status == "in_progress":
-        base_query = base_query.filter(
+    counters = {
+        "total": base_query.count(),
+        "approved": base_query.filter_by(status="APPROVED").count(),
+        "rejected": base_query.filter_by(status="REJECTED").count(),
+        "draft": base_query.filter_by(status="DRAFT").count(),
+        "in_progress": base_query.filter(
             WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "DRAFT"])
-        )
+        ).count()
+    }
 
-    requests = base_query.order_by(
-        WorkflowRequest.id.desc()
-    ).all()
+    if status:
+        if status == "in_progress":
+            base_query = base_query.filter(
+                WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "DRAFT"])
+            )
+        else:
+            base_query = base_query.filter(WorkflowRequest.status == status.upper())
+
+    requests = base_query.order_by(WorkflowRequest.id.desc()).all()
 
     return render_template(
         "my_requests.html",
         requests=requests,
-        counters={
-            "total": total,
-            "approved": approved,
-            "rejected": rejected,
-            "draft": draft,
-            "in_progress": in_progress
-        },
-        last_update=datetime.utcnow(),
-        breadcrumb=[
-            {"label": "Inbox", "url": url_for("inbox")},
-            {"label": "طلباتي"}
-        ]
+        counters=counters,
+        last_update=datetime.utcnow()
     )
 
 
 @app.route("/inbox")
 @login_required
 def inbox():
-    #current_user = get_current_user()
-
     allowed_statuses = [
-        status for status, role in STATUS_ROLE_MAP.items()
-        if role == current_user.role
+        s for s, r in STATUS_ROLE_MAP.items()
+        if r == current_user.role
     ]
 
     requests = WorkflowRequest.query.filter(
         WorkflowRequest.status.in_(allowed_statuses)
     ).all()
 
-    return render_template(
-        "inbox.html",
-        requests=requests,
-        breadcrumb=[
-            {"label": "Inbox", "url": url_for("inbox")}
-        ]
-    )
+    return render_template("inbox.html", requests=requests)
 
-
+# ======================
+# Review / Actions
+# ======================
 @app.route("/request/<int:request_id>")
+@login_required
 def review_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
-    return render_template(
-        "review_request.html",
-        req=req,
-        breadcrumb=[
-            {"label": "Inbox", "url": url_for("inbox")},
-            {"label": f"Request #{req.id}", "url": url_for("review_request", request_id=req.id)},
-            {"label": "Review"}
-        ]
-    )
+    return render_template("review_request.html", req=req)
 
 
 @app.route("/request/<int:request_id>/action", methods=["POST"])
 @login_required
 def request_action(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
-    current_user = get_current_user()
 
     action = request.form.get("action")
     note = request.form.get("note")
-
     old_status = req.status
 
     if action == "approve":
         req.status = NEXT_STATUS_MAP.get(req.status, req.status)
         action_name = "APPROVE"
-    elif action == "reject":
+    else:
         req.status = REJECT_STATUS
         action_name = "REJECT"
 
@@ -270,31 +234,30 @@ def request_action(request_id):
         note=note
     )
 
-    approval = Approval(
+    db.session.add(Approval(
         request_id=req.id,
         user_id=current_user.id,
         action=action,
         note=note
-    )
+    ))
 
-    db.session.add(approval)
     db.session.commit()
-
     flash("تم تسجيل الإجراء بنجاح", "success")
     return redirect(url_for("inbox"))
 
-from models import AuditLog
-
+# ======================
+# Audit / PDF
+# ======================
 def log_action(request_obj, user, action, old_status, new_status, note=None):
-    log = AuditLog(
+    db.session.add(AuditLog(
         request_id=request_obj.id,
         user_id=user.id if user else None,
         action=action,
         old_status=old_status,
         new_status=new_status,
         note=note
-    )
-    db.session.add(log)
+    ))
+
 
 @app.route("/request/<int:request_id>/audit")
 @login_required
@@ -304,75 +267,44 @@ def request_audit(request_id):
     ).order_by(AuditLog.created_at.asc()).all()
 
     req = WorkflowRequest.query.get_or_404(request_id)
-
-    return render_template(
-        "audit_log.html",
-        logs=logs,
-        req=req,
-        breadcrumb=[
-            {"label": "Inbox", "url": url_for("inbox")},
-            {"label": f"Request #{req.id}", "url": url_for("review_request", request_id=req.id)},
-            {"label": "Audit Log"}
-        ]
-    )
+    return render_template("audit_log.html", logs=logs, req=req)
 
 
 @app.route("/request/<int:request_id>/pdf")
 @login_required
 def request_pdf(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
-    logs = AuditLog.query.filter_by(
-        request_id=request_id
-    ).order_by(AuditLog.created_at.asc()).all()
+    logs = AuditLog.query.filter_by(request_id=request_id).all()
 
     buffer = io.BytesIO()
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.pagesizes import A4
+
     doc = SimpleDocTemplate(buffer, pagesize=A4)
-
     styles = getSampleStyleSheet()
-    elements = []
-
-    # العنوان
-    elements.append(Paragraph("<b>تقرير مسار الطلب</b>", styles["Title"]))
-    elements.append(Spacer(1, 12))
-
-    # بيانات الطلب
-    elements.append(Paragraph(f"<b>رقم الطلب:</b> {req.id}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>العنوان:</b> {req.title}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>الوصف:</b> {req.description}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>الحالة الحالية:</b> {req.status}", styles["Normal"]))
-    elements.append(Spacer(1, 12))
-
-    # جدول السجل
-    table_data = [
-        ["التاريخ", "المستخدم", "الإجراء", "من → إلى", "ملاحظة"]
+    elements = [
+        Paragraph("<b>تقرير مسار الطلب</b>", styles["Title"]),
+        Spacer(1, 12)
     ]
 
+    table_data = [["التاريخ", "الإجراء", "من → إلى", "ملاحظة"]]
     for log in logs:
         table_data.append([
             log.created_at.strftime("%Y-%m-%d %H:%M"),
-            log.user.name if log.user else "النظام",
             log.action,
             f"{log.old_status} → {log.new_status}",
             log.note or ""
         ])
 
-    table = Table(table_data, repeatRows=1)
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-        ("GRID", (0,0), (-1,-1), 1, colors.black),
-        ("ALIGN", (0,0), (-1,-1), "CENTER"),
-        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
-    ]))
-
-    elements.append(table)
-
+    elements.append(Table(table_data))
     doc.build(elements)
 
     buffer.seek(0)
     return send_file(
         buffer,
         as_attachment=True,
-        download_name=f"request_{req.id}_report.pdf",
+        download_name=f"request_{req.id}.pdf",
         mimetype="application/pdf"
     )
 

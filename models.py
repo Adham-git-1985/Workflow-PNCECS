@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
@@ -23,11 +23,14 @@ class WorkflowRequest(db.Model):
     title = db.Column(db.String(200))
     description = db.Column(db.Text)
     status = db.Column(db.String(50))
-
     requester_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     requester = db.relationship("User", backref="requests")
-
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
+    is_escalated = db.Column(db.Boolean, default=False)
 
 
 class Approval(db.Model):
@@ -36,7 +39,11 @@ class Approval(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("user.id"))
     action = db.Column(db.String(20))  # approve / reject
     note = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False
+    )
 
 
 
@@ -51,8 +58,18 @@ class AuditLog(db.Model):
     new_status = db.Column(db.String(50))
     note = db.Column(db.Text)
 
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
-
+    created_at = db.Column(
+        db.DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        nullable=False, index=True
+    )
     user = db.relationship("User")
     request = db.relationship("WorkflowRequest")
 
+class SystemSetting(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    key = db.Column(db.String(100), unique=True, nullable=False)
+    value = db.Column(db.String(255), nullable=False)
+
+    def __repr__(self):
+        return f"<SystemSetting {self.key}={self.value}>"
