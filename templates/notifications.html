@@ -1,0 +1,22 @@
+<ul class="list-group">
+{% for n in notifications %}
+<li class="list-group-item d-flex justify-content-between
+           {% if not n.is_read %}list-group-item-warning{% endif %}">
+    <span>{{ n.message }}</span>
+
+    {% if not n.is_read %}
+    <button class="btn btn-sm btn-outline-secondary"
+            onclick="markRead({{ n.id }})">
+        Mark as read
+    </button>
+    {% endif %}
+</li>
+{% endfor %}
+</ul>
+
+<script>
+function markRead(id){
+    fetch(`/notifications/mark-read/${id}`, {method: "POST"})
+      .then(() => location.reload());
+}
+</script>

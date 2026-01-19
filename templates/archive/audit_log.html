@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="container mt-4">
+    <h3>Archive Audit Log</h3>
+
+    <table class="table table-bordered table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>Date</th>
+                <th>User</th>
+                <th>Action</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for log in logs %}
+            <tr>
+                <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                <td>{{ log.user.name }}</td>
+                <td>
+                    <span class="badge bg-warning">
+                        {{ log.action }}
+                    </span>
+                </td>
+                <td>{{ log.description }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

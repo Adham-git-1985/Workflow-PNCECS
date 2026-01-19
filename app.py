@@ -15,7 +15,7 @@ import io
 import os
 from flask import session
 import logging
-
+from archive import archive_bp
 
 
 
@@ -80,6 +80,8 @@ migrate = Migrate(app, db)
 app.register_blueprint(admin_bp)
 app.register_blueprint(audit_bp)
 app.register_blueprint(users_bp)
+app.register_blueprint(archive_bp)
+
 
 # ======================
 # Login Manager
@@ -362,47 +364,45 @@ def request_audit(request_id):
     return render_template("audit_log.html", logs=logs, req=req)
 
 
-@app.route("/request/<int:request_id>/pdf")
+
+@app.route("/notifications/mark-read/<int:note_id>", methods=["POST"])
 @login_required
-def request_pdf(request_id):
-    req = WorkflowRequest.query.get_or_404(request_id)
-    logs = AuditLog.query.filter_by(request_id=request_id).all()
+def mark_notification_read(note_id):
+    note = Notification.query.filter_by(
+        id=note_id,
+        user_id=current_user.id
+    ).first_or_404()
 
-    buffer = io.BytesIO()
-    from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph,
-        Spacer, Table
-    )
-    from reportlab.lib.styles import getSampleStyleSheet
-    from reportlab.lib.pagesizes import A4
+    note.is_read = True
+    db.session.commit()
+    return {"success": True}
 
-    doc = SimpleDocTemplate(buffer, pagesize=A4)
-    styles = getSampleStyleSheet()
-    elements = [
-        Paragraph("<b>تقرير مسار الطلب</b>", styles["Title"]),
-        Spacer(1, 12)
-    ]
+@app.route("/notifications/unread-count")
+@login_required
+def unread_count():
+    return {"count": current_user.unread_notifications_count}
 
-    table_data = [["التاريخ", "الإجراء", "من → إلى", "ملاحظة"]]
-    for log in logs:
-        table_data.append([
-            log.created_at.strftime("%Y-%m-%d %H:%M"),
-            log.action,
-            f"{log.old_status} → {log.new_status}",
-            log.note or ""
-        ])
+@archive_bp.route("/sign/<int:file_id>", methods=["POST"])
+@login_required
+@roles_required("ADMIN")
+def sign_pdf(file_id):
 
-    elements.append(Table(table_data))
-    doc.build(elements)
+    file = ArchivedFile.query.get_or_404(file_id)
 
-    buffer.seek(0)
-    return send_file(
-        buffer,
-        as_attachment=True,
-        download_name=f"request_{req.id}.pdf",
-        mimetype="application/pdf"
-    )
+    if file.is_signed:
+        abort(400)
+
+    file.is_signed = True
+    file.signed_at = datetime.utcnow()
+    file.signed_by = current_user.id
+
+    db.session.commit()
+    flash("Document signed successfully", "success")
+    return redirect(url_for("archive.my_files"))
 
 
 if __name__ == "__main__":
     app.run(debug=True, use_reloader=False)
+
+
+

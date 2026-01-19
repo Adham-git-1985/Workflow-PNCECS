@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="container mt-4">
+    <h3>Archive Retention Policy</h3>
+
+    <form method="POST">
+        <div class="mb-3">
+            <label class="form-label">
+                Delete archived files after (days)
+            </label>
+            <input type="number"
+                   name="days"
+                   value="{{ days }}"
+                   class="form-control w-25"
+                   min="1"
+                   required>
+        </div>
+
+        <button class="btn btn-primary">
+            Save
+        </button>
+    </form>
+</div>
+
+{% endblock %}

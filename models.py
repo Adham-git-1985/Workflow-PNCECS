@@ -11,6 +11,7 @@ class User(UserMixin, db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(50))
+    department_id = db.Column(db.Integer, nullable=True)
 
     # =====================
     # Password helpers
@@ -20,6 +21,14 @@ class User(UserMixin, db.Model):
 
     def check_password(self, password):
         return check_password_hash(self.password_hash, password)
+
+    @property
+    def unread_notifications_count(self):
+        return Notification.query.filter_by(
+            user_id=self.id,
+            is_read=False
+        ).count()
+
 
 class WorkflowRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -83,5 +92,106 @@ class AuditLog(db.Model):
 
 class SystemSetting(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    key = db.Column(db.String(100), unique=True, nullable=False)
+    key = db.Column(db.String(50), primary_key=True)
     value = db.Column(db.String(255), nullable=False)
+
+
+# ======================
+# Archive Models
+# ======================
+class ArchivedFile(db.Model):
+    __tablename__ = "archived_file"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text)
+
+    upload_date = db.Column(db.DateTime, default=datetime.utcnow)
+
+    file_path = db.Column(db.String(500), nullable=False)
+    mime_type = db.Column(db.String(100))
+    file_size = db.Column(db.Integer)
+
+    visibility = db.Column(db.String(30), default="owner")
+
+    owner_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    deleted_by = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=True
+    )
+
+    is_deleted = db.Column(db.Boolean, default=False)
+    deleted_at = db.Column(db.DateTime)
+
+    owner = db.relationship(
+        "User",
+        foreign_keys=[owner_id],
+        backref="archived_files"
+    )
+
+    deleted_by_user = db.relationship(
+        "User",
+        foreign_keys=[deleted_by],
+        backref="deleted_archived_files"
+    )
+    department_id = db.Column(db.Integer, nullable=True)
+    is_signed = db.Column(db.Boolean, default=False)
+    signed_at = db.Column(db.DateTime)
+    signed_by = db.Column(db.Integer, db.ForeignKey("user.id"))
+
+
+class Notification(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=False)
+    message = db.Column(db.String(255))
+    is_read = db.Column(db.Boolean, default=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+
+class FilePermission(db.Model):
+    __tablename__ = "file_permission"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    file_id = db.Column(
+        db.Integer,
+        db.ForeignKey("archived_file.id"),
+        nullable=False
+    )
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=False
+    )
+
+    file = db.relationship(
+        "ArchivedFile",
+        backref="shared_with"
+    )
+
+    user = db.relationship(
+        "User",
+        backref="shared_files"
+    )
+
+
+workflow_request_id = db.Column(
+    db.Integer,
+    db.ForeignKey("workflow_request.id"),
+    nullable=True
+)
+
+workflow_request = db.relationship(
+    "WorkflowRequest",
+    backref="attachments"
+)

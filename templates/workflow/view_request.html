@@ -1,0 +1,40 @@
+<h5 class="mt-4">Attachments</h5>
+
+{% if request.attachments %}
+<table class="table table-sm">
+    <thead>
+        <tr>
+            <th>File</th>
+            <th>Description</th>
+            <th>Uploaded</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for f in request.attachments %}
+        {% if not f.is_deleted %}
+        <tr>
+            <td>{{ f.original_name }}</td>
+            <td>{{ f.description or "-" }}</td>
+            <td>{{ f.upload_date.strftime("%Y-%m-%d") }}</td>
+            <td>
+                <a class="btn btn-sm btn-primary"
+                   href="{{ url_for('workflow.download_workflow_attachment', file_id=f.id) }}">
+                    Download
+                </a>
+            </td>
+            <td>
+                <a class="btn btn-outline-secondary"
+               href="{{ url_for('workflow.request_pdf', request_id=request.id) }}">
+                Export PDF
+                </a>
+            </td>
+
+        </tr>
+        {% endif %}
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="text-muted">No attachments</p>
+{% endif %}

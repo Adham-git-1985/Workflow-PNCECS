@@ -84,10 +84,7 @@ def update_sla():
 @roles_required("ADMIN")
 def dashboard():
 
-    from flask import current_app
-    print("ROUTE APP ID:", id(current_app._get_current_object()))
-
-    # ===== Counters =====
+    # ===== Counters (Workflow) =====
     total = db.session.query(func.count(WorkflowRequest.id)).scalar()
 
     approved = WorkflowRequest.query.filter(
@@ -119,7 +116,6 @@ def dashboard():
         days=SLA_DAYS + ESCALATION_DAYS
     )
 
-    # ===== Aging Requests (for display) =====
     aging_requests = (
         WorkflowRequest.query
         .filter(
@@ -130,7 +126,6 @@ def dashboard():
         .all()
     )
 
-    # ===== Escalation Logic =====
     escalated_requests = (
         WorkflowRequest.query
         .filter(
@@ -145,7 +140,6 @@ def dashboard():
         old_status = req.status
         old_role = req.current_role or "dept_head"
 
-        # Update request
         req.is_escalated = True
         req.escalated_at = now
         req.status = "ESCALATED"
@@ -156,8 +150,7 @@ def dashboard():
         )
         req.current_role = new_role
 
-        # Audit log
-        log = AuditLog(
+        db.session.add(AuditLog(
             request_id=req.id,
             user_id=SYSTEM_USER_ID,
             action="ESCALATION",
@@ -167,11 +160,15 @@ def dashboard():
                 f"Escalated from {old_role} to {new_role} "
                 f"after {SLA_DAYS + ESCALATION_DAYS} days"
             )
-        )
-        db.session.add(log)
+        ))
 
     if escalated_requests:
         db.session.commit()
+
+    # ===== Archive Counters (NEW) =====
+    archive_total = ArchivedFile.query.count()
+    archive_active = ArchivedFile.query.filter_by(is_deleted=False).count()
+    archive_deleted = ArchivedFile.query.filter_by(is_deleted=True).count()
 
     # ===== Render =====
     return render_template(
@@ -183,6 +180,11 @@ def dashboard():
             "drafts": drafts,
             "in_progress": in_progress,
             "delegated": delegated
+        },
+        archive_counters={
+            "total": archive_total,
+            "active": archive_active,
+            "deleted": archive_deleted
         },
         aging_requests=aging_requests,
         sla_days=SLA_DAYS,

@@ -216,4 +216,41 @@ new Chart(ctx, {
 });
 </script>
 
+<!-- Archive Counters -->
+<div class="row g-3 mt-4">
+
+    <div class="col-md-4">
+        <div class="card border-dark shadow-sm text-center">
+            <div class="card-body">
+                <h6 class="text-muted">Archive - Total Files</h6>
+                <h2>{{ archive_counters.total }}</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-success shadow-sm text-center">
+            <div class="card-body">
+                <h6 class="text-muted">Archive - Active</h6>
+                <h2 class="text-success">
+                    {{ archive_counters.active }}
+                </h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card border-danger shadow-sm text-center">
+            <div class="card-body">
+                <h6 class="text-muted">Archive - Deleted</h6>
+                <h2 class="text-danger">
+                    {{ archive_counters.deleted }}
+                </h2>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+
 {% endblock %}

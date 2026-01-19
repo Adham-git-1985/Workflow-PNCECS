@@ -29,7 +29,31 @@
                 <a href="/users">Users</a>
             {% endif %}
             <a href="/logout">Logout</a>
+
+            <a href="{{ url_for('notifications') }}">
+    🔔
+            {% if current_user.unread_notifications_count %}
+                <span class="badge bg-danger">
+                    {{ current_user.unread_notifications_count }}
+                </span>
+            {% endif %}
+            </a>
+            <li class="nav-item">
+                <a class="nav-link position-relative"
+                   href="{{ url_for('notifications') }}">
+                    🔔
+                    {% if current_user.unread_notifications_count > 0 %}
+                        <span class="position-absolute top-0 start-100
+                                     translate-middle badge rounded-pill bg-danger">
+                            {{ current_user.unread_notifications_count }}
+                        </span>
+                    {% endif %}
+                </a>
+            </li>
+
+
         </nav>
+
     </div>
 </header>
 
@@ -90,6 +114,22 @@
         <small>© اللجنة الوطنية الفلسطينية</small>
     </div>
 </footer>
+
+<script>
+setInterval(() => {
+    fetch("/notifications/unread-count")
+      .then(r => r.json())
+      .then(data => {
+          const badge = document.getElementById("notif-badge");
+          if (data.count > 0) {
+              badge.innerText = data.count;
+              badge.style.display = "inline-block";
+          } else {
+              badge.style.display = "none";
+          }
+      });
+}, 30000); // كل 30 ثانية
+</script>
 
 </body>
 </html>

@@ -1,0 +1,29 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="container mt-4">
+    <h3>Share File</h3>
+
+    <p><strong>File:</strong> {{ file.original_name }}</p>
+
+    <form method="POST">
+        <div class="mb-3">
+            <label class="form-label">Select users</label>
+            <select name="users" multiple class="form-select" size="8">
+                {% for u in users %}
+                    <option value="{{ u.id }}">{{ u.name }}</option>
+                {% endfor %}
+            </select>
+            <small class="text-muted">
+                Hold Ctrl (Windows) or Cmd (Mac) to select multiple users
+            </small>
+        </div>
+
+        <button class="btn btn-primary">Share</button>
+        <a href="{{ url_for('archive.my_files') }}" class="btn btn-secondary">
+            Cancel
+        </a>
+    </form>
+</div>
+
+{% endblock %}

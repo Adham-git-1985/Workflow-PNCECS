@@ -1,0 +1,38 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="container mt-4">
+    <h3>Recycle Bin</h3>
+
+    {% if files %}
+    <table class="table table-bordered">
+        <thead>
+            <tr>
+                <th>File</th>
+                <th>Deleted At</th>
+                <th>Deleted By</th>
+                <th>Action</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for f in files %}
+            <tr>
+                <td>{{ f.original_name }}</td>
+                <td>{{ f.deleted_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                <td>{{ f.deleted_by }}</td>
+                <td>
+                    <a class="btn btn-sm btn-success"
+                       href="{{ url_for('archive.restore_file', file_id=f.id) }}">
+                        Restore
+                    </a>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <div class="alert alert-info">Recycle Bin is empty</div>
+    {% endif %}
+</div>
+
+{% endblock %}
