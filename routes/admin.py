@@ -4,11 +4,15 @@ from flask import (
 )
 from flask_login import login_required
 from permissions import roles_required
-from models import WorkflowRequest, SystemSetting
+from models import WorkflowRequest, SystemSetting, AuditLog
 from extensions import db
 from sqlalchemy import func
 from datetime import datetime, timedelta
 
+
+# =========================
+# Blueprint
+# =========================
 admin_bp = Blueprint(
     "admin",
     __name__,
@@ -16,20 +20,30 @@ admin_bp = Blueprint(
 )
 
 # =========================
+# Constants
+# =========================
+FINAL_STATUSES = ["APPROVED", "REJECTED"]
+
+ESCALATION_ROLE_MAP = {
+    "dept_head": "secretary_general",
+    "finance": "secretary_general"
+}
+
+SYSTEM_USER_ID = None  # system action
+
+
+# =========================
 # Helpers
 # =========================
 def get_sla_days():
-    sla_setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
-    return int(sla_setting.value) if sla_setting else 3
+    setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
+    return int(setting.value) if setting else 3
 
-# =========================
-# Escalation
-# =========================
+
 def get_escalation_days():
-    setting = SystemSetting.query.filter_by(
-        key="ESCALATION_DAYS"
-    ).first()
+    setting = SystemSetting.query.filter_by(key="ESCALATION_DAYS").first()
     return int(setting.value) if setting else 2
+
 
 # =========================
 # Update SLA
@@ -45,18 +59,22 @@ def update_sla():
         flash("Invalid SLA value", "danger")
         return redirect(url_for("admin.dashboard"))
 
-    sla_setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
+    setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
 
-    if not sla_setting:
-        sla_setting = SystemSetting(key="SLA_DAYS", value=str(sla_days))
-        db.session.add(sla_setting)
+    if not setting:
+        setting = SystemSetting(
+            key="SLA_DAYS",
+            value=str(sla_days)
+        )
+        db.session.add(setting)
     else:
-        sla_setting.value = str(sla_days)
+        setting.value = str(sla_days)
 
     db.session.commit()
 
     flash(f"SLA updated to {sla_days} days", "success")
     return redirect(url_for("admin.dashboard"))
+
 
 # =========================
 # Admin Dashboard
@@ -66,67 +84,96 @@ def update_sla():
 @roles_required("ADMIN")
 def dashboard():
 
+    from flask import current_app
+    print("ROUTE APP ID:", id(current_app._get_current_object()))
+
+    # ===== Counters =====
     total = db.session.query(func.count(WorkflowRequest.id)).scalar()
 
-    approved = db.session.query(func.count(WorkflowRequest.id)) \
-        .filter(WorkflowRequest.status == "APPROVED") \
-        .scalar()
+    approved = WorkflowRequest.query.filter(
+        WorkflowRequest.status == "APPROVED"
+    ).count()
 
-    rejected = db.session.query(func.count(WorkflowRequest.id)) \
-        .filter(WorkflowRequest.status == "REJECTED") \
-        .scalar()
+    rejected = WorkflowRequest.query.filter(
+        WorkflowRequest.status == "REJECTED"
+    ).count()
 
-    drafts = db.session.query(func.count(WorkflowRequest.id)) \
-        .filter(WorkflowRequest.status == "DRAFT") \
-        .scalar()
+    drafts = WorkflowRequest.query.filter(
+        WorkflowRequest.status == "DRAFT"
+    ).count()
 
-    in_progress = db.session.query(func.count(WorkflowRequest.id)) \
-        .filter(
-            WorkflowRequest.status.notin_(
-                ["APPROVED", "REJECTED", "DRAFT"]
-            )
-        ) \
-        .scalar()
+    in_progress = WorkflowRequest.query.filter(
+        WorkflowRequest.status.notin_(FINAL_STATUSES + ["DRAFT"])
+    ).count()
 
-    delegated = 0  # مؤقتًا
+    delegated = 0  # TODO: implement delegation counter
 
-    # ===== SLA / Aging =====
+    # ===== SLA / Escalation =====
     SLA_DAYS = get_sla_days()
-    sla_threshold = datetime.utcnow() - timedelta(days=SLA_DAYS)
+    ESCALATION_DAYS = get_escalation_days()
 
+    now = datetime.utcnow()
+
+    sla_threshold = now - timedelta(days=SLA_DAYS)
+    escalation_threshold = now - timedelta(
+        days=SLA_DAYS + ESCALATION_DAYS
+    )
+
+    # ===== Aging Requests (for display) =====
     aging_requests = (
         WorkflowRequest.query
         .filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.status.notin_(FINAL_STATUSES),
             WorkflowRequest.created_at <= sla_threshold
         )
         .order_by(WorkflowRequest.created_at.asc())
         .all()
     )
 
-    ESCALATION_DAYS = get_escalation_days()
-    escalation_threshold = datetime.utcnow() - timedelta(
-        days=(SLA_DAYS + ESCALATION_DAYS)
-    )
-
+    # ===== Escalation Logic =====
     escalated_requests = (
         WorkflowRequest.query
-            .filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+        .filter(
+            WorkflowRequest.status.notin_(FINAL_STATUSES),
             WorkflowRequest.created_at <= escalation_threshold,
             WorkflowRequest.is_escalated == False
         )
-            .all()
+        .all()
     )
 
-    # Mark as escalated
     for req in escalated_requests:
+        old_status = req.status
+        old_role = req.current_role or "dept_head"
+
+        # Update request
         req.is_escalated = True
+        req.escalated_at = now
+        req.status = "ESCALATED"
+
+        new_role = ESCALATION_ROLE_MAP.get(
+            old_role,
+            "secretary_general"
+        )
+        req.current_role = new_role
+
+        # Audit log
+        log = AuditLog(
+            request_id=req.id,
+            user_id=SYSTEM_USER_ID,
+            action="ESCALATION",
+            old_status=old_status,
+            new_status="ESCALATED",
+            note=(
+                f"Escalated from {old_role} to {new_role} "
+                f"after {SLA_DAYS + ESCALATION_DAYS} days"
+            )
+        )
+        db.session.add(log)
 
     if escalated_requests:
         db.session.commit()
 
-
+    # ===== Render =====
     return render_template(
         "admin/dashboard.html",
         counters={
@@ -139,5 +186,6 @@ def dashboard():
         },
         aging_requests=aging_requests,
         sla_days=SLA_DAYS,
-        now=datetime.utcnow()
+        now=now
     )
+

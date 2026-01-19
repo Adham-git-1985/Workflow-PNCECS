@@ -13,11 +13,6 @@ from sqlalchemy import func
 from datetime import datetime
 import io
 import os
-from flask import session
-import logging
-
-
-
 
 # ======================
 # Extensions
@@ -37,18 +32,6 @@ from models import (
 # ======================
 from routes import admin_bp, audit_bp, users_bp
 
-
-# ======================
-# logging
-# ======================
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
-logger = logging.getLogger(__name__)
-
 # ======================
 # App Init
 # ======================
@@ -61,7 +44,7 @@ os.makedirs(app.instance_path, exist_ok=True)
 # المسار المطلق لقاعدة البيانات
 db_path = os.path.join(app.instance_path, "workflow.db")
 
-app.config["SECRET_KEY"] = "workflow-very-secret-key-2026"
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-key")
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
@@ -86,17 +69,7 @@ app.register_blueprint(users_bp)
 # ======================
 @login_manager.user_loader
 def load_user(user_id):
-    logger.info(f"user_loader called with user_id={user_id}")
-
-    user = User.query.get(int(user_id))
-
-    if not user:
-        logger.error("user_loader returned None ❌")
-    else:
-        logger.info(f"user_loader loaded user {user.email}")
-
-    return user
-
+    return User.query.get(int(user_id))
 
 # ======================
 # Workflow Constants
@@ -116,62 +89,30 @@ NEXT_STATUS_MAP = {
 REJECT_STATUS = "REJECTED"
 FINAL_STATUSES = ["APPROVED", "REJECTED"]
 
-
-@app.route("/")
-@login_required
-def index():
-    logger.info(
-        f"Accessing index | is_authenticated={current_user.is_authenticated} | user={current_user.get_id()}"
-    )
-    return redirect(url_for("my_requests"))
-
-
-@app.before_request
-def log_session():
-    logger.debug(f"Session content: {dict(session)}")
-
-@login_manager.unauthorized_handler
-def unauthorized():
-    logger.warning(
-        f"Unauthorized access | path={request.path} | user={current_user.get_id()}"
-    )
-    return redirect(url_for("login"))
-
-
 # ======================
 # Auth Routes
 # ======================
 @app.route("/login", methods=["GET", "POST"])
 def login():
-
-    logger.info("Login page accessed")
-
     if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
-
-        logger.info(f"Login attempt for email={email}")
+        email = request.form["email"]
+        password = request.form["password"]
 
         user = User.query.filter_by(email=email).first()
 
-        if not user:
-            logger.warning("Login failed: user not found")
-            flash("Invalid credentials")
-            return redirect(url_for("login"))
+        if user and check_password_hash(user.password_hash, password):
+            login_user(user, remember=True)
 
-        if not user.check_password(password):
-            logger.warning("Login failed: wrong password")
-            flash("Invalid credentials")
-            return redirect(url_for("login"))
+            next_page = request.args.get("next")
+            if not next_page or urlparse(next_page).netloc != "":
+                next_page = url_for("inbox")
 
-        login_user(user)
-        logger.info(
-            f"Login success | user_id={user.id} | authenticated={current_user.is_authenticated}"
-        )
+            return redirect(next_page)
 
-        return redirect(url_for("index"))
+        flash("بيانات الدخول غير صحيحة", "danger")
 
     return render_template("login.html")
+
 
 @app.route("/logout")
 @login_required

@@ -13,6 +13,9 @@
             <h5 class="mb-0">تسجيل الدخول</h5>
         </div>
         <div class="card-body">
+
+            {% include "_flash_messages.html" %}
+
             <form method="POST">
                 <div class="mb-3">
                     <label>البريد الإلكتروني</label>
@@ -26,6 +29,7 @@
 
                 <button class="btn btn-primary w-100">دخول</button>
             </form>
+
         </div>
     </div>
 </div>
