@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <title>{% block title %}Workflow System{% endblock %}</title>
 
-    <!-- الخط -->
+    <!-- Font -->
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 
-    <!-- CSS العام -->
+    <!-- Global CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
 
     {% block extra_css %}{% endblock %}
@@ -20,76 +20,94 @@
         <h2 class="logo">اللجنة الوطنية الفلسطينية</h2>
 
         <nav class="main-nav">
-            <a href="/inbox" class="{% if request.path.startswith('/inbox') %}active{% endif %}">
-                Inbox</a>
-            <a href="{{ url_for('my_requests') }}">📂 طلباتي</a>
 
-            {% if current_user.is_authenticated and current_user.role == "admin" %}
-                <a href="/audit-dashboard">Audit</a>
-                <a href="/users">Users</a>
+            <a href="/inbox"
+               class="{% if request.path.startswith('/inbox') %}active{% endif %}">
+                Inbox
+            </a>
+
+            <a href="{{ url_for('my_requests') }}"
+               class="{% if request.path.startswith('/my-requests') %}active{% endif %}">
+                📂 طلباتي
+            </a>
+
+            {% if current_user.is_authenticated and current_user.has_role("ADMIN") %}
+                <a href="{{ url_for('audit.audit_dashboard') }}"
+                   class="{% if request.path.startswith('/audit') %}active{% endif %}">
+                    📊 Audit
+                </a>
+
+                <a href="{{ url_for('users.list_users') }}"
+                   class="{% if request.path.startswith('/users') %}active{% endif %}">
+                    👤 Users
+                </a>
             {% endif %}
+
+            <!-- Notifications -->
+            {% if current_user.is_authenticated %}
+            <a class="nav-link position-relative"
+               href="{{ url_for('workflow.notifications') }}">
+                🔔
+                {% if current_user.unread_notifications_count > 0 %}
+                    <span id="notif-badge"
+                          class="badge bg-danger position-absolute top-0 start-100 translate-middle">
+                        {{ current_user.unread_notifications_count }}
+                    </span>
+                {% endif %}
+            </a>
+            {% endif %}
+
             <a href="/logout">Logout</a>
 
-            <a href="{{ url_for('notifications') }}">
-    🔔
-            {% if current_user.unread_notifications_count %}
-                <span class="badge bg-danger">
-                    {{ current_user.unread_notifications_count }}
-                </span>
-            {% endif %}
-            </a>
-            <li class="nav-item">
-                <a class="nav-link position-relative"
-                   href="{{ url_for('notifications') }}">
-                    🔔
-                    {% if current_user.unread_notifications_count > 0 %}
-                        <span class="position-absolute top-0 start-100
-                                     translate-middle badge rounded-pill bg-danger">
-                            {{ current_user.unread_notifications_count }}
-                        </span>
-                    {% endif %}
-                </a>
-            </li>
-
-
         </nav>
-
     </div>
 </header>
 
-<!-- Content -->
+<!-- Main Layout -->
 <main class="container admin-wrapper">
 
-    {% if current_user.is_authenticated and current_user.role == "admin" %}
+    {% if current_user.is_authenticated and current_user.has_role("ADMIN") %}
     <!-- Sidebar -->
-<aside class="admin-sidebar">
-    <h4 class="sidebar-title">الإدارة</h4>
+    <aside class="admin-sidebar">
+        <h4 class="sidebar-title">الإدارة</h4>
 
-    <a href="/audit-dashboard"
-       class="{% if request.path.startswith('/audit-dashboard') %}active{% endif %}">
-       📊 Audit Dashboard
-    </a>
+        <a href="{{ url_for('audit.audit_dashboard') }}"
+           class="{% if request.path.startswith('/audit/dashboard') %}active{% endif %}">
+            📊 Audit Dashboard
+        </a>
 
-    <a href="/audit-logs"
-       class="{% if request.path.startswith('/audit-logs') %}active{% endif %}">
-       📑 Audit Logs
-    </a>
+        <a href="{{ url_for('audit.list_audit_logs') }}"
+           class="{% if request.path.startswith('/audit/logs') %}active{% endif %}">
+            📑 Audit Logs
+        </a>
 
-    <a href="/users"
-       class="{% if request.path.startswith('/users') %}active{% endif %}">
-       👤 Users
-    </a>
+        <a href="{{ url_for('users.list_users') }}"
+           class="{% if request.path.startswith('/users') %}active{% endif %}">
+            👤 Users
+        </a>
 
-    <a href="#"
-       class="{% if request.path.startswith('/reports') %}active{% endif %}">
-       📁 Reports
-    </a>
-</aside>
+        <a href="#"
+           class="{% if request.path.startswith('/reports') %}active{% endif %}">
+            📁 Reports
+        </a>
 
+        <a href="{{ url_for('workflow.notifications_dashboard') }}">
+          🔔 Notifications Dashboard
+        </a>
+
+        <a href="{{ url_for('audit.system_timeline') }}">
+            🧭 Activity Timeline
+        </a>
+
+        <a href="{{ url_for('archive.upload_file') }}">
+            🗂️ Archive
+        </a>
+    </aside>
     {% endif %}
 
     <!-- Content -->
     <section class="admin-content">
+
         {% if breadcrumb %}
             <nav class="breadcrumb">
                 {% for item in breadcrumb %}
@@ -108,28 +126,36 @@
 
 </main>
 
-
+<!-- Footer -->
 <footer class="main-footer">
     <div class="container">
         <small>© اللجنة الوطنية الفلسطينية</small>
     </div>
 </footer>
 
+<!-- Notifications polling -->
+{% if current_user.is_authenticated %}
 <script>
-setInterval(() => {
-    fetch("/notifications/unread-count")
-      .then(r => r.json())
-      .then(data => {
-          const badge = document.getElementById("notif-badge");
-          if (data.count > 0) {
-              badge.innerText = data.count;
-              badge.style.display = "inline-block";
-          } else {
-              badge.style.display = "none";
-          }
-      });
-}, 30000); // كل 30 ثانية
+{% if current_user.is_authenticated %}
+const source = new EventSource("{{ url_for('workflow.notifications_stream') }}");
+
+source.onmessage = function (event) {
+    const badge = document.getElementById("notif-badge");
+    if (!badge) return;
+
+    const count = parseInt(event.data);
+
+    if (count > 0) {
+        badge.innerText = count;
+        badge.style.display = "inline-block";
+    } else {
+        badge.style.display = "none";
+    }
+};
+{% endif %}
 </script>
+
+{% endif %}
 
 </body>
 </html>

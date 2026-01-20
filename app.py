@@ -15,7 +15,8 @@ import io
 import os
 from flask import session
 import logging
-from archive import archive_bp
+
+from utils.events import emit_event
 
 
 
@@ -35,7 +36,13 @@ from models import (
 # ======================
 # Blueprints
 # ======================
-from routes import admin_bp, audit_bp, users_bp
+# Blueprints
+from workflow import workflow_bp
+from admin import admin_bp
+from archive import archive_bp
+from audit import audit_bp
+from users import users_bp
+
 
 
 # ======================
@@ -64,6 +71,8 @@ db_path = os.path.join(app.instance_path, "workflow.db")
 app.config["SECRET_KEY"] = "workflow-very-secret-key-2026"
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config.from_object("config.DevConfig")
+
 
 
 # ======================
@@ -81,6 +90,8 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(audit_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(archive_bp)
+app.register_blueprint(workflow_bp)
+
 
 
 # ======================
@@ -206,6 +217,7 @@ def create_request():
         db.session.add(new_request)
         db.session.flush()
 
+        #  Audit (موجود عندك)
         log_action(
             request_obj=new_request,
             user=current_user,
@@ -215,10 +227,19 @@ def create_request():
             note="تم إنشاء الطلب"
         )
 
+        #  Notification + Audit مركزي
+        emit_event(
+            actor_id=current_user.id,
+            action="REQUEST_CREATED",
+            message=f"تم إنشاء طلب جديد رقم #{new_request.title}",
+            target_type="WorkflowRequest",
+            target_id=new_request.id,
+            notify_role="ADMIN"
+        )
+
         db.session.commit()
         flash("تم حفظ الطلب بنجاح", "success")
         return redirect(url_for("create_request"))
-
     return render_template("create_request.html")
 
 # ======================
@@ -314,10 +335,12 @@ def request_action(request_id):
         req.status = NEXT_STATUS_MAP.get(req.status, req.status)
         req.current_role = STATUS_ROLE_MAP.get(req.status)
         action_name = "APPROVE"
+        notif_type = "INFO"
     else:
         req.status = REJECT_STATUS
         req.current_role = None
         action_name = "REJECT"
+        notif_type = "CRITICAL"
 
     log_action(
         request_obj=req,
@@ -328,6 +351,20 @@ def request_action(request_id):
         note=note
     )
 
+    # 🔔 Notification + Audit
+    emit_event(
+        actor_id=current_user.id,
+        action=f"REQUEST_{action_name}",
+        message=(
+            f"تم {'الموافقة على' if action == 'approve' else 'رفض'} "
+            f"الطلب رقم #{req.id}"
+        ),
+        target_type="WorkflowRequest",
+        target_id=req.id,
+        notify_user_id=req.requester_id,  # صاحب الطلب
+        notif_type=notif_type
+    )
+
     db.session.add(Approval(
         request_id=req.id,
         user_id=current_user.id,
@@ -336,6 +373,7 @@ def request_action(request_id):
     ))
 
     db.session.commit()
+
     flash("تم تسجيل الإجراء بنجاح", "success")
     return redirect(url_for("inbox"))
 
@@ -363,42 +401,6 @@ def request_audit(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
     return render_template("audit_log.html", logs=logs, req=req)
 
-
-
-@app.route("/notifications/mark-read/<int:note_id>", methods=["POST"])
-@login_required
-def mark_notification_read(note_id):
-    note = Notification.query.filter_by(
-        id=note_id,
-        user_id=current_user.id
-    ).first_or_404()
-
-    note.is_read = True
-    db.session.commit()
-    return {"success": True}
-
-@app.route("/notifications/unread-count")
-@login_required
-def unread_count():
-    return {"count": current_user.unread_notifications_count}
-
-@archive_bp.route("/sign/<int:file_id>", methods=["POST"])
-@login_required
-@roles_required("ADMIN")
-def sign_pdf(file_id):
-
-    file = ArchivedFile.query.get_or_404(file_id)
-
-    if file.is_signed:
-        abort(400)
-
-    file.is_signed = True
-    file.signed_at = datetime.utcnow()
-    file.signed_by = current_user.id
-
-    db.session.commit()
-    flash("Document signed successfully", "success")
-    return redirect(url_for("archive.my_files"))
 
 
 if __name__ == "__main__":

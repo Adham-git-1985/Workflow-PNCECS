@@ -6,11 +6,7 @@ from models import User
 from extensions import db
 
 
-users_bp = Blueprint(
-    "users",
-    __name__,
-    url_prefix="/users"
-)
+
 
 @users_bp.route("/users")
 @login_required

@@ -191,3 +191,38 @@ def dashboard():
         now=now
     )
 
+@admin_bp.route("/permissions", methods=["GET", "POST"])
+@login_required
+@roles_required("ADMIN")
+def manage_permissions():
+
+    roles = db.session.query(RolePermission.role).distinct().all()
+    permissions = [
+        "CREATE_REQUEST",
+        "APPROVE_REQUEST",
+        "UPLOAD_ATTACHMENT",
+        "SIGN_ARCHIVE",
+        "DELETE_ARCHIVE",
+        "VIEW_TIMELINE"
+    ]
+
+    if request.method == "POST":
+        role = request.form["role"]
+        perms = request.form.getlist("permissions")
+
+        RolePermission.query.filter_by(role=role).delete()
+
+        for p in perms:
+            db.session.add(RolePermission(role=role, permission=p))
+
+        db.session.commit()
+        flash("Permissions updated", "success")
+
+    data = RolePermission.query.all()
+
+    return render_template(
+        "admin/permissions.html",
+        data=data,
+        roles=roles,
+        permissions=permissions
+    )

@@ -1,0 +1,44 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<h3>🧭 System Activity Timeline</h3>
+
+<form method="get" class="row g-2 mb-3">
+    <div class="col-md-4">
+        <select name="user_id" class="form-control">
+            <option value="">All Users</option>
+            {% for u in users %}
+                <option value="{{ u.id }}">{{ u.email }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="col-md-4">
+        <input name="action"
+               class="form-control"
+               placeholder="Action (e.g. REQUEST_CREATED)">
+    </div>
+
+    <div class="col-md-2">
+        <button class="btn btn-secondary w-100">
+            Filter
+        </button>
+    </div>
+</form>
+
+<ul class="list-group">
+{% for log in logs %}
+<li class="list-group-item">
+    <strong>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</strong><br>
+    👤 {{ log.user.email if log.user else "System" }}<br>
+    ⚙️ {{ log.action }}<br>
+    📌 {{ log.description }}<br>
+
+    {% if log.target_type %}
+        🔗 {{ log.target_type }} #{{ log.target_id }}
+    {% endif %}
+</li>
+{% endfor %}
+</ul>
+
+{% endblock %}

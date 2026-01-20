@@ -1,43 +1,53 @@
 from flask import render_template, request
 from flask_login import login_required
-from models import AuditLog, User
 from datetime import datetime, timedelta
-from sqlalchemy import or_
+from sqlalchemy import or_, func
+
+from . import audit_bp
+from models import AuditLog, User
 from extensions import db
-from utils.permissions import admin_required
-from flask import Blueprint
+from permissions import roles_required
 
 
-audit_bp = Blueprint(
-    "audit",
-    __name__,
-    url_prefix="/audit"
-)
-
-@audit_bp.route("/audit-logs")
+@audit_bp.route("/")
 @login_required
-@admin_required
+@roles_required("ADMIN")
+def audit_index():
+
+    page = request.args.get("page", 1, type=int)
+
+    pagination = (
+        AuditLog.query
+        .order_by(AuditLog.created_at.desc())
+        .paginate(page=page, per_page=20, error_out=False)
+    )
+
+    return render_template(
+        "audit/index.html",
+        logs=pagination.items,
+        pagination=pagination
+    )
+
+
+@audit_bp.route("/logs")
+@login_required
+@roles_required("ADMIN")
 def list_audit_logs():
 
     user_id = request.args.get("user_id")
     action = request.args.get("action")
     date_from = request.args.get("date_from")
     date_to = request.args.get("date_to")
-
-    query = AuditLog.query
-
     search = request.args.get("search")
 
+    query = AuditLog.query.outerjoin(User)
 
-    # 🔹 فلترة حسب المستخدم
     if user_id:
         query = query.filter(AuditLog.user_id == user_id)
 
-    # 🔹 فلترة حسب نوع الإجراء
     if action:
         query = query.filter(AuditLog.action == action)
 
-    # 🔹 فلترة حسب التاريخ
     if date_from:
         query = query.filter(
             AuditLog.created_at >= datetime.strptime(date_from, "%Y-%m-%d")
@@ -45,19 +55,12 @@ def list_audit_logs():
 
     if date_to:
         query = query.filter(
-            AuditLog.created_at < (
-                    datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
-            )
+            AuditLog.created_at <
+            datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
         )
 
-    # 🔍 بحث نصي
     if search:
-        keywords = search.strip().split()
-
-        # نعمل join فقط إذا احتجنا اسم المستخدم
-        query = query.outerjoin(User)
-
-        for word in keywords:
+        for word in search.strip().split():
             query = query.filter(
                 or_(
                     AuditLog.note.ilike(f"%{word}%"),
@@ -66,64 +69,45 @@ def list_audit_logs():
                 )
             )
 
-    # رقم الصفحة (يأتي من الرابط ?page=1)
     page = request.args.get("page", 1, type=int)
 
-    # إنشاء Pagination
     pagination = query.order_by(
         AuditLog.created_at.desc()
-    ).paginate(
-        page=page,
-        per_page=20,  # عدد السجلات في كل صفحة
-        error_out=False
-    )
-
-    # السجلات الخاصة بالصفحة الحالية فقط
-    logs = pagination.items
+    ).paginate(page=page, per_page=20, error_out=False)
 
     users = User.query.all()
 
-    search_terms = []
-    if search:
-        search_terms = search.strip().split()
-
     return render_template(
         "audit/list.html",
-        logs=logs,
+        logs=pagination.items,
         users=users,
-        pagination=pagination,
-        search_terms=search_terms
+        pagination=pagination
     )
 
 
-from sqlalchemy import func
-
-@audit_bp.route("/audit-dashboard")
+@audit_bp.route("/dashboard")
 @login_required
-@admin_required
+@roles_required("ADMIN")
 def audit_dashboard():
 
-    # 1️⃣ عدد العمليات الكلي
     total_logs = AuditLog.query.count()
 
-    # 2️⃣ أكثر المستخدمين نشاطًا
     top_users = (
         db.session.query(
             User.email,
-            func.count(AuditLog.id).label("count")
+            func.count(AuditLog.id)
         )
-            .join(AuditLog, AuditLog.user_id == User.id)
-            .group_by(User.email)
-            .order_by(func.count(AuditLog.id).desc())
-            .limit(5)
-            .all()
+        .join(AuditLog, AuditLog.user_id == User.id)
+        .group_by(User.email)
+        .order_by(func.count(AuditLog.id).desc())
+        .limit(5)
+        .all()
     )
 
-    # 3️⃣ أكثر الإجراءات
     top_actions = (
         db.session.query(
             AuditLog.action,
-            func.count(AuditLog.id).label("count")
+            func.count(AuditLog.id)
         )
         .group_by(AuditLog.action)
         .order_by(func.count(AuditLog.id).desc())
@@ -138,5 +122,30 @@ def audit_dashboard():
         top_actions=top_actions
     )
 
+@audit_bp.route("/timeline")
+@login_required
+@roles_required("ADMIN")
+def system_timeline():
 
+    action = request.args.get("action")
+    user_id = request.args.get("user_id")
 
+    query = AuditLog.query
+
+    if action:
+        query = query.filter(AuditLog.action == action)
+
+    if user_id:
+        query = query.filter(AuditLog.user_id == user_id)
+
+    logs = query.order_by(
+        AuditLog.created_at.desc()
+    ).limit(200).all()
+
+    users = User.query.all()
+
+    return render_template(
+        "audit/timeline.html",
+        logs=logs,
+        users=users
+    )

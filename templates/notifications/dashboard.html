@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<h3>📊 Notifications Dashboard</h3>
+
+<div class="row mt-3">
+    <div class="col-md-4">
+        <div class="card p-3">
+            <h6>Total Notifications</h6>
+            <h2>{{ total }}</h2>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card p-3">
+            <h6>Unread Notifications</h6>
+            <h2>{{ unread }}</h2>
+        </div>
+    </div>
+</div>
+
+<hr>
+
+<h5>Top Users</h5>
+<ul>
+    {% for email, count in top_users %}
+        <li>{{ email }} — {{ count }}</li>
+    {% endfor %}
+</ul>
+
+<hr>
+
+<h5>Notifications by Type</h5>
+<ul>
+    {% for t, count in by_type %}
+        <li>{{ t }} — {{ count }}</li>
+    {% endfor %}
+</ul>
+
+{% endblock %}

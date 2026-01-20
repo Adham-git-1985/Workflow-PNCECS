@@ -1,0 +1,30 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<h3>🔐 Permission Matrix</h3>
+
+<form method="post">
+    <label>Role</label>
+    <input name="role" class="form-control mb-2" required>
+
+    <label>Permissions</label>
+    {% for p in permissions %}
+        <div>
+            <input type="checkbox" name="permissions" value="{{ p }}">
+            {{ p }}
+        </div>
+    {% endfor %}
+
+    <button class="btn btn-primary mt-3">Save</button>
+</form>
+
+<hr>
+
+<h5>Current Permissions</h5>
+<ul>
+{% for r in data %}
+    <li>{{ r.role }} → {{ r.permission }}</li>
+{% endfor %}
+</ul>
+
+{% endblock %}

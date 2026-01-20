@@ -4,14 +4,19 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 
 
-class User(UserMixin, db.Model):
+class User(db.Model, UserMixin):
     __tablename__ = "user"
 
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    role = db.Column(db.String(50))
+    role = db.Column(db.String(50), nullable=False)
     department_id = db.Column(db.Integer, nullable=True)
+
+
+    def has_role(self, role_name):
+        return self.role == role_name
+
 
     # =====================
     # Password helpers
@@ -154,7 +159,8 @@ class Notification(db.Model):
     message = db.Column(db.String(255))
     is_read = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
+    type = db.Column(db.String(50), default="INFO")
+    role = db.Column(db.String(50), nullable=True)
 
 
 class FilePermission(db.Model):
@@ -195,3 +201,15 @@ workflow_request = db.relationship(
     "WorkflowRequest",
     backref="attachments"
 )
+
+
+class RolePermission(db.Model):
+    __tablename__ = "role_permission"
+
+    id = db.Column(db.Integer, primary_key=True)
+    role = db.Column(db.String(50), nullable=False)
+    permission = db.Column(db.String(100), nullable=False)
+
+    __table_args__ = (
+        db.UniqueConstraint("role", "permission", name="uix_role_permission"),
+    )

@@ -5,106 +5,124 @@
     <h3>My Archived Files</h3>
 
     {% if files %}
-    <form method="get" class="row g-2 mb-3">
-    <div class="col-md-10">
-        <input type="text"
-               name="q"
-               value="{{ q }}"
-               class="form-control"
-               placeholder="Search by file name or description">
-    </div>
-    <div class="col-md-2">
-        <button class="btn btn-secondary w-100">
-            Search
-        </button>
-    </div>
-    </form>
+        <!-- Search -->
+        <form method="get" class="row g-2 mb-3">
+            <div class="col-md-10">
+                <input type="text"
+                       name="q"
+                       value="{{ q }}"
+                       class="form-control"
+                       placeholder="Search by file name or description">
+            </div>
+            <div class="col-md-2">
+                <button class="btn btn-secondary w-100">
+                    Search
+                </button>
+            </div>
+        </form>
 
+        <!-- Table -->
+        <table class="table table-bordered table-hover mt-3">
+            <thead class="table-light">
+                <tr>
+                    <th>#</th>
+                    <th>File Name</th>
+                    <th>Description</th>
+                    <th>Uploaded At</th>
+                    <th>Size (KB)</th>
 
-    <table class="table table-bordered table-hover mt-3">
-        <thead class="table-light">
-        <tr>
-            <th>#</th>
-            <th>File Name</th>
-            <th>Description</th>
-            <th>Uploaded At</th>
-            <th>Size (KB)</th>
-
-            {% if current_user.has_role("ADMIN") %}
-                <th>Status</th>
-            {% endif %}
-
-            <th>Action</th>
-        </tr>
-        </thead>
-
-        <tbody>
-            {% for f in files %}
-            <tr>
-                <td>{{ loop.index }}</td>
-                <td>{{ f.original_name }}</td>
-                <td>{{ f.description or "-" }}</td>
-                <td>{{ f.upload_date.strftime("%Y-%m-%d %H:%M") }}</td>
-                <td>{{ (f.file_size / 1024) | round(1) }}</td>
-                {% if current_user.has_role("ADMIN") %}
-                <td>
-                    {% if f.is_deleted %}
-                        <span class="badge bg-danger">Deleted</span>
-                    {% else %}
-                        <span class="badge bg-success">Active</span>
-                    {% endif %}
-                </td>
-                {% endif %}
-                <td>
-                   {% if not f.is_deleted %}
-                    <a class="btn btn-sm btn-primary"
-                       href="{{ url_for('archive.download_file', file_id=f.id) }}">
-                        Download
-                    </a>
-                    {% else %}
-                    <span class="text-muted">Unavailable</span>
+                    {% if current_user.has_role("ADMIN") %}
+                        <th>Status</th>
                     {% endif %}
 
-                   {% if not f.is_deleted %}
-                    <a class="btn btn-sm btn-warning"
-                       href="{{ url_for('archive.share_file', file_id=f.id) }}">
-                        Share
-                    </a>
-                    {% endif %}
-                </td>
+                    <th>Actions</th>
+                </tr>
+            </thead>
 
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+            <tbody>
+                {% for f in files %}
+                <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ f.original_name }}</td>
+                    <td>{{ f.description or "-" }}</td>
+                    <td>{{ f.upload_date.strftime("%Y-%m-%d %H:%M") }}</td>
+                    <td>{{ (f.file_size / 1024) | round(1) }}</td>
+
+                    {% if current_user.has_role("ADMIN") %}
+                    <td>
+                        {% if f.is_deleted %}
+                            <span class="badge bg-danger">Deleted</span>
+                        {% else %}
+                            <span class="badge bg-success">Active</span>
+                        {% endif %}
+
+                        {% if f.is_signed %}
+                            <span class="badge bg-success ms-1">Signed</span>
+                        {% else %}
+                            <span class="badge bg-secondary ms-1">Unsigned</span>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+
+                    <!-- Actions -->
+                    <td>
+                        {% if not f.is_deleted %}
+
+                            <!-- Download -->
+                            <a class="btn btn-sm btn-primary"
+                               href="{{ url_for('archive.download_file', file_id=f.id) }}">
+                                Download
+                            </a>
+
+                            <!-- Share -->
+                            <a class="btn btn-sm btn-warning"
+                               href="{{ url_for('archive.share_file', file_id=f.id) }}">
+                                Share
+                            </a>
+
+                            {% if current_user.has_role("ADMIN") %}
+
+                                <!-- Delete -->
+                                <form method="post"
+                                      action="{{ url_for('archive.delete_file', file_id=f.id) }}"
+                                      style="display:inline"
+                                      onsubmit="return confirm('Are you sure you want to delete this file?');">
+                                    <button class="btn btn-sm btn-danger">
+                                        Delete
+                                    </button>
+                                </form>
+
+                                <!-- Sign (PDF only & not signed) -->
+                                {% if f.original_name.lower().endswith('.pdf') %}
+                                    {% if not f.is_signed %}
+                                        <form method="post"
+                                              action="{{ url_for('archive.sign_pdf', file_id=f.id) }}"
+                                              style="display:inline;">
+                                            <button class="btn btn-sm btn-success">
+                                                Sign
+                                            </button>
+                                        </form>
+                                    {% else %}
+                                        <span class="badge bg-success ms-1">Signed</span>
+                                    {% endif %}
+                                {% endif %}
+
+                            {% endif %}
+
+                        {% else %}
+                            <span class="text-muted">Unavailable</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
     {% else %}
         <div class="alert alert-info mt-3">
             You have not uploaded any files yet.
         </div>
     {% endif %}
 </div>
-{% if current_user.has_role("ADMIN") %}
-<form method="POST"
-      action="{{ url_for('archive.delete_file', file_id=f.id) }}"
-      style="display:inline"
-      onsubmit="return confirm('Are you sure you want to delete this file?');">
-
-    <button class="btn btn-sm btn-danger">
-        Delete
-    </button>
-</form>
-{% endif %}
-
-{% if current_user.has_role("ADMIN") and not f.is_deleted %}
-<form method="POST"
-      action="{{ url_for('archive.delete_file', file_id=f.id) }}"
-      style="display:inline"
-      onsubmit="return confirm('Are you sure?');">
-
-    <button class="btn btn-sm btn-danger">
-        Delete
-    </button>
-</form>
-{% endif %}
 
 {% endblock %}

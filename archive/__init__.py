@@ -6,4 +6,5 @@ archive_bp = Blueprint(
     url_prefix="/archive"
 )
 
+# ⚠️ هذا السطر ضروري
 from . import routes

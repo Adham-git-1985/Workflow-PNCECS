@@ -17,6 +17,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 from io import BytesIO
 from archive.permissions import archive_access_query
+from utils.notify import notify_and_audit
+from utils.events import emit_event
 
 
 
@@ -57,24 +59,44 @@ def archive_files():
         q=q
     )
 
-@archive_bp.route("/sign/<int:file_id>")
+@archive_bp.route("/sign/<int:file_id>", methods=["POST"])
 @login_required
 @roles_required("ADMIN")
 def sign_pdf(file_id):
 
     file = ArchivedFile.query.get_or_404(file_id)
 
-    if not file.original_name.lower().endswith(".pdf"):
+    if file.is_signed:
         abort(400)
 
-    # إضافة ختم توقيع (ReportLab أو PyPDF)
-    # لاحقًا: شهادة رقمية
+    file.is_signed = True
+    file.signed_at = datetime.utcnow()
+    file.signed_by = current_user.id
 
-    flash("PDF signed successfully", "success")
+    emit_event(
+        actor_id=current_user.id,
+        action="ARCHIVE_SIGNED",
+        message=f"تم توقيع الملف: {file.original_name}",
+        target_type="ArchivedFile",
+        target_id=file.id,
+        notify_user_id=file.owner_id
+    )
+
+    notify_and_audit(
+        actor_id=current_user.id,
+        target_user_id=file.owner_id,
+        action="FILE_SIGNED",
+        message=f"File '{file.original_name}' was signed",
+        target_type="ArchivedFile",
+        target_id=file.id
+    )
+
+    db.session.commit()
+    flash("Document signed successfully", "success")
     return redirect(url_for("archive.my_files"))
 
 
-@admin_bp.route("/archive-retention", methods=["GET", "POST"])
+@archive_bp.route("/archive-retention", methods=["GET", "POST"])
 @login_required
 @roles_required("ADMIN")
 def archive_retention():
@@ -186,6 +208,15 @@ def upload_file():
             visibility="owner"
         )
 
+        emit_event(
+            actor_id=current_user.id,
+            action="ARCHIVE_UPLOADED",
+            message=f"تم رفع ملف أرشيف: {archived.original_name}",
+            target_type="ArchivedFile",
+            target_id=archived.id,
+            notify_role="ADMIN"
+        )
+
         db.session.add(archived)
         db.session.commit()
 
@@ -286,6 +317,16 @@ def share_file(file_id):
             )
 
         file.visibility = "shared"
+
+        emit_event(
+            actor_id=current_user.id,
+            action="ARCHIVE_SHARED",
+            message=f"تمت مشاركة الملف: {file.original_name}",
+            target_type="ArchivedFile",
+            target_id=file.id,
+            notify_role="ADMIN"
+        )
+
         db.session.commit()
 
         flash("File shared successfully", "success")
@@ -307,6 +348,16 @@ def delete_file(file_id):
     file.is_deleted = True
     file.deleted_at = datetime.utcnow()
     file.deleted_by = current_user.id
+
+    emit_event(
+        actor_id=current_user.id,
+        action="ARCHIVE_DELETED",
+        message=f"تم حذف الملف: {file.original_name}",
+        target_type="ArchivedFile",
+        target_id=file.id,
+        notify_user_id=file.owner_id,
+        notif_type="CRITICAL"
+    )
 
     # Audit log
     log = AuditLog(
@@ -364,6 +415,15 @@ def restore_file(file_id):
     file.deleted_at = None
     file.deleted_by = None
 
+    emit_event(
+        actor_id=current_user.id,
+        action="ARCHIVE_RESTORED",
+        message=f"تم استرجاع الملف: {file.original_name}",
+        target_type="ArchivedFile",
+        target_id=file.id,
+        notify_user_id=file.owner_id
+    )
+
     # Audit log
     log = AuditLog(
         action="ARCHIVE_RESTORE",
@@ -395,83 +455,6 @@ def archive_audit_log():
         logs=logs
     )
 
-@workflow_bp.route("/<int:request_id>/upload-attachment", methods=["POST"])
-@login_required
-def upload_attachment(request_id):
-
-    req = WorkflowRequest.query.get_or_404(request_id)
-
-    # تحقق صلاحية المستخدم على الطلب
-    if not can_access_request(req, current_user):
-        abort(403)
-
-    file = request.files.get("file")
-    description = request.form.get("description")
-
-    if not file or file.filename == "":
-        abort(400)
-
-    # reuse منطق الرفع من الأرشفة
-    original_name = secure_filename(file.filename)
-
-    if not original_name or not allowed_file(original_name):
-        abort(400)
-
-    ext = original_name.rsplit(".", 1)[1].lower()
-    stored_name = f"{uuid.uuid4().hex}.{ext}"
-    file_path = os.path.join(BASE_STORAGE, stored_name)
-
-    os.makedirs(BASE_STORAGE, exist_ok=True)
-    file.save(file_path)
-
-    attachment = ArchivedFile(
-        original_name=original_name,
-        stored_name=stored_name,
-        description=description,
-        file_path=file_path,
-        mime_type=file.mimetype,
-        file_size=os.path.getsize(file_path),
-        owner_id=current_user.id,
-        workflow_request_id=req.id,
-        visibility="workflow"
-    )
-
-    db.session.add(attachment)
-    db.session.commit()
-
-    flash("Attachment uploaded successfully", "success")
-    return redirect(url_for("workflow.view_request", request_id=req.id))
-
-@workflow_bp.route("/attachment/<int:file_id>/download")
-@login_required
-def download_workflow_attachment(file_id):
-
-    file = ArchivedFile.query.filter(
-        ArchivedFile.id == file_id,
-        ArchivedFile.workflow_request_id.isnot(None),
-        ArchivedFile.is_deleted == False
-    ).first_or_404()
-
-    req = file.workflow_request
-
-    if not can_access_request(req, current_user):
-        abort(403)
-
-    return send_file(
-        file.file_path,
-        as_attachment=True,
-        download_name=file.original_name
-    )
 
 
-@app.route("/notifications")
-@login_required
-def notifications():
-    notes = Notification.query.filter_by(
-        user_id=current_user.id
-    ).order_by(Notification.created_at.desc()).all()
 
-    return render_template(
-        "notifications.html",
-        notifications=notes
-    )
