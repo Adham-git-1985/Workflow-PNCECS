@@ -1,0 +1,79 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🔔 الإشعارات</h3>
+        <small class="text-muted">آخر التحديثات والتنبيهات الخاصة بك</small>
+    </div>
+
+    <form method="post"
+          action="{{ url_for('workflow.mark_all_notifications_read') }}">
+        <button class="btn btn-sm btn-outline-secondary">
+            تعليم الكل كمقروء
+        </button>
+    </form>
+</div>
+
+{% if notifications %}
+<ul class="list-group shadow-sm">
+
+{% for n in notifications %}
+<li class="list-group-item d-flex justify-content-between align-items-start
+           {% if not n.is_read %}list-group-item-warning{% endif %}">
+
+    <div class="me-3">
+
+        <div class="mb-1">
+            <strong>{{ n.message }}</strong>
+
+            {% if n.type == "CRITICAL" %}
+                <span class="badge bg-danger ms-2">Critical</span>
+            {% elif n.type == "WARNING" %}
+                <span class="badge bg-warning text-dark ms-2">Warning</span>
+            {% else %}
+                <span class="badge bg-info text-dark ms-2">Info</span>
+            {% endif %}
+
+            {% if n.role %}
+                <span class="badge bg-secondary ms-1">
+                    {{ n.role }}
+                </span>
+            {% endif %}
+        </div>
+
+        <div class="text-muted small">
+            {{ n.created_at.strftime("%Y-%m-%d %H:%M") }}
+        </div>
+    </div>
+
+    <div class="text-end">
+        {% if not n.is_read %}
+            <button class="btn btn-sm btn-outline-primary"
+                    onclick="markRead({{ n.id }})">
+                تعليم كمقروء
+            </button>
+        {% else %}
+            <span class="badge bg-success">مقروء</span>
+        {% endif %}
+    </div>
+
+</li>
+{% endfor %}
+</ul>
+
+{% else %}
+<div class="alert alert-light text-center text-muted">
+    لا توجد إشعارات حالياً
+</div>
+{% endif %}
+
+<script>
+function markRead(id) {
+    fetch("{{ url_for('workflow.mark_notification_read', id=0) }}".replace("0", id), {
+        method: "POST"
+    }).then(() => location.reload());
+}
+</script>
+
+{% endblock %}

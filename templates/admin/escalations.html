@@ -1,31 +1,58 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<h3 class="mb-4">🚨 Escalated Requests</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🚨 الطلبات المصعّدة</h3>
+        <small class="text-muted">الطلبات التي تجاوزت مدة SLA وتم تصعيدها</small>
+    </div>
+</div>
 
-<table class="table table-striped">
-  <thead>
-    <tr>
-      <th>ID</th>
-      <th>Title</th>
-      <th>Assignee</th>
-      <th>Created</th>
-      <th>SLA</th>
-    </tr>
-  </thead>
-  <tbody>
-    {% for req in requests %}
-    <tr class="table-danger">
-      <td>{{ req.id }}</td>
-      <td>{{ req.title }}</td>
-      <td>{{ req.current_assignee.name }}</td>
-      <td>{{ req.created_at.strftime("%Y-%m-%d") }}</td>
-      <td>
-        <span class="badge bg-danger">Escalated</span>
-      </td>
-    </tr>
-    {% endfor %}
-  </tbody>
-</table>
+<div class="card border-danger shadow-sm">
+    <div class="card-body p-0">
+
+        {% if requests %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>العنوان</th>
+                        <th>المكلّف الحالي</th>
+                        <th class="text-center">تاريخ الإنشاء</th>
+                        <th class="text-center">الحالة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for req in requests %}
+                    <tr class="table-danger">
+                        <td>{{ req.id }}</td>
+                        <td>
+                            <strong>{{ req.title }}</strong>
+                        </td>
+                        <td>
+                            {{ req.current_assignee.name if req.current_assignee else "—" }}
+                        </td>
+                        <td class="text-center">
+                            {{ req.created_at.strftime("%Y-%m-%d") }}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-danger">
+                                Escalated
+                            </span>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد طلبات مصعّدة حالياً
+        </div>
+        {% endif %}
+
+    </div>
+</div>
 
 {% endblock %}

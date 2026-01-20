@@ -4,30 +4,64 @@
 
 {% block content %}
 
-<h3>التفويضات النشطة</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🔁 التفويضات النشطة</h3>
+        <small class="text-muted">قائمة التفويضات السارية حاليًا</small>
+    </div>
+</div>
 
-<table border="1">
-  <tr>
-    <th>المفوَّض له</th>
-    <th>الدور</th>
-    <th>حتى</th>
-    <th>إجراء</th>
-  </tr>
+<div class="card shadow-sm">
+    <div class="card-body">
 
-  {% for d in active %}
-  <tr>
-    <td>{{ d.to_user.name }}</td>
-    <td>{{ d.role }}</td>
-    <td>{{ d.end_date }}</td>
-    <td>
-      <form method="POST"
-            action="{{ url_for('delegation.cancel_delegation', id=d.id) }}">
-        {{ csrf_token() }}
-        <button type="submit">إلغاء</button>
-      </form>
-    </td>
-  </tr>
-  {% endfor %}
-</table>
+        {% if active %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>المفوَّض له</th>
+                        <th>الدور</th>
+                        <th>حتى</th>
+                        <th class="text-center">إجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for d in active %}
+                    <tr>
+                        <td>
+                            <strong>{{ d.to_user.name }}</strong>
+                        </td>
+                        <td>
+                            <span class="badge bg-secondary">
+                                {{ d.role }}
+                            </span>
+                        </td>
+                        <td>
+                            {{ d.end_date }}
+                        </td>
+                        <td class="text-center">
+                            <form method="POST"
+                                  action="{{ url_for('delegation.cancel_delegation', id=d.id) }}"
+                                  onsubmit="return confirm('هل أنت متأكد من إلغاء هذا التفويض؟')">
+                                {{ csrf_token() }}
+                                <button type="submit"
+                                        class="btn btn-sm btn-outline-danger">
+                                    إلغاء
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-light text-center text-muted">
+            لا توجد تفويضات نشطة حاليًا
+        </div>
+        {% endif %}
+
+    </div>
+</div>
 
 {% endblock %}

@@ -1,26 +1,42 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<div class="container mt-4">
-    <h3>Archive Retention Policy</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🕒 سياسة الاحتفاظ بالأرشيف</h3>
+        <small class="text-muted">
+            تحديد المدة الزمنية للاحتفاظ بالملفات المؤرشفة قبل الحذف
+        </small>
+    </div>
+</div>
 
-    <form method="POST">
-        <div class="mb-3">
-            <label class="form-label">
-                Delete archived files after (days)
-            </label>
-            <input type="number"
-                   name="days"
-                   value="{{ days }}"
-                   class="form-control w-25"
-                   min="1"
-                   required>
-        </div>
+<div class="card shadow-sm" style="max-width:500px">
+    <div class="card-body">
 
-        <button class="btn btn-primary">
-            Save
-        </button>
-    </form>
+        <form method="POST">
+
+            <div class="mb-4">
+                <label class="form-label fw-bold">
+                    حذف الملفات المؤرشفة بعد (بالأيام)
+                </label>
+
+                <input type="number"
+                       name="days"
+                       value="{{ days }}"
+                       class="form-control"
+                       min="1"
+                       required>
+            </div>
+
+            <div class="d-flex justify-content-end">
+                <button class="btn btn-primary">
+                    حفظ الإعدادات
+                </button>
+            </div>
+
+        </form>
+
+    </div>
 </div>
 
 {% endblock %}

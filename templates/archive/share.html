@@ -1,29 +1,53 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<div class="container mt-4">
-    <h3>Share File</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">📤 مشاركة ملف</h3>
+        <small class="text-muted">تحديد المستخدمين المسموح لهم بالوصول إلى الملف</small>
+    </div>
+</div>
 
-    <p><strong>File:</strong> {{ file.original_name }}</p>
+<div class="card shadow-sm">
+    <div class="card-body">
 
-    <form method="POST">
         <div class="mb-3">
-            <label class="form-label">Select users</label>
-            <select name="users" multiple class="form-select" size="8">
-                {% for u in users %}
-                    <option value="{{ u.id }}">{{ u.name }}</option>
-                {% endfor %}
-            </select>
-            <small class="text-muted">
-                Hold Ctrl (Windows) or Cmd (Mac) to select multiple users
-            </small>
+            <strong>📄 الملف:</strong>
+            <span class="ms-2">{{ file.original_name }}</span>
         </div>
 
-        <button class="btn btn-primary">Share</button>
-        <a href="{{ url_for('archive.my_files') }}" class="btn btn-secondary">
-            Cancel
-        </a>
-    </form>
+        <form method="POST">
+
+            <div class="mb-4">
+                <label class="form-label">اختر المستخدمين</label>
+                <select name="users"
+                        multiple
+                        class="form-select"
+                        size="8">
+                    {% for u in users %}
+                        <option value="{{ u.id }}">
+                            {{ u.name or u.email }}
+                        </option>
+                    {% endfor %}
+                </select>
+                <small class="text-muted">
+                    اضغط Ctrl (ويندوز) أو Cmd (ماك) لاختيار أكثر من مستخدم
+                </small>
+            </div>
+
+            <div class="d-flex justify-content-end gap-2">
+                <button class="btn btn-primary">
+                    مشاركة
+                </button>
+                <a href="{{ url_for('archive.my_files') }}"
+                   class="btn btn-outline-secondary">
+                    إلغاء
+                </a>
+            </div>
+
+        </form>
+
+    </div>
 </div>
 
 {% endblock %}

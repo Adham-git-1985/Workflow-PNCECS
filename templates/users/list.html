@@ -2,34 +2,80 @@
 {% block title %}إدارة المستخدمين{% endblock %}
 
 {% block content %}
-<h3>إدارة المستخدمين</h3>
 
-<a href="{{ url_for('users.create_user') }}">➕ مستخدم جديد</a>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">👥 إدارة المستخدمين</h3>
+        <small class="text-muted">إدارة حسابات المستخدمين وأدوارهم</small>
+    </div>
 
-<table border="1" width="100%" style="margin-top:10px">
-  <tr>
-    <th>ID</th>
-    <th>Email</th>
-    <th>Role</th>
-    <th>تغيير الدور</th>
-  </tr>
+    <a href="{{ url_for('users.create_user') }}"
+       class="btn btn-primary">
+        ➕ مستخدم جديد
+    </a>
+</div>
 
-  {% for user in users %}
-  <tr>
-    <td>{{ user.id }}</td>
-    <td>{{ user.email }}</td>
-    <td>{{ user.role }}</td>
-    <td>
-      <form method="POST"
-            action="{{ url_for('users.change_role', user_id=user.id) }}">
-        <select name="role">
-          <option value="user" {% if user.role=="user" %}selected{% endif %}>User</option>
-          <option value="admin" {% if user.role=="admin" %}selected{% endif %}>Admin</option>
-        </select>
-        <button type="submit">تحديث</button>
-      </form>
-    </td>
-  </tr>
-  {% endfor %}
-</table>
+<div class="card shadow-sm">
+    <div class="card-body">
+
+        {% if users %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>ID</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th class="text-center">تغيير الدور</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for user in users %}
+                    <tr>
+                        <td>{{ user.id }}</td>
+                        <td>
+                            <strong>{{ user.email }}</strong>
+                        </td>
+                        <td>
+                            <span class="badge bg-{{ 'success' if user.role == 'ADMIN' else 'secondary' }}">
+                                {{ user.role }}
+                            </span>
+                        </td>
+                        <td class="text-center">
+                            <form method="POST"
+                                  action="{{ url_for('users.change_role', user_id=user.id) }}"
+                                  class="d-flex justify-content-center gap-2">
+                                <select name="role"
+                                        class="form-select form-select-sm"
+                                        style="max-width:140px">
+                                    <option value="USER"
+                                        {% if user.role == "USER" %}selected{% endif %}>
+                                        User
+                                    </option>
+                                    <option value="ADMIN"
+                                        {% if user.role == "ADMIN" %}selected{% endif %}>
+                                        Admin
+                                    </option>
+                                </select>
+
+                                <button type="submit"
+                                        class="btn btn-sm btn-outline-primary">
+                                    تحديث
+                                </button>
+                            </form>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert alert-light text-center text-muted">
+            لا يوجد مستخدمون مسجلون
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+
 {% endblock %}

@@ -1,5 +1,6 @@
-from models import AuditLog, Notification, User
+from datetime import datetime
 from extensions import db
+from models import Notification, User
 
 
 def emit_event(
@@ -10,34 +11,39 @@ def emit_event(
     target_id=None,
     notify_user_id=None,
     notify_role=None,
-    notif_type="INFO"
+    level="INFO"
 ):
-    # 1️⃣ Audit Log
-    db.session.add(AuditLog(
-        user_id=actor_id,
-        action=action,
-        note=message,
-        target_type=target_type,
-        target_id=target_id
-    ))
+    # ✅ تعريف المتغير (كان مفقود فعليًا عندك)
+    notifications = []
 
-    # 2️⃣ Notifications
+    #إشعار لمستخدم محدد
     if notify_user_id:
-        db.session.add(Notification(
-            user_id=notify_user_id,
-            message=message,
-            type=notif_type
-        ))
+        notifications.append(
+            Notification(
+                user_id=notify_user_id,
+                message=message,
+                type=level,
+                is_read=False,
+                created_at=datetime.utcnow()
+            )
+        )
 
+    #  إشعار حسب الدور
     if notify_role:
         users = User.query.filter_by(role=notify_role).all()
+
         for u in users:
-            db.session.add(Notification(
-                user_id=u.id,
-                message=message,
-                type=notif_type
-            ))
+            notifications.append(
+                Notification(
+                    user_id=u.id,
+                    message=message,
+                    type=level,
+                    is_read=False,
+                    created_at=datetime.utcnow()
+                )
+            )
 
-
-    for n in notifications:
-        db.session.add(n)
+    #  حفظ
+    if notifications:
+        db.session.add_all(notifications)
+        db.session.commit()

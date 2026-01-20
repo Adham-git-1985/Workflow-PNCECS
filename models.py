@@ -51,10 +51,8 @@ class WorkflowRequest(db.Model):
     )
 
     is_escalated = db.Column(db.Boolean, default=False)
-    current_role = db.Column(
-        db.String(50),
-        default="dept_head"
-    )
+    escalated_at = db.Column(db.DateTime, nullable=True)
+    current_role = db.Column(db.String(50), default="dept_head")
 
 
 
@@ -76,26 +74,22 @@ class Approval(db.Model):
 class AuditLog(db.Model):
     __tablename__ = "audit_log"
     id = db.Column(db.Integer, primary_key=True)
-
     request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"))
     user_id = db.Column(
         db.Integer,
         db.ForeignKey("user.id"),
         nullable=True
     )
-
+    note = db.Column(db.Text, nullable=True)
     action = db.Column(db.String(100), nullable=False)
     old_status = db.Column(db.String(50))
     new_status = db.Column(db.String(50))
-    action = db.Column(db.String(100), nullable=False)
-
     created_at = db.Column(
         db.DateTime,
         default=datetime.utcnow,
         nullable=False,
         index=True
     )
-
     user = db.relationship("User")
     request = db.relationship("WorkflowRequest")
     target_type = db.Column(db.String(50))

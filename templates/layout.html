@@ -16,30 +16,31 @@
 
 <!-- Header -->
 <header class="main-header">
-    <div class="container">
+    <div class="container d-flex align-items-center justify-content-between">
+
         <h2 class="logo">اللجنة الوطنية الفلسطينية</h2>
 
-        <nav class="main-nav">
-
-            <a href="{{ url_for('inbox') }}"
-               class="{% if request.path.startswith('/inbox') %}active{% endif %}">
-                Inbox
-            </a>
+        <nav class="main-nav d-flex align-items-center gap-3">
 
             <a href="{{ url_for('my_requests') }}"
                class="{% if request.path.startswith('/my-requests') %}active{% endif %}">
                 📂 طلباتي
             </a>
 
-            {% if current_user.is_authenticated and current_user.has_role("ADMIN") %}
-                <a href="{{ url_for('audit.audit_dashboard') }}"
-                   class="{% if request.path.startswith('/audit') %}active{% endif %}">
-                    📊 Audit
-                </a>
+            <a href="{{ url_for('create_request') }}"
+               class="{% if request.path.startswith('/request/new') %}active{% endif %}">
+                ➕ طلب جديد
+            </a>
 
-                <a href="{{ url_for('users.list_users') }}"
-                   class="{% if request.path.startswith('/users') %}active{% endif %}">
-                    👤 Users
+            <a href="{{ url_for('inbox') }}"
+               class="{% if request.path.startswith('/inbox') %}active{% endif %}">
+                📥 Inbox
+            </a>
+
+            {% if current_user.is_authenticated and current_user.has_role("ADMIN") %}
+                <a href="{{ url_for('admin.dashboard') }}"
+                   class="{% if request.path.startswith('/admin/dashboard') %}active{% endif %}">
+                    🛠️ Admin
                 </a>
             {% endif %}
 
@@ -48,12 +49,11 @@
             <a class="nav-link position-relative"
                href="{{ url_for('workflow.notifications') }}">
                 🔔
-                {% if current_user.unread_notifications_count > 0 %}
-                    <span id="notif-badge"
-                          class="badge bg-danger position-absolute top-0 start-100 translate-middle">
-                        {{ current_user.unread_notifications_count }}
-                    </span>
-                {% endif %}
+                <span id="notif-badge"
+                      class="badge bg-danger position-absolute top-0 start-100 translate-middle"
+                      style="display:{% if current_user.unread_notifications_count > 0 %}inline-block{% else %}none{% endif %};">
+                    {{ current_user.unread_notifications_count }}
+                </span>
             </a>
             {% endif %}
 
@@ -71,39 +71,16 @@
     <aside class="admin-sidebar">
         <h4 class="sidebar-title">الإدارة</h4>
 
-        <a href="{{ url_for('audit.audit_dashboard') }}"
-           class="{% if request.path.startswith('/audit/dashboard') %}active{% endif %}">
-            📊 Audit Dashboard
+        <a href="{{ url_for('admin.dashboard') }}"
+           class="{% if request.path.startswith('/admin/dashboard') %}active{% endif %}">
+            🧭 Dashboard
         </a>
 
-        <a href="{{ url_for('audit.list_audit_logs') }}"
-           class="{% if request.path.startswith('/audit/logs') %}active{% endif %}">
-            📑 Audit Logs
+        <a href="{{ url_for('admin.admin_requests') }}"
+           class="{% if request.path.startswith('/admin/requests') %}active{% endif %}">
+            📂 All Requests
         </a>
 
-        <a href="{{ url_for('users.list_users') }}"
-           class="{% if request.path.startswith('/users') %}active{% endif %}">
-            👤 Users
-        </a>
-
-        <a href="#"
-           class="{% if request.path.startswith('/reports') %}active{% endif %}">
-            📁 Reports
-        </a>
-
-        <a href="{{ url_for('workflow.notifications_dashboard') }}">
-            🔔 Notifications Dashboard
-        </a>
-
-        <a href="{{ url_for('audit.system_timeline') }}">
-            🧭 Activity Timeline
-        </a>
-
-        <a href="{{ url_for('archive.upload_file') }}">
-            🗂️ Archive
-        </a>
-
-        <!-- Escalations -->
         <a href="{{ url_for('admin.escalations') }}"
            class="{% if request.path.startswith('/admin/escalations') %}active{% endif %}">
             🚨 Escalations
@@ -114,6 +91,26 @@
             {% endif %}
         </a>
 
+        <a href="{{ url_for('workflow.notifications_dashboard') }}">
+            🔔 Notifications
+        </a>
+
+        <a href="{{ url_for('archive.upload_file') }}">
+            🗂️ Archive
+        </a>
+
+        <a href="{{ url_for('users.list_users') }}"
+           class="{% if request.path.startswith('/users') %}active{% endif %}">
+            👤 Users
+        </a>
+
+        <a href="{{ url_for('audit.audit_dashboard') }}">
+            📊 Audit
+        </a>
+
+        <a href="{{ url_for('audit.system_timeline') }}">
+            🧭 Timeline
+        </a>
     </aside>
     {% endif %}
 
@@ -121,7 +118,7 @@
     <section class="admin-content">
 
         {% if breadcrumb %}
-            <nav class="breadcrumb">
+            <nav class="breadcrumb mb-3">
                 {% for item in breadcrumb %}
                     {% if not loop.last %}
                         <a href="{{ item.url }}">{{ item.label }}</a>
@@ -140,7 +137,7 @@
 
 <!-- Footer -->
 <footer class="main-footer">
-    <div class="container">
+    <div class="container text-center">
         <small>© اللجنة الوطنية الفلسطينية</small>
     </div>
 </footer>
@@ -165,6 +162,9 @@ source.onmessage = function (event) {
 };
 </script>
 {% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="{{ url_for('static', filename='js/charts.js') }}"></script>
 
 </body>
 </html>

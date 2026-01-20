@@ -6,48 +6,73 @@
 
 {% block content %}
 
-<h3>إنشاء تفويض</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🔁 إنشاء تفويض</h3>
+        <small class="text-muted">تفويض الصلاحيات لمستخدم آخر لفترة زمنية محددة</small>
+    </div>
+</div>
 
-<form method="POST">
-  {{ csrf_token() }}
+<div class="card shadow-sm">
+    <div class="card-body">
 
-  <div>
-    <label>المستخدم المفوَّض له</label>
-    <select name="to_user_id" required>
-      {% for user in users %}
-        <option value="{{ user.id }}">{{ user.name }}</option>
-      {% endfor %}
-    </select>
-  </div>
+        <form method="POST" novalidate>
+            {{ csrf_token() }}
 
-  <br>
+            <div class="mb-3">
+                <label class="form-label">المستخدم المفوَّض له</label>
+                <select name="to_user_id"
+                        class="form-select"
+                        required>
+                    {% for user in users %}
+                        <option value="{{ user.id }}">{{ user.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
 
-  <div>
-    <label>الصلاحية</label>
-    <select name="role" required>
-      <option value="approver">Approver</option>
-      <option value="reviewer">Reviewer</option>
-    </select>
-  </div>
+            <div class="mb-3">
+                <label class="form-label">الصلاحية</label>
+                <select name="role"
+                        class="form-select"
+                        required>
+                    <option value="approver">Approver</option>
+                    <option value="reviewer">Reviewer</option>
+                </select>
+            </div>
 
-  <br>
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <label class="form-label">تاريخ البداية</label>
+                    <input type="date"
+                           name="start_date"
+                           class="form-control"
+                           required>
+                </div>
 
-  <div>
-    <label>تاريخ البداية</label>
-    <input type="date" name="start_date" required>
-  </div>
+                <div class="col-md-6">
+                    <label class="form-label">تاريخ النهاية</label>
+                    <input type="date"
+                           name="end_date"
+                           class="form-control"
+                           required>
+                </div>
+            </div>
 
-  <br>
+            <div class="d-flex gap-3">
+                <button type="submit"
+                        class="btn btn-primary px-4">
+                    💾 حفظ التفويض
+                </button>
 
-  <div>
-    <label>تاريخ النهاية</label>
-    <input type="date" name="end_date" required>
-  </div>
+                <a href="{{ url_for('admin.dashboard') }}"
+                   class="btn btn-outline-secondary">
+                    ← رجوع
+                </a>
+            </div>
 
-  <br>
+        </form>
 
-  <button type="submit">حفظ التفويض</button>
-
-</form>
+    </div>
+</div>
 
 {% endblock %}

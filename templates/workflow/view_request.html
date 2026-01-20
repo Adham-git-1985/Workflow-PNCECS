@@ -1,40 +1,50 @@
-<h5 class="mt-4">Attachments</h5>
+<h5 class="mt-4 mb-3">📎 المرفقات</h5>
 
 {% if request.attachments %}
-<table class="table table-sm">
-    <thead>
+<div class="table-responsive">
+<table class="table table-hover table-sm align-middle">
+    <thead class="table-light">
         <tr>
-            <th>File</th>
-            <th>Description</th>
-            <th>Uploaded</th>
-            <th>Action</th>
+            <th>الملف</th>
+            <th>الوصف</th>
+            <th>تاريخ الرفع</th>
+            <th class="text-center">إجراء</th>
         </tr>
     </thead>
     <tbody>
     {% for f in request.attachments %}
         {% if not f.is_deleted %}
         <tr>
-            <td>{{ f.original_name }}</td>
-            <td>{{ f.description or "-" }}</td>
-            <td>{{ f.upload_date.strftime("%Y-%m-%d") }}</td>
             <td>
-                <a class="btn btn-sm btn-primary"
-                   href="{{ url_for('workflow.download_workflow_attachment', file_id=f.id) }}">
-                    Download
-                </a>
+                <strong>{{ f.original_name }}</strong>
+            </td>
+            <td class="text-muted">
+                {{ f.description or "—" }}
             </td>
             <td>
-                <a class="btn btn-outline-secondary"
-               href="{{ url_for('workflow.request_pdf', request_id=request.id) }}">
-                Export PDF
-                </a>
+                {{ f.upload_date.strftime("%Y-%m-%d") }}
             </td>
+            <td class="text-center">
+                <div class="d-flex gap-2 justify-content-center">
+                    <a class="btn btn-sm btn-outline-primary"
+                       href="{{ url_for('workflow.download_workflow_attachment', file_id=f.id) }}">
+                        ⬇️ تحميل
+                    </a>
 
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="{{ url_for('workflow.request_pdf', request_id=request.id) }}">
+                        📄 PDF
+                    </a>
+                </div>
+            </td>
         </tr>
         {% endif %}
     {% endfor %}
     </tbody>
 </table>
+</div>
 {% else %}
-<p class="text-muted">No attachments</p>
+<div class="alert alert-light text-muted text-center">
+    لا توجد مرفقات مضافة بعد
+</div>
 {% endif %}

@@ -1,12 +1,15 @@
 <form method="get" class="card shadow-sm mb-4">
 
   <div class="card-header d-flex justify-content-between align-items-center">
-    <strong>Advanced Filters</strong>
+    <div>
+      <strong>🔍 Advanced Filters</strong>
+      <small class="text-muted d-block">تصفية الطلبات بدقة</small>
+    </div>
     <button type="button"
             class="btn btn-sm btn-outline-secondary"
             data-bs-toggle="collapse"
             data-bs-target="#advanced-filters-body">
-      Toggle
+      إظهار / إخفاء
     </button>
   </div>
 
@@ -15,7 +18,7 @@
 
       <!-- Status -->
       <div class="col-md-3">
-        <label class="form-label">Status</label>
+        <label class="form-label">الحالة</label>
         <select name="status" multiple class="form-select">
           {% for s in ["DRAFT","IN_PROGRESS","APPROVED","REJECTED"] %}
             <option value="{{ s }}"
@@ -24,11 +27,12 @@
             </option>
           {% endfor %}
         </select>
+        <small class="text-muted">يمكن اختيار أكثر من حالة</small>
       </div>
 
       <!-- Date From -->
       <div class="col-md-3">
-        <label class="form-label">From</label>
+        <label class="form-label">من تاريخ</label>
         <input type="date"
                name="date_from"
                value="{{ request.args.get('date_from','') }}"
@@ -37,7 +41,7 @@
 
       <!-- Date To -->
       <div class="col-md-3">
-        <label class="form-label">To</label>
+        <label class="form-label">إلى تاريخ</label>
         <input type="date"
                name="date_to"
                value="{{ request.args.get('date_to','') }}"
@@ -46,19 +50,19 @@
 
       <!-- Keyword -->
       <div class="col-md-3">
-        <label class="form-label">Keyword</label>
+        <label class="form-label">كلمة مفتاحية</label>
         <input type="text"
                name="keyword"
                value="{{ request.args.get('keyword','') }}"
                class="form-control"
-               placeholder="ID, title, description">
+               placeholder="رقم، عنوان، وصف">
       </div>
 
       <!-- SLA Status -->
       <div class="col-md-3">
-        <label class="form-label">SLA Status</label>
+        <label class="form-label">حالة SLA</label>
         <select name="sla_state" class="form-select">
-          <option value="">All</option>
+          <option value="">الكل</option>
           <option value="ON_TRACK"
             {% if request.args.get("sla_state") == "ON_TRACK" %}selected{% endif %}>
             On Track
@@ -77,7 +81,7 @@
       {% if is_admin %}
       <!-- Requester ID -->
       <div class="col-md-3">
-        <label class="form-label">Requester ID</label>
+        <label class="form-label">رقم مقدم الطلب</label>
         <input type="number"
                name="requester_id"
                value="{{ request.args.get('requester_id','') }}"
@@ -86,7 +90,7 @@
 
       <!-- Current Role -->
       <div class="col-md-3">
-        <label class="form-label">Current Role</label>
+        <label class="form-label">الدور الحالي</label>
         <input type="text"
                name="current_role"
                value="{{ request.args.get('current_role','') }}"
@@ -100,10 +104,10 @@
     <!-- Actions -->
     <div class="mt-4 d-flex justify-content-end gap-2">
       <button type="submit" class="btn btn-primary">
-        Apply
+        تطبيق
       </button>
       <a href="{{ request.path }}" class="btn btn-outline-secondary">
-        Reset
+        إعادة ضبط
       </a>
     </div>
   </div>

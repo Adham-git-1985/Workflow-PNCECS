@@ -1,40 +1,76 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<h3>📊 Notifications Dashboard</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">📊 لوحة الإشعارات</h3>
+        <small class="text-muted">نظرة عامة على نشاط الإشعارات في النظام</small>
+    </div>
+</div>
 
-<div class="row mt-3">
+<!-- Counters -->
+<div class="row g-3 mb-4">
     <div class="col-md-4">
-        <div class="card p-3">
-            <h6>Total Notifications</h6>
-            <h2>{{ total }}</h2>
+        <div class="card text-center shadow-sm border-primary">
+            <div class="card-body">
+                <small class="text-muted">Total Notifications</small>
+                <h2 class="text-primary">{{ total }}</h2>
+            </div>
         </div>
     </div>
 
     <div class="col-md-4">
-        <div class="card p-3">
-            <h6>Unread Notifications</h6>
-            <h2>{{ unread }}</h2>
+        <div class="card text-center shadow-sm border-warning">
+            <div class="card-body">
+                <small class="text-muted">Unread Notifications</small>
+                <h2 class="text-warning">{{ unread }}</h2>
+            </div>
         </div>
     </div>
 </div>
 
-<hr>
+<!-- Top Users -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="mb-3">👤 أكثر المستخدمين استلامًا للإشعارات</h5>
 
-<h5>Top Users</h5>
-<ul>
-    {% for email, count in top_users %}
-        <li>{{ email }} — {{ count }}</li>
-    {% endfor %}
-</ul>
+        {% if top_users %}
+        <ul class="list-group list-group-flush">
+            {% for email, count in top_users %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ email }}</span>
+                <span class="badge bg-secondary rounded-pill">{{ count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="text-muted text-center">
+            لا توجد بيانات
+        </div>
+        {% endif %}
+    </div>
+</div>
 
-<hr>
+<!-- Notifications by Type -->
+<div class="card shadow-sm">
+    <div class="card-body">
+        <h5 class="mb-3">🏷️ توزيع الإشعارات حسب النوع</h5>
 
-<h5>Notifications by Type</h5>
-<ul>
-    {% for t, count in by_type %}
-        <li>{{ t }} — {{ count }}</li>
-    {% endfor %}
-</ul>
+        {% if by_type %}
+        <ul class="list-group list-group-flush">
+            {% for t, count in by_type %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ t }}</span>
+                <span class="badge bg-info text-dark rounded-pill">{{ count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="text-muted text-center">
+            لا توجد بيانات
+        </div>
+        {% endif %}
+    </div>
+</div>
 
 {% endblock %}

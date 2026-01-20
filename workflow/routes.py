@@ -279,7 +279,7 @@ def notifications():
         .all()
     )
     return render_template(
-        "notifications.html",
+        "workflow/notifications.html",
         notifications=notes
     )
 
@@ -331,7 +331,7 @@ def notifications_stream():
                     yield f"data: {count}\n\n"
                     last_count = count
 
-                time.sleep(5)
+                time.sleep(2)
 
     return Response(
         event_stream(app, user_id),
@@ -368,7 +368,7 @@ def notifications_dashboard():
     )
 
     return render_template(
-        "notifications/dashboard.html",
+        "workflow/notifications/dashboard.html",
         total=total,
         unread=unread,
         top_users=top_users,
@@ -386,4 +386,6 @@ def mark_notification_read(id):
 
     notif.is_read = True
     db.session.commit()
-    return "", 204
+    if notif.is_read:
+        return "", 204
+

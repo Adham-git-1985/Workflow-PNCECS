@@ -1,38 +1,57 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<div class="container mt-4">
-    <h3>Recycle Bin</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🗑️ سلة المحذوفات</h3>
+        <small class="text-muted">الملفات التي تم حذفها ويمكن استعادتها</small>
+    </div>
+</div>
 
-    {% if files %}
-    <table class="table table-bordered">
-        <thead>
-            <tr>
-                <th>File</th>
-                <th>Deleted At</th>
-                <th>Deleted By</th>
-                <th>Action</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for f in files %}
-            <tr>
-                <td>{{ f.original_name }}</td>
-                <td>{{ f.deleted_at.strftime("%Y-%m-%d %H:%M") }}</td>
-                <td>{{ f.deleted_by }}</td>
-                <td>
-                    <a class="btn btn-sm btn-success"
-                       href="{{ url_for('archive.restore_file', file_id=f.id) }}">
-                        Restore
-                    </a>
-                </td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    {% else %}
-        <div class="alert alert-info">Recycle Bin is empty</div>
-    {% endif %}
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+
+        {% if files %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>الملف</th>
+                        <th class="text-center">تاريخ الحذف</th>
+                        <th class="text-center">تم الحذف بواسطة</th>
+                        <th class="text-center">إجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for f in files %}
+                    <tr>
+                        <td>
+                            <strong>{{ f.original_name }}</strong>
+                        </td>
+                        <td class="text-center">
+                            {{ f.deleted_at.strftime("%Y-%m-%d %H:%M") }}
+                        </td>
+                        <td class="text-center">
+                            {{ f.deleted_by_user.email if f.deleted_by_user else "System" }}
+                        </td>
+                        <td class="text-center">
+                            <a class="btn btn-sm btn-outline-success"
+                               href="{{ url_for('archive.restore_file', file_id=f.id) }}">
+                                Restore
+                            </a>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            سلة المحذوفات فارغة
+        </div>
+        {% endif %}
+
+    </div>
 </div>
 
 {% endblock %}

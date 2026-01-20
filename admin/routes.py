@@ -4,7 +4,7 @@ from flask import (
 )
 from flask_login import login_required
 from permissions import roles_required
-from models import WorkflowRequest, SystemSetting, AuditLog
+from models import WorkflowRequest, SystemSetting, AuditLog, ArchivedFile
 from extensions import db
 from sqlalchemy import func
 from datetime import datetime, timedelta

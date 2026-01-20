@@ -1,33 +1,53 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<div class="container mt-4">
-    <h3>Archive Audit Log</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3>🗂️ Archive Audit Log</h3>
+</div>
 
-    <table class="table table-bordered table-hover">
-        <thead class="table-light">
-            <tr>
-                <th>Date</th>
-                <th>User</th>
-                <th>Action</th>
-                <th>Description</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for log in logs %}
-            <tr>
-                <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-                <td>{{ log.user.name }}</td>
-                <td>
-                    <span class="badge bg-warning">
-                        {{ log.action }}
-                    </span>
-                </td>
-                <td>{{ log.description }}</td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+
+        {% if logs %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>التاريخ</th>
+                        <th>المستخدم</th>
+                        <th class="text-center">الإجراء</th>
+                        <th>الوصف</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for log in logs %}
+                    <tr>
+                        <td>
+                            {{ log.created_at.strftime("%Y-%m-%d %H:%M") }}
+                        </td>
+                        <td>
+                            <strong>{{ log.user.name if log.user else "System" }}</strong>
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-warning text-dark">
+                                {{ log.action }}
+                            </span>
+                        </td>
+                        <td>
+                            {{ log.description or "—" }}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد سجلات تدقيق للأرشيف
+        </div>
+        {% endif %}
+
+    </div>
 </div>
 
 {% endblock %}

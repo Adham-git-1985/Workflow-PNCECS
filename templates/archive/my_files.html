@@ -1,128 +1,143 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<div class="container mt-4">
-    <h3>My Archived Files</h3>
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🗂️ ملفاتي المؤرشفة</h3>
+        <small class="text-muted">عرض وإدارة الملفات التي قمت برفعها</small>
+    </div>
+</div>
 
-    {% if files %}
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+
+        {% if files %}
         <!-- Search -->
-        <form method="get" class="row g-2 mb-3">
+        <form method="get" class="row g-2 align-items-center">
             <div class="col-md-10">
                 <input type="text"
                        name="q"
                        value="{{ q }}"
                        class="form-control"
-                       placeholder="Search by file name or description">
+                       placeholder="🔍 البحث باسم الملف أو الوصف">
             </div>
             <div class="col-md-2">
-                <button class="btn btn-secondary w-100">
-                    Search
+                <button class="btn btn-primary w-100">
+                    بحث
                 </button>
             </div>
         </form>
+        {% endif %}
 
-        <!-- Table -->
-        <table class="table table-bordered table-hover mt-3">
-            <thead class="table-light">
-                <tr>
-                    <th>#</th>
-                    <th>File Name</th>
-                    <th>Description</th>
-                    <th>Uploaded At</th>
-                    <th>Size (KB)</th>
+    </div>
+</div>
 
-                    {% if current_user.has_role("ADMIN") %}
-                        <th>Status</th>
-                    {% endif %}
+<div class="card shadow-sm">
+    <div class="card-body p-0">
 
-                    <th>Actions</th>
-                </tr>
-            </thead>
+        {% if files %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>الملف</th>
+                        <th>الوصف</th>
+                        <th class="text-center">تاريخ الرفع</th>
+                        <th class="text-center">الحجم (KB)</th>
 
-            <tbody>
+                        {% if current_user.has_role("ADMIN") %}
+                            <th class="text-center">الحالة</th>
+                        {% endif %}
+
+                        <th class="text-center">إجراءات</th>
+                    </tr>
+                </thead>
+                <tbody>
                 {% for f in files %}
-                <tr>
-                    <td>{{ loop.index }}</td>
-                    <td>{{ f.original_name }}</td>
-                    <td>{{ f.description or "-" }}</td>
-                    <td>{{ f.upload_date.strftime("%Y-%m-%d %H:%M") }}</td>
-                    <td>{{ (f.file_size / 1024) | round(1) }}</td>
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>
+                            <strong>{{ f.original_name }}</strong>
+                        </td>
+                        <td>{{ f.description or "—" }}</td>
+                        <td class="text-center">
+                            {{ f.upload_date.strftime("%Y-%m-%d %H:%M") }}
+                        </td>
+                        <td class="text-center">
+                            {{ (f.file_size / 1024) | round(1) }}
+                        </td>
 
-                    {% if current_user.has_role("ADMIN") %}
-                    <td>
-                        {% if f.is_deleted %}
-                            <span class="badge bg-danger">Deleted</span>
-                        {% else %}
-                            <span class="badge bg-success">Active</span>
-                        {% endif %}
-
-                        {% if f.is_signed %}
-                            <span class="badge bg-success ms-1">Signed</span>
-                        {% else %}
-                            <span class="badge bg-secondary ms-1">Unsigned</span>
-                        {% endif %}
-                    </td>
-                    {% endif %}
-
-                    <!-- Actions -->
-                    <td>
-                        {% if not f.is_deleted %}
-
-                            <!-- Download -->
-                            <a class="btn btn-sm btn-primary"
-                               href="{{ url_for('archive.download_file', file_id=f.id) }}">
-                                Download
-                            </a>
-
-                            <!-- Share -->
-                            <a class="btn btn-sm btn-warning"
-                               href="{{ url_for('archive.share_file', file_id=f.id) }}">
-                                Share
-                            </a>
-
-                            {% if current_user.has_role("ADMIN") %}
-
-                                <!-- Delete -->
-                                <form method="post"
-                                      action="{{ url_for('archive.delete_file', file_id=f.id) }}"
-                                      style="display:inline"
-                                      onsubmit="return confirm('Are you sure you want to delete this file?');">
-                                    <button class="btn btn-sm btn-danger">
-                                        Delete
-                                    </button>
-                                </form>
-
-                                <!-- Sign (PDF only & not signed) -->
-                                {% if f.original_name.lower().endswith('.pdf') %}
-                                    {% if not f.is_signed %}
-                                        <form method="post"
-                                              action="{{ url_for('archive.sign_pdf', file_id=f.id) }}"
-                                              style="display:inline;">
-                                            <button class="btn btn-sm btn-success">
-                                                Sign
-                                            </button>
-                                        </form>
-                                    {% else %}
-                                        <span class="badge bg-success ms-1">Signed</span>
-                                    {% endif %}
-                                {% endif %}
-
+                        {% if current_user.has_role("ADMIN") %}
+                        <td class="text-center">
+                            {% if f.is_deleted %}
+                                <span class="badge bg-danger">Deleted</span>
+                            {% else %}
+                                <span class="badge bg-success">Active</span>
                             {% endif %}
 
-                        {% else %}
-                            <span class="text-muted">Unavailable</span>
+                            {% if f.is_signed %}
+                                <span class="badge bg-success ms-1">Signed</span>
+                            {% else %}
+                                <span class="badge bg-secondary ms-1">Unsigned</span>
+                            {% endif %}
+                        </td>
                         {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
 
-    {% else %}
-        <div class="alert alert-info mt-3">
-            You have not uploaded any files yet.
+                        <!-- Actions -->
+                        <td class="text-center">
+                            {% if not f.is_deleted %}
+                                <div class="d-flex justify-content-center gap-1 flex-wrap">
+
+                                    <a class="btn btn-sm btn-outline-primary"
+                                       href="{{ url_for('archive.download_file', file_id=f.id) }}">
+                                        Download
+                                    </a>
+
+                                    <a class="btn btn-sm btn-outline-warning"
+                                       href="{{ url_for('archive.share_file', file_id=f.id) }}">
+                                        Share
+                                    </a>
+
+                                    {% if current_user.has_role("ADMIN") %}
+
+                                        <form method="post"
+                                              action="{{ url_for('archive.delete_file', file_id=f.id) }}"
+                                              onsubmit="return confirm('Are you sure you want to delete this file?');">
+                                            <button class="btn btn-sm btn-outline-danger">
+                                                Delete
+                                            </button>
+                                        </form>
+
+                                        {% if f.original_name.lower().endswith('.pdf') %}
+                                            {% if not f.is_signed %}
+                                                <form method="post"
+                                                      action="{{ url_for('archive.sign_pdf', file_id=f.id) }}">
+                                                    <button class="btn btn-sm btn-outline-success">
+                                                        Sign
+                                                    </button>
+                                                </form>
+                                            {% endif %}
+                                        {% endif %}
+
+                                    {% endif %}
+                                </div>
+                            {% else %}
+                                <span class="text-muted">Unavailable</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
         </div>
-    {% endif %}
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لم تقم برفع أي ملفات بعد
+        </div>
+        {% endif %}
+
+    </div>
 </div>
 
 {% endblock %}

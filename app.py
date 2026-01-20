@@ -10,7 +10,7 @@ from werkzeug.security import check_password_hash
 from urllib.parse import urlparse
 from flask_migrate import Migrate
 from sqlalchemy import func
-from datetime import datetime
+from datetime import datetime, timedelta
 import io
 import os
 from flask import session
@@ -38,11 +38,11 @@ from models import (
 # Blueprints
 # ======================
 # Blueprints
-from workflow import workflow_bp
-from admin import admin_bp
-from archive import archive_bp
-from audit import audit_bp
-from users import users_bp
+from workflow.routes import workflow_bp
+from admin.routes import admin_bp
+from archive.routes import archive_bp
+from audit.routes import audit_bp
+from users.routes import users_bp
 
 
 from filters.request_filters import apply_request_filters
@@ -303,11 +303,12 @@ def my_requests():
 @login_required
 def inbox():
     run_escalation_check()
-    effective_user = get_effective_user(current_user)
+    effective_user = get_effective_user()
+
 
     # 1️⃣ Base query (delegation-aware)
     base_query = WorkflowRequest.query.filter(
-        WorkflowRequest.current_assignee_id == effective_user.id
+        WorkflowRequest.current_role == effective_user.role
     )
 
     # 2️⃣ Apply advanced filters
@@ -361,7 +362,7 @@ def inbox():
     )
 
     escalation_alerts_count = WorkflowRequest.query.filter(
-        WorkflowRequest.current_assignee_id == effective_user.id,
+        WorkflowRequest.current_role == effective_user.id,
         WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
         WorkflowRequest.created_at < esc_deadline
     ).count()

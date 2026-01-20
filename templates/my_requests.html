@@ -3,49 +3,83 @@
 
 {% block content %}
 
-<h3>📂 طلباتي</h3>
-
-<p style="color:gray; font-size:13px">
-🕒 آخر تحديث: {{ last_update.strftime("%Y-%m-%d %H:%M") }}
-</p>
-
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h3 class="mb-1">📂 طلباتي</h3>
+        <small class="text-muted">
+            🕒 آخر تحديث: {{ last_update.strftime("%Y-%m-%d %H:%M") }}
+        </small>
+    </div>
+</div>
 
 {% if requests %}
-<div style="display:flex; gap:15px; margin-bottom:20px; flex-wrap:wrap">
 
-  <a href="{{ url_for('my_requests', status='all') }}"
-     class="counter counter-total">
-      <h4>📄 الكل</h4>
-      <strong>{{ counters.total }}</strong>
-  </a>
+<!-- Counters -->
+<div class="row g-3 mb-4">
 
-  <a href="{{ url_for('my_requests', status='in_progress') }}"
-     class="counter counter-progress">
-      <h4>🕓 قيد المعالجة</h4>
-      <strong>{{ counters.in_progress }}</strong>
-  </a>
+  <div class="col-md">
+    <a href="{{ url_for('my_requests', status='all') }}"
+       class="card text-center shadow-sm border-secondary text-decoration-none">
+      <div class="card-body">
+        <small class="text-muted">📄 الكل</small>
+        <h3>{{ counters.total }}</h3>
+      </div>
+    </a>
+  </div>
 
-  <a href="{{ url_for('my_requests', status='draft') }}"
-     class="counter counter-draft">
-      <h4>💾 مسودة</h4>
-      <strong>{{ counters.draft }}</strong>
-  </a>
+  <div class="col-md">
+    <a href="{{ url_for('my_requests', status='in_progress') }}"
+       class="card text-center shadow-sm border-warning text-decoration-none">
+      <div class="card-body">
+        <small class="text-muted">🕓 قيد المعالجة</small>
+        <h3 class="text-warning">{{ counters.in_progress }}</h3>
+      </div>
+    </a>
+  </div>
 
-  <a href="{{ url_for('my_requests', status='approved') }}"
-     class="counter counter-approved">
-      <h4>✅ موافق</h4>
-      <strong>{{ counters.approved }}</strong>
-  </a>
+  <div class="col-md">
+    <a href="{{ url_for('my_requests', status='draft') }}"
+       class="card text-center shadow-sm border-secondary text-decoration-none">
+      <div class="card-body">
+        <small class="text-muted">💾 مسودة</small>
+        <h3 class="text-secondary">{{ counters.draft }}</h3>
+      </div>
+    </a>
+  </div>
 
-  <a href="{{ url_for('my_requests', status='rejected') }}"
-     class="counter counter-rejected">
-      <h4>❌ مرفوض</h4>
-      <strong>{{ counters.rejected }}</strong>
-  </a>
+  <div class="col-md">
+    <a href="{{ url_for('my_requests', status='approved') }}"
+       class="card text-center shadow-sm border-success text-decoration-none">
+      <div class="card-body">
+        <small class="text-muted">✅ موافق</small>
+        <h3 class="text-success">{{ counters.approved }}</h3>
+      </div>
+    </a>
+  </div>
+
+  <div class="col-md">
+    <a href="{{ url_for('my_requests', status='rejected') }}"
+       class="card text-center shadow-sm border-danger text-decoration-none">
+      <div class="card-body">
+        <small class="text-muted">❌ مرفوض</small>
+        <h3 class="text-danger">{{ counters.rejected }}</h3>
+      </div>
+    </a>
+  </div>
 
 </div>
 
-<canvas id="requestsChart" height="120"></canvas>
+<!-- Chart -->
+<div class="card shadow-sm mb-4">
+  <div class="card-body d-flex justify-content-center">
+      <div class="chart-wrapper">
+          <canvas id="requestsChart"></canvas>
+      </div>
+  </div>
+</div>
+
+
+
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
@@ -69,45 +103,105 @@ new Chart(ctx, {
                 '#e63946'
             ]
         }]
+    },
+    options: {
+        plugins: {
+            legend: {
+                position: 'bottom'
+            }
+        }
     }
 });
 </script>
 
-
-<table>
-    <tr>
-        <th>#</th>
-        <th>العنوان</th>
-        <th>الحالة</th>
-        <th>إجراءات</th>
-    </tr>
-
+<!-- Requests Table -->
+<div class="table-responsive">
+<table class="table table-hover align-middle">
+    <thead class="table-light">
+        <tr>
+            <th>#</th>
+            <th>العنوان</th>
+            <th>الحالة</th>
+            <th class="text-center">إجراءات</th>
+        </tr>
+    </thead>
+    <tbody>
     {% for req in requests %}
-    <tr>
-        <td>{{ req.id }}</td>
-        <td>{{ req.title }}</td>
-        <td>{{ req.status }}</td>
-        <td style="display:flex; gap:6px; justify-content:center">
-            <a href="{{ url_for('review_request', request_id=req.id) }}"
-               class="btn btn-secondary">
-                👁 عرض
-            </a>
+        <tr>
+            <td>{{ req.id }}</td>
+            <td>{{ req.title }}</td>
+            <td>
+                <span class="badge bg-{{ {
+                    'APPROVED':'success',
+                    'REJECTED':'danger',
+                    'ESCALATED':'warning',
+                    'DRAFT':'secondary'
+                }.get(req.status,'primary') }}">
+                    {{ req.status }}
+                </span>
+            </td>
+            <td class="text-center">
+                <div class="d-flex gap-2 justify-content-center">
+                    <a href="{{ url_for('review_request', request_id=req.id) }}"
+                       class="btn btn-sm btn-outline-primary">
+                        👁 عرض
+                    </a>
 
-            <a href="{{ url_for('request_pdf', request_id=req.id) }}"
-               class="btn btn-secondary">
-                📄 PDF
-            </a>
+                    <a href="{{ url_for('workflow.request_pdf', request_id=req.id) }}"
+                       class="btn btn-secondary">
+                        📄 PDF
+                    </a>
 
-            <a href="{{ url_for('request_audit', request_id=req.id) }}"
-               class="btn btn-secondary">
-                🧾 Audit
-            </a>
-        </td>
-    </tr>
+                    <a href="{{ url_for('request_audit', request_id=req.id) }}"
+                       class="btn btn-sm btn-outline-dark">
+                        🧾 Audit
+                    </a>
+                </div>
+            </td>
+        </tr>
     {% endfor %}
+    </tbody>
 </table>
+</div>
+
 {% else %}
-<p style="color:gray">لا يوجد طلبات قمت بإنشائها بعد.</p>
+<div class="alert alert-light text-center">
+    لا يوجد طلبات قمت بإنشائها بعد.
+</div>
 {% endif %}
 
 {% endblock %}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+
+    const ctx = document.getElementById("statusChart");
+
+    if (!ctx) return;
+
+    new Chart(ctx, {
+        type: 'pie',
+        data: {
+            labels: ['Approved', 'Rejected', 'In Progress'],
+            datasets: [{
+                data: [
+                    {{ counters.approved }},
+                    {{ counters.rejected }},
+                    {{ counters.in_progress }}
+                ],
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,   // ⭐ هذا سر التصغير
+            plugins: {
+                legend: {
+                    position: 'bottom'
+                }
+            }
+        }
+    });
+});
+</script>

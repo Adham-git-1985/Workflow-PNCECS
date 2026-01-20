@@ -3,46 +3,92 @@
 <head>
     <meta charset="UTF-8">
     <title>مراجعة الطلب</title>
+
+    <!-- Font -->
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+
+    <!-- Bootstrap -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+        }
+        .status-badge {
+            font-size: 0.9rem;
+        }
+    </style>
 </head>
 <body class="bg-light">
 
-<div class="container mt-5">
-    <div class="card shadow">
-        <div class="card-header bg-primary text-white">
-            <h5 class="mb-0">مراجعة الطلب رقم {{ req.id }}</h5>
+<div class="container mt-5 mb-5">
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                📝 مراجعة الطلب رقم {{ req.id }}
+            </h5>
+
+            <span class="badge bg-light text-dark status-badge">
+                {{ req.status }}
+            </span>
         </div>
 
         <div class="card-body">
-            <p><strong>العنوان:</strong> {{ req.title }}</p>
-            <p><strong>الوصف:</strong> {{ req.description }}</p>
-            <p><strong>الحالة الحالية:</strong> {{ req.status }}</p>
 
-          <form method="POST" action="{{ url_for('request_action', request_id=req.id) }}">
-
-            <textarea name="note" placeholder="ملاحظة (اختياري)" rows="3"
-                      style="width:100%; margin-bottom:10px"></textarea>
-
-            <div style="display:flex; gap:10px">
-                <button type="submit"
-                        name="action"
-                        value="approve"
-                        class="btn btn-approve">
-                    ✔️ موافقة
-                </button>
-
-                <button type="submit"
-                        name="action"
-                        value="reject"
-                        class="btn btn-reject"
-                        onclick="return confirm('هل أنت متأكد من رفض الطلب؟')">
-                    ✖️ رفض
-                </button>
+            <div class="mb-3">
+                <p class="mb-1"><strong>العنوان:</strong></p>
+                <div class="p-2 bg-light border rounded">
+                    {{ req.title }}
+                </div>
             </div>
-        </form>
+
+            <div class="mb-4">
+                <p class="mb-1"><strong>الوصف:</strong></p>
+                <div class="p-3 bg-light border rounded">
+                    {{ req.description or "—" }}
+                </div>
+            </div>
+
+            <form method="POST"
+                  action="{{ url_for('workflow.request_action', request_id=req.id) }}">
+
+                <div class="mb-3">
+                    <label class="form-label">ملاحظة (اختياري)</label>
+                    <textarea name="note"
+                              rows="4"
+                              class="form-control"
+                              placeholder="اكتب ملاحظتك هنا إن وجدت"></textarea>
+                </div>
+
+                <div class="d-flex gap-3">
+
+                    <button type="submit"
+                            name="action"
+                            value="approve"
+                            class="btn btn-success px-4">
+                        ✔️ موافقة
+                    </button>
+
+                    <button type="submit"
+                            name="action"
+                            value="reject"
+                            class="btn btn-danger px-4"
+                            onclick="return confirm('هل أنت متأكد من رفض الطلب؟')">
+                        ✖️ رفض
+                    </button>
+
+                    <a href="{{ url_for('inbox') }}"
+                       class="btn btn-outline-secondary ms-auto">
+                        ← رجوع
+                    </a>
+
+                </div>
+            </form>
 
         </div>
     </div>
+
 </div>
 
 </body>
