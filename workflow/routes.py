@@ -311,24 +311,30 @@ def mark_all_notifications_read():
 @workflow_bp.route("/notifications/stream")
 @login_required
 def notifications_stream():
-    def event_stream(user_id):
+    # خذ app و user_id داخل request context
+    app = current_app._get_current_object()
+    user_id = current_user.id
+
+    def event_stream(app, user_id):
         last_count = None
 
-        while True:
-            count = (
-                Notification.query
-                .filter_by(user_id=user_id, is_read=False)
-                .count()
-            )
+        # Application context ثابت للـ generator
+        with app.app_context():
+            while True:
+                count = (
+                    Notification.query
+                    .filter_by(user_id=user_id, is_read=False)
+                    .count()
+                )
 
-            if count != last_count:
-                yield f"data: {count}\n\n"
-                last_count = count
+                if count != last_count:
+                    yield f"data: {count}\n\n"
+                    last_count = count
 
-            time.sleep(5)
+                time.sleep(5)
 
     return Response(
-        event_stream(current_user.id),
+        event_stream(app, user_id),
         mimetype="text/event-stream"
     )
 
