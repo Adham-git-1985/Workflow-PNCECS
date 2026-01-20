@@ -9,15 +9,34 @@ from permissions import roles_required
 from models import AuditLog
 from flask_login import current_user
 from utils.events import emit_event
+from sqlalchemy.orm import joinedload
 
 
 @users_bp.route("/")
 @login_required
 @roles_required("ADMIN")
 def list_users():
-    users = User.query.order_by(User.id.desc()).all()
-    return render_template("users/list.html", users=users)
+    page = request.args.get("page", 1, type=int)
 
+    users = (
+        User.query
+            .order_by(User.id.desc())
+            .paginate(page=page, per_page=20, error_out=False)
+    )
+
+    users_with_role = []
+    for u in users.items:
+        users_with_role.append({
+            "id": u.id,
+            "email": u.email,
+            "role": u.role  # تُحسب مرة واحدة هنا
+        })
+
+    return render_template(
+        "users/list.html",
+        users=users_with_role,
+        pagination=users
+    )
 
 @users_bp.route("/create", methods=["GET", "POST"])
 @login_required

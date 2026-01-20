@@ -368,7 +368,7 @@ def notifications_dashboard():
     )
 
     return render_template(
-        "workflow/notifications/dashboard.html",
+        "notifications/dashboard.html",
         total=total,
         unread=unread,
         top_users=top_users,

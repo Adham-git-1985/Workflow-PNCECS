@@ -74,7 +74,14 @@ body {
     border-radius: 6px;
     margin-bottom: 6px;
     font-size: 14px;
-    transition: background 0.2s ease;
+    transition: none !important;
+}
+
+.admin-sidebar span,
+.admin-sidebar .menu-text {
+    display: inline !important;
+    opacity: 1 !important;
+    white-space: nowrap;
 }
 
 .admin-sidebar a:hover {
@@ -292,7 +299,41 @@ a {
     height: 350px;
 }
 
-
-.admin-content {
-    min-height: 100vh;
+.admin-sidebar a {
+    color: #212529 !important;
+    font-weight: 600;
 }
+
+.admin-sidebar a:hover,
+.admin-sidebar a.active {
+    background-color: #e9ecef;
+    color: #000 !important;
+}
+
+body {
+    overflow-y: scroll;
+}
+
+/* ===== GLOBAL SCROLL & LAYOUT STABILITY FIX ===== */
+html, body {
+    height: auto !important;
+    min-height: 100% !important;
+    overflow-y: scroll !important;
+}
+
+/* Prevent dashboard from forcing height */
+.admin-dashboard,
+.admin-dashboard *,
+.container-fluid,
+.container {
+    height: auto !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+}
+
+body {
+    padding-top: 70px; /* حسب ارتفاع الهيدر */
+}
+
+
+

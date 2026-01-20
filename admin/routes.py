@@ -10,6 +10,7 @@ from sqlalchemy import func
 from datetime import datetime, timedelta
 from filters.request_filters import apply_request_filters
 from filters.request_filters import get_sla_days, get_escalation_days
+from sqlalchemy import case
 
 # =========================
 # Blueprint
@@ -24,6 +25,14 @@ admin_bp = Blueprint(
 # Constants
 # =========================
 FINAL_STATUSES = ["APPROVED", "REJECTED"]
+
+DASHBOARD_CACHE = {
+    "data": None,
+    "last_update": None
+}
+
+DASHBOARD_TTL_SECONDS = 30
+
 
 ESCALATION_ROLE_MAP = {
     "dept_head": "secretary_general",
@@ -84,38 +93,36 @@ def update_sla():
 @login_required
 @roles_required("ADMIN")
 def dashboard():
-
-    # ===== Counters (Workflow) =====
-    total = db.session.query(func.count(WorkflowRequest.id)).scalar()
-
-    approved = WorkflowRequest.query.filter(
-        WorkflowRequest.status == "APPROVED"
-    ).count()
-
-    rejected = WorkflowRequest.query.filter(
-        WorkflowRequest.status == "REJECTED"
-    ).count()
-
-    drafts = WorkflowRequest.query.filter(
-        WorkflowRequest.status == "DRAFT"
-    ).count()
-
-    in_progress = WorkflowRequest.query.filter(
-        WorkflowRequest.status.notin_(FINAL_STATUSES + ["DRAFT"])
-    ).count()
-
-    delegated = 0  # TODO: implement delegation counter
-
-    # ===== SLA / Escalation =====
-    SLA_DAYS = get_sla_days()
-    ESCALATION_DAYS = get_escalation_days()
-
     now = datetime.utcnow()
 
+    if (
+        DASHBOARD_CACHE["data"]
+        and DASHBOARD_CACHE["last_update"]
+        and (now - DASHBOARD_CACHE["last_update"]).seconds < DASHBOARD_TTL_SECONDS
+    ):
+        return render_template(
+            "admin/dashboard.html",
+            **DASHBOARD_CACHE["data"]
+        )
+
+    stats = db.session.query(
+        func.count(WorkflowRequest.id),
+        func.sum(case((WorkflowRequest.status == "APPROVED", 1), else_=0)),
+        func.sum(case((WorkflowRequest.status == "REJECTED", 1), else_=0)),
+        func.sum(case((WorkflowRequest.status == "DRAFT", 1), else_=0)),
+        func.sum(
+            case(
+                (WorkflowRequest.status.notin_(FINAL_STATUSES + ["DRAFT"]), 1),
+                else_=0
+            )
+        )
+    ).one()
+
+    total, approved, rejected, drafts, in_progress = stats
+    delegated = 0
+
+    SLA_DAYS = get_sla_days()
     sla_threshold = now - timedelta(days=SLA_DAYS)
-    escalation_threshold = now - timedelta(
-        days=SLA_DAYS + ESCALATION_DAYS
-    )
 
     aging_requests = (
         WorkflowRequest.query
@@ -124,57 +131,16 @@ def dashboard():
             WorkflowRequest.created_at <= sla_threshold
         )
         .order_by(WorkflowRequest.created_at.asc())
+        .limit(10)
         .all()
     )
 
-    escalated_requests = (
-        WorkflowRequest.query
-        .filter(
-            WorkflowRequest.status.notin_(FINAL_STATUSES),
-            WorkflowRequest.created_at <= escalation_threshold,
-            WorkflowRequest.is_escalated == False
-        )
-        .all()
-    )
-
-    for req in escalated_requests:
-        old_status = req.status
-        old_role = req.current_role or "dept_head"
-
-        req.is_escalated = True
-        req.escalated_at = now
-        req.status = "ESCALATED"
-
-        new_role = ESCALATION_ROLE_MAP.get(
-            old_role,
-            "secretary_general"
-        )
-        req.current_role = new_role
-
-        db.session.add(AuditLog(
-            request_id=req.id,
-            user_id=SYSTEM_USER_ID,
-            action="ESCALATION",
-            old_status=old_status,
-            new_status="ESCALATED",
-            note=(
-                f"Escalated from {old_role} to {new_role} "
-                f"after {SLA_DAYS + ESCALATION_DAYS} days"
-            )
-        ))
-
-    if escalated_requests:
-        db.session.commit()
-
-    # ===== Archive Counters (NEW) =====
     archive_total = ArchivedFile.query.count()
     archive_active = ArchivedFile.query.filter_by(is_deleted=False).count()
     archive_deleted = ArchivedFile.query.filter_by(is_deleted=True).count()
 
-    # ===== Render =====
-    return render_template(
-        "admin/dashboard.html",
-        counters={
+    context = {
+        "counters": {
             "total": total,
             "approved": approved,
             "rejected": rejected,
@@ -182,15 +148,22 @@ def dashboard():
             "in_progress": in_progress,
             "delegated": delegated
         },
-        archive_counters={
+        "archive_counters": {
             "total": archive_total,
             "active": archive_active,
             "deleted": archive_deleted
         },
-        aging_requests=aging_requests,
-        sla_days=SLA_DAYS,
-        now=now
-    )
+        "aging_requests": aging_requests,
+        "sla_days": SLA_DAYS,
+        "now": now
+    }
+
+    DASHBOARD_CACHE["data"] = context
+    DASHBOARD_CACHE["last_update"] = now
+
+    return render_template("admin/dashboard.html", **context)
+
+
 
 @admin_bp.route("/permissions", methods=["GET", "POST"])
 @login_required

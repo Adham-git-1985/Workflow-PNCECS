@@ -48,12 +48,16 @@ from users.routes import users_bp
 from filters.request_filters import apply_request_filters
 from utils.permissions import get_effective_user
 from filters.request_filters import get_sla_state
-from services.escalation_service import run_escalation_check
+from services.escalation_service import run_escalation_if_needed
+
 from filters.request_filters import get_sla_days, get_escalation_days
 
 # ======================
 # logging
 # ======================
+
+import logging
+from logging.handlers import RotatingFileHandler
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,11 +66,44 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+# =========================
+# Logging (Workflow)
+# =========================
+if not os.path.exists("logs"):
+    os.mkdir("logs")
+
+file_handler = RotatingFileHandler(
+    "logs/workflow.log",
+    maxBytes=1_000_000,   # 1MB
+    backupCount=5
+)
+
+file_handler.setLevel(logging.INFO)
+
+formatter = logging.Formatter(
+    "%(asctime)s | %(levelname)s | %(message)s"
+)
+
+file_handler.setFormatter(formatter)
+
+logging.getLogger().setLevel(logging.INFO)
+logging.getLogger().addHandler(file_handler)
+
+
+ESCALATION_BADGE_CACHE = {
+    "value": None,
+    "last_update": None,
+    "user_id": None
+}
+
+ESCALATION_BADGE_TTL = 30  # seconds
+
 # ======================
 # App Init
 # ======================
 
 app = Flask(__name__)
+app.jinja_env.globals["get_sla_state"] = get_sla_state
 
 # تأكيد وجود instance
 os.makedirs(app.instance_path, exist_ok=True)
@@ -78,6 +115,7 @@ app.config["SECRET_KEY"] = "workflow-very-secret-key-2026"
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config.from_object("config.DevConfig")
+
 
 
 
@@ -302,7 +340,7 @@ def my_requests():
 @app.route("/inbox")
 @login_required
 def inbox():
-    run_escalation_check()
+    run_escalation_if_needed()
     effective_user = get_effective_user()
 
 
@@ -361,11 +399,24 @@ def inbox():
         days=get_sla_days() + get_escalation_days()
     )
 
-    escalation_alerts_count = WorkflowRequest.query.filter(
-        WorkflowRequest.current_role == effective_user.id,
-        WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
-        WorkflowRequest.created_at < esc_deadline
-    ).count()
+
+    if (
+            ESCALATION_BADGE_CACHE["value"] is not None
+            and ESCALATION_BADGE_CACHE["last_update"]
+            and ESCALATION_BADGE_CACHE["user_id"] == effective_user.id
+            and (now - ESCALATION_BADGE_CACHE["last_update"]).seconds < ESCALATION_BADGE_TTL
+    ):
+        escalation_alerts_count = ESCALATION_BADGE_CACHE["value"]
+    else:
+        escalation_alerts_count = WorkflowRequest.query.filter(
+            WorkflowRequest.current_role == effective_user.id,
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.created_at < esc_deadline
+        ).count()
+
+        ESCALATION_BADGE_CACHE["value"] = escalation_alerts_count
+        ESCALATION_BADGE_CACHE["last_update"] = now
+        ESCALATION_BADGE_CACHE["user_id"] = effective_user.id
 
     # 4️⃣ Final list
     requests = filtered_query.order_by(

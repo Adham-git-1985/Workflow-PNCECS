@@ -31,40 +31,42 @@
                 </thead>
                 <tbody>
                 {% for user in users %}
-                    <tr>
-                        <td>{{ user.id }}</td>
-                        <td>
-                            <strong>{{ user.email }}</strong>
-                        </td>
-                        <td>
-                            <span class="badge bg-{{ 'success' if user.role == 'ADMIN' else 'secondary' }}">
-                                {{ user.role }}
-                            </span>
-                        </td>
-                        <td class="text-center">
-                            <form method="POST"
-                                  action="{{ url_for('users.change_role', user_id=user.id) }}"
-                                  class="d-flex justify-content-center gap-2">
-                                <select name="role"
-                                        class="form-select form-select-sm"
-                                        style="max-width:140px">
-                                    <option value="USER"
-                                        {% if user.role == "USER" %}selected{% endif %}>
-                                        User
-                                    </option>
-                                    <option value="ADMIN"
-                                        {% if user.role == "ADMIN" %}selected{% endif %}>
-                                        Admin
-                                    </option>
-                                </select>
+                <tr>
+                <td>{{ user["id"] }}</td>
+                <td>
+                    <strong>{{ user["email"] }}</strong>
+                </td>
+                <td>
+                    <span class="badge bg-{{ 'success' if user["role"] == 'ADMIN' else 'secondary' }}">
+                        {{ user["role"] }}
+                    </span>
+                </td>
+                <td class="text-center">
+                    <form method="POST"
+                          action="{{ url_for('users.change_role', user_id=user["id"]) }}"
+                          class="d-flex justify-content-center gap-2">
 
-                                <button type="submit"
-                                        class="btn btn-sm btn-outline-primary">
-                                    تحديث
-                                </button>
-                            </form>
-                        </td>
-                    </tr>
+                        <select name="role"
+                                class="form-select form-select-sm"
+                                style="max-width:140px">
+                            <option value="USER"
+                                {% if user["role"] == "USER" %}selected{% endif %}>
+                                User
+                            </option>
+                            <option value="ADMIN"
+                                {% if user["role"] == "ADMIN" %}selected{% endif %}>
+                                Admin
+                            </option>
+                        </select>
+
+                        <button type="submit"
+                                class="btn btn-sm btn-outline-primary">
+                            تحديث
+                        </button>
+                    </form>
+                </td>
+            </tr>
+
                 {% endfor %}
                 </tbody>
             </table>

@@ -6,6 +6,10 @@
 
     <!-- Font -->
     <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@500;600;700&family=Tajawal:wght@500;600;700&display=swap" rel="stylesheet">
+
+
 
     <!-- Global CSS -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}">
@@ -69,7 +73,11 @@
     {% if current_user.is_authenticated and current_user.has_role("ADMIN") %}
     <!-- Sidebar -->
     <aside class="admin-sidebar">
-        <h4 class="sidebar-title">الإدارة</h4>
+        <h4 class="sidebar-title">
+    <i class="bi bi-gear"></i>
+    <span class="menu-text">الإدارة</span>
+</h4>
+
 
         <a href="{{ url_for('admin.dashboard') }}"
            class="{% if request.path.startswith('/admin/dashboard') %}active{% endif %}">
