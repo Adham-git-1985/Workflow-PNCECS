@@ -74,15 +74,20 @@ class Approval(db.Model):
 
 
 class AuditLog(db.Model):
+    __tablename__ = "audit_log"
     id = db.Column(db.Integer, primary_key=True)
 
     request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"))
-    user_id = db.Column(db.Integer, db.ForeignKey("user.id"), nullable=True, index=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user.id"),
+        nullable=True
+    )
 
-    action = db.Column(db.String(50), index=True)
+    action = db.Column(db.String(100), nullable=False)
     old_status = db.Column(db.String(50))
     new_status = db.Column(db.String(50))
-    note = db.Column(db.Text)
+    action = db.Column(db.String(100), nullable=False)
 
     created_at = db.Column(
         db.DateTime,
@@ -93,6 +98,8 @@ class AuditLog(db.Model):
 
     user = db.relationship("User")
     request = db.relationship("WorkflowRequest")
+    target_type = db.Column(db.String(50))
+    target_id = db.Column(db.Integer)
 
 
 class SystemSetting(db.Model):

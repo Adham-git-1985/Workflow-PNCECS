@@ -12,11 +12,11 @@ def emit_event(
     notify_role=None,
     notif_type="INFO"
 ):
-    # 1️⃣ Audit
+    # 1️⃣ Audit Log
     db.session.add(AuditLog(
         user_id=actor_id,
         action=action,
-        description=message,
+        note=message,
         target_type=target_type,
         target_id=target_id
     ))
@@ -37,6 +37,7 @@ def emit_event(
                 message=message,
                 type=notif_type
             ))
+
 
     for n in notifications:
         db.session.add(n)

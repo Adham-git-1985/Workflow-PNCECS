@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<h3 class="mb-4">🚨 Escalated Requests</h3>
+
+<table class="table table-striped">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Title</th>
+      <th>Assignee</th>
+      <th>Created</th>
+      <th>SLA</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for req in requests %}
+    <tr class="table-danger">
+      <td>{{ req.id }}</td>
+      <td>{{ req.title }}</td>
+      <td>{{ req.current_assignee.name }}</td>
+      <td>{{ req.created_at.strftime("%Y-%m-%d") }}</td>
+      <td>
+        <span class="badge bg-danger">Escalated</span>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

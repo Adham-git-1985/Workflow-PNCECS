@@ -138,9 +138,12 @@ def system_timeline():
     if user_id:
         query = query.filter(AuditLog.user_id == user_id)
 
-    logs = query.order_by(
-        AuditLog.created_at.desc()
-    ).limit(200).all()
+    logs = (
+        AuditLog.query
+            .order_by(AuditLog.created_at.desc())
+            .limit(200)
+            .all()
+    )
 
     users = User.query.all()
 

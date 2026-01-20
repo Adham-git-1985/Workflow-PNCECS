@@ -7,7 +7,7 @@ from datetime import datetime
 from flask import (
     send_file, abort, render_template,
     request, redirect, url_for,
-    flash, jsonify, Response
+    flash, jsonify, Response, current_app
 )
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
@@ -26,9 +26,6 @@ from . import workflow_bp
 from extensions import db
 from permissions import roles_required
 from utils.permissions import can_access_request
-
-from utils.permissions import can_access_request
-
 from archive.routes import allowed_file, BASE_STORAGE
 
 from models import (
@@ -40,16 +37,13 @@ from models import (
 )
 
 from utils.events import emit_event
-from flask import current_app
+
 
 @workflow_bp.route("/<int:request_id>/pdf")
 @login_required
 def request_pdf(request_id):
-
-    # ===== Load Request =====
     req = WorkflowRequest.query.get_or_404(request_id)
 
-    # ===== Security =====
     if not can_access_request(req, current_user):
         abort(403)
 
@@ -78,7 +72,7 @@ def request_pdf(request_id):
         name="Header",
         fontSize=14,
         leading=18,
-        alignment=1,  # center
+        alignment=1,
         spaceAfter=20
     ))
 
@@ -90,7 +84,6 @@ def request_pdf(request_id):
 
     elements = []
 
-    # ===== Header =====
     elements.append(
         Paragraph("Workflow Request Report", styles["Header"])
     )
@@ -112,10 +105,8 @@ def request_pdf(request_id):
         )
     )
 
-    Spacer(1, 20)
     elements.append(Spacer(1, 20))
 
-    # ===== Attachments =====
     elements.append(
         Paragraph("<b>Attachments</b>", styles["Heading2"])
     )
@@ -136,8 +127,8 @@ def request_pdf(request_id):
                 att_table,
                 colWidths=[30, 180, 80, 70, 80],
                 style=TableStyle([
-                    ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                    ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
                 ])
             )
         )
@@ -148,7 +139,6 @@ def request_pdf(request_id):
 
     elements.append(PageBreak())
 
-    # ===== Audit Log =====
     elements.append(
         Paragraph("<b>Workflow Timeline</b>", styles["Heading2"])
     )
@@ -168,9 +158,9 @@ def request_pdf(request_id):
                 log_table,
                 colWidths=[90, 90, 100, 160],
                 style=TableStyle([
-                    ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-                    ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-                    ("VALIGN", (0,0), (-1,-1), "TOP")
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP")
                 ])
             )
         )
@@ -179,26 +169,20 @@ def request_pdf(request_id):
             Paragraph("No workflow actions recorded.", styles["Normal"])
         )
 
-    # ===== Signed Stamp =====
-    signed_attachments = [
-        f for f in attachments if f.is_signed
-    ]
+    signed_attachments = [f for f in attachments if f.is_signed]
 
     if signed_attachments:
         elements.append(Spacer(1, 20))
         elements.append(
             Paragraph(
-                f"<b>Signed:</b> "
-                f"Approved attachments signed by "
-                f"{current_user.name} "
-                f"on {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+                f"<b>Signed:</b> Approved attachments signed by "
+                f"{current_user.email} on "
+                f"{datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
                 styles["Normal"]
             )
         )
 
-    # ===== Build PDF =====
     doc.build(elements)
-
     buffer.seek(0)
 
     return send_file(
@@ -208,13 +192,12 @@ def request_pdf(request_id):
         mimetype="application/pdf"
     )
 
+
 @workflow_bp.route("/<int:request_id>/upload-attachment", methods=["POST"])
 @login_required
 def upload_attachment(request_id):
-
     req = WorkflowRequest.query.get_or_404(request_id)
 
-    # تحقق صلاحية المستخدم على الطلب
     if not can_access_request(req, current_user):
         abort(403)
 
@@ -224,7 +207,6 @@ def upload_attachment(request_id):
     if not file or file.filename == "":
         abort(400)
 
-    # reuse منطق الرفع من الأرشفة
     original_name = secure_filename(file.filename)
 
     if not original_name or not allowed_file(original_name):
@@ -251,7 +233,6 @@ def upload_attachment(request_id):
 
     db.session.add(attachment)
 
-    # Emit Event (Notification + Audit)
     emit_event(
         actor_id=current_user.id,
         action="WORKFLOW_ATTACHMENT_UPLOADED",
@@ -260,21 +241,20 @@ def upload_attachment(request_id):
         target_id=req.id,
         notify_role="ADMIN"
     )
+
     db.session.commit()
-
-
 
     flash("Attachment uploaded successfully", "success")
     return redirect(url_for("workflow.view_request", request_id=req.id))
 
+
 @workflow_bp.route("/attachment/<int:file_id>/download")
 @login_required
 def download_workflow_attachment(file_id):
-
     file = ArchivedFile.query.filter(
         ArchivedFile.id == file_id,
         ArchivedFile.workflow_request_id.isnot(None),
-        ArchivedFile.is_deleted == False
+        ArchivedFile.is_deleted.is_(False)
     ).first_or_404()
 
     req = file.workflow_request
@@ -287,6 +267,7 @@ def download_workflow_attachment(file_id):
         as_attachment=True,
         download_name=file.original_name
     )
+
 
 @workflow_bp.route("/notifications")
 @login_required
@@ -313,6 +294,7 @@ def unread_notifications_count():
 
     return jsonify({"count": count})
 
+
 @workflow_bp.route("/notifications/mark-all-read", methods=["POST"])
 @login_required
 def mark_all_notifications_read():
@@ -325,18 +307,19 @@ def mark_all_notifications_read():
     flash("تم تعليم جميع الإشعارات كمقروءة", "success")
     return redirect(url_for("workflow.notifications"))
 
+
 @workflow_bp.route("/notifications/stream")
 @login_required
 def notifications_stream():
-    def event_stream():
+    def event_stream(user_id):
         last_count = None
 
         while True:
-            with current_app.app_context():
-                count = Notification.query.filter_by(
-                    user_id=current_user.id,
-                    is_read=False
-                ).count()
+            count = (
+                Notification.query
+                .filter_by(user_id=user_id, is_read=False)
+                .count()
+            )
 
             if count != last_count:
                 yield f"data: {count}\n\n"
@@ -344,17 +327,19 @@ def notifications_stream():
 
             time.sleep(5)
 
-    return Response(event_stream(), mimetype="text/event-stream")
+    return Response(
+        event_stream(current_user.id),
+        mimetype="text/event-stream"
+    )
+
 
 @workflow_bp.route("/notifications/dashboard")
 @login_required
 @roles_required("ADMIN")
 def notifications_dashboard():
-
     total = Notification.query.count()
     unread = Notification.query.filter_by(is_read=False).count()
 
-    # أكثر المستخدمين استلامًا للإشعارات
     top_users = (
         db.session.query(
             User.email,
@@ -367,7 +352,6 @@ def notifications_dashboard():
         .all()
     )
 
-    # توزيع الإشعارات حسب النوع
     by_type = (
         db.session.query(
             Notification.type,
@@ -384,6 +368,7 @@ def notifications_dashboard():
         top_users=top_users,
         by_type=by_type
     )
+
 
 @workflow_bp.route("/notifications/mark-read/<int:id>", methods=["POST"])
 @login_required

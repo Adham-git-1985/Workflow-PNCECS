@@ -1,44 +1,70 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<h3>🧭 System Activity Timeline</h3>
+<h3 class="mb-4">🧭 System Activity Timeline</h3>
 
-<form method="get" class="row g-2 mb-3">
-    <div class="col-md-4">
-        <select name="user_id" class="form-control">
-            <option value="">All Users</option>
-            {% for u in users %}
-                <option value="{{ u.id }}">{{ u.email }}</option>
-            {% endfor %}
-        </select>
-    </div>
+<ul class="timeline">
 
-    <div class="col-md-4">
-        <input name="action"
-               class="form-control"
-               placeholder="Action (e.g. REQUEST_CREATED)">
-    </div>
-
-    <div class="col-md-2">
-        <button class="btn btn-secondary w-100">
-            Filter
-        </button>
-    </div>
-</form>
-
-<ul class="list-group">
 {% for log in logs %}
-<li class="list-group-item">
-    <strong>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</strong><br>
-    👤 {{ log.user.email if log.user else "System" }}<br>
-    ⚙️ {{ log.action }}<br>
-    📌 {{ log.description }}<br>
+<li class="timeline-item">
 
-    {% if log.target_type %}
-        🔗 {{ log.target_type }} #{{ log.target_id }}
-    {% endif %}
+    <!-- الوقت -->
+    <div class="timeline-time">
+        {{ log.created_at.strftime("%Y-%m-%d") }}<br>
+        <small>{{ log.created_at.strftime("%H:%M") }}</small>
+    </div>
+
+    <!-- المحتوى -->
+    <div class="timeline-content">
+
+        <!-- العنوان -->
+        <div class="timeline-header">
+            <span class="badge badge-action">
+                {{ log.action }}
+            </span>
+        </div>
+
+        <!-- الرسالة -->
+        <p class="mt-2">
+            {{ log.note or "-" }}
+        </p>
+
+        <!-- تفاصيل -->
+        <div class="timeline-meta">
+
+            {% if log.user %}
+                👤
+                <strong>{{ log.user.email }}</strong>
+            {% else %}
+                🤖 System
+            {% endif %}
+
+            {% if log.target_type %}
+                &nbsp;|&nbsp;
+
+                {% if log.target_type == "WorkflowRequest" %}
+                    📄
+                    <a href="{{ url_for('review_request', request_id=log.target_id) }}">
+                        Request #{{ log.target_id }}
+                    </a>
+
+                {% elif log.target_type == "ArchivedFile" %}
+                    🗂️
+                    <a href="{{ url_for('archive.my_files') }}">
+                        Archived File #{{ log.target_id }}
+                    </a>
+
+                {% elif log.target_type == "User" %}
+                    👤
+                    User #{{ log.target_id }}
+                {% endif %}
+            {% endif %}
+        </div>
+
+    </div>
 </li>
 {% endfor %}
+
 </ul>
 
 {% endblock %}

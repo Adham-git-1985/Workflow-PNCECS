@@ -16,6 +16,7 @@ import os
 from flask import session
 import logging
 
+
 from utils.events import emit_event
 
 
@@ -44,6 +45,11 @@ from audit import audit_bp
 from users import users_bp
 
 
+from filters.request_filters import apply_request_filters
+from utils.permissions import get_effective_user
+from filters.request_filters import get_sla_state
+from services.escalation_service import run_escalation_check
+from filters.request_filters import get_sla_days, get_escalation_days
 
 # ======================
 # logging
@@ -282,6 +288,7 @@ def my_requests():
         WorkflowRequest.id.desc()
     ).all()
 
+
     return render_template(
         "my_requests.html",
         requests=requests,
@@ -295,12 +302,85 @@ def my_requests():
 @app.route("/inbox")
 @login_required
 def inbox():
-    requests = WorkflowRequest.query.filter(
-        WorkflowRequest.current_role == current_user.role,
-        WorkflowRequest.status.notin_(FINAL_STATUSES)
+    run_escalation_check()
+    effective_user = get_effective_user(current_user)
+
+    # 1️⃣ Base query (delegation-aware)
+    base_query = WorkflowRequest.query.filter(
+        WorkflowRequest.current_assignee_id == effective_user.id
+    )
+
+    # 2️⃣ Apply advanced filters
+    filtered_query = apply_request_filters(
+        base_query,
+        request.args
+    )
+
+    # 3️⃣ Counters (من نفس filtered_query)
+    counters = {
+        "total": filtered_query.count(),
+        "approved": filtered_query.filter(
+            WorkflowRequest.status == "APPROVED"
+        ).count(),
+        "rejected": filtered_query.filter(
+            WorkflowRequest.status == "REJECTED"
+        ).count(),
+        "in_progress": filtered_query.filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"])
+        ).count(),
+    }
+
+    sla_days = get_sla_days()
+    esc_days = get_escalation_days()
+
+    now = datetime.utcnow()
+    sla_deadline = now - timedelta(days=sla_days)
+    esc_deadline = now - timedelta(days=sla_days + esc_days)
+
+    sla_counters = {
+        "on_track": filtered_query.filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.created_at >= sla_deadline
+        ).count(),
+
+        "breached": filtered_query.filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.created_at < sla_deadline,
+            WorkflowRequest.created_at >= esc_deadline
+        ).count(),
+
+        "escalated": filtered_query.filter(
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.created_at < esc_deadline
+        ).count(),
+    }
+
+    now = datetime.utcnow()
+    esc_deadline = now - timedelta(
+        days=get_sla_days() + get_escalation_days()
+    )
+
+    escalation_alerts_count = WorkflowRequest.query.filter(
+        WorkflowRequest.current_assignee_id == effective_user.id,
+        WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+        WorkflowRequest.created_at < esc_deadline
+    ).count()
+
+    # 4️⃣ Final list
+    requests = filtered_query.order_by(
+        WorkflowRequest.created_at.desc()
     ).all()
 
-    return render_template("inbox.html", requests=requests)
+    return render_template(
+        "inbox.html",
+        requests=requests,
+        counters=counters,
+        sla_counters=sla_counters,
+        escalation_alerts_count=escalation_alerts_count,
+        is_admin=False,
+        get_sla_state=get_sla_state
+    )
+
 
 # ======================
 # Review / Actions

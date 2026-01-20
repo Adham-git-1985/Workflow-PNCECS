@@ -8,7 +8,8 @@ from models import WorkflowRequest, SystemSetting, AuditLog
 from extensions import db
 from sqlalchemy import func
 from datetime import datetime, timedelta
-
+from filters.request_filters import apply_request_filters
+from filters.request_filters import get_sla_days, get_escalation_days
 
 # =========================
 # Blueprint
@@ -225,4 +226,48 @@ def manage_permissions():
         data=data,
         roles=roles,
         permissions=permissions
+    )
+
+@admin_bp.route("/requests")
+@login_required
+@roles_required("ADMIN")
+def admin_requests():
+
+    base_query = WorkflowRequest.query
+
+    query = apply_request_filters(
+        base_query,
+        request.args
+    )
+
+    requests = query.order_by(
+        WorkflowRequest.created_at.desc()
+    ).all()
+
+    return render_template(
+        "admin/requests.html",
+        requests=requests,
+        is_admin=True
+    )
+
+@admin_bp.route("/escalations")
+@login_required
+@roles_required("ADMIN")
+def escalations():
+
+    now = datetime.utcnow()
+    esc_deadline = now - timedelta(
+        days=get_sla_days() + get_escalation_days()
+    )
+
+    escalated_requests = WorkflowRequest.query.filter(
+        WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+        WorkflowRequest.created_at < esc_deadline
+    ).order_by(
+        WorkflowRequest.created_at.asc()
+    ).all()
+
+    return render_template(
+        "admin/escalations.html",
+        requests=escalated_requests
     )
