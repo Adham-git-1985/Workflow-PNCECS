@@ -43,7 +43,7 @@
                             <form method="POST"
                                   action="{{ url_for('delegation.cancel_delegation', id=d.id) }}"
                                   onsubmit="return confirm('هل أنت متأكد من إلغاء هذا التفويض؟')">
-                                {{ csrf_token() }}
+
                                 <button type="submit"
                                         class="btn btn-sm btn-outline-danger">
                                     إلغاء

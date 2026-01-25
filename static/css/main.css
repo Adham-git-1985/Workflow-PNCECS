@@ -1,14 +1,36 @@
+/* =========================
+   Global
+========================= */
+
+html {
+    height: 100%;
+}
+
 body {
     font-family: "Cairo", sans-serif;
     background-color: #f8f9fa;
     margin: 0;
+    padding-top: 70px; /* ارتفاع الهيدر */
+    min-height: 100%;
+    overflow-y: auto;
 }
 
-/* Header */
+/* =========================
+   Bootstrap handles .container
+========================= */
+
+/* =========================
+   Header
+========================= */
+
 .main-header {
     background: linear-gradient(90deg, #0d3b66, #144f85);
     color: #fff;
     padding: 12px 0;
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
 }
 
 .main-header .container {
@@ -23,7 +45,10 @@ body {
     font-weight: 700;
 }
 
-/* Navigation */
+/* =========================
+   Navigation
+========================= */
+
 .main-nav a {
     color: #fff;
     margin-right: 15px;
@@ -31,11 +56,10 @@ body {
     font-weight: 600;
     padding: 6px 8px;
     border-radius: 6px;
-    transition: background 0.2s ease;
 }
 
 .main-nav a:hover {
-    background: rgba(255,255,255,.15);
+    background: rgba(255, 255, 255, 0.15);
 }
 
 .main-nav a.active {
@@ -43,26 +67,32 @@ body {
     color: #000;
 }
 
-/* Container */
-.container {
-    width: 95%;
-    max-width: 1200px;
-    margin: auto;
-}
+/* =========================
+   Layout
+========================= */
 
-/* Layout */
 .admin-wrapper {
     display: flex;
-    gap: 20px;
-    margin-top: 20px;
+    min-height: calc(100vh - 70px); /* الهيدر */
+    align-items: flex-start; /* مهم جدًا */
 }
 
-/* Sidebar */
+
+/* =========================
+   Sidebar
+========================= */
+
+.admin-sidebar {
+    flex: 0 0 240px;
+    background: #0d3b66;
+    padding: 15px;
+}
 
 .sidebar-title {
     margin: 0 0 15px 0;
     font-size: 15px;
-    border-bottom: 1px solid rgba(255,255,255,.25);
+    color: #fff;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
     padding-bottom: 8px;
 }
 
@@ -74,42 +104,44 @@ body {
     border-radius: 6px;
     margin-bottom: 6px;
     font-size: 14px;
-    transition: none !important;
+    font-weight: 600;
 }
 
-.admin-sidebar span,
-.admin-sidebar .menu-text {
-    display: inline !important;
-    opacity: 1 !important;
-    white-space: nowrap;
-}
-
-.admin-sidebar a:hover {
-    background: rgba(255,255,255,.15);
-}
-
+.admin-sidebar a:hover,
 .admin-sidebar a.active {
-    background: #f4a261;
+    background-color: #f4a261;
     color: #000;
-    font-weight: 700;
 }
 
-/* Content */
+/* =========================
+   Content
+========================= */
+
 .admin-content {
     flex: 1;
     background: #fff;
     padding: 22px;
     border-radius: 12px;
-    box-shadow: 0 4px 16px rgba(0,0,0,.06);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    max-height: none !important;
 }
 
-/* Cards */
+/* =========================
+   Cards
+========================= */
+
 .card {
     border-radius: 14px;
-    box-shadow: 0 4px 14px rgba(0,0,0,.05);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
 }
 
-/* Tables */
+/* =========================
+   Tables
+========================= */
+
 table {
     width: 100%;
     border-collapse: collapse;
@@ -121,7 +153,8 @@ th {
     font-weight: 600;
 }
 
-th, td {
+th,
+td {
     padding: 10px;
     border: 1px solid #ddd;
     text-align: center;
@@ -131,8 +164,12 @@ th, td {
     background-color: #eef2f7;
 }
 
-/* Buttons */
-button, .btn {
+/* =========================
+   Buttons
+========================= */
+
+button,
+.btn {
     background: #f4a261;
     color: #000;
     border: none;
@@ -141,10 +178,10 @@ button, .btn {
     cursor: pointer;
     font-size: 14px;
     font-weight: 600;
-    transition: opacity 0.2s ease, transform 0.1s ease;
 }
 
-button:hover, .btn:hover {
+button:hover,
+.btn:hover {
     opacity: 0.9;
     transform: translateY(-1px);
 }
@@ -172,18 +209,20 @@ button:hover, .btn:hover {
     color: #000;
 }
 
-/* Counters */
+/* =========================
+   Counters
+========================= */
+
 .counter {
     flex: 1;
     text-align: center;
     padding: 16px;
     border-radius: 10px;
     color: #fff;
-    transition: transform 0.15s ease;
 }
 
-.counter:hover {
-    transform: translateY(-3px);
+.counter strong {
+    font-size: 22px;
 }
 
 .counter-total { background: #6c757d; }
@@ -192,11 +231,10 @@ button:hover, .btn:hover {
 .counter-approved { background: #2a9d8f; }
 .counter-rejected { background: #e63946; }
 
-.counter strong {
-    font-size: 22px;
-}
+/* =========================
+   Breadcrumb
+========================= */
 
-/* Breadcrumb */
 .breadcrumb {
     margin-bottom: 15px;
     font-size: 14px;
@@ -222,7 +260,10 @@ button:hover, .btn:hover {
     font-weight: 600;
 }
 
-/* Timeline */
+/* =========================
+   Timeline
+========================= */
+
 .timeline {
     list-style: none;
     padding: 0;
@@ -250,10 +291,6 @@ button:hover, .btn:hover {
     border-left: 4px solid #0d6efd;
 }
 
-.timeline-header {
-    margin-bottom: 6px;
-}
-
 .badge-action {
     background-color: #0d6efd;
     color: #fff;
@@ -268,18 +305,28 @@ button:hover, .btn:hover {
     margin-top: 10px;
 }
 
-.timeline-meta a {
-    text-decoration: none;
-    font-weight: bold;
-}
+/* =========================
+   Badges
+========================= */
 
-/* Badges */
 .badge {
     font-size: 0.85rem;
     border-radius: 6px;
 }
 
-/* Footer */
+/* =========================
+   Charts
+========================= */
+
+.chart-wrapper {
+    width: 350px;
+    height: 350px;
+}
+
+/* =========================
+   Footer
+========================= */
+
 .main-footer {
     margin-top: 40px;
     padding: 12px;
@@ -289,51 +336,142 @@ button:hover, .btn:hover {
     color: #555;
 }
 
-/* Links */
-a {
-    text-decoration: none;
+
+
+canvas {
+    display: block;
+    max-height: 350px;
 }
 
-.chart-wrapper {
-    width: 350px;
-    height: 350px;
+.timeline {
+    list-style: none;
+    padding-right: 0;
+    position: relative;
 }
 
-.admin-sidebar a {
-    color: #212529 !important;
+.timeline li {
+    position: relative;
+    padding-right: 25px;
+    margin-bottom: 20px;
+}
+
+.timeline li::before {
+    content: "";
+    position: absolute;
+    right: 6px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    background: #0d6efd;
+    border-radius: 50%;
+}
+
+.timeline li::after {
+    content: "";
+    position: absolute;
+    right: 10px;
+    top: 16px;
+    bottom: -20px;
+    width: 2px;
+    background: #dee2e6;
+}
+
+
+/* ===============================
+   Archive – File Details
+================================ */
+
+.file-header h4 {
     font-weight: 600;
 }
 
-.admin-sidebar a:hover,
-.admin-sidebar a.active {
-    background-color: #e9ecef;
-    color: #000 !important;
+.timeline {
+    list-style: none;
+    padding-right: 0;
+    margin: 0;
+    position: relative;
 }
 
-body {
-    overflow-y: scroll;
+.timeline li {
+    position: relative;
+    padding-right: 30px;
+    margin-bottom: 20px;
 }
 
-/* ===== GLOBAL SCROLL & LAYOUT STABILITY FIX ===== */
-html, body {
-    height: auto !important;
-    min-height: 100% !important;
-    overflow-y: scroll !important;
+.timeline li::before {
+    content: "";
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    width: 10px;
+    height: 10px;
+    background: #0d6efd;
+    border-radius: 50%;
 }
 
-/* Prevent dashboard from forcing height */
-.admin-dashboard,
-.admin-dashboard *,
-.container-fluid,
-.container {
-    height: auto !important;
-    min-height: 0 !important;
-    overflow: visible !important;
+.timeline li::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    top: 18px;
+    bottom: -20px;
+    width: 2px;
+    background: #dee2e6;
 }
 
-body {
-    padding-top: 70px; /* حسب ارتفاع الهيدر */
+.timeline li:last-child::after {
+    display: none;
 }
 
 
+/* =========================
+   Brand + User (Header)
+========================= */
 
+.brand-logo {
+    height: 56px;
+    width: auto;
+    display: block;
+}
+
+.brand-title {
+    font-weight: 800;
+    font-size: 18px;
+    line-height: 1.2;
+}
+
+
+.brand-subtitle {
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.9;
+    line-height: 1.1;
+}
+
+@media (max-width: 576px) {
+    .brand-logo { height: 46px; }
+    .brand-title { font-size: 16px; }
+    .brand-subtitle { font-size: 11px; }
+}
+
+.user-badge {
+    color: #fff;
+    font-weight: 700;
+}
+
+.user-role {
+    color: rgba(255, 255, 255, 0.85);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* =========================
+   Sidebar User Box
+========================= */
+
+.sidebar-user {
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 10px 12px;
+}

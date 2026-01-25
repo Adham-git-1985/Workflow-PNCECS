@@ -1,26 +1,127 @@
 {% extends "layout.html" %}
 {% block content %}
 
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div class="btn-group" role="group" aria-label="Notifications scope">
+        <a href="{{ url_for('workflow.notifications', scope='inbox') }}"
+           class="btn btn-sm {% if scope == 'inbox' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+            📥 الوارد
+            {% if unread_count %}<span class="badge bg-light text-dark ms-1">{{ unread_count }}</span>{% endif %}
+        </a>
+        <a href="{{ url_for('workflow.notifications', scope='sent') }}"
+           class="btn btn-sm {% if scope == 'sent' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+            📤 متابعة الصادر
+            {% if pending_sent_count %}<span class="badge bg-light text-dark ms-1">{{ pending_sent_count }}</span>{% endif %}
+        </a>
+    </div>
+</div>
+
+<form method="get" class="card card-body mb-4 shadow-sm">
+
+    <input type="hidden" name="scope" value="{{ scope }}">
+
+    <div class="row g-3 align-items-end">
+        <!-- Date from -->
+        <div class="col-md-3">
+            <label class="form-label fw-bold">من تاريخ</label>
+            <input type="date"
+                   name="from"
+                   class="form-control"
+                   value="{{ filters.from or '' }}">
+        </div>
+
+        <!-- Date to -->
+        <div class="col-md-3">
+            <label class="form-label fw-bold">إلى تاريخ</label>
+            <input type="date"
+                   name="to"
+                   class="form-control"
+                   value="{{ filters.to or '' }}">
+        </div>
+
+        <!-- Type -->
+        <div class="col-md-3">
+            <label class="form-label fw-bold">نوع الإشعار</label>
+            <select name="type" class="form-select">
+                <option value="">الكل</option>
+                <option value="INFO" {% if filters.type == "INFO" %}selected{% endif %}>Info</option>
+                <option value="WARNING" {% if filters.type == "WARNING" %}selected{% endif %}>Warning</option>
+                <option value="CRITICAL" {% if filters.type == "CRITICAL" %}selected{% endif %}>Critical</option>
+            </select>
+        </div>
+
+        <!-- Read state -->
+        <div class="col-md-3">
+            <label class="form-label fw-bold">الحالة</label>
+            <select name="read" class="form-select">
+                <option value="">الكل</option>
+                <option value="unread" {% if filters.read == "unread" %}selected{% endif %}>غير مقروء</option>
+                <option value="read" {% if filters.read == "read" %}selected{% endif %}>مقروء</option>
+            </select>
+        </div>
+
+        <!-- Role -->
+        <div class="col-md-3">
+            <label class="form-label fw-bold">الدور</label>
+            <input type="text"
+                   name="role"
+                   class="form-control"
+                   placeholder="ADMIN / FINANCE ..."
+                   value="{{ filters.role or '' }}">
+        </div>
+
+        <!-- Buttons -->
+        <div class="col-md-3 d-flex gap-2">
+            <button type="submit" class="btn btn-primary w-100">
+                🔍 تطبيق
+            </button>
+
+            <a href="{{ url_for('workflow.notifications', scope=scope) }}"
+               class="btn btn-outline-secondary w-100">
+                ✖ إعادة ضبط
+            </a>
+        </div>
+
+    </div>
+</form>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h3 class="mb-1">🔔 الإشعارات</h3>
-        <small class="text-muted">آخر التحديثات والتنبيهات الخاصة بك</small>
+        <h3 class="mb-1">🔔 {% if scope == 'sent' %}متابعة الإشعارات الصادرة{% else %}الإشعارات{% endif %}</h3>
+        <small class="text-muted">
+            {% if scope == 'sent' %}
+                متابعة حالة القراءة لدى المستلمين
+                {% if pending_sent_count %}
+                    · <strong>{{ pending_sent_count }}</strong> بانتظار القراءة
+                {% endif %}
+            {% else %}
+                آخر التحديثات والتنبيهات الخاصة بك
+                {% if unread_count %}
+                    · <strong id="unread-count">{{ unread_count }}</strong> غير مقروء
+                {% endif %}
+            {% endif %}
+        </small>
     </div>
 
+    {% if scope == 'inbox' and unread_count %}
     <form method="post"
           action="{{ url_for('workflow.mark_all_notifications_read') }}">
         <button class="btn btn-sm btn-outline-secondary">
             تعليم الكل كمقروء
         </button>
     </form>
+    {% endif %}
+
 </div>
 
 {% if notifications %}
+
 <ul class="list-group shadow-sm">
 
 {% for n in notifications %}
-<li class="list-group-item d-flex justify-content-between align-items-start
-           {% if not n.is_read %}list-group-item-warning{% endif %}">
+<li id="notification-{{ n.id }}"
+    class="list-group-item d-flex justify-content-between align-items-start
+           {% if not n.is_read %}bg-light{% endif %}">
 
     <div class="me-3">
 
@@ -48,13 +149,23 @@
     </div>
 
     <div class="text-end">
-        {% if not n.is_read %}
-            <button class="btn btn-sm btn-outline-primary"
-                    onclick="markRead({{ n.id }})">
-                تعليم كمقروء
-            </button>
+        {% if scope == 'sent' %}
+            {% if n.is_read %}
+                <span class="badge bg-success">تمت القراءة</span>
+            {% else %}
+                <span class="badge bg-warning text-dark">غير مقروء عند المستلم</span>
+            {% endif %}
         {% else %}
-            <span class="badge bg-success">مقروء</span>
+            {% if not n.is_read %}
+                <button type="button"
+                        class="btn btn-sm btn-outline-primary"
+                        aria-label="تعليم الإشعار كمقروء"
+                        onclick="markRead({{ n.id }}, this)">
+                    تعليم كمقروء
+                </button>
+            {% else %}
+                <span class="badge bg-success">مقروء</span>
+            {% endif %}
         {% endif %}
     </div>
 
@@ -62,18 +173,98 @@
 {% endfor %}
 </ul>
 
+<!-- Pagination -->
+<nav class="mt-4 d-flex justify-content-center">
+    <ul class="pagination pagination-sm">
+
+        {% if pagination.has_prev %}
+        <li class="page-item">
+            <a class="page-link"
+               href="{{ url_for(
+                'workflow.notifications',
+                page=pagination.prev_num,
+                type=filters.type,
+                read=filters.read,
+                role=filters.role,
+                from=filters.from,
+                to=filters.to,
+                scope=filters.scope
+            ) }}">
+                «
+            </a>
+        </li>
+        {% endif %}
+
+        <li class="page-item disabled">
+            <span class="page-link">
+                صفحة {{ pagination.page }} من {{ pagination.pages }}
+            </span>
+        </li>
+
+        {% if pagination.has_next %}
+        <li class="page-item">
+            <a class="page-link"
+               href="{{ url_for(
+                'workflow.notifications',
+                page=pagination.next_num,
+                type=filters.type,
+                read=filters.read,
+                role=filters.role,
+                from=filters.from,
+                to=filters.to,
+                scope=filters.scope
+            ) }}">
+                »
+            </a>
+        </li>
+        {% endif %}
+
+    </ul>
+</nav>
+
 {% else %}
-<div class="alert alert-light text-center text-muted">
-    لا توجد إشعارات حالياً
+<div class="alert alert-light text-center text-muted py-4">
+    🔕 لا توجد إشعارات حالياً
 </div>
 {% endif %}
 
 <script>
-function markRead(id) {
-    fetch("{{ url_for('workflow.mark_notification_read', id=0) }}".replace("0", id), {
-        method: "POST"
-    }).then(() => location.reload());
-}
+  const markReadUrlTemplate = "{{ url_for('workflow.mark_notification_read', notif_id=0) }}";
+
+  function markRead(id, btn) {
+      if (btn) {
+          btn.disabled = true;
+          btn.innerText = "...";
+      }
+
+      const url = markReadUrlTemplate.replace("0", id);
+
+      fetch(url, { method: "POST" })
+        .then(response => {
+            if (!response.ok) throw new Error("Request failed");
+        })
+        .then(() => {
+            const el = document.getElementById("notification-" + id);
+            if (el) {
+                el.classList.remove("bg-light");
+                const right = el.querySelector(".text-end");
+                if (right) right.innerHTML = '<span class="badge bg-success">مقروء</span>';
+            }
+
+            const counter = document.getElementById("unread-count");
+            if (counter) {
+                const val = parseInt(counter.innerText, 10) - 1;
+                counter.innerText = Math.max(val, 0);
+            }
+        })
+        .catch(() => {
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = "تعليم كمقروء";
+            }
+            alert("حدث خطأ أثناء تحديث الإشعار");
+        });
+  }
 </script>
 
 {% endblock %}

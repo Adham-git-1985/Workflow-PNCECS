@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% block title %}رد على رسالة | المراسلات{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h3 class="mb-1">↩️ رد على رسالة</h3>
+      <small class="text-muted">سيتم إرسال الرد إلى مرسل الرسالة الأصلية</small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('messages.inbox') }}" class="btn btn-outline-secondary">📥 الوارد</a>
+      <a href="{{ url_for('messages.compose') }}" class="btn btn-primary">✉️ رسالة جديدة</a>
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-header bg-light">
+          <strong>الرسالة الأصلية</strong>
+        </div>
+        <div class="card-body">
+          <div class="mb-2"><span class="text-muted small">من:</span> <strong>{{ original.sender.email }}</strong></div>
+          <div class="mb-2"><span class="text-muted small">الموضوع:</span> <strong>{{ original.subject or 'بدون موضوع' }}</strong></div>
+          <div class="mb-2"><span class="text-muted small">التاريخ:</span> {{ original.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+          <hr>
+          <div style="white-space:pre-wrap; line-height:1.8">{{ original.body }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-header bg-light">
+          <strong>الرد</strong>
+        </div>
+        <div class="card-body">
+          <form method="post">
+            <div class="mb-3">
+              <label class="form-label">الموضوع</label>
+              <input type="text" name="subject" class="form-control" value="{{ default_subject }}">
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">نص الرد</label>
+              <textarea name="body" class="form-control" rows="8" placeholder="اكتب ردك هنا..."></textarea>
+            </div>
+
+            <div class="d-flex gap-2">
+              <button type="submit" class="btn btn-success">إرسال الرد</button>
+              <a href="{{ url_for('messages.view_message', message_id=original.id) }}" class="btn btn-outline-secondary">رجوع للرسالة</a>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

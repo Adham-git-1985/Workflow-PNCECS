@@ -1,0 +1,192 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">🧩 تعديل المسار #{{ t.id }}</h3>
+    <small class="text-muted">{{ t.name }}</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_list') }}">رجوع</a>
+    <form method="post" action="{{ url_for('workflow.templates_delete', template_id=t.id) }}"
+          onsubmit="return confirm('حذف المسار بالكامل؟');">
+      <button class="btn btn-outline-danger">حذف</button>
+    </form>
+  </div>
+</div>
+
+{# users map for display #}
+{% set users_map = {} %}
+{% if users %}
+  {% for u in users %}
+    {% set _ = users_map.update({u.id: u}) %}
+  {% endfor %}
+{% endif %}
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">اسم المسار</label>
+          <input class="form-control" name="name" value="{{ t.name }}" required>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">SLA الافتراضي (أيام)</label>
+          <input class="form-control" name="sla_days_default" type="number" min="1"
+                 value="{{ t.sla_days_default if t.sla_days_default is not none else '' }}">
+        </div>
+
+        <div class="col-md-3 d-flex align-items-end">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active"
+                   {% if t.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Active</label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary">حفظ بيانات المسار</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header bg-white"><strong>📌 خطوات المسار</strong></div>
+  <div class="card-body">
+    {% if steps %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Step</th>
+            <th>Kind</th>
+            <th>Target</th>
+            <th>SLA</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in steps %}
+          <tr>
+            <td>{{ s.step_order }}</td>
+            <td>{{ s.approver_kind }}</td>
+            <td>
+              {% if s.approver_kind == "USER" %}
+                USER:
+                {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
+                  {{ users_map.get(s.approver_user_id).email }}
+                {% else %}
+                  {{ s.approver_user_id }}
+                {% endif %}
+              {% elif s.approver_kind == "ROLE" %}
+                ROLE: {{ s.approver_role }}
+              {% else %}
+                DEPT: {{ s.approver_department_id }}
+              {% endif %}
+            </td>
+            <td>{{ s.sla_days if s.sla_days is not none else "-" }}</td>
+            <td class="text-end d-flex gap-2 justify-content-end">
+              <a class="btn btn-sm btn-outline-primary"
+                 href="{{ url_for('workflow.templates_steps_edit', step_id=s.id) }}">تعديل</a>
+
+              <form method="post" action="{{ url_for('workflow.templates_steps_delete', step_id=s.id) }}"
+                    onsubmit="return confirm('حذف الخطوة؟');">
+                <button class="btn btn-sm btn-outline-danger">حذف</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-muted">لا توجد خطوات بعد.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white"><strong>➕ إضافة خطوة</strong></div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('workflow.templates_steps_add', template_id=t.id) }}">
+      <div class="row g-3">
+
+        <div class="col-md-3">
+          <label class="form-label">Approver Kind</label>
+          <select class="form-select" name="approver_kind" id="kind">
+            <option value="ROLE">ROLE</option>
+            <option value="USER">USER</option>
+            <option value="DEPARTMENT">DEPARTMENT</option>
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_role">
+          <label class="form-label">Role</label>
+          <input class="form-control" name="approver_role" placeholder="مثال: FINANCE">
+        </div>
+
+        <div class="col-md-3" id="box_user" style="display:none;">
+          <label class="form-label">User</label>
+          <select class="form-select" name="approver_user_id">
+            <option value="">-- اختر --</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.email }} ({{ u.role }})</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_dept" style="display:none;">
+          <label class="form-label">Department ID</label>
+          <input class="form-control" name="approver_department_id" type="number" min="1" placeholder="مثال: 2">
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">SLA (أيام)</label>
+          <input class="form-control" name="sla_days" type="number" min="1" placeholder="اختياري">
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-success">إضافة</button>
+        </div>
+
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const kind = document.getElementById("kind");
+  const boxRole = document.getElementById("box_role");
+  const boxUser = document.getElementById("box_user");
+  const boxDept = document.getElementById("box_dept");
+
+  function toggle() {
+    const v = kind.value;
+
+    boxRole.style.display = (v === "ROLE") ? "block" : "none";
+    boxUser.style.display = (v === "USER") ? "block" : "none";
+    boxDept.style.display = (v === "DEPARTMENT") ? "block" : "none";
+
+    // Disable unused fields to avoid posting junk values
+    const roleInp = boxRole.querySelector('input[name="approver_role"]');
+    const userSel = boxUser.querySelector('select[name="approver_user_id"]');
+    const deptInp = boxDept.querySelector('input[name="approver_department_id"]');
+
+    roleInp.disabled = (v !== "ROLE");
+    userSel.disabled = (v !== "USER");
+    deptInp.disabled = (v !== "DEPARTMENT");
+
+    if (v !== "ROLE") roleInp.value = "";
+    if (v !== "USER") userSel.value = "";
+    if (v !== "DEPARTMENT") deptInp.value = "";
+  }
+
+  kind.addEventListener("change", toggle);
+  toggle();
+</script>
+
+{% endblock %}

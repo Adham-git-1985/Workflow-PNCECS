@@ -1,0 +1,75 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🧭 قواعد التوجيه (Routing Rules)</h3>
+    <small class="text-muted">ربط نوع الطلب بمسار العمل حسب (منظمة/إدارة/دائرة)</small>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('admin.workflow_routing_new') }}">➕ إضافة قاعدة</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    {% if rules %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>نوع الطلب</th>
+              <th>منظمة</th>
+              <th>إدارة</th>
+              <th>دائرة</th>
+              <th>المسار</th>
+              <th>الأولوية</th>
+              <th>نشط</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rules %}
+              <tr>
+                <td>{{ r.id }}</td>
+                <td>
+                  {% if r.request_type %}
+                    <div class="fw-bold">{{ r.request_type.name_ar }}</div>
+                    <small class="text-muted">{{ r.request_type.code }}</small>
+                  {% else %}
+                    <span class="text-muted">-</span>
+                  {% endif %}
+                </td>
+                <td>{{ r.organization.name_ar if r.organization else '-' }}</td>
+                <td>{{ r.directorate.name_ar if r.directorate else '-' }}</td>
+                <td>{{ r.department.name_ar if r.department else '-' }}</td>
+                <td>
+                  {% if r.template %}
+                    <span class="badge bg-dark">{{ r.template.name }}</span>
+                  {% else %}-{% endif %}
+                </td>
+                <td>{{ r.priority }}</td>
+                <td>
+                  {% if r.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.workflow_routing_edit', rule_id=r.id) }}">✏️ تعديل</a>
+                  <form method="post" action="{{ url_for('admin.workflow_routing_delete', rule_id=r.id) }}" class="d-inline" onsubmit="return confirm('تأكيد حذف قاعدة التوجيه؟');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد قواعد</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

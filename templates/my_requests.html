@@ -142,7 +142,7 @@ new Chart(ctx, {
             </td>
             <td class="text-center">
                 <div class="d-flex gap-2 justify-content-center">
-                    <a href="{{ url_for('review_request', request_id=req.id) }}"
+                    <a href="{{ url_for('workflow.view_request', request_id=req.id) }}"
                        class="btn btn-sm btn-outline-primary">
                         👁 عرض
                     </a>

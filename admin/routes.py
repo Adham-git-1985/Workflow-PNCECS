@@ -3,8 +3,9 @@ from flask import (
     request, redirect, url_for, flash
 )
 from flask_login import login_required
+from utils.perms import perm_required
 from permissions import roles_required
-from models import WorkflowRequest, SystemSetting, AuditLog, ArchivedFile
+from models import WorkflowRequest, SystemSetting, AuditLog, ArchivedFile, WorkflowRoutingRule, RequestType, Organization, Directorate, Department, WorkflowTemplate
 from extensions import db
 from sqlalchemy import func
 from datetime import datetime, timedelta
@@ -244,3 +245,110 @@ def escalations():
         "admin/escalations.html",
         requests=escalated_requests
     )
+
+# =========================
+# Workflow Routing Rules (Admin)
+# =========================
+@admin_bp.route("/workflow-routing")
+@login_required
+@perm_required("WORKFLOW_ROUTING_READ")
+def workflow_routing_list():
+    rules = (
+        WorkflowRoutingRule.query
+        .order_by(WorkflowRoutingRule.is_active.desc(), WorkflowRoutingRule.priority.asc(), WorkflowRoutingRule.id.desc())
+        .all()
+    )
+    return render_template("admin/workflow_routing/list.html", rules=rules)
+
+
+@admin_bp.route("/workflow-routing/new", methods=["GET", "POST"])
+@login_required
+@perm_required("WORKFLOW_ROUTING_CREATE")
+def workflow_routing_new():
+    r = WorkflowRoutingRule()
+    return _workflow_routing_form(r, is_new=True)
+
+
+@admin_bp.route("/workflow-routing/<int:rule_id>/edit", methods=["GET", "POST"])
+@login_required
+@perm_required("WORKFLOW_ROUTING_UPDATE")
+def workflow_routing_edit(rule_id):
+    r = WorkflowRoutingRule.query.get_or_404(rule_id)
+    return _workflow_routing_form(r, is_new=False)
+
+
+def _workflow_routing_form(r: WorkflowRoutingRule, is_new: bool):
+    request_types = RequestType.query.order_by(RequestType.name_ar.asc()).all()
+    orgs = Organization.query.order_by(Organization.name_ar.asc()).all()
+    dirs = Directorate.query.order_by(Directorate.name_ar.asc()).all()
+    depts = Department.query.order_by(Department.name_ar.asc()).all()
+    templates = WorkflowTemplate.query.order_by(WorkflowTemplate.name.asc()).all()
+
+    if request.method == "POST":
+        # required
+        rt_id = (request.form.get("request_type_id") or "").strip()
+        template_id = (request.form.get("template_id") or "").strip()
+
+        if not rt_id.isdigit():
+            flash("اختر نوع طلب.", "danger")
+            return redirect(request.url)
+        if not template_id.isdigit():
+            flash("اختر مسار (Template).", "danger")
+            return redirect(request.url)
+
+        r.request_type_id = int(rt_id)
+        r.template_id = int(template_id)
+
+        # optional hierarchy
+        org_id = (request.form.get("organization_id") or "").strip()
+        dir_id = (request.form.get("directorate_id") or "").strip()
+        dept_id = (request.form.get("department_id") or "").strip()
+
+        r.organization_id = int(org_id) if org_id.isdigit() else None
+        r.directorate_id = int(dir_id) if dir_id.isdigit() else None
+        r.department_id = int(dept_id) if dept_id.isdigit() else None
+
+        # priority + active
+        try:
+            r.priority = int((request.form.get("priority") or "100").strip())
+        except Exception:
+            r.priority = 100
+
+        r.is_active = (request.form.get("is_active") == "1")
+
+        # validation: don't allow dept without dir, or dir without org
+        if r.department_id and not r.directorate_id:
+            flash("لا يمكن تحديد دائرة بدون تحديد إدارة.", "danger")
+            return redirect(request.url)
+        if r.directorate_id and not r.organization_id:
+            flash("لا يمكن تحديد إدارة بدون تحديد منظمة.", "danger")
+            return redirect(request.url)
+
+        if is_new:
+            db.session.add(r)
+
+        db.session.commit()
+        flash("تم حفظ قاعدة التوجيه.", "success")
+        return redirect(url_for("admin.workflow_routing_list"))
+
+    return render_template(
+        "admin/workflow_routing/form.html",
+        r=r,
+        is_new=is_new,
+        request_types=request_types,
+        orgs=orgs,
+        dirs=dirs,
+        depts=depts,
+        templates=templates
+    )
+
+
+@admin_bp.route("/workflow-routing/<int:rule_id>/delete", methods=["POST"])
+@login_required
+@perm_required("WORKFLOW_ROUTING_DELETE")
+def workflow_routing_delete(rule_id):
+    r = WorkflowRoutingRule.query.get_or_404(rule_id)
+    db.session.delete(r)
+    db.session.commit()
+    flash("تم حذف قاعدة التوجيه.", "warning")
+    return redirect(url_for("admin.workflow_routing_list"))

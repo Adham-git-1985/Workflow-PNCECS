@@ -35,9 +35,10 @@
 
             <div class="mb-4">
                 <label class="form-label">الدور</label>
-                <select name="role" class="form-select">
-                    <option value="USER">User</option>
-                    <option value="ADMIN">Admin</option>
+                <select name="role" class="form-select" required>
+                    {% for r in role_choices %}
+                        <option value="{{ r }}">{{ r }}</option>
+                    {% endfor %}
                 </select>
             </div>
 

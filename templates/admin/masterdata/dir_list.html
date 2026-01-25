@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🏛️ الإدارات</h3>
+    <small class="text-muted">إدارة الإدارات</small>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('masterdata.dir_new') }}">➕ إضافة إدارة</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>المنظمة</th>
+              <th>الاسم (AR)</th>
+              <th>الاسم (EN)</th>
+              <th>Code</th>
+              <th>نشط</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in items %}
+              <tr>
+                <td>{{ d.id }}</td>
+                <td>{{ org_map.get(d.organization_id).name_ar if org_map.get(d.organization_id) else d.organization_id }}</td>
+                <td>{{ d.name_ar }}</td>
+                <td>{{ d.name_en or '-' }}</td>
+                <td>{{ d.code or '-' }}</td>
+                <td>
+                  {% if d.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.dir_edit', dir_id=d.id) }}">✏️ تعديل</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

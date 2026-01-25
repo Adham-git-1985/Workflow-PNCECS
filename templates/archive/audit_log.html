@@ -2,7 +2,7 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h3>🗂️ Archive Audit Log</h3>
+    <h3>🗂️ سجل تدقيق الأرشيف</h3>
 </div>
 
 <div class="card shadow-sm">
@@ -22,20 +22,20 @@
                 <tbody>
                 {% for log in logs %}
                     <tr>
-                        <td>
-                            {{ log.created_at.strftime("%Y-%m-%d %H:%M") }}
-                        </td>
-                        <td>
-                            <strong>{{ log.user.name if log.user else "System" }}</strong>
-                        </td>
+                        <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                        <td><strong>{{ log.user.name if log.user else "System" }}</strong></td>
                         <td class="text-center">
-                            <span class="badge bg-warning text-dark">
-                                {{ log.action }}
-                            </span>
+                            {% if log.action == "ARCHIVE_DELETE" %}
+                                <span class="badge bg-danger">DELETE</span>
+                            {% elif log.action == "ARCHIVE_RESTORE" %}
+                                <span class="badge bg-success">RESTORE</span>
+                            {% elif log.action == "ARCHIVE_PURGE" %}
+                                <span class="badge bg-dark">PURGE</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ log.action }}</span>
+                            {% endif %}
                         </td>
-                        <td>
-                            {{ log.description or "—" }}
-                        </td>
+                        <td>{{ log.description or "—" }}</td>
                     </tr>
                 {% endfor %}
                 </tbody>
@@ -43,7 +43,7 @@
         </div>
         {% else %}
         <div class="p-4 text-center text-muted">
-            لا توجد سجلات تدقيق للأرشيف
+            لا توجد سجلات تدقيق
         </div>
         {% endif %}
 

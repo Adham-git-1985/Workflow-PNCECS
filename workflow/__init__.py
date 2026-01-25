@@ -6,4 +6,6 @@ workflow_bp = Blueprint(
     url_prefix="/workflow"
 )
 
-from . import routes
+# IMPORTANT: import routes after blueprint definition
+from . import routes  # noqa: E402,F401
+from . import templates_admin  # noqa: E402,F401

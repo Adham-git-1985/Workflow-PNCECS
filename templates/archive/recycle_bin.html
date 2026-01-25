@@ -4,7 +4,9 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h3 class="mb-1">🗑️ سلة المحذوفات</h3>
-        <small class="text-muted">الملفات التي تم حذفها ويمكن استعادتها</small>
+        <small class="text-muted">
+            الملفات المحذوفة مؤقتًا (سيتم حذفها نهائيًا تلقائيًا حسب سياسة الاحتفاظ)
+        </small>
     </div>
 </div>
 
@@ -25,11 +27,9 @@
                 <tbody>
                 {% for f in files %}
                     <tr>
-                        <td>
-                            <strong>{{ f.original_name }}</strong>
-                        </td>
+                        <td><strong>{{ f.original_name }}</strong></td>
                         <td class="text-center">
-                            {{ f.deleted_at.strftime("%Y-%m-%d %H:%M") }}
+                            {{ f.deleted_at.strftime("%Y-%m-%d %H:%M") if f.deleted_at else "—" }}
                         </td>
                         <td class="text-center">
                             {{ f.deleted_by_user.email if f.deleted_by_user else "System" }}

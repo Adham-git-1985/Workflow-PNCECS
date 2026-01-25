@@ -1,50 +1,194 @@
-<h5 class="mt-4 mb-3">📎 المرفقات</h5>
+{# templates/workflow/view_request.html #}
+{% extends "layout.html" %}
+{% block title %}عرض الطلب{% endblock %}
+{% block content %}
 
-{% if request.attachments %}
-<div class="table-responsive">
-<table class="table table-hover table-sm align-middle">
-    <thead class="table-light">
-        <tr>
-            <th>الملف</th>
-            <th>الوصف</th>
-            <th>تاريخ الرفع</th>
-            <th class="text-center">إجراء</th>
-        </tr>
-    </thead>
-    <tbody>
-    {% for f in request.attachments %}
-        {% if not f.is_deleted %}
-        <tr>
-            <td>
-                <strong>{{ f.original_name }}</strong>
-            </td>
-            <td class="text-muted">
-                {{ f.description or "—" }}
-            </td>
-            <td>
-                {{ f.upload_date.strftime("%Y-%m-%d") }}
-            </td>
-            <td class="text-center">
-                <div class="d-flex gap-2 justify-content-center">
-                    <a class="btn btn-sm btn-outline-primary"
-                       href="{{ url_for('workflow.download_workflow_attachment', file_id=f.id) }}">
-                        ⬇️ تحميل
-                    </a>
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">📄 الطلب #{{ req.id }}</h3>
+    <small class="text-muted">
+      الحالة: <strong>{{ req.status }}</strong>
+      {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
+    </small>
+  </div>
 
-                    <a class="btn btn-sm btn-outline-secondary"
-                       href="{{ url_for('workflow.request_pdf', request_id=request.id) }}">
-                        📄 PDF
-                    </a>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
+      PDF
+    </a>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <h5 class="mb-2">{{ req.title }}</h5>
+        <div class="text-muted">{{ req.description or "—" }}</div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white">
+        <strong>📎 المرفقات</strong>
+      </div>
+      <div class="card-body">
+        {% if attachments %}
+          <ul class="list-group">
+            {% for a in attachments %}
+              {% set f = files_map.get(a.archived_file_id) %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <strong>{{ f.original_name if f else ("File #" ~ a.archived_file_id) }}</strong>
+                  {% if f %}
+                    <div class="small text-muted">
+                      {{ f.file_type }} · {{ (f.file_size or 0)//1024 }} KB
+                    </div>
+                  {% endif %}
                 </div>
-            </td>
-        </tr>
+                {% if f %}
+                  <div class="d-flex gap-2">
+                    <a class="btn btn-sm btn-outline-primary"
+                       href="{{ url_for('archive.download_file', file_id=f.id) }}">
+                      تنزيل
+                    </a>
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="{{ url_for('archive.preview_file', file_id=f.id) }}">
+                      معاينة
+                    </a>
+                  </div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">لا توجد مرفقات.</div>
         {% endif %}
-    {% endfor %}
-    </tbody>
-</table>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-header bg-white">
+        <strong>🧾 سجل الإجراءات (Audit)</strong>
+      </div>
+      <div class="card-body">
+        {% if audit %}
+          <ul class="list-group">
+            {% for log in audit %}
+              <li class="list-group-item">
+                <div class="d-flex justify-content-between">
+                  <strong>{{ log.action }}</strong>
+                  <span class="small text-muted">{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+                </div>
+                {% if log.note %}
+                  <div class="small text-muted mt-1">{{ log.note }}</div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">لا يوجد سجل بعد.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white">
+        <strong>🧩 المسار</strong>
+      </div>
+      <div class="card-body">
+        {% if steps %}
+          <ol class="mb-0">
+            {% for s in steps %}
+              <li class="mb-2">
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <strong>Step {{ s.step_order }}</strong>
+                    <div class="small text-muted">
+                      {{ s.approver_kind }}
+                      {% if s.approver_role %} · ROLE={{ s.approver_role }}{% endif %}
+                      {% if s.approver_user_id %} · USER={{ s.approver_user_id }}{% endif %}
+                      {% if s.approver_department_id %} · DEPT={{ s.approver_department_id }}{% endif %}
+                    </div>
+                  </div>
+                  <span class="badge
+                    {% if s.status == 'PENDING' %}bg-warning text-dark
+                    {% elif s.status == 'APPROVED' %}bg-success
+                    {% elif s.status == 'REJECTED' %}bg-danger
+                    {% else %}bg-secondary{% endif %}">
+                    {{ s.status }}
+                  </span>
+                </div>
+                {% if s.due_at %}
+                  <div class="small text-muted">SLA: {{ s.due_at.strftime("%Y-%m-%d %H:%M") }}</div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ol>
+        {% else %}
+          <div class="text-muted">لا يوجد مسار منشأ لهذا الطلب.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if can_decide and current_step %}
+    <div class="card shadow-sm">
+      <div class="card-header bg-white">
+        <strong>✅ الإجراء (الخطوة {{ current_step.step_order }})</strong>
+      </div>
+      <div class="card-body">
+        <form method="post"
+              action="{{ url_for('workflow.decide_request_step', request_id=req.id, step_order=current_step.step_order) }}">
+          <div class="mb-3">
+            <label class="form-label">الملاحظة</label>
+            <textarea class="form-control" name="note" rows="3" placeholder="ملاحظة اختيارية"></textarea>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button class="btn btn-success w-100" name="decision" value="APPROVED">موافقة</button>
+            <button class="btn btn-danger w-100" name="decision" value="REJECTED">رفض</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-light text-muted">
+      لا يوجد إجراء مطلوب منك حالياً.
+    </div>
+    
+
+
+    {% endif %}
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-header bg-white">
+        <strong>💬 تعليق / رد</strong>
+      </div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
+          <div class="mb-3">
+            <label class="form-label">النص</label>
+            <textarea class="form-control" name="note" rows="3" placeholder="اكتب التعليق أو الرد هنا"></textarea>
+          </div>
+
+          {% if current_user.id == req.requester_id %}
+            <button class="btn btn-primary w-100" name="kind" value="REPLY">إرسال رد للمراجع</button>
+          {% else %}
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-primary w-100" name="kind" value="COMMENT">إرسال تعليق</button>
+              <button class="btn btn-primary w-100" name="kind" value="REPLY">إرسال رد</button>
+            </div>
+          {% endif %}
+        </form>
+        <div class="small text-muted mt-2">سيصل تنبيه تلقائي للطرف الآخر.</div>
+      </div>
+    </div>
+
+  </div>
+
 </div>
-{% else %}
-<div class="alert alert-light text-muted text-center">
-    لا توجد مرفقات مضافة بعد
-</div>
-{% endif %}
+
+{% endblock %}

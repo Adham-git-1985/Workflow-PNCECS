@@ -1,32 +1,70 @@
 {% extends "layout.html" %}
+{% block title %}FILES{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/archive.css') }}?v=20260122">
+{% endblock %}
 {% block content %}
+<div class="alert alert-info mb-3">
+    <strong>المستخدم:</strong> {{ current_user.email }} |
+    <strong>الدور:</strong> {{ current_user.role }}
+    {% if current_user.department_id %}
+        | <strong>الدائرة:</strong> {{ current_user.department_id }}
+    {% else %}
+        | <strong>الدائرة:</strong> غير محددة
+    {% endif %}
+</div>
+
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm">
+            <div class="card-body">
+                <small class="text-muted">كل الملفات</small>
+                <h4 class="mb-0">{{ counters.total }}</h4>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm">
+            <div class="card-body">
+                <small class="text-muted">ملفاتي</small>
+                <h4 class="mb-0">{{ counters.mine }}</h4>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm">
+            <div class="card-body">
+                <small class="text-muted">مشارَك معي</small>
+                <h4 class="mb-0">{{ counters.shared }}</h4>
+            </div>
+        </div>
+    </div>
+</div>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h3 class="mb-1">🗂️ Archive Files</h3>
-        <small class="text-muted">إدارة واستعراض ملفات الأرشيف</small>
+        <h3 class="mb-1">📁 FILES</h3>
+        <small class="text-muted">استعراض وبحث الملفات المسموح لك بالوصول إليها</small>
     </div>
 </div>
 
 <div class="card shadow-sm mb-4">
     <div class="card-body">
-
-        <!-- Search -->
         <form method="get" class="row g-2 align-items-center">
             <div class="col-md-10">
                 <input type="text"
                        name="q"
                        value="{{ q }}"
                        class="form-control"
-                       placeholder="🔍 البحث في الملفات (الاسم أو الوصف)">
+                       placeholder="🔍 البحث باسم الملف أو الوصف">
             </div>
             <div class="col-md-2">
-                <button class="btn btn-primary w-100">
-                    بحث
-                </button>
+                <button class="btn btn-primary w-100">بحث</button>
             </div>
         </form>
-
     </div>
 </div>
 
@@ -41,19 +79,34 @@
                         <th>الملف</th>
                         <th>الوصف</th>
                         <th class="text-center">تاريخ الرفع</th>
+                        <th class="text-center">الحجم (KB)</th>
+                        <th class="text-center">الحالة</th>
+                        <th class="text-center">إجراء</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for f in files %}
                     <tr>
-                        <td>
-                            <strong>{{ f.original_name }}</strong>
-                        </td>
-                        <td>
-                            {{ f.description or "—" }}
+                        <td><strong>{{ f.original_name }}</strong></td>
+                        <td>{{ f.description or "—" }}</td>
+                        <td class="text-center">
+                            {{ f.upload_date.strftime("%Y-%m-%d") if f.upload_date else "—" }}
                         </td>
                         <td class="text-center">
-                            {{ f.upload_date.strftime("%Y-%m-%d") }}
+                            {{ (f.file_size / 1024) | round(1) if f.file_size else "—" }}
+                        </td>
+                        <td class="text-center">
+                            {% if f.is_signed %}
+                                <span class="badge bg-success">Signed</span>
+                            {% else %}
+                                <span class="badge bg-secondary">Active</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <a class="btn btn-sm btn-outline-primary"
+                               href="{{ url_for('archive.download_file', file_id=f.id) }}">
+                                Download
+                            </a>
                         </td>
                     </tr>
                 {% endfor %}
@@ -74,31 +127,30 @@
     <ul class="pagination">
 
         {% if pagination.has_prev %}
-            <li class="page-item">
-                <a class="page-link"
-                   href="?page={{ pagination.prev_num }}&q={{ q }}">
-                    السابق
-                </a>
-            </li>
+        <li class="page-item">
+            <a class="page-link"
+               href="?page={{ pagination.prev_num }}&q={{ q }}">
+                السابق
+            </a>
+        </li>
         {% endif %}
 
         <li class="page-item active">
-            <span class="page-link">
-                {{ pagination.page }}
-            </span>
+            <span class="page-link">{{ pagination.page }}</span>
         </li>
 
         {% if pagination.has_next %}
-            <li class="page-item">
-                <a class="page-link"
-                   href="?page={{ pagination.next_num }}&q={{ q }}">
-                    التالي
-                </a>
-            </li>
+        <li class="page-item">
+            <a class="page-link"
+               href="?page={{ pagination.next_num }}&q={{ q }}">
+                التالي
+            </a>
+        </li>
         {% endif %}
 
     </ul>
 </nav>
 {% endif %}
+
 
 {% endblock %}

@@ -1,0 +1,95 @@
+{% extends "layout.html" %}
+{% block title %}طلب جديد{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">➕ طلب جديد</h3>
+    <small class="text-muted">إنشاء طلب وبدء مسار العمل</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.inbox') }}">رجوع للصندوق</a>
+</div>
+
+{% if request_types and not templates %}
+  <div class="alert alert-warning">لا يوجد Templates مفعّلة. يرجى إنشاء مسار عمل من صفحة Templates.</div>
+{% endif %}
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">عنوان الطلب</label>
+        <input class="form-control" name="title" placeholder="مثال: طلب شراء، طلب إجازة..." required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">نوع الطلب</label>
+        {% if request_types %}
+          <select class="form-select" id="rtSelect" name="request_type_id" required>
+            <option value="">— اختر —</option>
+            {% for rt in request_types %}
+              <option value="{{ rt.id }}" {% if selected_rt_id == rt.id %}selected{% endif %}>{{ rt.name_ar }} ({{ rt.code }})</option>
+            {% endfor %}
+          </select>
+          <div class="form-text">عند اختيار نوع الطلب سيتم اقتراح المسار تلقائياً (إذا كانت قواعد التوجيه مضبوطة).</div>
+        {% else %}
+          <div class="alert alert-light mb-0 text-muted">لا توجد Request Types بعد. يمكنك اختيار Template مباشرة.</div>
+        {% endif %}
+      </div>
+
+      <div class="col-12">
+        <label class="form-label fw-bold">الوصف / الملاحظات</label>
+        <textarea class="form-control" name="description" rows="4" placeholder="اكتب التفاصيل..."></textarea>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">المسار (Template)</label>
+        <select class="form-select" id="templateSelect" name="template_id" {% if not templates %}disabled{% endif %}>
+          <option value="">— اختر —</option>
+          {% for t in templates %}
+            <option value="{{ t.id }}" {% if suggested_template and suggested_template.id == t.id %}selected{% endif %}>{{ t.name }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">إذا لم يتم اقتراح مسار تلقائياً، اختره يدوياً.</div>
+
+        {% if suggested_template %}
+          <div class="alert alert-success mt-2 mb-0">
+            ✅ تم اقتراح المسار تلقائياً: <strong>{{ suggested_template.name }}</strong>
+            {% if matched_rule %}
+              <div class="mt-1"><small class="text-muted">قاعدة توجيه: #{{ matched_rule.id }} | Priority: {{ matched_rule.priority }}</small></div>
+            {% endif %}
+          </div>
+        {% elif selected_rt_id %}
+          <div class="alert alert-warning mt-2 mb-0">
+            ⚠️ لا يوجد Routing Rule مطابق لهذا النوع (حسب دائرتك). يمكنك اختيار Template يدوياً أو إضافة قاعدة توجيه.
+          </div>
+        {% endif %}
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">🚀 إنشاء الطلب</button>
+      </div>
+
+    </div>
+  </div>
+</form>
+
+{% if request_types %}
+<script>
+  (function(){
+    const rt = document.getElementById('rtSelect');
+    if (!rt) return;
+    rt.addEventListener('change', function(){
+      const v = this.value;
+      const url = new URL(window.location.href);
+      if (v) url.searchParams.set('request_type_id', v);
+      else url.searchParams.delete('request_type_id');
+      window.location.href = url.toString();
+    });
+  })();
+</script>
+{% endif %}
+
+{% endblock %}

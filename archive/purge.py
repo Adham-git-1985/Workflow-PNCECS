@@ -25,7 +25,7 @@ def purge_archived_files(days):
             user_id=None,
             target_type="ArchivedFile",
             target_id=f.id,
-            description=f"Permanently deleted file '{f.original_name}'"
+            note=f"Permanently deleted file '{f.original_name}'"
         )
         db.session.add(log)
 

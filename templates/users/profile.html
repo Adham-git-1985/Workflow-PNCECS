@@ -1,0 +1,94 @@
+{% extends "layout.html" %}
+{% block title %}الملف الشخصي{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">👤 الملف الشخصي</h3>
+    <small class="text-muted">يمكنك تحديث بياناتك (ما عدا الدور)</small>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🧾 بيانات الحساب</h5>
+        <form method="post">
+          <input type="hidden" name="form_type" value="profile">
+
+          <div class="mb-3">
+            <label class="form-label">البريد الإلكتروني</label>
+            <input type="email" name="email" class="form-control" value="{{ current_user.email }}" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">الدور (غير قابل للتعديل)</label>
+            <input type="text" class="form-control" value="{{ current_user.role }}" readonly>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الحالية (لتأكيد التعديل)</label>
+            <input type="password" name="current_password" class="form-control" required>
+          </div>
+
+          <button class="btn btn-primary">حفظ التغييرات</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="mb-3">🏢 معلومات إدارية</h5>
+        <div class="row g-2">
+          <div class="col-md-4">
+            <div class="small text-muted">المؤسسة</div>
+            <div>{{ organization.name if organization else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">المديرية</div>
+            <div>{{ directorate.name if directorate else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">الدائرة</div>
+            <div>{{ dept.name if dept else "—" }}</div>
+          </div>
+        </div>
+        <small class="text-muted d-block mt-2">هذه المعلومات تُدار من الإدارة.</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6" id="password">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🔐 تغيير كلمة المرور</h5>
+
+        <form method="post">
+          <input type="hidden" name="form_type" value="password">
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الحالية</label>
+            <input type="password" name="current_password" class="form-control" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الجديدة</label>
+            <input type="password" name="new_password" class="form-control" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">تأكيد كلمة المرور</label>
+            <input type="password" name="confirm_password" class="form-control" required>
+          </div>
+
+          <button type="submit" class="btn btn-success">تحديث كلمة المرور</button>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

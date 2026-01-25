@@ -1,0 +1,90 @@
+{% extends "layout.html" %}
+{% block title %}عرض رسالة | المراسلات{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h3 class="mb-1">📝 عرض رسالة</h3>
+      <small class="text-muted">المراسلات الداخلية</small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('messages.inbox') }}" class="btn btn-outline-secondary">📥 الوارد</a>
+      <a href="{{ url_for('messages.sent') }}" class="btn btn-outline-secondary">📤 المرسلة</a>
+      {% if rec %}
+        <a href="{{ url_for('messages.reply', message_id=msg.id) }}" class="btn btn-outline-primary">↩️ رد</a>
+      {% endif %}
+      <form method="post" action="{{ url_for('messages.delete_message', message_id=msg.id) }}" onsubmit="return confirm('حذف الرسالة؟')">
+        <button type="submit" class="btn btn-outline-danger">🗑️ حذف</button>
+      </form>
+      <a href="{{ url_for('messages.compose') }}" class="btn btn-primary">✉️ رسالة جديدة</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="text-muted small">من</div>
+          <div class="fw-bold">{{ msg.sender.email }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="text-muted small">التاريخ</div>
+          <div>{{ msg.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        </div>
+
+        <div class="col-12">
+          <div class="text-muted small">الموضوع</div>
+          <div class="fw-bold">{{ msg.subject or 'بدون موضوع' }}</div>
+        </div>
+
+        <div class="col-12">
+          <hr>
+          <div style="white-space:pre-wrap; line-height:1.8">{{ msg.body }}</div>
+        </div>
+
+        {% if rec %}
+        <div class="col-12">
+          <hr>
+          <div class="text-muted small">حالة القراءة</div>
+          {% if rec.is_read %}
+            <span class="badge bg-success">مقروء</span>
+            {% if rec.read_at %}
+              <span class="text-muted ms-2">{{ rec.read_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            {% endif %}
+          {% else %}
+            <span class="badge bg-warning text-dark">غير مقروء</span>
+          {% endif %}
+        </div>
+
+        {% if msg.sender_id == current_user.id %}
+        <div class="col-12">
+          <hr>
+          <div class="text-muted small mb-2">حالة القراءة لدى المستلمين</div>
+          <div class="d-flex flex-column gap-1">
+            {% for r in msg.recipients %}
+              {% if not r.is_deleted %}
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                {% if r.is_read %}
+                  <span class="badge bg-success">مقروء</span>
+                {% else %}
+                  <span class="badge bg-warning text-dark">غير مقروء</span>
+                {% endif %}
+                <span class="fw-bold">{{ r.recipient.full_name }}</span>
+                <span class="text-muted">({{ r.recipient.email }})</span>
+                {% if r.is_read and r.read_at %}
+                  <span class="text-muted">— {{ r.read_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                {% endif %}
+              </div>
+              {% endif %}
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

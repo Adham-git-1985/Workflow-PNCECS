@@ -9,7 +9,8 @@ from flask_login import (
 from werkzeug.security import check_password_hash
 from urllib.parse import urlparse
 from flask_migrate import Migrate
-from sqlalchemy import func
+from sqlalchemy import func, event
+from sqlalchemy.engine import Engine
 from datetime import datetime, timedelta
 import io
 import os
@@ -18,7 +19,7 @@ import logging
 
 
 from utils.events import emit_event
-
+from admin.masterdata import masterdata_bp
 
 
 # ======================
@@ -31,18 +32,20 @@ from extensions import db, login_manager
 # ======================
 from models import (
     User, WorkflowRequest,
-    Approval, AuditLog
+    Approval, AuditLog, Notification,
+    MessageRecipient
 )
 
 # ======================
 # Blueprints
 # ======================
 # Blueprints
-from workflow.routes import workflow_bp
+from workflow import workflow_bp
 from admin.routes import admin_bp
 from archive.routes import archive_bp
 from audit.routes import audit_bp
 from users.routes import users_bp
+from messages import messages_bp
 
 
 from filters.request_filters import apply_request_filters
@@ -51,6 +54,7 @@ from filters.request_filters import get_sla_state
 from services.escalation_service import run_escalation_if_needed
 
 from filters.request_filters import get_sla_days, get_escalation_days
+from flask import g
 
 # ======================
 # logging
@@ -58,6 +62,7 @@ from filters.request_filters import get_sla_days, get_escalation_days
 
 import logging
 from logging.handlers import RotatingFileHandler
+from sqlalchemy.exc import SQLAlchemyError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -98,6 +103,9 @@ ESCALATION_BADGE_CACHE = {
 
 ESCALATION_BADGE_TTL = 30  # seconds
 
+UNREAD_CACHE = {}
+UNREAD_TTL = 10  # seconds
+
 # ======================
 # App Init
 # ======================
@@ -105,15 +113,85 @@ ESCALATION_BADGE_TTL = 30  # seconds
 app = Flask(__name__)
 app.jinja_env.globals["get_sla_state"] = get_sla_state
 
+    # Cache func
+def get_unread_count(user_id):
+    now = datetime.utcnow()
+    cache = UNREAD_CACHE.get(user_id)
+
+    if cache and (now - cache["ts"]).seconds < UNREAD_TTL:
+        return cache["value"]
+
+    count = (
+        db.session.query(func.count(Notification.id))
+        .filter(
+            Notification.user_id == user_id,
+            Notification.is_mirror.is_(False),
+            Notification.is_read.is_(False)
+        )
+        .scalar()
+    )
+
+    UNREAD_CACHE[user_id] = {"value": count, "ts": now}
+    return count
+
+app.jinja_env.globals["get_unread_count"] = get_unread_count
+
+
+def get_unread_messages_count(user_id):
+    """Count unread internal messages for current user."""
+    try:
+        return (
+            db.session.query(func.count(MessageRecipient.id))
+            .filter(
+                MessageRecipient.recipient_user_id == user_id,
+                MessageRecipient.is_deleted.is_(False),
+                MessageRecipient.is_read.is_(False)
+            )
+            .scalar()
+        )
+    except Exception:
+        return 0
+
+
+app.jinja_env.globals["get_unread_messages_count"] = get_unread_messages_count
+
+
 # تأكيد وجود instance
 os.makedirs(app.instance_path, exist_ok=True)
 
 # المسار المطلق لقاعدة البيانات
 db_path = os.path.join(app.instance_path, "workflow.db")
 
-app.config["SECRET_KEY"] = "workflow-very-secret-key-2026"
+app.config["SECRET_KEY"] = "super-secret-key"
 app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# تحسين الأداء وتقليل البطء المتقطع مع SQLite (وخاصة مع SSE)
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_size": 10,
+    "max_overflow": 20,
+    "pool_timeout": 30,
+    "connect_args": {
+        "timeout": 30,
+        "check_same_thread": False,
+    },
+}
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_pragmas(dbapi_connection, connection_record):
+    """Improve SQLite concurrency/perf to reduce intermittent slowness."""
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA temp_store=MEMORY;")
+        cursor.execute("PRAGMA busy_timeout=5000;")
+        cursor.close()
+    except Exception:
+        pass
+
 app.config.from_object("config.DevConfig")
 
 
@@ -135,7 +213,8 @@ app.register_blueprint(audit_bp)
 app.register_blueprint(users_bp)
 app.register_blueprint(archive_bp)
 app.register_blueprint(workflow_bp)
-
+app.register_blueprint(masterdata_bp)
+app.register_blueprint(messages_bp)
 
 
 # ======================
@@ -143,15 +222,40 @@ app.register_blueprint(workflow_bp)
 # ======================
 @login_manager.user_loader
 def load_user(user_id):
-    logger.info(f"user_loader called with user_id={user_id}")
+    """
+    Final, safe, and optimized user_loader
+    - Uses db.session.get (SQLAlchemy 2.0 safe)
+    - Caches user per request (via flask.g)
+    - Logs only meaningful events
+    """
 
-    user = User.query.get(int(user_id))
+    # Validate user_id early
+    try:
+        uid = int(user_id)
+    except (TypeError, ValueError):
+        logger.warning(f"user_loader invalid user_id: {user_id}")
+        return None
 
-    if not user:
-        logger.error("user_loader returned None ❌")
-    else:
-        logger.info(f"user_loader loaded user {user.email}")
+    # Return cached user if already loaded in this request
+    if hasattr(g, "_current_user"):
+        logger.debug("user_loader: using cached user")
+        return g._current_user
 
+    # Load user safely
+    try:
+        user = db.session.get(User, uid)
+
+        if user is None:
+            logger.warning(f"user_loader: user not found (id={uid})")
+        else:
+            logger.debug(f"user_loader: loaded user id={user.id}, email={user.email}")
+
+    except SQLAlchemyError as e:
+        logger.exception(f"user_loader DB error for user_id={uid}")
+        return None
+
+    # Cache result for this request
+    g._current_user = user
     return user
 
 
@@ -180,7 +284,20 @@ def index():
     logger.info(
         f"Accessing index | is_authenticated={current_user.is_authenticated} | user={current_user.get_id()}"
     )
+
+    # ✅ Home page: All Requests for ADMIN/SUPER_ADMIN (and anyone granted REQUESTS_ALL_READ)
+    try:
+        if current_user.has_role("SUPER_ADMIN") or current_user.has_role("ADMIN") or current_user.has_perm("REQUESTS_ALL_READ"):
+            return redirect(url_for("admin.admin_requests"))
+    except Exception:
+        pass
+
+    # Default for normal users
     return redirect(url_for("my_requests"))
+
+@app.teardown_appcontext
+def shutdown_session(exception=None):
+    db.session.remove()
 
 
 @app.before_request
@@ -228,7 +345,7 @@ def login():
 
         return redirect(url_for("index"))
 
-    return render_template("login.html")
+    return render_template("login.html", disable_sse=True, hide_sidebar=True)
 
 @app.route("/logout")
 @login_required
@@ -442,6 +559,11 @@ def inbox():
 def review_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
 
+    # إذا كان الطلب يتبع Workflow Engine الجديد، حوّله لصفحة العرض الجديدة
+    # (لتفادي تضارب المسارات القديمة current_role)
+    if getattr(req, "workflow_instance", None):
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
     if req.current_role != current_user.role:
         flash("غير مصرح لك بمراجعة هذا الطلب", "danger")
         return redirect(url_for("inbox"))
@@ -453,6 +575,11 @@ def review_request(request_id):
 @login_required
 def request_action(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
+
+    # هذا المسار قديم ولا يجب أن ينفّذ إجراءات على طلبات Workflow Engine
+    if getattr(req, "workflow_instance", None):
+        flash("هذا الطلب يعمل عبر محرك المسارات الجديد. استخدم صفحة الطلب ضمن /workflow.", "info")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
 
     if req.current_role != current_user.role:
         flash("غير مصرح لك بتنفيذ هذا الإجراء", "danger")

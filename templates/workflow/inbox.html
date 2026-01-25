@@ -1,0 +1,72 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">📥 صندوق الوارد (المهام)</h3>
+    <small class="text-muted">الطلبات التي تحتاج إجراء منك</small>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-center mb-3">
+  <div class="col-sm-7 col-md-6 col-lg-5">
+    <div class="input-group">
+      <span class="input-group-text"><i class="bi bi-search"></i></span>
+      <input type="text"
+             class="form-control"
+             name="q"
+             value="{{ q or '' }}"
+             placeholder="ابحث برقم الطلب أو العنوان أو البريد..." />
+    </div>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-outline-primary">بحث</button>
+  </div>
+  {% if q %}
+  <div class="col-auto">
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.inbox') }}">إلغاء</a>
+  </div>
+  {% endif %}
+</form>
+
+{% if rows %}
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>العنوان</th>
+          <th>الحالة</th>
+          <th>الخطوة</th>
+          <th>تاريخ الإنشاء</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for req, inst, step in rows %}
+        <tr>
+          <td>{{ req.id }}</td>
+          <td>{{ req.title }}</td>
+          <td><span class="badge bg-primary">{{ req.status }}</span></td>
+          <td>Step {{ step.step_order }}</td>
+          <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary"
+               href="{{ url_for('workflow.view_request', request_id=req.id) }}">
+              فتح
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% else %}
+<div class="alert alert-light text-center text-muted py-4">
+  لا توجد مهام حالياً ✅
+</div>
+{% endif %}
+
+{% endblock %}
