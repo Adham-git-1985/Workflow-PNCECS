@@ -1,23 +1,59 @@
-from flask import render_template, request, redirect, url_for, flash, abort
+from flask import render_template, request, redirect, url_for, flash, abort, current_app
 from flask_login import login_required, current_user
 from werkzeug.security import generate_password_hash
+from werkzeug.utils import secure_filename
 
 from . import users_bp
 from extensions import db
 from permissions import roles_required
-from models import User, AuditLog, Department, Directorate, Organization
+from models import User, AuditLog, Department, Directorate, Organization, Role
 from utils.events import emit_event
 
+import os
+import time
 
-ROLE_CHOICES = [
-    "USER",
-    "dept_head",
-    "deputy_head",
-    "finance",
-    "secretary_general",
-    "ADMIN",
-    "SUPER_ADMIN",
-]
+AVATAR_ALLOWED_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
+
+
+def _get_role_choices(include_adminish: bool) -> list[str]:
+    """Read roles from DB (Role table)."""
+    try:
+        roles = Role.query.filter_by(is_active=True).order_by(Role.id.asc()).all()
+        codes = [r.code for r in roles if r.code]
+    except Exception:
+        codes = []
+
+    # Ensure core roles exist in UI even if not seeded yet
+    for c in ["USER", "dept_head", "directorate_head"]:
+        if c not in codes:
+            codes.append(c)
+
+    if include_adminish:
+        for c in ["ADMIN", "SUPER_ADMIN"]:
+            if c not in codes:
+                codes.append(c)
+    else:
+        codes = [c for c in codes if c not in ("ADMIN", "SUPER_ADMIN")]
+
+    # stable ordering (case-insensitive)
+    codes_sorted = sorted(codes, key=lambda x: (str(x).lower()))
+    return codes_sorted
+
+
+
+
+def _allowed_avatar(filename: str) -> bool:
+    if not filename or "." not in filename:
+        return False
+    ext = filename.rsplit(".", 1)[1].lower().strip()
+    return ext in AVATAR_ALLOWED_EXTS
+
+
+def _avatar_storage_dir() -> str:
+    base = os.path.join(current_app.root_path, "static", "uploads", "avatars")
+    os.makedirs(base, exist_ok=True)
+    return base
+
 
 
 def _is_super_admin():
@@ -25,9 +61,18 @@ def _is_super_admin():
 
 
 def _validate_role(role: str) -> bool:
-    return role in ROLE_CHOICES
+    if not role:
+        return False
+    role = str(role).strip()
+    if not role:
+        return False
 
+    # Admin-ish are always allowed as values (enforced by routes)
+    if role in ("ADMIN", "SUPER_ADMIN"):
+        return True
 
+    r = Role.query.filter_by(code=role).first()
+    return bool(r and r.is_active)
 def _audit(action: str, target_user: User, note: str):
     db.session.add(AuditLog(
         action=action,
@@ -38,15 +83,32 @@ def _audit(action: str, target_user: User, note: str):
     ))
 
 
-@users_bp.route("/"
-)
+@users_bp.route("/")
 @login_required
 @roles_required("ADMIN")
 def list_users():
     page = request.args.get("page", 1, type=int)
+    q = (request.args.get("q") or "").strip()
+
+    query = User.query
+
+    # Simple search (id/email/name/job_title)
+    if q:
+        like = f"%{q}%"
+        conds = [
+            User.email.ilike(like),
+            User.name.ilike(like),
+            User.job_title.ilike(like),
+        ]
+        if q.isdigit():
+            try:
+                conds.insert(0, User.id == int(q))
+            except Exception:
+                pass
+        query = query.filter(or_(*conds))
 
     pagination = (
-        User.query
+        query
         .order_by(User.id.desc())
         .paginate(page=page, per_page=25, error_out=False)
     )
@@ -56,10 +118,12 @@ def list_users():
         users_with_role.append({
             "id": u.id,
             "email": u.email,
+            "name": getattr(u, "name", None),
+            "job_title": getattr(u, "job_title", None),
             "role": u.role,
         })
 
-    roles_for_ui = ROLE_CHOICES if _is_super_admin() else [r for r in ROLE_CHOICES if r not in ("ADMIN", "SUPER_ADMIN")]
+    roles_for_ui = _get_role_choices(include_adminish=_is_super_admin())
 
     return render_template(
         "users/list.html",
@@ -67,6 +131,7 @@ def list_users():
         pagination=pagination,
         role_choices=roles_for_ui,
         is_super_admin=_is_super_admin(),
+        q=q,
     )
 
 
@@ -131,7 +196,7 @@ def create_user():
         return redirect(url_for("users.list_users"))
 
     # Role options in UI
-    roles_for_ui = ROLE_CHOICES if _is_super_admin() else [r for r in ROLE_CHOICES if r not in ("ADMIN", "SUPER_ADMIN")]
+    roles_for_ui = _get_role_choices(include_adminish=_is_super_admin())
     return render_template("users/create.html", role_choices=roles_for_ui)
 
 
@@ -194,7 +259,7 @@ def change_role(user_id):
 @roles_required("SUPER_ADMIN")
 def manage_user(user_id):
     user = User.query.get_or_404(user_id)
-    roles_for_ui = ROLE_CHOICES
+    roles_for_ui = _get_role_choices(include_adminish=_is_super_admin())
     return render_template("users/manage.html", user=user, role_choices=roles_for_ui)
 
 
@@ -315,13 +380,81 @@ def manage_user_delete(user_id):
 # =========================
 # My Profile (User self-service)
 # =========================
+@users_bp.route("/<int:user_id>/edit", methods=["GET", "POST"])
+@login_required
+@roles_required("ADMIN")
+def edit_user(user_id):
+    target = User.query.get_or_404(user_id)
+
+    # ✅ Admin cannot touch SUPER_ADMIN (only SUPER_ADMIN can)
+    if (getattr(target, "role", "") or "").strip().upper() == "SUPER_ADMIN" and not _is_super_admin():
+        abort(403)
+
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+
+    if request.method == "POST":
+        # Basic fields
+        target.name = (request.form.get("name") or "").strip() or None
+        target.job_title = (request.form.get("job_title") or "").strip() or None
+        new_email = (request.form.get("email") or "").strip()
+        if new_email:
+            target.email = new_email
+
+        # Department (optional)
+        dept_id_raw = request.form.get("department_id")
+        try:
+            target.department_id = int(dept_id_raw) if dept_id_raw not in (None, "", "0") else None
+        except Exception:
+            target.department_id = None
+
+        # Password reset (optional)
+        new_pw = (request.form.get("new_password") or "").strip()
+        if new_pw:
+            target.password_hash = generate_password_hash(new_pw)
+            _audit("RESET_PASSWORD", target, f"Password reset by admin (user_id={current_user.id})")
+
+            # notify user
+            try:
+                emit_event(
+                        actor_id=current_user.id,
+                        action="RESET_PASSWORD",
+                        message="تمت إعادة تعيين كلمة المرور الخاصة بك بواسطة الإدارة.",
+                        target_type="User",
+                        target_id=target.id,
+                        notify_user_id=target.id,
+                        level="INFO",
+                        auto_commit=False
+                    )
+            except Exception:
+                pass
+
+        _audit("UPDATE_USER", target, "Admin updated user profile fields")
+
+        try:
+            db.session.commit()
+            flash("تم تحديث بيانات المستخدم بنجاح.", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"تعذر تحديث المستخدم: {e}", "danger")
+
+        return redirect(url_for("users.list_users"))
+
+    return render_template(
+        "users/edit.html",
+        u=target,
+        departments=departments,
+        is_super_admin=_is_super_admin(),
+    )
+
 @users_bp.route("/profile", methods=["GET", "POST"])
 @login_required
 def profile():
     """User profile page.
 
-    - User can edit email + password.
-    - Role is read-only.
+    - User can edit: name, job_title, email (with current password confirmation)
+    - User can change password
+    - User can upload/change avatar
+    - Role is read-only
     """
 
     dept = None
@@ -335,13 +468,21 @@ def profile():
                 org = Organization.query.get(dir_.organization_id)
 
     if request.method == "POST":
-        form_type = request.form.get("form_type")
+        form_type = (request.form.get("form_type") or "").strip().lower()
 
+<<<<<<< HEAD
         # ------- Update Email (role stays read-only)
         if form_type == "profile":
             new_name = request.form.get("name", "").strip()
             new_job_title = request.form.get("job_title", "").strip()
             new_email = request.form.get("email", "").strip()
+=======
+        # ------- Update profile info (name/job/email)
+        if form_type in ("profile", ""):
+            new_name = (request.form.get("name") or "").strip()
+            new_job_title = (request.form.get("job_title") or "").strip()
+            new_email = (request.form.get("email") or "").strip()
+>>>>>>> afbb9dd (Full body refresh)
             current_pw = request.form.get("current_password", "")
 
             if not new_email or not current_pw:
@@ -352,19 +493,28 @@ def profile():
                 flash("كلمة المرور الحالية غير صحيحة", "danger")
                 return redirect(url_for("users.profile"))
 
-            if new_email != current_user.email:
-                if User.query.filter(User.email == new_email, User.id != current_user.id).first():
+            u = User.query.get(current_user.id)
+
+            # email change (ensure unique)
+            if new_email != u.email:
+                if User.query.filter(User.email == new_email, User.id != u.id).first():
                     flash("هذا البريد مستخدم مسبقًا", "danger")
                     return redirect(url_for("users.profile"))
 
-                u = User.query.get(current_user.id)
                 old_email = u.email
                 old_name = (u.name or "").strip()
                 old_job = (u.job_title or "").strip()
 
                 u.email = new_email
+<<<<<<< HEAD
                 u.name = new_name or u.name
                 u.job_title = new_job_title or u.job_title
+=======
+                if new_name:
+                    u.name = new_name
+                if new_job_title:
+                    u.job_title = new_job_title
+>>>>>>> afbb9dd (Full body refresh)
 
                 db.session.add(AuditLog(
                     action="USER_PROFILE_UPDATED",
@@ -387,7 +537,29 @@ def profile():
 
                 db.session.commit()
                 flash("تم تحديث البريد الإلكتروني", "success")
+                return redirect(url_for("users.profile"))
+
+            # name/job only
+            changed = False
+            if new_name and (new_name != (u.name or "").strip()):
+                u.name = new_name
+                changed = True
+            if new_job_title and (new_job_title != (u.job_title or "").strip()):
+                u.job_title = new_job_title
+                changed = True
+
+            if changed:
+                db.session.add(AuditLog(
+                    action="USER_PROFILE_UPDATED",
+                    user_id=current_user.id,
+                    target_type="User",
+                    target_id=current_user.id,
+                    note="Profile updated (name/title)"
+                ))
+                db.session.commit()
+                flash("تم تحديث بيانات الملف الشخصي", "success")
             else:
+<<<<<<< HEAD
                 u = User.query.get(current_user.id)
                 changed = False
                 if new_name and (new_name.strip() != (u.name or "").strip()):
@@ -409,10 +581,64 @@ def profile():
                     flash("تم تحديث بيانات الملف الشخصي", "success")
                 else:
                     flash("لا يوجد تغيير على البيانات", "info")
+=======
+                flash("لا يوجد تغيير على البيانات", "info")
+>>>>>>> afbb9dd (Full body refresh)
 
             return redirect(url_for("users.profile"))
 
-        # ------- Change Password
+        # ------- Update avatar
+        if form_type == "avatar":
+            f = request.files.get("avatar")
+            if not f or not getattr(f, "filename", ""):
+                flash("يرجى اختيار صورة.", "danger")
+                return redirect(url_for("users.profile"))
+
+            if not _allowed_avatar(f.filename):
+                flash("امتداد الصورة غير مسموح. المسموح: png, jpg, jpeg, gif, webp", "danger")
+                return redirect(url_for("users.profile"))
+
+            ext = f.filename.rsplit(".", 1)[1].lower().strip()
+            new_name = secure_filename(f"user_{current_user.id}_{int(time.time())}.{ext}")
+            folder = _avatar_storage_dir()
+
+            # delete old avatar
+            old = getattr(current_user, "avatar_filename", None)
+            if old:
+                try:
+                    old_path = os.path.join(folder, old)
+                    if os.path.exists(old_path):
+                        os.remove(old_path)
+                except Exception:
+                    pass
+
+            f.save(os.path.join(folder, new_name))
+            current_user.avatar_filename = new_name
+
+            db.session.add(AuditLog(
+                action="USER_AVATAR_UPDATED",
+                user_id=current_user.id,
+                target_type="User",
+                target_id=current_user.id,
+                note="Avatar updated"
+            ))
+
+            emit_event(
+                actor_id=current_user.id,
+                action="USER_AVATAR_UPDATED",
+                message="تم تحديث صورة الملف الشخصي",
+                target_type="User",
+                target_id=current_user.id,
+                notify_user_id=current_user.id,
+                level="INFO",
+                auto_commit=False
+            )
+
+            db.session.commit()
+            flash("تم تحديث صورة الملف الشخصي.", "success")
+            return redirect(url_for("users.profile"))
+
+        # ------- Change password
         if form_type == "password":
             current_pw = request.form.get("current_password", "")
             new_pw = request.form.get("new_password", "")
@@ -434,8 +660,8 @@ def profile():
                 flash("كلمتا المرور غير متطابقتين", "danger")
                 return redirect(url_for("users.profile") + "#password")
 
-            user = User.query.get(current_user.id)
-            user.password_hash = generate_password_hash(new_pw)
+            u = User.query.get(current_user.id)
+            u.password_hash = generate_password_hash(new_pw)
 
             db.session.add(AuditLog(
                 action="USER_PASSWORD_CHANGED",
@@ -448,28 +674,22 @@ def profile():
             emit_event(
                 actor_id=current_user.id,
                 action="USER_PASSWORD_CHANGED",
-                message="تم تغيير كلمة المرور بنجاح",
+                message="تم تغيير كلمة المرور",
                 target_type="User",
                 target_id=current_user.id,
                 notify_user_id=current_user.id,
-                level="INFO",
+                level="WARNING",
                 auto_commit=False
             )
 
             db.session.commit()
-            flash("تم تغيير كلمة المرور بنجاح", "success")
+            flash("تم تغيير كلمة المرور.", "success")
             return redirect(url_for("users.profile") + "#password")
 
-        abort(400)
+        flash("طلب غير معروف.", "danger")
+        return redirect(url_for("users.profile"))
 
-    return render_template(
-        "users/profile.html",
-        dept=dept,
-        directorate=dir_,
-        organization=org
-    )
-
-
+    return render_template("users/profile.html", dept=dept, dir_=dir_, org=org)
 @users_bp.route("/change-password")
 @login_required
 def change_password_redirect():

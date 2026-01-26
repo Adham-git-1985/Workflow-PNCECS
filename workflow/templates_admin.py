@@ -7,12 +7,16 @@ from sqlalchemy import func
 from . import workflow_bp
 from extensions import db
 from utils.perms import perm_required
-
 from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
     User,
     Department,
+<<<<<<< HEAD
+=======
+    Directorate,
+    Role,
+>>>>>>> afbb9dd (Full body refresh)
 )
 
 
@@ -27,12 +31,13 @@ def _to_int(val, default=None):
 
 def _normalize_kind(kind: str) -> str:
     kind = (kind or "").strip().upper()
-    if kind in ("USER", "ROLE", "DEPARTMENT"):
+    if kind in ("USER", "ROLE", "DEPARTMENT", "DIRECTORATE"):
         return kind
     return ""
 
 
 def _get_role_choices():
+<<<<<<< HEAD
     """Return role list for UI (stable + any roles already in DB)."""
     base = [
         "USER",
@@ -44,6 +49,9 @@ def _get_role_choices():
         "SUPER_ADMIN",
     ]
 
+=======
+    """Return role list for UI (active roles table + any roles already in DB)."""
+>>>>>>> afbb9dd (Full body refresh)
     seen = set()
     out = []
 
@@ -59,19 +67,36 @@ def _get_role_choices():
         seen.add(key)
         out.append(r)
 
+<<<<<<< HEAD
     for r in base:
         add(r)
 
     for (r,) in db.session.query(User.role).distinct().all():
         add(r)
 
+=======
+    # 1) Preferred source: active roles from master data
+    try:
+        for r in Role.query.filter_by(is_active=True).order_by(Role.code.asc()).all():
+            add(r.code)
+    except Exception:
+        pass
+
+    # 2) Fallback: any roles already used by users
+    for (r,) in db.session.query(User.role).distinct().all():
+        add(r)
+
+    # 3) Ensure core system roles exist
+    for r in ["USER", "ADMIN", "SUPER_ADMIN"]:
+        add(r)
+
+>>>>>>> afbb9dd (Full body refresh)
     return out
 
 
 def _resequence_steps(template_id: int):
     steps = (
-        WorkflowTemplateStep.query
-        .filter_by(template_id=template_id)
+        WorkflowTemplateStep.query.filter_by(template_id=template_id)
         .order_by(WorkflowTemplateStep.step_order.asc())
         .all()
     )
@@ -84,12 +109,15 @@ def _resequence_steps(template_id: int):
 @login_required
 @perm_required("WORKFLOW_TEMPLATES_READ")
 def templates_list():
-    items = (
-        WorkflowTemplate.query
-        .order_by(WorkflowTemplate.id.desc())
-        .all()
-    )
-    return render_template("workflow/templates_admin/list.html", items=items)
+    q = (request.args.get("q") or "").strip()
+
+    query = WorkflowTemplate.query
+    if q:
+        like = f"%{q}%"
+        query = query.filter(WorkflowTemplate.name.ilike(like))
+
+    items = query.order_by(WorkflowTemplate.id.desc()).all()
+    return render_template("workflow/templates_admin/list.html", items=items, q=q)
 
 
 @workflow_bp.route("/templates/new", methods=["GET", "POST"])
@@ -97,7 +125,18 @@ def templates_list():
 @perm_required("WORKFLOW_TEMPLATES_CREATE")
 def templates_new():
     users = User.query.order_by(User.email.asc()).all()
+<<<<<<< HEAD
     departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+=======
+    departments = (
+        Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    )
+    directorates = (
+        Directorate.query.filter_by(is_active=True)
+        .order_by(Directorate.name_ar.asc())
+        .all()
+    )
+>>>>>>> afbb9dd (Full body refresh)
     role_choices = _get_role_choices()
 
     if request.method == "POST":
@@ -110,32 +149,50 @@ def templates_new():
 
         t = WorkflowTemplate(
             name=name,
-            is_active=True,  # new.html ما فيه checkbox
+            is_active=True,  # new.html عادة بدون checkbox
             created_by_id=current_user.id,
-            sla_days_default=sla_days_default
+            sla_days_default=sla_days_default,
         )
         db.session.add(t)
-        db.session.flush()  # نحتاج t.id
+        db.session.flush()  # نحتاج t.id قبل إضافة الخطوات
 
-        # ====== steps arrays from new.html ======
+        # Arrays from new.html
         kinds = request.form.getlist("approver_kind")
         user_ids = request.form.getlist("approver_user_id")
         roles = request.form.getlist("approver_role")
         dept_ids = request.form.getlist("approver_department_id")
-        sla_list = request.form.getlist("step_sla_days")  # نفس الاسم في new.html
+        dir_ids = request.form.getlist("approver_directorate_id")
+        sla_list = request.form.getlist("step_sla_days")
 
-        max_len = max(len(kinds), len(user_ids), len(roles), len(dept_ids), len(sla_list), 0)
+        max_len = max(
+            len(kinds),
+            len(user_ids),
+            len(roles),
+            len(dept_ids),
+            len(dir_ids),
+            len(sla_list),
+            0,
+        )
 
         step_order = 1
+
         for i in range(max_len):
             kind = _normalize_kind(kinds[i] if i < len(kinds) else "")
             user_id = _to_int(user_ids[i] if i < len(user_ids) else "", default=None)
             role = (roles[i] if i < len(roles) else "").strip()
             dept_id = _to_int(dept_ids[i] if i < len(dept_ids) else "", default=None)
+            dir_id = _to_int(dir_ids[i] if i < len(dir_ids) else "", default=None)
             sla_days = _to_int(sla_list[i] if i < len(sla_list) else "", default=None)
 
-            # skip completely empty rows
-            if not kind and not user_id and not role and not dept_id and sla_days is None:
+            # Skip completely empty row
+            if (
+                not kind
+                and not user_id
+                and not role
+                and not dept_id
+                and not dir_id
+                and sla_days is None
+            ):
                 continue
 
             if not kind:
@@ -150,12 +207,17 @@ def templates_new():
 
             if kind == "ROLE" and not role:
                 db.session.rollback()
-                flash("يرجى إدخال ROLE لخطوة نوع ROLE.", "danger")
+                flash("يرجى اختيار ROLE لخطوة نوع ROLE.", "danger")
                 return redirect(request.url)
 
             if kind == "DEPARTMENT" and not dept_id:
                 db.session.rollback()
-                flash("يرجى إدخال Department ID لخطوة نوع DEPARTMENT.", "danger")
+                flash("يرجى اختيار دائرة/قسم للخطوة.", "danger")
+                return redirect(request.url)
+
+            if kind == "DIRECTORATE" and not dir_id:
+                db.session.rollback()
+                flash("يرجى اختيار إدارة للخطوة.", "danger")
                 return redirect(request.url)
 
             step = WorkflowTemplateStep(
@@ -165,7 +227,8 @@ def templates_new():
                 approver_user_id=user_id if kind == "USER" else None,
                 approver_role=role if kind == "ROLE" else None,
                 approver_department_id=dept_id if kind == "DEPARTMENT" else None,
-                sla_days=sla_days
+                approver_directorate_id=dir_id if kind == "DIRECTORATE" else None,
+                sla_days=sla_days,
             )
             db.session.add(step)
             step_order += 1
@@ -176,11 +239,20 @@ def templates_new():
             return redirect(request.url)
 
         db.session.commit()
-
         flash("تم إنشاء المسار وخطواته.", "success")
         return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
+<<<<<<< HEAD
     return render_template("workflow/templates_admin/new.html", users=users, departments=departments, role_choices=role_choices)
+=======
+    return render_template(
+        "workflow/templates_admin/new.html",
+        users=users,
+        departments=departments,
+        directorates=directorates,
+        role_choices=role_choices,
+    )
+>>>>>>> afbb9dd (Full body refresh)
 
 
 @workflow_bp.route("/templates/<int:template_id>/edit", methods=["GET", "POST"])
@@ -203,14 +275,24 @@ def templates_edit(template_id):
         return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
     steps = (
-        WorkflowTemplateStep.query
-        .filter_by(template_id=t.id)
+        WorkflowTemplateStep.query.filter_by(template_id=t.id)
         .order_by(WorkflowTemplateStep.step_order.asc())
         .all()
     )
 
     users = User.query.order_by(User.email.asc()).all()
+<<<<<<< HEAD
     departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+=======
+    departments = (
+        Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    )
+    directorates = (
+        Directorate.query.filter_by(is_active=True)
+        .order_by(Directorate.name_ar.asc())
+        .all()
+    )
+>>>>>>> afbb9dd (Full body refresh)
     role_choices = _get_role_choices()
 
     return render_template(
@@ -219,7 +301,12 @@ def templates_edit(template_id):
         steps=steps,
         users=users,
         departments=departments,
+<<<<<<< HEAD
         role_choices=role_choices
+=======
+        directorates=directorates,
+        role_choices=role_choices,
+>>>>>>> afbb9dd (Full body refresh)
     )
 
 
@@ -228,24 +315,45 @@ def templates_edit(template_id):
 @perm_required("WORKFLOW_TEMPLATES_READ")
 def templates_details(template_id):
     t = WorkflowTemplate.query.get_or_404(template_id)
+
     steps = (
-        WorkflowTemplateStep.query
-        .filter_by(template_id=t.id)
+        WorkflowTemplateStep.query.filter_by(template_id=t.id)
         .order_by(WorkflowTemplateStep.step_order.asc())
         .all()
     )
+
     users = User.query.order_by(User.email.asc()).all()
     users_map = {u.id: u for u in users}
 
+<<<<<<< HEAD
     departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
     depts_map = {d.id: d for d in departments}
 
+=======
+    departments = (
+        Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    )
+    depts_map = {d.id: d for d in departments}
+
+    directorates = (
+        Directorate.query.filter_by(is_active=True)
+        .order_by(Directorate.name_ar.asc())
+        .all()
+    )
+    dirs_map = {d.id: d for d in directorates}
+
+>>>>>>> afbb9dd (Full body refresh)
     return render_template(
         "workflow/templates_admin/details.html",
         t=t,
         steps=steps,
         users_map=users_map,
+<<<<<<< HEAD
         depts_map=depts_map
+=======
+        depts_map=depts_map,
+        dirs_map=dirs_map,
+>>>>>>> afbb9dd (Full body refresh)
     )
 
 
@@ -272,11 +380,12 @@ def templates_steps_add(template_id):
     kind = _normalize_kind(request.form.get("approver_kind"))
     user_id = _to_int(request.form.get("approver_user_id"), default=None)
     dept_id = _to_int(request.form.get("approver_department_id"), default=None)
+    dir_id = _to_int(request.form.get("approver_directorate_id"), default=None)
     role = (request.form.get("approver_role") or "").strip()
     sla_days = _to_int(request.form.get("sla_days"), default=None)
 
     if not kind:
-        flash("يرجى اختيار نوع المعتمد (USER/ROLE/DEPARTMENT).", "danger")
+        flash("يرجى اختيار نوع المعتمد (USER/ROLE/DEPARTMENT/DIRECTORATE).", "danger")
         return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
     if kind == "USER" and not user_id:
@@ -288,7 +397,11 @@ def templates_steps_add(template_id):
         return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
     if kind == "DEPARTMENT" and not dept_id:
-        flash("يرجى إدخال رقم الدائرة (department_id) للخطوة.", "danger")
+        flash("يرجى اختيار دائرة/قسم للخطوة.", "danger")
+        return redirect(url_for("workflow.templates_edit", template_id=t.id))
+
+    if kind == "DIRECTORATE" and not dir_id:
+        flash("يرجى اختيار إدارة للخطوة.", "danger")
         return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
     max_order = (
@@ -303,8 +416,9 @@ def templates_steps_add(template_id):
         approver_kind=kind,
         approver_user_id=user_id if kind == "USER" else None,
         approver_department_id=dept_id if kind == "DEPARTMENT" else None,
+        approver_directorate_id=dir_id if kind == "DIRECTORATE" else None,
         approver_role=role if kind == "ROLE" else None,
-        sla_days=sla_days
+        sla_days=sla_days,
     )
     db.session.add(step)
     db.session.commit()
@@ -313,12 +427,41 @@ def templates_steps_add(template_id):
     return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
 
+@workflow_bp.route("/templates/steps/<int:step_id>/move/<direction>", methods=["POST"])
+@login_required
+@perm_required("WORKFLOW_TEMPLATES_UPDATE")
+def templates_steps_move(step_id, direction):
+    s = WorkflowTemplateStep.query.get_or_404(step_id)
+    tid = s.template_id
+
+    direction = (direction or "").strip().lower()
+    if direction not in ("up", "down"):
+        flash("اتجاه غير صحيح.", "danger")
+        return redirect(url_for("workflow.templates_edit", template_id=tid))
+
+    target_order = (s.step_order or 1) - 1 if direction == "up" else (s.step_order or 1) + 1
+
+    other = (
+        WorkflowTemplateStep.query
+        .filter_by(template_id=tid, step_order=target_order)
+        .first()
+    )
+    if other:
+        other.step_order, s.step_order = s.step_order, other.step_order
+        db.session.commit()
+        _resequence_steps(tid)
+
+    flash("تم تحديث ترتيب الخطوات.", "success")
+    return redirect(url_for("workflow.templates_edit", template_id=tid))
+
+
 @workflow_bp.route("/templates/steps/<int:step_id>/delete", methods=["POST"])
 @login_required
 @perm_required("WORKFLOW_TEMPLATES_UPDATE")
 def templates_steps_delete(step_id):
     s = WorkflowTemplateStep.query.get_or_404(step_id)
     tid = s.template_id
+
     db.session.delete(s)
     db.session.commit()
 
@@ -333,14 +476,27 @@ def templates_steps_delete(step_id):
 def templates_steps_edit(step_id):
     s = WorkflowTemplateStep.query.get_or_404(step_id)
     t = WorkflowTemplate.query.get_or_404(s.template_id)
+
     users = User.query.order_by(User.email.asc()).all()
+<<<<<<< HEAD
     departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+=======
+    departments = (
+        Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    )
+    directorates = (
+        Directorate.query.filter_by(is_active=True)
+        .order_by(Directorate.name_ar.asc())
+        .all()
+    )
+>>>>>>> afbb9dd (Full body refresh)
     role_choices = _get_role_choices()
 
     if request.method == "POST":
         kind = _normalize_kind(request.form.get("approver_kind"))
         user_id = _to_int(request.form.get("approver_user_id"), default=None)
         dept_id = _to_int(request.form.get("approver_department_id"), default=None)
+        dir_id = _to_int(request.form.get("approver_directorate_id"), default=None)
         role = (request.form.get("approver_role") or "").strip()
         sla_days = _to_int(request.form.get("sla_days"), default=None)
 
@@ -349,21 +505,26 @@ def templates_steps_edit(step_id):
             return redirect(request.url)
 
         if kind == "USER" and not user_id:
-            flash("اختر مستخدم.", "danger")
+            flash("يرجى اختيار مستخدم.", "danger")
             return redirect(request.url)
 
         if kind == "ROLE" and not role:
-            flash("أدخل ROLE.", "danger")
+            flash("يرجى إدخال ROLE.", "danger")
             return redirect(request.url)
 
         if kind == "DEPARTMENT" and not dept_id:
-            flash("أدخل department_id.", "danger")
+            flash("يرجى اختيار دائرة/قسم للخطوة.", "danger")
+            return redirect(request.url)
+
+        if kind == "DIRECTORATE" and not dir_id:
+            flash("يرجى اختيار إدارة للخطوة.", "danger")
             return redirect(request.url)
 
         s.approver_kind = kind
         s.approver_user_id = user_id if kind == "USER" else None
-        s.approver_department_id = dept_id if kind == "DEPARTMENT" else None
         s.approver_role = role if kind == "ROLE" else None
+        s.approver_department_id = dept_id if kind == "DEPARTMENT" else None
+        s.approver_directorate_id = dir_id if kind == "DIRECTORATE" else None
         s.sla_days = sla_days
 
         db.session.commit()
@@ -376,5 +537,10 @@ def templates_steps_edit(step_id):
         s=s,
         users=users,
         departments=departments,
+<<<<<<< HEAD
         role_choices=role_choices
+=======
+        directorates=directorates,
+        role_choices=role_choices,
+>>>>>>> afbb9dd (Full body refresh)
     )

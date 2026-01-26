@@ -1,13 +1,14 @@
+from models import Role, RolePermission, User
 from flask import (
     render_template, Blueprint,
     request, redirect, url_for, flash
 )
 from flask_login import login_required
 from utils.perms import perm_required
-from permissions import roles_required
+from permissions import roles_required, role_perm_required
 from models import WorkflowRequest, SystemSetting, AuditLog, ArchivedFile, WorkflowRoutingRule, RequestType, Organization, Directorate, Department, WorkflowTemplate
 from extensions import db
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 from filters.request_filters import apply_request_filters
 from filters.request_filters import get_sla_days, get_escalation_days
@@ -92,7 +93,7 @@ def update_sla():
 # =========================
 @admin_bp.route("/dashboard")
 @login_required
-@roles_required("ADMIN")
+@role_perm_required("VIEW_DASHBOARD")
 def dashboard():
     now = datetime.utcnow()
 
@@ -168,38 +169,66 @@ def dashboard():
 
 @admin_bp.route("/permissions", methods=["GET", "POST"])
 @login_required
-@roles_required("ADMIN")
+@roles_required("ADMIN")  # SUPER_ADMIN bypass exists in roles_required
 def manage_permissions():
+    """Manage permissions by ROLE (RolePermission table).
 
-    roles = db.session.query(RolePermission.role).distinct().all()
+    Note: This is different from per-user CRUD permissions in masterdata/permissions.
+    """
+    # Prefer roles from master data table
+    roles = Role.query.filter_by(is_active=True).order_by(Role.code.asc()).all()
+    role_codes = [r.code for r in roles]
+
+    # If roles table empty for some reason, fall back to roles in DB users
+    if not role_codes:
+        role_codes = [
+            r for (r,) in db.session.query(User.role).distinct().order_by(User.role.asc()).all()
+            if (r or "").strip()
+        ]
+
     permissions = [
+        "VIEW_DASHBOARD",
+        "VIEW_ESCALATIONS",
         "CREATE_REQUEST",
         "APPROVE_REQUEST",
         "UPLOAD_ATTACHMENT",
         "SIGN_ARCHIVE",
         "DELETE_ARCHIVE",
-        "VIEW_TIMELINE"
+        "VIEW_TIMELINE",
     ]
 
+    selected_role = (request.args.get("role") or "").strip()
     if request.method == "POST":
-        role = request.form["role"]
+        selected_role = (request.form.get("role") or "").strip()
         perms = request.form.getlist("permissions")
 
-        RolePermission.query.filter_by(role=role).delete()
+        if not selected_role:
+            flash("اختر Role.", "danger")
+            return redirect(url_for("admin.manage_permissions"))
+
+        RolePermission.query.filter_by(role=selected_role).delete(synchronize_session=False)
 
         for p in perms:
-            db.session.add(RolePermission(role=role, permission=p))
+            p = (p or "").strip()
+            if p:
+                db.session.add(RolePermission(role=selected_role, permission=p))
 
         db.session.commit()
-        flash("Permissions updated", "success")
+        flash("تم تحديث صلاحيات الدور.", "success")
+        return redirect(url_for("admin.manage_permissions", role=selected_role))
 
-    data = RolePermission.query.all()
+    # Pre-check existing permissions for selected role
+    checked = set()
+    if selected_role:
+        rows = RolePermission.query.filter_by(role=selected_role).all()
+        checked = { (r.permission or "").strip() for r in rows if r.permission }
 
     return render_template(
         "admin/permissions.html",
-        data=data,
-        roles=roles,
-        permissions=permissions
+        role_codes=role_codes,
+        permissions=permissions,
+        selected_role=selected_role,
+        checked=checked,
     )
 
 @admin_bp.route("/requests")
@@ -226,7 +255,7 @@ def admin_requests():
 
 @admin_bp.route("/escalations")
 @login_required
-@roles_required("ADMIN")
+@role_perm_required("VIEW_ESCALATIONS")
 def escalations():
 
     now = datetime.utcnow()
@@ -253,12 +282,42 @@ def escalations():
 @login_required
 @perm_required("WORKFLOW_ROUTING_READ")
 def workflow_routing_list():
-    rules = (
+    q = (request.args.get("q") or "").strip()
+
+    query = (
         WorkflowRoutingRule.query
-        .order_by(WorkflowRoutingRule.is_active.desc(), WorkflowRoutingRule.priority.asc(), WorkflowRoutingRule.id.desc())
+        .outerjoin(RequestType, WorkflowRoutingRule.request_type_id == RequestType.id)
+        .outerjoin(WorkflowTemplate, WorkflowRoutingRule.template_id == WorkflowTemplate.id)
+        .outerjoin(Organization, WorkflowRoutingRule.organization_id == Organization.id)
+        .outerjoin(Directorate, WorkflowRoutingRule.directorate_id == Directorate.id)
+        .outerjoin(Department, WorkflowRoutingRule.department_id == Department.id)
+    )
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            RequestType.code.ilike(like),
+            RequestType.name_ar.ilike(like),
+            RequestType.name_en.ilike(like),
+            WorkflowTemplate.name.ilike(like),
+            Organization.name_ar.ilike(like),
+            Organization.name_en.ilike(like),
+            Directorate.name_ar.ilike(like),
+            Directorate.name_en.ilike(like),
+            Department.name_ar.ilike(like),
+            Department.name_en.ilike(like),
+        ))
+
+    rules = (
+        query
+        .order_by(
+            WorkflowRoutingRule.is_active.desc(),
+            WorkflowRoutingRule.priority.asc(),
+            WorkflowRoutingRule.id.desc()
+        )
         .all()
     )
-    return render_template("admin/workflow_routing/list.html", rules=rules)
+    return render_template("admin/workflow_routing/list.html", rules=rules, q=q)
 
 
 @admin_bp.route("/workflow-routing/new", methods=["GET", "POST"])

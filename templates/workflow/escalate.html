@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+{% block title %}تصعيد الطلب{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🚨 تصعيد الطلب #{{ req.id }}</h3>
+    <small class="text-muted">{{ req.title }}</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post" novalidate>
+
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">نوع التصعيد</label>
+          <select class="form-select" name="category" required>
+            {% for c in categories %}
+              <option value="{{ c }}">{{ c }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-8">
+          <label class="form-label">توجيه التصعيد إلى</label>
+          <select class="form-select" name="to_user_id" required>
+            <option value="">-- اختر مستخدم --</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.email }}{% if u.name %} — {{ u.name }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">وصف التصعيد</label>
+          <textarea class="form-control" name="description" rows="4" required placeholder="اكتب سبب/تفاصيل التصعيد"></textarea>
+        </div>
+      </div>
+
+      <hr class="my-4">
+
+      <button class="btn btn-danger">إرسال التصعيد</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">إلغاء</a>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

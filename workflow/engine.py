@@ -13,6 +13,8 @@ from models import (
     WorkflowTemplateStep,
     WorkflowInstance,
     WorkflowInstanceStep,
+    Department,
+    Directorate,
 )
 
 # =========================
@@ -46,6 +48,20 @@ def _resolve_approver_users(step: WorkflowInstanceStep):
     if kind == "ROLE" and step.approver_role:
         role = (step.approver_role or "").strip().lower()
         users = User.query.filter(User.role.ilike(role)).all()
+        return [u.id for u in users]
+
+
+    if kind == "DIRECTORATE" and getattr(step, "approver_directorate_id", None):
+        dir_id = step.approver_directorate_id
+        # directorate heads: users with role directorate_head inside any department under that directorate
+        users = (
+            User.query.join(Department, User.department_id == Department.id)
+            .filter(
+                Department.directorate_id == dir_id,
+                User.role.ilike("directorate_head")
+            )
+            .all()
+        )
         return [u.id for u in users]
 
     if kind == "DEPARTMENT" and step.approver_department_id:
@@ -137,6 +153,7 @@ def start_workflow_for_request(
             approver_kind=ts.approver_kind,
             approver_user_id=ts.approver_user_id,
             approver_department_id=ts.approver_department_id,
+            approver_directorate_id=getattr(ts, 'approver_directorate_id', None),
             approver_role=ts.approver_role,
             status="PENDING",
             due_at=_step_due_at(template_sla, ts.sla_days),

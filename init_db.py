@@ -23,7 +23,12 @@ from models import (
     User, ArchivedFile, FilePermission, AuditLog, Notification,
     WorkflowRequest, RequestAttachment,
     WorkflowTemplate, WorkflowTemplateStep, WorkflowInstance, WorkflowInstanceStep,
+<<<<<<< HEAD
     Organization, Directorate, Department
+=======
+    Organization, Directorate, Department,
+    Role, RequestType, WorkflowRoutingRule
+>>>>>>> afbb9dd (Full body refresh)
 )
 
 
@@ -187,9 +192,15 @@ def init_database():
 
         
         # =========================
+<<<<<<< HEAD
         # =========================
         # 4) Seed Organization / Directorates / Departments + Users from seed.xlsx
         # =========================
+=======
+        # =========================
+        # 4) Seed Organization / Directorates / Departments + Users from seed.xlsx
+        # =========================
+>>>>>>> afbb9dd (Full body refresh)
         # Notes:
         # - The script will create the DB at: <instance_path>/workflow.db
         # - Place seed.xlsx next to init_db.py (recommended) OR set env var SEED_XLSX to a full path.
@@ -438,7 +449,170 @@ def init_database():
             print(f"[seed] Done. Created users: {created_users}")
             return created_users
 
+<<<<<<< HEAD
         # Run the Excel seeder first (so org structure exists)
+=======
+        
+
+        # =========================
+        # 3.5️⃣ Seed Extra Master Data (Roles + Request Types + Sample Template)
+        # =========================
+        def seed_extra_master_data():
+            # ---- Roles (Master Data) ----
+            roles = [
+                # code, name_ar, name_en, active
+                ("sect_head", "رئيس قسم", "Section Head", True),
+                ("devision_head", "رئيس شعبة", "Division Head", True),
+                ("General_secretary", "الأمين العام", "General Secretary", True),
+                ("dept_head", "مدير دائرة", "Department Head", True),
+                ("directorate_head", "مدير عام الإدارة", "Directorate Head", True),
+                ("PNCECS_Head", "رئيس اللجنة الوطنية", "President of National Commission", True),
+                ("employee", "موظف", "Employee", True),
+                ("ADMIN", "مدير النظام", "System Admin", True),
+                ("SUPER_ADMIN", "سوبر أدمن", "Super Admin", True),
+                ("USER", "مستخدم", "User", True),
+            ]
+
+            for code, name_ar, name_en, active in roles:
+                r = Role.query.filter_by(code=code).first()
+                if not r:
+                    r = Role(code=code)
+                    db.session.add(r)
+                r.name_ar = name_ar
+                r.name_en = name_en
+                r.is_active = bool(active)
+
+            db.session.flush()
+
+            # ---- Request Types ----
+            request_types = [
+                ("purchase_request", "طلب شراء", "Purchase request", True),
+                ("project_review", "طلب مراجعة مشروع", "Project Review", True),
+                ("signature_request", "طلب توقيع", "Signature Request", True),
+                ("approval_request", "طلب إعتماد", "Application for approval", True),
+            ]
+            for code, name_ar, name_en, active in request_types:
+                rt = RequestType.query.filter_by(code=code).first()
+                if not rt:
+                    rt = RequestType(code=code, name_ar=name_ar, name_en=name_en, is_active=bool(active))
+                    db.session.add(rt)
+                else:
+                    rt.name_ar = name_ar
+                    rt.name_en = name_en
+                    rt.is_active = bool(active)
+
+            db.session.flush()
+
+            # ---- Sample Template: "مسار طلب مالي مشاريع" ----
+            template_name = "مسار طلب مالي مشاريع"
+            t = WorkflowTemplate.query.filter_by(name=template_name).first()
+            if not t:
+                creator = User.query.filter(User.role.in_(["SUPER_ADMIN", "ADMIN"])).order_by(User.id.asc()).first()
+                created_by_id = creator.id if creator else None
+
+                t = WorkflowTemplate(
+                    name=template_name,
+                    sla_days_default=5,
+                    is_active=True,
+                    created_by_id=created_by_id
+                )
+                db.session.add(t)
+                db.session.flush()
+
+                # Lookups
+                user1 = User.query.filter_by(email="adham.pncecs@gmail.com").first()
+
+                org = Organization.query.filter_by(code="PNCECS").first()
+
+                # Ensure directorates exist (create if missing)
+                dir_programs_projects = Directorate.query.filter(
+                    Directorate.name_ar.ilike("%الإدارة العامة للبرامج%")
+                ).first()
+                if not dir_programs_projects and org:
+                    dir_programs_projects = Directorate(
+                        organization_id=org.id,
+                        name_ar="الإدارة العامة للبرامج والمشاريع",
+                        name_en="General Directorate of Programs and Projects",
+                        is_active=True
+                    )
+                    db.session.add(dir_programs_projects)
+                    db.session.flush()
+
+                dir_admin_affairs = Directorate.query.filter(
+                    Directorate.name_ar.ilike("%الشؤون الإدارية%")
+                ).first()
+                if not dir_admin_affairs and org:
+                    dir_admin_affairs = Directorate(
+                        organization_id=org.id,
+                        name_ar="الإدارة العامة للشؤون الإدارية",
+                        name_en="General Directorate of Administrative Affairs",
+                        is_active=True
+                    )
+                    db.session.add(dir_admin_affairs)
+                    db.session.flush()
+
+                # Ensure department exists (create if missing)
+                dept_fin_projects = Department.query.filter(
+                    Department.name_ar.ilike("%دائرة مالية المشاريع%")
+                ).first()
+                if not dept_fin_projects and dir_programs_projects:
+                    dept_fin_projects = Department(
+                        directorate_id=dir_programs_projects.id,
+                        name_ar="دائرة مالية المشاريع",
+                        name_en="Projects Financial Department",
+                        is_active=True
+                    )
+                    db.session.add(dept_fin_projects)
+                    db.session.flush()
+
+                steps = [
+                    ("USER", {"user": user1}, 1),
+                    ("DEPARTMENT", {"dept": dept_fin_projects}, 1),
+                    ("DIRECTORATE", {"dir": dir_programs_projects}, 1),
+                    ("DIRECTORATE", {"dir": dir_admin_affairs}, 1),
+                    ("ROLE", {"role": "General_secretary"}, 1),
+                ]
+
+                order = 1
+                for kind, target, sla_days in steps:
+                    s = WorkflowTemplateStep(
+                        template_id=t.id,
+                        step_order=order,
+                        approver_kind=kind,
+                        approver_user_id=(target.get("user").id if kind == "USER" and target.get("user") else None),
+                        approver_department_id=(target.get("dept").id if kind == "DEPARTMENT" and target.get("dept") else None),
+                        approver_directorate_id=(target.get("dir").id if kind == "DIRECTORATE" and target.get("dir") else None),
+                        approver_role=(target.get("role") if kind == "ROLE" else None),
+                        sla_days=sla_days
+                    )
+                    db.session.add(s)
+                    order += 1
+
+                                # Optional: map request types to this template (helps testing)
+                for code in ["purchase_request", "project_review", "signature_request", "approval_request"]:
+                    rt = RequestType.query.filter_by(code=code).first()
+                    if not rt:
+                        continue
+                    rule = WorkflowRoutingRule.query.filter_by(
+                        request_type_id=rt.id,
+                        template_id=t.id,
+                        is_active=True
+                    ).first()
+                    if not rule:
+                        rule = WorkflowRoutingRule(
+                            request_type_id=rt.id,
+                            template_id=t.id,
+                            organization_id=None,   # global fallback (works even if user has no dept/org)
+                            directorate_id=None,
+                            department_id=None,
+                            priority=10,
+                            is_active=True
+                        )
+                        db.session.add(rule)
+
+
+# Run the Excel seeder first (so org structure exists)
+>>>>>>> afbb9dd (Full body refresh)
         seed_from_excel()
         # 4️⃣ Seed Users (FIXED)
         # =========================
@@ -492,6 +666,58 @@ def init_database():
         if created:
             print("User created:", user3_email)
         seeded.append(("USER", user3_email, user3_password))
+
+
+        # =========================
+        # 4.9️⃣ Seed Extra Master Data (after users)
+        # =========================
+        seed_extra_master_data()
+
+        # =========================
+        # 4.95️⃣ Apply User Role Overrides (By Email)
+        # =========================
+        def apply_user_role_overrides():
+            mapping = {
+                "irene2.pncecs@mail.com": "directorate_head",
+                "belal.pncecs@gmail.com": "dept_head",
+                "bayan.pncecs@gmail.com": "USER",
+                "khlud.pncecs@gmail.com": "directorate_head",
+                "jihad.pncecs@gmail.com": "General_secretary",
+                "raed.pncecs@gmail.com": "directorate_head",
+                "saleem.pncecs@gmail.com": "USER",
+                "samir.pncecs@gmail.com": "USER",
+                "sawsan.pncecs@gmail.com": "dept_head",
+                "fadi.pncecs@gmail.com": "dept_head",
+                "hamdan.pncecs@gmail.com": "dept_head",
+                "harfoush82@yahoo.com": "dept_head",
+                "motaz.elbh1@gmail.com": "directorate_head",
+                "safi.pncecs2@gmail.com": "directorate_head",
+                "dua.pncecs@gmail.com": "USER",
+                "ruba.pncecs@gmail.com": "USER",
+                "adham.pncecs@gmail.com": "USER",
+                "raheeq.pncecs@gmail.com": "USER",
+                "shorouq.pncecs@gmail.com": "dept_head",
+                "ayman.pncecs@gmail.com": "USER",
+                "noor.pncecs@gmail.com": "USER",
+                "shawkat.pncecs@gmail.com": "USER",
+                "majd.pncecs@gmail.com": "dept_head",
+                "admin@pncecs.org": "ADMIN",
+                "superadmin@pncecs.org": "SUPER_ADMIN",
+                "mo@gmail.com": "USER",
+                "ta.pncecs@gmail.com": "USER",
+            }
+
+            updated = 0
+            for email, role in mapping.items():
+                u = User.query.filter_by(email=email).first()
+                if not u:
+                    continue
+                u.role = role
+                updated += 1
+            print(f"[seed] Role overrides applied: {updated}")
+
+        apply_user_role_overrides()
+
 
         # =========================
         # 5️⃣ Commit نهائي

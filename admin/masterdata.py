@@ -1,10 +1,11 @@
 # admin/masterdata.py
 from flask import Blueprint, render_template, request, redirect, url_for, flash, abort
 from flask_login import login_required
+from sqlalchemy import or_
 from extensions import db
 from utils.perms import perm_required
 
-from models import Organization, Directorate, Department, User, UserPermission, RequestType, WorkflowRoutingRule, WorkflowRequest
+from models import Organization, Directorate, Department, Role, User, UserPermission, RequestType, WorkflowRoutingRule, WorkflowRequest
 
 masterdata_bp = Blueprint("masterdata", __name__, url_prefix="/admin/masterdata")
 
@@ -14,6 +15,11 @@ PERM_MODULES = [
     ("REQUEST_TYPES", "أنواع الطلبات (Request Types)", "REQUEST_TYPES_MANAGE"),
     ("WORKFLOW_ROUTING", "قواعد التوجيه (Routing Rules)", "WORKFLOW_ROUTING_MANAGE"),
     ("USER_PERMISSIONS", "إدارة صلاحيات المستخدمين", "USER_PERMISSIONS_MANAGE"),
+]
+
+PERM_EXTRA_KEYS = [
+    ("VIEW_DASHBOARD", "رؤية لوحة Dashboard"),
+    ("VIEW_ESCALATIONS", "رؤية صفحة 🚨 Escalations"),
 ]
 
 PERM_ACTIONS = [
@@ -43,8 +49,19 @@ def _current_is_super_admin() -> bool:
 @login_required
 @perm_required("MASTERDATA_READ")
 def org_list():
-    items = Organization.query.order_by(Organization.id.desc()).all()
-    return render_template("admin/masterdata/org_list.html", items=items)
+    q = request.args.get("q", "").strip()
+    query = Organization.query
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            Organization.name_ar.ilike(like),
+            Organization.name_en.ilike(like),
+            Organization.code.ilike(like)
+        ))
+
+    items = query.order_by(Organization.name_ar.asc()).all()
+    return render_template("admin/masterdata/org_list.html", items=items, q=q)
 
 @masterdata_bp.route("/organizations/new", methods=["GET", "POST"])
 @login_required
@@ -63,7 +80,6 @@ def org_new():
             is_active=(request.form.get("is_active") == "1"),
         )
         db.session.add(o)
-        db.session.commit()
         flash("تم إنشاء المنظمة.", "success")
         return redirect(url_for("masterdata.org_list"))
 
@@ -85,7 +101,6 @@ def org_edit(org_id):
         o.code = _clean(request.form.get("code")) or None
         o.is_active = (request.form.get("is_active") == "1")
 
-        db.session.commit()
         flash("تم حفظ التعديلات.", "success")
         return redirect(url_for("masterdata.org_list"))
 
@@ -98,14 +113,20 @@ def org_edit(org_id):
 @login_required
 @perm_required("MASTERDATA_READ")
 def dir_list():
-    items = (
-        Directorate.query
-        .order_by(Directorate.id.desc())
-        .all()
-    )
-    orgs = Organization.query.order_by(Organization.name_ar.asc()).all()
+    q = request.args.get("q", "").strip()
+    query = Directorate.query
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            Directorate.name_ar.ilike(like),
+            Directorate.name_en.ilike(like)
+        ))
+
+    items = query.order_by(Directorate.name_ar.asc()).all()
+    orgs = Organization.query.order_by(Organization.id.asc()).all()
     org_map = {o.id: o for o in orgs}
-    return render_template("admin/masterdata/dir_list.html", items=items, org_map=org_map)
+    return render_template("admin/masterdata/dir_list.html", items=items, q=q, org_map=org_map)
 
 @masterdata_bp.route("/directorates/new", methods=["GET", "POST"])
 @login_required
@@ -132,7 +153,6 @@ def dir_new():
             is_active=(request.form.get("is_active") == "1"),
         )
         db.session.add(d)
-        db.session.commit()
         flash("تم إنشاء الإدارة.", "success")
         return redirect(url_for("masterdata.dir_list"))
 
@@ -162,7 +182,6 @@ def dir_edit(dir_id):
         d.code = _clean(request.form.get("code")) or None
         d.is_active = (request.form.get("is_active") == "1")
 
-        db.session.commit()
         flash("تم حفظ التعديلات.", "success")
         return redirect(url_for("masterdata.dir_list"))
 
@@ -175,10 +194,20 @@ def dir_edit(dir_id):
 @login_required
 @perm_required("MASTERDATA_READ")
 def dept_list():
-    items = Department.query.order_by(Department.id.desc()).all()
-    dirs = Directorate.query.order_by(Directorate.name_ar.asc()).all()
+    q = request.args.get("q", "").strip()
+    query = Department.query
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            Department.name_ar.ilike(like),
+            Department.name_en.ilike(like)
+        ))
+
+    items = query.order_by(Department.name_ar.asc()).all()
+    dirs = Directorate.query.order_by(Directorate.id.asc()).all()
     dir_map = {d.id: d for d in dirs}
-    return render_template("admin/masterdata/dept_list.html", items=items, dir_map=dir_map)
+    return render_template("admin/masterdata/dept_list.html", items=items, q=q, dir_map=dir_map)
 
 @masterdata_bp.route("/departments/new", methods=["GET", "POST"])
 @login_required
@@ -205,7 +234,6 @@ def dept_new():
             is_active=(request.form.get("is_active") == "1"),
         )
         db.session.add(dep)
-        db.session.commit()
         flash("تم إنشاء الدائرة.", "success")
         return redirect(url_for("masterdata.dept_list"))
 
@@ -235,7 +263,6 @@ def dept_edit(dept_id):
         dep.code = _clean(request.form.get("code")) or None
         dep.is_active = (request.form.get("is_active") == "1")
 
-        db.session.commit()
         flash("تم حفظ التعديلات.", "success")
         return redirect(url_for("masterdata.dept_list"))
 
@@ -248,8 +275,19 @@ def dept_edit(dept_id):
 @login_required
 @perm_required("REQUEST_TYPES_READ")
 def request_types_list():
-    items = RequestType.query.order_by(RequestType.id.desc()).all()
-    return render_template("admin/masterdata/request_types_list.html", items=items)
+    q = request.args.get("q", "").strip()
+    query = RequestType.query
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            RequestType.name_ar.ilike(like),
+            RequestType.name_en.ilike(like),
+            RequestType.code.ilike(like)
+        ))
+
+    items = query.order_by(RequestType.id.asc()).all()
+    return render_template("admin/masterdata/request_types_list.html", items=items, q=q)
 
 @masterdata_bp.route("/request-types/new", methods=["GET", "POST"])
 @login_required
@@ -275,7 +313,6 @@ def request_types_new():
 
         rt = RequestType(code=code, name_ar=name_ar, name_en=name_en, is_active=is_active)
         db.session.add(rt)
-        db.session.commit()
         flash("تم إنشاء نوع الطلب.", "success")
         return redirect(url_for("masterdata.request_types_list"))
 
@@ -310,7 +347,6 @@ def request_types_edit(rt_id):
         rt.name_en = name_en
         rt.is_active = is_active
 
-        db.session.commit()
         flash("تم حفظ التعديلات.", "success")
         return redirect(url_for("masterdata.request_types_list"))
 
@@ -329,7 +365,6 @@ def request_types_delete(rt_id):
     if used_in_req or used_in_rules:
         # safer: deactivate
         rt.is_active = False
-        db.session.commit()
         flash("هذا النوع مستخدم بالفعل. تم تعطيله بدلاً من الحذف.", "warning")
         return redirect(url_for("masterdata.request_types_list"))
 
@@ -341,30 +376,56 @@ def request_types_delete(rt_id):
 # -------------------------
 # Permissions management
 # -------------------------
+# -------------------------
+# Permissions management
+# -------------------------
 @masterdata_bp.route("/permissions", methods=["GET", "POST"])
 @login_required
 @perm_required("USER_PERMISSIONS_UPDATE")
 def permissions_manage():
+<<<<<<< HEAD
     users = User.query.order_by(User.email.asc()).all()
     # Admin (or any non-super-admin) must NOT be able to manage SUPER_ADMIN permissions
     if not _current_is_super_admin():
         users = [u for u in users if not _is_super_admin_user(u)]
+=======
+    users = User.query.order_by(User.id.asc()).all()
+    if not _current_is_super_admin():
+        users = [u for u in users if not _is_super_admin_user(u)]
+
+>>>>>>> afbb9dd (Full body refresh)
     selected_user_id = request.args.get("user_id")
 
-    # build all managed keys (CRUD + legacy *_MANAGE) to keep things clean
-    action_codes = [a for a, _ in PERM_ACTIONS]
-    crud_keys = [f"{prefix}_{a}" for (prefix, _label, _legacy) in PERM_MODULES for a in action_codes]
-    legacy_keys = [legacy for (_prefix, _label, legacy) in PERM_MODULES if legacy]
-    all_keys = sorted(set(crud_keys + legacy_keys))
+    action_codes = [a for a, _ in PERM_ACTIONS]  # e.g. ["CREATE","READ","UPDATE","DELETE"]
+
+    # Build managed keys list for cleanup (CRUD + legacy *_MANAGE + extra)
+    managed_keys = set()
+    for prefix, _label, legacy in PERM_MODULES:
+        for act in action_codes:
+            managed_keys.add(f"{prefix}_{act}")
+        if legacy:
+            managed_keys.add(legacy)
+    for k, _lbl in PERM_EXTRA_KEYS:
+        managed_keys.add(k)
 
     if request.method == "POST":
-        uid = request.form.get("user_id")
-        if not (uid or "").isdigit():
-            flash("اختر مستخدم.", "danger")
-            return redirect(request.url)
+        uid = (request.form.get("user_id") or "").strip()
+        if not uid.isdigit():
+            flash("يرجى اختيار مستخدم صحيح.", "danger")
+            return redirect(url_for("masterdata.permissions_manage"))
 
         uid = int(uid)
+        target = User.query.get(uid)
+        if not target:
+            flash("المستخدم غير موجود.", "danger")
+            return redirect(url_for("masterdata.permissions_manage"))
 
+        # HARD BLOCK: only SUPER_ADMIN can edit SUPER_ADMIN permissions
+        if _is_super_admin_user(target) and not _current_is_super_admin():
+            flash("لا يمكنك تعديل صلاحيات حساب SUPER_ADMIN.", "danger")
+            return redirect(url_for("masterdata.permissions_manage"))
+
+<<<<<<< HEAD
         target = User.query.get(uid)
         if not target:
             flash("المستخدم غير موجود.", "danger")
@@ -376,50 +437,75 @@ def permissions_manage():
             return redirect(url_for("masterdata.permissions_manage"))
 
         # remove old perms for these keys
+=======
+        # Remove old perms for managed keys
+>>>>>>> afbb9dd (Full body refresh)
         UserPermission.query.filter(
             UserPermission.user_id == uid,
-            UserPermission.key.in_(all_keys)
+            UserPermission.key.in_(list(managed_keys))
         ).delete(synchronize_session=False)
 
-        # add checked perms (CRUD only)
-        for (prefix, _label, _legacy) in PERM_MODULES:
+        # Add selected CRUD perms
+        for prefix, _label, _legacy in PERM_MODULES:
             for act in action_codes:
-                k = f"{prefix}_{act}"
                 if request.form.get(f"perm_{prefix}_{act}") == "1":
+                    k = f"{prefix}_{act}"
                     db.session.add(UserPermission(user_id=uid, key=k, is_allowed=True))
+
+        # Add selected EXTRA perms
+        for k, _lbl in PERM_EXTRA_KEYS:
+            if request.form.get(f"perm_extra_{k}") == "1":
+                db.session.add(UserPermission(user_id=uid, key=k, is_allowed=True))
 
         db.session.commit()
         flash("تم حفظ صلاحيات المستخدم.", "success")
         return redirect(url_for("masterdata.permissions_manage", user_id=uid))
 
+    # GET view
     selected = None
     checked_keys = set()
     current_keys = set()
 
-    if (selected_user_id or "").isdigit():
-        selected = User.query.get(int(selected_user_id))
+    if selected_user_id and str(selected_user_id).isdigit():
+        uid = int(selected_user_id)
+        selected = User.query.get(uid)
         if selected:
             if _is_super_admin_user(selected) and not _current_is_super_admin():
                 flash("لا يمكنك عرض/تعديل صلاحيات حساب SUPER_ADMIN.", "warning")
                 return redirect(url_for("masterdata.permissions_manage"))
+<<<<<<< HEAD
             rows = UserPermission.query.filter_by(user_id=selected.id).all()
+=======
+
+            rows = UserPermission.query.filter_by(user_id=uid).all()
+>>>>>>> afbb9dd (Full body refresh)
             current_keys = {
                 (p.key or "").strip().upper()
                 for p in rows
                 if p.is_allowed
             }
 
-            # If legacy MANAGE exists, treat CRUD as checked for that module
-            for (prefix, _label, legacy) in PERM_MODULES:
-                legacy_u = (legacy or "").strip().upper()
-                if legacy_u and legacy_u in current_keys:
+            # CRUD keys (+ legacy mapping)
+            for prefix, _label, legacy in PERM_MODULES:
+                # legacy -> all CRUD enabled
+                if legacy and legacy.upper() in current_keys:
                     for act in action_codes:
                         checked_keys.add(f"{prefix}_{act}")
+                    checked_keys.add(legacy)
+                    continue
 
                 for act in action_codes:
-                    k = f"{prefix}_{act}"
+                    k = f"{prefix}_{act}".upper()
                     if k in current_keys:
-                        checked_keys.add(k)
+                        checked_keys.add(f"{prefix}_{act}")
+
+                if legacy and legacy.upper() in current_keys:
+                    checked_keys.add(legacy)
+
+            # Extra keys
+            for k, _lbl in PERM_EXTRA_KEYS:
+                if k.upper() in current_keys:
+                    checked_keys.add(k)
 
     return render_template(
         "admin/masterdata/permissions.html",
@@ -429,4 +515,93 @@ def permissions_manage():
         perm_actions=PERM_ACTIONS,
         checked_keys=checked_keys,
         current_keys=current_keys,
+        extra_keys=PERM_EXTRA_KEYS,
     )
+@masterdata_bp.route("/roles")
+@login_required
+@perm_required("MASTERDATA_READ")
+def roles_list():
+    q = request.args.get("q", "").strip()
+    query = Role.query
+
+    if q:
+        like = f"%{q}%"
+        query = query.filter(or_(
+            Role.code.ilike(like),
+            Role.name_ar.ilike(like),
+            Role.name_en.ilike(like)
+        ))
+
+    items = query.order_by(Role.id.asc()).all()
+    return render_template("admin/masterdata/roles_list.html", items=items, q=q)
+
+
+@masterdata_bp.route("/roles/new", methods=["GET", "POST"])
+@login_required
+@perm_required("MASTERDATA_CREATE")
+def roles_new():
+    if request.method == "POST":
+        code = _clean(request.form.get("code"))
+        name_ar = _clean(request.form.get("name_ar"))
+        name_en = _clean(request.form.get("name_en"))
+        is_active = (request.form.get("is_active") == "1")
+
+        if not code:
+            flash("كود الدور مطلوب.", "danger")
+            return redirect(request.url)
+
+        code = code.replace(" ", "_")
+        if Role.query.filter_by(code=code).first():
+            flash("هذا الدور موجود مسبقًا.", "danger")
+            return redirect(request.url)
+
+        r = Role(code=code, name_ar=name_ar or None, name_en=name_en or None, is_active=is_active)
+        db.session.add(r)
+        flash("تم إنشاء الدور.", "success")
+        return redirect(url_for("masterdata.roles_list"))
+
+    return render_template("admin/masterdata/roles_form.html", r=None)
+
+
+@masterdata_bp.route("/roles/<int:role_id>/edit", methods=["GET", "POST"])
+@login_required
+@perm_required("MASTERDATA_UPDATE")
+def roles_edit(role_id):
+    r = Role.query.get_or_404(role_id)
+
+    if request.method == "POST":
+        code = _clean(request.form.get("code"))
+        name_ar = _clean(request.form.get("name_ar"))
+        name_en = _clean(request.form.get("name_en"))
+        is_active = (request.form.get("is_active") == "1")
+
+        if not code:
+            flash("كود الدور مطلوب.", "danger")
+            return redirect(request.url)
+
+        code = code.replace(" ", "_")
+        exists = Role.query.filter(Role.code == code, Role.id != r.id).first()
+        if exists:
+            flash("يوجد دور آخر بنفس الكود.", "danger")
+            return redirect(request.url)
+
+        r.code = code
+        r.name_ar = name_ar or None
+        r.name_en = name_en or None
+        r.is_active = is_active
+
+        flash("تم حفظ الدور.", "success")
+        return redirect(url_for("masterdata.roles_list"))
+
+    return render_template("admin/masterdata/roles_form.html", r=r)
+
+
+@masterdata_bp.route("/roles/<int:role_id>/delete", methods=["POST"])
+@login_required
+@perm_required("MASTERDATA_DELETE")
+def roles_delete(role_id):
+    r = Role.query.get_or_404(role_id)
+    db.session.delete(r)
+    db.session.commit()
+    flash("تم حذف الدور.", "warning")
+    return redirect(url_for("masterdata.roles_list"))

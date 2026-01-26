@@ -29,6 +29,17 @@
   {% for d in departments %}
     {% set _ = depts_map.update({d.id: d}) %}
   {% endfor %}
+<<<<<<< HEAD
+=======
+{# directorates map for display #}
+{% set dirs_map = {} %}
+{% if directorates %}
+  {% for d in directorates %}
+    {% set _ = dirs_map.update({d.id: d}) %}
+  {% endfor %}
+{% endif %}
+
+>>>>>>> afbb9dd (Full body refresh)
 {% endif %}
 
 <div class="card shadow-sm mb-3">
@@ -39,6 +50,16 @@
           <label class="form-label">اسم المسار</label>
           <input class="form-control" name="name" value="{{ t.name }}" required>
         </div>
+
+        <div class="col-md-3" id="box_dir" style="display:none;">
+  <label class="form-label">Directorate</label>
+  <select class="form-select" name="approver_directorate_id">
+    <option value="">-- اختر --</option>
+    {% for d in directorates %}
+      <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+    {% endfor %}
+  </select>
+</div>
 
         <div class="col-md-3">
           <label class="form-label">SLA الافتراضي (أيام)</label>
@@ -92,14 +113,24 @@
                 {% endif %}
               {% elif s.approver_kind == "ROLE" %}
                 ROLE: {{ s.approver_role }}
+              {% elif s.approver_kind == "DIRECTORATE" %}
+                DIR: {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}{{ dirs_map.get(s.approver_directorate_id).name_ar }} [#{{ s.approver_directorate_id }}]{% else %}{{ s.approver_directorate_id }}{% endif %}
               {% else %}
                 DEPT: {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}{{ depts_map.get(s.approver_department_id).name_ar }} [#{{ s.approver_department_id }}]{% else %}{{ s.approver_department_id }}{% endif %}
               {% endif %}
             </td>
             <td>{{ s.sla_days if s.sla_days is not none else "-" }}</td>
             <td class="text-end d-flex gap-2 justify-content-end">
-              <a class="btn btn-sm btn-outline-primary"
+              <div class="d-inline-flex gap-1">
+  <form method="post" action="{{ url_for('workflow.templates_steps_move', step_id=s.id, direction='up') }}">
+    <button class="btn btn-sm btn-outline-secondary" title="أعلى">↑</button>
+  </form>
+  <form method="post" action="{{ url_for('workflow.templates_steps_move', step_id=s.id, direction='down') }}">
+    <button class="btn btn-sm btn-outline-secondary" title="أسفل">↓</button>
+  </form>
+  <a class="btn btn-sm btn-outline-primary"
                  href="{{ url_for('workflow.templates_steps_edit', step_id=s.id) }}">تعديل</a>
+</div>
 
               <form method="post" action="{{ url_for('workflow.templates_steps_delete', step_id=s.id) }}"
                     onsubmit="return confirm('حذف الخطوة؟');">
@@ -129,6 +160,7 @@
             <option value="ROLE">ROLE</option>
             <option value="USER">USER</option>
             <option value="DEPARTMENT">DEPARTMENT</option>
+            <option value="DIRECTORATE">DIRECTORATE</option>
           </select>
         </div>
 
@@ -162,6 +194,16 @@
           </select>
         </div>
 
+        <div class="col-md-3" id="box_dir" style="display:none;">
+  <label class="form-label">Directorate</label>
+  <select class="form-select" name="approver_directorate_id">
+    <option value="">-- اختر --</option>
+    {% for d in directorates %}
+      <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+    {% endfor %}
+  </select>
+</div>
+
         <div class="col-md-3">
           <label class="form-label">SLA (أيام)</label>
           <input class="form-control" name="sla_days" type="number" min="1" placeholder="اختياري">
@@ -181,6 +223,7 @@
   const boxRole = document.getElementById("box_role");
   const boxUser = document.getElementById("box_user");
   const boxDept = document.getElementById("box_dept");
+  const boxDir = document.getElementById("box_dir");
 
   function toggle() {
     const v = kind.value;
@@ -188,19 +231,32 @@
     boxRole.style.display = (v === "ROLE") ? "block" : "none";
     boxUser.style.display = (v === "USER") ? "block" : "none";
     boxDept.style.display = (v === "DEPARTMENT") ? "block" : "none";
+    boxDir.style.display = (v === "DIRECTORATE") ? "block" : "none";
 
     // Disable unused fields to avoid posting junk values
     const roleSel = boxRole.querySelector('select[name="approver_role"]');
     const userSel = boxUser.querySelector('select[name="approver_user_id"]');
     const deptSel = boxDept.querySelector('select[name="approver_department_id"]');
+<<<<<<< HEAD
+=======
+    const dirSel = boxDir.querySelector('select[name="approver_directorate_id"]');
+>>>>>>> afbb9dd (Full body refresh)
 
     roleSel.disabled = (v !== "ROLE");
     userSel.disabled = (v !== "USER");
     deptSel.disabled = (v !== "DEPARTMENT");
+<<<<<<< HEAD
+=======
+    dirSel.disabled = (v !== "DIRECTORATE");
+>>>>>>> afbb9dd (Full body refresh)
 
     if (v !== "ROLE") roleSel.value = "";
     if (v !== "USER") userSel.value = "";
     if (v !== "DEPARTMENT") deptSel.value = "";
+<<<<<<< HEAD
+=======
+    if (v !== "DIRECTORATE") dirSel.value = "";
+>>>>>>> afbb9dd (Full body refresh)
   }
 
   kind.addEventListener("change", toggle);

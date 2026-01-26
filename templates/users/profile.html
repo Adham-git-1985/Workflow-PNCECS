@@ -12,6 +12,32 @@
 
 <div class="row g-3">
   <div class="col-lg-6">
+
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <h5 class="mb-3">🖼️ صورة الملف الشخصي</h5>
+
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <img
+                src="{% if current_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ current_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}"
+                alt="Avatar"
+                style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.15);"
+            >
+            <form method="post" enctype="multipart/form-data" class="flex-grow-1">
+                <input type="hidden" name="form_type" value="avatar">
+                <input class="form-control mb-2" type="file" name="avatar" accept="image/*" required>
+                <button class="btn btn-outline-primary btn-sm">
+                    تحديث الصورة
+                </button>
+                <div class="text-muted mt-2" style="font-size:0.9rem">
+                    الامتدادات المسموحة: png, jpg, jpeg, gif, webp
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+
     <div class="card shadow-sm">
       <div class="card-body">
         <h5 class="mb-3">🧾 بيانات الحساب</h5>

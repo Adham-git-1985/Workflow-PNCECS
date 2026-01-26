@@ -3,7 +3,25 @@ from datetime import datetime, timedelta
 from extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
+from sqlalchemy import func
 
+
+# ======================
+# Roles (Master Data)
+# ======================
+class Role(db.Model):
+    __tablename__ = "roles"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(50), unique=True, index=True, nullable=False)
+    name_ar = db.Column(db.String(200), nullable=True)
+    name_en = db.Column(db.String(200), nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    @property
+    def label(self):
+        return (self.name_ar or self.name_en or self.code or "").strip() or self.code
 
 # ======================
 # Users
@@ -15,6 +33,10 @@ class User(db.Model, UserMixin):
     email = db.Column(db.String(255), unique=True, index=True)
     name = db.Column(db.String(200), nullable=True)
     job_title = db.Column(db.String(200), nullable=True)
+<<<<<<< HEAD
+=======
+    avatar_filename = db.Column(db.String(255), nullable=True)  # profile photo
+>>>>>>> afbb9dd (Full body refresh)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(50), index=True)
     department_id = db.Column(db.Integer, nullable=True)
@@ -78,6 +100,35 @@ class User(db.Model, UserMixin):
             return True
 
         return my_role == role_name
+
+    def has_role_perm(self, permission: str) -> bool:
+        """Role-based permissions (RolePermission table).
+
+        - ADMIN (and SUPER_ADMIN via has_role('ADMIN')) always allowed.
+        - Otherwise: checks RolePermission where role matches current user's role (case-insensitive)
+          and permission matches (case-insensitive stored as upper).
+        """
+        if self.has_role("ADMIN"):
+            return True
+
+        perm = (permission or "").strip().upper()
+        if not perm:
+            return False
+
+        role = (self.role or "").strip()
+        if not role:
+            return False
+
+        role_norm = role.lower()
+
+        return (
+            RolePermission.query
+            .filter(func.lower(RolePermission.role) == role_norm)
+            .filter(RolePermission.permission == perm)
+            .first()
+            is not None
+        )
+
 
     @property
     def full_name(self):
@@ -420,6 +471,27 @@ class WorkflowTemplate(db.Model):
         cascade="all, delete-orphan",
         order_by="WorkflowTemplateStep.step_order"
     )
+class RequestEscalation(db.Model):
+    __tablename__ = "request_escalation"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"), nullable=False)
+
+    from_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    to_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    category = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    request = db.relationship("WorkflowRequest", backref="escalations")
+    from_user = db.relationship("User", foreign_keys=[from_user_id], lazy="joined")
+    to_user = db.relationship("User", foreign_keys=[to_user_id], lazy="joined")
+
+    def __repr__(self):
+        return f"<RequestEscalation #{self.id} req={self.request_id} {self.category}>"
+
 
 
 class WorkflowTemplateStep(db.Model):
@@ -434,7 +506,8 @@ class WorkflowTemplateStep(db.Model):
     approver_kind = db.Column(db.String(20), nullable=False)
 
     approver_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    approver_department_id = db.Column(db.Integer, nullable=True)  # no departments table in your schema
+    approver_department_id = db.Column(db.Integer, nullable=True)
+    approver_directorate_id = db.Column(db.Integer, nullable=True)  # no departments table in your schema
     approver_role = db.Column(db.String(50), nullable=True)
 
     # SLA override for this step (optional)
@@ -479,6 +552,7 @@ class WorkflowInstanceStep(db.Model):
     approver_kind = db.Column(db.String(20), nullable=False)
     approver_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     approver_department_id = db.Column(db.Integer, nullable=True)
+    approver_directorate_id = db.Column(db.Integer, nullable=True)
     approver_role = db.Column(db.String(50), nullable=True)
 
     status = db.Column(db.String(30), default="PENDING")  # PENDING / APPROVED / REJECTED / SKIPPED

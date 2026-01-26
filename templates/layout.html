@@ -42,7 +42,7 @@
         {% if current_user.is_authenticated and not hide_shell %}
         <div class="header-actions d-flex align-items-center gap-3">
             <div class="user-badge d-none d-md-flex align-items-center gap-2">
-                <i class="bi bi-person-circle"></i>
+                <img src="{% if current_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ current_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}" alt="avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.12);">
                 <span>{{ current_user.full_name }}</span>
                 <span class="user-role">({{ current_user.role }})</span>
             </div>
@@ -233,6 +233,11 @@
            class="{% if request.path.startswith('/admin/masterdata/departments') %}active{% endif %}">
             🧩 Departments
         </a>
+
+        <a href="{{ url_for('masterdata.roles_list') }}"
+           class="{% if request.path.startswith('/admin/masterdata/roles') %}active{% endif %}">
+            🎭 Roles
+        </a>
         {% endif %}
 
         {% if can_user_perms %}
@@ -240,24 +245,37 @@
            class="{% if request.path.startswith('/admin/masterdata/permissions') %}active{% endif %}">
             🔐 Permissions
         </a>
+
+        {% if current_user.has_role('ADMIN') %}
+        <a href="{{ url_for('admin.manage_permissions') }}"
+           class="{% if request.path.startswith('/admin/permissions') %}active{% endif %}">
+            🔐 Role Permissions
+        </a>
+        {% endif %}
+
         {% endif %}
         {% endif %}
 
-        {% if current_user.has_role('ADMIN') %}
+{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_DASHBOARD') or current_user.has_role_perm('VIEW_ESCALATIONS') %}
         <h4 class="sidebar-title mt-4">
             <i class="bi bi-gear"></i>
             <span class="menu-text">إدارة النظام</span>
         </h4>
 
+{% if current_user.has_role('ADMIN') %}
         <a href="{{ url_for('users.list_users') }}"
            class="{% if request.path.startswith('/users') %}active{% endif %}">
             👤 Users
         </a>
+{% endif %}
 
+{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_DASHBOARD') %}
         <a href="{{ url_for('admin.dashboard') }}"
            class="{% if request.path.startswith('/admin/dashboard') %}active{% endif %}">
             🧭 Dashboard
         </a>
+{% endif %}
+{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_ESCALATIONS') %}
         <a href="{{ url_for('admin.escalations') }}"
            class="{% if request.path.startswith('/admin/escalations') %}active{% endif %}">
             🚨 Escalations
@@ -265,18 +283,25 @@
                 <span class="badge bg-danger ms-2">{{ escalation_alerts_count }}</span>
             {% endif %}
         </a>
+{% endif %}
 
+{% if current_user.has_role('ADMIN') %}
         <a href="{{ url_for('workflow.notifications_dashboard') }}">
             📊 Notifications Dashboard
         </a>
+{% endif %}
 
+{% if current_user.has_role('ADMIN') %}
         <a href="{{ url_for('audit.audit_dashboard') }}">
             📊 Audit
         </a>
+{% endif %}
 
+{% if current_user.has_role('ADMIN') %}
         <a href="{{ url_for('audit.system_timeline') }}">
             🧭 Timeline
         </a>
+{% endif %}
 
         {% endif %}
 

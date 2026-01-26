@@ -11,6 +11,18 @@
 
 <div class="card shadow-sm">
   <div class="card-body">
+
+<form method="get" class="mb-3">
+  <div class="input-group">
+    <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="ابحث بالاسم…">
+    <button class="btn btn-outline-secondary" type="submit">بحث</button>
+    {% if q %}
+      <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+    {% endif %}
+  </div>
+</form>
+
+
     {% if items %}
       <div class="table-responsive">
         <table class="table table-sm align-middle">

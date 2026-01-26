@@ -60,6 +60,11 @@ ALLOWED_EXTENSIONS = {
 
     # Audio/Video (optional but common)
     "mp3", "wav", "m4a", "mp4", "mov", "avi",
+<<<<<<< HEAD
+=======
+    # html, web, sql, dll
+    "html", "css", "js", "py", "java", "php", "sql", "db", "dll",
+>>>>>>> afbb9dd (Full body refresh)
 }
 
 

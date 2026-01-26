@@ -13,6 +13,19 @@
   </div>
 </div>
 
+
+<form method="get" class="row g-2 align-items-center mb-3">
+  <div class="col-md-6 col-lg-5">
+    <input type="text" name="q" class="form-control" placeholder="بحث بالاسم/الإيميل/الوظيفة/ID" value="{{ q or '' }}">
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-outline-primary">بحث</button>
+    {% if q %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('users.list_users') }}">إلغاء</a>
+    {% endif %}
+  </div>
+</form>
+
 <div class="card shadow-sm">
   <div class="card-body">
 
@@ -30,6 +43,7 @@
         <tbody>
         {% for user in users %}
           {% set target_adminish = (user.role|string)|upper in ['ADMIN','SUPER_ADMIN'] %}
+          {% set target_super = (user.role|string)|upper == 'SUPER_ADMIN' %}
           <tr>
             <td>{{ user.id }}</td>
             <td>{{ user.name or "—" }}</td>
@@ -53,12 +67,17 @@
               {% endif %}
             </td>
             <td>
-              {% if is_super_admin %}
-                <a class="btn btn-sm btn-outline-dark" href="{{ url_for('users.manage_user', user_id=user.id) }}">⚙️ Manage</a>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
-            </td>
+  {# ✅ Edit user for ADMIN (except SUPER_ADMIN unless current is SUPER_ADMIN) #}
+  {% if is_super_admin or (not target_super) %}
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.edit_user', user_id=user.id) }}">✏️ تعديل</a>
+  {% else %}
+    <span class="text-muted">—</span>
+  {% endif %}
+
+  {% if is_super_admin %}
+    <a class="btn btn-sm btn-outline-dark ms-1" href="{{ url_for('users.manage_user', user_id=user.id) }}">⚙️ Manage</a>
+  {% endif %}
+</td>
           </tr>
         {% endfor %}
         </tbody>
@@ -70,7 +89,7 @@
       <ul class="pagination justify-content-center mb-0">
         {% if pagination.has_prev %}
           <li class="page-item">
-            <a class="page-link" href="{{ url_for('users.list_users', page=pagination.prev_num) }}">السابق</a>
+            <a class="page-link" href="{{ url_for('users.list_users', page=pagination.prev_num, q=q) }}">السابق</a>
           </li>
         {% endif %}
 
@@ -80,7 +99,7 @@
 
         {% if pagination.has_next %}
           <li class="page-item">
-            <a class="page-link" href="{{ url_for('users.list_users', page=pagination.next_num) }}">التالي</a>
+            <a class="page-link" href="{{ url_for('users.list_users', page=pagination.next_num, q=q) }}">التالي</a>
           </li>
         {% endif %}
       </ul>

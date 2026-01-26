@@ -2919,3 +2919,45 @@ sqlalchemy.exc.InvalidRequestError: One or more mappers failed to initialize - c
 2026-01-25 08:56:26,731 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:26] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
 2026-01-25 08:56:26,733 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:26] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
 2026-01-25 08:56:27,084 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:27] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+<<<<<<< HEAD
+=======
+2026-01-26 01:50:10,338 | INFO | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-01-26 01:50:10,339 | INFO | [33mPress CTRL+C to quit[0m
+2026-01-26 01:50:10,469 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:10] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:10,472 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:10] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:14,271 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:14] "GET /workflow/inbox HTTP/1.1" 200 -
+2026-01-26 01:50:14,662 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:14] "GET /static/css/main.css?v=20260123 HTTP/1.1" 200 -
+2026-01-26 01:50:14,664 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:14] "GET /static/js/charts.js HTTP/1.1" 200 -
+2026-01-26 01:50:14,676 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:14] "GET /static/images/avatar_default.svg HTTP/1.1" 200 -
+2026-01-26 01:50:14,693 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:14] "GET /static/images/logo.png HTTP/1.1" 200 -
+2026-01-26 01:50:14,717 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:14] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:18,515 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:18] "GET /admin/masterdata/departments HTTP/1.1" 200 -
+2026-01-26 01:50:18,562 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:18] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-26 01:50:18,581 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:18] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-26 01:50:18,581 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:18] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-26 01:50:18,582 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:18] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-26 01:50:18,662 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:18] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:23,651 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:23] "GET /admin/masterdata/directorates HTTP/1.1" 200 -
+2026-01-26 01:50:23,693 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:23] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-26 01:50:23,704 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:23] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-26 01:50:23,706 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:23] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-26 01:50:23,715 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:23] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-26 01:50:23,767 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:23] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:25,430 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:25] "GET /admin/masterdata/organizations HTTP/1.1" 200 -
+2026-01-26 01:50:25,472 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:25] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-26 01:50:25,482 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:25] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-26 01:50:25,484 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:25] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-26 01:50:25,487 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:25] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-26 01:50:25,564 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:25] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:27,098 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:27] "GET /users/ HTTP/1.1" 200 -
+2026-01-26 01:50:27,136 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:27] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-26 01:50:27,154 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:27] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-26 01:50:27,159 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:27] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-26 01:50:27,160 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:27] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-26 01:50:27,266 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:27] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-26 01:50:31,082 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:31] "[32mGET /logout HTTP/1.1[0m" 302 -
+2026-01-26 01:50:31,088 | INFO | Login page accessed
+2026-01-26 01:50:31,094 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:31] "GET /login HTTP/1.1" 200 -
+2026-01-26 01:50:31,134 | INFO | 127.0.0.1 - - [26/Jan/2026 01:50:31] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+>>>>>>> afbb9dd (Full body refresh)

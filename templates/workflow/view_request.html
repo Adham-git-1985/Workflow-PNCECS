@@ -9,6 +9,7 @@
     <small class="text-muted">
       الحالة: <strong>{{ req.status }}</strong>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
+      {% if template %} · المسار: <strong>{{ template.name }}</strong>{% endif %}
     </small>
   </div>
 
@@ -16,6 +17,21 @@
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
       PDF
     </a>
+
+    {% if current_user.has_role('SUPER_ADMIN') %}
+    <form method="post"
+          action="{{ url_for('workflow.delete_request', request_id=req.id) }}"
+          onsubmit="return confirm('هل أنت متأكد من حذف الطلب نهائياً؟ سيتم تسجيل ذلك في سجل التدقيق.');">
+      <button type="submit" class="btn btn-sm btn-danger">
+        🗑️ حذف
+      </button>
+    </form>
+    {% endif %}
+    {% if can_decide %}
+    <a class="btn btn-sm btn-outline-danger" href="{{ url_for('workflow.escalate_request', request_id=req.id) }}">
+      🚨 تصعيد
+    </a>
+    {% endif %}
   </div>
 </div>
 
@@ -68,6 +84,33 @@
       </div>
     </div>
 
+    <div class="card shadow-sm mb-3">
+  <div class="card-header bg-white">
+    <strong>🚨 التصعيدات</strong>
+  </div>
+  <div class="card-body">
+    {% if req.escalations %}
+      <ul class="list-group">
+        {% for e in req.escalations|sort(attribute='created_at', reverse=True) %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between">
+              <strong>{{ e.category }}</strong>
+              <span class="small text-muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+            </div>
+            <div class="small text-muted mt-1">
+              من: {{ e.from_user.email if e.from_user else ('#' ~ e.from_user_id) }}
+              → إلى: {{ e.to_user.email if e.to_user else ('#' ~ e.to_user_id) }}
+            </div>
+            <div class="mt-2">{{ e.description }}</div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-muted">لا يوجد تصعيدات.</div>
+    {% endif %}
+  </div>
+</div>
+
     <div class="card shadow-sm">
       <div class="card-header bg-white">
         <strong>🧾 سجل الإجراءات (Audit)</strong>
@@ -108,11 +151,34 @@
                   <div>
                     <strong>Step {{ s.step_order }}</strong>
                     <div class="small text-muted">
-                      {{ s.approver_kind }}
-                      {% if s.approver_role %} · ROLE={{ s.approver_role }}{% endif %}
-                      {% if s.approver_user_id %} · USER={{ s.approver_user_id }}{% endif %}
-                      {% if s.approver_department_id %} · DEPT={{ s.approver_department_id }}{% endif %}
-                    </div>
+  الوجهة:
+  {% if s.approver_kind == "ROLE" %}
+    <span class="badge bg-secondary">ROLE</span> {{ s.approver_role }}
+  {% elif s.approver_kind == "USER" %}
+    <span class="badge bg-secondary">USER</span>
+    {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
+      {{ users_map.get(s.approver_user_id).email }}
+    {% else %}
+      #{{ s.approver_user_id }}
+    {% endif %}
+  {% elif s.approver_kind == "DIRECTORATE" %}
+    <span class="badge bg-secondary">DIRECTORATE</span>
+    {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
+      {{ dirs_map.get(s.approver_directorate_id).name_ar }}
+    {% else %}
+      #{{ s.approver_directorate_id }}
+    {% endif %}
+    → <span class="text-muted">المدير العام (directorate_head)</span>
+  {% else %}
+    <span class="badge bg-secondary">DEPARTMENT</span>
+    {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}
+      {{ depts_map.get(s.approver_department_id).name_ar }}
+    {% else %}
+      #{{ s.approver_department_id }}
+    {% endif %}
+    → <span class="text-muted">رئيس الدائرة (dept_head)</span>
+  {% endif %}
+</div>
                   </div>
                   <span class="badge
                     {% if s.status == 'PENDING' %}bg-warning text-dark

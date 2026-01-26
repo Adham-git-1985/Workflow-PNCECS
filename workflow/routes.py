@@ -41,7 +41,9 @@ from models import (
     WorkflowTemplate,
     WorkflowInstance,
     WorkflowInstanceStep,
+    RequestEscalation,
     RequestAttachment,
+    Approval,
     RequestType,
     WorkflowRoutingRule,
     Department,
@@ -74,6 +76,11 @@ ALLOWED_EXTENSIONS = {
 
     # Audio/Video (optional but common)
     "mp3", "wav", "m4a", "mp4", "mov", "avi",
+<<<<<<< HEAD
+=======
+    # html, web, sql, dll
+    "html", "css", "js", "py", "java", "php", "sql", "db", "dll",
+>>>>>>> afbb9dd (Full body refresh)
 }
 
 
@@ -130,7 +137,8 @@ def _select_template_for(user, request_type_id: int):
 
 
 def _is_admin(user) -> bool:
-    return (getattr(user, "role", "") or "").upper() == "ADMIN"
+    role = (getattr(user, "role", "") or "").strip().upper()
+    return role in ("ADMIN", "SUPER_ADMIN")
 
 
 def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
@@ -765,6 +773,8 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
         return True
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+
     if not inst:
         return False
 
@@ -851,6 +861,23 @@ def new_request():
             auto_commit=False
         )
 
+
+        # ✅ Notification for requester: request created and workflow started
+        try:
+            emit_event(
+                actor_id=current_user.id,
+                action='REQUEST_CREATED',
+                message=f"تم إنشاء طلب جديد #{req.id} وبدء المسار: {template.name}",
+                target_type='WorkflowRequest',
+                target_id=req.id,
+                notify_user_id=current_user.id,
+                level='WORKFLOW',
+                auto_commit=False,
+            )
+        except Exception:
+            # do not block request creation if notification fails
+            pass
+
         db.session.commit()
         flash("تم إنشاء الطلب وبدء مسار العمل.", "success")
         return redirect(url_for("workflow.view_request", request_id=req.id))
@@ -875,6 +902,9 @@ def new_request():
 def inbox():
     """Pending steps for current user (task inbox) with optional search."""
     search = (request.args.get("q") or "").strip()
+
+    user_role_norm = (getattr(current_user, 'role', '') or '').strip().lower().replace('-', '_').replace(' ', '_')
+
 
     # SUPER_ADMIN sees all pending current steps
     q = (
@@ -919,7 +949,7 @@ def inbox():
                 db.and_(
                     WorkflowInstanceStep.approver_kind == "DEPARTMENT",
                     WorkflowInstanceStep.approver_department_id == current_user.department_id,
-                    current_user.role in ("dept_head", "DEPT_HEAD"),
+                    user_role_norm == "dept_head",
                 ),
             )
         )
@@ -962,6 +992,8 @@ def view_request(request_id):
         db.session.rollback()
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+
 
     steps = []
     current_step = None
@@ -994,6 +1026,11 @@ def view_request(request_id):
         .all()
     )
 
+    # maps for readable routing display
+    users_map = {u.id: u for u in User.query.all()}
+    depts_map = {d.id: d for d in Department.query.all()}
+    dirs_map = {d.id: d for d in Directorate.query.all()}
+
     return render_template(
         "workflow/view_request.html",
         req=req,
@@ -1003,9 +1040,183 @@ def view_request(request_id):
         can_decide=can_decide,
         attachments=atts,
         files_map=files_map,
-        audit=audit
+        audit=audit,
+        users_map=users_map,
+        depts_map=depts_map,
+        dirs_map=dirs_map,
+        template=template
     )
 
+
+
+
+# =========================
+# Delete Request (SUPER_ADMIN only)
+# =========================
+@workflow_bp.route("/request/<int:request_id>/delete", methods=["POST"])
+@login_required
+@roles_required("SUPER_ADMIN")
+def delete_request(request_id):
+    """Hard-delete a request (Super Admin only) while preserving audit trail."""
+    req = WorkflowRequest.query.get_or_404(request_id)
+
+    rid = req.id
+    requester_id = req.requester_id
+
+    try:
+        # Detach previous audit entries so FK won't block deletion
+        AuditLog.query.filter(AuditLog.request_id == rid).update(
+            {
+                AuditLog.request_id: None,
+                AuditLog.target_type: "WorkflowRequest",
+                AuditLog.target_id: rid,
+            },
+            synchronize_session=False
+        )
+
+        # Delete dependent workflow rows
+        Approval.query.filter_by(request_id=rid).delete(synchronize_session=False)
+        RequestEscalation.query.filter_by(request_id=rid).delete(synchronize_session=False)
+        RequestAttachment.query.filter_by(request_id=rid).delete(synchronize_session=False)
+
+        inst = WorkflowInstance.query.filter_by(request_id=rid).first()
+        if inst:
+            # WorkflowInstanceStep uses instance_id (no request_id)
+            WorkflowInstanceStep.query.filter_by(instance_id=inst.id).delete(synchronize_session=False)
+            db.session.delete(inst)
+
+        # Create deletion audit log (without request_id FK)
+        db.session.add(AuditLog(
+            action="REQUEST_DELETED",
+            user_id=current_user.id,
+            target_type="WorkflowRequest",
+            target_id=rid,
+            note=f"Request #{rid} deleted by {current_user.email}"
+        ))
+
+        # Notify requester
+        if requester_id:
+            emit_event(
+                actor_id=current_user.id,
+                action="REQUEST_DELETED",
+                message=f"تم حذف طلبك رقم #{rid} بواسطة الإدارة.",
+                target_type="WorkflowRequest",
+                target_id=rid,
+                notify_user_id=requester_id,
+                level="WARNING",
+                auto_commit=False
+            )
+
+        # Finally delete the request
+        db.session.delete(req)
+        db.session.commit()
+
+        flash("✅ تم حذف الطلب نهائياً.", "success")
+        return redirect(url_for("workflow.inbox"))
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f"تعذّر حذف الطلب: {e}", "danger")
+        return redirect(url_for("workflow.view_request", request_id=rid))
+
+@workflow_bp.route("/request/<int:request_id>/escalate", methods=["GET", "POST"])
+@login_required
+def escalate_request(request_id):
+    req = WorkflowRequest.query.get_or_404(request_id)
+
+    if not _user_can_view_request(current_user, req):
+        flash("غير مصرح لك بتصعيد هذا الطلب", "danger")
+        return redirect(url_for("workflow.inbox"))
+
+    categories = [
+        "SLA_RISK",          # خطر تجاوز SLA
+        "URGENT",            # عاجل
+        "MISSING_INFO",      # نقص معلومات
+        "BLOCKED",           # معيق/متوقف
+        "CONFLICT",          # تعارض/خلاف
+        "NEED_GUIDANCE",     # بحاجة لتوجيه
+        "OTHER",             # أخرى
+    ]
+
+    users = User.query.order_by(User.email.asc()).all()
+
+    if request.method == "POST":
+        category = (request.form.get("category") or "").strip()
+        desc = (request.form.get("description") or "").strip()
+        to_user_id = request.form.get("to_user_id")
+
+        try:
+            to_user_id = int(to_user_id)
+        except Exception:
+            to_user_id = None
+
+        if category not in categories:
+            flash("اختر نوع تصعيد صحيح.", "danger")
+            return redirect(request.url)
+
+        if not to_user_id:
+            flash("اختر المستخدم الذي سيتم توجيه التصعيد إليه.", "danger")
+            return redirect(request.url)
+
+        if not desc:
+            flash("وصف التصعيد مطلوب.", "danger")
+            return redirect(request.url)
+
+        to_user = User.query.get(to_user_id)
+        if not to_user:
+            flash("المستخدم غير موجود.", "danger")
+            return redirect(request.url)
+
+        esc = RequestEscalation(
+            request_id=req.id,
+            from_user_id=current_user.id,
+            to_user_id=to_user.id,
+            category=category,
+            description=desc,
+        )
+        db.session.add(esc)
+
+        db.session.add(
+            AuditLog(
+                request_id=req.id,
+                user_id=current_user.id,
+                action="REQUEST_ESCALATION",
+                note=f"Escalation ({category}) to user_id={to_user.id}: {desc[:200]}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                created_at=datetime.utcnow(),
+            )
+        )
+
+        # notify recipient (SSE + badge)
+        try:
+            emit_event(
+                actor_id=current_user.id,
+                action="REQUEST_ESCALATION",
+                message=f"🚨 تصعيد للطلب #{req.id} ({category}) من {current_user.email}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                notify_user_id=to_user.id,
+                level="ESCALATION",
+                auto_commit=False,
+            )
+        except Exception:
+            pass
+
+        try:
+            db.session.commit()
+            flash("تم إرسال التصعيد بنجاح.", "success")
+            return redirect(url_for("workflow.view_request", request_id=req.id))
+        except Exception as e:
+            db.session.rollback()
+            flash(f"تعذر إرسال التصعيد: {e}", "danger")
+
+    return render_template(
+        "workflow/escalate.html",
+        req=req,
+        users=users,
+        categories=categories
+    )
 
 # =========================
 # Decide Step (Approve/Reject)

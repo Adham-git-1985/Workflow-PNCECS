@@ -46,7 +46,8 @@
             <th style="width:170px">النوع</th>
             <th>مستخدم</th>
             <th>Role</th>
-            <th>Dept ID</th>
+            <th>Department</th>
+            <th>Directorate</th>
             <th style="width:140px">SLA أيام</th>
             <th style="width:80px"></th>
           </tr>
@@ -61,6 +62,7 @@
                 <option value="USER">USER</option>
                 <option value="ROLE">ROLE</option>
                 <option value="DEPARTMENT">DEPARTMENT</option>
+                <option value="DIRECTORATE">DIRECTORATE</option>
               </select>
             </td>
 
@@ -91,12 +93,21 @@
               </select>
             </td>
 
+<td>
+  <select class="form-select form-select-sm" name="approver_directorate_id">
+    <option value="">-- اختر Directorate --</option>
+    {% for d in directorates %}
+      <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+    {% endfor %}
+  </select>
+</td>
+
             <td>
               <input class="form-control form-control-sm" name="step_sla_days" type="number" min="1" placeholder="اختياري">
             </td>
 
             <td class="text-end">
-              <button class="btn btn-sm btn-outline-danger" type="button" onclick="removeRow(this)">حذف</button>
+              <div class="btn-group btn-group-sm" role="group"><button class="btn btn-outline-secondary" type="button" onclick="moveUp(this)">↑</button><button class="btn btn-outline-secondary" type="button" onclick="moveDown(this)">↓</button><button class="btn btn-outline-danger" type="button" onclick="removeRow(this)">حذف</button></div>
             </td>
           </tr>
         </tbody>
@@ -117,6 +128,18 @@ function renumber(){
   });
 }
 
+function setActive(el, active){
+  // keep enabled so it gets submitted (prevents getlist alignment bugs)
+  el.disabled = false;
+  if(active){
+    el.style.pointerEvents = "auto";
+    el.style.opacity = "1";
+  } else {
+    el.style.pointerEvents = "none";
+    el.style.opacity = "0.5";
+  }
+}
+
 function toggleFields(sel){
   const tr = sel.closest("tr");
   const kind = sel.value;
@@ -124,15 +147,28 @@ function toggleFields(sel){
   const userSel = tr.querySelector('select[name="approver_user_id"]');
   const roleSel = tr.querySelector('select[name="approver_role"]');
   const deptSel = tr.querySelector('select[name="approver_department_id"]');
+<<<<<<< HEAD
 
   userSel.disabled = (kind !== "USER");
   roleSel.disabled = (kind !== "ROLE");
   deptSel.disabled = (kind !== "DEPARTMENT");
+=======
+  const dirSel  = tr.querySelector('select[name="approver_directorate_id"]');
 
-  // clear irrelevant
+  setActive(userSel, kind === "USER");
+  setActive(roleSel, kind === "ROLE");
+  setActive(deptSel, kind === "DEPARTMENT");
+  setActive(dirSel,  kind === "DIRECTORATE");
+>>>>>>> afbb9dd (Full body refresh)
+
+  // clear irrelevant values
   if (kind !== "USER") userSel.value = "";
   if (kind !== "ROLE") roleSel.value = "";
   if (kind !== "DEPARTMENT") deptSel.value = "";
+<<<<<<< HEAD
+=======
+  if (kind !== "DIRECTORATE") dirSel.value = "";
+>>>>>>> afbb9dd (Full body refresh)
 }
 
 function addRow(){
@@ -142,7 +178,8 @@ function addRow(){
 
   // reset values
   clone.querySelectorAll("input").forEach(i => i.value = "");
-  clone.querySelectorAll("select").forEach(s => s.value = s.querySelector("option").value);
+  // reset selects
+  clone.querySelectorAll("select").forEach(s => s.selectedIndex = 0);
 
   tbody.appendChild(clone);
   renumber();
@@ -156,7 +193,23 @@ function removeRow(btn){
   renumber();
 }
 
-// init first row fields
+function moveUp(btn){
+  const tr = btn.closest("tr");
+  const prev = tr.previousElementSibling;
+  if(!prev) return;
+  tr.parentNode.insertBefore(tr, prev);
+  renumber();
+}
+
+function moveDown(btn){
+  const tr = btn.closest("tr");
+  const next = tr.nextElementSibling;
+  if(!next) return;
+  tr.parentNode.insertBefore(next, tr);
+  renumber();
+}
+
+// init
 toggleFields(document.querySelector('#stepsTable tbody tr select[name="approver_kind"]'));
 </script>
 
