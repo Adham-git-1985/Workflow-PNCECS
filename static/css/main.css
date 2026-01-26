@@ -37,9 +37,13 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 12px;
 }
 
-.logo {
+
+/* Brand على اليمين */
+.main-header /* User actions على اليسار */
+.main-header .logo {
     margin: 0;
     font-size: 20px;
     font-weight: 700;
@@ -432,6 +436,10 @@ canvas {
     height: 56px;
     width: auto;
     display: block;
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 4px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.08) inset;
 }
 
 .brand-title {
@@ -449,7 +457,7 @@ canvas {
 }
 
 @media (max-width: 576px) {
-    .brand-logo { height: 46px; }
+    .brand-logo { height: 46px; padding: 3px; border-radius: 10px; }
     .brand-title { font-size: 16px; }
     .brand-subtitle { font-size: 11px; }
 }
@@ -474,4 +482,11 @@ canvas {
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 12px;
     padding: 10px 12px;
+}
+
+
+/* Brand (header) */
+.brand {
+    display: flex;
+    align-items: center;
 }

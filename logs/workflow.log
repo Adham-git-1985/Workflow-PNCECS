@@ -2711,3 +2711,211 @@ sqlalchemy.exc.InvalidRequestError: One or more mappers failed to initialize - c
 2026-01-25 01:55:35,796 | INFO | 127.0.0.1 - - [25/Jan/2026 01:55:35] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
 2026-01-25 01:55:35,798 | INFO | 127.0.0.1 - - [25/Jan/2026 01:55:35] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
 2026-01-25 01:55:35,838 | INFO | 127.0.0.1 - - [25/Jan/2026 01:55:35] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:48:55,426 | INFO | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-01-25 08:48:55,427 | INFO | [33mPress CTRL+C to quit[0m
+2026-01-25 08:49:46,052 | INFO | Login page accessed
+2026-01-25 08:49:46,063 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:46] "GET /login HTTP/1.1" 200 -
+2026-01-25 08:49:46,177 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:46] "GET /static/images/logo.png HTTP/1.1" 200 -
+2026-01-25 08:49:48,496 | INFO | Login page accessed
+2026-01-25 08:49:48,499 | INFO | Login attempt for email=admin@pncecs.org
+2026-01-25 08:49:48,651 | WARNING | Login failed: wrong password
+2026-01-25 08:49:48,654 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:48] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-01-25 08:49:48,803 | INFO | Login page accessed
+2026-01-25 08:49:48,804 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:48] "GET /login HTTP/1.1" 200 -
+2026-01-25 08:49:49,132 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:49] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:49:55,522 | INFO | Login page accessed
+2026-01-25 08:49:55,523 | INFO | Login attempt for email=admin@pncecs.org
+2026-01-25 08:49:55,633 | WARNING | Login failed: wrong password
+2026-01-25 08:49:55,634 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:55] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-01-25 08:49:55,826 | INFO | Login page accessed
+2026-01-25 08:49:55,827 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:55] "GET /login HTTP/1.1" 200 -
+2026-01-25 08:49:56,151 | INFO | 127.0.0.1 - - [25/Jan/2026 08:49:56] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:50:01,589 | INFO | Login page accessed
+2026-01-25 08:50:01,590 | INFO | Login attempt for email=adham.pncecs@gmail.com
+2026-01-25 08:50:01,697 | INFO | Login success | user_id=3 | authenticated=True
+2026-01-25 08:50:01,698 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:01] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-01-25 08:50:01,912 | INFO | Accessing index | is_authenticated=True | user=3
+2026-01-25 08:50:01,913 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:01] "[32mGET / HTTP/1.1[0m" 302 -
+2026-01-25 08:50:02,382 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:02] "GET /my-requests HTTP/1.1" 200 -
+2026-01-25 08:50:02,498 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:02] "GET /static/css/main.css?v=20260123 HTTP/1.1" 200 -
+2026-01-25 08:50:02,715 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:02] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:50:02,717 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:02] "GET /static/js/charts.js HTTP/1.1" 200 -
+2026-01-25 08:50:02,732 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:02] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:50:06,369 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:06] "GET /workflow/new HTTP/1.1" 200 -
+2026-01-25 08:50:06,694 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:06] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:50:06,706 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:06] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:50:06,708 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:06] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:50:06,951 | INFO | 127.0.0.1 - - [25/Jan/2026 08:50:06] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:51:04,583 | INFO | Accessing index | is_authenticated=True | user=3
+2026-01-25 08:51:04,585 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:04] "[32mGET / HTTP/1.1[0m" 302 -
+2026-01-25 08:51:04,925 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:04] "GET /my-requests HTTP/1.1" 200 -
+2026-01-25 08:51:05,163 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:05] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:51:05,300 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:05] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:51:05,301 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:05] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:51:05,319 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:05] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:51:08,845 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:08] "GET /workflow/new HTTP/1.1" 200 -
+2026-01-25 08:51:08,892 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:08] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:51:09,086 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:09] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:51:09,203 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:09] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:51:09,520 | INFO | 127.0.0.1 - - [25/Jan/2026 08:51:09] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:52:14,784 | WARNING | Unauthorized access | path=/workflow/new | user=None
+2026-01-25 08:52:14,784 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:14] "[32mGET /workflow/new HTTP/1.1[0m" 302 -
+2026-01-25 08:52:14,788 | INFO | Login page accessed
+2026-01-25 08:52:14,788 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:14] "GET /login HTTP/1.1" 200 -
+2026-01-25 08:52:15,036 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:15] "GET /static/images/logo.png HTTP/1.1" 200 -
+2026-01-25 08:52:15,486 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:15] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+2026-01-25 08:52:40,187 | INFO | Login page accessed
+2026-01-25 08:52:40,188 | INFO | Login attempt for email=mo@gmail.com
+2026-01-25 08:52:40,306 | INFO | Login success | user_id=4 | authenticated=True
+2026-01-25 08:52:40,307 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:40] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-01-25 08:52:40,495 | INFO | Accessing index | is_authenticated=True | user=4
+2026-01-25 08:52:40,495 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:40] "[32mGET / HTTP/1.1[0m" 302 -
+2026-01-25 08:52:40,810 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:40] "GET /my-requests HTTP/1.1" 200 -
+2026-01-25 08:52:41,060 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:41] "GET /static/css/main.css?v=20260123 HTTP/1.1" 200 -
+2026-01-25 08:52:41,142 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:41] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:52:41,142 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:41] "GET /static/js/charts.js HTTP/1.1" 200 -
+2026-01-25 08:52:42,695 | INFO | 127.0.0.1 - - [25/Jan/2026 08:52:42] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:01,096 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:01] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:53:01,113 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:01] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:01,331 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:01] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:01,414 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:01] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:01,729 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:01] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:03,868 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:03] "GET /messages/compose HTTP/1.1" 200 -
+2026-01-25 08:53:04,168 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:04] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:04,205 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:04] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:04,206 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:04] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:04,528 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:04] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:12,621 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:12] "[32mPOST /messages/compose HTTP/1.1[0m" 302 -
+2026-01-25 08:53:12,987 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:12] "GET /messages/sent HTTP/1.1" 200 -
+2026-01-25 08:53:13,310 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:13] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:13,310 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:13] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:13,311 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:13] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:13,568 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:13] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:26,563 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:26] "GET /workflow/notifications HTTP/1.1" 200 -
+2026-01-25 08:53:26,599 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:26] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:26,799 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:26] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:26,908 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:26] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:27,231 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:27] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:29,242 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:29] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:53:29,540 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:29] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:29,565 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:29] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:29,570 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:29] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:29,889 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:29] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:37,603 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:37] "GET /messages/view/1 HTTP/1.1" 200 -
+2026-01-25 08:53:37,883 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:37] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:37,934 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:37] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:37,935 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:37] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:38,246 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:38] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:39,653 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:39] "GET /messages/reply/1 HTTP/1.1" 200 -
+2026-01-25 08:53:39,947 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:39] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:39,987 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:39] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:39,988 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:39] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:40,309 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:40] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:53:46,354 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:46] "[32mPOST /messages/reply/1 HTTP/1.1[0m" 302 -
+2026-01-25 08:53:46,678 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:46] "GET /messages/sent HTTP/1.1" 200 -
+2026-01-25 08:53:47,030 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:47] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:53:47,031 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:47] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:53:47,032 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:47] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:53:47,293 | INFO | 127.0.0.1 - - [25/Jan/2026 08:53:47] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:24,993 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:24] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:54:25,299 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:25] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:25,348 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:25] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:25,348 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:25] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:25,676 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:25] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:32,474 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:32] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:54:32,509 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:32] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:32,722 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:32] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:32,826 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:32] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:33,155 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:33] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:34,654 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:34] "GET /messages/view/2 HTTP/1.1" 200 -
+2026-01-25 08:54:34,947 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:34] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:34,991 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:34] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:34,992 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:34] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:35,313 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:35] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:36,346 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:36] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:54:36,647 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:36] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:36,679 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:36] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:36,680 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:36] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:37,012 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:37] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:39,000 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:39] "GET /messages/view/2 HTTP/1.1" 200 -
+2026-01-25 08:54:39,298 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:39] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:39,351 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:39] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:39,352 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:39] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:39,682 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:39] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:42,624 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:42] "GET /messages/reply/2 HTTP/1.1" 200 -
+2026-01-25 08:54:42,917 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:42] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:42,960 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:42] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:42,961 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:42] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:43,280 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:43] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:46,687 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:46] "[32mPOST /messages/reply/2 HTTP/1.1[0m" 302 -
+2026-01-25 08:54:47,006 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:47] "GET /messages/sent HTTP/1.1" 200 -
+2026-01-25 08:54:47,355 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:47] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:47,363 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:47] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:47,364 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:47] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:47,613 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:47] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:48,779 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:48] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:54:49,083 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:49] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:49,106 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:49] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:49,107 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:49] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:49,424 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:49] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:53,217 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:53] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:54:53,513 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:53] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:53,543 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:53] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:53,544 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:53] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:53,858 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:53] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:55,117 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:55] "GET /messages/view/3 HTTP/1.1" 200 -
+2026-01-25 08:54:55,413 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:55] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:55,465 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:55] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:55,467 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:55] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:55,800 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:55] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:54:56,888 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:56] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:54:57,184 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:57] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:54:57,215 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:57] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:54:57,217 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:57] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:54:57,550 | INFO | 127.0.0.1 - - [25/Jan/2026 08:54:57] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:00,006 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:00] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:55:00,301 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:00] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:00,339 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:00] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:00,340 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:00] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:00,656 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:00] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:01,914 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:01] "GET /messages/view/2 HTTP/1.1" 200 -
+2026-01-25 08:55:02,218 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:02] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:02,255 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:02] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:02,256 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:02] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:02,571 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:02] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:06,318 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:06] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:55:06,624 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:06] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:06,658 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:06] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:06,660 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:06] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:06,977 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:06] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:08,704 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:08] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:55:09,015 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:09] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:09,036 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:09] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:09,038 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:09] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:09,382 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:09] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:19,504 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:19] "GET /messages/sent HTTP/1.1" 200 -
+2026-01-25 08:55:19,802 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:19] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:19,845 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:19] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:19,845 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:19] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:20,172 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:20] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:21,851 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:21] "GET /messages/inbox HTTP/1.1" 200 -
+2026-01-25 08:55:22,154 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:22] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:22,187 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:22] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:22,188 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:22] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:22,504 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:22] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:55:53,501 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:53] "GET /workflow/inbox HTTP/1.1" 200 -
+2026-01-25 08:55:53,803 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:53] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:55:53,846 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:53] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:55:53,847 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:53] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:55:54,170 | INFO | 127.0.0.1 - - [25/Jan/2026 08:55:54] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:56:24,460 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:24] "GET /my-requests HTTP/1.1" 200 -
+2026-01-25 08:56:24,509 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:24] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:56:24,701 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:24] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:56:24,819 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:24] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:56:25,144 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:25] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-25 08:56:26,398 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:26] "GET /workflow/inbox HTTP/1.1" 200 -
+2026-01-25 08:56:26,708 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:26] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-25 08:56:26,731 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:26] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-25 08:56:26,733 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:26] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-25 08:56:27,084 | INFO | 127.0.0.1 - - [25/Jan/2026 08:56:27] "GET /workflow/notifications/stream HTTP/1.1" 200 -

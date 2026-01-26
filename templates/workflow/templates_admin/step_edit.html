@@ -25,7 +25,12 @@
 
         <div class="col-md-4" id="box_role">
           <label class="form-label">Role</label>
-          <input class="form-control" name="approver_role" value="{{ s.approver_role or '' }}">
+          <select class="form-select" name="approver_role">
+            <option value="">-- اختر --</option>
+            {% for r in role_choices %}
+              <option value="{{ r }}" {% if (s.approver_role or '').lower() == r.lower() %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
         </div>
 
         <div class="col-md-4" id="box_user">
@@ -41,9 +46,15 @@
         </div>
 
         <div class="col-md-4" id="box_dept">
-          <label class="form-label">Department ID</label>
-          <input class="form-control" name="approver_department_id" type="number" min="1"
-                 value="{{ s.approver_department_id if s.approver_department_id is not none else '' }}">
+          <label class="form-label">Department</label>
+          <select class="form-select" name="approver_department_id">
+            <option value="">-- اختر --</option>
+            {% for d in departments %}
+              <option value="{{ d.id }}" {% if s.approver_department_id == d.id %}selected{% endif %}>
+                {{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]
+              </option>
+            {% endfor %}
+          </select>
         </div>
 
         <div class="col-md-4">
@@ -74,17 +85,17 @@
     boxUser.style.display = (v === "USER") ? "block" : "none";
     boxDept.style.display = (v === "DEPARTMENT") ? "block" : "none";
 
-    const roleInp = boxRole.querySelector('input[name="approver_role"]');
+    const roleSel = boxRole.querySelector('select[name="approver_role"]');
     const userSel = boxUser.querySelector('select[name="approver_user_id"]');
-    const deptInp = boxDept.querySelector('input[name="approver_department_id"]');
+    const deptSel = boxDept.querySelector('select[name="approver_department_id"]');
 
-    roleInp.disabled = (v !== "ROLE");
+    roleSel.disabled = (v !== "ROLE");
     userSel.disabled = (v !== "USER");
-    deptInp.disabled = (v !== "DEPARTMENT");
+    deptSel.disabled = (v !== "DEPARTMENT");
 
-    if (v !== "ROLE") roleInp.value = "";
+    if (v !== "ROLE") roleSel.value = "";
     if (v !== "USER") userSel.value = "";
-    if (v !== "DEPARTMENT") deptInp.value = "";
+    if (v !== "DEPARTMENT") deptSel.value = "";
   }
 
   kind.addEventListener("change", toggle);

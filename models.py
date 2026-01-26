@@ -13,6 +13,8 @@ class User(db.Model, UserMixin):
 
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(255), unique=True, index=True)
+    name = db.Column(db.String(200), nullable=True)
+    job_title = db.Column(db.String(200), nullable=True)
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(50), index=True)
     department_id = db.Column(db.Integer, nullable=True)
@@ -79,7 +81,7 @@ class User(db.Model, UserMixin):
 
     @property
     def full_name(self):
-        return self.email or f"User #{self.id}"
+        return (self.name or "").strip() or self.email or f"User #{self.id}"
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)

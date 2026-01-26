@@ -75,6 +75,8 @@ def list_users():
 @roles_required("ADMIN")
 def create_user():
     if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        job_title = request.form.get("job_title", "").strip()
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
         role = request.form.get("role", "").strip()
@@ -96,6 +98,8 @@ def create_user():
             return redirect(url_for("users.create_user"))
 
         user = User(
+            name=name or None,
+            job_title=job_title or None,
             email=email,
             password_hash=generate_password_hash(password),
             role=role
@@ -335,6 +339,8 @@ def profile():
 
         # ------- Update Email (role stays read-only)
         if form_type == "profile":
+            new_name = request.form.get("name", "").strip()
+            new_job_title = request.form.get("job_title", "").strip()
             new_email = request.form.get("email", "").strip()
             current_pw = request.form.get("current_password", "")
 
@@ -353,7 +359,12 @@ def profile():
 
                 u = User.query.get(current_user.id)
                 old_email = u.email
+                old_name = (u.name or "").strip()
+                old_job = (u.job_title or "").strip()
+
                 u.email = new_email
+                u.name = new_name or u.name
+                u.job_title = new_job_title or u.job_title
 
                 db.session.add(AuditLog(
                     action="USER_PROFILE_UPDATED",
@@ -377,7 +388,27 @@ def profile():
                 db.session.commit()
                 flash("تم تحديث البريد الإلكتروني", "success")
             else:
-                flash("لا يوجد تغيير على البريد الإلكتروني", "info")
+                u = User.query.get(current_user.id)
+                changed = False
+                if new_name and (new_name.strip() != (u.name or "").strip()):
+                    u.name = new_name.strip()
+                    changed = True
+                if new_job_title and (new_job_title.strip() != (u.job_title or "").strip()):
+                    u.job_title = new_job_title.strip()
+                    changed = True
+
+                if changed:
+                    db.session.add(AuditLog(
+                        action="USER_PROFILE_UPDATED",
+                        user_id=current_user.id,
+                        target_type="User",
+                        target_id=current_user.id,
+                        note="Profile updated (name/title)"
+                    ))
+                    db.session.commit()
+                    flash("تم تحديث بيانات الملف الشخصي", "success")
+                else:
+                    flash("لا يوجد تغيير على البيانات", "info")
 
             return redirect(url_for("users.profile"))
 

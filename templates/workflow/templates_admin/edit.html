@@ -23,6 +23,14 @@
   {% endfor %}
 {% endif %}
 
+{# departments map for display #}
+{% set depts_map = {} %}
+{% if departments %}
+  {% for d in departments %}
+    {% set _ = depts_map.update({d.id: d}) %}
+  {% endfor %}
+{% endif %}
+
 <div class="card shadow-sm mb-3">
   <div class="card-body">
     <form method="post">
@@ -85,7 +93,7 @@
               {% elif s.approver_kind == "ROLE" %}
                 ROLE: {{ s.approver_role }}
               {% else %}
-                DEPT: {{ s.approver_department_id }}
+                DEPT: {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}{{ depts_map.get(s.approver_department_id).name_ar }} [#{{ s.approver_department_id }}]{% else %}{{ s.approver_department_id }}{% endif %}
               {% endif %}
             </td>
             <td>{{ s.sla_days if s.sla_days is not none else "-" }}</td>
@@ -126,7 +134,12 @@
 
         <div class="col-md-3" id="box_role">
           <label class="form-label">Role</label>
-          <input class="form-control" name="approver_role" placeholder="مثال: FINANCE">
+          <select class="form-select" name="approver_role">
+            <option value="">-- اختر --</option>
+            {% for r in role_choices %}
+              <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </select>
         </div>
 
         <div class="col-md-3" id="box_user" style="display:none;">
@@ -140,8 +153,13 @@
         </div>
 
         <div class="col-md-3" id="box_dept" style="display:none;">
-          <label class="form-label">Department ID</label>
-          <input class="form-control" name="approver_department_id" type="number" min="1" placeholder="مثال: 2">
+          <label class="form-label">Department</label>
+          <select class="form-select" name="approver_department_id">
+            <option value="">-- اختر --</option>
+            {% for d in departments %}
+              <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+            {% endfor %}
+          </select>
         </div>
 
         <div class="col-md-3">
@@ -172,17 +190,17 @@
     boxDept.style.display = (v === "DEPARTMENT") ? "block" : "none";
 
     // Disable unused fields to avoid posting junk values
-    const roleInp = boxRole.querySelector('input[name="approver_role"]');
+    const roleSel = boxRole.querySelector('select[name="approver_role"]');
     const userSel = boxUser.querySelector('select[name="approver_user_id"]');
-    const deptInp = boxDept.querySelector('input[name="approver_department_id"]');
+    const deptSel = boxDept.querySelector('select[name="approver_department_id"]');
 
-    roleInp.disabled = (v !== "ROLE");
+    roleSel.disabled = (v !== "ROLE");
     userSel.disabled = (v !== "USER");
-    deptInp.disabled = (v !== "DEPARTMENT");
+    deptSel.disabled = (v !== "DEPARTMENT");
 
-    if (v !== "ROLE") roleInp.value = "";
+    if (v !== "ROLE") roleSel.value = "";
     if (v !== "USER") userSel.value = "";
-    if (v !== "DEPARTMENT") deptInp.value = "";
+    if (v !== "DEPARTMENT") deptSel.value = "";
   }
 
   kind.addEventListener("change", toggle);

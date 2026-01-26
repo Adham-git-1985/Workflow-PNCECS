@@ -21,6 +21,7 @@
         <thead>
           <tr>
             <th style="width:80px">#</th>
+            <th>الاسم</th>
             <th>البريد الإلكتروني</th>
             <th style="width:220px">الدور</th>
             <th style="width:200px">إجراءات</th>
@@ -31,6 +32,7 @@
           {% set target_adminish = (user.role|string)|upper in ['ADMIN','SUPER_ADMIN'] %}
           <tr>
             <td>{{ user.id }}</td>
+            <td>{{ user.name or "—" }}</td>
             <td>{{ user.email }}</td>
             <td>
               {% if is_super_admin or not target_adminish %}

@@ -46,9 +46,20 @@ from archive import archive_bp
 BASE_STORAGE = os.path.join(os.getcwd(), "storage", "archive")
 
 ALLOWED_EXTENSIONS = {
-    "pdf", "doc", "docx",
-    "xls", "xlsx",
-    "png", "jpg", "jpeg"
+    # Documents
+    "pdf", "txt", "rtf",
+    "doc", "docx", "odt",
+    "xls", "xlsx", "ods", "csv",
+    "ppt", "pptx", "odp",
+
+    # Images
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff",
+
+    # Archives (common in institutions)
+    "zip", "rar", "7z",
+
+    # Audio/Video (optional but common)
+    "mp3", "wav", "m4a", "mp4", "mov", "avi",
 }
 
 

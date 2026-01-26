@@ -83,3 +83,4 @@ Werkzeug==3.0.4
 wfastcgi==3.0.0
 WTForms==3.1.2
 zopfli==0.2.3.post1
+openpyxl==3.1.5

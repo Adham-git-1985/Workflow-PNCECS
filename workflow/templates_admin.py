@@ -12,6 +12,7 @@ from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
     User,
+    Department,
 )
 
 
@@ -29,6 +30,42 @@ def _normalize_kind(kind: str) -> str:
     if kind in ("USER", "ROLE", "DEPARTMENT"):
         return kind
     return ""
+
+
+def _get_role_choices():
+    """Return role list for UI (stable + any roles already in DB)."""
+    base = [
+        "USER",
+        "dept_head",
+        "deputy_head",
+        "finance",
+        "secretary_general",
+        "ADMIN",
+        "SUPER_ADMIN",
+    ]
+
+    seen = set()
+    out = []
+
+    def add(r):
+        if not r:
+            return
+        r = str(r).strip()
+        if not r:
+            return
+        key = r.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(r)
+
+    for r in base:
+        add(r)
+
+    for (r,) in db.session.query(User.role).distinct().all():
+        add(r)
+
+    return out
 
 
 def _resequence_steps(template_id: int):
@@ -60,6 +97,8 @@ def templates_list():
 @perm_required("WORKFLOW_TEMPLATES_CREATE")
 def templates_new():
     users = User.query.order_by(User.email.asc()).all()
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    role_choices = _get_role_choices()
 
     if request.method == "POST":
         name = (request.form.get("name") or "").strip()
@@ -141,7 +180,7 @@ def templates_new():
         flash("تم إنشاء المسار وخطواته.", "success")
         return redirect(url_for("workflow.templates_edit", template_id=t.id))
 
-    return render_template("workflow/templates_admin/new.html", users=users)
+    return render_template("workflow/templates_admin/new.html", users=users, departments=departments, role_choices=role_choices)
 
 
 @workflow_bp.route("/templates/<int:template_id>/edit", methods=["GET", "POST"])
@@ -171,12 +210,16 @@ def templates_edit(template_id):
     )
 
     users = User.query.order_by(User.email.asc()).all()
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    role_choices = _get_role_choices()
 
     return render_template(
         "workflow/templates_admin/edit.html",
         t=t,
         steps=steps,
-        users=users
+        users=users,
+        departments=departments,
+        role_choices=role_choices
     )
 
 
@@ -193,11 +236,16 @@ def templates_details(template_id):
     )
     users = User.query.order_by(User.email.asc()).all()
     users_map = {u.id: u for u in users}
+
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    depts_map = {d.id: d for d in departments}
+
     return render_template(
         "workflow/templates_admin/details.html",
         t=t,
         steps=steps,
-        users_map=users_map
+        users_map=users_map,
+        depts_map=depts_map
     )
 
 
@@ -286,6 +334,8 @@ def templates_steps_edit(step_id):
     s = WorkflowTemplateStep.query.get_or_404(step_id)
     t = WorkflowTemplate.query.get_or_404(s.template_id)
     users = User.query.order_by(User.email.asc()).all()
+    departments = Department.query.filter_by(is_active=True).order_by(Department.name_ar.asc()).all()
+    role_choices = _get_role_choices()
 
     if request.method == "POST":
         kind = _normalize_kind(request.form.get("approver_kind"))
@@ -324,5 +374,7 @@ def templates_steps_edit(step_id):
         "workflow/templates_admin/step_edit.html",
         t=t,
         s=s,
-        users=users
+        users=users,
+        departments=departments,
+        role_choices=role_choices
     )

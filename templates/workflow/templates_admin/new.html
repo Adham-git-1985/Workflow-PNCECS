@@ -74,15 +74,25 @@
             </td>
 
             <td>
-              <input class="form-control form-control-sm" name="approver_role" placeholder="مثال: FINANCE">
+              <select class="form-select form-select-sm" name="approver_role">
+                <option value="">-- اختر Role --</option>
+                {% for r in role_choices %}
+                  <option value="{{ r }}">{{ r }}</option>
+                {% endfor %}
+              </select>
             </td>
 
             <td>
-              <input class="form-control form-control-sm" name="approver_department_id" placeholder="مثال: 3">
+              <select class="form-select form-select-sm" name="approver_department_id">
+                <option value="">-- اختر Department --</option>
+                {% for d in departments %}
+                  <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+                {% endfor %}
+              </select>
             </td>
 
             <td>
-              <input class="form-control form-control-sm" name="sla_days" type="number" min="1" placeholder="اختياري">
+              <input class="form-control form-control-sm" name="step_sla_days" type="number" min="1" placeholder="اختياري">
             </td>
 
             <td class="text-end">
@@ -112,17 +122,17 @@ function toggleFields(sel){
   const kind = sel.value;
 
   const userSel = tr.querySelector('select[name="approver_user_id"]');
-  const roleInp = tr.querySelector('input[name="approver_role"]');
-  const deptInp = tr.querySelector('input[name="approver_department_id"]');
+  const roleSel = tr.querySelector('select[name="approver_role"]');
+  const deptSel = tr.querySelector('select[name="approver_department_id"]');
 
   userSel.disabled = (kind !== "USER");
-  roleInp.disabled = (kind !== "ROLE");
-  deptInp.disabled = (kind !== "DEPARTMENT");
+  roleSel.disabled = (kind !== "ROLE");
+  deptSel.disabled = (kind !== "DEPARTMENT");
 
   // clear irrelevant
   if (kind !== "USER") userSel.value = "";
-  if (kind !== "ROLE") roleInp.value = "";
-  if (kind !== "DEPARTMENT") deptInp.value = "";
+  if (kind !== "ROLE") roleSel.value = "";
+  if (kind !== "DEPARTMENT") deptSel.value = "";
 }
 
 function addRow(){

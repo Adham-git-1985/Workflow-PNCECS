@@ -26,6 +26,16 @@ PERM_ACTIONS = [
 
 def _clean(s): return (s or "").strip()
 
+
+def _is_super_admin_user(u: User) -> bool:
+    return ((getattr(u, "role", "") or "").strip().upper() == "SUPER_ADMIN")
+
+
+def _current_is_super_admin() -> bool:
+    # keep it local to avoid import cycles
+    from flask_login import current_user
+    return ((getattr(current_user, "role", "") or "").strip().upper() == "SUPER_ADMIN")
+
 # -------------------------
 # Organizations
 # -------------------------
@@ -336,6 +346,9 @@ def request_types_delete(rt_id):
 @perm_required("USER_PERMISSIONS_UPDATE")
 def permissions_manage():
     users = User.query.order_by(User.email.asc()).all()
+    # Admin (or any non-super-admin) must NOT be able to manage SUPER_ADMIN permissions
+    if not _current_is_super_admin():
+        users = [u for u in users if not _is_super_admin_user(u)]
     selected_user_id = request.args.get("user_id")
 
     # build all managed keys (CRUD + legacy *_MANAGE) to keep things clean
@@ -351,6 +364,16 @@ def permissions_manage():
             return redirect(request.url)
 
         uid = int(uid)
+
+        target = User.query.get(uid)
+        if not target:
+            flash("المستخدم غير موجود.", "danger")
+            return redirect(request.url)
+
+        # HARD BLOCK: no one except SUPER_ADMIN can modify SUPER_ADMIN permissions
+        if _is_super_admin_user(target) and not _current_is_super_admin():
+            flash("لا يمكنك تعديل صلاحيات حساب SUPER_ADMIN.", "danger")
+            return redirect(url_for("masterdata.permissions_manage"))
 
         # remove old perms for these keys
         UserPermission.query.filter(
@@ -376,6 +399,9 @@ def permissions_manage():
     if (selected_user_id or "").isdigit():
         selected = User.query.get(int(selected_user_id))
         if selected:
+            if _is_super_admin_user(selected) and not _current_is_super_admin():
+                flash("لا يمكنك عرض/تعديل صلاحيات حساب SUPER_ADMIN.", "warning")
+                return redirect(url_for("masterdata.permissions_manage"))
             rows = UserPermission.query.filter_by(user_id=selected.id).all()
             current_keys = {
                 (p.key or "").strip().upper()
