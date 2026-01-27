@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3>🗂️ سجل تدقيق الأرشيف</h3>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+
+        {% if logs %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>التاريخ</th>
+                        <th>المستخدم</th>
+                        <th class="text-center">الإجراء</th>
+                        <th>الوصف</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for log in logs %}
+                    <tr>
+                        <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                        <td><strong>{{ log.user.name if log.user else "System" }}</strong></td>
+                        <td class="text-center">
+                            {% if log.action == "ARCHIVE_DELETE" %}
+                                <span class="badge bg-danger">DELETE</span>
+                            {% elif log.action == "ARCHIVE_RESTORE" %}
+                                <span class="badge bg-success">RESTORE</span>
+                            {% elif log.action == "ARCHIVE_PURGE" %}
+                                <span class="badge bg-dark">PURGE</span>
+                            {% else %}
+                                <span class="badge bg-secondary">{{ log.action }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ log.description or "—" }}</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد سجلات تدقيق
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}

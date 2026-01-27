@@ -1,0 +1,43 @@
+{% extends "layout.html" %}
+{% block title %}الملفات المشتركة{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+
+    <h4 class="mb-3">🤝 الملفات المشتركة</h4>
+
+    <table class="table table-bordered table-hover">
+        <thead class="table-light">
+            <tr>
+                <th>الملف</th>
+                <th>مشارك مع</th>
+                <th>شارك بواسطة</th>
+                <th>انتهاء الصلاحية</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for p in permissions %}
+            <tr>
+                <td>
+                    <a href="{{ url_for('archive.file_details', file_id=p.file.id) }}">
+                        {{ p.file.original_name }}
+                    </a>
+                </td>
+                <td>{{ p.user.email }}</td>
+                <td>{{ p.delegated_by }}</td>
+                <td>{{ p.expires_at.strftime("%Y-%m-%d") if p.expires_at else '—' }}</td>
+                <td>
+                    <form method="post"
+                          action="{{ url_for('archive.unshare_file', permission_id=p.id) }}"
+                          onsubmit="return confirm('إلغاء المشاركة؟');">
+                        <button class="btn btn-sm btn-outline-danger">❌</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+</div>
+{% endblock %}

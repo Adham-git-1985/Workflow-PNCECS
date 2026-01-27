@@ -1,0 +1,90 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="container-fluid mt-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h3 class="mb-0">🚨 تصعيدات الطلب #{{ req.id }}</h3>
+      <div class="text-muted small">{{ req.title }}</div>
+      {% if template %}
+        <div class="text-muted small">المسار: <b>{{ template.name }}</b></div>
+      {% endif %}
+    </div>
+
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">رجوع للطلب</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body">
+      <form method="get" class="row g-2 align-items-end">
+        <div class="col-auto">
+          <label class="form-label small mb-1">فلترة حسب رقم الخطوة</label>
+          <input type="number" name="step" class="form-control" min="1" value="{{ step_filter if step_filter else '' }}">
+        </div>
+        <div class="col-auto">
+          <button class="btn btn-primary">تطبيق</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('workflow.request_escalations', request_id=req.id) }}">إلغاء</a>
+        </div>
+      </form>
+      <div class="form-text mt-2">
+        التصعيد هو تنبيه رسمي عند وجود تأخير أو مشكلة في سير الطلب (SLA)؛ يظهر كـ <b>Warning</b> ويتم توجيهه للجهة التي عندها الخطوة بالإضافة إلى مدير عام الإدارة.
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <strong>قائمة التصعيدات</strong>
+      <span class="badge bg-danger">{{ escalations|length }}</span>
+    </div>
+    <div class="card-body">
+      {% if escalations %}
+        <div class="table-responsive">
+          <table class="table table-hover align-middle">
+            <thead>
+              <tr>
+                <th class="text-nowrap">التاريخ</th>
+                <th class="text-nowrap">الخطوة</th>
+                <th>الفئة</th>
+                <th>من</th>
+                <th>إلى / نسخة</th>
+                <th>الشرح</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for e in escalations %}
+                <tr>
+                  <td class="text-nowrap">{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                  <td class="text-nowrap">{{ e.step_order if e.step_order else '-' }}</td>
+                  <td>{{ e.category }}</td>
+                  <td class="text-nowrap">{{ e.from_user.email if e.from_user else ('#' ~ e.from_user_id) }}</td>
+                  <td>
+                    {% if e.targets %}
+                      {% set tids = e.targets.split(',') %}
+                      {% for tid in tids %}
+                        {% set t = tid|trim %}
+                        {% if t %}
+                          {% set u = users_map.get(t|int) %}
+                          <span class="badge bg-light text-dark border">{{ u.email if u else ('#' ~ t) }}</span>
+                        {% endif %}
+                      {% endfor %}
+                    {% else %}
+                      {{ e.to_user.email if e.to_user else ('#' ~ e.to_user_id) }}
+                    {% endif %}
+                  </td>
+                  <td style="white-space: pre-wrap">{{ e.description }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا يوجد تصعيدات لهذه الحالة.</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

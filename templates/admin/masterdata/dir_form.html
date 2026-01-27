@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">{% if d %}✏️ تعديل إدارة{% else %}➕ إضافة إدارة{% endif %}</h3>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.dir_list') }}">رجوع</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label fw-bold">المنظمة</label>
+        <select class="form-select" name="organization_id" required>
+          <option value="">-- اختر --</option>
+          {% for o in orgs %}
+            <option value="{{ o.id }}" {% if d and d.organization_id == o.id %}selected{% endif %}>
+              {{ o.name_ar }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">الاسم (AR)</label>
+        <input class="form-control" name="name_ar" value="{{ d.name_ar if d else '' }}" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">الاسم (EN)</label>
+        <input class="form-control" name="name_en" value="{{ d.name_en if d else '' }}">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">Code</label>
+        <input class="form-control" name="code" value="{{ d.code if d else '' }}">
+      </div>
+
+      <div class="col-md-4 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if not d or d.is_active %}checked{% endif %}>
+          <label class="form-check-label" for="is_active">Active</label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">حفظ</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+{% endblock %}

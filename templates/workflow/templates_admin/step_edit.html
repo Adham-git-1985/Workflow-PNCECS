@@ -1,0 +1,123 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">✏️ تعديل خطوة</h3>
+    <small class="text-muted">Template: {{ t.name }} · Step {{ s.step_order }}</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_edit', template_id=t.id) }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+
+        <div class="col-md-4">
+          <label class="form-label">Approver Kind</label>
+          <select class="form-select" name="approver_kind" id="kind">
+            <option value="ROLE" {% if s.approver_kind == "ROLE" %}selected{% endif %}>ROLE</option>
+            <option value="USER" {% if s.approver_kind == "USER" %}selected{% endif %}>USER</option>
+            <option value="DEPARTMENT" {% if s.approver_kind == "DEPARTMENT" %}selected{% endif %}>DEPARTMENT</option>
+            <option value="DIRECTORATE" {% if s.approver_kind == "DIRECTORATE" %}selected{% endif %}>DIRECTORATE</option>
+          </select>
+        </div>
+
+        <div class="col-md-4" id="box_role">
+          <label class="form-label">Role</label>
+          <select class="form-select" name="approver_role">
+            <option value="">-- اختر --</option>
+            {% for r in role_choices %}
+              <option value="{{ r }}" {% if (s.approver_role or '').lower() == r.lower() %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4" id="box_user">
+          <label class="form-label">User</label>
+          <select class="form-select" name="approver_user_id">
+            <option value="">-- اختر --</option>
+            {% for u in users %}
+              <option value="{{ u.id }}" {% if s.approver_user_id == u.id %}selected{% endif %}>
+                {{ u.email }} ({{ u.role }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4" id="box_dept">
+          <label class="form-label">Department</label>
+          <select class="form-select" name="approver_department_id">
+            <option value="">-- اختر --</option>
+            {% for d in departments %}
+              <option value="{{ d.id }}" {% if s.approver_department_id == d.id %}selected{% endif %}>
+                {{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4" id="box_dir" style="display:none;">
+  <label class="form-label">Directorate</label>
+  <select class="form-select" name="approver_directorate_id">
+    <option value="">-- اختر --</option>
+    {% for d in directorates %}
+      <option value="{{ d.id }}" {% if s.approver_directorate_id == d.id %}selected{% endif %}>
+        {{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]
+      </option>
+    {% endfor %}
+  </select>
+</div>
+
+        <div class="col-md-4">
+          <label class="form-label">SLA (أيام)</label>
+          <input class="form-control" name="sla_days" type="number" min="1"
+                 value="{{ s.sla_days if s.sla_days is not none else '' }}">
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary">حفظ</button>
+        </div>
+
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  const kind = document.getElementById("kind");
+  const boxRole = document.getElementById("box_role");
+  const boxUser = document.getElementById("box_user");
+  const boxDept = document.getElementById("box_dept");
+  const boxDir = document.getElementById("box_dir");
+
+  function toggle() {
+    const v = kind.value;
+
+    boxRole.style.display = (v === "ROLE") ? "block" : "none";
+    boxUser.style.display = (v === "USER") ? "block" : "none";
+    boxDept.style.display = (v === "DEPARTMENT") ? "block" : "none";
+    boxDir.style.display = (v === "DIRECTORATE") ? "block" : "none";
+
+    const roleSel = boxRole.querySelector('select[name="approver_role"]');
+    const userSel = boxUser.querySelector('select[name="approver_user_id"]');
+    const deptSel = boxDept.querySelector('select[name="approver_department_id"]');
+    const dirSel = boxDir.querySelector('select[name="approver_directorate_id"]');
+
+    roleSel.disabled = (v !== "ROLE");
+    userSel.disabled = (v !== "USER");
+    deptSel.disabled = (v !== "DEPARTMENT");
+    dirSel.disabled = (v !== "DIRECTORATE");
+
+    if (v !== "ROLE") roleSel.value = "";
+    if (v !== "USER") userSel.value = "";
+    if (v !== "DEPARTMENT") deptSel.value = "";
+    if (v !== "DIRECTORATE") dirSel.value = "";
+  }
+
+  kind.addEventListener("change", toggle);
+  toggle();
+</script>
+
+{% endblock %}

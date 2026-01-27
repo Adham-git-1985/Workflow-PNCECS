@@ -1,0 +1,74 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🧾 أنواع الطلبات</h3>
+    <small class="text-muted">إدارة أنواع الطلبات (Request Types)</small>
+  </div>
+  <a class="btn btn-primary" href="{{ url_for('masterdata.request_types_new') }}">➕ إضافة نوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+<form method="get" class="mb-3">
+  <div class="input-group">
+    <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="ابحث بالاسم أو الكود…">
+    <button class="btn btn-outline-secondary" type="submit">بحث</button>
+    {% if q %}
+      <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+    {% endif %}
+  </div>
+</form>
+
+
+    {% if items %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle" data-sortable="true">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>CODE</th>
+              <th>الاسم (AR)</th>
+              <th>الاسم (EN)</th>
+              <th>نشط</th>
+              <th class="text-end" data-nosort>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rt in items %}
+              <tr>
+                <td>{{ rt.id }}</td>
+                <td><span class="badge bg-dark">{{ rt.code }}</span></td>
+                <td>{{ rt.name_ar }}</td>
+                <td>{{ rt.name_en or '-' }}</td>
+                <td>
+                  {% if rt.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.request_types_edit', rt_id=rt.id) }}">✏️ تعديل</a>
+                  <form method="post" action="{{ url_for('masterdata.request_types_delete', rt_id=rt.id) }}" class="d-inline" onsubmit="return confirm('تأكيد حذف/تعطيل نوع الطلب؟');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/table_sort.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,129 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">👁️ متابعة المسارات</h3>
+    <small class="text-muted">الطلبات التي شاركت فيها (وافقت/رفضت) وتريد متابعة سيرها</small>
+  </div>
+</div>
+
+<form method="get" class="row g-2 align-items-center mb-3">
+  <div class="col-sm-7 col-md-6 col-lg-5">
+    <div class="input-group">
+      <span class="input-group-text"><i class="bi bi-search"></i></span>
+      <input type="text"
+             class="form-control"
+             name="q"
+             value="{{ q or '' }}"
+             placeholder="ابحث برقم الطلب أو العنوان أو البريد..." />
+    </div>
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-outline-primary">بحث</button>
+  </div>
+  {% if q %}
+  <div class="col-auto">
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.following') }}">إلغاء</a>
+  </div>
+  {% endif %}
+</form>
+
+{% if rows %}
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>العنوان</th>
+          <th>الحالة</th>
+          <th>الخطوة الحالية</th>
+          <th>SLA</th>
+          <th>تاريخ الإنشاء</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for req, inst, tpl in rows %}
+        <tr>
+          <td>{{ req.id }}</td>
+          <td>{{ req.title }}</td>
+          <td>
+            <span class="badge {% if req.status in ['APPROVED','REJECTED'] %}bg-secondary{% else %}bg-primary{% endif %}">
+              {{ req.status }}
+            </span>
+          </td>
+          <td>{% if inst %}{{ inst.current_step_order }}{% else %}—{% endif %}</td>
+          <td>
+            {% if tpl and tpl.sla_days_default %}
+              <a href="#" class="text-decoration-none"
+                 data-bs-toggle="modal" data-bs-target="#slaInfoModal"
+                 data-sla-label="SLA الكلي للمسار" data-sla-value="{{ tpl.sla_days_default }}">
+                {{ tpl.sla_days_default }} يوم
+              </a>
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary"
+               href="{{ url_for('workflow.view_request', request_id=req.id) }}">
+              فتح
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# =========================
+   SLA Info Modal (template-level)
+   ========================= #}
+<div class="modal fade" id="slaInfoModal" tabindex="-1" aria-labelledby="slaInfoModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="slaInfoModalLabel">ما هو SLA؟</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">
+          <b>SLA</b> اختصار لـ <b>Service Level Agreement</b>، ويعني <b>اتفاقية مستوى الخدمة</b>.
+          في النظام: هي <b>مدة زمنية (بالأيام)</b> تحدد الحد الأقصى لإنجاز المسار قبل اعتباره متأخرًا.
+        </p>
+        <div class="alert alert-light mb-0">
+          <div class="fw-bold" id="slaInfoScope">SLA</div>
+          <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted">يوم</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var modalEl = document.getElementById('slaInfoModal');
+    if (!modalEl) return;
+    modalEl.addEventListener('show.bs.modal', function (event) {
+      var trigger = event.relatedTarget;
+      if (!trigger) return;
+      var label = trigger.getAttribute('data-sla-label') || 'SLA';
+      var value = trigger.getAttribute('data-sla-value') || '-';
+      var scopeEl = modalEl.querySelector('#slaInfoScope');
+      var valEl = modalEl.querySelector('#slaInfoValue');
+      if (scopeEl) scopeEl.textContent = label;
+      if (valEl) valEl.textContent = value;
+    });
+  });
+</script>
+{% else %}
+<div class="alert alert-light text-center text-muted py-4">
+  لا توجد مسارات تتابعها حالياً ✅
+</div>
+{% endif %}
+
+{% endblock %}

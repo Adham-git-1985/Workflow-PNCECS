@@ -1,0 +1,56 @@
+{% extends "layout.html" %}
+{% block title %}طلب جديد{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">📝 إنشاء طلب جديد</h3>
+        <small class="text-muted">يرجى تعبئة البيانات المطلوبة بدقة</small>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+
+        <form method="POST" novalidate>
+
+            <div class="mb-3">
+                <label class="form-label">العنوان</label>
+                <input type="text"
+                       name="title"
+                       class="form-control"
+                       placeholder="عنوان مختصر وواضح للطلب"
+                       required>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label">الوصف</label>
+                <textarea name="description"
+                          rows="5"
+                          class="form-control"
+                          placeholder="اكتب تفاصيل الطلب هنا"></textarea>
+            </div>
+
+            <div class="d-flex gap-3">
+                <button type="submit"
+                        name="action"
+                        value="save"
+                        class="btn btn-outline-secondary px-4">
+                    💾 حفظ كمسودة
+                </button>
+
+                <button type="submit"
+                        name="action"
+                        value="submit"
+                        class="btn btn-primary px-4">
+                    📤 إرسال الطلب
+                </button>
+            </div>
+
+        </form>
+
+    </div>
+</div>
+
+{% endblock %}

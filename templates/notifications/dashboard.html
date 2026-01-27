@@ -1,0 +1,76 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">📊 لوحة الإشعارات</h3>
+        <small class="text-muted">نظرة عامة على نشاط الإشعارات في النظام</small>
+    </div>
+</div>
+
+<!-- Counters -->
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm border-primary">
+            <div class="card-body">
+                <small class="text-muted">Total Notifications</small>
+                <h2 class="text-primary">{{ total }}</h2>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-4">
+        <div class="card text-center shadow-sm border-warning">
+            <div class="card-body">
+                <small class="text-muted">Unread Notifications</small>
+                <h2 class="text-warning">{{ unread }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Top Users -->
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <h5 class="mb-3">👤 أكثر المستخدمين استلامًا للإشعارات</h5>
+
+        {% if top_users %}
+        <ul class="list-group list-group-flush">
+            {% for email, count in top_users %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ email }}</span>
+                <span class="badge bg-secondary rounded-pill">{{ count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="text-muted text-center">
+            لا توجد بيانات
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Notifications by Type -->
+<div class="card shadow-sm">
+    <div class="card-body">
+        <h5 class="mb-3">🏷️ توزيع الإشعارات حسب النوع</h5>
+
+        {% if by_type %}
+        <ul class="list-group list-group-flush">
+            {% for t, count in by_type %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <span>{{ t }}</span>
+                <span class="badge bg-info text-dark rounded-pill">{{ count }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <div class="text-muted text-center">
+            لا توجد بيانات
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

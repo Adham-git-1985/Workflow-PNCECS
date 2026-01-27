@@ -1,0 +1,115 @@
+<form method="get" class="card shadow-sm mb-4">
+
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <strong>🔍 Advanced Filters</strong>
+      <small class="text-muted d-block">تصفية الطلبات بدقة</small>
+    </div>
+    <button type="button"
+            class="btn btn-sm btn-outline-secondary"
+            data-bs-toggle="collapse"
+            data-bs-target="#advanced-filters-body">
+      إظهار / إخفاء
+    </button>
+  </div>
+
+  <div id="advanced-filters-body" class="card-body collapse show">
+    <div class="row g-3">
+
+      <!-- Status -->
+      <div class="col-md-3">
+        <label class="form-label">الحالة</label>
+        <select name="status" multiple class="form-select">
+          {% for s in ["DRAFT","IN_PROGRESS","APPROVED","REJECTED"] %}
+            <option value="{{ s }}"
+              {% if s in request.args.getlist("status") %}selected{% endif %}>
+              {{ s.replace("_"," ").title() }}
+            </option>
+          {% endfor %}
+        </select>
+        <small class="text-muted">يمكن اختيار أكثر من حالة</small>
+      </div>
+
+      <!-- Date From -->
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date"
+               name="date_from"
+               value="{{ request.args.get('date_from','') }}"
+               class="form-control">
+      </div>
+
+      <!-- Date To -->
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date"
+               name="date_to"
+               value="{{ request.args.get('date_to','') }}"
+               class="form-control">
+      </div>
+
+      <!-- Keyword -->
+      <div class="col-md-3">
+        <label class="form-label">كلمة مفتاحية</label>
+        <input type="text"
+               name="keyword"
+               value="{{ request.args.get('keyword','') }}"
+               class="form-control"
+               placeholder="رقم، عنوان، وصف">
+      </div>
+
+      <!-- SLA Status -->
+      <div class="col-md-3">
+        <label class="form-label">حالة SLA</label>
+        <select name="sla_state" class="form-select">
+          <option value="">الكل</option>
+          <option value="ON_TRACK"
+            {% if request.args.get("sla_state") == "ON_TRACK" %}selected{% endif %}>
+            On Track
+          </option>
+          <option value="BREACHED"
+            {% if request.args.get("sla_state") == "BREACHED" %}selected{% endif %}>
+            Breached
+          </option>
+          <option value="ESCALATED"
+            {% if request.args.get("sla_state") == "ESCALATED" %}selected{% endif %}>
+            Escalated
+          </option>
+        </select>
+      </div>
+
+      {% if is_admin %}
+      <!-- Requester ID -->
+      <div class="col-md-3">
+        <label class="form-label">رقم مقدم الطلب</label>
+        <input type="number"
+               name="requester_id"
+               value="{{ request.args.get('requester_id','') }}"
+               class="form-control">
+      </div>
+
+      <!-- Current Role -->
+      <div class="col-md-3">
+        <label class="form-label">الدور الحالي</label>
+        <input type="text"
+               name="current_role"
+               value="{{ request.args.get('current_role','') }}"
+               class="form-control"
+               placeholder="finance, secretary_general…">
+      </div>
+      {% endif %}
+
+    </div>
+
+    <!-- Actions -->
+    <div class="mt-4 d-flex justify-content-end gap-2">
+      <button type="submit" class="btn btn-primary">
+        تطبيق
+      </button>
+      <a href="{{ request.path }}" class="btn btn-outline-secondary">
+        إعادة ضبط
+      </a>
+    </div>
+  </div>
+
+</form>

@@ -1,0 +1,206 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">➕ إنشاء مسار جديد</h3>
+    <small class="text-muted">حدد الخطوات ومن سيستلم كل خطوة</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_list') }}">رجوع</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <label class="form-label fw-bold">اسم المسار</label>
+        <input class="form-control" name="name" required>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-bold">SLA Default (days)</label>
+        <input class="form-control" name="sla_days_default" type="number" min="1" placeholder="اختياري">
+      </div>
+
+      <div class="col-md-3 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" checked>
+          <label class="form-check-label fw-bold" for="is_active">Active</label>
+        </div>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">الخطوات</h5>
+      <button class="btn btn-sm btn-outline-primary" type="button" onclick="addRow()">➕ إضافة خطوة</button>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle" id="stepsTable">
+        <thead>
+          <tr>
+            <th style="width:60px">#</th>
+            <th style="width:170px">النوع</th>
+            <th>مستخدم</th>
+            <th>Role</th>
+            <th>Department</th>
+            <th>Directorate</th>
+            <th style="width:140px">SLA أيام</th>
+            <th style="width:80px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- row 1 -->
+          <tr>
+            <td class="step-no">1</td>
+
+            <td>
+              <select class="form-select form-select-sm" name="approver_kind" onchange="toggleFields(this)">
+                <option value="USER">USER</option>
+                <option value="ROLE">ROLE</option>
+                <option value="DEPARTMENT">DEPARTMENT</option>
+                <option value="DIRECTORATE">DIRECTORATE</option>
+              </select>
+            </td>
+
+            <td>
+              <select class="form-select form-select-sm" name="approver_user_id">
+                <option value="">-- اختر مستخدم --</option>
+                {% for u in users %}
+                  <option value="{{ u.id }}">{{ u.email }}</option>
+                {% endfor %}
+              </select>
+            </td>
+
+            <td>
+              <select class="form-select form-select-sm" name="approver_role">
+                <option value="">-- اختر Role --</option>
+                {% for r in role_choices %}
+                  <option value="{{ r }}">{{ r }}</option>
+                {% endfor %}
+              </select>
+            </td>
+
+            <td>
+              <select class="form-select form-select-sm" name="approver_department_id">
+                <option value="">-- اختر Department --</option>
+                {% for d in departments %}
+                  <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+                {% endfor %}
+              </select>
+            </td>
+
+<td>
+  <select class="form-select form-select-sm" name="approver_directorate_id">
+    <option value="">-- اختر Directorate --</option>
+    {% for d in directorates %}
+      <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+    {% endfor %}
+  </select>
+</td>
+
+            <td>
+              <input class="form-control form-control-sm" name="step_sla_days" type="number" min="1" placeholder="اختياري">
+            </td>
+
+            <td class="text-end">
+              <div class="btn-group btn-group-sm" role="group"><button class="btn btn-outline-secondary" type="button" onclick="moveUp(this)">↑</button><button class="btn btn-outline-secondary" type="button" onclick="moveDown(this)">↓</button><button class="btn btn-outline-danger" type="button" onclick="removeRow(this)">حذف</button></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="d-flex justify-content-end mt-3">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+    </div>
+
+  </div>
+</form>
+
+<script>
+function renumber(){
+  document.querySelectorAll("#stepsTable tbody tr").forEach((tr, i) => {
+    tr.querySelector(".step-no").innerText = (i + 1);
+  });
+}
+
+function setActive(el, active){
+  // keep enabled so it gets submitted (prevents getlist alignment bugs)
+  el.disabled = false;
+  if(active){
+    el.style.pointerEvents = "auto";
+    el.style.opacity = "1";
+  } else {
+    el.style.pointerEvents = "none";
+    el.style.opacity = "0.5";
+  }
+}
+
+function toggleFields(sel){
+  const tr = sel.closest("tr");
+  const kind = sel.value;
+
+  const userSel = tr.querySelector('select[name="approver_user_id"]');
+  const roleSel = tr.querySelector('select[name="approver_role"]');
+  const deptSel = tr.querySelector('select[name="approver_department_id"]');
+  const dirSel  = tr.querySelector('select[name="approver_directorate_id"]');
+
+  setActive(userSel, kind === "USER");
+  setActive(roleSel, kind === "ROLE");
+  setActive(deptSel, kind === "DEPARTMENT");
+  setActive(dirSel,  kind === "DIRECTORATE");
+
+  // clear irrelevant values
+  if (kind !== "USER") userSel.value = "";
+  if (kind !== "ROLE") roleSel.value = "";
+  if (kind !== "DEPARTMENT") deptSel.value = "";
+  if (kind !== "DIRECTORATE") dirSel.value = "";
+}
+
+function addRow(){
+  const tbody = document.querySelector("#stepsTable tbody");
+  const first = tbody.querySelector("tr");
+  const clone = first.cloneNode(true);
+
+  // reset values
+  clone.querySelectorAll("input").forEach(i => i.value = "");
+  // reset selects
+  clone.querySelectorAll("select").forEach(s => s.selectedIndex = 0);
+
+  tbody.appendChild(clone);
+  renumber();
+  toggleFields(clone.querySelector('select[name="approver_kind"]'));
+}
+
+function removeRow(btn){
+  const tbody = document.querySelector("#stepsTable tbody");
+  if (tbody.querySelectorAll("tr").length <= 1) return;
+  btn.closest("tr").remove();
+  renumber();
+}
+
+function moveUp(btn){
+  const tr = btn.closest("tr");
+  const prev = tr.previousElementSibling;
+  if(!prev) return;
+  tr.parentNode.insertBefore(tr, prev);
+  renumber();
+}
+
+function moveDown(btn){
+  const tr = btn.closest("tr");
+  const next = tr.nextElementSibling;
+  if(!next) return;
+  tr.parentNode.insertBefore(next, tr);
+  renumber();
+}
+
+// init
+toggleFields(document.querySelector('#stepsTable tbody tr select[name="approver_kind"]'));
+</script>
+
+{% endblock %}

@@ -1,0 +1,182 @@
+{% extends "layout.html" %}
+{% block title %}MY_FILES{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/archive.css') }}?v=20260122">
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="container archive-wrap p-3 p-lg-4">
+
+    <!-- HERO -->
+    <div class="archive-hero mb-4">
+      <div class="hero-inner d-flex flex-column flex-lg-row justify-content-between align-items-start gap-3">
+        <div>
+          <h3 class="archive-title mb-1">🗂️ MY_FILES</h3>
+          <div class="archive-submeta">
+            {{ current_user.email }} · {{ current_user.role }} · الدائرة: {{ current_user.department_id or "غير محددة" }}
+          </div>
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap align-items-center">
+          <a class="btn btn-sm btn-outline-secondary btn-neo"
+             href="{{ url_for('archive.recycle_bin') }}">
+            🗑️ سلة المحذوفات
+          </a>
+
+          <div class="chips">
+          {% if counters %}
+            {% for k, v in counters.items() %}
+              <span class="chip info">
+                <span class="dot"></span>
+                <span>{{ k }}: <strong>{{ v }}</strong></span>
+              </span>
+            {% endfor %}
+          {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEARCH -->
+    <div class="archive-card mb-4">
+      <div class="card-body">
+        <form method="get" class="row g-2 align-items-center">
+          <div class="col-md-10">
+            <input type="text" name="q" value="{{ q }}" class="form-control"
+                   placeholder="🔍 البحث باسم الملف أو الوصف">
+          </div>
+          <div class="col-md-2">
+            <button class="btn btn-primary w-100 btn-neo">بحث</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {% if files %}
+    <!-- GRID -->
+    <div class="grid-files">
+
+      {% for f in files %}
+      {% set icon = 'bi-file-earmark-pdf' if f.file_type == 'PDF'
+        else ('bi-file-earmark-image' if f.file_type in ['JPG','PNG'] else 'bi-file-earmark-text') %}
+
+      <div class="file-tile">
+        <div class="tile-head">
+          <div class="d-flex gap-3 align-items-start">
+            <div class="file-icon">
+              <i class="bi {{ icon }}"></i>
+            </div>
+
+            <div class="flex-grow-1">
+              <a class="file-name" href="{{ url_for('archive.file_details', file_id=f.id) }}">
+                {{ f.original_name }}
+              </a>
+
+              <div class="chips mt-2">
+                {% if f.is_signed %}
+                  <span class="chip success"><span class="dot"></span>موقّع</span>
+                {% endif %}
+                {% if f.id in delegated_files %}
+                  <span class="chip warn"><span class="dot"></span>Delegated</span>
+                {% endif %}
+                {% if shared_count.get(f.id, 0) > 0 %}
+                  <span class="chip info">
+                    <span class="dot"></span>
+                    🤝 Shared: <strong>{{ shared_count[f.id] }}</strong>
+                  </span>
+                {% endif %}
+                {% if shared_by_map.get(f.id) and f.owner_id != current_user.id %}
+                  <a class="chip info" href="{{ url_for('archive.shared_by', file_id=f.id) }}">
+                    <span class="dot"></span>Shared by: <strong>{{ shared_by_map[f.id] }}</strong>
+                  </a>
+                {% endif %}
+                {% if f.visibility %}
+                  <span class="chip"><span class="dot"></span>{{ f.visibility }}</span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="file-desc">
+          {{ (f.description or "—") | truncate(120, True, "…") }}
+        </div>
+
+        <div class="tile-foot">
+          <div class="tile-meta">
+            <div>🕒 {{ f.upload_date.strftime("%Y-%m-%d %H:%M") if f.upload_date else "—" }}</div>
+            <div>💾 {{ (f.file_size / 1024) | round(1) if f.file_size else "—" }} KB</div>
+          </div>
+
+          <div class="d-flex gap-2 flex-wrap archive-actions">
+            {% if not f.is_deleted %}
+              <a class="btn btn-sm btn-outline-primary btn-neo"
+                 href="{{ url_for('archive.download_file', file_id=f.id) }}">
+                ⬇️ Download
+              </a>
+
+              <a class="btn btn-sm btn-outline-warning btn-neo"
+                 href="{{ url_for('archive.share_file', file_id=f.id) }}">
+                🤝 Share
+              </a>
+
+              {% if current_user.has_role("ADMIN") or f.owner_id == current_user.id %}
+                <form method="post"
+                      action="{{ url_for('archive.delete_file', file_id=f.id) }}"
+                      onsubmit="return confirm('هل أنت متأكد من حذف الملف؟');">
+                  <button class="btn btn-sm btn-outline-danger btn-neo">🗑️ Delete</button>
+                </form>
+
+                {% if current_user.has_role("ADMIN") and not f.is_signed %}
+                <form method="post"
+                      action="{{ url_for('archive.sign_pdf', file_id=f.id) }}">
+                  <button class="btn btn-sm btn-outline-success btn-neo">✍️ توقيع</button>
+                </form>
+                {% endif %}
+              {% endif %}
+            {% else %}
+              <span class="text-muted">Unavailable</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+
+    </div>
+
+    {% else %}
+    <div class="archive-card">
+      <div class="card-body text-center text-muted p-5">
+        لا توجد ملفات
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- PAGINATION -->
+    {% if pagination and pagination.pages > 1 %}
+    <nav class="mt-4 d-flex justify-content-center">
+      <ul class="pagination">
+        {% if pagination.has_prev %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ pagination.prev_num }}&q={{ q }}">السابق</a>
+        </li>
+        {% endif %}
+
+        <li class="page-item disabled">
+          <span class="page-link">صفحة {{ pagination.page }} من {{ pagination.pages }}</span>
+        </li>
+
+        {% if pagination.has_next %}
+        <li class="page-item">
+          <a class="page-link" href="?page={{ pagination.next_num }}&q={{ q }}">التالي</a>
+        </li>
+        {% endif %}
+      </ul>
+    </nav>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

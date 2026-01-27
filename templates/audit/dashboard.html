@@ -1,0 +1,75 @@
+{% extends "layout.html" %}
+
+{% block title %}لوحة تدقيق النظام{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3>🧾 لوحة إحصائيات Audit Log</h3>
+</div>
+
+<!-- Summary -->
+<div class="row mb-4">
+    <div class="col-md-4">
+        <div class="card shadow-sm text-center border-primary">
+            <div class="card-body">
+                <small class="text-muted">إجمالي العمليات</small>
+                <h2 class="mt-2">{{ total_logs }}</h2>
+            </div>
+        </div>
+    </div>
+</div>
+
+<p class="text-muted mb-4">
+    تم تسجيل <strong>{{ total_logs }}</strong> عملية في النظام
+</p>
+
+<hr>
+
+<!-- Top Users -->
+<h5 class="mb-3">👤 أكثر المستخدمين نشاطًا</h5>
+
+<div class="table-responsive mb-4">
+    <table class="table table-striped table-bordered align-middle w-75">
+        <thead class="table-light">
+            <tr>
+                <th>المستخدم</th>
+                <th class="text-center">عدد العمليات</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for user, count in top_users %}
+            <tr>
+                <td>{{ user }}</td>
+                <td class="text-center">{{ count }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<hr>
+
+<!-- Top Actions -->
+<h5 class="mb-3">⚙️ أكثر الإجراءات</h5>
+
+<div class="table-responsive">
+    <table class="table table-striped table-bordered align-middle w-75">
+        <thead class="table-light">
+            <tr>
+                <th>الإجراء</th>
+                <th class="text-center">عدد التكرار</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for action, count in top_actions %}
+            <tr>
+                <td>{{ action }}</td>
+                <td class="text-center">{{ count }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{% endblock %}

@@ -1,0 +1,78 @@
+{% extends "layout.html" %}
+{% block title %}تعديل مستخدم{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">✏️ تعديل المستخدم</h3>
+    <small class="text-muted">{{ u.email }} · الدور: {{ u.role }}</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('users.list_users') }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post" novalidate>
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">الاسم</label>
+          <input type="text" class="form-control" name="name" value="{{ u.name or '' }}">
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">المسمى الوظيفي</label>
+          <input type="text" class="form-control" name="job_title" value="{{ u.job_title or '' }}">
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">البريد الإلكتروني</label>
+          <input type="email" class="form-control" name="email" value="{{ u.email or '' }}">
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">الدائرة/القسم</label>
+          <select class="form-select" name="department_id">
+            <option value="">— بدون —</option>
+            {% for d in departments %}
+              <option value="{{ d.id }}" {% if u.department_id == d.id %}selected{% endif %}>
+                {{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">الإدارة (اختياري)</label>
+          <select class="form-select" name="directorate_id">
+            <option value="">— بدون —</option>
+            {% for dr in directorates %}
+              <option value="{{ dr.id }}" {% if u.directorate_id == dr.id %}selected{% endif %}>
+                {{ dr.name_ar }}{% if dr.code %} ({{ dr.code }}){% endif %}
+              </option>
+            {% endfor %}
+          </select>
+          <div class="form-text">
+            تُستخدم هذه القيمة لمهام <b>رئيس إدارة / نائب رئيس إدارة</b> في خطوات المسار من نوع <b>DIRECTORATE</b>، خصوصاً إذا لم يكن المستخدم مرتبطاً بدائرة.
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label">إعادة تعيين كلمة المرور (اختياري)</label>
+          <input type="password" class="form-control" name="new_password" placeholder="اتركه فارغاً بدون تغيير">
+          <div class="form-text">سيتم تغيير كلمة المرور فور الحفظ.</div>
+        </div>
+
+      </div>
+
+      <hr class="my-4">
+
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary">💾 حفظ</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('users.list_users') }}">إلغاء</a>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}

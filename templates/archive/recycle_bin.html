@@ -1,0 +1,88 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🗑️ سلة المحذوفات</h3>
+        <small class="text-muted">
+            الملفات المحذوفة مؤقتًا (يمكن حذفها نهائيًا حسب سياسة الاحتفاظ عبر "تنظيف المنتهي" أو عبر مهمة مجدولة)
+        </small>
+    </div>
+    {% if current_user.has_role("ADMIN") %}
+    <div class="d-flex gap-2 align-items-center">
+        <span class="badge bg-secondary">سياسة الاحتفاظ: {{ trash_retention_days }} يوم</span>
+        <form method="post" action="{{ url_for('archive.purge_recycle_bin') }}"
+              onsubmit="return confirm('حذف نهائي للملفات المنتهية حسب سياسة الاحتفاظ؟')">
+            <button type="submit" class="btn btn-outline-danger btn-sm">
+                <i class="bi bi-trash3"></i>
+                تنظيف المنتهي
+            </button>
+        </form>
+    </div>
+    {% else %}
+    <div>
+        <span class="badge bg-secondary">سياسة الاحتفاظ: {{ trash_retention_days }} يوم</span>
+    </div>
+    {% endif %}
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+
+        {% if files %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>الملف</th>
+                        <th class="text-center">تاريخ الحذف</th>
+                        <th class="text-center">تم الحذف بواسطة</th>
+                        <th class="text-center">إجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for f in files %}
+                    <tr>
+                        <td><strong>{{ f.original_name }}</strong></td>
+                        <td class="text-center">
+                            {{ f.deleted_at.strftime("%Y-%m-%d %H:%M") if f.deleted_at else "—" }}
+                        </td>
+                        <td class="text-center">
+                            {{ f.deleted_by_user.email if f.deleted_by_user else "System" }}
+                        </td>
+                        <td class="text-center">
+                            <div class="d-flex justify-content-center gap-2 flex-wrap">
+                                <a class="btn btn-sm btn-outline-success"
+                                   href="{{ url_for('archive.restore_file', file_id=f.id) }}">
+                                    <i class="bi bi-arrow-counterclockwise"></i>
+                                    استرجاع
+                                </a>
+
+                                {# Permanent delete (manual) - allowed for ADMIN or owner #}
+                                {% if current_user.has_role("ADMIN") or f.owner_id == current_user.id %}
+                                <form method="post"
+                                      action="{{ url_for('archive.purge_single_from_recycle_bin', file_id=f.id) }}"
+                                      onsubmit="return confirm('حذف نهائي لهذا الملف؟ لن يمكن استرجاعه.');">
+                                    <button type="submit" class="btn btn-sm btn-outline-danger">
+                                        <i class="bi bi-trash3"></i>
+                                        حذف نهائي
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            سلة المحذوفات فارغة
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}

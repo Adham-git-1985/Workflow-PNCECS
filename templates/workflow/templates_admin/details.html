@@ -1,0 +1,67 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">📄 تفاصيل المسار</h3>
+    <small class="text-muted">{{ t.name }}</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_list') }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6"><b>الاسم:</b> {{ t.name }}</div>
+      <div class="col-md-3"><b>Active:</b> {{ "Yes" if t.is_active else "No" }}</div>
+      <div class="col-md-3"><b>SLA Default:</b> {{ t.sla_days_default or "-" }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h5 class="mb-3">الخطوات</h5>
+
+    {% if steps %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Kind</th>
+              <th>USER</th>
+              <th>ROLE</th>
+              <th>DEPT</th>
+              <th>SLA</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for s in steps %}
+            <tr>
+              <td>{{ s.step_order }}</td>
+              <td>{{ s.approver_kind }}</td>
+              <td>
+                {% if s.approver_user_id %}
+                  {{ users_map.get(s.approver_user_id).email if users_map.get(s.approver_user_id) else s.approver_user_id }}
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>{{ s.approver_role or "-" }}</td>
+              <td>{{ s.approver_department_id or "-" }}</td>
+              <td>{{ s.sla_days or "-" }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">
+        لا يوجد خطوات
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

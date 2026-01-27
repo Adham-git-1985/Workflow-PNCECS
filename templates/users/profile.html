@@ -1,0 +1,130 @@
+{% extends "layout.html" %}
+{% block title %}الملف الشخصي{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">👤 الملف الشخصي</h3>
+    <small class="text-muted">يمكنك تحديث بياناتك (ما عدا الدور)</small>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+
+<div class="card shadow-sm mb-3">
+    <div class="card-body">
+        <h5 class="mb-3">🖼️ صورة الملف الشخصي</h5>
+
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+            <img
+                src="{% if current_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ current_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}"
+                alt="Avatar"
+                style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.15);"
+            >
+            <form method="post" enctype="multipart/form-data" class="flex-grow-1">
+                <input type="hidden" name="form_type" value="avatar">
+                <input class="form-control mb-2" type="file" name="avatar" accept="image/*" required>
+                <button class="btn btn-outline-primary btn-sm">
+                    تحديث الصورة
+                </button>
+                <div class="text-muted mt-2" style="font-size:0.9rem">
+                    الامتدادات المسموحة: png, jpg, jpeg, gif, webp
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🧾 بيانات الحساب</h5>
+        <form method="post">
+          <input type="hidden" name="form_type" value="profile">
+
+          <div class="mb-3">
+            <label class="form-label">الاسم</label>
+            <input type="text" name="name" class="form-control" value="{{ current_user.name or '' }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">المسمى الوظيفي</label>
+            <input type="text" name="job_title" class="form-control" value="{{ current_user.job_title or '' }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">البريد الإلكتروني</label>
+            <input type="email" name="email" class="form-control" value="{{ current_user.email }}" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">الدور (غير قابل للتعديل)</label>
+            <input type="text" class="form-control" value="{{ current_user.role }}" readonly>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الحالية (لتأكيد التعديل)</label>
+            <input type="password" name="current_password" class="form-control" required>
+          </div>
+
+          <button class="btn btn-primary">حفظ التغييرات</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="mb-3">🏢 معلومات إدارية</h5>
+        <div class="row g-2">
+          <div class="col-md-4">
+            <div class="small text-muted">المؤسسة</div>
+            <div>{{ organization.name if organization else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">المديرية</div>
+            <div>{{ directorate.name if directorate else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">الدائرة</div>
+            <div>{{ dept.name if dept else "—" }}</div>
+          </div>
+        </div>
+        <small class="text-muted d-block mt-2">هذه المعلومات تُدار من الإدارة.</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6" id="password">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🔐 تغيير كلمة المرور</h5>
+
+        <form method="post">
+          <input type="hidden" name="form_type" value="password">
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الحالية</label>
+            <input type="password" name="current_password" class="form-control" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الجديدة</label>
+            <input type="password" name="new_password" class="form-control" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">تأكيد كلمة المرور</label>
+            <input type="password" name="confirm_password" class="form-control" required>
+          </div>
+
+          <button type="submit" class="btn btn-success">تحديث كلمة المرور</button>
+        </form>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

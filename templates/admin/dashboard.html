@@ -1,0 +1,290 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="admin-dashboard">
+<div class="mt-4">
+
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h3 class="mb-1">📊 Admin Dashboard</h3>
+            <small class="text-muted">
+                Last refresh: {{ now.strftime("%Y-%m-%d %H:%M") }}
+            </small>
+        </div>
+        <div>
+            <a class="btn btn-outline-success"
+               href="{{ url_for('admin.dashboard_export_excel') }}">
+                <i class="bi bi-file-earmark-excel"></i>
+                تصدير Excel
+            </a>
+        </div>
+    </div>
+
+    <!-- Counters -->
+    <div class="row g-3">
+
+        <div class="col-md-4 col-lg-3">
+            <div class="card border-primary shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">Total Requests</small>
+                    <h2 class="text-primary">{{ counters.total }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <div class="card border-success shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">Approved</small>
+                    <h2 class="text-success">{{ counters.approved }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <div class="card border-danger shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">Rejected</small>
+                    <h2 class="text-danger">{{ counters.rejected }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <div class="card border-warning shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">In Progress</small>
+                    <h2 class="text-warning">{{ counters.in_progress }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <div class="card border-secondary shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">Drafts</small>
+                    <h2 class="text-secondary">{{ counters.drafts }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
+            <div class="card border-info shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">Delegated</small>
+                    <h2 class="text-info">{{ counters.delegated }}</h2>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Charts + SLA -->
+    <div class="row mt-5 g-4">
+
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="mb-3">📈 Requests by Status</h5>
+                    <canvas id="statusChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-body">
+                    <h5 class="mb-3">⏱ SLA Settings</h5>
+
+                    <form method="post"
+                          action="{{ url_for('admin.update_sla') }}"
+                          class="row g-3 align-items-center">
+
+                        <div class="col-auto">
+                            <label class="fw-bold mb-0">
+                                SLA (days)
+                            </label>
+                        </div>
+
+                        <div class="col-auto">
+                            <input type="number"
+                                   name="sla_days"
+                                   class="form-control"
+                                   min="1"
+                                   value="{{ sla_days }}"
+                                   required>
+                        </div>
+
+                        <div class="col-auto">
+                            <button type="submit"
+                                    class="btn btn-outline-primary">
+                                Update
+                            </button>
+                        </div>
+                    </form>
+
+                    <hr>
+
+                    <h6 class="mb-3">🗑️ سياسة الاحتفاظ بسلة المحذوفات</h6>
+                    <form method="post"
+                          action="{{ url_for('admin.update_trash_retention') }}"
+                          class="row g-3 align-items-center">
+
+                        <div class="col-auto">
+                            <label class="fw-bold mb-0">الاحتفاظ (days)</label>
+                        </div>
+
+                        <div class="col-auto">
+                            <input type="number"
+                                   name="trash_retention_days"
+                                   class="form-control"
+                                   min="1"
+                                   value="{{ trash_retention_days }}"
+                                   required>
+                        </div>
+
+                        <div class="col-auto">
+                            <button type="submit"
+                                    class="btn btn-outline-danger">
+                                Update
+                            </button>
+                        </div>
+                    </form>
+
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Overdue Requests -->
+    <div class="card border-danger shadow-sm mt-5">
+        <div class="card-body">
+            <h5 class="mb-3 text-danger">
+                🚨 Overdue Requests (SLA {{ sla_days }} days)
+            </h5>
+
+            {% if aging_requests %}
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>#</th>
+                            <th>Title</th>
+                            <th>Status</th>
+                            <th>Created</th>
+                            <th>Days Open</th>
+                            <th>Escalated</th>
+                            <th>Current Role</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for req in aging_requests %}
+                        <tr class="{% if req.is_escalated %}table-danger{% endif %}">
+                            <td>{{ req.id }}</td>
+                            <td>{{ req.title }}</td>
+                            <td>
+                                <span class="badge
+                                    {% if req.status == 'APPROVED' %}bg-success
+                                    {% elif req.status == 'REJECTED' %}bg-danger
+                                    {% elif req.status == 'DRAFT' %}bg-secondary
+                                    {% else %}bg-warning text-dark{% endif %}">
+                                    {{ req.status }}
+                                </span>
+                            </td>
+                            <td>{{ req.created_at.strftime("%Y-%m-%d") }}</td>
+                            <td>{{ (now - req.created_at).days }}</td>
+                            <td>
+                                {% if req.is_escalated %}
+                                    <span class="badge bg-danger">YES</span>
+                                {% else %}
+                                    <span class="badge bg-secondary">NO</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <span class="badge bg-info">
+                                    {{ req.current_role }}
+                                </span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-success mb-0">
+                🎉 No overdue requests
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Archive Counters -->
+    <div class="row g-3 mt-5">
+
+        <div class="col-md-4">
+            <div class="card border-dark shadow-sm text-center">
+                <div class="card-body">
+                    <small class="text-muted">Archive Total</small>
+                    <h2>{{ archive_counters.total }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card border-success shadow-sm text-center">
+                <div class="card-body">
+                    <small class="text-muted">Archive Active</small>
+                    <h2 class="text-success">{{ archive_counters.active }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card border-danger shadow-sm text-center">
+                <div class="card-body">
+                    <small class="text-muted">Archive Deleted</small>
+                    <h2 class="text-danger">{{ archive_counters.deleted }}</h2>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+const ctx = document.getElementById('statusChart');
+
+new Chart(ctx, {
+    type: 'pie',
+    data: {
+        labels: ['Approved', 'Rejected', 'In Progress', 'Drafts'],
+        datasets: [{
+            data: [
+                {{ counters.approved }},
+                {{ counters.rejected }},
+                {{ counters.in_progress }},
+                {{ counters.drafts }}
+            ],
+            backgroundColor: [
+                '#198754',
+                '#dc3545',
+                '#ffc107',
+                '#6c757d'
+            ]
+        }]
+    },
+    options: {
+        responsive: true,
+        maintainAspectRatio: true,   // ← مهم جدًا هنا
+        plugins: {
+            legend: { position: 'bottom' }
+        }
+    }
+
+});
+</script>
+</div>
+{% endblock %}

@@ -1,0 +1,73 @@
+2026-01-27 09:01:25,649 | INFO | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-01-27 09:01:25,649 | INFO | [33mPress CTRL+C to quit[0m
+2026-01-27 09:01:26,135 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:26] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:01:26,768 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:26] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:01:26,820 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:26] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:01:48,943 | INFO | Login page accessed
+2026-01-27 09:01:48,946 | INFO | Login attempt for email=superadmin@pncecs.org
+2026-01-27 09:01:49,335 | INFO | Login success | user_id=25 | authenticated=True
+2026-01-27 09:01:49,337 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-01-27 09:01:49,356 | INFO | Accessing index | is_authenticated=True | user=25
+2026-01-27 09:01:49,358 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "[32mGET / HTTP/1.1[0m" 302 -
+2026-01-27 09:01:49,545 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "GET /workflow/inbox HTTP/1.1" 200 -
+2026-01-27 09:01:49,613 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "GET /static/css/main.css?v=20260123 HTTP/1.1" 200 -
+2026-01-27 09:01:49,622 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "GET /static/images/avatar_default.svg HTTP/1.1" 200 -
+2026-01-27 09:01:49,632 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "GET /static/images/logo.png HTTP/1.1" 200 -
+2026-01-27 09:01:49,656 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "GET /static/js/charts.js HTTP/1.1" 200 -
+2026-01-27 09:01:49,750 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:49] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:01:51,790 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:51] "GET /admin/backup HTTP/1.1" 200 -
+2026-01-27 09:01:51,827 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:51] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-27 09:01:51,835 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:51] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-27 09:01:51,854 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:51] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:01:51,854 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:51] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-27 09:01:51,917 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:51] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:01:54,939 | INFO | 127.0.0.1 - - [27/Jan/2026 09:01:54] "GET /admin/backup/download HTTP/1.1" 200 -
+2026-01-27 09:02:09,965 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:09] "[32mPOST /admin/backup/restore HTTP/1.1[0m" 302 -
+2026-01-27 09:02:09,973 | INFO | Login page accessed
+2026-01-27 09:02:09,985 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:09] "GET /login HTTP/1.1" 200 -
+2026-01-27 09:02:10,045 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:10] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:02:58,939 | INFO | Login page accessed
+2026-01-27 09:02:58,940 | INFO | Login attempt for email=superadmin@pncecs.org
+2026-01-27 09:02:59,138 | INFO | Login success | user_id=25 | authenticated=True
+2026-01-27 09:02:59,139 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "[32mPOST /login HTTP/1.1[0m" 302 -
+2026-01-27 09:02:59,147 | INFO | Accessing index | is_authenticated=True | user=25
+2026-01-27 09:02:59,148 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "[32mGET / HTTP/1.1[0m" 302 -
+2026-01-27 09:02:59,162 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "GET /workflow/inbox HTTP/1.1" 200 -
+2026-01-27 09:02:59,217 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:02:59,222 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-27 09:02:59,223 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-27 09:02:59,231 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-27 09:02:59,304 | INFO | 127.0.0.1 - - [27/Jan/2026 09:02:59] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:03:12,196 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:12] "GET /admin/masterdata/directorates HTTP/1.1" 200 -
+2026-01-27 09:03:12,239 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:12] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-27 09:03:12,249 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:12] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:03:12,259 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:12] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-27 09:03:12,266 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:12] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-27 09:03:12,345 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:12] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:03:17,439 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "GET /admin/masterdata/request-types HTTP/1.1" 200 -
+2026-01-27 09:03:17,467 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-27 09:03:17,493 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:03:17,501 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-27 09:03:17,505 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-27 09:03:17,512 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "GET /static/js/table_sort.js HTTP/1.1" 200 -
+2026-01-27 09:03:17,550 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:17] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:03:19,974 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:19] "GET /workflow/templates HTTP/1.1" 200 -
+2026-01-27 09:03:20,012 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:20] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-27 09:03:20,029 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:20] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-27 09:03:20,035 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:20] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:03:20,039 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:20] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-27 09:03:20,084 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:20] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:03:26,561 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:26] "GET /workflow/templates/1/edit HTTP/1.1" 200 -
+2026-01-27 09:03:26,596 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:26] "[36mGET /static/css/main.css?v=20260123 HTTP/1.1[0m" 304 -
+2026-01-27 09:03:26,614 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:26] "[36mGET /static/images/avatar_default.svg HTTP/1.1[0m" 304 -
+2026-01-27 09:03:26,615 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:26] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:03:26,627 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:26] "[36mGET /static/js/charts.js HTTP/1.1[0m" 304 -
+2026-01-27 09:03:26,688 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:26] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:03:44,038 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:44] "[32mGET /logout HTTP/1.1[0m" 302 -
+2026-01-27 09:03:44,046 | INFO | Login page accessed
+2026-01-27 09:03:44,048 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:44] "GET /login HTTP/1.1" 200 -
+2026-01-27 09:03:44,108 | INFO | 127.0.0.1 - - [27/Jan/2026 09:03:44] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-01-27 09:25:57,382 | INFO | 127.0.0.1 - - [27/Jan/2026 09:25:57] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:25:57,388 | INFO | 127.0.0.1 - - [27/Jan/2026 09:25:57] "GET /workflow/notifications/stream HTTP/1.1" 200 -
+2026-01-27 09:25:57,395 | INFO | 127.0.0.1 - - [27/Jan/2026 09:25:57] "GET /workflow/notifications/stream HTTP/1.1" 200 -

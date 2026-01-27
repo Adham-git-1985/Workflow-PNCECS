@@ -1,0 +1,81 @@
+{% extends "layout.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">💾 النسخ الاحتياطي والاستيراد</h3>
+    <small class="text-muted">تنزيل نسخة احتياطية كاملة (قاعدة البيانات + ملفات الأرشفة) أو استيراد نسخة ZIP.</small>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <!-- Download backup -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="card-title mb-2">⬇️ تنزيل نسخة احتياطية</h5>
+        <p class="text-muted mb-3" style="font-size: 0.95rem;">
+          سيتم إنشاء ملف ZIP يحتوي على قاعدة البيانات وملفات الأرشفة.
+        </p>
+
+        <div class="d-flex gap-2 flex-wrap">
+          <a class="btn btn-primary" href="{{ url_for('admin.backup_download') }}">
+            ⬇️ تنزيل Backup جديد
+          </a>
+        </div>
+
+        {% if backups %}
+          <hr>
+          <div class="small text-muted mb-2">آخر النسخ المُولّدة على الخادم:</div>
+          <ul class="mb-0">
+            {% for b in backups %}
+              <li>
+                <a href="{{ url_for('admin.backup_download_existing', fname=b) }}">{{ b }}</a>
+              </li>
+            {% endfor %}
+          </ul>
+        {% endif %}
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Restore backup -->
+  <div class="col-lg-6">
+    <div class="card shadow-sm border-warning">
+      <div class="card-body">
+        <h5 class="card-title mb-2">⬆️ استيراد نسخة احتياطية</h5>
+        <p class="text-muted mb-3" style="font-size: 0.95rem;">
+          ⚠️ الاستيراد سيستبدل بيانات النظام الحالية (قاعدة البيانات وملفات الأرشفة). بعد الاستيراد سيتم تسجيل خروجك تلقائياً.
+        </p>
+
+        <form method="post" action="{{ url_for('admin.backup_restore') }}" enctype="multipart/form-data"
+              onsubmit="return confirm('هل أنت متأكد؟ سيتم استبدال بيانات النظام الحالية بالكامل.');">
+
+          <div class="mb-3">
+            <label class="form-label">ملف النسخة الاحتياطية (ZIP)</label>
+            <input class="form-control" type="file" name="backup_file" accept=".zip" required>
+          </div>
+
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" value="1" id="confirm_restore" name="confirm_restore" required>
+            <label class="form-check-label" for="confirm_restore">
+              أفهم أن الاستيراد سيستبدل البيانات الحالية.
+            </label>
+          </div>
+
+          <button class="btn btn-warning" type="submit">⬆️ استيراد</button>
+
+          <div class="mt-3 small text-muted">
+            ملاحظة: إذا ظهر خطأ بسبب قفل قاعدة البيانات على Windows، أغلق أي برنامج فاتح workflow.db (السيرفر/DB Browser/PyCharm DB tool) ثم حاول مرة أخرى.
+          </div>
+
+        </form>
+
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% extends "layout.html" %}
+{% block title %}مشاركة الملف{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="container">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+      <div>
+        <h3 class="mb-1">🤝 تفاصيل مشاركة الملف</h3>
+        <div class="text-muted">{{ file.original_name }} (ID: {{ file.id }})</div>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ url_for('archive.my_files') }}">← العودة</a>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        {% if perms %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>المستلم</th>
+                  <th>مَن شاركه</th>
+                  <th>تحميل</th>
+                  <th>مشاركة</th>
+                  <th>انتهاء</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for p in perms %}
+                  {% set sharer = sharers.get(p.shared_by) %}
+                  <tr>
+                    <td>{{ p.user.email if p.user else ('User#' ~ p.user_id) }}</td>
+                    <td>
+                      {% if sharer %}
+                        {{ sharer.email }}
+                      {% elif p.shared_by %}
+                        {{ 'User#' ~ p.shared_by }}
+                      {% else %}
+                        غير معروف
+                      {% endif %}
+                    </td>
+                    <td>{{ 'نعم' if p.can_download else 'لا' }}</td>
+                    <td>{{ 'نعم' if p.can_share else 'لا' }}</td>
+                    <td>{{ p.expires_at.strftime('%Y-%m-%d') if p.expires_at else 'بدون' }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          <div class="text-muted">لا توجد مشاركة لهذا الملف.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

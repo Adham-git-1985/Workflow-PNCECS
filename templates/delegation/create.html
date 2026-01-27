@@ -1,0 +1,78 @@
+{% extends "layout.html" %}
+
+{% block title %}
+إنشاء تفويض
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🔁 إنشاء تفويض</h3>
+        <small class="text-muted">تفويض الصلاحيات لمستخدم آخر لفترة زمنية محددة</small>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+
+        <form method="POST" novalidate>
+
+
+            <div class="mb-3">
+                <label class="form-label">المستخدم المفوَّض له</label>
+                <select name="to_user_id"
+                        class="form-select"
+                        required>
+                    {% for user in users %}
+                        <option value="{{ user.id }}">{{ user.name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">الصلاحية</label>
+                <select name="role"
+                        class="form-select"
+                        required>
+                    <option value="approver">Approver</option>
+                    <option value="reviewer">Reviewer</option>
+                </select>
+            </div>
+
+            <div class="row mb-4">
+                <div class="col-md-6">
+                    <label class="form-label">تاريخ البداية</label>
+                    <input type="date"
+                           name="start_date"
+                           class="form-control"
+                           required>
+                </div>
+
+                <div class="col-md-6">
+                    <label class="form-label">تاريخ النهاية</label>
+                    <input type="date"
+                           name="end_date"
+                           class="form-control"
+                           required>
+                </div>
+            </div>
+
+            <div class="d-flex gap-3">
+                <button type="submit"
+                        class="btn btn-primary px-4">
+                    💾 حفظ التفويض
+                </button>
+
+                <a href="{{ url_for('admin.dashboard') }}"
+                   class="btn btn-outline-secondary">
+                    ← رجوع
+                </a>
+            </div>
+
+        </form>
+
+    </div>
+</div>
+
+{% endblock %}
