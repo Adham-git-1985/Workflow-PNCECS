@@ -1,0 +1,43 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إضافة مناسبة{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-plus-circle"></i> إضافة مناسبة رسمية</h4>
+      <div class="text-muted">يمكن إدخال نفس التاريخ لتحديث المناسبة الموجودة.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_official_occasions') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">اسم المناسبة</label>
+      <input class="form-control" name="title" required placeholder="مثال: عطلة رسمية / مناسبة وطنية">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">التاريخ</label>
+      <input class="form-control" type="date" name="day" value="{{ today }}" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">يوم عطلة؟</label>
+      <select class="form-select" name="is_day_off">
+        <option value="1" selected>نعم (عطلة)</option>
+        <option value="0">لا (مناسبة بدون عطلة)</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <label class="form-label">ملاحظات</label>
+      <textarea class="form-control" name="note" rows="2"></textarea>
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_official_occasions') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,53 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}وثائق HR{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-journal-text"></i> وثائق الموارد البشرية</h4>
+    <div class="text-muted small">نماذج وسياسات بإصدار معتمد.</div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if current_user.has_perm('HR_DOCS_MANAGE') %}
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_docs_admin') }}"><i class="bi bi-gear"></i> إدارة</a>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}">رجوع</a>
+  </div>
+</div>
+
+<div class="p-3 bg-white rounded-3 shadow-sm">
+  {% if docs %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>{{ portal_sort_link('العنوان', 'title_ar') }}</th>
+            <th>{{ portal_sort_link('التصنيف', 'category') }}</th>
+            <th>{{ portal_sort_link('الإصدار', 'current_ver') }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in docs %}
+          <tr>
+            <td>{{ d.title_ar }}</td>
+            <td><span class="badge text-bg-light">{{ d.category }}</span></td>
+            <td class="text-muted small">
+              {% if d.current_ver %}v{{ d.current_ver.version_no }}{% else %}-{% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_docs_view', doc_id=d.id) }}">فتح</a>
+              {% if d.current_ver %}
+                <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_docs_download', doc_id=d.id, ver_id=d.current_ver.id) }}"><i class="bi bi-download"></i></a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد وثائق.</div>
+  {% endif %}
+</div>
+{% endblock %}

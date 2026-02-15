@@ -1,0 +1,77 @@
+{% extends "layout.html" %}
+{% block title %}مستخدم جديد{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">👤 إنشاء مستخدم جديد</h3>
+        <small class="text-muted">إضافة مستخدم جديد إلى النظام</small>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body">
+
+        <form method="POST" novalidate>
+
+            <div class="mb-3">
+                <label class="form-label">الاسم</label>
+                <input type="text"
+                       name="name"
+                       class="form-control"
+                       placeholder="اسم الموظف (اختياري)">
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">المسمى الوظيفي</label>
+                <input type="text"
+                       name="job_title"
+                       class="form-control"
+                       placeholder="المسمى الوظيفي (اختياري)">
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">البريد الإلكتروني</label>
+                <input type="email"
+                       name="email"
+                       class="form-control"
+                       placeholder="example@pncecs.org"
+                       required>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">كلمة المرور</label>
+                <input type="password"
+                       name="password"
+                       class="form-control"
+                       placeholder="••••••••"
+                       required>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label">الدور</label>
+                <select name="role" class="form-select" required>
+                    {% for r in role_choices %}
+                        <option value="{{ r }}">{{ r }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="d-flex gap-3">
+                <button type="submit" class="btn btn-primary px-4">
+                    💾 حفظ
+                </button>
+
+                <a href="{{ url_for('users.list_users') }}"
+                   class="btn btn-outline-secondary">
+                    ← رجوع
+                </a>
+            </div>
+
+        </form>
+
+    </div>
+</div>
+
+{% endblock %}

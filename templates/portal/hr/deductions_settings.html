@@ -1,0 +1,115 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إعدادات الخصم{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="dedSettingsPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-gear"></i> إعدادات الخصم</h4>
+      <div class="text-muted">إعدادات الخصم الخاصة بالتأخير والخروج المبكر والمغادرات حسب الشاشات المعتمدة.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-play-circle"></i> تنفيذ خصم</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-list-check"></i> سجل الخصومات</a>
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<form method="post" class="p-4 bg-white rounded-3 shadow-sm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+
+  <div class="row g-3">
+
+    <div class="col-12">
+      <label class="form-label fw-bold">أسلوب الخصم</label>
+      <select class="form-select" name="deduction_style" {% if not can_manage %}disabled{% endif %}>
+        {% for v, label in style_opts %}
+          <option value="{{ v }}" {% if cfg and cfg.deduction_style == v %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label fw-bold">خصم التأخير الصباحي</label>
+      <select class="form-select" name="late_source" {% if not can_manage %}disabled{% endif %}>
+        {% for v, label in source_opts %}
+          <option value="{{ v }}" {% if cfg and cfg.late_source == v %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label fw-bold">خصم الخروج المبكر</label>
+      <select class="form-select" name="early_source" {% if not can_manage %}disabled{% endif %}>
+        {% for v, label in source_opts %}
+          <option value="{{ v }}" {% if cfg and cfg.early_source == v %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label fw-bold">خصم المغادرات الخاصة</label>
+      <select class="form-select" name="special_permission_source" {% if not can_manage %}disabled{% endif %}>
+        {% for v, label in source_opts %}
+          <option value="{{ v }}" {% if cfg and cfg.special_permission_source == v %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label fw-bold">خصم المغادرات بدون إذن</label>
+      <select class="form-select" name="unauthorized_permission_source" {% if not can_manage %}disabled{% endif %}>
+        {% for v, label in source_opts %}
+          <option value="{{ v }}" {% if cfg and cfg.unauthorized_permission_source == v %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label fw-bold">آلية الترصيد</label>
+      <select class="form-select" name="carry_method" {% if not can_manage %}disabled{% endif %}>
+        {% for v, label in carry_opts %}
+          <option value="{{ v }}" {% if cfg and cfg.carry_method == v %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12 mt-2">
+      <div class="alert alert-light border mb-0">
+        <div class="fw-bold mb-2"><i class="bi bi-sliders"></i> إعدادات إضافية (اختياري)</div>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">عدد الساعات لليوم (افتراضي 7)</label>
+            <input type="number" step="0.1" class="form-control" name="hours_per_day"
+                   value="{{ cfg.hours_per_day if cfg else 7.0 }}" {% if not can_manage %}disabled{% endif %}>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">قيمة دقيقة التأخير (Legacy)</label>
+            <input type="number" step="0.01" class="form-control" name="late_minute_value"
+                   value="{{ cfg.late_minute_value if cfg and cfg.late_minute_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">قيمة دقيقة الخروج المبكر (Legacy)</label>
+            <input type="number" step="0.01" class="form-control" name="early_minute_value"
+                   value="{{ cfg.early_minute_value if cfg and cfg.early_minute_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">قيمة يوم الغياب (Legacy)</label>
+            <input type="number" step="0.01" class="form-control" name="absent_day_value"
+                   value="{{ cfg.absent_day_value if cfg and cfg.absent_day_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+      {% if can_manage %}
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+      {% endif %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-arrow-repeat"></i> تحديث</a>
+    </div>
+  </div>
+</form>
+
+{% endblock %}

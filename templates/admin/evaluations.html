@@ -1,0 +1,158 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">⭐ تقييم الموظفين</h3>
+    <small class="text-muted">يتم احتساب الدرجة من 100 ثم تحويلها إلى 5 مع تقريب لأقرب 0.1.</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_performance_admin_guide') }}">
+      <i class="bi bi-book"></i> دليل التقييم
+    </a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-md-2">
+        <label class="form-label">الفترة</label>
+        <select name="period_type" class="form-select">
+          <option value="">الكل</option>
+          <option value="MONTHLY" {% if selected.period_type=='MONTHLY' %}selected{% endif %}>شهري</option>
+          <option value="ANNUAL" {% if selected.period_type=='ANNUAL' %}selected{% endif %}>سنوي</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">السنة</label>
+        <input type="number" name="year" class="form-control" value="{{ selected.year or now.year }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">الشهر</label>
+        <input type="number" name="month" min="1" max="12" class="form-control" value="{{ selected.month or now.month }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">الموظف</label>
+        <select name="user_id" class="form-select">
+          <option value="">الكل</option>
+          {% for u in users %}
+            {% set uname = u.name or u.username or u.email %}
+            <option value="{{ u.id }}" {% if selected.user_id==u.id %}selected{% endif %}>{{ uname }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3 d-flex gap-2">
+        <button class="btn btn-primary">🔎 بحث</button>
+        <a class="btn btn-outline-success" href="{{ url_for('admin.evaluations_export_excel', period_type=selected.period_type, year=selected.year or now.year, month=selected.month or now.month) }}">⬇️ Excel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="mb-3">تشغيل تقييم</h5>
+    <form method="post" action="{{ url_for('admin.evaluations_run') }}" class="row g-3 align-items-end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="mode" id="eval_mode" value="single">
+
+      <div class="col-md-2">
+        <label class="form-label">الفترة</label>
+        <select name="period_type" class="form-select" id="eval_period">
+          <option value="MONTHLY" selected>شهري</option>
+          <option value="ANNUAL">سنوي</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">السنة</label>
+        <input type="number" name="year" class="form-control" value="{{ now.year }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">الشهر</label>
+        <input type="number" name="month" min="1" max="12" class="form-control" value="{{ now.month }}" id="eval_month">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">الموظف</label>
+        <select name="user_id" class="form-select">
+          <option value="">-- اختر --</option>
+          {% for u in users %}
+            {% set uname = u.name or u.username or u.email %}
+            <option value="{{ u.id }}">{{ uname }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-flex gap-2">
+        <button type="submit" class="btn btn-success" onclick="document.getElementById('eval_mode').value='single'">▶️ تشغيل</button>
+        <button type="submit" class="btn btn-outline-danger" onclick="document.getElementById('eval_mode').value='all'">👥 للجميع</button>
+      </div>
+    </form>
+
+    <script>
+      (function(){
+        const period = document.getElementById('eval_period');
+        const month = document.getElementById('eval_month');
+        function toggleMonth(){
+          if(period.value === 'ANNUAL'){
+            month.value = '';
+            month.setAttribute('disabled','disabled');
+          }else{
+            month.removeAttribute('disabled');
+            if(!month.value) month.value = '{{ now.month }}';
+          }
+        }
+        period.addEventListener('change', toggleMonth);
+        toggleMonth();
+      })();
+    </script>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h5 class="mb-3">سجل التقييمات (آخر 200)</h5>
+    <div class="table-responsive">
+      <table class="table table-sm table-striped align-middle">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>الموظف</th>
+            <th>الفترة</th>
+            <th>5</th>
+            <th>100</th>
+            <th>التاريخ</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in runs %}
+            {% set emp = r.user.name or r.user.username or r.user.email %}
+            <tr>
+              <td>{{ r.id }}</td>
+              <td>{{ emp }}</td>
+              <td>
+                {% if r.period_type == 'MONTHLY' %}
+                  شهري {{ r.year }}-{{ '%02d'|format(r.month or 0) }}
+                {% else %}
+                  سنوي {{ r.year }}
+                {% endif %}
+              </td>
+              <td><strong>{{ '%.1f'|format(r.score_5 or 0) }}</strong></td>
+              <td>{{ r.score_100 or 0 }}</td>
+              <td>{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+              <td>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('admin.evaluations_view', run_id=r.id) }}">عرض</a>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="7" class="text-muted">لا يوجد بيانات.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

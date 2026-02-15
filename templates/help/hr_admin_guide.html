@@ -1,0 +1,164 @@
+{% extends 'layout.html' %}
+
+{% block title %}دليل أدمن الموارد البشرية{% endblock %}
+
+{% block extra_css %}
+<style>
+  .guide-wrap{max-width:1100px;margin:0 auto;direction:rtl;unicode-bidi:plaintext}
+  .guide-hero{background:linear-gradient(180deg, rgba(184,134,11,.14), rgba(0,0,0,0));border:1px solid rgba(0,0,0,.07);border-radius:16px}
+  .guide-hero h1{font-weight:800;letter-spacing:.2px}
+  .guide-hero .meta{color:rgba(0,0,0,.6)}
+  .guide-card{border:1px solid rgba(0,0,0,.07);border-radius:14px}
+  .guide-card .card-header{background:rgba(0,0,0,.02);border-bottom:1px solid rgba(0,0,0,.06)}
+  .guide-toc a{color:inherit;text-decoration:none}
+  .guide-toc a:hover{text-decoration:underline}
+  .guide-list li{margin-bottom:.35rem}
+  .badge-soft{background:rgba(184,134,11,.12);color:#b8860b;border:1px solid rgba(184,134,11,.22)}
+  .ltr{direction:ltr;unicode-bidi:embed}
+  @media print{
+    .no-print{display:none !important}
+    .admin-sidebar,.main-header{display:none !important}
+    .admin-wrapper{padding:0 !important}
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="guide-wrap">
+
+    <div class="guide-hero p-4 p-md-5 mb-4">
+      <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+        <div>
+          <h1 class="mb-2">دليل أدمن الموارد البشرية</h1>
+          <div class="meta">مرجع عملي لمسؤولي الموارد البشرية: تعريف الأنواع والأرصدة، الاعتماد، التقارير، والتنبيهات الذكية.</div>
+          <div class="meta mt-1">يتضمن أيضاً قسمًا مختصرًا لإدارة الحركة والنقل عند تكليف الموارد البشرية بها.</div>
+        </div>
+        <div class="d-flex gap-2 no-print">
+          <a class="btn btn-outline-primary" href="{{ url_for('static', filename='docs/hr_admin_guide_ar.docx') }}">
+            <i class="bi bi-download"></i>
+            تنزيل نسخة وورد
+          </a>
+          <button class="btn btn-primary" onclick="window.print()">
+            <i class="bi bi-printer"></i>
+            طباعة
+          </button>
+        </div>
+      </div>
+
+      <div class="guide-toc mt-4">
+        <div class="row g-2">
+          <div class="col-12 col-md-4"><a href="#hr-core" class="d-block p-2 bg-white rounded-3 border">إدارة الإجازات والأرصدة</a></div>
+          <div class="col-12 col-md-4"><a href="#reports" class="d-block p-2 bg-white rounded-3 border">التقارير الشهرية والتصدير</a></div>
+          <div class="col-12 col-md-4"><a href="#transport" class="d-block p-2 bg-white rounded-3 border">إدارة الحركة والنقل (إن وُجدت)</a></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="hr-core" class="card guide-card mb-3">
+      <div class="card-header"><strong>١) الصلاحيات المطلوبة</strong></div>
+      <div class="card-body">
+        <ul class="guide-list mb-0">
+          <li>لإدارة الإعدادات (الأنواع، الأرصدة، السياسات): صلاحية <span class="badge badge-soft">HR_MASTERDATA_MANAGE</span>.</li>
+          <li>لاستعراض طلبات جميع الموظفين واعتمادها: صلاحية <span class="badge badge-soft">HR_REQUESTS_VIEW_ALL</span> (أو ما يعادلها).</li>
+          <li>إذا ظهرت رسالة "لا يوجد لديك صلاحية"، راجع مدير النظام لتمكين الصلاحيات.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="card guide-card mb-3">
+      <div class="card-header"><strong>٢) تعريف أنواع الإجازات (Leave Types)</strong></div>
+      <div class="card-body">
+        <ol class="guide-list">
+          <li>اذهب إلى: البوابة الإدارية → الموارد البشرية → إعدادات الدوام → <strong>أنواع الإجازات</strong>.</li>
+          <li>حدّد الاسم، الرمز، التفعيل/التعطيل، وهل النوع يتطلب اعتمادًا.</li>
+          <li>حدّد <strong>الحد الطبيعي</strong> (بالأيام) و<strong>الرصيد السنوي الافتراضي</strong>.</li>
+          <li>إذا كان النوع يتطلب مستندًا (مثل المرضية)، فعّل خيار <strong>يتطلب مرفقات</strong> واكتب رسالة توجيه تظهر للموظف.</li>
+        </ol>
+        <div class="alert alert-secondary mb-0">
+          <strong>نصيحة:</strong> حافظ على رموز موحّدة للأنواع (مثال: <span class="ltr">ANNUAL</span>, <span class="ltr">SICK</span>) لتسهيل التقارير.
+        </div>
+      </div>
+    </div>
+
+    <div class="card guide-card mb-3">
+      <div class="card-header"><strong>٣) الرصيد السنوي حسب الدرجة الإدارية</strong></div>
+      <div class="card-body">
+        <ul class="guide-list">
+          <li>داخل نوع الإجازة، أضف أرصدة حسب الدرجة (Grade) عند الحاجة.</li>
+          <li>تأكد أن قيمة الدرجة تطابق قيمة الدرجة داخل ملف الموظف.</li>
+        </ul>
+        <div class="alert alert-info mb-0">
+          <strong>أولوية الاحتساب:</strong> رصيد خاص للموظف (إن وُجد) ← رصيد حسب الدرجة ← الرصيد الافتراضي لنوع الإجازة.
+        </div>
+      </div>
+    </div>
+
+    <div class="card guide-card mb-3">
+      <div class="card-header"><strong>٤) اعتماد/رفض/إلغاء الطلب</strong></div>
+      <div class="card-body">
+        <ul class="guide-list">
+          <li>افتح الطلب لمراجعة المدة، الملاحظات، والمرفقات (إن وُجدت).</li>
+          <li>بعد الاعتماد يبدأ احتساب الخصم وفق سياسة النظام المعتمدة (كما هو موضح في دليل الإجازات).</li>
+          <li>يمكن للموارد البشرية إلغاء الإجازة بعد بدء تاريخها عند الضرورة، مع تحديد تاريخ الإلغاء الفعّال.</li>
+        </ul>
+        <div class="alert alert-warning mb-0">
+          <strong>تنبيه ذكي:</strong> في الأنواع التي تتطلب مرفقات، لن يُسمح للموظف بالإرسال دون رفع ملف واحد على الأقل.
+        </div>
+      </div>
+    </div>
+
+    <div id="reports" class="card guide-card mb-3">
+      <div class="card-header"><strong>٥) التقارير الشهرية (الإجازات + المغادرات)</strong></div>
+      <div class="card-body">
+        <ol class="guide-list">
+          <li>اذهب إلى: البوابة الإدارية → الموارد البشرية → <strong>تقارير الإجازات الشهرية</strong>.</li>
+          <li>حدّد الشهر والسنة، ويمكن اختيار موظف معين.</li>
+          <li>استخدم التصدير إن كان متاحاً لتجهيز التقارير الرسمية.</li>
+        </ol>
+        <div class="alert alert-secondary mb-0">
+          <strong>ملاحظة تقنية:</strong> صفحة التقرير هي: <span class="ltr">/portal/hr/leaves/monthly</span>.
+        </div>
+      </div>
+    </div>
+
+    <div class="card guide-card mb-4">
+      <div class="card-header"><strong>٦) التنبيهات الذكية للمسؤول</strong></div>
+      <div class="card-body">
+        <ul class="guide-list mb-0">
+          <li>إشعارات اعتماد/رفض/إلغاء.</li>
+          <li>تنبيه عند تجاوز الحد الطبيعي لمدة الإجازة (إن تم تفعيله).</li>
+          <li>تنبيه عند نقص المرفقات في الأنواع الإلزامية.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div id="transport" class="card guide-card mb-4">
+      <div class="card-header"><strong>٧) إدارة الحركة والنقل (اختياري حسب الهيكل)</strong></div>
+      <div class="card-body">
+        <p class="mb-2">إذا كانت وحدة الحركة ضمن مهام الموارد البشرية، فستجدها في: البوابة الإدارية → <strong>الحركة والنقل</strong>.</p>
+        <ul class="guide-list">
+          <li><strong>السيارات:</strong> إضافة/تعديل/تعطيل سيارة، وربط معرف جهاز التتبع لاحقًا (خيار C).</li>
+          <li><strong>السائقون:</strong> إضافة السائق وربطه بحساب مستخدم عند الحاجة.</li>
+          <li><strong>مناطق التوصيل:</strong> تعريف مناطق ثابتة لتسهيل إدخال المسار.</li>
+          <li><strong>أذون الحركة:</strong> مراجعة الطلبات واعتمادها/رفضها.</li>
+          <li><strong>الرحلات والمسافات:</strong> تسجيل عداد البداية/النهاية لحساب المسافة (خيار A).</li>
+        </ul>
+        <div class="alert alert-info mb-0">
+          <strong>الخيار C (التتبع):</strong> صفحة إعدادات التتبع جاهزة داخل النظام، وسيتم تفعيل الربط مع جهاز GPS لاحقًا عند توفره.
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+
+      <h4 id="training">التدريب</h4>
+      <ol>
+        <li><strong>إنشاء تدريب</strong>: من <em>إدارة الموارد البشرية → برامج فرعية → إضافة تدريب</em> ثم أكمل خطوات المعالج: معلومات التدريب → الشروط → المرفقات → إعدادات التعميم → المنتسبين.</li>
+        <li><strong>النشر</strong>: في <em>إعدادات التعميم</em> اختر: (لا / نعم / حسب الشروط فقط) وحدد بداية/نهاية الترشيح. عند النشر يمكن إرسال إشعار للموظفين حسب الإعداد.</li>
+        <li><strong>حسب الشروط فقط</strong>: يظهر التدريب ويُعمَّم فقط للموظفين الذين تنطبق عليهم الشروط، ويتم التحقق تلقائيًا عند الانتساب.</li>
+        <li><strong>إدارة المنتسبين</strong>: من خطوة <em>المنتسبين</em> يمكنك إضافة/تعديل الحالة (مرشح/معتمد/أتم/منسحب) وكتابة ملاحظات.</li>
+      </ol>

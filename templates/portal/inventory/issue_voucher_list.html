@@ -1,0 +1,109 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">سجل سندات الصرف</h5>
+  <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_issue_voucher_new') }}"><i class="bi bi-plus-circle"></i> إدخال سند</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">رقم السند</label>
+        <input name="voucher_no" class="form-control" value="{{ selected.voucher_no|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="from_date" class="form-control" value="{{ selected.from_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="to_date" class="form-control" value="{{ selected.to_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">من مخزن</label>
+        <select name="from_warehouse_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for w in warehouses %}
+            <option value="{{ w.id }}" {% if selected.from_warehouse_id==w.id %}selected{% endif %}>{{ w.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">إلى مخزن</label>
+        <select name="to_warehouse_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for w in warehouses %}
+            <option value="{{ w.id }}" {% if selected.to_warehouse_id==w.id %}selected{% endif %}>{{ w.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">السند يحتوي</label>
+        <input name="contains" class="form-control" value="{{ selected.contains|default('') }}" placeholder="اسم/كود الصنف">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">نوع الصرف</label>
+        <select name="issue_kind" class="form-select">
+          <option value="">بدون تحديد</option>
+          <option value="ROOM" {% if selected.issue_kind=='ROOM' %}selected{% endif %}>صرف إلى غرفة</option>
+          <option value="WAREHOUSE" {% if selected.issue_kind=='WAREHOUSE' %}selected{% endif %}>صرف إلى مستودع</option>
+        </select>
+      </div>
+
+      <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_issue_voucher_list') }}">مسح</a>
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped mb-0">
+        <thead>
+          <tr>
+            <th style="width:90px;">#</th>
+            <th>رقم السند</th>
+            <th>تاريخ السند</th>
+            <th>من مستودع</th>
+            <th>إلى</th>
+            <th>نوع الصرف</th>
+            <th style="width:120px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in rows %}
+          <tr>
+            <td>{{ v.id }}</td>
+            <td>{{ v.voucher_no }}</td>
+            <td>{{ v.voucher_date }}</td>
+            <td>{{ v.from_warehouse.label if v.from_warehouse else '-' }}</td>
+            <td>
+              {% if v.issue_kind=='WAREHOUSE' %}
+                {{ v.to_warehouse.label if v.to_warehouse else '-' }}
+              {% else %}
+                {{ v.to_room_name or '-' }}
+              {% endif %}
+            </td>
+            <td>{{ 'صرف إلى مستودع' if v.issue_kind=='WAREHOUSE' else 'صرف إلى غرفة' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_issue_voucher_view', v_id=v.id) }}"><i class="bi bi-eye"></i> عرض</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="7" class="text-center text-muted py-4">لا توجد بيانات.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,136 @@
+{% extends "portal/layout.html" %}
+{% block title %}تعديل نموذج تقييم{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-ui-checks"></i> تعديل نموذج: {{ form.name }}</h5>
+      <div class="text-muted small">أضف أقسام وأسئلة. نصيحة: استخدم RATING_1_5 للتقييم.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_perf_forms') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <h6 class="mb-3"><i class="bi bi-pencil-square"></i> بيانات النموذج</h6>
+  <form method="post" class="row g-2">
+    <input type="hidden" name="action" value="update_form">
+    <div class="col-md-5">
+      <input class="form-control" name="name" value="{{ form.name }}" placeholder="اسم النموذج" required>
+    </div>
+    <div class="col-md-5">
+      <input class="form-control" name="description" value="{{ form.description or '' }}" placeholder="وصف (اختياري)">
+    </div>
+    <div class="col-md-1">
+      <div class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" name="is_active" value="1" {% if form.is_active %}checked{% endif %}>
+        <label class="form-check-label">نشط</label>
+      </div>
+    </div>
+    <div class="col-md-1">
+      <button class="btn btn-primary w-100" type="submit">حفظ</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <h6 class="mb-3"><i class="bi bi-plus-circle"></i> إضافة قسم</h6>
+  <form method="post" class="row g-2">
+    <input type="hidden" name="action" value="add_section">
+    <div class="col-md-8">
+      <input class="form-control" name="section_title" placeholder="عنوان القسم" required>
+    </div>
+    <div class="col-md-2">
+      <input class="form-control" name="section_order" type="number" value="{{ (sections|length + 1) }}" min="1">
+    </div>
+    <div class="col-md-2">
+      <button class="btn btn-primary w-100" type="submit">إضافة</button>
+    </div>
+  </form>
+</div>
+
+{% for s in sections %}
+  <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <h6 class="mb-0"><i class="bi bi-list"></i> {{ s.title }}</h6>
+      <form method="post" onsubmit="return confirm('حذف القسم سيحذف أسئلته. هل أنت متأكد؟');">
+        <input type="hidden" name="action" value="delete_section">
+        <input type="hidden" name="section_id" value="{{ s.id }}">
+        <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i> حذف القسم</button>
+      </form>
+    </div>
+
+    <div class="mt-3">
+      <h6 class="mb-2"><i class="bi bi-question-circle"></i> إضافة سؤال</h6>
+      <form method="post" class="row g-2">
+        <input type="hidden" name="action" value="add_question">
+        <input type="hidden" name="q_section_id" value="{{ s.id }}">
+        <div class="col-md-6">
+          <input class="form-control" name="prompt" placeholder="نص السؤال" required>
+        </div>
+        <div class="col-md-2">
+          <select class="form-select" name="q_type">
+            <option value="RATING_1_5">RATING_1_5</option>
+            <option value="TEXT">TEXT</option>
+            <option value="YESNO">YESNO</option>
+            <option value="NUMBER">NUMBER</option>
+          </select>
+        </div>
+        <div class="col-md-1">
+          <input class="form-control" name="weight" type="number" step="0.1" value="1">
+        </div>
+        <div class="col-md-1">
+          <input class="form-control" name="order_no" type="number" value="1" min="1">
+        </div>
+        <div class="col-md-1">
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" name="is_required" value="1" checked>
+            <label class="form-check-label">إلزامي</label>
+          </div>
+        </div>
+        <div class="col-md-1">
+          <button class="btn btn-primary w-100" type="submit">+</button>
+        </div>
+      </form>
+
+      {% if questions_by_section.get(s.id) and questions_by_section.get(s.id)|length > 0 %}
+        <div class="table-responsive mt-3">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>{{ portal_sort_link('السؤال', 'text') }}</th>
+                <th>{{ portal_sort_link('النوع', 'q_type') }}</th>
+                <th>{{ portal_sort_link('وزن', 'weight') }}</th>
+                <th>إلزامي</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for q in questions_by_section.get(s.id) %}
+                <tr>
+                  <td>{{ q.order_no }}</td>
+                  <td>{{ q.prompt }}</td>
+                  <td><span class="badge bg-light text-dark">{{ q.q_type }}</span></td>
+                  <td>{{ q.weight }}</td>
+                  <td>{% if q.is_required %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+                  <td class="text-end">
+                    <form method="post" onsubmit="return confirm('حذف السؤال؟');" class="d-inline">
+                      <input type="hidden" name="action" value="delete_question">
+                      <input type="hidden" name="question_id" value="{{ q.id }}">
+                      <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف" data-bs-tooltip="1"><i class="bi bi-trash"></i></button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted small mt-3">لا توجد أسئلة بعد.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endfor %}
+{% endblock %}

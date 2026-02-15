@@ -1,0 +1,265 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}التقارير{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-graph-up"></i> التقارير</h4>
+      <div class="text-muted">تقارير الموارد البشرية (الموظفين + الدوام + الإجازات).</div>
+    </div>
+  </div>
+</div>
+
+<h5 class="mb-2">الموظفين</h5>
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-search fs-4"></i>
+        <div class="fw-bold">الإستعلامات</div>
+      </div>
+      <div class="text-muted small mb-3">استعلامات ومرجعيات ملف الموظف (حسب الصلاحيات).</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_employee_lookups_index') }}">فتح</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-award fs-4"></i>
+        <div class="fw-bold">الترقيات المستحقة</div>
+      </div>
+      <div class="text-muted small mb-3">حسب التاريخ وموقع العمل.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_promotions') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-person-check fs-4"></i>
+        <div class="fw-bold">التقاعد</div>
+      </div>
+      <div class="text-muted small mb-3">حسب التاريخ وموقع العمل.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_retirement') }}">فتح التقرير</a>
+    </div>
+  </div>
+</div>
+
+<h5 class="mb-2">الدوام</h5>
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-shield-check fs-4"></i>
+        <div class="fw-bold">آخر دخول ناجح</div>
+      </div>
+      <div class="text-muted small mb-3">الموظف/موقع العمل/نطاق التاريخ.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_last_login') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-clock-history fs-4"></i>
+        <div class="fw-bold">الحضور والانصراف والمغادرات</div>
+      </div>
+      <div class="text-muted small mb-3">فلترة نوع الحركات + المدة الفعلية.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_attendance_permissions') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-exclamation-triangle fs-4"></i>
+        <div class="fw-bold">التأخير</div>
+      </div>
+      <div class="text-muted small mb-3">تأخير صباحي/خروج مبكر + مقارنة المدة.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_delay') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-person-lines-fill fs-4"></i>
+        <div class="fw-bold">دوام موظف</div>
+      </div>
+      <div class="text-muted small mb-3">تفاصيل يومية لموظف ضمن نطاق تاريخ.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_employee_attendance') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-person-x fs-4"></i>
+        <div class="fw-bold">تقرير الغياب</div>
+      </div>
+      <div class="text-muted small mb-3">الموظف/موقع العمل/نطاق التاريخ.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_absence') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-fingerprint fs-4"></i>
+        <div class="fw-bold">تقرير البصمات</div>
+      </div>
+      <div class="text-muted small mb-3">الموظف/موقع العمل/نطاق التاريخ + نوع الحركات.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_fingerprints') }}">فتح التقرير</a>
+    </div>
+  </div>
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-building fs-4"></i>
+        <div class="fw-bold">تقرير تجميعي لحركات الدوام</div>
+      </div>
+      <div class="text-muted small mb-3">الموقع + الشهر والسنة + نوع التعيين.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_diwan') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-people fs-4"></i>
+        <div class="fw-bold">تقرير دوام موظفين</div>
+      </div>
+      <div class="text-muted small mb-3">موقع العمل + الهيكل التنظيمي + نوع التعيين + نطاق التاريخ.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_employees_attendance') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-collection fs-4"></i>
+        <div class="fw-bold">تقرير دوام تجميعي</div>
+      </div>
+      <div class="text-muted small mb-3">تجميع حسب الموظف ضمن نطاق التاريخ + فلترة موقع العمل والهيكل.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_attendance_summary') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-arrow-left-right fs-4"></i>
+        <div class="fw-bold">تقرير المغادرات مع البصمة</div>
+      </div>
+      <div class="text-muted small mb-3">الموظف/موقع العمل/نطاق التاريخ + نوع المغادرة + المشاكل.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_permissions_fingerprint') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-calendar-date fs-4"></i>
+        <div class="fw-bold">التقرير اليومي</div>
+      </div>
+      <div class="text-muted small mb-3">موقع العمل + الإدارة/الدائرة/القسم/الشعبة + الشهر والسنة.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_attendance_daily') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-pencil-square fs-4"></i>
+        <div class="fw-bold">مراقبة تعديلات الدوام</div>
+      </div>
+      <div class="text-muted small mb-3">من عدّل على الدوام ومتى + نوع التعديل + أثر التوقيت.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_attendance_edits') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-graph-down fs-4"></i>
+        <div class="fw-bold">تقرير الحركات السالبة</div>
+      </div>
+      <div class="text-muted small mb-3">موقع العمل + نطاق التاريخ (قيم سالبة في الدوام).</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_negative_movements') }}">فتح التقرير</a>
+    </div>
+  </div>
+</div>
+
+<h5 class="mb-2">الإجازات</h5>
+<div class="row g-3">
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-file-earmark-text fs-4"></i>
+        <div class="fw-bold">تقرير الإجازات</div>
+      </div>
+      <div class="text-muted small mb-3">تقرير طلبات الإجازات.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_leaves_report') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-calendar2-week fs-4"></i>
+        <div class="fw-bold">التقرير الشهري للإجازات</div>
+      </div>
+      <div class="text-muted small mb-3">تقرير شهري (إجازات + مغادرات) وأرصدة.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_monthly_leave_report') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-wallet2 fs-4"></i>
+        <div class="fw-bold">أرصدة الإجازات</div>
+      </div>
+      <div class="text-muted small mb-3">الأرصدة السنوية حسب نوع الإجازة.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_leave_balances') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-wallet fs-4"></i>
+        <div class="fw-bold">تقرير أرصدة الموظفين</div>
+      </div>
+      <div class="text-muted small mb-3">فلترة متقدمة للأرصدة حسب الموظف/الموقع/نوع التعيين.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_leave_employee_balances') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-cash-coin fs-4"></i>
+        <div class="fw-bold">تقرير الخصم من الراتب</div>
+      </div>
+      <div class="text-muted small mb-3">نتائج تنفيذ الخصم (حسب الموظف/الموقع/نطاق التاريخ).</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_salary_deductions') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-clock-history fs-4"></i>
+        <div class="fw-bold">تقرير إجازات الإضافي</div>
+      </div>
+      <div class="text-muted small mb-3">إجازات/أرصدة الإضافي مع خيار فلترة (فترات عمل مدخلة).</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_overtime_leaves') }}">فتح التقرير</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

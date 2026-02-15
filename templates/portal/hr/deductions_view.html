@@ -1,0 +1,58 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تفاصيل الخصم{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="dedViewPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-receipt"></i> تفاصيل الخصم</h4>
+      <div class="text-muted">{{ "%02d"|format(run.month) }}/{{ run.year }} - ID: {{ run.id }}</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=run.id, export='csv') }}"><i class="bi bi-download"></i> تنزيل CSV</a>
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="row g-2">
+    <div class="col-md-3"><div class="text-muted small">الحالة</div><div class="fw-bold">{{ run.status }}</div></div>
+    <div class="col-md-3"><div class="text-muted small">تاريخ الإنشاء</div><div class="fw-bold">{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '-' }}</div></div>
+    <div class="col-md-6"><div class="text-muted small">ملاحظة</div><div class="fw-bold">{{ run.note or '-' }}</div></div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الموظف</th>
+          <th>التأخير (دقيقة)</th>
+          <th>الخروج المبكر (دقيقة)</th>
+          <th>غياب (يوم)</th>
+          <th>المبلغ</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in run.items %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>
+              <div class="fw-bold">{{ it.user.name or '-' }}</div>
+              <div class="text-muted small">{{ it.user.email or '' }}</div>
+            </td>
+            <td>{{ it.late_minutes }}</td>
+            <td>{{ it.early_leave_minutes }}</td>
+            <td>{{ it.absent_days }}</td>
+            <td>{{ "%.3f"|format(it.amount or 0) }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

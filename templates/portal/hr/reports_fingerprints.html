@@ -1,0 +1,111 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير البصمات{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-fingerprint"></i> تقرير البصمات</h4>
+      <div class="text-muted">الموظف/موقع العمل/نطاق التاريخ + نوع الحركات (مقروءة/غير مقروءة/بدون تحديد).</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_fingerprints', user_id=selected_user_id, work_location_id=selected_work_location_id, from_date=from_date, to_date=to_date, move_read=move_read, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> تصدير Excel</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="">— الكل —</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user_id==u.id %}selected{% endif %}>{{ u.full_name or u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">— الكل —</option>
+        {% for x in work_locations %}
+          <option value="{{ x.id }}" {% if selected_work_location_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from_date" value="{{ from_date }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to_date" value="{{ to_date }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">نوع الحركات</label>
+      <select class="form-select" name="move_read">
+        <option value="" {% if not move_read %}selected{% endif %}>بدون تحديد</option>
+        <option value="read" {% if move_read=='read' %}selected{% endif %}>الحركات المقروءة</option>
+        <option value="unread" {% if move_read=='unread' %}selected{% endif %}>الحركات غير المقروءة</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div class="text-muted small">عدد النتائج: {{ rows|length }}</div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>الوقت</th>
+          <th>الموظف</th>
+          <th>موقع العمل</th>
+          <th>نوع الحركة</th>
+          <th>الحالة</th>
+          <th class="text-muted">الجهاز</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          {% set et = (r.event_type or '')|upper %}
+          <tr>
+            <td>{{ r.day or '—' }}</td>
+            <td>{{ r.event_dt.strftime('%H:%M:%S') if r.event_dt else '—' }}</td>
+            <td>{{ r.name or '—' }}</td>
+            <td>{{ r.work_location or '—' }}</td>
+            <td>
+              {% if et == 'I' %}
+                <span class="badge text-bg-success">دخول</span>
+              {% elif et == 'O' %}
+                <span class="badge text-bg-secondary">خروج</span>
+              {% else %}
+                <span class="badge text-bg-light text-dark">{{ et or '—' }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if r.is_read %}
+                <span class="badge text-bg-primary">مقروءة</span>
+              {% else %}
+                <span class="badge text-bg-warning">غير مقروءة</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ r.device_id or '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

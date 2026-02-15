@@ -1,0 +1,48 @@
+{% extends "portal/layout.html" %}
+{% block title %}الصادر والوارد{% endblock %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-envelope-paper"></i> الصادر والوارد</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#corrIndexPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+  </div>
+</div>
+
+<div id="corrIndexPrint">
+<div class="row g-3">
+  <div class="col-12">
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <h5 class="mb-1"><i class="bi bi-envelope-paper"></i> الصادر والوارد</h5>
+      <div class="text-muted">سجل مستقل للوارد والصادر داخل البوابة الإدارية.</div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-4 h-100">
+      <h6 class="mb-2">الوارد</h6>
+      <div class="d-flex gap-2">
+        <a class="btn btn-primary" href="{{ url_for('portal.inbound_list') }}">عرض</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.inbound_new') }}">تسجيل وارد</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-4 h-100">
+      <h6 class="mb-2">الصادر</h6>
+      <div class="d-flex gap-2">
+        <a class="btn btn-primary" href="{{ url_for('portal.outbound_list') }}">عرض</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.outbound_new') }}">تسجيل صادر</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+{% endblock %}

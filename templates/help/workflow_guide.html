@@ -1,0 +1,192 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل المسارات وأنواع الطلبات وقواعد التوجيه" %}
+{% set page_subtitle = "شرح عملي ومفصل لإدارة المسارات (Templates) وخطواتها (Steps) وقواعد التوجيه (Routing Rules) وكيفية اختيار المسار تلقائيًا." %}
+
+{% block guide_body %}
+
+<div class="mb-3">
+  <div class="alert alert-secondary py-2 mb-2">
+    <div class="fw-bold">ملخص سريع</div>
+    <div class="small text-muted">
+      المسار = قالب خطوات اعتماد. نوع الطلب = فئة المعاملة. قواعد التوجيه = منطق اختيار المسار تلقائيًا لنوع طلب محدد حسب (Organization/Directorate/Department).<br>
+      ملاحظة: <span class="fw-bold">اختيار المسار (Routing)</span> في هذه النسخة يعتمد على <span class="fw-bold">المنظمة + الإدارة + الدائرة</span>، بينما <span class="fw-bold">أنواع الموافقات داخل الخطوات</span> تدعم كذلك (Unit/Section/Division/Committee) عند الحاجة.
+    </div>
+  </div>
+
+  <div class="small">
+    <span class="badge bg-light text-dark border">المسارات</span>
+    <span class="badge bg-light text-dark border">خطوات المسار</span>
+    <span class="badge bg-light text-dark border">الخطوات المتسلسلة / المتزامنة</span>
+    <span class="badge bg-light text-dark border">قواعد التوجيه</span>
+    <span class="badge bg-light text-dark border">أفضل الممارسات</span>
+  </div>
+</div>
+
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) المفاهيم الأساسية (Definitions)</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>نوع الطلب (Request Type):</strong> اسم الفئة (إجازة، إذن، مشتريات… إلخ). يُستخدم لتجميع الطلبات وتطبيق قواعد اختيار المسار.</li>
+      <li><strong>المسار (Workflow Template):</strong> قالب يحتوي خطوات اعتماد مرتبة (Step 1, Step 2…).</li>
+      <li><strong>خطوة المسار (Template Step):</strong> تحديد “من يعتمد” في خطوة معينة (مستخدم/دور/دائرة/إدارة/وحدة/قسم/شعبة/لجنة) + نمط الخطوة + SLA.</li>
+      <li><strong>مثيل المسار (Workflow Instance):</strong> نسخة تشغيل للمسار تُنشأ عندما يبدأ طلب حقيقي؛ تتحول الخطوات إلى “خطوات تشغيل” (Instance Steps).</li>
+      <li><strong>قواعد التوجيه (Routing Rules):</strong> تحدد أي Template يُستخدم لنوع طلب معين حسب سياق الطلب (حاليًا: Organization/Directorate/Department).</li>
+      <li><strong>SLA:</strong> عدد الأيام المسموح بها للخطوة/المسار قبل اعتبارها متأخرة (تظهر كبادج/تصعيد حسب إعدادات النظام).</li>
+    </ul>
+
+    <div class="alert alert-info py-2 mb-0">
+      <strong>نصيحة:</strong> سمِّ المسارات بشكل موحّد مثل: <span class="fw-bold">"إجازة – موظف"</span>، <span class="fw-bold">"إجازة – مدير دائرة"</span>، <span class="fw-bold">"مشتريات – لجنة"</span>… هذا يجعل اختيار المسار وفهمه أسهل.
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">2) إنشاء/تعديل مسار (Template)</summary>
+  <div class="mt-2">
+    <ol class="mb-2">
+      <li>اذهب إلى شاشة <strong>إدارة المسارات</strong> ثم اختر <strong>إضافة مسار</strong>.</li>
+      <li>املأ البيانات الأساسية:
+        <ul>
+          <li><strong>اسم المسار</strong> (إجباري)</li>
+          <li><strong>SLA Default</strong> (اختياري): يُستخدم كافتراضي عند ترك SLA الخطوة فارغًا</li>
+          <li><strong>Active</strong>: تفعيل/تعطيل المسار</li>
+        </ul>
+      </li>
+      <li>احفظ، ثم انتقل لإضافة <strong>خطوات المسار</strong>.</li>
+    </ol>
+
+    <div class="alert alert-warning py-2 mb-0">
+      <strong>ملاحظة مهمة:</strong> إذا كان لديك أكثر من مسار “متشابه” لنفس نوع الطلب، اجعل الفرق واضحًا بالاسم والوصف، وقلّل التداخل قدر الإمكان لتجنب التعارض.
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">3) خطوات المسار (Steps): من يعتمد؟ وكيف؟</summary>
+  <div class="mt-2">
+
+    <div class="mb-2">
+      <div class="fw-bold">3.1 أنواع الموجّه (Approver Kind)</div>
+      <ul class="mb-2">
+        <li><strong>USER:</strong> اعتماد من مستخدم محدد (بريد/حساب).</li>
+        <li><strong>ROLE:</strong> اعتماد من أي مستخدم يحمل دورًا محددًا.</li>
+        <li><strong>DEPARTMENT:</strong> اعتماد “رئيس الدائرة” (dept_head) أو مديرها حسب تعيينات الهيكل.</li>
+        <li><strong>DIRECTORATE:</strong> اعتماد “رئيس الإدارة” أو بديله (directorate_head / deputy) أو مديرها حسب تعيينات الهيكل.</li>
+        <li><strong>UNIT / SECTION / DIVISION:</strong> اعتماد مدير الوحدة/القسم/الشعبة (من خلال تعيينات الهيكل OrgUnitManager).</li>
+        <li><strong>COMMITTEE:</strong> اعتماد لجنة (حسب أعضاء اللجنة وطريقة التسليم Committee_ALL / CHAIR / SECRETARY).</li>
+      </ul>
+      <div class="text-muted small">إذا كانت بيانات “مدير/بديل” مضبوطة في الهيكل التنظيمي، النظام يستطيع توجيه الخطوات بناءً عليها دون الحاجة لتثبيت أسماء أشخاص داخل المسار.</div>
+    </div>
+
+    <hr>
+
+    <div class="mb-2">
+      <div class="fw-bold">3.2 نمط الخطوة (Mode)</div>
+      <ul>
+        <li><strong>SEQUENTIAL (متسلسل):</strong> كل خطوة تُحسم ثم ينتقل النظام للخطوة التالية.</li>
+        <li><strong>PARALLEL_SYNC (متزامن):</strong> تُرسل لمجموعة أشخاص في نفس الخطوة (StepTask لكل شخص). ردودهم تُسجل للتوثيق، ويمكن إغلاق الخطوة بعد اكتمال الردود/التجاوزات حسب منطق النظام (مع صلاحيات التجاوز إن وُجدت).</li>
+      </ul>
+      <div class="alert alert-secondary py-2 mb-0">
+        <strong>متى أستخدم PARALLEL_SYNC؟</strong>
+        عند الحاجة لآراء/موافقات متعددة على نفس المرحلة (مثال: لجنة/مراجعين متعددين) مع توثيق “من رد” و”ماذا قرر”.
+      </div>
+    </div>
+
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">4) قواعد التوجيه (Routing Rules): كيف يختار النظام المسار؟</summary>
+  <div class="mt-2">
+
+    <div class="alert alert-info py-2">
+      <strong>قاعدة عامة:</strong> النظام يبحث عن قاعدة تطابق <strong>نوع الطلب</strong> ثم يطبّق “الأكثر تخصيصًا أولًا”، ثم <strong>الأولوية (Priority)</strong>.
+    </div>
+
+    <div class="fw-bold">4.1 حقول القاعدة</div>
+    <ul>
+      <li><strong>Request Type</strong> (إجباري)</li>
+      <li><strong>Template</strong> (إجباري)</li>
+      <li><strong>Organization</strong> (اختياري)</li>
+      <li><strong>Directorate</strong> (اختياري)</li>
+      <li><strong>Department</strong> (اختياري)</li>
+      <li><strong>Priority</strong> (رقم): كلما كان <span class="fw-bold">أصغر</span> كانت القاعدة <span class="fw-bold">أعلى</span></li>
+      <li><strong>Is Active</strong></li>
+    </ul>
+
+    <hr>
+
+    <div class="fw-bold">4.2 ترتيب الاختيار (Priority + Specificity)</div>
+    <div class="small text-muted mb-2">التخصيص يعني: كم حقلًا من (Organization/Directorate/Department) تم تحديده في القاعدة.</div>
+    <ol>
+      <li><strong>أولاً:</strong> قاعدة محددة على مستوى <span class="fw-bold">الدائرة</span> (Organization+Directorate+Department) إن وُجدت.</li>
+      <li><strong>ثم:</strong> قاعدة على مستوى <span class="fw-bold">الإدارة</span> (Organization+Directorate) إن وُجدت.</li>
+      <li><strong>ثم:</strong> قاعدة على مستوى <span class="fw-bold">المنظمة</span> (Organization فقط) إن وُجدت.</li>
+      <li><strong>ثم:</strong> قاعدة عامة لنوع الطلب (بدون تحديد Organization/Directorate/Department).</li>
+      <li><strong>داخل نفس المستوى:</strong> تُفضّل القاعدة ذات <span class="fw-bold">Priority أصغر</span>. وإذا تساوى كل شيء، تُؤخذ “الأحدث” (حسب ترتيب الإدخال).</li>
+    </ol>
+
+    <hr>
+
+    <div class="fw-bold">4.3 أمثلة عملية جاهزة</div>
+
+    <div class="border rounded p-2 mb-2">
+      <div class="fw-bold">مثال (A): نوع طلب “إجازة” — قواعد متعددة</div>
+      <ul class="mb-2">
+        <li>قاعدة 1 (عامة): Leave → Template: "إجازة – موظف" (Priority=100)</li>
+        <li>قاعدة 2 (إدارة الموارد): Leave + Directorate=HR → Template: "إجازة – HR" (Priority=10)</li>
+        <li>قاعدة 3 (دائرة الرواتب): Leave + Directorate=HR + Dept=Payroll → Template: "إجازة – Payroll" (Priority=5)</li>
+      </ul>
+      <div class="small text-muted">لو كان مقدم الطلب ضمن Payroll، سيختار النظام القاعدة 3 (الأكثر تخصيصًا). لو كان ضمن HR لكن ليس Payroll → القاعدة 2. غير ذلك → القاعدة 1.</div>
+    </div>
+
+    <div class="border rounded p-2 mb-2">
+      <div class="fw-bold">مثال (B): تعارض داخل نفس المستوى</div>
+      <div class="small text-muted mb-2">قاعدتان لنفس Request Type وعلى نفس (Org+Dir) بدون Dept:</div>
+      <ul class="mb-2">
+        <li>Rule X: Priority=10 → Template A</li>
+        <li>Rule Y: Priority=10 → Template B</li>
+      </ul>
+      <div class="small">هنا يُفضّل أن <strong>تغيّر Priority</strong> لتصبح قاعدة واحدة “أعلى” بوضوح. إن تُركت متساوية، سيختار النظام غالبًا الأحدث.</div>
+    </div>
+
+    <div class="alert alert-warning py-2 mb-0">
+      <strong>أفضل ممارسة:</strong> اجعل لكل (RequestType + Org/Dir/Dept) قاعدة واحدة فقط، وميّزها بـ Priority واضح لتجنب السلوك غير المتوقع.
+    </div>
+
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">5) أخطاء شائعة وكيف تتجنبها</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>المسار لا يبدأ:</strong> تأكد أن الطلب مرتبط بنوع طلب، وأن هناك قاعدة توجيه فعّالة أو اختيار يدوي للمسار.</li>
+      <li><strong>الخطوة لا تصل لأحد:</strong> تأكد من ضبط المدير/البديل في الهيكل (OrgUnitManager) إذا كانت الخطوة نوعها Unit/Section/Division/Department/Directorate، أو أن الدور/المستخدم موجود فعلاً.</li>
+      <li><strong>اختيار مسار غير صحيح:</strong> غالبًا بسبب Rule عامة تغطي كل شيء ب Priority أعلى من القواعد المخصصة. اجعل القاعدة العامة Priority أكبر (رقم أعلى).</li>
+      <li><strong>تكرار قواعد لنفس المستوى:</strong> غيّر Priority أو عطّل/احذف القاعدة الزائدة.</li>
+    </ul>
+    <div class="text-muted small">عند الشك: راجع قواعد التوجيه الخاصة بنوع الطلب، ثم راجع بيانات الدائرة/الإدارة/المنظمة لمقدم الطلب.</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">6) توصيات تنظيمية (نمط عمل مؤسسي)</summary>
+  <div class="mt-2">
+    <ol>
+      <li>أنشئ مسار “افتراضي” لكل نوع طلب (General Default).</li>
+      <li>أضف قواعد مخصصة فقط عندما يوجد اختلاف حقيقي في الاعتماد.</li>
+      <li>تجنب تثبيت أسماء أشخاص داخل المسار قدر الإمكان؛ اعتمد على الهيكل (مدير/بديل) أو الأدوار.</li>
+      <li>استخدم PARALLEL_SYNC للجان/مراجعات متعددة، ودوّن دائمًا ملاحظات القرار.</li>
+      <li>راجع المسارات كل فترة، واعتمد سياسة أسماء موحّدة.</li>
+    </ol>
+  </div>
+</details>
+
+{% endblock %}

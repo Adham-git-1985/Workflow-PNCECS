@@ -1,0 +1,40 @@
+{% extends "portal/layout.html" %}
+{% block title %}{% if item %}تعديل وجهة{% else %}وجهة جديدة{% endif %}{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-geo-alt"></i> {% if item %}تعديل وجهة{% else %}وجهة جديدة{% endif %}</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_destinations') }}">رجوع</a>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-8">
+      <label class="form-label">اسم الوجهة *</label>
+      <input class="form-control" name="name" required value="{{ item.name if item else '' }}">
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label d-block">الحالة</label>
+      <div class="form-check mt-2">
+        <input class="form-check-input" type="checkbox" name="is_active" value="1" id="isActive"
+               {% if item is none or item.is_active %}checked{% endif %}>
+        <label class="form-check-label" for="isActive">فعّالة</label>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label">ملاحظات</label>
+      <textarea class="form-control" name="notes" rows="3">{{ item.notes if item and item.notes else '' }}</textarea>
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_destinations') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

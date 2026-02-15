@@ -1,0 +1,55 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-people"></i> بيانات الأبناء والزوج/ة</h5>
+      <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_employee_dependent_new', user_id=u.id) }}">
+        <i class="bi bi-plus-lg"></i> إضافة
+      </a>
+    </div>
+    <div class="card-body">
+      {% if items %}
+        <div class="table-responsive">
+          <table class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>الاسم</th>
+                <th>العلاقة</th>
+                <th>رقم الهوية</th>
+                <th>الجنس</th>
+                <th>تاريخ الميلاد</th>
+                <th>العلاوة</th>
+                <th style="width: 140px;">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in items %}
+                <tr>
+                  <td>{{ it.full_name }}</td>
+                  <td>{{ lookup_label.get(it.relation_lookup_id, '—') }}</td>
+                  <td>{{ it.national_id or '—' }}</td>
+                  <td>{{ lookup_label.get(it.gender_lookup_id, '—') }}</td>
+                  <td>{{ it.birth_date or '—' }}</td>
+                  <td>{{ it.allowance if it.allowance is not none else '—' }}</td>
+                  <td>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_dependent_edit', user_id=u.id, dep_id=it.id) }}">
+                      <i class="bi bi-pencil"></i>
+                    </a>
+                    <form method="post" action="{{ url_for('portal.hr_employee_dependent_delete', user_id=u.id, dep_id=it.id) }}" style="display:inline-block" onsubmit="return confirm('تأكيد التعطيل/الحذف؟');">
+                      <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                    </form>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد بيانات.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-megaphone"></i> {{ row.title }}</h3>
+    <div class="text-muted">
+      {{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '' }}
+      {% if row.is_urgent %}<span class="badge bg-danger ms-2">مستعجل</span>{% endif %}
+    </div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.circulars_list') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div style="white-space: pre-wrap; line-height: 1.8;">{{ row.body }}</div>
+  </div>
+</div>
+
+{% endblock %}

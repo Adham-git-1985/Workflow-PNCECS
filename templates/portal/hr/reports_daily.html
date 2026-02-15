@@ -1,0 +1,136 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}التقرير اليومي{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-calendar-date"></i> التقرير اليومي</h4>
+      <div class="text-muted">موقع العمل + الإدارة/الدائرة/القسم/الشعبة + الشهر والسنة.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_attendance_daily', work_location_id=selected_work_location_id, organization_id=organization_id, directorate_id=directorate_id, department_id=department_id, division_id=division_id, year=year, month=month, export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">الكل</option>
+        {% for x in work_locations %}
+          <option value="{{ x.id }}" {% if selected_work_location_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">الإدارة</label>
+      <select class="form-select" name="organization_id">
+        <option value="">الكل</option>
+        {% for o in orgs %}
+          <option value="{{ o.id }}" {% if organization_id==o.id %}selected{% endif %}>{{ o.name_ar }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">الدائرة</label>
+      <select class="form-select" name="directorate_id">
+        <option value="">الكل</option>
+        {% for d in dirs %}
+          <option value="{{ d.id }}" {% if directorate_id==d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">القسم</label>
+      <select class="form-select" name="department_id">
+        <option value="">الكل</option>
+        {% for d in depts %}
+          <option value="{{ d.id }}" {% if department_id==d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">الشعبة</label>
+      <select class="form-select" name="division_id">
+        <option value="">الكل</option>
+        {% for d in divs %}
+          <option value="{{ d.id }}" {% if division_id==d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">السنة</label>
+      <input class="form-control" type="number" min="2000" max="2100" name="year" value="{{ year }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">الشهر</label>
+      <select class="form-select" name="month">
+        {% for m in range(1,13) %}
+          <option value="{{ m }}" {% if month==m %}selected{% endif %}>{{ '%02d'|format(m) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الرقم الوظيفي</th>
+          <th>الموظف</th>
+          <th>موقع العمل</th>
+          <th>الإدارة</th>
+          <th>الدائرة</th>
+          <th>القسم</th>
+          <th>الشعبة</th>
+          <th>أيام</th>
+          <th>غياب</th>
+          <th>غير مكتمل</th>
+          <th>ساعات الدوام</th>
+          <th>تأخير (د)</th>
+          <th>خروج مبكر (د)</th>
+          <th>إضافي (د)</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ r.employee_no or '' }}</td>
+            <td>{{ r.name or '' }}</td>
+            <td>{{ r.work_location or '' }}</td>
+            <td>{{ r.organization or '' }}</td>
+            <td>{{ r.directorate or '' }}</td>
+            <td>{{ r.department or '' }}</td>
+            <td>{{ r.division or '' }}</td>
+            <td>{{ r.days or 0 }}</td>
+            <td>{{ r.absent or 0 }}</td>
+            <td>{{ r.incomplete or 0 }}</td>
+            <td>{{ ((r.work_minutes or 0) / 60.0) | round(2) }}</td>
+            <td>{{ r.late_minutes or 0 }}</td>
+            <td>{{ r.early_minutes or 0 }}</td>
+            <td>{{ r.overtime_minutes or 0 }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

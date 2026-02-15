@@ -1,0 +1,102 @@
+{% extends 'portal/hr/base.html' %}
+
+{% block title %}المنتسبين{% endblock %}
+
+{% block hr_content %}
+  {% include 'portal/hr/training/_wizard_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-header">إضافة منتسب</div>
+    <div class="card-body">
+      <form method="post" class="row g-3 align-items-end">
+        <input type="hidden" name="action" value="add">
+        <div class="col-md-4">
+          <label class="form-label">الموظف (إيميل)</label>
+          <input type="email" name="employee_email" class="form-control" placeholder="example@pncecs.org" list="employees_emails" required>
+          <datalist id="employees_emails">
+            {% for u in employees or [] %}
+              <option value="{{ u.email }}">{{ u.full_name or u.email }}</option>
+            {% endfor %}
+          </datalist>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">حالة الانتساب</label>
+          <select name="status" class="form-select">
+            <option value="CANDIDATE">مرشح</option>
+            <option value="APPROVED">معتمد</option>
+            <option value="COMPLETED">أتم التدريب</option>
+            <option value="WITHDRAWN">منسحب</option>
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">ملاحظات</label>
+          <input type="text" name="notes" class="form-control">
+        </div>
+        <div class="col-md-2">
+          <button class="btn btn-primary w-100">إضافة</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card" id="wfPrintArea">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span>المنتسبين</span>
+      <button type="button" class="btn btn-sm btn-outline-secondary d-print-none" onclick="wfPrintSmart('#wfPrintArea')">
+        <i class="bi bi-printer"></i> طباعة
+      </button>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-striped align-middle mb-0">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>الموظف</th>
+              <th style="width:220px">الحالة</th>
+              <th>ملاحظات</th>
+              <th style="width:210px">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in enrollments %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>
+                  {{ r.user.full_name if r.user else ('#' ~ r.user_id) }}
+                  <div class="text-muted small">{{ r.user.email if r.user else '' }}</div>
+                </td>
+                <td>
+                  <form method="post" class="d-flex gap-2">
+                    <input type="hidden" name="action" value="update">
+                    <input type="hidden" name="enroll_id" value="{{ r.id }}">
+                    <select name="status" class="form-select form-select-sm">
+                      {% set st = (r.status or '').upper() %}
+                      <option value="CANDIDATE" {% if st=='CANDIDATE' %}selected{% endif %}>مرشح</option>
+                      <option value="APPROVED" {% if st=='APPROVED' %}selected{% endif %}>معتمد</option>
+                      <option value="COMPLETED" {% if st=='COMPLETED' %}selected{% endif %}>أتم التدريب</option>
+                      <option value="WITHDRAWN" {% if st=='WITHDRAWN' %}selected{% endif %}>منسحب</option>
+                    </select>
+                </td>
+                <td>
+                    <input type="text" name="notes" value="{{ r.notes or '' }}" class="form-control form-control-sm">
+                </td>
+                <td class="d-flex gap-2">
+                    <button class="btn btn-sm btn-success">حفظ</button>
+                  </form>
+                  <form method="post" onsubmit="return confirm('حذف المنتسب؟');">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="enroll_id" value="{{ r.id }}">
+                    <button class="btn btn-sm btn-outline-danger">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">لا يوجد منتسبين.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

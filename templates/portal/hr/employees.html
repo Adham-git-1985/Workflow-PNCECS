@@ -1,0 +1,91 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}ملفات الموظفين{% endblock %}
+
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-people"></i> ملفات الموظفين</h5>
+      <div class="text-muted small">قائمة الموظفين + ربط كود ساعة الدوام + فتح ملف الموظف ومرفقاته.</div>
+    </div>
+    {% set next_url = request.full_path %}
+    <div class="d-flex gap-2 flex-wrap align-items-center">
+      <a class="btn btn-outline-success" href="{{ url_for('portal.hr_employees', q=q, export=1) }}">
+        <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+      </a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.portal_excel_import', key='portal.hr_employees', next=next_url) }}">
+        <i class="bi bi-upload"></i> استيراد Excel
+      </a>
+      <form method="get" class="d-flex gap-2">
+        <input name="q" class="form-control" style="min-width:260px" placeholder="بحث بالاسم/الإيميل/رقم الموظف/كود الساعة" value="{{ q }}">
+        <button class="btn btn-outline-secondary"><i class="bi bi-search"></i></button>
+      </form>
+    </div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>{{ portal_sort_link('الموظف', 'full_name') }}</th>
+          <th>{{ portal_sort_link('الدور', 'role') }}</th>
+          <th>رقم الموظف</th>
+          <th>كود الساعة</th>
+          <th>الملف</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+                    {% set f = files.get(u.id) %}
+          <tr>
+            <td>
+              <div class="fw-semibold">
+                <a class="text-decoration-none" href="{{ url_for('users.profile_view', user_id=u.id) }}" title="فتح ملف الموظف في نظام مسار" target="_blank">
+                  {{ u.full_name }}
+                </a>
+              </div>
+              <div class="text-muted small">
+                <a class="text-muted text-decoration-none" href="{{ url_for('users.profile_view', user_id=u.id) }}" target="_blank">
+                  {{ u.email }}
+                </a>
+              </div>
+            </td>
+            <td><span class="badge bg-secondary">{{ u.role }}</span></td>
+            <td>
+              {% if f and f.employee_no %}
+                <span class="badge bg-light text-dark border">{{ f.employee_no }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if f and f.timeclock_code %}
+                <span class="badge bg-info text-dark">{{ f.timeclock_code }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if f %}
+                <span class="badge bg-success">موجود</span>
+              {% else %}
+                <span class="badge bg-warning text-dark">غير مكتمل</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_employee_file', user_id=u.id) }}">
+                <i class="bi bi-folder2-open"></i> فتح الملف
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+
+        {% if users|length == 0 %}
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد نتائج.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,171 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "⭐ دليل الأداء والتقييم (للأدمن)" %}
+{% set page_subtitle = "يوضح: إدارة نماذج التقييم (360) ودوراته + تشغيل التقييم النظامي (شهري/سنوي) + منح الصلاحيات." %}
+
+{% block guide_body %}
+
+<div class="alert alert-info mb-3">
+  <strong>نقطة مهمة:</strong> يوجد نوعان من التقييم داخل النظام:
+  <ul class="mb-0">
+    <li><strong>تقييم النموذج (360):</strong> يبنيه الأدمن (نموذج + دورة) ثم يولّد النظام تكليفات للموظفين.</li>
+    <li><strong>التقييم النظامي:</strong> يُشغَّل من الإدارة ويعتمد على مؤشرات من حركات المستخدم داخل النظام (سجلات/Audit/رفع ملفات…).</li>
+  </ul>
+</div>
+
+<div class="accordion" id="accPerfAdmin">
+
+  <!-- Permissions -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-perms">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#c-perms" aria-expanded="true" aria-controls="c-perms">
+        1) الصلاحيات: كيف أُظهر التقييم النظامي للموظف؟
+      </button>
+    </h2>
+    <div id="c-perms" class="accordion-collapse collapse show" aria-labelledby="h-perms" data-bs-parent="#accPerfAdmin">
+      <div class="accordion-body">
+        <ol class="mb-3">
+          <li>ادخل كأدمن/سوبر أدمن إلى: <strong>إدارة البوابة</strong> → <strong>إدارة صلاحيات البوابة</strong>.</li>
+          <li>اختر نطاق التعديل:
+            <ul>
+              <li><strong>بالدور (Role):</strong> يمنح الصلاحيات لكل من يحمل الدور.</li>
+              <li><strong>بالمستخدم (User):</strong> يمنح الصلاحيات لمستخدم محدد فقط.</li>
+            </ul>
+          </li>
+          <li>من <strong>الاختصارات السريعة</strong> استخدم أحد الخيارين:
+            <ul>
+              <li><strong>التقييم النظامي (عرض)</strong> (اختصار مستقل) لتفعيل <code>HR_SYSTEM_EVALUATION_VIEW</code> فقط مع <code>PORTAL_READ</code>.</li>
+              <li>أو اختصار <strong>خدمات الموظف (طلبات/مستندات/قسيمة)</strong> (ويتضمن الآن كذلك صلاحية <code>HR_SYSTEM_EVALUATION_VIEW</code>).</li>
+            </ul>
+          </li>
+          <li>اضغط <strong>حفظ</strong>.</li>
+        </ol>
+
+        <div class="alert alert-warning mb-0">
+          <strong>ملاحظة تشغيلية:</strong> إذا كان المستخدم قد سجّل دخول مسبقًا، يفضّل <strong>تسجيل خروج/دخول</strong> (أو إعادة تحميل الصفحة) لتنعكس الصلاحيات.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System evaluation run -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-sysrun">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-sysrun" aria-expanded="false" aria-controls="c-sysrun">
+        2) تشغيل التقييم النظامي (شهري/سنوي) + التصدير
+      </button>
+    </h2>
+    <div id="c-sysrun" class="accordion-collapse collapse" aria-labelledby="h-sysrun" data-bs-parent="#accPerfAdmin">
+      <div class="accordion-body">
+        <ol class="mb-3">
+          <li>اذهب إلى صفحة: <strong>⭐ تقييم الموظفين</strong> (ضمن لوحة الأدمن) أو مباشرةً: <code>/admin/evaluations</code>.</li>
+          <li>من مربع <strong>تشغيل تقييم</strong> اختر:
+            <ul>
+              <li><strong>الفترة:</strong> شهري أو سنوي.</li>
+              <li><strong>السنة</strong> (+ الشهر إذا كان شهريًا).</li>
+              <li><strong>الموظف</strong> لتقييم مستخدم محدد، أو اضغط <strong>للجميع</strong> لتقييم كل الموظفين.</li>
+            </ul>
+          </li>
+          <li>بعد التشغيل ستظهر النتيجة في <strong>سجل التقييمات</strong> ويمكن فتح التفاصيل عبر <strong>عرض</strong>.</li>
+          <li>للتصدير: اضغط زر <strong>Excel</strong> لعمل ملف إكسل حسب نفس الفلاتر.</li>
+        </ol>
+
+        <div class="small text-muted">
+          التقييم يُحتسب من 100 ثم يُحوَّل إلى 5 مع تقريب لأقرب 0.1.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- System score explanation -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-sysexplain">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-sysexplain" aria-expanded="false" aria-controls="c-sysexplain">
+        3) تفسير الدرجة للإدارة: لماذا من 5؟ ولماذا 0.1؟
+      </button>
+    </h2>
+    <div id="c-sysexplain" class="accordion-collapse collapse" aria-labelledby="h-sysexplain" data-bs-parent="#accPerfAdmin">
+      <div class="accordion-body">
+        <p class="mb-2">
+          داخل النظام نقوم بحساب درجة دقيقة من <strong>0 إلى 100</strong> (مناسب للتحليل والتفصيل)، ثم نعرضها أيضًا كدرجة <strong>من 5</strong> لأنها:
+        </p>
+        <ul>
+          <li><strong>مألوفة</strong> للإدارة والموظفين (مثل تقييمات الأداء الشائعة 1-5).</li>
+          <li>تسهّل <strong>المقارنة السريعة</strong> بين الموظفين والفترات.</li>
+          <li>تقلّل التشتت: بدل 74/100 و 76/100، تظهر 3.7/5 و 3.8/5.</li>
+        </ul>
+        <p class="mb-2">
+          أما التقريب لأقرب <strong>0.1</strong> فيُبقي فرقًا معقولًا دون مبالغة بالتفاصيل.
+        </p>
+        <div class="border rounded p-3" dir="ltr">
+          <div class="fw-semibold mb-1">Formula</div>
+          <code>score_5 = round((score_100 / 100) * 5, 1)</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form evaluation admin -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-formadmin">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-formadmin" aria-expanded="false" aria-controls="c-formadmin">
+        4) تقييم النموذج (360): إنشاء نموذج + دورة + تكليفات
+      </button>
+    </h2>
+    <div id="c-formadmin" class="accordion-collapse collapse" aria-labelledby="h-formadmin" data-bs-parent="#accPerfAdmin">
+      <div class="accordion-body">
+        <p class="mb-2">
+          إدارة تقييمات 360 تتم من داخل البوابة الإدارية ضمن وحدة HR:
+          <code>/portal/admin/hr/performance</code>
+        </p>
+
+        <ol class="mb-3">
+          <li><strong>إنشاء نموذج:</strong> من (الأداء والتقييم → النماذج) أنشئ نموذجًا ثم أضف أقسامًا وأسئلة.
+            <ul>
+              <li>نوع السؤال الافتراضي عادةً: <strong>RATING 1-5</strong>.</li>
+              <li>يمكن إعطاء وزن لكل سؤال (Weight) لزيادة تأثيره في المتوسط.</li>
+            </ul>
+          </li>
+          <li><strong>إنشاء دورة:</strong> من (الدورات) حدّد اسم الدورة، النموذج المرتبط، تاريخ البداية والنهاية، وعدد الزملاء (peer_count).</li>
+          <li><strong>توليد التكليفات:</strong> من تفاصيل الدورة اضغط <strong>توليد</strong> ليقوم النظام بإنشاء تكليفات:
+            <ul>
+              <li>تقييم ذاتي (SELF) لكل موظف</li>
+              <li>تقييم مدير (MANAGER) إن كان مرتبطًا بهيكل إداري</li>
+              <li>تقييم زملاء (PEER) حسب العدد المحدد</li>
+            </ul>
+          </li>
+          <li>راقب حالة التكليفات (قيد التنفيذ/تم الإرسال) ويمكنك تصدير ملخص النتائج عبر زر <strong>Export CSV</strong> من تفاصيل الدورة.</li>
+        </ol>
+
+        <div class="alert alert-secondary mb-0">
+          <strong>صلاحية الإدارة المطلوبة:</strong> <code>HR_PERFORMANCE_MANAGE</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Comparison -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-comp">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-comp" aria-expanded="false" aria-controls="c-comp">
+        5) المقارنة بين نتيجتين (النموذج vs النظام)
+      </button>
+    </h2>
+    <div id="c-comp" class="accordion-collapse collapse" aria-labelledby="h-comp" data-bs-parent="#accPerfAdmin">
+      <div class="accordion-body">
+        <p class="mb-2">
+          المقارنة تكون قوية عندما تكون <strong>الفترة واحدة</strong> (نفس الشهر/السنة) ويتم اعتماد:
+        </p>
+        <ul>
+          <li><strong>نتيجة النظام:</strong> 0..100 + 0..5 (تقريب 0.1) مع تفصيل المؤشرات.</li>
+          <li><strong>نتيجة النموذج:</strong> متوسط تقييمات 360 (مع الأوزان) ويمكن استخراجها من تقارير الدورة/التصدير.</li>
+        </ul>
+        <div class="alert alert-info mb-0">
+          <strong>أفضل ممارسة:</strong> اعتماد قواعد تحويل موحّدة (كل النتائج تُعرض كذلك من 5) ثم حساب Gap = (Form - System) مع تعليق مختصر.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

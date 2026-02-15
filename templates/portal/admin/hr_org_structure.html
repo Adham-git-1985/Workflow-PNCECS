@@ -1,0 +1,606 @@
+{% extends "portal/layout.html" %}
+{% block title %}الهيكل التنظيمي{% endblock %}
+{% block content %}
+<div id="portalOrgAdminPrint" class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-diagram-3"></i> الهيكل التنظيمي</h5>
+      <div class="text-muted small">إدارة المنظمات/الإدارات/الدوائر/الأقسام/الفرق (إضافة/تعديل/حذف + استيراد/تصدير Excel).</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#portalOrgAdminPrint')">
+        <i class="bi bi-printer"></i> طباعة
+      </button>
+      <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_hr_guide') }}" target="_blank">
+        <i class="bi bi-question-circle"></i> الدليل
+      </a>
+
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_structure') }}">
+        <i class="bi bi-diagram-3"></i> عرض المخطط
+      </a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_assignments') }}">
+        <i class="bi bi-people"></i> تعيين الموظفين
+      </a>
+      <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.portal_admin_hr_org_structure', export=1) }}">
+        <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+      </a>
+    </div>
+  </div>
+
+  <ul class="nav nav-tabs" role="tablist">
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='orgs' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-orgs" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='orgs') }}'">المنظمات</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='dirs' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-dirs" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='dirs') }}'">الإدارات</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='units' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-units" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='units') }}'">الوحدات</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='depts' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-depts" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='depts') }}'">الدوائر</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='secs' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-secs" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='secs') }}'">الأقسام</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='divs' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-divs" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='divs') }}'">الشُعب</button></li>
+    <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='teams' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-teams" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='teams') }}'">الفرق</button></li>
+  </ul>
+
+  <div class="tab-content pt-3">
+
+    {# -------------------- ORGS -------------------- #}
+    <div class="tab-pane fade {% if tab=='orgs' %}show active{% endif %}" id="tab-orgs">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">الأعمدة: code / الاسم عربي / الاسم إنجليزي / نشط</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import">
+          <input type="hidden" name="kind" value="orgs">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>{{ portal_sort_link('Code', 'code') }}</th><th>{{ portal_sort_link('الاسم (AR)', 'name_ar') }}</th><th>{{ portal_sort_link('الاسم (EN)', 'name_en') }}</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for o in orgs %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="orgs"><input type="hidden" name="id" value="{{ o.id }}">
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ o.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ o.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ o.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if o.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap">
+                    <button class="btn btn-sm btn-primary" type="submit">حفظ</button>
+                  </td>
+                </form>
+                <td class="text-nowrap">
+                  <form method="post" onsubmit="return confirm('حذف المنظمة؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="orgs"><input type="hidden" name="id" value="{{ o.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="text-muted">لا توجد منظمات.</td></tr>
+            {% endfor %}
+
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="orgs">
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td class="text-nowrap" colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# -------------------- DIRECTORATES -------------------- #}
+    <div class="tab-pane fade {% if tab=='dirs' %}show active{% endif %}" id="tab-dirs">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">مرتبطة بالمنظمة</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="dirs">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>المنظمة</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for d in directorates %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="dirs"><input type="hidden" name="id" value="{{ d.id }}">
+                  <td style="min-width:220px">
+                    <select class="form-select form-select-sm" name="parent_id" required>
+                      <option value="">-- اختر --</option>
+                      {% for o in orgs %}
+                        <option value="{{ o.id }}" {% if d.organization_id==o.id %}selected{% endif %}>{{ o.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ d.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ d.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ d.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if d.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                </form>
+                <td>
+                  <form method="post" onsubmit="return confirm('حذف الإدارة؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="dirs"><input type="hidden" name="id" value="{{ d.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-muted">لا توجد إدارات/دوائر.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="dirs">
+                <td>
+                  <select class="form-select form-select-sm" name="parent_id" required>
+                    <option value="">-- اختر المنظمة --</option>
+                    {% for o in orgs %}<option value="{{ o.id }}">{{ o.name_ar }}</option>{% endfor %}
+                  </select>
+                </td>
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+
+
+    {# -------------------- UNITS -------------------- #}
+    <div class="tab-pane fade {% if tab=='units' %}show active{% endif %}" id="tab-units">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">الوحدات مرتبطة بالمنظمة (Organization)</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="units">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>التبعية</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for u in units %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="units"><input type="hidden" name="id" value="{{ u.id }}">
+                  <td style="min-width:240px">
+                    <select class="form-select form-select-sm" name="parent_id" required>
+                      <option value="">-- اختر --</option>
+                      {% for o in orgs %}
+                        <option value="{{ o.id }}" {% if u.organization_id==o.id %}selected{% endif %}>{{ o.name_ar }}{% if o.code %} ({{ o.code }}){% endif %}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ u.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ u.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ u.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if u.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                </form>
+                <td>
+                  <form method="post" onsubmit="return confirm('حذف الوحدة؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="units"><input type="hidden" name="id" value="{{ u.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-muted">لا توجد وحدات.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="units">
+                <td>
+                  <select class="form-select form-select-sm" name="parent_id" required>
+                    <option value="">-- اختر المنظمة --</option>
+                    {% for o in orgs %}<option value="{{ o.id }}">{{ o.name_ar }}{% if o.code %} ({{ o.code }}){% endif %}</option>{% endfor %}
+                  </select>
+                </td>
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# -------------------- DEPARTMENTS -------------------- #}
+    <div class="tab-pane fade {% if tab=='depts' %}show active{% endif %}" id="tab-depts">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">مرتبطة بإدارة أو Unit (يجب اختيار واحدة فقط)</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="depts">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>التبعية</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for d in departments %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="depts"><input type="hidden" name="id" value="{{ d.id }}">
+                  <td style="min-width:260px">
+                    <div class="d-flex gap-2">
+                      <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="dept" required>
+                        <option value="directorate" {% if d.directorate_id %}selected{% endif %}>إدارة</option>
+                        <option value="unit" {% if d.unit_id %}selected{% endif %}>الوحدات</option>
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-dir" name="parent_id_dir" data-target="dept">
+                        <option value="">-- اختر الإدارة --</option>
+                        {% for di in directorates %}
+                          <option value="{{ di.id }}" {% if d.directorate_id==di.id %}selected{% endif %}>{{ di.name_ar }}{% if di.organization %} ({{ di.organization.name_ar }}){% endif %}</option>
+                        {% endfor %}
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-unit" name="parent_id_unit" data-target="dept">
+                        <option value="">-- اختر Unit --</option>
+                        {% for u in units %}
+                          <option value="{{ u.id }}" {% if d.unit_id==u.id %}selected{% endif %}>{{ u.name_ar }}{% if u.organization %} ({{ u.organization.name_ar }}){% endif %}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                  </td>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ d.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ d.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ d.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if d.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                </form>
+                <td>
+                  <form method="post" onsubmit="return confirm('حذف الدائرة؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="depts"><input type="hidden" name="id" value="{{ d.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-muted">لا توجد دوائر.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="depts">
+                <td>
+                  <select class="form-select form-select-sm" name="parent_id" required>
+                    <option value="">-- اختر المنظمة --</option>
+                    {% for o in orgs %}<option value="{{ o.id }}">{{ o.name_ar }}{% if o.code %} ({{ o.code }}){% endif %}</option>{% endfor %}
+                  </select>
+                </td>
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# -------------------- SECTIONS -------------------- #}
+    <div class="tab-pane fade {% if tab=='secs' %}show active{% endif %}" id="tab-secs">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">مرتبطة بدائرة أو إدارة أو Unit (يجب اختيار واحدة فقط)</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="secs">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>التبعية</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for s in sections %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="secs"><input type="hidden" name="id" value="{{ s.id }}">
+                  <td style="min-width:260px">
+                    <div class="d-flex gap-2">
+                      <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="sec" required>
+                        <option value="department" {% if s.department_id %}selected{% endif %}>دائرة</option>
+                        <option value="directorate" {% if s.directorate_id %}selected{% endif %}>إدارة</option>
+                        <option value="unit" {% if s.unit_id %}selected{% endif %}>الوحدات</option>
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-dept" name="parent_id_dept" data-target="sec">
+                        <option value="">-- اختر الدائرة --</option>
+                        {% for d in departments %}
+                          <option value="{{ d.id }}" {% if s.department_id==d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+                        {% endfor %}
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-dir" name="parent_id_dir" data-target="sec">
+                        <option value="">-- اختر الإدارة --</option>
+                        {% for di in directorates %}
+                          <option value="{{ di.id }}" {% if s.directorate_id==di.id %}selected{% endif %}>{{ di.name_ar }}</option>
+                        {% endfor %}
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-unit" name="parent_id_unit" data-target="sec">
+                        <option value="">-- اختر Unit --</option>
+                        {% for u in units %}
+                          <option value="{{ u.id }}" {% if s.unit_id==u.id %}selected{% endif %}>{{ u.name_ar }}{% if u.organization %} ({{ u.organization.name_ar }}){% endif %}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                  </td>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ s.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ s.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ s.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if s.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                </form>
+                <td>
+                  <form method="post" onsubmit="return confirm('حذف القسم؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="secs"><input type="hidden" name="id" value="{{ s.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-muted">لا توجد أقسام.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="secs">
+                <td>
+                  <div class="d-flex gap-2">
+                    <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="sec" required>
+                      <option value="department" selected>دائرة</option>
+                      <option value="directorate">إدارة</option>
+                      <option value="unit">الوحدات</option>
+                    </select>
+                    <select class="form-select form-select-sm parent-select parent-select-dept" name="parent_id_dept" data-target="sec">
+                      <option value="">-- اختر الدائرة --</option>
+                      {% for d in departments %}<option value="{{ d.id }}">{{ d.name_ar }}</option>{% endfor %}
+                    </select>
+                    <select class="form-select form-select-sm parent-select parent-select-dir" name="parent_id_dir" data-target="sec">
+                      <option value="">-- اختر الإدارة --</option>
+                      {% for di in directorates %}<option value="{{ di.id }}">{{ di.name_ar }}</option>{% endfor %}
+                    </select>
+                    <select class="form-select form-select-sm parent-select parent-select-unit" name="parent_id_unit" data-target="sec">
+                      <option value="">-- اختر Unit --</option>
+                      {% for u in units %}<option value="{{ u.id }}">{{ u.name_ar }}{% if u.organization %} ({{ u.organization.name_ar }}){% endif %}</option>{% endfor %}
+                    </select>
+                  </div>
+                </td>
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    
+
+    {# -------------------- DIVISIONS -------------------- #}
+    <div class="tab-pane fade {% if tab=='divs' %}show active{% endif %}" id="tab-divs">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">مرتبطة بقسم أو دائرة (يجب اختيار واحدة فقط)</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="divs">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>التبعية</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for d in divisions %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="divs"><input type="hidden" name="id" value="{{ d.id }}">
+                  <td style="min-width:320px">
+                    <div class="d-flex gap-2">
+                      <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="div" required>
+                        <option value="section" {% if d.section_id %}selected{% endif %}>قسم</option>
+                        <option value="department" {% if d.department_id %}selected{% endif %}>دائرة</option>
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-sec" name="parent_id_sec" data-target="div">
+                        <option value="">-- اختر القسم --</option>
+                        {% for s in sections %}
+                          <option value="{{ s.id }}" {% if d.section_id==s.id %}selected{% endif %}>{{ s.name_ar }}{% if s.department %} ({{ s.department.name_ar }}){% endif %}</option>
+                        {% endfor %}
+                      </select>
+                      <select class="form-select form-select-sm parent-select parent-select-dept" name="parent_id_dept" data-target="div">
+                        <option value="">-- اختر الدائرة --</option>
+                        {% for dep in departments %}
+                          <option value="{{ dep.id }}" {% if d.department_id==dep.id %}selected{% endif %}>{{ dep.name_ar }}</option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                  </td>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ d.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ d.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ d.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if d.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                </form>
+                <td>
+                  <form method="post" onsubmit="return confirm('حذف الشعبة؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="divs"><input type="hidden" name="id" value="{{ d.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-muted">لا توجد شُعب.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="divs">
+                <td>
+                  <div class="d-flex gap-2">
+                    <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="div" required>
+                      <option value="section" selected>قسم</option>
+                      <option value="department">دائرة</option>
+                    </select>
+                    <select class="form-select form-select-sm parent-select parent-select-sec" name="parent_id_sec" data-target="div">
+                      <option value="">-- اختر القسم --</option>
+                      {% for s in sections %}<option value="{{ s.id }}">{{ s.name_ar }}{% if s.department %} ({{ s.department.name_ar }}){% endif %}</option>{% endfor %}
+                    </select>
+                    <select class="form-select form-select-sm parent-select parent-select-dept" name="parent_id_dept" data-target="div">
+                      <option value="">-- اختر الدائرة --</option>
+                      {% for dep in departments %}<option value="{{ dep.id }}">{{ dep.name_ar }}</option>{% endfor %}
+                    </select>
+                  </div>
+                </td>
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# -------------------- TEAMS -------------------- #}
+    <div class="tab-pane fade {% if tab=='teams' %}show active{% endif %}" id="tab-teams">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div class="text-muted small">مرتبطة بالقسم</div>
+        <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
+          <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="teams">
+          <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
+          <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-upload"></i> استيراد Excel</button>
+        </form>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>القسم</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <tbody>
+            {% for t in teams %}
+              <tr>
+                <form method="post">
+                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="teams"><input type="hidden" name="id" value="{{ t.id }}">
+                  <td style="min-width:240px">
+                    <select class="form-select form-select-sm" name="parent_id" required>
+                      <option value="">-- اختر --</option>
+                      {% for s in sections %}
+                        <option value="{{ s.id }}" {% if t.section_id==s.id %}selected{% endif %}>{{ s.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ t.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ t.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" value="{{ t.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if t.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                </form>
+                <td>
+                  <form method="post" onsubmit="return confirm('حذف الفريق؟');">
+                    <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="teams"><input type="hidden" name="id" value="{{ t.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="7" class="text-muted">لا توجد فرق.</td></tr>
+            {% endfor %}
+            <tr class="table-light">
+              <form method="post">
+                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="teams">
+                <td>
+                  <select class="form-select form-select-sm" name="parent_id" required>
+                    <option value="">-- اختر القسم --</option>
+                    {% for s in sections %}<option value="{{ s.id }}">{{ s.name_ar }}</option>{% endfor %}
+                  </select>
+                </td>
+                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
+              </form>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    
+
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+(function(){
+  function toggle(container, target){
+    var typeSel = container.querySelector('select.parent-type-select[data-target="'+target+'"]');
+    if(!typeSel) return;
+
+    function apply(){
+      var t = (typeSel.value || '').toLowerCase();
+
+      container.querySelectorAll('select.parent-select').forEach(function(s){
+        if(s.getAttribute('data-target') !== target) return;
+        s.style.display = 'none';
+      });
+      if(target === 'dept'){
+        var selDir = container.querySelector('select.parent-select-dir[data-target="dept"]');
+        var selUnit = container.querySelector('select.parent-select-unit[data-target="dept"]');
+        if(selDir) selDir.style.display = (t === 'directorate' ? '' : 'none');
+        if(selUnit) selUnit.style.display = (t === 'unit' ? '' : 'none');
+      } else if(target === 'sec'){
+        var selDept = container.querySelector('select.parent-select-dept[data-target="sec"]');
+        var selDir2 = container.querySelector('select.parent-select-dir[data-target="sec"]');
+        var selUnit2 = container.querySelector('select.parent-select-unit[data-target="sec"]');
+        if(selDept) selDept.style.display = (t === 'department' ? '' : 'none');
+        if(selDir2) selDir2.style.display = (t === 'directorate' ? '' : 'none');
+        if(selUnit2) selUnit2.style.display = (t === 'unit' ? '' : 'none');
+      } else if(target === 'div'){
+        var selSec = container.querySelector('select.parent-select-sec[data-target="div"]');
+        var selDept3 = container.querySelector('select.parent-select-dept[data-target="div"]');
+        if(selSec) selSec.style.display = (t === 'section' ? '' : 'none');
+        if(selDept3) selDept3.style.display = (t === 'department' ? '' : 'none');
+      }
+    }
+
+    typeSel.addEventListener('change', apply);
+    apply();
+  }
+
+  function init(){
+    document.querySelectorAll('#tab-depts tbody tr').forEach(function(tr){ toggle(tr, 'dept'); });
+    document.querySelectorAll('#tab-secs tbody tr').forEach(function(tr){ toggle(tr, 'sec'); });
+    document.querySelectorAll('#tab-divs tbody tr').forEach(function(tr){ toggle(tr, 'div'); });
+  }
+
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+</script>
+{% endblock %}
+

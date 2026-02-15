@@ -1,0 +1,100 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">إدارة الأصناف</h5>
+  <div class="small text-muted">(يدعم لاحقًا الاستيراد/التصدير)</div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="fw-bold mb-2">{{ 'تعديل صنف' if edit else 'إضافة صنف' }}</div>
+        <form method="post">
+          <input type="hidden" name="action" value="save">
+          {% if edit %}<input type="hidden" name="id" value="{{ edit.id }}">{% endif %}
+          <div class="mb-2">
+            <label class="form-label">الصنف</label>
+            <input name="name" class="form-control" value="{{ edit.name if edit else '' }}" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">كود</label>
+            <input name="code" class="form-control" value="{{ edit.code if edit else '' }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">الوحدة</label>
+            <input name="unit" class="form-control" value="{{ edit.unit if edit else '' }}" placeholder="مثال: قطعة / صندوق">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">التصنيف</label>
+            <select name="category_id" class="form-select">
+              <option value="">بدون</option>
+              {% for c in categories %}
+                <option value="{{ c.id }}" {% if edit and edit.category_id==c.id %}selected{% endif %}>{{ c.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">ملاحظات</label>
+            <textarea name="note" class="form-control" rows="2">{{ edit.note if edit else '' }}</textarea>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="activeIt" {% if not edit or edit.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="activeIt">فعّال</label>
+          </div>
+          <div class="d-flex justify-content-end gap-2">
+            {% if edit %}
+              <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_admin_items') }}">إلغاء</a>
+            {% endif %}
+            <button class="btn btn-primary" type="submit">حفظ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped mb-0">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>الصنف</th>
+                <th>الكود</th>
+                <th>التصنيف</th>
+                <th>الحالة</th>
+                <th style="width:160px;"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in items %}
+              <tr>
+                <td>{{ it.id }}</td>
+                <td>{{ it.name }}</td>
+                <td>{{ it.code or '-' }}</td>
+                <td>{{ it.category.name if it.category else '-' }}</td>
+                <td>{% if it.is_active %}<span class="badge text-bg-success">فعّال</span>{% else %}<span class="badge text-bg-secondary">موقوف</span>{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_items', edit=it.id) }}">تعديل</a>
+                  <form method="post" class="d-inline">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="id" value="{{ it.id }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('حذف الصنف؟')">حذف</button>
+                  </form>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="6" class="text-center text-muted py-4">لا توجد أصناف.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

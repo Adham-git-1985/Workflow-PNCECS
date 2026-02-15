@@ -1,0 +1,31 @@
+{% extends "layout.html" %}
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block content %}
+<div class="container my-3" dir="rtl">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 no-print">
+    <div>
+      <h4 class="mb-1">{{ page_title }}</h4>
+      {% if page_subtitle %}<div class="text-muted small">{{ page_subtitle }}</div>{% endif %}
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_index') }}">
+        <i class="bi bi-compass"></i> مركز الأدلة
+      </a>
+      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="wfGuideOpenAll('#guide')">
+        <i class="bi bi-arrows-expand"></i> توسيع الكل
+      </button>
+      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="wfGuideCloseAll('#guide')">
+        <i class="bi bi-arrows-collapse"></i> طيّ الكل
+      </button>
+      <button class="btn btn-sm btn-primary" type="button" onclick="wfPrintSmart('#guide')">
+        <i class="bi bi-printer"></i> طباعة
+      </button>
+    </div>
+  </div>
+
+  <div id="guide" class="bg-white rounded-3 shadow-sm p-3">
+    {% block guide_body %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

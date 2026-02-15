@@ -1,0 +1,173 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}خدمات الموظف{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-person-lines-fill"></i> خدمات الموظف</h4>
+      <div class="text-muted">لوحة خدمات الموظف: إجازاتي / مغادراتي / قسائم راتبي / وثائق HR / الطلبات الداخلية.</div>
+    </div>
+    
+  </div>
+</div>
+
+<div class="row g-3">
+  <!-- Leaves -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-calendar2-check fs-4"></i>
+        <div class="fw-bold">إجازاتي</div>
+      </div>
+      <div class="text-muted small mb-2">عرض وطلبات الإجازات.</div>
+      {% if leaves_pending is defined %}
+      <div class="mb-3">
+        <span class="badge text-bg-warning">معلقة: {{ leaves_pending }}</span>
+        <span class="badge text-bg-light ms-1">الإجمالي: {{ leaves_total }}</span>
+      </div>
+      {% else %}
+      <div class="mb-3"></div>
+      {% endif %}
+      {% if can_hr %}
+        <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_my_leaves') }}">فتح</a>
+      {% else %}
+        <button class="btn btn-secondary w-100" disabled>غير مفعّل</button>
+        <a class="btn btn-outline-primary w-100 mt-2" href="{{ url_for('portal.access_request_new', service='hr') }}">طلب تفعيل</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Permissions -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-door-open fs-4"></i>
+        <div class="fw-bold">مغادراتي</div>
+      </div>
+      <div class="text-muted small mb-2">عرض وطلبات المغادرات.</div>
+      {% if permissions_pending is defined %}
+      <div class="mb-3">
+        <span class="badge text-bg-warning">معلقة: {{ permissions_pending }}</span>
+        <span class="badge text-bg-light ms-1">الإجمالي: {{ permissions_total }}</span>
+      </div>
+      {% else %}
+      <div class="mb-3"></div>
+      {% endif %}
+      {% if can_hr %}
+        <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_my_permissions') }}">فتح</a>
+      {% else %}
+        <button class="btn btn-secondary w-100" disabled>غير مفعّل</button>
+        <a class="btn btn-outline-primary w-100 mt-2" href="{{ url_for('portal.access_request_new', service='hr') }}">طلب تفعيل</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Payslips -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-file-earmark-pdf fs-4"></i>
+        <div class="fw-bold">قسائم راتبي</div>
+      </div>
+      <div class="text-muted small mb-2">عرض قسائم الراتب PDF (عرض فقط).</div>
+      {% if payslips_count is defined %}
+      <div class="mb-3">
+        <span class="badge text-bg-light">الملفات: {{ payslips_count }}</span>
+        {% if payslips_latest_label %}<span class="badge text-bg-light ms-1">آخر قسيمة: {{ payslips_latest_label }}</span>{% endif %}
+      </div>
+      {% else %}
+      <div class="mb-3"></div>
+      {% endif %}
+      {% if can_hr %}
+        <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_my_payslips') }}">فتح</a>
+      {% else %}
+        <button class="btn btn-secondary w-100" disabled>غير مفعّل</button>
+        <a class="btn btn-outline-primary w-100 mt-2" href="{{ url_for('portal.access_request_new', service='hr') }}">طلب تفعيل</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if can_sys_eval %}
+  <!-- System Evaluation -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-graph-up fs-4"></i>
+        <div class="fw-bold">تقييمي النظامي</div>
+      </div>
+      <div class="text-muted small mb-2">التقييم الشهري والسنوي من النظام (KPI).</div>
+      <div class="mb-3">
+        {% if latest_monthly_eval %}
+          <span class="badge text-bg-light">آخر شهري: {{ '%02d'|format(latest_monthly_eval.month or 0) }}/{{ latest_monthly_eval.year }} • {{ '%.1f'|format(latest_monthly_eval.score_5 or 0) }}/5</span>
+        {% endif %}
+        {% if latest_annual_eval %}
+          <span class="badge text-bg-light ms-1">آخر سنوي: {{ latest_annual_eval.year }} • {{ '%.1f'|format(latest_annual_eval.score_5 or 0) }}/5</span>
+        {% endif %}
+        {% if not latest_monthly_eval and not latest_annual_eval %}
+          <span class="text-muted small">لا يوجد تقييمات محفوظة لك بعد.</span>
+        {% endif %}
+      </div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_my_system_evaluations') }}">فتح</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Trainings -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-mortarboard fs-4"></i>
+        <div class="fw-bold">تدريباتي</div>
+      </div>
+      <div class="text-muted small mb-2">سجل تدريباتي والانتساب للتدريبات المنشورة.</div>
+      <div class="mb-3">
+        <span class="badge text-bg-light">الإجمالي: {{ trainings_total }}</span>
+        <span class="badge text-bg-light ms-1">القادمة: {{ trainings_upcoming }}</span>
+      </div>
+      {% if can_training %}
+        <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_training_log') }}">فتح</a>
+      {% else %}
+        <button class="btn btn-secondary w-100" disabled>غير مفعّل</button>
+        <a class="btn btn-outline-primary w-100 mt-2" href="{{ url_for('portal.access_request_new', service='hr') }}">طلب تفعيل</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Self-Service -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-ui-checks fs-4"></i>
+        <div class="fw-bold">الطلبات الداخلية</div>
+      </div>
+      <div class="text-muted small mb-3">شهادة راتب/تعريف/إفادة دوام، تحديث بيانات، رفع مستندات.</div>
+      {% if can_ss %}
+        <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_ss_home') }}">فتح</a>
+      {% else %}
+        <button class="btn btn-secondary w-100" disabled>غير مفعّل</button>
+        <a class="btn btn-outline-primary w-100 mt-2" href="{{ url_for('portal.access_request_new', service='hr') }}">طلب تفعيل</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- HR Docs -->
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-journal-text fs-4"></i>
+        <div class="fw-bold">وثائق HR</div>
+      </div>
+      <div class="text-muted small mb-3">سياسات ونماذج مع نسخة معتمدة وإشعارات تحديث.</div>
+      {% if can_docs %}
+        <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_docs_home') }}">فتح</a>
+      {% else %}
+        <button class="btn btn-secondary w-100" disabled>غير مفعّل</button>
+        <a class="btn btn-outline-primary w-100 mt-2" href="{{ url_for('portal.access_request_new', service='hr') }}">طلب تفعيل</a>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,102 @@
+{% extends "layout.html" %}
+{% block content %}
+
+{% set _q = q or '' %}
+{% set _sort = sort or 'id' %}
+{% set _dir = direction or 'asc' %}
+
+{% macro sort_link(field, label) %}
+  {% set new_dir = 'desc' if _sort == field and _dir == 'asc' else 'asc' %}
+  <a class="text-decoration-none text-dark" href="{{ url_for('masterdata.divisions_list', q=_q, sort=field, dir=new_dir) }}">
+    {{ label }}
+    {% if _sort == field %}
+      <small class="text-muted">{{ '▲' if _dir == 'asc' else '▼' }}</small>
+    {% endif %}
+  </a>
+{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🧩 الشُعب</h3>
+    <small class="text-muted">إدارة الشُعب وربطها بالأقسام/المكاتب والدوائر والإدارات</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdDivPrint\')">🖨️ طباعة</button>
+    <a class="btn btn-outline-secondary no-print" href="{{ url_for(\'users.help_hr_guide\') }}" target="_blank">❓ الدليل</a>
+
+    <a class="btn btn-outline-success" href="{{ url_for('masterdata.divisions_export_excel', q=_q, sort=_sort, dir=_dir) }}">⬇️ Excel</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('masterdata.import_excel', screen='divisions') }}">⬆️ استيراد Excel</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.divisions_new') }}">➕ إضافة شعبة</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <form method="get" class="mb-3">
+      <div class="input-group">
+        <input class="form-control" type="text" name="q" value="{{ _q }}" placeholder="ابحث بالاسم أو الكود أو اسم القسم/الدائرة…">
+        <button class="btn btn-outline-secondary" type="submit">بحث</button>
+        {% if _q %}
+          <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+        {% endif %}
+      </div>
+      <input type="hidden" name="sort" value="{{ _sort }}">
+      <input type="hidden" name="dir" value="{{ _dir }}">
+    </form>
+
+    {% if items %}
+      <div id="mdDivPrint" class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>{{ sort_link('id', '#') }}</th>
+              <th>الإدارة</th>
+              <th>{{ sort_link('department_id', 'الدائرة/المكتب') }}</th>
+              <th>{{ sort_link('section_id', 'القسم') }}</th>
+              <th>{{ sort_link('name_ar', 'الاسم (AR)') }}</th>
+              <th>{{ sort_link('name_en', 'الاسم (EN)') }}</th>
+              <th>{{ sort_link('code', 'Code') }}</th>
+              <th>{{ sort_link('is_active', 'نشط') }}</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for d in items %}
+              {% set sec = sec_map.get(d.section_id) if d.section_id else None %}
+              {% set dept = dept_map.get(d.department_id) if d.department_id else (dept_map.get(sec.department_id) if sec and sec.department_id else None) %}
+              {% set dir = (dir_map.get(dept.directorate_id) if dept and dept.directorate_id else (dir_map.get(sec.directorate_id) if sec and sec.directorate_id else None)) %}
+              <tr>
+                <td>{{ d.id }}</td>
+                <td>{{ dir.name_ar if dir else '-' }}</td>
+                <td>{{ dept.name_ar if dept else '-' }}</td>
+                <td>{{ sec.name_ar if sec else '-' }}</td>
+                <td>{{ d.name_ar }}</td>
+                <td>{{ d.name_en or '-' }}</td>
+                <td>{{ d.code or '-' }}</td>
+                <td>
+                  {% if d.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.divisions_edit', division_id=d.id) }}">✏️ تعديل</a>
+                  <form method="post" action="{{ url_for('masterdata.divisions_delete', division_id=d.id) }}" class="d-inline" onsubmit="return confirm('حذف الشعبة نهائيًا؟');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}

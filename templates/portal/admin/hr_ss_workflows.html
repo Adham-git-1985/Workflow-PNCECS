@@ -1,0 +1,126 @@
+{% extends "portal/layout.html" %}
+{% block title %}إعداد سير الطلبات الداخلية{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-diagram-2"></i> إعداد سير الطلبات الداخلية</h4>
+    <div class="text-muted small">تعريف أنواع الطلبات + الخطوات (Role/User) داخل HR.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-5">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">إضافة نوع طلب</div>
+      <form method="post">
+        <input type="hidden" name="action" value="add_def"/>
+        <div class="mb-2">
+          <label class="form-label">Code</label>
+          <input class="form-control" name="code" placeholder="CERTIFICATE" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">الاسم (AR)</label>
+          <input class="form-control" name="name_ar" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">الاسم (EN) (اختياري)</label>
+          <input class="form-control" name="name_en"/>
+        </div>
+        <button class="btn btn-success w-100" type="submit">إضافة</button>
+      </form>
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm mt-3">
+      <div class="fw-bold mb-2">إضافة خطوة</div>
+      <form method="post">
+        <input type="hidden" name="action" value="add_step"/>
+        <div class="mb-2">
+          <label class="form-label">نوع الطلب</label>
+          <select class="form-select" name="definition_id" required>
+            {% for d in defs %}
+              <option value="{{ d.id }}">{{ d.code }} - {{ d.name_ar }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label">رقم الخطوة</label>
+            <input class="form-control" type="number" min="1" name="step_no" required/>
+          </div>
+          <div class="col-6">
+            <label class="form-label">SLA ساعات (اختياري)</label>
+            <input class="form-control" type="number" min="1" name="sla_hours"/>
+          </div>
+        </div>
+        <div class="mt-2">
+          <label class="form-label">Approver Role (اختياري)</label>
+          <input class="form-control" name="approver_role" placeholder="HR"/>
+        </div>
+        <div class="mt-2">
+          <label class="form-label">أو Approver User (اختياري)</label>
+          <select class="form-select" name="approver_user_id">
+            <option value="">--</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.full_name }} ({{ u.role }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-text">إذا تم اختيار User سيتم تجاهل Role.</div>
+        <button class="btn btn-primary w-100 mt-2" type="submit">إضافة خطوة</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">التعريفات والخطوات</div>
+      {% for d in defs %}
+        <div class="border rounded-3 p-3 mb-3">
+          <div class="d-flex justify-content-between align-items-center">
+            <div>
+              <div class="fw-bold">{{ d.code }} - {{ d.name_ar }}</div>
+              <div class="text-muted small">Active: {{ 'Yes' if d.is_active else 'No' }}</div>
+            </div>
+          </div>
+
+          {% if d.steps %}
+            <div class="table-responsive mt-2">
+              <table class="table table-sm align-middle">
+                <thead><tr><th>#</th><th>{{ portal_sort_link('Role/User', 'approver_user') }}</th><th>{{ portal_sort_link('SLA', 'sla_hours') }}</th><th>حالة</th><th></th></tr></thead>
+                <tbody>
+                  {% for s in d.steps|sort(attribute='step_no') %}
+                  <tr>
+                    <td>{{ s.step_no }}</td>
+                    <td class="small">
+                      {% if s.approver_user %}{{ s.approver_user.full_name }}{% elif s.approver_role %}ROLE: {{ s.approver_role }}{% else %}-{% endif %}
+                    </td>
+                    <td class="text-muted small">{{ s.sla_hours or '-' }}</td>
+                    <td><span class="badge text-bg-light">{{ 'Active' if s.is_active else 'Off' }}</span></td>
+                    <td class="text-end">
+                      <form method="post" class="d-inline">
+                        <input type="hidden" name="action" value="toggle_step"/>
+                        <input type="hidden" name="step_id" value="{{ s.id }}"/>
+                        <button class="btn btn-sm btn-outline-secondary" type="submit">{{ 'إيقاف' if s.is_active else 'تفعيل' }}</button>
+                      </form>
+                      <form method="post" class="d-inline" onsubmit="return confirm('حذف الخطوة؟');">
+                        <input type="hidden" name="action" value="delete_step"/>
+                        <input type="hidden" name="step_id" value="{{ s.id }}"/>
+                        <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                      </form>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted small mt-2">لا يوجد خطوات.</div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,140 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}التنبيهات الذكية{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-bell"></i> التنبيهات الذكية</h4>
+      <div class="text-muted">
+        صفحة متابعة تساعد الموارد البشرية والمديرين على اكتشاف الحالات التي تحتاج إجراء سريع (طلبات إجازات متأخرة، تأخرات في الدوام، أرصدة إجازات منخفضة).
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_leaves_report', year=year) }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-inbox"></i> الموافقات</a>
+    </div>
+  </div>
+</div>
+
+{% set pending_days = pending_info.get('pending_days') if pending_info else 2 %}
+{% set pending_list = pending_info.get('pending') if pending_info else [] %}
+
+<div class="row g-3">
+  <div class="col-12">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-semibold"><i class="bi bi-calendar-event"></i> طلبات إجازات معلّقة</div>
+        <span class="badge bg-warning text-dark">بعد {{ pending_days }} أيام</span>
+      </div>
+
+      {% if pending_list and pending_list|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>الموظف</th>
+                <th>النوع</th>
+                <th>من</th>
+                <th>إلى</th>
+                <th>الأيام</th>
+                <th>تاريخ الإرسال</th>
+                <th>التذكيرات</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in pending_list %}
+                <tr>
+                  <td class="fw-semibold">#{{ r.id }}</td>
+                  <td>{{ (r.user.name or r.user.email) if r.user else r.user_id }}</td>
+                  <td>{{ r.leave_type.name_ar if r.leave_type else r.leave_type_id }}</td>
+                  <td>{{ r.start_date }}</td>
+                  <td>{{ r.end_date }}</td>
+                  <td>{{ r.days }}</td>
+                  <td class="text-muted small">{{ r.submitted_at.strftime('%Y-%m-%d') if r.submitted_at else '—' }}</td>
+                  <td class="text-muted small">{{ r.reminder_count or 0 }}</td>
+                  <td class="text-end">
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_approval_leave', req_id=r.id) }}"><i class="bi bi-eye"></i> فتح</a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <div class="text-muted small mt-2">ملاحظة: النظام يرسل تذكيرًا تلقائيًا (بحد أقصى مرة كل 24 ساعة لكل طلب) حتى يتم الاعتماد أو الرفض.</div>
+      {% else %}
+        <div class="text-muted">لا توجد طلبات متأخرة حاليًا.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="bg-white rounded-3 shadow-sm p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-semibold"><i class="bi bi-clock-history"></i> تأخرات الدوام (شهري)</div>
+        <span class="badge bg-danger">أكثر من {{ late_threshold }} دقيقة</span>
+      </div>
+
+      {% if late_rows and late_rows|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>الموظف</th>
+                <th>إجمالي دقائق التأخر</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in late_rows %}
+                <tr>
+                  <td class="fw-semibold">{{ row.user.full_name if row.user else '—' }}</td>
+                  <td class="text-muted">{{ row.late_minutes }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد حالات تتجاوز الحد الحالي.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="bg-white rounded-3 shadow-sm p-3 h-100">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-semibold"><i class="bi bi-battery-half"></i> أرصدة إجازات منخفضة</div>
+        <span class="badge bg-warning text-dark">أقل من {{ leave_threshold }} يوم</span>
+      </div>
+
+      {% if low_leave and low_leave|length > 0 %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>الموظف</th>
+                <th>نوع الإجازة</th>
+                <th>المتبقي</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in low_leave %}
+                <tr>
+                  <td class="fw-semibold">{{ row.user.full_name if row.user else '—' }}</td>
+                  <td>{{ row.leave_type.name_ar if row.leave_type else '—' }}</td>
+                  <td><span class="badge bg-warning text-dark">{{ row.remaining }}</span></td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد أرصدة منخفضة حسب الحد الحالي.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,72 @@
+{% extends 'portal/hr/base.html' %}
+
+{% block title %}إعدادات التعميم{% endblock %}
+
+{% block hr_content %}
+  {% include 'portal/hr/training/_wizard_nav.html' %}
+
+  <div class="card">
+    <div class="card-header">إعدادات التعميم</div>
+    <div class="card-body">
+      <div class="alert alert-warning d-print-none">
+        بعد تعديل خيار <strong>(منشور للانتساب)</strong> أو فترة الترشيح، اضغط <strong>حفظ</strong> حتى يتم نشر التدريب وظهوره للموظفين.
+      </div>
+      <form method="post" class="row g-3">
+        <div class="col-12 d-flex justify-content-end d-print-none">
+          <button id="trainingSaveTop" type="submit" class="btn btn-primary">حفظ</button>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">منشور للانتساب</label>
+          <select name="publish_mode" class="form-select">
+            <option value="0" {% if not program.is_published %}selected{% endif %}>لا</option>
+            <option value="1" {% if program.is_published and not program.publish_conditions_only %}selected{% endif %}>نعم</option>
+            <option value="2" {% if program.is_published and program.publish_conditions_only %}selected{% endif %}>حسب الشروط فقط</option>
+          </select>
+          <div class="form-text">
+            <div>إذا نعم: يظهر لمن لديه صلاحية الوصول للتدريب.</div>
+            <div>حسب الشروط فقط: يظهر ويُعمَّم فقط لمن تنطبق عليهم شروط الانتساب.</div>
+          </div>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">بداية الترشيح</label>
+          <input type="date" name="nomination_start" value="{{ program.nomination_start or '' }}" class="form-control">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">نهاية الترشيح</label>
+          <input type="date" name="nomination_end" value="{{ program.nomination_end or '' }}" class="form-control">
+        </div>
+
+        <div class="col-12"><hr></div>
+
+        <div class="col-12">
+          <div class="alert alert-info mb-0">
+            <div class="fw-bold mb-1">ملاحظة</div>
+            الإعدادات التالية يمكن ضبطها على مستوى التدريب أو تركها "تطبق على النظام".
+          </div>
+        </div>
+
+        {% macro tri_select(name, label, current, sys_default) -%}
+          <div class="col-md-4">
+            <label class="form-label">{{ label }}</label>
+            <select name="{{ name }}" class="form-select">
+              <option value="" {% if current is none %}selected{% endif %}>تطبق على النظام ({{ 'نعم' if sys_default else 'لا' }})</option>
+              <option value="1" {% if current is not none and current %}selected{% endif %}>نعم</option>
+              <option value="0" {% if current is not none and (not current) %}selected{% endif %}>لا</option>
+            </select>
+          </div>
+        {%- endmacro %}
+
+        {{ tri_select('require_manager_approval', 'هل الترشيح يتطلب موافقة المسؤول المباشر؟', program.require_manager_approval, sys_defaults.require_manager_approval) }}
+        {{ tri_select('needs_training_needs_window', 'نافذة إدخال الاحتياجات التدريبية (مفتوحة؟)', program.needs_training_needs_window, sys_defaults.needs_training_needs_window) }}
+        {{ tri_select('employee_notifications_enabled', 'الإشعارات للموظفين (فعالة؟)', program.employee_notifications_enabled, sys_defaults.employee_notifications_enabled) }}
+        {{ tri_select('apply_conditions_on_portal', 'تطبيق الشروط عند الانتساب على البوابة (فعال؟)', program.apply_conditions_on_portal, sys_defaults.apply_conditions_on_portal) }}
+        {{ tri_select('apply_conditions_in_program', 'تطبيق الشروط عند التنسيب ضمن البرنامج (فعال؟)', program.apply_conditions_in_program, sys_defaults.apply_conditions_in_program) }}
+
+        <div class="col-12">
+          <button type="submit" class="btn btn-primary">حفظ ومتابعة</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

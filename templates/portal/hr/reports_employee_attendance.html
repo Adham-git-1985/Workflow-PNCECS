@@ -1,0 +1,97 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير دوام موظف{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-person-lines-fill"></i> تقرير دوام موظف</h4>
+      <div class="text-muted">تفاصيل يومية لموظف ضمن نطاق تاريخ.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export and selected_user_id %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_employee_attendance', user_id=selected_user_id, work_location_id=selected_work_location_id, from_date=from_date, to_date=to_date, export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-5">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id" required>
+        <option value="">اختر...</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user_id==u.id %}selected{% endif %}>{{ u.full_name or u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">بدون اختيار</option>
+        {% for x in work_locations %}
+          <option value="{{ x.id }}" {% if selected_work_location_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from_date" value="{{ from_date }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to_date" value="{{ to_date }}">
+    </div>
+    <div class="col-md-12">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div class="text-muted small">عدد النتائج: {{ rows|length }}</div>
+    {% if selected_user %}
+      <div class="fw-bold">{{ selected_user.full_name or selected_user.name or selected_user.email }}</div>
+    {% endif %}
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>التاريخ</th>
+          <th>أول دخول</th>
+          <th>آخر خروج</th>
+          <th>ساعات العمل</th>
+          <th>تأخير (دقيقة)</th>
+          <th>خروج مبكر (دقيقة)</th>
+          <th>عمل إضافي (دقيقة)</th>
+          <th>الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in rows %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ a.day }}</td>
+            <td>{{ a.first_in.strftime('%H:%M') if a.first_in else '—' }}</td>
+            <td>{{ a.last_out.strftime('%H:%M') if a.last_out else '—' }}</td>
+            <td>{{ '%.2f'|format((a.work_minutes or 0)/60.0) }}</td>
+            <td>{{ a.late_minutes or 0 }}</td>
+            <td>{{ a.early_leave_minutes or 0 }}</td>
+            <td>{{ a.overtime_minutes or 0 }}</td>
+            <td>{{ a.status or '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

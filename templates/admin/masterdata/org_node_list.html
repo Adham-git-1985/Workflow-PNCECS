@@ -1,0 +1,105 @@
+{% extends "layout.html" %}
+{% block content %}
+
+{% set _q = q or '' %}
+{% set _type_id = type_id or '' %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🌳 عناصر الهيكلية (Dynamic)</h3>
+    <small class="text-muted">إدارة عناصر الهيكلية واختيار الأب عبر شجرة</small>
+    <div class="d-flex flex-wrap gap-2 align-items-center small mt-1">
+      <span class="text-muted">آخر مزامنة: <b>{{ last_sync or '—' }}</b></span>
+      <span class="badge {% if legacy_locked %}bg-danger{% else %}bg-success{% endif %}">
+        {% if legacy_locked %}🔒 الهيكلية الثابتة مقفلة{% else %}🔓 الهيكلية الثابتة غير مقفلة{% endif %}
+      </span>
+    </div>
+    {% if legacy_locked %}
+      <div class="alert alert-warning small mt-2 mb-0">
+        الهيكلية الثابتة مقفلة (قراءة فقط). إنشاء/تعديل العناصر هنا (Dynamic) لا يتأثر بالقفل.
+      </div>
+    {% endif %}
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#mdOrgNodesPrint')">🖨️ طباعة</button>
+    <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">❓ دليل الهيكلية</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.org_node_types_list') }}">🧱 أنواع الهيكلية</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.org_nodes_new') }}">➕ إضافة عنصر</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <form method="get" class="mb-3">
+      <div class="row g-2">
+        <div class="col-md-4">
+          <input class="form-control" type="text" name="q" value="{{ _q }}" placeholder="ابحث بالاسم أو الكود…">
+        </div>
+        <div class="col-md-3">
+          <select class="form-select" name="type_id">
+            <option value="">— كل الأنواع —</option>
+            {% for t in types %}
+              <option value="{{ t.id }}" {% if _type_id|int == t.id %}selected{% endif %}>{{ t.name_ar }} ({{ t.code }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-5 d-flex gap-2">
+          <button class="btn btn-outline-secondary" type="submit">بحث</button>
+          <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+          <a class="btn btn-outline-primary" href="{{ url_for('masterdata.org_nodes_new', type_id=_type_id) }}">➕ إضافة لنفس النوع</a>
+        </div>
+      </div>
+    </form>
+
+    {% if items %}
+      <div id="mdOrgNodesPrint" class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>النوع</th>
+              <th>الاسم (AR)</th>
+              <th>الأب</th>
+              <th>Code</th>
+              <th>ترتيب</th>
+              <th>نشط</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for n in items %}
+              <tr>
+                <td>{{ n.id }}</td>
+                <td>
+                  {% if n.type %}
+                    <span class="badge bg-primary-subtle text-primary border">{{ n.type.name_ar }}</span>
+                    <small class="text-muted">({{ n.type.code }})</small>
+                  {% else %}-{% endif %}
+                </td>
+                <td>{{ n.name_ar }}</td>
+                <td>{% if n.parent %}{{ n.parent.name_ar }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{{ n.code or '-' }}</td>
+                <td>{{ n.sort_order or 0 }}</td>
+                <td>{% if n.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.org_nodes_edit', node_id=n.id) }}">✏️ تعديل</a>
+                  {% if current_user.has_perm('MASTERDATA_DELETE') %}
+                  <form method="post" action="{{ url_for('masterdata.org_nodes_delete', node_id=n.id) }}" class="d-inline" onsubmit="return confirm('هل أنت متأكد؟ إذا كان هناك أبناء سيتم تعطيل العنصر بدلاً من حذفه.');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}

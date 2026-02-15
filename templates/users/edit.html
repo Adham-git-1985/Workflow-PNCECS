@@ -1,0 +1,168 @@
+{% extends "layout.html" %}
+{% block title %}تعديل مستخدم{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+  <div>
+    <h3 class="mb-1">✏️ تعديل المستخدم</h3>
+    <div class="text-muted small">
+      <span>{{ u.email }}</span>
+      <span class="mx-2">•</span>
+      <span>الدور:</span>
+      <span class="badge text-bg-dark ms-1">{{ u.role }}</span>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    {% if is_super_admin %}
+      <a class="btn btn-outline-dark" href="{{ url_for('users.manage_user', user_id=u.id) }}">⚙️ إدارة متقدمة</a>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('users.list_users') }}">← رجوع</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <form method="post" novalidate>
+
+    <div class="card-body">
+      <div class="row g-3">
+
+        <!-- Basic Info -->
+        <div class="col-lg-5">
+          <div class="border rounded-3 p-3 h-100 bg-body-tertiary">
+            <div class="d-flex align-items-center justify-content-between mb-3">
+              <h5 class="mb-0">👤 البيانات الأساسية</h5>
+              <span class="badge text-bg-secondary">معلومات المستخدم</span>
+            </div>
+
+            <div class="row g-3">
+              <div class="col-12">
+                <label class="form-label">الاسم</label>
+                <input type="text" class="form-control" name="name" value="{{ u.name or '' }}" placeholder="اسم الموظف (اختياري)">
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">المسمى الوظيفي</label>
+                <input type="text" class="form-control" name="job_title" value="{{ u.job_title or '' }}" placeholder="المسمى الوظيفي (اختياري)">
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">البريد الإلكتروني</label>
+                <input type="email" class="form-control" name="email" value="{{ u.email or '' }}" placeholder="example@pncecs.org">
+                <div class="form-text">تأكد أن البريد فريد وغير مستخدم لموظف آخر.</div>
+              </div>
+
+              <div class="col-12">
+                <div class="d-flex align-items-center justify-content-between">
+                  <label class="form-label mb-0">إعادة تعيين كلمة المرور (اختياري)</label>
+                  <span class="badge text-bg-warning">حساس</span>
+                </div>
+                <input type="password" class="form-control" name="new_password" placeholder="اتركه فارغاً بدون تغيير">
+                <div class="form-text">عند إدخال كلمة مرور جديدة سيتم تغييرها فور الحفظ.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Org Assignment -->
+        <div class="col-lg-7">
+          <div class="border rounded-3 p-3 h-100">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <h5 class="mb-0">🏢 التعيين على الهيكل التنظيمي</h5>
+              <span class="badge text-bg-secondary">اختياري</span>
+            </div>
+
+            <p class="text-muted small mb-3">
+              اختر <b>أدنى مستوى</b> تعرفه (مثل الشعبة أو القسم)، وسيتم استنتاج المستويات الأعلى تلقائياً عند الحفظ إن أمكن.
+            </p>
+
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label">الإدارة (Directorate)</label>
+                <select class="form-select" name="directorate_id">
+                  <option value="">— بدون —</option>
+                  {% for dr in directorates %}
+                    <option value="{{ dr.id }}" {% if u.directorate_id == dr.id %}selected{% endif %}>
+                      {{ dr.name_ar }}{% if dr.code %} ({{ dr.code }}){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">
+                  تُستخدم هذه القيمة لمهام <b>رئيس إدارة / نائب رئيس إدارة</b> في خطوات المسار من نوع <b>DIRECTORATE</b>.
+                </div>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">الوحدة (Unit)</label>
+                <select class="form-select" name="unit_id">
+                  <option value="">— بدون —</option>
+                  {% for un in units %}
+                    <option value="{{ un.id }}" {% if u.unit_id == un.id %}selected{% endif %}>
+                      {{ un.name_ar }}{% if un.code %} ({{ un.code }}){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">الدائرة (Department)</label>
+                <select class="form-select" name="department_id">
+                  <option value="">— بدون —</option>
+                  {% for d in departments %}
+                    <option value="{{ d.id }}" {% if u.department_id == d.id %}selected{% endif %}>
+                      {{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label">القسم (Section)</label>
+                <select class="form-select" name="section_id">
+                  <option value="">— بدون —</option>
+                  {% for s in sections %}
+                    <option value="{{ s.id }}" {% if u.section_id == s.id %}selected{% endif %}>
+                      {{ s.name_ar }}{% if s.code %} ({{ s.code }}){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">الشعبة (Division)</label>
+                <select class="form-select" name="division_id">
+                  <option value="">— بدون —</option>
+                  {% for dv in divisions %}
+                    <option value="{{ dv.id }}" {% if u.division_id == dv.id %}selected{% endif %}>
+                      {{ dv.name_ar }}{% if dv.code %} ({{ dv.code }}){% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">
+                  ملاحظة: عند اختيار <b>الشعبة</b> أو <b>القسم</b> سيتم استنتاج المستوى الأعلى (الدائرة/الإدارة/الوحدة) تلقائياً عند الحفظ.
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="card-footer bg-transparent d-flex flex-wrap gap-2 justify-content-between align-items-center">
+      <div class="text-muted small">
+        <span class="me-2">ID: {{ u.id }}</span>
+        <span class="mx-2">•</span>
+        <span>يمكنك حفظ التغييرات أو الإلغاء.</span>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary px-4">💾 حفظ التغييرات</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('users.list_users') }}">إلغاء</a>
+      </div>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

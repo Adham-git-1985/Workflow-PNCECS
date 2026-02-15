@@ -1,0 +1,212 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تعيين الموظفين على الهيكل التنظيمي{% endblock %}
+
+{% block head %}
+<style>
+  .w-220{min-width:220px}
+</style>
+{% endblock %}
+
+{% block hr_content %}
+<div id="orgAssignmentsPrint" class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-people"></i> تعيين الموظفين على الهيكل التنظيمي</h5>
+      <div class="text-muted small">
+        هذا التعيين خاص بالبوابة الإدارية (Portal) ولا يؤثر على تعيينات مسار.
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#orgAssignmentsPrint')">
+        <i class="bi bi-printer"></i> طباعة
+      </button>
+      <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_hr_guide') }}" target="_blank">
+        <i class="bi bi-question-circle"></i> الدليل
+      </a>
+
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_org_structure') }}"><i class="bi bi-arrow-right"></i> العودة للهيكل</a>
+    </div>
+  </div>
+
+  <div class="border rounded-3 p-3 mb-4">
+    <h6 class="mb-3">إضافة/تحديث تعيين</h6>
+    <form method="post" action="{{ url_for('portal.hr_org_assignments_save') }}" class="row g-3 align-items-end">
+      <div class="col-12 col-lg-4">
+        <label class="form-label">الموظف</label>
+        <select name="user_id" class="form-select" required>
+          <option value="">— اختر —</option>
+          {% for u in users %}
+            <option value="{{ u.id }}">{{ u.full_name }}{% if u.email %} ({{ u.email }}){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12 col-lg-2">
+        <label class="form-label">نوع الوحدة</label>
+        <select name="unit_type" id="unit_type" class="form-select" required>
+          <option value="">—</option>
+          <option value="ORGANIZATION">مؤسسة</option>
+          <option value="DIRECTORATE">إدارة</option>
+          <option value="UNIT">وحدة</option>
+          <option value="DEPARTMENT">دائرة</option>
+          <option value="SECTION">قسم</option>
+          <option value="TEAM">فريق</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-lg-4">
+        <label class="form-label">الوحدة</label>
+        <input type="hidden" name="unit_id" id="unit_id" value="">
+
+        <select id="sel_org" class="form-select unit-sel" style="display:none;">
+          <option value="">—</option>
+          {% for o in orgs %}
+            <option value="{{ o.id }}">{{ o.name_ar }}</option>
+          {% endfor %}
+        </select>
+
+        <select id="sel_dir" class="form-select unit-sel" style="display:none;">
+          <option value="">—</option>
+          {% for d in directorates %}
+            <option value="{{ d.id }}">{{ d.name_ar }}</option>
+          {% endfor %}
+        </select>
+
+        <select id="sel_unit" class="form-select unit-sel" style="display:none;">
+          <option value="">—</option>
+          {% for u in units %}
+            <option value="{{ u.id }}">{{ u.name_ar }}</option>
+          {% endfor %}
+        </select>
+
+        <select id="sel_dep" class="form-select unit-sel" style="display:none;">
+          <option value="">—</option>
+          {% for d in departments %}
+            <option value="{{ d.id }}">{{ d.name_ar }}</option>
+          {% endfor %}
+        </select>
+
+        <select id="sel_sec" class="form-select unit-sel" style="display:none;">
+          <option value="">—</option>
+          {% for s in sections %}
+            <option value="{{ s.id }}">{{ s.name_ar }}</option>
+          {% endfor %}
+        </select>
+
+        <select id="sel_team" class="form-select unit-sel" style="display:none;">
+          <option value="">—</option>
+          {% for t in teams %}
+            <option value="{{ t.id }}">{{ t.name_ar }}</option>
+          {% endfor %}
+        </select>
+
+        <div class="text-muted small mt-1">اختر نوع الوحدة ثم اختر الوحدة المطلوبة.</div>
+      </div>
+
+      <div class="col-12 col-lg-2">
+        <label class="form-label">المسمّى/ملاحظة (اختياري)</label>
+        <input name="title" class="form-control" placeholder="مثال: موظف، منسق...">
+      </div>
+
+      <div class="col-12 col-lg-2">
+        <div class="form-check mt-4">
+          <input class="form-check-input" type="checkbox" id="is_primary" name="is_primary" value="1">
+          <label class="form-check-label" for="is_primary">تعيين أساسي</label>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-2">
+        <button class="btn btn-primary w-100"><i class="bi bi-save"></i> حفظ</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+    <h6 class="mb-0">التعيينات الحالية</h6>
+    <div class="text-muted small">تلميح: اجعل تعيين واحد "أساسي" ليُستخدم في سلسلة المدراء.</div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th class="w-220">{{ portal_sort_link('الموظف', 'user') }}</th>
+          <th>{{ portal_sort_link('الوحدة', 'unit_label') }}</th>
+          <th>{{ portal_sort_link('نوع', 'unit_type') }}</th>
+          <th>أساسي</th>
+          <th class="text-muted">{{ portal_sort_link('ملاحظة', 'title') }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td class="fw-semibold">{{ r.user.full_name }}</td>
+            <td>{{ r.unit_label }}</td>
+            <td class="text-muted">{{ r.unit_type }}</td>
+            <td>
+              {% if r.is_primary %}
+                <span class="badge bg-success">نعم</span>
+              {% else %}
+                <span class="badge bg-light text-dark border">لا</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ r.title or '—' }}</td>
+            <td class="text-end">
+              <form method="post" action="{{ url_for('portal.hr_org_assignments_delete', assign_id=r.id) }}" onsubmit="return confirm('حذف التعيين؟');">
+                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        {% if rows|length == 0 %}
+          <tr>
+            <td colspan="6" class="text-muted">لا توجد تعيينات بعد.</td>
+          </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  const unitType = document.getElementById('unit_type');
+  const unitId = document.getElementById('unit_id');
+  const sels = {
+    'ORGANIZATION': document.getElementById('sel_org'),
+    'DIRECTORATE': document.getElementById('sel_dir'),
+    'UNIT': document.getElementById('sel_unit'),
+    'DEPARTMENT': document.getElementById('sel_dep'),
+    'SECTION': document.getElementById('sel_sec'),
+    'TEAM': document.getElementById('sel_team'),
+  };
+
+  function hideAll() {
+    Object.values(sels).forEach(el => { if (el) el.style.display = 'none'; });
+  }
+
+  function syncUnitId() {
+    const t = (unitType.value || '').toUpperCase();
+    const sel = sels[t];
+    if (!sel) { unitId.value = ''; return; }
+    unitId.value = sel.value || '';
+  }
+
+  function onTypeChange() {
+    hideAll();
+    const t = (unitType.value || '').toUpperCase();
+    const sel = sels[t];
+    if (sel) {
+      sel.style.display = '';
+      sel.value = '';
+    }
+    unitId.value = '';
+  }
+
+  unitType?.addEventListener('change', onTypeChange);
+  Object.values(sels).forEach(el => el?.addEventListener('change', syncUnitId));
+
+  // init
+  onTypeChange();
+</script>
+{% endblock %}

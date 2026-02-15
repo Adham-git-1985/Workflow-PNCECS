@@ -1,0 +1,71 @@
+{% extends "layout.html" %}
+{% block title %}سجل الطلب{% endblock %}
+
+{% block extra_css %}
+<style>
+  .timeline-item {
+      border-right: 4px solid #dee2e6;
+      padding-right: 15px;
+      margin-bottom: 20px;
+  }
+  .timeline-item:last-child { margin-bottom: 0; }
+  .timeline-date { font-size: 0.85rem; color: #6c757d; }
+  .timeline-action { font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4 mb-5">
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">🧾 السجل الزمني للطلب رقم {{ req.id }}</h5>
+
+            <a href="{{ url_for('workflow.request_pdf', request_id=req.id) }}" class="btn btn-sm btn-light">
+                📄 تحميل التقرير PDF
+            </a>
+        </div>
+
+        <div class="card-body">
+
+            <div class="mb-3">
+                <a href="{{ url_for('workflow.view_request', request_id=req.id) }}" class="btn btn-sm btn-outline-primary">
+                    ← الرجوع إلى الطلب
+                </a>
+            </div>
+
+            {% if logs %}
+            <div class="list-group list-group-flush">
+                {% for log in logs %}
+                <div class="timeline-item">
+                    <div class="timeline-date mb-1">{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+
+                    <div class="timeline-action">{{ log.action }}</div>
+
+                    <div class="mt-1">
+                        <strong>من:</strong>
+                        {{ log.user.email if log.user else "النظام" }}
+                    </div>
+
+                    <div>
+                        <strong>الحالة:</strong>
+                        {{ log.old_status or "—" }} → {{ log.new_status or "—" }}
+                    </div>
+
+                    {% if log.note %}
+                    <div class="mt-1 text-muted"><em>ملاحظة:</em> {{ log.note }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="alert alert-light text-center text-muted mb-0">
+                لا يوجد سجل زمني لهذا الطلب
+            </div>
+            {% endif %}
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}

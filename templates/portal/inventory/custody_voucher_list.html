@@ -1,0 +1,101 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set selected = selected if selected is defined else {} %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">سجل سندات العهدة</h5>
+  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_custody_voucher_new') }}"><i class="bi bi-plus"></i> إدخال سند</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">رقم السند</label>
+        <input name="voucher_no" class="form-control" value="{{ selected.voucher_no|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="from_date" class="form-control" value="{{ selected.from_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="to_date" class="form-control" value="{{ selected.to_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">نوع الحامل</label>
+        <select name="holder_kind" class="form-select">
+          <option value="">بدون تحديد</option>
+          <option value="EMPLOYEE" {% if selected.holder_kind=='EMPLOYEE' %}selected{% endif %}>موظف</option>
+          <option value="ROOM" {% if selected.holder_kind=='ROOM' %}selected{% endif %}>غرفة</option>
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">الموظف</label>
+        <select name="holder_user_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if selected.holder_user_id==u.id %}selected{% endif %}>{{ u.full_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">الغرفة</label>
+        <select name="holder_room_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for r in rooms %}
+            <option value="{{ r.id }}" {% if selected.holder_room_id==r.id %}selected{% endif %}>{{ r.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_custody_voucher_list') }}">تفريغ</a>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>التاريخ</th>
+            <th>رقم السند</th>
+            <th>الحامل</th>
+            <th>ملاحظات</th>
+            <th style="width:120px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in rows %}
+          <tr>
+            <td>{{ v.voucher_date }}</td>
+            <td>{{ v.voucher_no }}</td>
+            <td>
+              {% if v.holder_kind=='ROOM' %}
+                <span class="badge text-bg-secondary">غرفة</span> {{ v.holder_room.label if v.holder_room else '-' }}
+              {% else %}
+                <span class="badge text-bg-info">موظف</span> {{ v.holder_user.full_name if v.holder_user else '-' }}
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ v.note or '' }}</td>
+            <td class="text-center">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_custody_voucher_view', v_id=v.id) }}">عرض</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted">لا توجد نتائج</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

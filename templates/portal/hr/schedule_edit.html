@@ -1,0 +1,72 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تعديل جدول دوام{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-pencil-square"></i> تعديل جدول دوام</h4>
+  <div class="text-muted">قم بتعديل بيانات الجدول ثم احفظ.</div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="post">
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <label class="form-label">اسم الجدول</label>
+        <input class="form-control" name="name" value="{{ row.name }}" required>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">النوع</label>
+        <select class="form-select" name="kind">
+          {% set k = row.kind or 'FIXED' %}
+          <option value="FIXED" {% if k=='FIXED' %}selected{% endif %}>ثابت FIXED</option>
+          <option value="FLEX" {% if k=='FLEX' %}selected{% endif %}>مرن FLEX</option>
+          <option value="SHIFT" {% if k=='SHIFT' %}selected{% endif %}>مناوبات SHIFT</option>
+          <option value="RAMADAN" {% if k=='RAMADAN' %}selected{% endif %}>رمضان RAMADAN</option>
+          <option value="REMOTE" {% if k=='REMOTE' %}selected{% endif %}>عمل عن بعد REMOTE</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">بداية (HH:MM)</label>
+        <input class="form-control" name="start_time" value="{{ row.start_time or '' }}" placeholder="08:00">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">نهاية (HH:MM)</label>
+        <input class="form-control" name="end_time" value="{{ row.end_time or '' }}" placeholder="15:00">
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">دقائق مطلوبة (مرن)</label>
+        <input class="form-control" name="required_minutes" type="number" min="0" value="{{ row.required_minutes or '' }}">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">استراحة (دقيقة)</label>
+        <input class="form-control" name="break_minutes" type="number" min="0" value="{{ row.break_minutes or 0 }}">
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">سماح (دقيقة)</label>
+        <input class="form-control" name="grace_minutes" type="number" min="0" value="{{ row.grace_minutes or 0 }}">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">بدء الإضافي بعد (دقيقة)</label>
+        <input class="form-control" name="overtime_threshold_minutes" type="number" min="0" value="{{ row.overtime_threshold_minutes or '' }}">
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">نشط</label>
+        <select class="form-select" name="is_active">
+          <option value="1" {% if row.is_active %}selected{% endif %}>نعم</option>
+          <option value="0" {% if not row.is_active %}selected{% endif %}>لا</option>
+        </select>
+      </div>
+
+      <div class="col-12 d-flex gap-2 flex-wrap">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

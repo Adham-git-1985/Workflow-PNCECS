@@ -1,0 +1,141 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}مغادراتي{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-door-open"></i> مغادراتي</h4>
+      <div class="text-muted">قدّم طلب مغادرة وتابع حالته بسهولة.</div>
+    </div>
+    {% if can_create %}
+      <a class="btn btn-primary" href="{{ url_for('portal.hr_permission_request_new') }}">
+        <i class="bi bi-plus-circle"></i> طلب مغادرة جديد
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{% if can_requests %}
+  <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+    <div class="fw-semibold mb-2">طلباتي (مغادرات)</div>
+
+    {% if reqs and reqs|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th style="width: 70px;">#</th>
+              <th>{{ portal_sort_link('النوع', 'permission_type') }}</th>
+              <th>{{ portal_sort_link('التاريخ', 'day') }}</th>
+              <th>{{ portal_sort_link('من', 'from_time') }}</th>
+              <th>{{ portal_sort_link('إلى', 'to_time') }}</th>
+              <th>{{ portal_sort_link('ساعات', 'hours') }}</th>
+              <th>الحالة</th>
+              <th>{{ portal_sort_link('المدير', 'approver_user') }}</th>
+              <th style="width: 120px;">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in reqs %}
+              {% set st = (r.status or '').upper() %}
+              {% set badge = 'secondary' %}
+              {% if st == 'SUBMITTED' %}{% set badge = 'warning' %}{% endif %}
+              {% if st == 'APPROVED' %}{% set badge = 'success' %}{% endif %}
+              {% if st == 'REJECTED' %}{% set badge = 'danger' %}{% endif %}
+              {% if st == 'CANCELLED' %}{% set badge = 'secondary' %}{% endif %}
+
+              <tr>
+                <td class="text-muted">{{ r.id }}</td>
+                <td class="fw-semibold">{{ r.permission_type.name_ar if r.permission_type else '-' }}</td>
+                <td>{{ r.day }}</td>
+                <td>{{ r.from_time or '-' }}</td>
+                <td>{{ r.to_time or '-' }}</td>
+                <td>{{ r.hours or '-' }}</td>
+                <td><span class="badge bg-{{ badge }}">{{ st }}</span></td>
+                <td class="text-muted small">
+                  {% if r.approver_user %}
+                    {{ r.approver_user.full_name }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td>
+                  {% if st in ['SUBMITTED', 'DRAFT'] %}
+                    <form method="post" action="{{ url_for('portal.hr_permission_request_cancel', req_id=r.id) }}" onsubmit="return confirm('هل تريد إلغاء الطلب؟');">
+                      <button class="btn btn-sm btn-outline-danger" type="submit">
+                        <i class="bi bi-x-circle"></i> إلغاء
+                      </button>
+                    </form>
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+              </tr>
+
+              {% if r.decision_note %}
+                <tr>
+                  <td></td>
+                  <td colspan="8" class="small text-muted">
+                    <i class="bi bi-chat-left-text"></i> {{ r.decision_note }}
+                  </td>
+                </tr>
+              {% endif %}
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا يوجد طلبات بعد.</div>
+    {% endif %}
+  </div>
+{% endif %}
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center">
+    <div class="fw-semibold">أنواع المغادرات</div>
+    <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#permTypes" aria-expanded="false">
+      <i class="bi bi-chevron-down"></i> عرض/إخفاء
+    </button>
+  </div>
+
+  <div class="collapse mt-2" id="permTypes">
+    {% if types and types|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>{{ portal_sort_link('الاسم', 'name_ar') }}</th>
+              <th>{{ portal_sort_link('الرمز', 'code') }}</th>
+              <th>{{ portal_sort_link('الحد الأقصى (ساعات)', 'max_hours') }}</th>
+              <th>يتطلب موافقة</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in types %}
+              <tr>
+                <td class="fw-semibold">{{ t.name_ar }}</td>
+                <td class="text-muted small">{{ t.code }}</td>
+                <td>{{ t.max_hours or '-' }}</td>
+                <td>
+                  {% if t.requires_approval is false %}
+                    <span class="badge bg-success">لا</span>
+                  {% else %}
+                    <span class="badge bg-warning text-dark">نعم</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا يوجد أنواع مُعرّفة حالياً.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="mt-3">
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_me_home') }}"><i class="bi bi-arrow-right"></i> العودة</a>
+</div>
+{% endblock %}

@@ -1,0 +1,99 @@
+{% extends "portal/layout.html" %}
+{% block title %}إذن حركة جديد{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-file-earmark-plus"></i> إذن حركة جديد</h5>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_transport_guide') }}" target="_blank">
+      <i class="bi bi-book"></i> دليل الحركة
+    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_permits') }}">رجوع</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">سبب/غرض الحركة *</label>
+      <input class="form-control" name="purpose" required placeholder="مثال: مهمة رسمية / توصيل وثائق / ...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">السيارة</label>
+      <select class="form-select" name="vehicle_id">
+        <option value="">—</option>
+        {% for v in vehicles %}
+          <option value="{{ v.id }}">{{ v.plate_no }}{% if v.label %} — {{ v.label }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">السائق</label>
+      <select class="form-select" name="driver_id">
+        <option value="">—</option>
+        {% for d in drivers %}
+          <option value="{{ d.id }}">{{ d.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">من (منطقة)</label>
+      <select class="form-select" name="origin_zone_id">
+        <option value="">—</option>
+        {% for z in zones %}
+          <option value="{{ z.id }}">{{ z.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">أو اكتبها يدوياً:</div>
+      <input class="form-control" name="origin_text" placeholder="نص حر">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إلى (منطقة)</label>
+      <select class="form-select" name="dest_zone_id">
+        <option value="">—</option>
+        {% for z in zones %}
+          <option value="{{ z.id }}">{{ z.name }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">أو اكتبها يدوياً:</div>
+      <input class="form-control" name="dest_text" placeholder="نص حر">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">وقت الانطلاق</label>
+      <input class="form-control" type="datetime-local" name="depart_at">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">وقت العودة</label>
+      <input class="form-control" type="datetime-local" name="return_at">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">عدد الركاب</label>
+      <input class="form-control" type="number" min="0" name="passengers_count">
+    </div>
+    <div class="col-md-9">
+      <label class="form-label">ملاحظات</label>
+      <input class="form-control" name="note" placeholder="أي تفاصيل إضافية...">
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">إرسال للاعتماد</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_permits') }}">إلغاء</a>
+      <a class="btn btn-outline-secondary ms-auto" href="{{ url_for('users.help_transport_guide') }}" target="_blank">
+        <i class="bi bi-book"></i> دليل الحركة
+      </a>
+    </div>
+
+    <div class="col-12">
+      <div class="alert alert-info mb-0">
+        <b>ملاحظة:</b> تم تجهيز الأساسيات لبدء العمل فوراً. يمكن لاحقاً إضافة مرفقات، وتحديد المسار بدقة (Multi-stops)، وتوليد رقم مرجعي تلقائي.
+      </div>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

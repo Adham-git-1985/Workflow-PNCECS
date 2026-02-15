@@ -1,0 +1,195 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">🧑‍🤝‍🧑 {% if can_manage %}إدارة التفويضات{% else %}تفويضي{% endif %}</h3>
+    <small class="text-muted">تحديد تفويض بتاريخ محدد أو لمدة (عدد أيام) أو بوقت انتهاء (Expiry).</small>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-light">
+    <strong>إنشاء تفويض جديد</strong>
+  </div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('delegation.create') }}" class="row g-3">
+      {% if can_manage %}
+      <div class="col-md-4">
+        <label class="form-label">المستخدم الأصيل (Delegator)</label>
+        <select name="from_user_id" class="form-select" required>
+          <option value="">— اختر —</option>
+          {% for u in users %}
+            {% if u.id != current_user.id %}
+              <option value="{{ u.id }}">{{ u.email }}{% if u.name %} — {{ u.name }}{% endif %}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="col-md-4">
+        <label class="form-label">المستخدم الأصيل (Delegator)</label>
+        <input type="text" class="form-control" value="{{ current_user.email }}{% if current_user.name %} — {{ current_user.name }}{% endif %}" disabled>
+        <input type="hidden" name="from_user_id" value="{{ current_user.id }}">
+      </div>
+      {% endif %}
+
+      <div class="col-md-4">
+        <label class="form-label">المفوّض إليه (Delegatee)</label>
+        <select name="to_user_id" class="form-select" required>
+          <option value="">— اختر —</option>
+          {% for u in users %}
+            {% if u.id != current_user.id %}
+              <option value="{{ u.id }}">{{ u.email }}{% if u.name %} — {{ u.name }}{% endif %}</option>
+            {% endif %}
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">طريقة تحديد المدة</label>
+        <select name="mode" id="modeSelect" class="form-select">
+          <option value="days" selected>عدد أيام</option>
+          <option value="day">يوم محدد</option>
+          <option value="expiry">Expiry (وقت بداية/نهاية)</option>
+        </select>
+      </div>
+
+      <!-- days -->
+      <div class="col-md-4 mode mode-days">
+        <label class="form-label">تاريخ البداية</label>
+        <input type="date" name="start_day" class="form-control">
+      </div>
+      <div class="col-md-4 mode mode-days">
+        <label class="form-label">عدد الأيام</label>
+        <input type="number" name="days_count" min="1" class="form-control" placeholder="مثال: 3">
+      </div>
+
+      <!-- day -->
+      <div class="col-md-4 mode mode-day d-none">
+        <label class="form-label">اليوم</label>
+        <input type="date" name="day" class="form-control">
+      </div>
+
+      <!-- expiry -->
+      <div class="col-md-4 mode mode-expiry d-none">
+        <label class="form-label">بداية (datetime)</label>
+        <input type="datetime-local" name="start_dt" class="form-control">
+      </div>
+      <div class="col-md-4 mode mode-expiry d-none">
+        <label class="form-label">نهاية (datetime)</label>
+        <input type="datetime-local" name="end_dt" class="form-control">
+      </div>
+
+      <div class="col-md-12">
+        <label class="form-label">ملاحظة (اختياري)</label>
+        <textarea name="note" rows="2" class="form-control" placeholder="سبب التفويض أو تعليمات..."></textarea>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">
+          <i class="bi bi-check2-circle"></i>
+          إنشاء التفويض
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-light">
+    <strong>قائمة التفويضات</strong>
+  </div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>الأصيل</th>
+            <th>المفوّض إليه</th>
+            <th>البداية</th>
+            <th>الانتهاء</th>
+            <th>الحالة</th>
+            <th class="text-end">إجراء</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for d in delegations %}
+          {% set status = "منتهي" %}
+          {% set badge = "secondary" %}
+          {% if not d.is_active %}
+            {% set status = "ملغى" %}
+            {% set badge = "danger" %}
+          {% else %}
+            {% if d.starts_at and d.expires_at and now >= d.starts_at and now <= d.expires_at %}
+              {% set status = "نشط" %}
+              {% set badge = "success" %}
+            {% elif d.starts_at and now < d.starts_at %}
+              {% set status = "قادم" %}
+              {% set badge = "warning" %}
+            {% else %}
+              {% set status = "منتهي" %}
+              {% set badge = "secondary" %}
+            {% endif %}
+          {% endif %}
+
+          <tr>
+            <td>{{ d.id }}</td>
+            <td>
+              {% if d.from_user %}<strong>{{ d.from_user.email }}</strong>{% else %}#{{ d.from_user_id }}{% endif %}
+            </td>
+            <td>
+              {% if d.to_user %}<strong>{{ d.to_user.email }}</strong>{% else %}#{{ d.to_user_id }}{% endif %}
+            </td>
+            <td>{{ d.starts_at.strftime("%Y-%m-%d %H:%M") if d.starts_at else "-" }}</td>
+            <td>{{ d.expires_at.strftime("%Y-%m-%d %H:%M") if d.expires_at else "-" }}</td>
+            <td><span class="badge bg-{{ badge }}">{{ status }}</span></td>
+            <td class="text-end">
+              {% if d.is_active %}
+                <form method="post" action="{{ url_for('delegation.revoke', delegation_id=d.id) }}" onsubmit="return confirm('هل تريد إلغاء هذا التفويض؟');">
+                  <button class="btn btn-sm btn-outline-danger">
+                    <i class="bi bi-x-circle"></i>
+                    إلغاء
+                  </button>
+                </form>
+              {% else %}
+                <span class="text-muted small">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% if d.note %}
+            <tr class="table-light">
+              <td></td>
+              <td colspan="6">
+                <small class="text-muted">📝 {{ d.note }}</small>
+              </td>
+            </tr>
+          {% endif %}
+        {% else %}
+          <tr>
+            <td colspan="7" class="text-center py-4 text-muted">لا توجد تفويضات.</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const mode = document.getElementById('modeSelect');
+  const toggle = () => {
+    const v = (mode.value || 'days');
+    document.querySelectorAll('.mode').forEach(el => el.classList.add('d-none'));
+    document.querySelectorAll('.mode-' + v).forEach(el => el.classList.remove('d-none'));
+  };
+  if (mode) {
+    mode.addEventListener('change', toggle);
+    toggle();
+  }
+})();
+</script>
+
+{% endblock %}

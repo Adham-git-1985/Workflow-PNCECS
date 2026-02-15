@@ -1,0 +1,160 @@
+{% extends 'portal/hr/base.html' %}
+
+{% block title %}لوحة تحكم التدريب{% endblock %}
+
+{% block hr_content %}
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <h4 class="mb-0">لوحة تحكم التدريب</h4>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_training_log') }}">رجوع لسجل التدريبات</a>
+  </div>
+
+  <ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link {% if tab=='settings' %}active{% endif %}" href="{{ url_for('portal.hr_training_admin_dashboard', tab='settings') }}">الإعدادات العامة</a></li>
+    <li class="nav-item"><a class="nav-link {% if tab=='lookups' %}active{% endif %}" href="{{ url_for('portal.hr_training_admin_dashboard', tab='lookups') }}">ثوابت النظام</a></li>
+    <li class="nav-item"><a class="nav-link {% if tab=='courses' %}active{% endif %}" href="{{ url_for('portal.hr_training_admin_dashboard', tab='courses') }}">قائمة التدريبات</a></li>
+  </ul>
+
+  {% if tab=='settings' %}
+    <div class="card">
+      <div class="card-header">الإعدادات العامة</div>
+      <div class="card-body">
+        <form method="post" class="row g-3">
+          <input type="hidden" name="action" value="save_settings">
+          <div class="col-md-4">
+            <label class="form-label">هل الترشيح يتطلب موافقة المسؤول المباشر؟</label>
+            <select name="require_manager_approval" class="form-select">
+              <option value="1" {% if settings.require_manager_approval %}selected{% endif %}>نعم</option>
+              <option value="0" {% if not settings.require_manager_approval %}selected{% endif %}>لا</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">نافذة إدخال الاحتياجات التدريبية</label>
+            <select name="needs_window" class="form-select">
+              <option value="1" {% if settings.needs_window %}selected{% endif %}>مفتوحة</option>
+              <option value="0" {% if not settings.needs_window %}selected{% endif %}>مغلقة</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">إشعارات التدريب للموظفين</label>
+            <select name="employee_notifications" class="form-select">
+              <option value="1" {% if settings.employee_notifications %}selected{% endif %}>فعالة</option>
+              <option value="0" {% if not settings.employee_notifications %}selected{% endif %}>غير فعالة</option>
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">تطبيق الشروط عند الانتساب على البوابة</label>
+            <select name="apply_cond_portal" class="form-select">
+              <option value="1" {% if settings.apply_cond_portal %}selected{% endif %}>فعال</option>
+              <option value="0" {% if not settings.apply_cond_portal %}selected{% endif %}>غير فعال</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">تطبيق الشروط عند التنسيب ضمن البرنامج</label>
+            <select name="apply_cond_admin" class="form-select">
+              <option value="1" {% if settings.apply_cond_admin %}selected{% endif %}>فعال</option>
+              <option value="0" {% if not settings.apply_cond_admin %}selected{% endif %}>غير فعال</option>
+            </select>
+          </div>
+
+          <div class="col-12">
+            <button class="btn btn-primary">حفظ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% elif tab=='lookups' %}
+    <div class="row g-3">
+      <div class="col-lg-4">
+        <div class="card">
+          <div class="card-header">تصنيفات الدورات</div>
+          <div class="card-body">
+            {% include 'portal/hr/training/partials/lookups_block.html' with context %}
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="card">
+          <div class="card-header">الجهة الممولة/الداعية</div>
+          <div class="card-body">
+            {% set _lookup_category = 'TRAINING_SPONSOR' %}
+            {% set _lookup_rows = sponsors %}
+            {% include 'portal/hr/training/partials/lookups_block.html' with context %}
+          </div>
+        </div>
+      </div>
+      <div class="col-lg-4">
+        <div class="card">
+          <div class="card-header">الدول</div>
+          <div class="card-body">
+            {% set _lookup_category = 'COUNTRY' %}
+            {% set _lookup_rows = countries %}
+            {% include 'portal/hr/training/partials/lookups_block.html' with context %}
+            <div class="form-text mt-2">يمكن استيراد قائمة الدول من ملف لاحقًا، وهذه إدارة بسيطة الآن.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  {% else %}
+    <div class="card">
+      <div class="card-header">قائمة التدريبات</div>
+      <div class="card-body">
+        <form method="post" class="row g-3 align-items-end mb-3">
+          <input type="hidden" name="action" value="add_course">
+          <div class="col-md-4">
+            <label class="form-label">تصنيف</label>
+            <select name="category_lookup_id" class="form-select">
+              <option value="">-- اختياري --</option>
+              {% for c in categories %}
+                <option value="{{ c.id }}">{{ c.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">اسم التدريب</label>
+            <input type="text" name="name_ar" class="form-control" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">English</label>
+            <input type="text" name="name_en" class="form-control">
+          </div>
+          <div class="col-md-1">
+            <button class="btn btn-primary w-100">+</button>
+          </div>
+        </form>
+
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>التصنيف</th>
+                <th>اسم التدريب</th>
+                <th class="text-end">إجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for c in courses %}
+                <tr>
+                  <td>{{ c.id }}</td>
+                  <td>{{ c.category_lookup.name_ar if c.category_lookup else '-' }}</td>
+                  <td>{{ c.name_ar }}</td>
+                  <td class="text-end">
+                    <form method="post" class="d-inline" onsubmit="return confirm('حذف التدريب؟');">
+                      <input type="hidden" name="action" value="delete_course">
+                      <input type="hidden" name="id" value="{{ c.id }}">
+                      <button class="btn btn-sm btn-outline-danger">حذف</button>
+                    </form>
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="4" class="text-muted">لا يوجد بيانات.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+{% endblock %}

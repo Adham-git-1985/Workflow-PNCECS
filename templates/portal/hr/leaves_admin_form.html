@@ -1,0 +1,153 @@
+{% extends 'portal/hr/base.html' %}
+{% block hr_content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0">{{ 'تعديل إجازة' if edit_mode else 'إدخال إجازة' }}</h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_leaves_admin_log') }}">سجل الإجازات</a>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">الموظف</label>
+        <select class="form-select" name="user_id" {{ 'disabled' if edit_mode else '' }}>
+          <option value="">— اختر —</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if (row and row.user_id==u.id) %}selected{% endif %}>{{ u.full_name or u.email }}</option>
+          {% endfor %}
+        </select>
+        {% if edit_mode %}<input type="hidden" name="user_id" value="{{ row.user_id }}">{% endif %}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">نوع الإجازة</label>
+        <select class="form-select" name="leave_type_id" required>
+          {% for t in leave_types %}
+            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %}>{{ t.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input class="form-control" type="date" name="start_date" value="{{ row.start_date if row else today }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input class="form-control" type="date" name="end_date" value="{{ row.end_date if row else today }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">عدد الأيام</label>
+        <input class="form-control" type="number" min="0" name="days" value="{{ row.days if row and row.days is not none else '' }}" placeholder="تلقائي">
+        <div class="form-text">يُحتسب تلقائياً باستثناء العطل/الأعياد إن تُرك فارغاً.</div>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">مكان الإجازة</label>
+        <select class="form-select" name="leave_place" id="leave_place">
+          <option value="">— تلقائي —</option>
+          <option value="INTERNAL" {% if row and row.leave_place=='INTERNAL' %}selected{% endif %}>داخلية</option>
+          <option value="EXTERNAL" {% if row and row.leave_place=='EXTERNAL' %}selected{% endif %}>خارجية</option>
+        </select>
+      </div>
+
+      <div id="external-fields" class="col-12" style="display:none;">
+        <div class="border rounded-3 p-3">
+          <div class="fw-semibold mb-2"><i class="bi bi-globe2"></i> بيانات الإجازة الخارجية (اختياري)</div>
+          <div class="row g-3">
+            <div class="col-12 col-md-4">
+              <label class="form-label">الدولة</label>
+              <input class="form-control" name="travel_country" value="{{ row.travel_country if row else '' }}" placeholder="مثال: الأردن">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label">المدينة</label>
+              <input class="form-control" name="travel_city" value="{{ row.travel_city if row else '' }}" placeholder="مثال: عمّان">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label">المعبر/الحدود</label>
+              <input class="form-control" name="border_crossing" value="{{ row.border_crossing if row else '' }}" placeholder="اختياري">
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">العنوان في الخارج</label>
+              <input class="form-control" name="travel_address" value="{{ row.travel_address if row else '' }}" placeholder="اختياري">
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">هاتف للتواصل</label>
+              <input class="form-control" name="travel_contact_phone" value="{{ row.travel_contact_phone if row else '' }}" placeholder="اختياري">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label">الغرض من السفر</label>
+              <input class="form-control" name="travel_purpose" value="{{ row.travel_purpose if row else '' }}" placeholder="اختياري">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">الحالة</label>
+        <select class="form-select" name="admin_status_id">
+          <option value="">— بدون —</option>
+          {% for s in status_defs %}
+            <option value="{{ s.id }}" {% if row and row.admin_status_id==s.id %}selected{% endif %}>{{ s.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">مرفقات (تقرير/مستند) <span id="docs-required" class="badge bg-danger" style="display:none;">مطلوب</span></label>
+        <input class="form-control" type="file" name="attachments" id="attachments" multiple>
+        <div class="form-text" id="docs-hint">اختياري. يمكن رفع أكثر من ملف حسب الحاجة.</div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">تفاصيل</label>
+        <textarea class="form-control" name="note" rows="3">{{ row.note if row else '' }}</textarea>
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex gap-2">
+    <button class="btn btn-primary" type="submit">حفظ</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_leaves_admin_log') }}">إلغاء</a>
+  </div>
+</form>
+
+<script>
+  (function() {
+    const meta = {{ (types_meta or {}) | tojson }};
+    const sel = document.querySelector('select[name="leave_type_id"]');
+    const box = document.getElementById('external-fields');
+    if (!sel) return;
+
+    function refresh() {
+      const id = sel.value || '';
+      const isExternal = !!(meta[id] && meta[id].is_external);
+      if (box) box.style.display = isExternal ? '' : 'none';
+
+      // Auto place
+      const placeSel = document.getElementById('leave_place');
+      if (placeSel) {
+        if (isExternal && !placeSel.value) placeSel.value = 'EXTERNAL';
+      }
+
+      // Docs requirement
+      const docsInput = document.getElementById('attachments');
+      const docsRequired = document.getElementById('docs-required');
+      const docsHint = document.getElementById('docs-hint');
+      if (docsInput && docsRequired && docsHint) {
+        const requiresDocs = !!(meta[id] && meta[id].requires_documents);
+        const hint = (meta[id] && meta[id].documents_hint) ? String(meta[id].documents_hint) : '';
+        docsInput.required = requiresDocs;
+        docsRequired.style.display = requiresDocs ? '' : 'none';
+        docsHint.textContent = requiresDocs ? (hint || 'هذا النوع يتطلب إرفاق تقرير/مستند.') : (hint || 'اختياري. يمكن رفع أكثر من ملف حسب الحاجة.');
+      }
+    }
+
+    sel.addEventListener('change', refresh);
+    refresh();
+  })();
+</script>
+
+{% endblock %}
+{% block content %}{{ self.hr_content() }}{% endblock %}

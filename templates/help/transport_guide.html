@@ -1,0 +1,199 @@
+{% extends 'layout.html' %}
+
+{% block title %}دليل الحركة{% endblock %}
+
+{% block extra_css %}
+<style>
+  .guide-wrap{max-width:1100px;margin:0 auto;direction:rtl;unicode-bidi:plaintext}
+  .guide-hero{background:linear-gradient(180deg, rgba(25,135,84,.12), rgba(0,0,0,0));border:1px solid rgba(0,0,0,.07);border-radius:16px}
+  .guide-hero h1{font-weight:800;letter-spacing:.2px}
+  .guide-hero .meta{color:rgba(0,0,0,.6)}
+  .guide-card{border:1px solid rgba(0,0,0,.07);border-radius:14px}
+  .guide-card .card-header{background:rgba(0,0,0,.02);border-bottom:1px solid rgba(0,0,0,.06)}
+  .guide-toc a{color:inherit;text-decoration:none}
+  .guide-toc a:hover{text-decoration:underline}
+  .guide-list li{margin-bottom:.35rem}
+  .badge-soft{background:rgba(25,135,84,.10);color:#198754;border:1px solid rgba(25,135,84,.20)}
+  .ltr{direction:ltr;unicode-bidi:embed}
+  @media print{
+    .no-print{display:none !important}
+    .admin-sidebar,.main-header{display:none !important}
+    .admin-wrapper{padding:0 !important}
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4">
+  <div class="guide-wrap">
+
+    <div class="guide-hero p-4 p-md-5 mb-4">
+      <div class="d-flex flex-column flex-md-row align-items-md-center justify-content-between gap-3">
+        <div>
+          <h1 class="mb-2">دليل الحركة</h1>
+          <div class="meta">شرح واضح لوحدة الحركة والنقل: أذون الحركة، الرحلات والمسافات، مهام السائقين، وإعدادات التتبع (الخيار C).</div>
+          <div class="meta mt-1">يتضمن قسمًا للموظفين وقسمًا لمسؤولي الموارد البشرية/الحركة.</div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 no-print">
+          <a class="btn btn-outline-primary" href="{{ url_for('static', filename='docs/transport_guide_ar.docx') }}">
+            <i class="bi bi-download"></i>
+            تنزيل نسخة وورد
+          </a>
+          <button class="btn btn-primary" onclick="window.print()">
+            <i class="bi bi-printer"></i>
+            طباعة
+          </button>
+        </div>
+      </div>
+
+      <div class="guide-toc mt-4">
+        <div class="row g-2">
+          <div class="col-12 col-md-4"><a href="#emp" class="d-block p-2 bg-white rounded-3 border">للموظفين: طلب إذن حركة ومتابعته</a></div>
+          <div class="col-12 col-md-4"><a href="#ops" class="d-block p-2 bg-white rounded-3 border">للمشرفين: الاعتماد والرحلات والمهام</a></div>
+          <div class="col-12 col-md-4"><a href="#track" class="d-block p-2 bg-white rounded-3 border">التتبع: تجهيز الخيار C</a></div>
+        </div>
+      </div>
+    </div>
+
+    <ul class="nav nav-pills mb-3 no-print" id="pills-tab" role="tablist">
+      <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="pills-emp-tab" data-bs-toggle="pill" data-bs-target="#pills-emp" type="button" role="tab">إرشادات الموظف</button>
+      </li>
+      <li class="nav-item" role="presentation">
+        <button class="nav-link" id="pills-admin-tab" data-bs-toggle="pill" data-bs-target="#pills-admin" type="button" role="tab">إرشادات المشرف</button>
+      </li>
+    </ul>
+
+    <div class="tab-content" id="pills-tabContent">
+
+      <!-- ===================== Employee ===================== -->
+      <div class="tab-pane fade show active" id="pills-emp" role="tabpanel" aria-labelledby="pills-emp-tab">
+
+        <div id="emp" class="card guide-card mb-3">
+          <div class="card-header"><strong>١) أين تجد خدمة الحركة؟</strong></div>
+          <div class="card-body">
+            <ul class="guide-list mb-0">
+              <li>بعد الدخول، من القائمة الجانبية اختر: <span class="badge badge-soft">البوابة الإدارية</span> ثم <span class="badge badge-soft">الحركة والنقل</span>.</li>
+              <li>إذا لم تظهر لك القائمة: اطلب من مسؤول النظام منحك صلاحية الخدمة.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card guide-card mb-3">
+          <div class="card-header"><strong>٢) تقديم طلب إذن حركة</strong></div>
+          <div class="card-body">
+            <ol class="guide-list">
+              <li>افتح: الحركة والنقل → <strong>أذون الحركة</strong> ثم اضغط <strong>إذن جديد</strong>.</li>
+              <li>اكتب الغرض (سبب الحركة) بوضوح.</li>
+              <li>حدد السيارة والسائق إن كانا معروفين (اختياري).</li>
+              <li>حدد (من) و(إلى) عبر المناطق أو اكتبها يدويًا.</li>
+              <li>أدخل وقت الانطلاق والعودة المتوقعين (إن وجد).</li>
+              <li>اضغط <strong>إرسال للاعتماد</strong>.</li>
+            </ol>
+            <div class="alert alert-info mb-0">
+              <strong>نصيحة:</strong> كلما كان الغرض والمسار واضحين، تسارع الاعتماد وتقل الاستفسارات.
+            </div>
+          </div>
+        </div>
+
+        <div class="card guide-card mb-3">
+          <div class="card-header"><strong>٣) متابعة حالة الإذن</strong></div>
+          <div class="card-body">
+            <ul class="guide-list mb-0">
+              <li>افتح قائمة <strong>أذون الحركة</strong> وسترى الحالة: قيد الاعتماد / معتمد / مرفوض / مكتمل / ملغي.</li>
+              <li>افتح الإذن لمراجعة تفاصيله، وقرار الاعتماد، وأي ملاحظات.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card guide-card mb-4">
+          <div class="card-header"><strong>٤) الفرق بين إذن الحركة والرحلات ومهام السائقين</strong></div>
+          <div class="card-body">
+            <ul class="guide-list mb-0">
+              <li><strong>إذن الحركة:</strong> موافقة إدارية قبل التنفيذ.</li>
+              <li><strong>الرحلة:</strong> تسجيل التنفيذ الفعلي والمسافة المقطوعة (خصوصًا في خيار A عبر عداد الكيلومترات).</li>
+              <li><strong>مهام السائق:</strong> تفاصيل التوصيلات/التوقفات داخل الرحلة (اختياري حسب الاستخدام).</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ===================== Admin/Ops ===================== -->
+      <div class="tab-pane fade" id="pills-admin" role="tabpanel" aria-labelledby="pills-admin-tab">
+
+        <div id="ops" class="card guide-card mb-3">
+          <div class="card-header"><strong>١) إدارة البيانات الأساسية (السيارات/السائقون/المناطق)</strong></div>
+          <div class="card-body">
+            <ul class="guide-list mb-0">
+              <li>من: الحركة والنقل → <strong>السيارات</strong> لإضافة مركبات وتحديث حالتها.</li>
+              <li>من: الحركة والنقل → <strong>السائقون</strong> لإضافة السائقين وربطهم (اختياريًا) بحساب مستخدم.</li>
+              <li>من: الحركة والنقل → <strong>مناطق التوصيل</strong> لتسهيل إدخال المسارات دون أخطاء.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card guide-card mb-3">
+          <div class="card-header"><strong>٢) الاعتماد والرفض</strong></div>
+          <div class="card-body">
+            <ul class="guide-list">
+              <li>افتح إذن الحركة من قائمة الأذون.</li>
+              <li>راجع الغرض والمسار والوقت، ثم اختر <strong>اعتماد</strong> أو <strong>رفض</strong> مع ملاحظة سبب القرار عند الحاجة.</li>
+              <li>يفضل اعتماد الإذن قبل وقت الانطلاق لتجنب التأخير.</li>
+            </ul>
+            <div class="alert alert-warning mb-0">
+              <strong>تنبيه ذكي:</strong> عند رفض الإذن، اكتب سببًا واضحًا ليسهل على الموظف تصحيح الطلب وإعادة الإرسال.
+            </div>
+          </div>
+        </div>
+
+        <div class="card guide-card mb-3">
+          <div class="card-header"><strong>٣) تسجيل الرحلات والمسافات (الخيار A)</strong></div>
+          <div class="card-body">
+            <ol class="guide-list">
+              <li>بعد تنفيذ الحركة، افتح: الحركة والنقل → <strong>الرحلات</strong>.</li>
+              <li>أدخل عداد البداية وعداد النهاية، وسيقوم النظام بحساب المسافة.</li>
+              <li>يمكن ربط الرحلة بإذن حركة لتوثيق التنفيذ.</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="card guide-card mb-3">
+          <div class="card-header"><strong>٤) مهام السائقين</strong></div>
+          <div class="card-body">
+            <ul class="guide-list mb-0">
+              <li>استخدم المهام عندما تحتوي الحركة على عدة توقفات/توصيلات.</li>
+              <li>مثال: تسليم وثائق لعدة جهات في نفس اليوم ضمن إذن واحد.</li>
+            </ul>
+          </div>
+        </div>
+
+        <div id="track" class="card guide-card mb-4">
+          <div class="card-header"><strong>٥) تجهيز التتبع (الخيار C) — جاهز للتفعيل لاحقًا</strong></div>
+          <div class="card-body">
+            <ul class="guide-list">
+              <li>صفحة الإعدادات: الحركة والنقل → <strong>إعدادات التتبع</strong>.</li>
+              <li>ضع بيانات المزوّد (Base URL / Token) عند توفر جهاز التتبع أو الخدمة.</li>
+              <li>لكل سيارة، سجّل معرف الجهاز (مثل <span class="ltr">IMEI</span> أو <span class="ltr">Unit ID</span>) لتسهيل الربط لاحقًا.</li>
+            </ul>
+            <div class="alert alert-secondary mb-0">
+              <strong>ملاحظة:</strong> الربط الفعلي مع جهاز <span class="ltr">GPS</span> سيتم تشغيله لاحقًا دون تغيير شكل الواجهة.
+            </div>
+          </div>
+        </div>
+
+        <div class="text-muted small">
+          <i class="bi bi-link-45deg"></i>
+          لديك أيضًا: <a href="{{ url_for('users.help_employee_guide') }}" target="_blank">دليل الموظف</a>
+          {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_perm('HR_DOCS_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
+          و <a href="{{ url_for('users.help_hr_admin_guide') }}" target="_blank">دليل أدمن الموارد البشرية</a>
+          {% endif %}.
+        </div>
+
+      </div>
+
+    </div>
+
+  </div>
+</div>
+{% endblock %}

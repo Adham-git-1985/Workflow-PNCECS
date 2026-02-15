@@ -1,0 +1,95 @@
+{#
+  Generic lookup block used in Training Admin dashboard.
+  Expects:
+    _lookup_category (optional): category key
+    _lookup_rows (optional): list of HRLookupItem rows
+  Fallbacks:
+    categories / sponsors / countries variables (depending on category)
+#}
+
+{% set _cat = (_lookup_category if _lookup_category is defined and _lookup_category else 'TRAINING_CATEGORY') %}
+{% set _rows = (_lookup_rows if _lookup_rows is defined and _lookup_rows is not none else (categories if _cat=='TRAINING_CATEGORY' else (sponsors if _cat=='TRAINING_SPONSOR' else countries))) %}
+
+<form method="post" class="row g-2 align-items-end mb-3">
+  <input type="hidden" name="action" value="add_lookup">
+  <input type="hidden" name="category" value="{{ _cat }}">
+
+  <div class="col-4">
+    <label class="form-label">Code</label>
+    <input type="text" name="code" class="form-control form-control-sm" placeholder="اختياري">
+  </div>
+  <div class="col-4">
+    <label class="form-label">النص (عربي)</label>
+    <input type="text" name="name_ar" class="form-control form-control-sm" required>
+  </div>
+  <div class="col-3">
+    <label class="form-label">English</label>
+    <input type="text" name="name_en" class="form-control form-control-sm" placeholder="اختياري">
+  </div>
+  <div class="col-1">
+    <button class="btn btn-sm btn-primary w-100" title="إضافة">+</button>
+  </div>
+</form>
+
+<div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead>
+      <tr>
+        <th style="width:60px;">#</th>
+        <th style="width:160px;">Code</th>
+        <th>النص</th>
+        <th class="text-end" style="width:160px;">إجراء</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in _rows %}
+        <tr>
+          <td>{{ it.id }}</td>
+          <td class="ltr"><code>{{ it.code or '' }}</code></td>
+          <td>
+            <div class="fw-semibold">{{ it.name_ar }}</div>
+            <div class="text-muted small ltr">{{ it.name_en or '' }}</div>
+          </td>
+          <td class="text-end">
+            <details class="d-inline-block text-start">
+              <summary class="btn btn-sm btn-outline-secondary">تعديل</summary>
+              <div class="border rounded p-2 mt-2 bg-white" style="min-width: 300px;">
+                <form method="post" class="row g-2">
+                  <input type="hidden" name="action" value="edit_lookup">
+                  <input type="hidden" name="category" value="{{ _cat }}">
+                  <input type="hidden" name="id" value="{{ it.id }}">
+
+                  <div class="col-12">
+                    <label class="form-label">Code</label>
+                    <input type="text" name="code" class="form-control form-control-sm" value="{{ it.code or '' }}">
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label">النص (عربي)</label>
+                    <input type="text" name="name_ar" class="form-control form-control-sm" value="{{ it.name_ar }}" required>
+                  </div>
+                  <div class="col-12">
+                    <label class="form-label">English</label>
+                    <input type="text" name="name_en" class="form-control form-control-sm" value="{{ it.name_en or '' }}">
+                  </div>
+                  <div class="col-12 d-flex justify-content-between">
+                    <button class="btn btn-sm btn-primary">حفظ</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="this.closest('details').removeAttribute('open');">إغلاق</button>
+                  </div>
+                </form>
+              </div>
+            </details>
+
+            <form method="post" class="d-inline" onsubmit="return confirm('حذف العنصر؟');">
+              <input type="hidden" name="action" value="delete_lookup">
+              <input type="hidden" name="category" value="{{ _cat }}">
+              <input type="hidden" name="id" value="{{ it.id }}">
+              <button class="btn btn-sm btn-outline-danger">حذف</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="text-muted">لا يوجد بيانات.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

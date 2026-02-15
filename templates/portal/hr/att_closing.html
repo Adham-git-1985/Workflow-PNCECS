@@ -1,0 +1,117 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}الإغلاق الجماعي{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="closingPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-lock"></i> الإغلاق الجماعي</h4>
+      <div class="text-muted">إغلاق جماعي لحركات مفتوحة (مغادرات + الدوام). يتم حفظ الإغلاق كسجل إداري.</div>
+    </div>
+    <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="post" class="row g-3" autocomplete="off">
+    <div class="col-md-3">
+      <label class="form-label">التاريخ</label>
+      <input class="form-control" type="date" name="day" value="{{ today }}" required {% if not can_manage %}disabled{% endif %}>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">محافظة الدوام</label>
+      <select class="form-select" name="work_governorate_lookup_id" {% if not can_manage %}disabled{% endif %}>
+        <option value="">بدون تحديد</option>
+        {% for it in govs %}
+          <option value="{{ it.id }}">{{ it.name_ar or it.name_en or it.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">موقع الدوام</label>
+      <select class="form-select" name="work_location_lookup_id" {% if not can_manage %}disabled{% endif %}>
+        <option value="">بدون تحديد</option>
+        {% for it in locs %}
+          <option value="{{ it.id }}">{{ it.name_ar or it.name_en or it.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">خيارات الإغلاق</label>
+      <div class="d-flex flex-column gap-2 pt-1">
+        <label class="form-check">
+          <input class="form-check-input" type="checkbox" name="close_attendance" value="1" checked {% if not can_manage %}disabled{% endif %}>
+          <span class="form-check-label">إغلاق الدوام</span>
+        </label>
+        <label class="form-check">
+          <input class="form-check-input" type="checkbox" name="close_permissions" value="1" checked {% if not can_manage %}disabled{% endif %}>
+          <span class="form-check-label">إغلاق المغادرات</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label">ملاحظات</label>
+      <textarea class="form-control" name="note" rows="2" placeholder="ملاحظة (اختياري)" {% if not can_manage %}disabled{% endif %}></textarea>
+    </div>
+
+    <div class="col-12 d-flex gap-2 justify-content-end">
+      <button type="reset" class="btn btn-info" {% if not can_manage %}disabled{% endif %}>إعادة تعيين</button>
+      <button type="submit" class="btn btn-primary" {% if not can_manage %}disabled{% endif %}><i class="bi bi-check2-circle"></i> تنفيذ الإغلاق</button>
+    </div>
+
+    {% if not can_manage %}
+      <div class="col-12"><div class="alert alert-warning mb-0">لا تملك صلاحية تنفيذ الإغلاق. يمكنك فقط عرض السجلات.</div></div>
+    {% endif %}
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>التاريخ</th>
+          <th>محافظة</th>
+          <th>موقع</th>
+          <th>الدوام</th>
+          <th>المغادرات</th>
+          <th>ملاحظات</th>
+          <th>أنشئ بواسطة</th>
+          <th>تاريخ الإنشاء</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td class="text-muted">{{ r.day_from }}</td>
+            <td class="text-muted">{{ r.work_governorate.name_ar if r.work_governorate else '-' }}</td>
+            <td class="text-muted">{{ r.work_location.name_ar if r.work_location else '-' }}</td>
+            <td>{% if r.close_attendance %}<span class="badge text-bg-success">نعم</span>{% else %}<span class="badge text-bg-secondary">لا</span>{% endif %}</td>
+            <td>{% if r.close_permissions %}<span class="badge text-bg-success">نعم</span>{% else %}<span class="badge text-bg-secondary">لا</span>{% endif %}</td>
+            <td class="text-muted small">{{ r.note or '' }}</td>
+            <td class="text-muted">{{ r.created_by.name if r.created_by else '-' }}</td>
+            <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+            <td class="text-end">
+              {% if can_manage %}
+                <form method="post" action="{{ url_for('portal.hr_att_closing_delete', row_id=r.id) }}" onsubmit="return confirm('حذف سجل الإغلاق؟');" class="d-inline">
+                  <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        {% if not rows %}
+          <tr><td colspan="10" class="text-center text-muted py-4">لا توجد سجلات.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "portal/layout.html" %}
+{% block title %}{% if item %}تعديل سائق{% else %}إضافة سائق{% endif %}{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-person-badge"></i> {% if item %}تعديل سائق{% else %}إضافة سائق{% endif %}</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_drivers') }}">رجوع</a>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">اسم السائق *</label>
+      <input class="form-control" name="name" value="{{ item.name if item else '' }}" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">الهاتف</label>
+      <input class="form-control" name="phone" value="{{ item.phone if item else '' }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">رقم الرخصة</label>
+      <input class="form-control" name="license_no" value="{{ item.license_no if item else '' }}">
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label">الحالة</label>
+      {% set st = item.status if item else 'ACTIVE' %}
+      <select class="form-select" name="status">
+        <option value="ACTIVE" {% if st=='ACTIVE' %}selected{% endif %}>فعّال</option>
+        <option value="INACTIVE" {% if st=='INACTIVE' %}selected{% endif %}>غير فعّال</option>
+      </select>
+    </div>
+
+    <div class="col-md-8">
+      <label class="form-label">ملاحظات</label>
+      <input class="form-control" name="notes" value="{{ item.notes if item else '' }}">
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_drivers') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

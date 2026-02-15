@@ -1,0 +1,62 @@
+{% extends "portal/layout.html" %}
+{% block title %}نماذج التقييم{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-ui-checks"></i> نماذج التقييم</h5>
+      <div class="text-muted small">ملاحظة: هذا نموذج مرن (أقسام + أسئلة), ويمكن استخدامه في دورات متعددة.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_perf_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+    </div>
+  </div>
+
+  <form method="post" class="row g-2 mb-4">
+    <input type="hidden" name="action" value="create">
+    <div class="col-md-6">
+      <input class="form-control" name="name" placeholder="اسم النموذج" required>
+    </div>
+    <div class="col-md-6">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-plus"></i> إنشاء نموذج</button>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{{ portal_sort_link('الاسم', 'name') }}</th>
+          <th>نشط</th>
+          <th>{{ portal_sort_link('آخر تحديث', 'updated_at') }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for f in forms %}
+        <tr>
+          <td>{{ f.id }}</td>
+          <td>{{ f.name }}</td>
+          <td>{% if f.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+          <td class="text-muted small">{{ f.updated_at or f.created_at }}</td>
+          <td class="text-end">
+            <div class="d-inline-flex gap-1">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_hr_perf_form_edit', form_id=f.id) }}">تحرير</a>
+              <form method="post" onsubmit="return confirm('حذف النموذج؟ إذا كان مرتبطاً بدورات سيتم إيقافه فقط.');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="form_id" value="{{ f.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted">لا توجد نماذج.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

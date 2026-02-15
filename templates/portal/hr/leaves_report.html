@@ -1,0 +1,86 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير الإجازات{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</h4>
+      <div class="text-muted">عرض طلبات الإجازات حسب السنة والحالة. (عند فتح التقرير يتم فحص الطلبات المتأخرة وإرسال تنبيهات مرة واحدة يوميًا لكل طلب.)</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_leave_balances', year=year) }}"><i class="bi bi-arrow-right"></i> رجوع لأرصدة الإجازات</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_alerts') }}"><i class="bi bi-bell"></i> التنبيهات الذكية</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">السنة</label>
+      <input class="form-control" type="number" min="2000" max="2100" name="year" value="{{ year }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="status">
+        <option value="" {% if not status %}selected{% endif %}>الكل</option>
+        <option value="SUBMITTED" {% if status=='SUBMITTED' %}selected{% endif %}>قيد الإجراء</option>
+        <option value="APPROVED" {% if status=='APPROVED' %}selected{% endif %}>موافق عليه</option>
+        <option value="REJECTED" {% if status=='REJECTED' %}selected{% endif %}>مرفوض</option>
+      </select>
+    </div>
+    <div class="col-md-5">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div class="text-muted small">عدد النتائج: {{ rows|length }}</div>
+    {% if reminder_count and reminder_count>0 %}
+      <div class="alert alert-warning py-1 px-2 mb-0">تم إرسال {{ reminder_count }} تنبيه/تنبيهات للطلبات المتأخرة.</div>
+    {% endif %}
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الموظف</th>
+          <th>النوع</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>الأيام</th>
+          <th>الحالة</th>
+          <th>تاريخ الإرسال</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td>{{ (r.user.name or r.user.email) if r.user else r.user_id }}</td>
+            <td>{{ r.leave_type.name_ar if r.leave_type else r.leave_type_id }}</td>
+            <td>{{ r.start_date }}</td>
+            <td>{{ r.end_date }}</td>
+            <td>{{ r.days }}</td>
+            <td>
+              {% if r.status == 'APPROVED' %}
+                <span class="badge bg-success">موافق</span>
+              {% elif r.status == 'REJECTED' %}
+                <span class="badge bg-danger">مرفوض</span>
+              {% else %}
+                <span class="badge bg-warning text-dark">قيد الإجراء</span>
+              {% endif %}
+            </td>
+            <td>{{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

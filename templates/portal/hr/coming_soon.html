@@ -1,0 +1,12 @@
+{% extends "portal/hr/base.html" %}
+
+{% block title %}{{ title or 'قيد التطوير' }} - شؤون الموظفين{% endblock %}
+
+{% block hr_content %}
+  <div class="card border-0 shadow-sm">
+    <div class="card-body p-4">
+      <h3 class="mb-2">{{ title or 'قيد التطوير' }}</h3>
+      <p class="text-muted mb-0">{{ hint or 'هذه الصفحة قيد التطوير حالياً. سيتم إضافتها ضمن نفس ترتيب النظام المرجعي.' }}</p>
+    </div>
+  </div>
+{% endblock %}

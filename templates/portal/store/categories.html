@@ -1,0 +1,87 @@
+{% extends "portal/layout.html" %}
+{% block title %}تصنيفات المستودع{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#storeCatPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_store_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <h4 class="mb-0"><i class="bi bi-tags"></i> تصنيفات المستودع</h4>
+
+    <div class="ms-auto d-flex gap-2 flex-wrap">
+      {% set next_url = request.full_path %}
+      <a class="btn btn-outline-success" href="{{ url_for('portal.store_categories', export=1) }}">
+        <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+      </a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.portal_excel_import', key='portal.store_categories', next=next_url) }}">
+        <i class="bi bi-upload"></i> استيراد Excel
+      </a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.store_home') }}">
+        <i class="bi bi-arrow-right"></i> العودة للمستودع
+      </a>
+    </div>
+  </div>
+<div class="text-muted mt-2">أضف مجلدات (جذرية أو داخل مجلد). ستظهر في المستودع كمسار (مجلدات).</div>
+</div>
+
+<div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+  <form method="post" class="row g-2">
+    <div class="col-md-5">
+      <input class="form-control" name="name" placeholder="اسم المجلد" required>
+    </div>
+    <div class="col-md-5">
+      <select class="form-select" name="parent_id">
+        <option value="">(جذر) بدون مجلد أب</option>
+        {% for cid, label in category_options %}
+          <option value="{{ cid }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2 d-grid">
+      <button class="btn btn-success" type="submit"><i class="bi bi-plus-circle"></i> إضافة</button>
+    </div>
+  </form>
+</div>
+
+<div id="storeCatPrint" class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>{{ portal_sort_link('المجلد', 'name') }}</th>
+          <th class="text-nowrap">{{ portal_sort_link('ضمن', 'parent') }}</th>
+          <th class="text-nowrap">الحالة</th>
+          <th class="text-nowrap">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in cats %}
+        <tr>
+          <td class="fw-semibold">{{ c.name }}</td>
+          <td class="text-nowrap">{{ c.parent.name if c.parent else "-" }}</td>
+          <td class="text-nowrap">
+            {% if c.is_active %}
+              <span class="badge text-bg-success">نشط</span>
+            {% else %}
+              <span class="badge text-bg-secondary">موقوف</span>
+            {% endif %}
+          </td>
+          <td class="text-nowrap">
+            <form method="post" action="{{ url_for('portal.store_category_toggle', cat_id=c.id) }}" class="d-inline">
+              <button class="btn btn-sm btn-outline-primary" type="submit">
+                {% if c.is_active %}<i class="bi bi-pause"></i> إيقاف{% else %}<i class="bi bi-play"></i> تفعيل{% endif %}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

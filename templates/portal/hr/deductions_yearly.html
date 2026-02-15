@@ -1,0 +1,60 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}الجدول السنوي للخصم{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-calendar3"></i> الجدول السنوي للخصم</h4>
+      <div class="text-muted">عرض سريع لحالة كل شهر.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-play-circle"></i> تنفيذ خصم</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-list"></i> السجل</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-md-4">
+      <label class="form-label">السنة</label>
+      <input class="form-control" type="number" name="year" value="{{ year }}" min="2000" max="2100">
+    </div>
+    <div class="col-md-8">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+
+  <div class="row g-3">
+    {% for m in range(1,13) %}
+      {% set r = latest_by_month.get(m) %}
+      <div class="col-md-3">
+        <div class="border rounded-3 p-3 h-100">
+          <div class="d-flex align-items-center justify-content-between">
+            <div class="fw-bold">{{ "%02d"|format(m) }}/{{ year }}</div>
+            {% if r %}
+              <span class="badge text-bg-success">تم</span>
+            {% else %}
+              <span class="badge text-bg-secondary">لا يوجد</span>
+            {% endif %}
+          </div>
+          <div class="mt-2 small text-muted">
+            {% if r %}
+              {{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '' }}
+            {% else %}
+              لم يتم تنفيذ خصم لهذا الشهر.
+            {% endif %}
+          </div>
+          <div class="mt-3 d-flex gap-2">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_deductions_run', year=year, month=m) }}">تنفيذ</a>
+            {% if r %}
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_deductions_view', run_id=r.id) }}">تفاصيل</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

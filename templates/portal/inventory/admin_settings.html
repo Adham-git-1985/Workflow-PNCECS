@@ -1,0 +1,77 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set edit = edit if edit is defined else None %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">الإعدادات العامة</h5>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <input type="hidden" name="action" value="{% if edit %}update{% else %}create{% endif %}">
+      {% if edit %}<input type="hidden" name="id" value="{{ edit.id }}">{% endif %}
+      <div class="row g-2">
+        <div class="col-md-4">
+          <label class="form-label">المفتاح</label>
+          <input name="key" class="form-control" required value="{{ edit.key if edit else '' }}" {% if edit %}readonly{% endif %}>
+          <div class="text-muted small mt-1">يفضل استخدام بادئة INV_</div>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">القيمة</label>
+          <input name="value" class="form-control" required value="{{ edit.value if edit else '' }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">الوصف</label>
+          <input name="description" class="form-control" value="{{ edit.description if edit else '' }}">
+        </div>
+      </div>
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        {% if edit %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_admin_settings') }}">إلغاء</a>
+        {% endif %}
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th>المفتاح</th>
+            <th>القيمة</th>
+            <th>الوصف</th>
+            <th style="width:160px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in rows %}
+          <tr>
+            <td class="fw-bold">{{ s.key }}</td>
+            <td>{{ s.value }}</td>
+            <td class="text-muted">{{ s.description or '' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_settings', edit_id=s.id) }}">تعديل</a>
+              <form method="post" class="d-inline" onsubmit="return confirm('حذف الإعداد؟');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="{{ s.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not rows %}
+          <tr><td colspan="4" class="text-center text-muted py-4">لا يوجد إعدادات.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

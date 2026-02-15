@@ -1,0 +1,43 @@
+{% extends "portal/layout.html" %}
+{% block title %}{% if item %}تعديل منطقة{% else %}إضافة منطقة{% endif %}{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-geo"></i> {% if item %}تعديل منطقة{% else %}إضافة منطقة{% endif %}</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_zones') }}">رجوع</a>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">اسم المنطقة *</label>
+      <input class="form-control" name="name" value="{{ item.name if item else '' }}" required>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">المدينة</label>
+      <input class="form-control" name="city" value="{{ item.city if item else '' }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">الحالة</label>
+      {% set active = (item.is_active if item else True) %}
+      <select class="form-select" name="is_active">
+        <option value="1" {% if active %}selected{% endif %}>فعّالة</option>
+        <option value="0" {% if not active %}selected{% endif %}>غير فعّالة</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <label class="form-label">ملاحظات</label>
+      <input class="form-control" name="notes" value="{{ item.notes if item else '' }}">
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_zones') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

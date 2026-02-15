@@ -1,0 +1,250 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}اختصارات الصلاحيات{% endblock %}
+
+{% block head %}
+<style>
+  .perm-key { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  .preset-card { border: 1px solid rgba(0,0,0,.08); border-radius: .6rem; padding: .75rem; }
+  .preset-code { font-size: .8rem; }
+  .preset-meta { font-size: .85rem; color: #6c757d; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1">اختصارات صلاحيات البوابة</h4>
+    <div class="text-muted small">
+      هنا تتحكم بالأزرار السريعة التي تظهر في صفحة <strong>إدارة صلاحيات البوابة</strong>.
+      ستجد <strong>معاينة مبسّطة</strong> أدناه + محرر JSON (متقدم) لمن يريد تعديلًا دقيقًا.
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.portal_admin_permissions_catalog') }}">
+      <i class="bi bi-book"></i> دليل الصلاحيات
+    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_permissions') }}">
+      <i class="bi bi-arrow-right"></i> رجوع
+    </a>
+  </div>
+</div>
+
+{# -------------------- Preview -------------------- #}
+<div class="row g-3 mb-3">
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <div class="fw-semibold">المعاينة — الاختصارات الرئيسية</div>
+        <div class="text-muted small">تظهر كأزرار كبيرة في أعلى صفحة الصلاحيات.</div>
+      </div>
+      <div class="card-body">
+        {% if presets_main %}
+          {% for code, pr in presets_main.items() %}
+            {# NOTE: pr is a dict (mapping). Avoid using pr.keys (dict method) which breaks |length #}
+            {% set keys = (pr.get('keys') if pr is mapping else []) or [] %}
+            {% set label = (pr.get('label') if pr is mapping else code) or code %}
+            <div class="preset-card mb-2">
+              <div class="d-flex justify-content-between align-items-center">
+                <div class="fw-semibold">{{ label }}</div>
+                <span class="badge bg-dark preset-code">{{ code }}</span>
+              </div>
+              <div class="preset-meta mt-1">
+                <span class="badge bg-secondary">{{ (keys|length) if keys else 0 }}</span>
+                <span class="ms-1">صلاحية داخل الاختصار</span>
+              </div>
+
+              {% if keys %}
+                <div class="d-flex flex-wrap gap-1 mt-2">
+                  {% for k in keys[:10] %}
+                    <span class="badge bg-light text-dark border">
+                      {{ perm_labels.get(k, k) }}
+                      <span class="text-muted perm-key">({{ k }})</span>
+                    </span>
+                  {% endfor %}
+                  {% if keys|length > 10 %}
+                    <a class="small ms-2" data-bs-toggle="collapse" href="#all_main_{{ code }}" role="button" aria-expanded="false">
+                      عرض الكل
+                    </a>
+                  {% endif %}
+                </div>
+
+                {% if keys|length > 10 %}
+                  <div class="collapse mt-2" id="all_main_{{ code }}">
+                    <div class="d-flex flex-wrap gap-1">
+                      {% for k in keys %}
+                        <span class="badge bg-light text-dark border">
+                          {{ perm_labels.get(k, k) }}
+                          <span class="text-muted perm-key">({{ k }})</span>
+                        </span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+              {% else %}
+                <div class="text-muted small mt-2">لا توجد صلاحيات داخل هذا الاختصار.</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="text-muted">لا يوجد اختصارات رئيسية.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-header bg-light">
+        <div class="fw-semibold">المعاينة — اختصارات إضافية</div>
+        <div class="text-muted small">تظهر تحت “المزيد من الاختصارات”.</div>
+      </div>
+      <div class="card-body">
+        {% if presets_extra %}
+          {% for code, pr in presets_extra.items() %}
+            {# NOTE: pr is a dict (mapping). Avoid using pr.keys (dict method) which breaks |length #}
+            {% set keys = (pr.get('keys') if pr is mapping else []) or [] %}
+            {% set label = (pr.get('label') if pr is mapping else code) or code %}
+            <div class="preset-card mb-2">
+              <div class="d-flex justify-content-between align-items-center">
+                <div class="fw-semibold">{{ label }}</div>
+                <span class="badge bg-secondary preset-code">{{ code }}</span>
+              </div>
+              <div class="preset-meta mt-1">
+                <span class="badge bg-secondary">{{ (keys|length) if keys else 0 }}</span>
+                <span class="ms-1">صلاحية</span>
+              </div>
+
+              {% if keys %}
+                <div class="d-flex flex-wrap gap-1 mt-2">
+                  {% for k in keys[:10] %}
+                    <span class="badge bg-light text-dark border">
+                      {{ perm_labels.get(k, k) }}
+                      <span class="text-muted perm-key">({{ k }})</span>
+                    </span>
+                  {% endfor %}
+                  {% if keys|length > 10 %}
+                    <a class="small ms-2" data-bs-toggle="collapse" href="#all_extra_{{ code }}" role="button" aria-expanded="false">
+                      عرض الكل
+                    </a>
+                  {% endif %}
+                </div>
+
+                {% if keys|length > 10 %}
+                  <div class="collapse mt-2" id="all_extra_{{ code }}">
+                    <div class="d-flex flex-wrap gap-1">
+                      {% for k in keys %}
+                        <span class="badge bg-light text-dark border">
+                          {{ perm_labels.get(k, k) }}
+                          <span class="text-muted perm-key">({{ k }})</span>
+                        </span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+              {% else %}
+                <div class="text-muted small mt-2">لا توجد صلاحيات داخل هذا الاختصار.</div>
+              {% endif %}
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="text-muted">لا يوجد اختصارات إضافية.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+{# -------------------- JSON Editor -------------------- #}
+<div class="card shadow-sm">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <div class="fw-semibold">محرر JSON (متقدم)</div>
+      <div class="text-muted small">
+        المفتاح: <span class="badge bg-dark">{{ setting_key }}</span>
+      </div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="prettifyPresets()">
+        <i class="bi bi-braces"></i> تنسيق JSON
+      </button>
+      <button type="button" class="btn btn-sm btn-outline-info" onclick="validatePresets()">
+        <i class="bi bi-shield-check"></i> تحقق
+      </button>
+    </div>
+  </div>
+
+  <div class="card-body">
+    <div id="jsonHint" class="alert alert-info py-2 small d-none"></div>
+
+    <form method="post">
+      <input type="hidden" name="action" value="save">
+      <textarea id="presetsTextarea" name="presets_json" class="form-control" rows="18"
+        style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">{{ presets_json }}</textarea>
+
+      <div class="form-text mt-2">
+        البنية المتوقعة: كائن يحتوي <code>main</code> و <code>extra</code>، وكل واحد عبارة عن اختصارات: <code>{ "CODE": {"label": "...", "keys": ["PERM1","PERM2"]} }</code>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2 mt-3">
+        <button class="btn btn-primary" type="submit">
+          <i class="bi bi-save"></i> حفظ
+        </button>
+
+        <button class="btn btn-outline-danger" type="submit" name="action" value="reset"
+                onclick="return confirm('إعادة ضبط الاختصارات للوضع الافتراضي؟');">
+          <i class="bi bi-arrow-counterclockwise"></i> إعادة ضبط
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  function _showHint(msg, kind) {
+    const el = document.getElementById('jsonHint');
+    if (!el) return;
+    el.classList.remove('d-none','alert-info','alert-success','alert-danger','alert-warning');
+    el.classList.add('alert-' + (kind || 'info'));
+    el.textContent = msg;
+  }
+
+  function prettifyPresets() {
+    const ta = document.getElementById('presetsTextarea');
+    if (!ta) return;
+    const raw = (ta.value || '').trim();
+    if (!raw) { _showHint('لا يوجد نص لتنسيقه.', 'warning'); return; }
+    try {
+      const obj = JSON.parse(raw);
+      ta.value = JSON.stringify(obj, null, 2);
+      _showHint('تم تنسيق JSON بنجاح.', 'success');
+    } catch (e) {
+      _showHint('JSON غير صالح: تأكد من الأقواس والفواصل.', 'danger');
+    }
+  }
+
+  function validatePresets() {
+    const ta = document.getElementById('presetsTextarea');
+    if (!ta) return;
+    const raw = (ta.value || '').trim();
+    if (!raw) { _showHint('يرجى إدخال JSON أولًا.', 'warning'); return; }
+    try {
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== 'object') { _showHint('JSON يجب أن يكون كائن (Object).', 'danger'); return; }
+
+      const pm = obj.main || obj.presets_main || {};
+      const pe = obj.extra || obj.presets_extra || {};
+      const cntMain = (pm && typeof pm === 'object') ? Object.keys(pm).length : 0;
+      const cntExtra = (pe && typeof pe === 'object') ? Object.keys(pe).length : 0;
+
+      _showHint('JSON صالح. عدد اختصارات main: ' + cntMain + ' — extra: ' + cntExtra + '.', 'success');
+    } catch (e) {
+      _showHint('JSON غير صالح: ' + (e && e.message ? e.message : 'خطأ في التحليل') , 'danger');
+    }
+  }
+</script>
+{% endblock %}

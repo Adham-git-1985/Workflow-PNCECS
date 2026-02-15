@@ -1,0 +1,44 @@
+{% extends "portal/layout.html" %}
+{% block title %}إدارة البوابة{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h4 class="mb-1">لوحة إدارة البوابة</h4>
+    <div class="text-muted small">ستظهر لك فقط الأدوات التي تملك صلاحيتها.</div>
+  </div>
+</div>
+
+{% set _pending = (pending_access if pending_access is defined else (portal_access_requests_pending if portal_access_requests_pending is defined else 0)) %}
+{% if _pending|int > 0 %}
+<div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2">
+  <div><i class="bi bi-exclamation-triangle"></i> يوجد <strong>{{ _pending }}</strong> طلب صلاحية بانتظار المراجعة.</div>
+  <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.admin_access_requests') }}">فتح الطلبات</a>
+</div>
+{% endif %}
+
+<div class="row g-3">
+  {% for c in cards %}
+  <div class="col-12 col-md-6 col-lg-4">
+    <a class="text-decoration-none" href="{{ c.url }}">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2">
+            <i class="bi {{ c.icon }} fs-4"></i>
+            <div>
+              <div class="fw-bold">{{ c.title }}</div>
+              <div class="text-muted small">{{ c.desc }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </a>
+  </div>
+  {% else %}
+  <div class="col-12">
+    <div class="alert alert-info mb-0">
+      لا توجد أدوات إدارة متاحة لك حاليًا. راجع صلاحياتك مع مدير النظام.
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

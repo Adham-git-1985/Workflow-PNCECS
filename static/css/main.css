@@ -1,0 +1,654 @@
+/* =========================
+   Global
+========================= */
+
+
+/* ================================
+   Sortable tables (Admin Masterdata)
+   ================================ */
+table[data-sortable="true"] th.sorted-asc::after {
+  content: " \25B2"; /* ▲ */
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-right: 6px;
+}
+
+table[data-sortable="true"] th.sorted-desc::after {
+  content: " \25BC"; /* ▼ */
+  font-size: 0.8em;
+  opacity: 0.7;
+  margin-right: 6px;
+}
+
+html {
+    height: 100%;
+}
+
+body {
+    font-family: "Cairo", sans-serif;
+    background-color: #f8f9fa;
+    margin: 0;
+    padding-top: 70px; /* ارتفاع الهيدر */
+    min-height: 100%;
+    overflow-y: auto;
+}
+
+/* =========================
+   Bootstrap handles .container
+========================= */
+
+/* =========================
+   Header
+========================= */
+
+.main-header {
+    background: linear-gradient(90deg, #0d3b66, #144f85);
+    color: #fff;
+    padding: 12px 0;
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
+}
+
+.main-header .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+}
+
+
+/* Brand على اليمين */
+.main-header /* User actions على اليسار */
+.main-header .logo {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+/* =========================
+   Navigation
+========================= */
+
+.main-nav a {
+    color: #fff;
+    margin-right: 15px;
+    text-decoration: none;
+    font-weight: 600;
+    padding: 6px 8px;
+    border-radius: 6px;
+}
+
+.main-nav a:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.main-nav a.active {
+    background: #f4a261;
+    color: #000;
+}
+
+/* =========================
+   Layout
+========================= */
+
+.admin-wrapper {
+    display: flex;
+    min-height: calc(100vh - 70px); /* الهيدر */
+    align-items: flex-start; /* مهم جدًا */
+}
+
+
+/* =========================
+   Sidebar
+========================= */
+
+.admin-sidebar {
+    flex: 0 0 240px;
+    background: #0d3b66;
+    padding: 15px;
+
+    position: sticky;
+    top: 70px; /* تحت الهيدر الثابت */
+    height: calc(100vh - 70px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+
+.sidebar-title {
+    margin: 0 0 15px 0;
+    font-size: 15px;
+    color: #fff;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+    padding-bottom: 8px;
+}
+
+.admin-sidebar a {
+    display: block;
+    color: #fff;
+    text-decoration: none;
+    padding: 8px 10px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.admin-sidebar a:hover {
+    background-color: #f4a261;
+    color: #000;
+}
+
+/* Active link should look like hover so user knows current page */
+.admin-sidebar a.active:not(.nav-cta),
+.admin-sidebar a[aria-current="page"]:not(.nav-cta) {
+    background-color: #f4a261;
+    color: #000;
+}
+
+/* Prevent visited links from changing colors */
+.admin-sidebar a:visited {
+    color: #fff;
+}
+.admin-sidebar a.active:visited {
+    color: #000;
+}
+
+/* =========================
+   Content
+========================= */
+
+.admin-content {
+    flex: 1;
+    background: #fff;
+    padding: 22px;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+    max-height: none !important;
+}
+
+/* =========================
+   Cards
+========================= */
+
+.card {
+    border-radius: 14px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+}
+
+/* =========================
+   Tables
+========================= */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th {
+    background: #0d3b66;
+    color: #fff;
+    font-weight: 600;
+}
+
+th,
+td {
+    padding: 10px;
+    border: 1px solid #ddd;
+    text-align: center;
+}
+
+.table-hover tbody tr:hover {
+    background-color: #eef2f7;
+}
+
+/* =========================
+   Buttons
+========================= */
+
+button,
+.btn {
+    background: #f4a261;
+    color: #000;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+button:hover,
+.btn:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+}
+
+.btn-approve {
+    background-color: #2a9d8f;
+    color: #fff;
+}
+
+.btn-approve:hover {
+    background-color: #21867a;
+}
+
+.btn-reject {
+    background-color: #e63946;
+    color: #fff;
+}
+
+.btn-reject:hover {
+    background-color: #c5303a;
+}
+
+.btn-secondary {
+    background-color: #adb5bd;
+    color: #000;
+}
+
+/* =========================
+   Counters
+========================= */
+
+.counter {
+    flex: 1;
+    text-align: center;
+    padding: 16px;
+    border-radius: 10px;
+    color: #fff;
+}
+
+.counter strong {
+    font-size: 22px;
+}
+
+.counter-total { background: #6c757d; }
+.counter-progress { background: #f4a261; }
+.counter-draft { background: #adb5bd; color: #000; }
+.counter-approved { background: #2a9d8f; }
+.counter-rejected { background: #e63946; }
+
+/* =========================
+   Breadcrumb
+========================= */
+
+.breadcrumb {
+    margin-bottom: 15px;
+    font-size: 14px;
+}
+
+.breadcrumb a {
+    color: #0d3b66;
+    text-decoration: none;
+    font-weight: 600;
+}
+
+.breadcrumb a:hover {
+    text-decoration: underline;
+}
+
+.breadcrumb .sep {
+    margin: 0 6px;
+    color: #999;
+}
+
+.breadcrumb .current {
+    color: #555;
+    font-weight: 600;
+}
+
+/* =========================
+   Timeline
+========================= */
+
+.timeline {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.timeline-item {
+    display: flex;
+    margin-bottom: 20px;
+}
+
+.timeline-time {
+    width: 110px;
+    text-align: right;
+    font-size: 12px;
+    color: #777;
+    padding-right: 15px;
+}
+
+.timeline-content {
+    background: #f9f9f9;
+    padding: 16px;
+    border-radius: 10px;
+    width: 100%;
+    border-left: 4px solid #0d6efd;
+}
+
+.badge-action {
+    background-color: #0d6efd;
+    color: #fff;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.timeline-meta {
+    font-size: 13px;
+    color: #555;
+    margin-top: 10px;
+}
+
+/* =========================
+   Badges
+========================= */
+
+.badge {
+    font-size: 0.85rem;
+    border-radius: 6px;
+}
+
+/* =========================
+   Charts
+========================= */
+
+.chart-wrapper {
+    width: 350px;
+    height: 350px;
+}
+
+/* =========================
+   Footer
+========================= */
+
+.main-footer {
+    margin-top: 40px;
+    padding: 12px;
+    text-align: center;
+    background: #eee;
+    font-size: 13px;
+    color: #555;
+}
+
+
+
+canvas {
+    display: block;
+    max-height: 350px;
+}
+
+.timeline {
+    list-style: none;
+    padding-right: 0;
+    position: relative;
+}
+
+.timeline li {
+    position: relative;
+    padding-right: 25px;
+    margin-bottom: 20px;
+}
+
+.timeline li::before {
+    content: "";
+    position: absolute;
+    right: 6px;
+    top: 4px;
+    width: 10px;
+    height: 10px;
+    background: #0d6efd;
+    border-radius: 50%;
+}
+
+.timeline li::after {
+    content: "";
+    position: absolute;
+    right: 10px;
+    top: 16px;
+    bottom: -20px;
+    width: 2px;
+    background: #dee2e6;
+}
+
+
+/* ===============================
+   Archive – File Details
+================================ */
+
+.file-header h4 {
+    font-weight: 600;
+}
+
+.timeline {
+    list-style: none;
+    padding-right: 0;
+    margin: 0;
+    position: relative;
+}
+
+.timeline li {
+    position: relative;
+    padding-right: 30px;
+    margin-bottom: 20px;
+}
+
+.timeline li::before {
+    content: "";
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    width: 10px;
+    height: 10px;
+    background: #0d6efd;
+    border-radius: 50%;
+}
+
+.timeline li::after {
+    content: "";
+    position: absolute;
+    right: 12px;
+    top: 18px;
+    bottom: -20px;
+    width: 2px;
+    background: #dee2e6;
+}
+
+.timeline li:last-child::after {
+    display: none;
+}
+
+
+/* =========================
+   Brand + User (Header)
+========================= */
+
+.brand-logo {
+    height: 56px;
+    width: auto;
+    display: block;
+    background: #ffffff;
+    border-radius: 12px;
+    padding: 4px;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.08) inset;
+}
+
+.brand-title {
+    font-weight: 800;
+    font-size: 18px;
+    line-height: 1.2;
+}
+
+
+.brand-subtitle {
+    font-size: 12px;
+    font-weight: 600;
+    opacity: 0.9;
+    line-height: 1.1;
+}
+
+@media (max-width: 576px) {
+    .brand-logo { height: 46px; padding: 3px; border-radius: 10px; }
+    .brand-title { font-size: 16px; }
+    .brand-subtitle { font-size: 11px; }
+}
+
+.user-badge {
+    color: #fff;
+    font-weight: 700;
+}
+
+.user-role {
+    color: rgba(255, 255, 255, 0.85);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+/* =========================
+   Sidebar User Box
+========================= */
+
+.sidebar-user {
+    background: rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    padding: 10px 12px;
+}
+
+
+/* Brand (header) */
+.brand {
+    display: flex;
+    align-items: center;
+}
+
+
+.portal-brand-logo{height:34px;width:auto;padding:2px;border-radius:10px;}
+@media (max-width: 576px){.portal-brand-logo{height:30px;padding:2px;border-radius:9px;}}
+
+/* =========================
+   Portal sortable tables
+========================= */
+
+.portal-sort-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    text-decoration: none;
+    color: inherit;
+}
+
+.portal-sort-link:hover {
+    text-decoration: underline;
+}
+
+.portal-sort-icon {
+    opacity: 0.75;
+    font-size: 0.95em;
+}
+
+/* === Soft Blue (CTA) === */
+:root{
+  --pncecs-soft-blue: #4da3ff;
+  --pncecs-soft-blue-hover: #3b95ff;
+}
+
+/* Buttons (e.g., "طلب جديد" / "رفع ملف") */
+.btn-soft-blue{
+  background: var(--pncecs-soft-blue);
+  border-color: var(--pncecs-soft-blue);
+  color: #fff;
+}
+.btn-soft-blue:hover,
+.btn-soft-blue:focus{
+  background: var(--pncecs-soft-blue-hover);
+  border-color: var(--pncecs-soft-blue-hover);
+  color: #fff;
+}
+.btn-soft-blue:active{
+  background: var(--pncecs-soft-blue-hover);
+  border-color: var(--pncecs-soft-blue-hover);
+  color: #fff;
+}
+
+/* Sidebar CTA links ("طلب جديد" / "رفع ملف") */
+.nav-cta{
+  background: var(--pncecs-soft-blue);
+  color: #fff !important;
+  border-radius: 0.6rem;
+  padding: 0.55rem 0.8rem;
+  margin: 0.15rem 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 .125rem .25rem rgba(0,0,0,.08);
+}
+.nav-cta:hover,
+.nav-cta:focus{
+  background: var(--pncecs-soft-blue-hover);
+  color: #fff !important;
+}
+.nav-cta:active{
+  background: var(--pncecs-soft-blue-hover);
+}
+
+@media (max-width: 991.98px){
+  .nav-cta{
+    margin: 0.25rem 0;
+    border-radius: 0.75rem;
+    justify-content: center;
+    text-align: center;
+  }
+}
+
+
+
+/* =========================
+   Smart Print
+   ========================= */
+@media print {
+  .no-print, .no-print * { display: none !important; }
+  .main-header, .sidebar, .portal-navbar, nav.navbar, .navbar, .toast-container { display: none !important; }
+  body { background: #fff !important; }
+  .container, .container-fluid { max-width: 100% !important; }
+  .shadow, .shadow-sm, .shadow-lg { box-shadow: none !important; }
+  a[href]:after { content: "" !important; } /* do not print URLs */
+  table { page-break-inside: auto; }
+  tr { page-break-inside: avoid; page-break-after: auto; }
+  thead { display: table-header-group; }
+  .wf-print-target { display: block; }
+}
+
+/* When printing only a target area, hide everything else */
+body.wf-print-only-target * { visibility: hidden; }
+body.wf-print-only-target .wf-print-target,
+body.wf-print-only-target .wf-print-target * { visibility: visible; }
+body.wf-print-only-target .wf-print-target { position: absolute; inset: 0; padding: 16px; }
+
+/* =========================
+   Sidebar Help Collapse Toggle
+   ========================= */
+.sidebar-collapse-toggle {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: .55rem .65rem;
+  border-radius: .6rem;
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  color: inherit;
+}
+.sidebar-collapse-toggle:hover { background: rgba(255,255,255,.08); }
+.sidebar-collapse-toggle .chev { margin-inline-start: auto; transition: transform .2s ease; }
+.sidebar-collapse-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.help-menu a { display:block; padding:.35rem .75rem; border-radius:.55rem; margin:.1rem 0; }
+.help-menu a.active { background: rgba(255,255,255,.12); font-weight: 600; }

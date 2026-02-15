@@ -1,0 +1,144 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}طلب إجازة جديد{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-plus-circle"></i> طلب إجازة جديد</h4>
+  <div class="text-muted">املأ البيانات ثم اضغط إرسال.</div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="post" enctype="multipart/form-data" class="needs-validation" novalidate>
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <label class="form-label">نوع الإجازة</label>
+        <select name="leave_type_id" class="form-select" required>
+          <option value="">— اختر —</option>
+          {% for t in types %}
+            <option value="{{ t.id }}">{{ t.name_ar }}{% if t.max_days %} (حد أقصى {{ t.max_days }} يوم){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="start_date" class="form-control" required>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="end_date" class="form-control" required>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">عدد الأيام</label>
+        <input type="number" min="0" name="days" class="form-control" placeholder="تلقائي">
+        <div class="form-text">يُحتسب تلقائياً باستثناء العطل/الأعياد إن تُرك فارغاً.</div>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">مكان الإجازة</label>
+        <select name="leave_place" class="form-select">
+          <option value="">— تلقائي —</option>
+          <option value="INTERNAL">داخلية</option>
+          <option value="EXTERNAL">خارجية</option>
+        </select>
+      </div>
+
+      <div id="external-fields" class="col-12" style="display:none;">
+        <div class="border rounded-3 p-3">
+          <div class="fw-semibold mb-2"><i class="bi bi-globe2"></i> بيانات الإجازة الخارجية (اختياري)</div>
+
+          <div class="row g-3">
+            <div class="col-12 col-md-4">
+              <label class="form-label">الدولة</label>
+              <input class="form-control" name="travel_country" placeholder="مثال: الأردن">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label">المدينة</label>
+              <input class="form-control" name="travel_city" placeholder="مثال: عمّان">
+            </div>
+            <div class="col-12 col-md-4">
+              <label class="form-label">المعبر/الحدود</label>
+              <input class="form-control" name="border_crossing" placeholder="اختياري">
+            </div>
+
+            <div class="col-12">
+              <label class="form-label">العنوان في الخارج</label>
+              <input class="form-control" name="travel_address" placeholder="اختياري">
+            </div>
+
+            <div class="col-12 col-md-6">
+              <label class="form-label">هاتف للتواصل</label>
+              <input class="form-control" name="travel_contact_phone" placeholder="اختياري">
+            </div>
+            <div class="col-12 col-md-6">
+              <label class="form-label">الغرض من السفر</label>
+              <input class="form-control" name="travel_purpose" placeholder="اختياري">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">ملاحظات</label>
+        <textarea name="note" class="form-control" rows="3" placeholder="سبب الإجازة (اختياري)"></textarea>
+      </div>
+
+
+      <div class="col-12" id="docs-fields">
+        <label class="form-label">مرفقات (تقرير/مستند) <span id="docs-required" class="badge bg-danger" style="display:none;">مطلوب</span></label>
+        <input class="form-control" type="file" name="attachments" id="attachments" multiple>
+        <div class="form-text" id="docs-hint">اختياري. يمكن رفع أكثر من ملف (PDF/Word/Image) حسب الحاجة.</div>
+      </div>
+
+      <div class="col-12 d-flex gap-2 flex-wrap">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-send"></i> إرسال الطلب</button>
+
+        <a class="btn btn-outline-secondary" href="{{ url_for('users.help_leaves_guide') }}" target="_blank">
+          <i class="bi bi-book"></i> دليل الإجازات
+        </a>
+
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_my_leaves') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+  (function() {
+    const meta = {{ (types_meta or {}) | tojson }};
+    const sel = document.querySelector('select[name="leave_type_id"]');
+    const box = document.getElementById('external-fields');
+    if (!sel || !box) return;
+
+    function refresh() {
+      const id = sel.value || '';
+      const isExternal = !!(meta[id] && meta[id].is_external);
+      box.style.display = isExternal ? '' : 'none';
+
+      // Auto place
+      const placeSel = document.querySelector('select[name="leave_place"]');
+      if (placeSel) {
+        if (isExternal && !placeSel.value) placeSel.value = 'EXTERNAL';
+      }
+
+      // Docs requirement
+      const docsInput = document.getElementById('attachments');
+      const docsRequired = document.getElementById('docs-required');
+      const docsHint = document.getElementById('docs-hint');
+      if (docsInput && docsRequired && docsHint) {
+        const requiresDocs = !!(meta[id] && meta[id].requires_documents);
+        const hint = (meta[id] && meta[id].documents_hint) ? String(meta[id].documents_hint) : '';
+        docsInput.required = requiresDocs;
+        docsRequired.style.display = requiresDocs ? '' : 'none';
+        docsHint.textContent = (requiresDocs ? (hint || 'هذا النوع يتطلب إرفاق تقرير/مستند.') : (hint || 'اختياري. يمكن رفع أكثر من ملف حسب الحاجة.'));
+      }
+    }
+
+    sel.addEventListener('change', refresh);
+    refresh();
+  })();
+</script>
+
+{% endblock %}

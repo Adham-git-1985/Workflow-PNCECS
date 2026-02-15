@@ -1,0 +1,72 @@
+{% extends "portal/layout.html" %}
+{% block title %}مناطق التوصيل{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-geo"></i> مناطق التوصيل</h5>
+  {% if current_user.has_perm('TRANSPORT_CREATE') %}
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_zone_new') }}">إضافة منطقة</a>
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-9">
+      <label class="form-label">بحث</label>
+      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="اسم/مدينة...">
+    </div>
+    <div class="col-md-3 d-flex gap-2">
+      <button class="btn btn-primary">تطبيق</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_zones') }}">تفريغ</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>المنطقة</th>
+          <th>المدينة</th>
+          <th>الحالة</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td class="fw-semibold">{{ it.name }}</td>
+            <td>{{ it.city or '-' }}</td>
+            <td>
+              {% if it.is_active %}
+                <span class="badge text-bg-success">فعّالة</span>
+              {% else %}
+                <span class="badge text-bg-secondary">غير فعّالة</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <div class="btn-group">
+                {% if can_edit %}
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_zone_edit', zone_id=it.id) }}">تعديل</a>
+                {% endif %}
+                {% if can_delete %}
+                  <form method="post" action="{{ url_for('portal.transport_zone_delete', zone_id=it.id) }}" class="d-inline" onsubmit="return confirm('حذف المنطقة؟');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,109 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set selected = selected if selected is defined else {} %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">عرض العهدة</h5>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_custody_items') }}"><i class="bi bi-collection"></i> الأصناف والعهدة</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_custody_voucher_new') }}"><i class="bi bi-plus"></i> سند جديد</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">نوع الحامل</label>
+        <select name="holder_kind" id="hk" class="form-select">
+          <option value="" {% if not selected.holder_kind %}selected{% endif %}>بدون تحديد</option>
+          <option value="EMPLOYEE" {% if selected.holder_kind=='EMPLOYEE' %}selected{% endif %}>موظف</option>
+          <option value="ROOM" {% if selected.holder_kind=='ROOM' %}selected{% endif %}>غرفة</option>
+        </select>
+      </div>
+      <div class="col-md-4" id="wrapEmployee" style="display:none;">
+        <label class="form-label">الموظف</label>
+        <select name="holder_user_id" class="form-select">
+          <option value="" {% if not selected.holder_user_id %}selected{% endif %}>بدون تحديد</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if selected.holder_user_id==u.id %}selected{% endif %}>{{ u.full_name or u.email }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4" id="wrapRoom" style="display:none;">
+        <label class="form-label">الغرفة</label>
+        <select name="holder_room_id" class="form-select">
+          <option value="" {% if not selected.holder_room_id %}selected{% endif %}>بدون تحديد</option>
+          {% for r in rooms %}
+            <option value="{{ r.id }}" {% if selected.holder_room_id==r.id %}selected{% endif %}>{{ r.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> بحث</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>الحامل</th>
+            <th>الصنف</th>
+            <th style="width:120px;">الكمية</th>
+            <th>السيريال</th>
+            <th style="width:140px;">آخر تحديث</th>
+            <th style="width:90px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ r.holder_label }}</div>
+              <div class="text-muted small">{{ 'موظف' if r.holder_kind=='EMPLOYEE' else 'غرفة' }}</div>
+            </td>
+            <td>{{ r.item.label if r.item else '-' }}</td>
+            <td class="text-end">{{ '%.2f'|format(r.qty) }}</td>
+            <td>{{ r.serial or '' }}</td>
+            <td>{{ r.voucher_date }}</td>
+            <td class="text-center"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_custody_voucher_view', v_id=r.voucher_id) }}"><i class="bi bi-eye"></i></a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">لا يوجد بيانات.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const hk = document.getElementById('hk');
+  const wrapEmployee = document.getElementById('wrapEmployee');
+  const wrapRoom = document.getElementById('wrapRoom');
+  function sync(){
+    const v = (hk.value || '');
+    if(v === 'ROOM'){
+      wrapRoom.style.display='block';
+      wrapEmployee.style.display='none';
+    }else if(v === 'EMPLOYEE'){
+      wrapRoom.style.display='none';
+      wrapEmployee.style.display='block';
+    }else{
+      wrapRoom.style.display='none';
+      wrapEmployee.style.display='none';
+    }
+  }
+  hk.addEventListener('change', sync);
+  sync();
+})();
+</script>
+
+{% endblock %}

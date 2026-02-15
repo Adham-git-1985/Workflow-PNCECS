@@ -1,0 +1,65 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}دوامي{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-clock-history"></i> دوامي</h4>
+  <div class="text-muted">
+    عرض ملخص الدوام لآخر الأيام (Read-only).
+    {% if timeclock_code %}
+      <span class="ms-2">كود الساعة: <span class="badge bg-light text-dark border">{{ timeclock_code }}</span></span>
+    {% endif %}
+  </div>
+</div>
+
+{% if rows and rows|length > 0 %}
+  <div class="bg-white rounded-3 shadow-sm p-3">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>{{ portal_sort_link('اليوم', 'day') }}</th>
+            <th>{{ portal_sort_link('أول دخول', 'first_in') }}</th>
+            <th>{{ portal_sort_link('آخر خروج', 'last_out') }}</th>
+            <th>ساعات العمل</th>
+            <th>{{ portal_sort_link('تأخير', 'late_minutes') }}</th>
+            <th>{{ portal_sort_link('مغادرة مبكرة', 'early_leave_minutes') }}</th>
+            <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
+            <th>{{ portal_sort_link('الحالة', 'status') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td class="fw-semibold">{{ r.day }}</td>
+              <td class="text-muted small">{{ r.first_in.strftime('%H:%M') if r.first_in else '-' }}</td>
+              <td class="text-muted small">{{ r.last_out.strftime('%H:%M') if r.last_out else '-' }}</td>
+              <td>{{ '%.2f'|format((r.work_minutes or 0)/60) }}</td>
+              <td>{{ r.late_minutes or 0 }} د</td>
+              <td>{{ r.early_leave_minutes or 0 }} د</td>
+              <td>{{ r.overtime_minutes or 0 }} د</td>
+              <td>
+                {% if r.status == 'OK' %}
+                  <span class="badge bg-success">OK</span>
+                {% elif r.status == 'ABSENT' %}
+                  <span class="badge bg-danger">ABSENT</span>
+                {% else %}
+                  <span class="badge bg-warning text-dark">{{ r.status }}</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% else %}
+  <div class="alert alert-info">
+    لا توجد بيانات دوام حالياً. (سيظهر الملخص بعد استيراد الأحداث وحساب الملخص اليومي).
+  </div>
+{% endif %}
+
+<div class="mt-3">
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}"><i class="bi bi-arrow-right"></i> العودة للموارد البشرية</a>
+</div>
+{% endblock %}

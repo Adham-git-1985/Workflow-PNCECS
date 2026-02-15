@@ -1,0 +1,101 @@
+{% extends "portal/layout.html" %}
+{% block title %}التكاملات{% endblock %}
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <h5 class="mb-0"><i class="bi bi-plug"></i> التكاملات</h5>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">العودة للبوابة الإدارية</a>
+    </div>
+  </div>
+
+  <hr class="my-4">
+
+  <div class="row g-4">
+    <div class="col-lg-7">
+      <div class="p-3 border rounded-3">
+        <h6 class="mb-3"><i class="bi bi-clock-history"></i> تكامل ساعة الدوام</h6>
+
+        <form method="post" class="row g-2">
+          <div class="col-12">
+            <label class="form-label">مسار ملف/مجلد الساعة على السيرفر</label>
+            <input class="form-control" name="timeclock_file_path" value="{{ timeclock_file_path }}" placeholder="مثال: \\10.10.10.200\\JRTMData  أو  \\10.10.10.200\\JRTMData\\20260215.CSV" dir="ltr">
+            <div class="form-text">
+              يمكنك وضع <b>ملف</b> أو <b>مجلد</b>. عند وضع مجلد: سيتم اختيار أحدث ملف يومي تلقائيًا (مثل <code>YYYYMMDD.CSV</code>).
+            </div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">المطابقة حسب</label>
+            <select class="form-select" name="match_by">
+              <option value="TIMECLK_CODE" {% if (match_by or '') == 'TIMECLK_CODE' %}selected{% endif %}>كود الساعة (timeclock_code)</option>
+              <option value="EMPLOYEE_NO" {% if (match_by or '') == 'EMPLOYEE_NO' %}selected{% endif %}>الرقم الوظيفي (employee_no)</option>
+            </select>
+            <div class="form-text">يجب أن يطابق الرقم الموجود داخل ملف الساعة.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">طريقة القراءة</label>
+            <select class="form-select" name="append_only">
+              <option value="1" {% if append_only %}selected{% endif %}>Append-only (قراءة الزيادات فقط)</option>
+              <option value="0" {% if not append_only %}selected{% endif %}>Full read (قراءة كاملة)</option>
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">المزامنة التلقائية داخل التطبيق</label>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="auto_enabled" name="auto_enabled" value="1" {% if auto_enabled %}checked{% endif %}>
+              <label class="form-check-label" for="auto_enabled">تفعيل المراقبة (Polling) لملف الساعة</label>
+            </div>
+            <div class="form-text">عند التفعيل: يقوم التطبيق بفحص الملف كل فترة، وإذا تغيّر (حجم/تاريخ تعديل) يتم إدخال السجلات الجديدة تلقائيًا.</div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">فترة الفحص (ثواني)</label>
+            <input class="form-control" type="number" min="10" name="auto_interval" value="{{ auto_interval or 60 }}">
+            <div class="form-text">الحد الأدنى 10 ثواني. الافتراضي 60.</div>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">User ID لسجل الاستيراد (اختياري)</label>
+            <input class="form-control" type="number" min="1" name="imported_by_id" value="{{ imported_by_id or '' }}" placeholder="مثال: 1">
+            <div class="form-text">يُستخدم لتوثيق من قام بالاستيراد في الـ Audit عند التشغيل التلقائي/السكربت.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">الحالة</label>
+            <div class="border rounded p-2 bg-light">
+              <div class="small text-muted">آخر ملف: <b dir="ltr">{{ last_file or '—' }}</b></div>
+              <div class="small text-muted">آخر حجم: <b>{{ last_size or '—' }}</b></div>
+              <div class="small text-muted">آخر مزامنة: <b>{{ last_sync or '—' }}</b></div>
+            </div>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-primary w-100" type="submit">حفظ الإعدادات</button>
+          </div>
+        </form>
+
+        <hr class="my-3">
+
+        <form method="post" action="{{ url_for('portal.hr_attendance_sync_now') }}">
+          <button class="btn btn-success w-100" type="submit">
+            <i class="bi bi-arrow-repeat"></i> مزامنة الآن
+          </button>
+          <div class="form-text mt-2">يمكنك لاحقًا تشغيل مهمة مجدولة على السيرفر (Task Scheduler / Cron) لاستدعاء سكربت المزامنة بشكل دوري.</div>
+        </form>
+
+      </div>
+    </div>
+
+    <div class="col-lg-5">
+      <div class="p-3 border rounded-3">
+        <h6 class="mb-3"><i class="bi bi-info-circle"></i> ملاحظات تشغيل</h6>
+        <ul class="small mb-0">
+          <li>المزامنة لا تغير الملف على السيرفر؛ فقط تقرأ وتُدخل سجلات جديدة.</li>
+          <li>النظام يمنع التكرار عبر تحقق مسبق على أحداث الدوام.</li>
+          <li>للتشغيل الآلي: استخدم سكربت <code>sync_timeclock.py</code> مع مهمة مجدولة.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

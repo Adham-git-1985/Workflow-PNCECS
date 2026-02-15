@@ -1,0 +1,96 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set edit = edit if edit is defined else None %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">الغرف</h5>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <input type="hidden" name="action" value="{% if edit %}update{% else %}create{% endif %}">
+      {% if edit %}<input type="hidden" name="id" value="{{ edit.id }}">{% endif %}
+
+      <div class="row g-2">
+        <div class="col-md-4">
+          <label class="form-label">اسم الغرفة</label>
+          <input class="form-control" name="name" required value="{{ edit.name if edit else '' }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">الكود</label>
+          <input class="form-control" name="code" value="{{ edit.code if edit else '' }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">الوحدة (اختياري)</label>
+          <select class="form-select" name="unit_id">
+            <option value="">-</option>
+            {% for u in units %}
+              <option value="{{ u.id }}" {% if edit and edit.unit_id==u.id %}selected{% endif %}>{{ u.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">فعّال</label>
+          <select class="form-select" name="is_active">
+            <option value="1" {% if not edit or edit.is_active %}selected{% endif %}>نعم</option>
+            <option value="0" {% if edit and not edit.is_active %}selected{% endif %}>لا</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">ملاحظات</label>
+          <input class="form-control" name="note" value="{{ edit.note if edit else '' }}">
+        </div>
+      </div>
+
+      <div class="d-flex justify-content-end gap-2 mt-3">
+        {% if edit %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_admin_rooms') }}">إلغاء</a>
+        {% endif %}
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>الغرفة</th>
+            <th style="width:140px;">الكود</th>
+            <th style="width:220px;">الوحدة</th>
+            <th style="width:110px;">الحالة</th>
+            <th style="width:120px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.name }}</td>
+            <td class="text-muted">{{ r.code or '-' }}</td>
+            <td>{{ r.unit.name if r.unit else '-' }}</td>
+            <td>
+              {% if r.is_active %}
+                <span class="badge text-bg-success">فعّال</span>
+              {% else %}
+                <span class="badge text-bg-secondary">موقوف</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_rooms', edit_id=r.id) }}">تعديل</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted">لا يوجد بيانات</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

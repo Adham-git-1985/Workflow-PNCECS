@@ -1,0 +1,73 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}طلباتي{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-list-ul"></i> طلباتي</h4>
+    <div class="text-muted small">قائمة الطلبات الداخلية الخاصة بك.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_home') }}">رجوع</a>
+  </div>
+</div>
+
+<form class="row g-2 mb-3" method="get">
+  <div class="col-12 col-md-3">
+    <select class="form-select" name="status">
+      <option value="">كل الحالات</option>
+      {% for s in ['DRAFT','IN_REVIEW','APPROVED','REJECTED','RETURNED','CANCELLED'] %}
+        <option value="{{ s }}" {% if status==s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-3">
+    <select class="form-select" name="type">
+      <option value="">كل الأنواع</option>
+      {% for t in types %}
+        <option value="{{ t }}" {% if type_code==t %}selected{% endif %}>{{ t }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="col-12 col-md-3">
+    <button class="btn btn-primary w-100" type="submit">تصفية</button>
+  </div>
+</form>
+
+<div class="p-3 bg-white rounded-3 shadow-sm">
+  {% if rows %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>{{ portal_sort_link('ID', 'id') }}</th>
+            <th>{{ portal_sort_link('النوع', 'type_code') }}</th>
+            <th>{{ portal_sort_link('الحالة', 'status') }}</th>
+            <th>{{ portal_sort_link('آخر تحديث', 'updated_at') }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td>{{ r.type_code }}</td>
+            <td>
+              <span class="badge text-bg-{% if r.status in ['APPROVED'] %}success{% elif r.status in ['REJECTED'] %}danger{% elif r.status in ['RETURNED'] %}warning{% elif r.status in ['IN_REVIEW'] %}primary{% else %}secondary{% endif %}">
+                {{ r.status }}
+              </span>
+            </td>
+            <td class="text-muted small">{{ r.updated_at.strftime('%Y-%m-%d %H:%M') if r.updated_at else '' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_ss_view_request', req_id=r.id) }}">فتح</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد نتائج.</div>
+  {% endif %}
+</div>
+{% endblock %}

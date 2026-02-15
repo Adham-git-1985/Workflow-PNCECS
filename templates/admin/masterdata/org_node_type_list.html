@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+{% block content %}
+
+{% set _q = q or '' %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🧱 أنواع الهيكلية (Dynamic)</h3>
+    <small class="text-muted">تعريف مستويات/أجزاء الهيكلية (B: أكثر من نوع أب مسموح)</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#mdOrgTypePrint')">🖨️ طباعة</button>
+    <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">❓ دليل الهيكلية</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.org_nodes_list') }}">🌳 عناصر الهيكلية</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.org_node_types_new') }}">➕ إضافة نوع</a>
+  </div>
+</div>
+
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3 align-items-center">
+      <div class="col-lg-6">
+        <div class="d-flex flex-wrap align-items-center gap-3">
+          <form method="post" action="{{ url_for('masterdata.org_dynamic_toggle_legacy_lock') }}" class="d-flex align-items-center gap-2">
+            <input type="hidden" name="locked" value="0">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" id="legacyLock" name="locked" value="1" {% if legacy_locked %}checked{% endif %} onchange="this.form.submit()">
+              <label class="form-check-label" for="legacyLock">قفل الهيكلية الثابتة (قراءة فقط)</label>
+            </div>
+            <span class="badge {% if legacy_locked %}bg-danger{% else %}bg-success{% endif %}">
+              {% if legacy_locked %}🔒 مقفلة{% else %}🔓 غير مقفلة{% endif %}
+            </span>
+          </form>
+          <div class="small text-muted">آخر مزامنة: <b>{{ last_sync or '—' }}</b></div>
+        </div>
+        <div class="small text-muted mt-2">
+          <b>ماذا يفعل القفل؟</b> يجعل الهيكلية القديمة <b>قراءة فقط</b> (يعطّل الإضافة/التعديل/الحذف في صفحات الهيكلية الثابتة مثل الفرق/المدراء/التعيينات القديمة) لمنع التعارض أثناء الانتقال إلى الهيكلية الموحدة.
+          <span class="text-muted">لا يحذف أي بيانات.</span>
+        </div>
+        <div class="small text-muted mt-2">المزامنة تقوم بإنشاء/تحديث عناصر الهيكلية الموحدة من الجداول الثابتة. لا تحذف العناصر الديناميكية التي أنشأتها يدويًا.</div>
+      </div>
+      <div class="col-lg-6 text-lg-end">
+        <form method="post" action="{{ url_for('masterdata.org_dynamic_sync_legacy') }}" class="d-inline" onsubmit="return confirm('سيتم جلب الهيكلية من الجداول الثابتة إلى الهيكلية الموحدة. هل تريد المتابعة؟');">
+          <button class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> مزامنة من الهيكلية الثابتة الآن</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <form method="get" class="mb-3">
+      <div class="input-group">
+        <input class="form-control" type="text" name="q" value="{{ _q }}" placeholder="ابحث بالكود أو الاسم…">
+        <button class="btn btn-outline-secondary" type="submit">بحث</button>
+        {% if _q %}
+          <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+        {% endif %}
+      </div>
+    </form>
+
+    {% if items %}
+      <div id="mdOrgTypePrint" class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Code</th>
+              <th>الاسم (AR)</th>
+              <th>الاسم (EN)</th>
+              <th>ترتيب</th>
+              <th>موافقات</th>
+              <th>مخطط</th>
+              <th>مسارات</th>
+              <th>نشط</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for t in items %}
+              <tr>
+                <td>{{ t.id }}</td>
+                <td><code>{{ t.code }}</code></td>
+                <td>{{ t.name_ar }}</td>
+                <td>{{ t.name_en or '-' }}</td>
+                <td>{{ t.sort_order }}</td>
+                <td>{% if t.allow_in_approvals %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+                <td>{% if t.show_in_chart %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+                <td>{% if t.show_in_routes %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+                <td>{% if t.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.org_node_types_edit', type_id=t.id) }}">✏️ تعديل</a>
+                  {% if current_user.has_perm('MASTERDATA_DELETE') %}
+                  <form method="post" action="{{ url_for('masterdata.org_node_types_delete', type_id=t.id) }}" class="d-inline" onsubmit="return confirm('هل أنت متأكد؟ إذا كان هناك عناصر مرتبطة سيتم تعطيله بدلاً من الحذف.');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}

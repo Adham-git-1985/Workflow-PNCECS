@@ -1,0 +1,25 @@
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h4 class="mb-1">التدريب</h4>
+    <div class="text-muted small">
+      تدريب رقم: <strong>{{ program.program_no or ('#' ~ program.id) }}</strong>
+      {% if program.course and program.course.name_ar %}
+        — {{ program.course.name_ar }}
+      {% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_training_log') }}">سجل التدريبات</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_training_admin_dashboard') }}">لوحة التحكم</a>
+  </div>
+</div>
+
+<ul class="nav nav-pills flex-wrap mb-3">
+  {% for s_key, s_label, s_ep in steps %}
+    <li class="nav-item">
+      <a class="nav-link {% if step == s_key %}active{% endif %}" href="{{ url_for(s_ep, program_id=program.id) }}">
+        {{ loop.index }}. {{ s_label }}
+      </a>
+    </li>
+  {% endfor %}
+</ul>

@@ -1,0 +1,123 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "⭐ دليل الأداء والتقييم (للموظف)" %}
+{% set page_subtitle = "يوضح: تقييم النموذج (360) + التقييم النظامي (شهري/سنوي) + كيف تقرأ النتيجة." %}
+
+{% block guide_body %}
+
+<div class="alert alert-secondary mb-3">
+  <div><strong>ما الذي ستراه داخل النظام؟</strong></div>
+  <ul class="mb-0">
+    <li><strong>تقييم النموذج (360):</strong> نموذج يحدده الأدمن (أقسام + أسئلة + أوزان) ويقوم النظام بتوليد <em>تكليفات</em> لك (ذاتي/زملاء/مدير) لتعبئتها.</li>
+    <li><strong>التقييم النظامي:</strong> تقييم تلقائي يعتمد على حركاتك داخل النظام (طلبات، اعتماد/رفض، مرفقات، التزام…)، ويظهر <strong>شهريًا</strong> و<strong>سنويًا</strong> حسب تشغيله من الإدارة.</li>
+  </ul>
+</div>
+
+<div class="accordion" id="accPerfEmp">
+
+  <!-- System evaluation -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-sys">
+      <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#c-sys" aria-expanded="true" aria-controls="c-sys">
+        1) التقييم النظامي: أين أراه؟
+      </button>
+    </h2>
+    <div id="c-sys" class="accordion-collapse collapse show" aria-labelledby="h-sys" data-bs-parent="#accPerfEmp">
+      <div class="accordion-body">
+        <ol class="mb-3">
+          <li>من <strong>البوابة الإدارية</strong> افتح: <strong>الموارد البشرية</strong> → <strong>خدمات الموظف</strong>.</li>
+          <li>إذا كانت لديك صلاحية <code>HR_SYSTEM_EVALUATION_VIEW</code> ستظهر لك بطاقة باسم: <strong>تقييمي النظامي</strong>.</li>
+          <li>اضغط البطاقة لفتح صفحة النتائج: <strong>التقييم الشهري</strong> و<strong>التقييم السنوي</strong>.</li>
+        </ol>
+
+        <div class="alert alert-info mb-3">
+          <strong>إذا لم تظهر بطاقة (تقييمي النظامي):</strong>
+          <ul class="mb-0">
+            <li>اطلب من الأدمن تفعيل صلاحية <code>HR_SYSTEM_EVALUATION_VIEW</code> لحسابك/لدورك.</li>
+            <li>أو قدّم <strong>طلب صلاحية</strong> من داخل النظام (إن كانت خدمة طلب الصلاحيات مفعّلة).</li>
+          </ul>
+        </div>
+
+        <div class="small text-muted">
+          ملاحظة: تظهر النتائج فقط بعد أن تقوم الإدارة بتشغيل التقييم للشهر/السنة المطلوبة.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Form evaluation -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-form">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-form" aria-expanded="false" aria-controls="c-form">
+        2) تقييم النموذج (360): كيف أعبّئ التقييمات المطلوبة مني؟
+      </button>
+    </h2>
+    <div id="c-form" class="accordion-collapse collapse" aria-labelledby="h-form" data-bs-parent="#accPerfEmp">
+      <div class="accordion-body">
+        <ol class="mb-3">
+          <li>من البوابة الإدارية افتح: <strong>الموارد البشرية</strong> → <strong>الأداء والتقييم</strong>.</li>
+          <li>ستجد جدول: <strong>تقييمات مطلوبة منك</strong> (ذاتي/زميل/مدير) حسب التكليفات التي يولّدها الأدمن ضمن دورة تقييم.</li>
+          <li>اضغط <strong>تعبئة</strong> لفتح نموذج التقييم.</li>
+          <li>أجب على الأسئلة (غالبًا تقييم من 1 إلى 5) ثم اضغط <strong>حفظ</strong> أو <strong>إرسال</strong> حسب ما يظهر لك.</li>
+        </ol>
+
+        <div class="alert alert-warning mb-0">
+          <strong>صلاحيات مهمة:</strong>
+          <ul class="mb-0">
+            <li>للاطلاع على صفحة الأداء والتقييم: <code>HR_PERFORMANCE_READ</code></li>
+            <li>لتعبئة/إرسال التقييمات: <code>HR_PERFORMANCE_SUBMIT</code></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Score reading -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-score">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-score" aria-expanded="false" aria-controls="c-score">
+        3) كيف تُحسب وتُعرض الدرجة؟ (من 100 إلى 5 مع تقريب 0.1)
+      </button>
+    </h2>
+    <div id="c-score" class="accordion-collapse collapse" aria-labelledby="h-score" data-bs-parent="#accPerfEmp">
+      <div class="accordion-body">
+        <p class="mb-2">
+          <strong>التقييم النظامي</strong> يُحسب داخليًا كنقاط من <strong>0 إلى 100</strong> ثم يُحوَّل إلى <strong>0 إلى 5</strong> لسهولة القراءة.
+          ويتم <strong>التقريب لأقرب 0.1</strong>.
+        </p>
+        <div class="border rounded p-3 mb-3">
+          <div class="fw-semibold mb-1">المعادلة المستخدمة:</div>
+          <div dir="ltr"><code>score_5 = round((score_100 / 100) * 5, 1)</code></div>
+        </div>
+        <div class="small text-muted">
+          مثال: 88/100 → 4.4/5
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Comparison -->
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="h-compare">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c-compare" aria-expanded="false" aria-controls="c-compare">
+        4) المقارنة بين تقييم النموذج والتقييم النظامي
+      </button>
+    </h2>
+    <div id="c-compare" class="accordion-collapse collapse" aria-labelledby="h-compare" data-bs-parent="#accPerfEmp">
+      <div class="accordion-body">
+        <p class="mb-2">
+          عند اعتماد نموذج التقييم (360) وتشغيل التقييم النظامي لنفس الفترة، تستطيع الإدارة استخراج نتيجتين:
+        </p>
+        <ul>
+          <li><strong>نتيجة النموذج:</strong> متوسط إجابات النماذج (مع الأوزان إن وُجدت).</li>
+          <li><strong>نتيجة النظام:</strong> نتيجة مبنية على نشاطك داخل النظام.</li>
+        </ul>
+        <div class="alert alert-secondary mb-0">
+          <strong>المخرَج المتوقع للمقارنة:</strong> عرض النتيجتين جنبًا إلى جنب، مع فرق واضح (Gap) وتفسير مختصر.
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+{% endblock %}

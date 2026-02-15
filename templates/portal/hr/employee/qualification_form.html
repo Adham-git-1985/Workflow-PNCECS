@@ -1,0 +1,74 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-mortarboard"></i> {{ 'تعديل' if is_edit else 'إضافة' }} مؤهل</h5>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_qualifications', user_id=u.id) }}">
+        <i class="bi bi-arrow-right"></i> رجوع
+      </a>
+    </div>
+    <div class="card-body">
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">الدرجة العلمية</label>
+            <select name="degree_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.QUAL_DEGREE %}
+                <option value="{{ it.id }}" {% if item and item.degree_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">التخصص</label>
+            <select name="specialization_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.QUAL_SPECIALIZATION %}
+                <option value="{{ it.id }}" {% if item and item.specialization_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">التقدير</label>
+            <select name="grade_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.QUAL_GRADE %}
+                <option value="{{ it.id }}" {% if item and item.grade_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label">تاريخ المؤهل</label>
+            <input type="date" name="qualification_date" class="form-control" value="{{ item.qualification_date if item else '' }}">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">الجامعة</label>
+            <select name="university_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.UNIVERSITY %}
+                <option value="{{ it.id }}" {% if item and item.university_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label">الدولة</label>
+            <select name="country_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.COUNTRY %}
+                <option value="{{ it.id }}" {% if item and item.country_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div class="mt-4 d-flex justify-content-end">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

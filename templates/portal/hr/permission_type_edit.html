@@ -1,0 +1,59 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تعديل نوع مغادرة{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-pencil-square"></i> تعديل نوع مغادرة</h4>
+  <div class="text-muted">قم بتعديل البيانات ثم احفظ.</div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="post">
+    <div class="row g-3">
+      <div class="col-12 col-md-3">
+        <label class="form-label">CODE</label>
+        <input class="form-control" name="code" value="{{ row.code }}" required>
+      </div>
+      <div class="col-12 col-md-5">
+        <label class="form-label">الاسم بالعربية</label>
+        <input class="form-control" name="name_ar" value="{{ row.name_ar }}" required>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">Name (EN)</label>
+        <input class="form-control" name="name_en" value="{{ row.name_en or '' }}">
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">تحتاج موافقة</label>
+        <select class="form-select" name="requires_approval">
+          <option value="1" {% if row.requires_approval %}selected{% endif %}>نعم</option>
+          <option value="0" {% if not row.requires_approval %}selected{% endif %}>لا</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">حد الساعات</label>
+        <input class="form-control" name="max_hours" type="number" min="0" value="{{ row.max_hours or '' }}">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">تُحسب دوام</label>
+        <select class="form-select" name="counts_as_work">
+          <option value="1" {% if row.counts_as_work %}selected{% endif %}>نعم</option>
+          <option value="0" {% if not row.counts_as_work %}selected{% endif %}>لا</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label">نشط</label>
+        <select class="form-select" name="is_active">
+          <option value="1" {% if row.is_active %}selected{% endif %}>نعم</option>
+          <option value="0" {% if not row.is_active %}selected{% endif %}>لا</option>
+        </select>
+      </div>
+
+      <div class="col-12 d-flex gap-2 flex-wrap">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      </div>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,60 @@
+{% extends "layout.html" %}
+{% block title %}مراجعة الطلب{% endblock %}
+
+{% block extra_css %}
+<style>
+  .status-badge { font-size: 0.9rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4 mb-5">
+
+    <div class="card shadow-sm">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">📝 مراجعة الطلب رقم {{ req.id }}</h5>
+            <span class="badge bg-light text-dark status-badge">{{ req.status }}</span>
+        </div>
+
+        <div class="card-body">
+
+            <div class="mb-3">
+                <p class="mb-1"><strong>العنوان:</strong></p>
+                <div class="p-2 bg-light border rounded">{{ req.title }}</div>
+            </div>
+
+            <div class="mb-4">
+                <p class="mb-1"><strong>الوصف:</strong></p>
+                <div class="p-3 bg-light border rounded">{{ req.description or "—" }}</div>
+            </div>
+
+            <form method="POST" action="{{ url_for('request_action', request_id=req.id) }}">
+
+                <div class="mb-3">
+                    <label class="form-label">ملاحظة (اختياري)</label>
+                    <textarea name="note" rows="4" class="form-control" placeholder="اكتب ملاحظتك هنا إن وجدت"></textarea>
+                </div>
+
+                <div class="d-flex gap-3 flex-wrap">
+
+                    <button type="submit" name="action" value="approve" class="btn btn-success px-4">
+                        ✔️ موافقة
+                    </button>
+
+                    <button type="submit" name="action" value="reject" class="btn btn-danger px-4"
+                            onclick="return confirm('هل أنت متأكد من رفض الطلب؟')">
+                        ✖️ رفض
+                    </button>
+
+                    <a href="{{ url_for('inbox') }}" class="btn btn-outline-secondary ms-auto">
+                        ← رجوع
+                    </a>
+
+                </div>
+            </form>
+
+        </div>
+    </div>
+
+</div>
+{% endblock %}

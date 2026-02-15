@@ -1,0 +1,112 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}عرض طلب{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-card-checklist"></i> طلب #{{ r.id }} ({{ r.type_code }})</h4>
+    <div class="text-muted small">
+      الحالة:
+      <span class="badge text-bg-{% if r.status=='APPROVED' %}success{% elif r.status=='REJECTED' %}danger{% elif r.status=='RETURNED' %}warning{% elif r.status=='IN_REVIEW' %}primary{% else %}secondary{% endif %}">
+        {{ r.status }}
+      </span>
+    </div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_my_requests') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-7">
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <div class="fw-bold mb-2"><i class="bi bi-info-circle"></i> تفاصيل الطلب</div>
+      <div class="small">
+        {% for k,v in payload.items() %}
+          <div class="mb-1"><span class="text-muted">{{ k }}:</span> {{ v }}</div>
+        {% endfor %}
+      </div>
+
+      {% if can_edit %}
+      <hr/>
+      <form method="post" action="{{ url_for('portal.hr_ss_update_request', req_id=r.id) }}" enctype="multipart/form-data">
+        <div class="fw-bold mb-2">تعديل (مسودة/مُعادة)</div>
+        <div class="row g-2">
+          <div class="col-12">
+            <label class="form-label">ملاحظات</label>
+            <textarea class="form-control" name="notes" rows="3">{{ payload.get('notes','') }}</textarea>
+          </div>
+          <div class="col-12">
+            <label class="form-label">إضافة مرفقات (اختياري)</label>
+            <input class="form-control" type="file" name="files" multiple/>
+          </div>
+        </div>
+        <div class="d-flex gap-2 mt-3">
+          <button class="btn btn-primary" type="submit">حفظ التعديل</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_view_request', req_id=r.id) }}">تحديث</a>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2"><i class="bi bi-paperclip"></i> المرفقات</div>
+      {% if attachments %}
+        <ul class="list-group">
+          {% for a in attachments %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <div>
+                <div class="fw-bold">{{ a.original_name }}</div>
+                <div class="text-muted small">{{ a.doc_type }} · {{ a.uploaded_at.strftime('%Y-%m-%d %H:%M') if a.uploaded_at else '' }}</div>
+              </div>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_ss_download_attachment', req_id=r.id, att_id=a.id) }}">تنزيل</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="text-muted">لا يوجد مرفقات.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <div class="fw-bold mb-2"><i class="bi bi-diagram-3"></i> مسار الاعتماد</div>
+      {% if approvals %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead><tr><th>{{ portal_sort_link('الخطوة', 'step_no') }}</th><th>{{ portal_sort_link('المعتمد', 'approver_user') }}</th><th>{{ portal_sort_link('الحالة', 'status') }}</th></tr></thead>
+            <tbody>
+              {% for a in approvals %}
+              <tr>
+                <td>{{ a.step_no }}</td>
+                <td class="small">
+                  {% if a.approver_user %}{{ a.approver_user.full_name }}{% elif a.approver_role %}ROLE: {{ a.approver_role }}{% else %}-{% endif %}
+                </td>
+                <td><span class="badge text-bg-light">{{ a.status }}</span></td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لم يتم إنشاء مسار بعد (مسودة).</div>
+      {% endif %}
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2"><i class="bi bi-lightning-charge"></i> إجراءات</div>
+      {% if can_submit %}
+        <form method="post" action="{{ url_for('portal.hr_ss_submit_request', req_id=r.id) }}">
+          <button class="btn btn-success w-100" type="submit"><i class="bi bi-send"></i> تقديم الطلب</button>
+        </form>
+        <div class="form-text mt-2">بعد التقديم سيتم تحويله لمسار الاعتماد.</div>
+      {% endif %}
+
+      {% if can_cancel %}
+        <form method="post" class="mt-2" action="{{ url_for('portal.hr_ss_cancel_request', req_id=r.id) }}">
+          <button class="btn btn-outline-danger w-100" type="submit">إلغاء</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,158 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير دوام موظفين{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-people"></i> تقرير دوام موظفين</h4>
+      <div class="text-muted">موقع العمل + الهيكل التنظيمي + نوع التعيين + نطاق التاريخ.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_employees_attendance',
+            work_location_id=selected_work_location_id,
+            organization_id=organization_id,
+            directorate_id=directorate_id,
+            department_id=department_id,
+            division_id=division_id,
+            appointment_type_id=selected_appointment_type_id,
+            from=from_date,
+            to=to_date,
+            export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">الكل</option>
+        {% for x in work_locations %}
+          <option value="{{ x.id }}" {% if selected_work_location_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">نوع التعيين</label>
+      <select class="form-select" name="appointment_type_id">
+        <option value="">بدون اختيار</option>
+        {% for x in appointment_types %}
+          <option value="{{ x.id }}" {% if selected_appointment_type_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">الإدارة العامة</label>
+      <select class="form-select" name="organization_id">
+        <option value="">الكل</option>
+        {% for x in orgs %}
+          <option value="{{ x.id }}" {% if organization_id==x.id %}selected{% endif %}>{{ x.name_ar or x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">الدائرة</label>
+      <select class="form-select" name="directorate_id">
+        <option value="">الكل</option>
+        {% for x in dirs %}
+          <option value="{{ x.id }}" {% if directorate_id==x.id %}selected{% endif %}>{{ x.name_ar or x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">القسم</label>
+      <select class="form-select" name="department_id">
+        <option value="">الكل</option>
+        {% for x in depts %}
+          <option value="{{ x.id }}" {% if department_id==x.id %}selected{% endif %}>{{ x.name_ar or x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">الشعبة</label>
+      <select class="form-select" name="division_id">
+        <option value="">الكل</option>
+        {% for x in divs %}
+          <option value="{{ x.id }}" {% if division_id==x.id %}selected{% endif %}>{{ x.name_ar or x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from" value="{{ from_date }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to" value="{{ to_date }}">
+    </div>
+
+    <div class="col-md-1">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i></button>
+    </div>
+  </form>
+  <div class="text-muted small mt-2">ملاحظة: في حال عدم تحديد التاريخ، يتم افتراض الشهر الحالي تلقائياً.</div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>التاريخ</th>
+          <th>الرقم الوظيفي</th>
+          <th>الموظف</th>
+          <th>موقع العمل</th>
+          <th>الإدارة العامة</th>
+          <th>الدائرة</th>
+          <th>القسم</th>
+          <th>الشعبة</th>
+          <th>أول دخول</th>
+          <th>آخر خروج</th>
+          <th>ساعات الدوام</th>
+          <th>تأخير</th>
+          <th>خروج مبكر</th>
+          <th>إضافي</th>
+          <th>الحالة</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ r.get('day') or '' }}</td>
+            <td>{{ r.get('employee_no') or '' }}</td>
+            <td>{{ r.get('name') or '' }}</td>
+            <td>{{ r.get('work_location') or '' }}</td>
+            <td>{{ r.get('organization') or '' }}</td>
+            <td>{{ r.get('directorate') or '' }}</td>
+            <td>{{ r.get('department') or '' }}</td>
+            <td>{{ r.get('division') or '' }}</td>
+            <td>{% if r.get('first_in') %}{{ r.get('first_in').strftime('%Y-%m-%d %H:%M') }}{% endif %}</td>
+            <td>{% if r.get('last_out') %}{{ r.get('last_out').strftime('%Y-%m-%d %H:%M') }}{% endif %}</td>
+            <td>{{ r.get('work_hours') or 0 }}</td>
+            <td>{{ r.get('late_minutes') or 0 }}</td>
+            <td>{{ r.get('early_minutes') or 0 }}</td>
+            <td>{{ r.get('overtime_minutes') or 0 }}</td>
+            <td>{{ r.get('status') or '' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

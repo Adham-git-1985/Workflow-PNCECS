@@ -1,0 +1,65 @@
+{% extends "layout.html" %}
+
+{% block title %}المستودع{% endblock %}
+
+{% block content %}
+  <div class="container">
+    <div class="card border-0 shadow-sm mb-3">
+      <div class="card-body p-4">
+        <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+          <h3 class="mb-0">📦 المستودع</h3>
+          <div class="text-muted small">وحدة المستودع (هيكل الملاحة جاهز – التنفيذ التفصيلي لاحقاً)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-md-6 col-lg-4">
+        <a class="card border-0 shadow-sm h-100 text-decoration-none" href="{{ url_for('store.requests_log') }}">
+          <div class="card-body">
+            <div class="fw-bold">الطلبات</div>
+            <div class="text-muted small">سجل الطلبات</div>
+          </div>
+        </a>
+      </div>
+
+      <div class="col-md-6 col-lg-4">
+        <a class="card border-0 shadow-sm h-100 text-decoration-none" href="{{ url_for('store.voucher_issue_list') }}">
+          <div class="card-body">
+            <div class="fw-bold">السندات</div>
+            <div class="text-muted small">سندات الصرف / الإدخال / الجرد / الإتلاف / الإرجاع</div>
+          </div>
+        </a>
+      </div>
+
+      <div class="col-md-6 col-lg-4">
+        <a class="card border-0 shadow-sm h-100 text-decoration-none" href="{{ url_for('store.report_warehouses_contents') }}">
+          <div class="card-body">
+            <div class="fw-bold">التقارير</div>
+            <div class="text-muted small">المخازن – الأصناف – بطاقة الصنف – الجداول السنوية</div>
+          </div>
+        </a>
+      </div>
+
+      <div class="col-md-6 col-lg-4">
+        <a class="card border-0 shadow-sm h-100 text-decoration-none" href="{{ url_for('store.custody_view') }}">
+          <div class="card-body">
+            <div class="fw-bold">العهدة</div>
+            <div class="text-muted small">عرض العهدة وسندات العهدة</div>
+          </div>
+        </a>
+      </div>
+
+      {% if current_user.has_perm('STORE_MANAGE') %}
+      <div class="col-md-6 col-lg-4">
+        <a class="card border-0 shadow-sm h-100 text-decoration-none" href="{{ url_for('store.admin_constants') }}">
+          <div class="card-body">
+            <div class="fw-bold">لوحة التحكم</div>
+            <div class="text-muted small">ثوابت النظام + إدارة الأصناف + التصنيفات ...</div>
+          </div>
+        </a>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "portal/layout.html" %}
+{% block title %}إعدادات المراسلات{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">إعدادات المراسلات (الوارد/الصادر)</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-4 h-100">
+      <h6 class="mb-2">التصنيفات</h6>
+      <p class="text-muted mb-3">إدارة التصنيفات التي تظهر في تسجيل الوارد/الصادر وفلترة القوائم.</p>
+      <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_corr_categories') }}">فتح التصنيفات</a>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-4 h-100">
+      <h6 class="mb-2">الجهات (مرسلة/مستلمة)</h6>
+      <p class="text-muted mb-3">إدارة الجهات التي تظهر في تسجيل الوارد (مرسل) وتسجيل الصادر (مستلم).</p>
+      <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_corr_parties') }}">فتح الجهات</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

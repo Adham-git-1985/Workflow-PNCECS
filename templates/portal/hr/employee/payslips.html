@@ -1,0 +1,102 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-header"><h5 class="mb-0"><i class="bi bi-receipt"></i> رفع قسيمة راتب</h5></div>
+        <div class="card-body">
+          <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.hr_employee_attachments_upload', user_id=u.id) }}">
+            <input type="hidden" name="attachment_type" value="PAYSLIP">
+            <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_payslips', user_id=u.id) }}">
+
+            <div class="row g-2 mb-2">
+              <div class="col-6">
+                <label class="form-label">الشهر</label>
+                <input type="number" min="1" max="12" name="payslip_month" class="form-control" required>
+              </div>
+              <div class="col-6">
+                <label class="form-label">السنة</label>
+                <input type="number" min="2000" max="2100" name="payslip_year" class="form-control" required>
+              </div>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">ملاحظات</label>
+              <input type="text" name="note" class="form-control" placeholder="اختياري">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">الملف</label>
+              <input class="form-control" type="file" name="file" required>
+            </div>
+            <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع (Draft)</button>
+            <div class="form-text">يتم حفظ القسيمة كـ Draft ولا تُنشر إلا عند اختيار "نشر".</div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="mb-0"><i class="bi bi-receipt"></i> قسائم الراتب</h5>
+          <span class="text-muted small">Draft / Published</span>
+        </div>
+        <div class="card-body">
+          {% if items %}
+            <div class="table-responsive">
+              <table class="table table-striped align-middle">
+                <thead>
+                  <tr>
+                    <th>الشهر/السنة</th>
+                    <th>الملف</th>
+                    <th>الحالة</th>
+                    <th>تاريخ الرفع</th>
+                    <th style="width: 220px;">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for a in items %}
+                    <tr>
+                      <td>{{ a.payslip_month or '—' }}/{{ a.payslip_year or '—' }}</td>
+                      <td class="text-truncate" style="max-width: 220px;">{{ a.original_name }}</td>
+                      <td>
+                        {% if a.is_published %}
+                          <span class="badge bg-success">Published</span>
+                        {% else %}
+                          <span class="badge bg-warning text-dark">Draft</span>
+                        {% endif %}
+                      </td>
+                      <td>{{ a.uploaded_at.strftime('%Y-%m-%d') if a.uploaded_at else '—' }}</td>
+                      <td>
+                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=a.id) }}"><i class="bi bi-download"></i></a>
+
+                        {% if a.is_published %}
+                          <form method="post" action="{{ url_for('portal.hr_employee_payslip_unpublish', user_id=u.id, att_id=a.id) }}" style="display:inline-block">
+                            <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-eye-slash"></i></button>
+                          </form>
+                        {% else %}
+                          <form method="post" action="{{ url_for('portal.hr_employee_payslip_publish', user_id=u.id, att_id=a.id) }}" style="display:inline-block">
+                            <button class="btn btn-sm btn-success" type="submit"><i class="bi bi-eye"></i> نشر</button>
+                          </form>
+                        {% endif %}
+
+                        <form method="post" action="{{ url_for('portal.hr_employee_attachment_delete', user_id=u.id, att_id=a.id) }}" style="display:inline-block" onsubmit="return confirm('حذف القسيمة؟');">
+                          <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_payslips', user_id=u.id) }}">
+                          <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                        </form>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted">لا توجد قسائم راتب.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

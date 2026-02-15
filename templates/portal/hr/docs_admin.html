@@ -1,0 +1,89 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إدارة وثائق HR{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-gear"></i> إدارة وثائق HR</h4>
+    <div class="text-muted small">إنشاء وثيقة + رفع إصدار معتمد.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_docs_home') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-5">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">إنشاء وثيقة</div>
+      <form method="post" action="{{ url_for('portal.hr_docs_create') }}">
+        <div class="mb-2">
+          <label class="form-label">العنوان (AR)</label>
+          <input class="form-control" name="title_ar" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">التصنيف</label>
+          <select class="form-select" name="category">
+            <option value="POLICY">POLICY</option>
+            <option value="FORM">FORM</option>
+            <option value="PROCEDURE">PROCEDURE</option>
+          </select>
+        </div>
+        <button class="btn btn-success w-100" type="submit">إنشاء</button>
+      </form>
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm mt-3">
+      <div class="fw-bold mb-2">رفع إصدار جديد</div>
+      <form method="post" action="{{ url_for('portal.hr_docs_upload_version') }}" enctype="multipart/form-data">
+        <div class="mb-2">
+          <label class="form-label">الوثيقة</label>
+          <select class="form-select" name="doc_id" required>
+            {% for d in docs %}
+              <option value="{{ d.id }}" {% if focus and focus|int==d.id %}selected{% endif %}>{{ d.title_ar }} ({{ d.category }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">الملف</label>
+          <input class="form-control" type="file" name="file" required/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">ملاحظة/تغيير</label>
+          <input class="form-control" name="change_log" placeholder="مثال: تحديث نموذج..."/>
+        </div>
+        <div class="mb-2">
+          <label class="form-label">تاريخ السريان (اختياري)</label>
+          <input class="form-control" type="date" name="effective_date"/>
+        </div>
+        <button class="btn btn-primary w-100" type="submit">رفع واعتماد</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">قائمة الوثائق</div>
+      {% if docs %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>{{ portal_sort_link('العنوان', 'title_ar') }}</th><th>{{ portal_sort_link('التصنيف', 'category') }}</th><th>{{ portal_sort_link('الإصدار المعتمد', 'current_ver') }}</th><th></th></tr></thead>
+          <tbody>
+            {% for d in docs %}
+            <tr>
+              <td>{{ d.title_ar }}</td>
+              <td><span class="badge text-bg-light">{{ d.category }}</span></td>
+              <td class="text-muted small">{% if d.current_ver %}v{{ d.current_ver.version_no }}{% else %}-{% endif %}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_docs_view', doc_id=d.id) }}">فتح</a>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <div class="text-muted">لا توجد وثائق.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

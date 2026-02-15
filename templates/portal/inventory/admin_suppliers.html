@@ -1,0 +1,99 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set edit = edit if edit is defined else None %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">الموردون</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_admin_settings') }}"><i class="bi bi-gear"></i> الإعدادات</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post" class="row g-2">
+      <input type="hidden" name="action" value="{{ 'update' if edit else 'create' }}">
+      {% if edit %}
+      <input type="hidden" name="id" value="{{ edit.id }}">
+      {% endif %}
+
+      <div class="col-md-4">
+        <label class="form-label">اسم المورد</label>
+        <input name="name" class="form-control" required value="{{ edit.name if edit else '' }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">هاتف</label>
+        <input name="phone" class="form-control" value="{{ edit.phone if edit else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إيميل</label>
+        <input name="email" class="form-control" value="{{ edit.email if edit else '' }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">نشط</label>
+        <select name="is_active" class="form-select">
+          <option value="1" {% if (edit is none) or (edit and edit.is_active) %}selected{% endif %}>نعم</option>
+          <option value="0" {% if edit and not edit.is_active %}selected{% endif %}>لا</option>
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">العنوان</label>
+        <input name="address" class="form-control" value="{{ edit.address if edit else '' }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">ملاحظات</label>
+        <input name="note" class="form-control" value="{{ edit.note if edit else '' }}">
+      </div>
+
+      <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+        {% if edit %}
+          <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_admin_suppliers') }}">إلغاء التعديل</a>
+        {% endif %}
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:70px;">#</th>
+            <th>الاسم</th>
+            <th>هاتف</th>
+            <th>إيميل</th>
+            <th>نشط</th>
+            <th style="width:160px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in rows %}
+          <tr>
+            <td>{{ s.id }}</td>
+            <td>{{ s.name }}</td>
+            <td>{{ s.phone or '-' }}</td>
+            <td>{{ s.email or '-' }}</td>
+            <td>
+              {% if s.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-secondary">لا</span>{% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_suppliers', edit_id=s.id) }}"><i class="bi bi-pencil"></i></a>
+              <form method="post" class="d-inline" onsubmit="return confirm('حذف المورد؟');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="{{ s.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="text-muted">لا يوجد بيانات.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

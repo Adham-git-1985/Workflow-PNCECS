@@ -1,0 +1,94 @@
+{% extends 'portal/hr/base.html' %}
+
+{% block title %}التدريب{% endblock %}
+
+{% block hr_content %}
+  {% include 'portal/hr/training/_wizard_nav.html' %}
+
+  <div class="card">
+    <div class="card-header">معلومات التدريب</div>
+    <div class="card-body">
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">رقم التدريب</label>
+            <input type="text" name="program_no" value="{{ program.program_no or '' }}" class="form-control" placeholder="مثال: TRN-2026-01">
+          </div>
+
+          <div class="col-md-8">
+            <label class="form-label">التدريب (من ثوابت النظام)</label>
+            <select name="course_id" class="form-select">
+              <option value="">-- اختر --</option>
+              {% for c in courses %}
+                <option value="{{ c.id }}" {% if program.course_id == c.id %}selected{% endif %}>{{ c.name_ar }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">يمكنك إضافة التدريب من لوحة التحكم → قائمة التدريبات.</div>
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">بداية التدريب</label>
+            <input type="date" name="start_date" value="{{ program.start_date or '' }}" class="form-control">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">نهاية التدريب</label>
+            <input type="date" name="end_date" value="{{ program.end_date or '' }}" class="form-control">
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">الدولة</label>
+            <select name="country_lookup_id" class="form-select">
+              <option value="">-- اختر --</option>
+              {% for it in countries %}
+                <option value="{{ it.id }}" {% if program.country_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">الجهة الممولة/الداعية</label>
+            <select name="sponsor_lookup_id" class="form-select">
+              <option value="">-- اختر --</option>
+              {% for it in sponsors %}
+                <option value="{{ it.id }}" {% if program.sponsor_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">مكان الانعقاد</label>
+            <input type="text" name="venue" value="{{ program.venue or '' }}" class="form-control" placeholder="مثال: رام الله / دبي">
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label">عدد الساعات</label>
+            <input type="number" name="hours" value="{{ program.hours if program.hours is not none else '' }}" class="form-control" min="0">
+          </div>
+
+          <div class="col-md-2">
+            <label class="form-label">الاستضافة</label>
+            <select name="is_hosted" class="form-select">
+              <option value="0" {% if not program.is_hosted %}selected{% endif %}>غير مستضافة</option>
+              <option value="1" {% if program.is_hosted %}selected{% endif %}>مستضافة</option>
+            </select>
+          </div>
+
+          <div class="col-md-4">
+            <label class="form-label">اسم المدرب</label>
+            <input type="text" name="trainer_name" value="{{ program.trainer_name or '' }}" class="form-control">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">ملاحظات</label>
+            <textarea name="notes" class="form-control" rows="3">{{ program.notes or '' }}</textarea>
+          </div>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2 mt-3">
+          <button type="submit" class="btn btn-primary">حفظ والمتابعة</button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_training_program_conditions', program_id=program.id) }}">التالي</a>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

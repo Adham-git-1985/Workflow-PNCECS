@@ -1,0 +1,81 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">🎭 Roles</h3>
+    <small class="text-muted">إدارة الأدوار التي تظهر في النظام (Dropdowns)</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdRolesPrint\')">🖨️ طباعة</button>
+
+    <a class="btn btn-outline-success" href="{{ url_for('masterdata.roles_export_excel', q=q) }}">⬇️ Excel</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('masterdata.import_excel', screen='roles') }}">⬆️ استيراد Excel</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.roles_new') }}">➕ Role جديد</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+<form method="get" class="mb-3">
+  <div class="input-group">
+    <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="ابحث بالكود أو الاسم…">
+    <button class="btn btn-outline-secondary" type="submit">بحث</button>
+    {% if q %}
+      <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+    {% endif %}
+  </div>
+</form>
+
+
+    {% if items %}
+    <div id="mdRolesPrint" class="table-responsive">
+      <table class="table table-sm align-middle" data-sortable="true">
+        <thead class="table-light">
+          <tr>
+            <th>#</th>
+            <th>Code</th>
+            <th>الاسم (عربي)</th>
+            <th>الاسم (EN)</th>
+            <th>Active</th>
+            <th data-nosort></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in items %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td><code>{{ r.code }}</code></td>
+            <td>{{ r.name_ar or "-" }}</td>
+            <td>{{ r.name_en or "-" }}</td>
+            <td>
+              {% if r.is_active %}
+                <span class="badge bg-success">Yes</span>
+              {% else %}
+                <span class="badge bg-secondary">No</span>
+              {% endif %}
+            </td>
+            <td class="text-end d-flex gap-2 justify-content-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.roles_edit', role_id=r.id) }}">تعديل</a>
+              <form method="post" action="{{ url_for('masterdata.roles_delete', role_id=r.id) }}"
+                    onsubmit="return confirm('حذف الدور؟');">
+                <button class="btn btn-sm btn-outline-danger">حذف</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-muted">لا توجد أدوار بعد.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/table_sort.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,54 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}وثيقة{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-file-text"></i> {{ doc.title_ar }}</h4>
+    <div class="text-muted small">التصنيف: {{ doc.category }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_docs_home') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-7">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">الإصدارات</div>
+      {% if versions %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead><tr><th>{{ portal_sort_link('الإصدار', 'version_no') }}</th><th>{{ portal_sort_link('تاريخ', 'created_at') }}</th><th>{{ portal_sort_link('ملاحظات', 'change_log') }}</th><th></th></tr></thead>
+            <tbody>
+              {% for v in versions %}
+              <tr>
+                <td>v{{ v.version_no }} {% if doc.current_version_id==v.id %}<span class="badge text-bg-success ms-1">معتمد</span>{% endif %}</td>
+                <td class="text-muted small">{{ v.created_at.strftime('%Y-%m-%d') if v.created_at else '' }}</td>
+                <td class="small">{{ v.change_log or '' }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_docs_download', doc_id=doc.id, ver_id=v.id) }}">تنزيل</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا يوجد إصدارات.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">معلومات</div>
+      <div class="small">
+        <div><span class="text-muted">أنشئت:</span> {{ doc.created_at.strftime('%Y-%m-%d') if doc.created_at else '' }}</div>
+        <div><span class="text-muted">ناشر:</span> {{ doc.created_by.full_name if doc.created_by else '-' }}</div>
+      </div>
+      {% if current_user.has_perm('HR_DOCS_MANAGE') %}
+        <a class="btn btn-outline-primary w-100 mt-3" href="{{ url_for('portal.hr_docs_admin', focus=doc.id) }}">رفع إصدار جديد</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

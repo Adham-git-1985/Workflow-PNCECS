@@ -1,0 +1,74 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير التقاعد{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-person-check"></i> تقرير التقاعد</h4>
+      <div class="text-muted">حسب التاريخ وموقع العمل.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_retirement', from_date=from_date, to_date=to_date, work_location_id=selected_work_location_id, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> Excel</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from_date" value="{{ from_date }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to_date" value="{{ to_date }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">بدون اختيار</option>
+        {% for wl in work_locations %}
+          <option value="{{ wl.id }}" {% if selected_work_location_id==wl.id %}selected{% endif %}>{{ wl.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>الرقم الوظيفي</th>
+          <th>الموظف</th>
+          <th>موقع العمل</th>
+          <th>تاريخ الميلاد</th>
+          <th>تاريخ التقاعد المتوقع</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          {% set ef = r.ef %}
+          {% set u = r.user %}
+          <tr>
+            <td>{{ ef.employee_no if ef else '' }}</td>
+            <td>{{ ef.full_name_quad if ef and ef.full_name_quad else (u.full_name or u.name or u.email) }}</td>
+            <td>{{ work_location_map.get(ef.work_location_lookup_id, '') if ef else '' }}</td>
+            <td>{{ r.birth_date.strftime('%Y-%m-%d') if r.birth_date else '' }}</td>
+            <td>{{ r.retirement_date.strftime('%Y-%m-%d') if r.retirement_date else '' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,96 @@
+{% extends "layout.html" %}
+{% block title %}طلبات النظام{% endblock %}
+
+{% block content %}
+
+{% include "components/advanced_filters.html" %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">📋 طلبات النظام</h3>
+        <small class="text-muted">عرض جميع الطلبات مع إمكانيات الفلترة المتقدمة</small>
+    </div>
+    <div class="d-flex gap-2">
+        {% set qs = request.args.to_dict() %}
+        <a class="btn btn-outline-success"
+           href="{{ url_for('admin.admin_requests_export_excel', **qs) }}">
+            <i class="bi bi-file-earmark-excel"></i>
+            تصدير Excel
+        </a>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+
+        {% if requests %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>العنوان</th>
+                        <th>الحالة</th>
+                        <th class="text-center">تاريخ الإنشاء</th>
+                        <th class="text-center">الدور الحالي</th>
+                        <th class="text-center">SLA</th>
+                        <th class="text-center">إجراء</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for req in requests %}
+                    <tr>
+                        <td>{{ req.id }}</td>
+                        <td>
+                            <strong>{{ req.title }}</strong>
+                        </td>
+                        <td>
+                            <span class="badge
+                                {% if req.status == 'APPROVED' %}bg-success
+                                {% elif req.status == 'REJECTED' %}bg-danger
+                                {% elif req.status == 'DRAFT' %}bg-secondary
+                                {% else %}bg-warning text-dark{% endif %}">
+                                {{ req.status }}
+                            </span>
+                        </td>
+                        <td class="text-center">
+                            {{ req.created_at.strftime("%Y-%m-%d") }}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-info">
+                                {{ req.current_role }}
+                            </span>
+                        </td>
+                        <td class="text-center">
+                            {% set sla = get_sla_state(req) %}
+                            {% if sla == "ON_TRACK" %}
+                                <span class="badge bg-success">On Track</span>
+                            {% elif sla == "BREACHED" %}
+                                <span class="badge bg-warning text-dark">Breached</span>
+                            {% elif sla == "ESCALATED" %}
+                                <span class="badge bg-danger">Escalated</span>
+                            {% else %}
+                                <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <a href="{{ url_for('workflow.view_request', request_id=req.id) }}"
+                               class="btn btn-sm btn-outline-primary">
+                                عرض
+                            </a>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد طلبات مطابقة لنتائج الفلترة
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}

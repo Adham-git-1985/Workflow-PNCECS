@@ -1,0 +1,109 @@
+{% extends 'portal/hr/base.html' %}
+{% block hr_content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0">سجل الإجازات</h4>
+  {% if can_manage %}
+    <a class="btn btn-primary btn-sm" href="{{ url_for('portal.hr_leaves_admin_new') }}">إدخال إجازة</a>
+  {% endif %}
+</div>
+
+<form class="card shadow-sm mb-3" method="get">
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-md-3">
+        <select class="form-select" name="user_id">
+          <option value="">الموظف (الكل)</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if filters.user_id|int == u.id %}selected{% endif %}>{{ u.full_name or u.email }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select class="form-select" name="leave_type_id">
+          <option value="">نوع الإجازة (الكل)</option>
+          {% for t in leave_types %}
+            <option value="{{ t.id }}" {% if filters.leave_type_id|int == t.id %}selected{% endif %}>{{ t.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <select class="form-select" name="leave_place">
+          <option value="">مكان الإجازة (الكل)</option>
+          <option value="INTERNAL" {% if filters.leave_place=='INTERNAL' %}selected{% endif %}>داخلية</option>
+          <option value="EXTERNAL" {% if filters.leave_place=='EXTERNAL' %}selected{% endif %}>خارجية</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <select class="form-select" name="admin_status_id">
+          <option value="">الحالة (الكل)</option>
+          {% for s in status_defs %}
+            <option value="{{ s.id }}" {% if filters.admin_status_id|int == s.id %}selected{% endif %}>{{ s.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-outline-primary" type="submit">بحث</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>المحافظة</th>
+          <th>الموقع</th>
+          <th>الموظف</th>
+          <th>نوع الإجازة</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>الأيام</th>
+          <th>المكان</th>
+          <th>الحالة</th>
+          <th>مدخل بواسطة</th>
+          <th>مرفقات</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        {% set ef = file_map.get(r.user_id) %}
+        <tr>
+          <td>{{ ef.work_governorate_lookup.name_ar if ef and ef.work_governorate_lookup else '—' }}</td>
+          <td>{{ ef.work_location_lookup.name_ar if ef and ef.work_location_lookup else '—' }}</td>
+          <td>{{ r.user.full_name or r.user.email }}</td>
+          <td>{{ r.leave_type.name_ar }}</td>
+          <td>{{ r.start_date }}</td>
+          <td>{{ r.end_date }}</td>
+          <td>{{ r.days if r.days is not none else '—' }}</td>
+          <td>{{ 'داخلية' if r.leave_place=='INTERNAL' else ('خارجية' if r.leave_place=='EXTERNAL' else '—') }}</td>
+          <td>{{ r.admin_status.name_ar if r.admin_status else '—' }}</td>
+          <td>
+            {% if r.entered_by=='SELF' %}الموظف{% elif r.entered_by=='ADMIN' %}موظف البرنامج الإداري{% else %}بدون تحديد{% endif %}
+          </td>
+          <td>
+            {% if r.attachments %}
+              {% for a in r.attachments %}
+                <a class="btn btn-link btn-sm p-0" href="{{ url_for('portal.hr_leave_attachment_download_admin', att_id=a.id) }}">{{ a.original_name or 'ملف' }}</a>{% if not loop.last %}<br>{% endif %}
+              {% endfor %}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td class="text-end">
+            {% if can_manage %}
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_leaves_admin_edit', row_id=r.id) }}">تعديل</a>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+{% block content %}{{ self.hr_content() }}{% endblock %}

@@ -1,0 +1,74 @@
+{% extends "portal/layout.html" %}
+{% block title %}تفاصيل دورة تقييم{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-calendar2-range"></i> دورة: {{ cycle.name }}</h5>
+      <div class="text-muted small">نموذج: {{ cycle.form.name if cycle.form else cycle.form_id }} — الحالة: <b>{{ cycle.status }}</b></div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_perf_cycles') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_hr_perf_cycle_export_csv', cycle_id=cycle.id) }}"><i class="bi bi-download"></i> Export CSV</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div class="d-flex gap-2 flex-wrap">
+      <span class="badge bg-dark">الإجمالي: {{ stats.total }}</span>
+      <span class="badge bg-success">مُرسل: {{ stats.submitted }}</span>
+      <span class="badge bg-secondary">معلّق: {{ stats.pending }}</span>
+    </div>
+    <form method="post" action="{{ url_for('portal.portal_admin_hr_perf_cycle_generate', cycle_id=cycle.id) }}" class="d-flex gap-2">
+      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-gear"></i> توليد التكليفات (Auto)</button>
+    </form>
+  </div>
+  <div class="text-muted small mt-2">* توليد تلقائي: (ذاتي) + (مدير) + (زملاء) حسب الوحدة الأساسية، مع احترام عدم التكرار.</div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <h6 class="mb-3"><i class="bi bi-list-check"></i> التكليفات</h6>
+
+  {% if assignments and assignments|length > 0 %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>{{ portal_sort_link('الموظف', 'evaluatee') }}</th>
+            <th>{{ portal_sort_link('المقيّم', 'evaluator') }}</th>
+            <th>{{ portal_sort_link('النوع', 'evaluator_type') }}</th>
+            <th>الحالة</th>
+            <th class="text-end">النتيجة</th>
+            <th class="text-end">{{ portal_sort_link('تاريخ', 'submitted_at') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in assignments %}
+            <tr>
+              <td>{{ a.id }}</td>
+              <td>{{ a.evaluatee.full_name if a.evaluatee else a.evaluatee_user_id }}</td>
+              <td>{{ a.evaluator.full_name if a.evaluator else a.evaluator_user_id }}</td>
+              <td>{{ a.evaluator_type }}</td>
+              <td>
+                {% if a.status == 'SUBMITTED' %}
+                  <span class="badge bg-success">SUBMITTED</span>
+                {% else %}
+                  <span class="badge bg-secondary">PENDING</span>
+                {% endif %}
+              </td>
+              <td class="text-end">{% if a.score_total is not none %}{{ "%.2f"|format(a.score_total) }}{% else %}—{% endif %}</td>
+              <td class="text-end">{% if a.submitted_at %}{{ a.submitted_at.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد تكليفات بعد. اضغط زر التوليد.</div>
+  {% endif %}
+</div>
+{% endblock %}

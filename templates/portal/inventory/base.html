@@ -1,0 +1,14 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}المستودع{% endblock %}
+
+{% block content %}
+<div class="row g-3">
+  <div class="col-lg-3">
+    {% include "portal/inventory/_sidebar.html" %}
+  </div>
+  <div class="col-lg-9">
+    {% block inv_content %}{% endblock %}
+  </div>
+</div>
+{% endblock %}

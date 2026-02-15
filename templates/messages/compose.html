@@ -1,0 +1,93 @@
+{% extends "layout.html" %}
+{% block title %}رسالة جديدة | المراسلات{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h3 class="mb-1">✉️ رسالة جديدة</h3>
+      <small class="text-muted">إرسال رسالة لمستخدم أو دائرة أو إدارة</small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('messages.inbox') }}" class="btn btn-outline-secondary">📥 العودة للوارد</a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <form method="POST" novalidate>
+        <div class="row g-3">
+          <div class="col-md-4">
+            <label class="form-label">الجهة</label>
+            <select class="form-select" name="target_kind" id="target_kind" required>
+              <option value="USER">مستخدم</option>
+              <option value="DEPARTMENT">دائرة</option>
+              <option value="DIRECTORATE">إدارة</option>
+            </select>
+          </div>
+
+          <div class="col-md-8">
+            <label class="form-label">إلى</label>
+
+            <select class="form-select" name="target_id" id="target_user">
+              {% for u in users %}
+                <option value="{{ u.id }}">{{ u.email }} ({{ u.role }})</option>
+              {% endfor %}
+            </select>
+
+            <select class="form-select d-none" name="target_id" id="target_dept" disabled>
+              {% for d in departments %}
+                <option value="{{ d.id }}">{{ d.name_ar }}</option>
+              {% endfor %}
+            </select>
+
+            <select class="form-select d-none" name="target_id" id="target_dir" disabled>
+              {% for d in directorates %}
+                <option value="{{ d.id }}">{{ d.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">الموضوع (اختياري)</label>
+            <input class="form-control" name="subject" maxlength="200" placeholder="مثال: متابعة طلب/استفسار" />
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">نص الرسالة</label>
+            <textarea class="form-control" name="body" rows="6" required placeholder="اكتب رسالتك هنا..."></textarea>
+          </div>
+
+          <div class="col-12">
+            <button class="btn btn-primary w-100">إرسال</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const kind = document.getElementById('target_kind');
+  const uSel = document.getElementById('target_user');
+  const dSel = document.getElementById('target_dept');
+  const rSel = document.getElementById('target_dir');
+
+  function toggle() {
+    const v = (kind.value || 'USER').toUpperCase();
+    // reset
+    uSel.classList.add('d-none'); uSel.disabled = true;
+    dSel.classList.add('d-none'); dSel.disabled = true;
+    rSel.classList.add('d-none'); rSel.disabled = true;
+
+    if (v === 'USER') { uSel.classList.remove('d-none'); uSel.disabled = false; }
+    if (v === 'DEPARTMENT') { dSel.classList.remove('d-none'); dSel.disabled = false; }
+    if (v === 'DIRECTORATE') { rSel.classList.remove('d-none'); rSel.disabled = false; }
+  }
+
+  kind.addEventListener('change', toggle);
+  toggle();
+})();
+</script>
+{% endblock %}

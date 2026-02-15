@@ -1,0 +1,121 @@
+{% extends "portal/layout.html" %}
+{% block title %}طلبات الصلاحيات (إدارة){% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm" id="adminAccessReqPrint">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#adminAccessReqPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_access_requests_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <div>
+      <h4 class="mb-1">طلبات الصلاحيات</h4>
+      <div class="text-muted">إدارة ومراجعة طلبات تفعيل خدمات البوابة.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.index') }}">
+        <i class="bi bi-arrow-right"></i> العودة للرئيسية
+      </a>
+    </div>
+  </div>
+
+  <form method="get" class="row g-2 align-items-end mt-3">
+    <div class="col-md-2">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="status">
+        <option value="PENDING" {{ 'selected' if status=='PENDING' else '' }}>قيد المراجعة</option>
+        <option value="APPROVED" {{ 'selected' if status=='APPROVED' else '' }}>تمت الموافقة</option>
+        <option value="REJECTED" {{ 'selected' if status=='REJECTED' else '' }}>مرفوض</option>
+        <option value="CANCELLED" {{ 'selected' if status=='CANCELLED' else '' }}>ملغي</option>
+        <option value="ALL" {{ 'selected' if status=='ALL' else '' }}>الكل</option>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">الخدمة</label>
+      <select class="form-select" name="service">
+        <option value="">الكل</option>
+        {% for k,svc in defs.items() %}
+          <option value="{{ k }}" {{ 'selected' if service==k else '' }}>{{ svc['label'] }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">بحث (اسم/إيميل)</label>
+      <input class="form-control" name="q" value="{{ q }}" placeholder="مثال: ahmad أو user@pncecs.ps">
+    </div>
+
+    <div class="col-md-2">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" name="mine" value="1" id="mine" {% if mine %}checked{% endif %}>
+        <label class="form-check-label" for="mine">المعين لي فقط</label>
+      </div>
+    </div>
+
+    <div class="col-md-2">
+      <button class="btn btn-primary w-100">تطبيق</button>
+    </div>
+  </form>
+
+  <div class="table-responsive mt-3">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr class="text-muted">
+          <th>#</th>
+          <th>الموظف</th>
+          <th>{{ portal_sort_link('الخدمة', 'service') }}</th>
+          <th>{{ portal_sort_link('المعين إلى', 'assigned_to_user_id') }}</th>
+          <th>الصلاحيات المطلوبة</th>
+          <th>{{ portal_sort_link('الحالة', 'status') }}</th>
+          <th>{{ portal_sort_link('تاريخ الطلب', 'created_at') }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td><b>#{{ r.id }}</b></td>
+            <td>
+              <div>{{ r.user.name or '—' }}</div>
+              <div class="text-muted small">{{ r.user.email }}</div>
+            </td>
+            <td>{{ defs.get(r.service, {}).get('label', r.service) }}</td>
+            <td>
+              {% if r.assigned_to %}
+                <div>{{ r.assigned_to.name or '—' }}</div>
+                <div class="text-muted small">{{ r.assigned_to.email }}</div>
+              {% else %}
+                <span class="text-muted small">غير معيّن</span>
+              {% endif %}
+            </td>
+            <td>
+              {% for k in r.keys_list %}
+                <span class="badge text-bg-light border">{{ k }}</span>
+              {% endfor %}
+            </td>
+            <td>
+              {% if r.status=='PENDING' %}
+                <span class="badge text-bg-warning">قيد المراجعة</span>
+              {% elif r.status=='APPROVED' %}
+                <span class="badge text-bg-success">موافق</span>
+              {% elif r.status=='REJECTED' %}
+                <span class="badge text-bg-danger">مرفوض</span>
+              {% else %}
+                <span class="badge text-bg-secondary">{{ r.status }}</span>
+              {% endif %}
+            </td>
+            <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '—' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.admin_access_request_view', req_id=r.id) }}">فتح</a>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">لا توجد طلبات.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

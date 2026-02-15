@@ -1,0 +1,85 @@
+{% extends "portal/layout.html" %}
+{% block title %}الرحلات والمسافات{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-map"></i> الرحلات والمسافات</h5>
+  {% if can_create %}
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_trip_new') }}">تسجيل رحلة</a>
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-9">
+      <label class="form-label">بحث</label>
+      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="ملاحظة/رقم الرحلة...">
+    </div>
+    <div class="col-md-3 d-flex gap-2">
+      <button class="btn btn-primary">تطبيق</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_trips') }}">تفريغ</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>السيارة</th>
+          <th>السائق</th>
+          <th>الانطلاق</th>
+          <th>الوصول</th>
+          <th>المسافة (كم)</th>
+          <th>ملاحظات</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td class="text-muted">#{{ it.id }}</td>
+            <td class="fw-semibold">{{ it.vehicle.plate_no }}</td>
+            <td>{{ it.driver.name if it.driver else '-' }}</td>
+            <td class="text-muted small">{% if it.started_at %}{{ it.started_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>
+            <td class="text-muted small">{% if it.ended_at %}{{ it.ended_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>
+            <td>
+              {% if it.distance_km is not none %}
+                {{ "%.1f"|format(it.distance_km) }}
+              {% elif it.start_odometer is not none and it.end_odometer is not none %}
+                {{ "%.1f"|format(it.end_odometer - it.start_odometer) }}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ it.note or '-' }}</td>
+
+<td class="text-end">
+  {% if can_edit %}
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_trip_edit', trip_id=it.id) }}">تعديل</a>
+  {% endif %}
+  {% if can_delete %}
+    <form method="post" action="{{ url_for('portal.transport_trip_delete', trip_id=it.id) }}" class="d-inline"
+          onsubmit="return confirm('هل تريد حذف هذه الرحلة؟');">
+      <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+    </form>
+  {% endif %}
+  {% if not can_edit and not can_delete %}
+    <span class="text-muted">-</span>
+  {% endif %}
+</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

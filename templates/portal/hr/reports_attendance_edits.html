@@ -1,0 +1,116 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير مراقبة تعديلات الدوام{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-pencil-square"></i> تقرير مراقبة تعديلات الدوام</h4>
+      <div class="text-muted">الموظف الذي قام بالتعديل + الموظف الذي تم التعديل عليه + تاريخ التعديل + نوع التعديل.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_attendance_edits', editor_id=editor_id, user_id=target_user_id, from_date=date_from, to_date=date_to, edit_type=edit_type, affect_time=('1' if only_affect_time else ''), export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">الموظف الذي قام بالتعديل</label>
+      <select class="form-select" name="editor_id">
+        <option value="">— الكل —</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if editor_id==u.id %}selected{% endif %}>{{ u.full_name or u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">الموظف الذي تم التعديل عليه</label>
+      <select class="form-select" name="user_id">
+        <option value="">— الكل —</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if target_user_id==u.id %}selected{% endif %}>{{ u.full_name or u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">تاريخ التعديل من</label>
+      <input class="form-control" type="date" name="from_date" value="{{ date_from }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">تاريخ التعديل إلى</label>
+      <input class="form-control" type="date" name="to_date" value="{{ date_to }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">نوع التعديل</label>
+      <select class="form-select" name="edit_type">
+        <option value="" {% if not edit_type %}selected{% endif %}>الكل</option>
+        <option value="manual" {% if edit_type=='manual' %}selected{% endif %}>تعديل يدوي</option>
+        <option value="delete" {% if edit_type=='delete' %}selected{% endif %}>حذف حركات</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <div class="form-check mt-4">
+        <input class="form-check-input" type="checkbox" id="affect_time" name="affect_time" value="1" {% if only_affect_time %}checked{% endif %}>
+        <label class="form-check-label" for="affect_time">التعديلات التي أثرت على توقيت مدخل على الساعة</label>
+      </div>
+    </div>
+    <div class="col-md-3">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>تاريخ التعديل</th>
+          <th>نوع التعديل</th>
+          <th>من قام بالتعديل</th>
+          <th>الموظف</th>
+          <th>تأثير على التوقيت</th>
+          <th>تفاصيل</th>
+          <th>ملاحظات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ loop.index }}</td>
+            <td>{{ r.ts.strftime('%Y-%m-%d %H:%M') if r.ts else '' }}</td>
+            <td>
+              {% if r.edit_type == 'manual' %}
+                <span class="badge text-bg-primary">تعديل يدوي</span>
+              {% else %}
+                <span class="badge text-bg-secondary">حذف حركات</span>
+              {% endif %}
+            </td>
+            <td>{{ r.edited_by.full_name or r.edited_by.name or r.edited_by.email if r.edited_by else '' }}</td>
+            <td>{{ r.target_user.full_name or r.target_user.name or r.target_user.email if r.target_user else '' }}</td>
+            <td>
+              {% if r.affects_time %}
+                <span class="badge text-bg-success">نعم</span>
+              {% else %}
+                <span class="badge text-bg-light text-dark">لا</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ r.details or '' }}</td>
+            <td>{{ r.note or '' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

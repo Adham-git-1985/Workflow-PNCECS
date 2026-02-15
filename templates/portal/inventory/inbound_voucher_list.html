@@ -1,0 +1,83 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">سجل سندات الإدخال</h5>
+  <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_inbound_voucher_new') }}"><i class="bi bi-plus-circle"></i> إدخال سند</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">رقم السند</label>
+        <input name="voucher_no" class="form-control" value="{{ selected.voucher_no|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="from_date" class="form-control" value="{{ selected.from_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="to_date" class="form-control" value="{{ selected.to_date|default('') }}">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">إلى مخزن</label>
+        <select name="to_warehouse_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for w in warehouses %}
+            <option value="{{ w.id }}" {% if selected.to_warehouse_id==w.id %}selected{% endif %}>{{ w.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">السند يحتوي</label>
+        <input name="contains" class="form-control" value="{{ selected.contains|default('') }}" placeholder="اسم/كود الصنف">
+      </div>
+
+      <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_inbound_voucher_list') }}">مسح</a>
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped mb-0">
+        <thead>
+          <tr>
+            <th style="width:90px;">#</th>
+            <th>رقم السند</th>
+            <th>تاريخ السند</th>
+            <th>إلى مستودع</th>
+            <th style="width:120px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in rows %}
+          <tr>
+            <td>{{ v.id }}</td>
+            <td>{{ v.voucher_no }}</td>
+            <td>{{ v.voucher_date }}</td>
+            <td>{{ v.to_warehouse.label if v.to_warehouse else '-' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_inbound_voucher_view', v_id=v.id) }}"><i class="bi bi-eye"></i> عرض</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-4">لا توجد بيانات.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

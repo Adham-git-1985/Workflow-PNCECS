@@ -1,0 +1,59 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-people"></i> {{ 'تعديل' if is_edit else 'إضافة' }} فرد</h5>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_dependents', user_id=u.id) }}">
+        <i class="bi bi-arrow-right"></i> رجوع
+      </a>
+    </div>
+    <div class="card-body">
+      <form method="post">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">الاسم</label>
+            <input type="text" name="full_name" class="form-control" value="{{ item.full_name if item else '' }}" required>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">العلاقة</label>
+            <select name="relation_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.DEP_RELATION %}
+                <option value="{{ it.id }}" {% if item and item.relation_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">رقم الهوية</label>
+            <input type="text" name="national_id" class="form-control" value="{{ item.national_id if item else '' }}">
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">الجنس</label>
+            <select name="gender_lookup_id" class="form-select">
+              <option value="">—</option>
+              {% for it in lookups.GENDER %}
+                <option value="{{ it.id }}" {% if item and item.gender_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">تاريخ الميلاد</label>
+            <input type="date" name="birth_date" class="form-control" value="{{ item.birth_date if item else '' }}">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">العلاوة</label>
+            <input type="number" step="0.01" name="allowance" class="form-control" value="{{ item.allowance if item and item.allowance is not none else '' }}">
+          </div>
+        </div>
+
+        <div class="mt-4 d-flex justify-content-end">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

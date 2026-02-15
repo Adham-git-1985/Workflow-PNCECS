@@ -1,0 +1,40 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}الانضباط والشؤون القانونية{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-shield-exclamation"></i> الانضباط والشؤون القانونية</h4>
+    <div class="text-muted small">مخالفات/إنذارات/تحقيقات مع مرفقات.</div>
+  </div>
+  <div class="d-flex gap-2">
+    {% if current_user.has_perm('HR_DISCIPLINE_MANAGE') %}
+      <a class="btn btn-primary" href="{{ url_for('portal.hr_discipline_new') }}"><i class="bi bi-plus-circle"></i> قضية جديدة</a>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}">رجوع</a>
+  </div>
+</div>
+
+<div class="p-3 bg-white rounded-3 shadow-sm">
+  {% if rows %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead><tr><th>{{ portal_sort_link('ID', 'id') }}</th><th>{{ portal_sort_link('الموظف', 'employee') }}</th><th>{{ portal_sort_link('النوع', 'category') }}</th><th>{{ portal_sort_link('الحالة', 'status') }}</th><th></th></tr></thead>
+        <tbody>
+          {% for c in rows %}
+          <tr>
+            <td>{{ c.id }}</td>
+            <td>{{ c.employee.full_name }}</td>
+            <td><span class="badge text-bg-light">{{ c.category }}</span></td>
+            <td><span class="badge text-bg-{% if c.status=='CLOSED' %}success{% else %}primary{% endif %}">{{ c.status }}</span></td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_discipline_view', case_id=c.id) }}">فتح</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد قضايا.</div>
+  {% endif %}
+</div>
+{% endblock %}

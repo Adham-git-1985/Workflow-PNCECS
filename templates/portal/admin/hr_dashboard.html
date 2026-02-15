@@ -1,0 +1,70 @@
+{% extends "portal/layout.html" %}
+{% block title %}لوحة الموارد البشرية{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+  <div class="row g-3">
+    <div class="col-lg-3">
+      <div class="bg-white rounded-3 shadow-sm p-3">
+        <div class="fw-bold mb-2"><i class="bi bi-list"></i> تنقّل سريع</div>
+        <div class="list-group list-group-flush">
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-grid"></i> لوحة الإدارة</a>
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.hr_me_home') }}"><i class="bi bi-person"></i> خدمات الموظف</a>
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.hr_home') }}"><i class="bi bi-people"></i> شؤون الموظفين</a>
+          <div class="px-3 pt-3 text-muted small">التقارير</div>
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.hr_leaves_report') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.hr_monthly_leave_report') }}"><i class="bi bi-calendar2-week"></i> التقرير الشهري</a>
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.hr_leave_balances') }}"><i class="bi bi-wallet2"></i> أرصدة الإجازات</a>
+        </div>
+      </div>
+
+      {% if pending and ((pending.get('leaves', 0) or 0) > 0 or (pending.get('permissions', 0) or 0) > 0) %}
+        <div class="bg-white rounded-3 shadow-sm p-3 mt-3">
+          <div class="fw-bold mb-2"><i class="bi bi-exclamation-triangle"></i> طلبات معلّقة</div>
+          <div class="d-flex flex-wrap gap-2 mb-2">
+            {% if (pending.get('leaves', 0) or 0) > 0 %}
+              <span class="badge bg-dark">إجازات: {{ pending.get('leaves') }}</span>
+            {% endif %}
+            {% if (pending.get('permissions', 0) or 0) > 0 %}
+              <span class="badge bg-dark">مغادرات: {{ pending.get('permissions') }}</span>
+            {% endif %}
+          </div>
+          <a class="btn btn-sm btn-warning w-100" href="{{ url_for('portal.hr_approvals') }}">
+            <i class="bi bi-check2-square"></i> مراجعة الاعتمادات
+          </a>
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="col-lg-9">
+      <div class="bg-white rounded-3 shadow-sm p-4">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+          <div>
+            <h5 class="mb-0"><i class="bi bi-clipboard2-data"></i> لوحة الموارد البشرية</h5>
+            <div class="text-muted small">أدوات الموارد البشرية للإدارة (ستظهر لك فقط الأدوات المسموحة).</div>
+          </div>
+        </div>
+
+        <div class="row g-3">
+          {% for c in cards %}
+            <div class="col-md-6 col-xl-4">
+              <div class="border rounded-3 p-3 h-100 d-flex flex-column">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <div class="fs-5 text-primary"><i class="bi {{ c.icon }}"></i></div>
+                  <h6 class="mb-0">{{ c.title }}</h6>
+                </div>
+                <div class="text-muted small mb-3">{{ c.desc }}</div>
+                <div class="mt-auto">
+                  <a class="btn btn-sm btn-primary w-100" href="{{ c.url }}">فتح</a>
+                </div>
+              </div>
+            </div>
+          {% else %}
+            <div class="col-12 text-muted">لا توجد أدوات متاحة.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

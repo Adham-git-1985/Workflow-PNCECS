@@ -1,0 +1,61 @@
+{% extends "portal/layout.html" %}
+{% block title %}{% if item %}تعديل صيانة{% else %}سجل صيانة جديد{% endif %}{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-wrench-adjustable"></i> {% if item %}تعديل صيانة #{{ item.id }}{% else %}سجل صيانة جديد{% endif %}</h5>
+  {% if item %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_maintenance_view', maint_id=item.id) }}">رجوع</a>
+  {% else %}
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_maintenance_list') }}">رجوع</a>
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-6">
+      <label class="form-label">السيارة *</label>
+      <select class="form-select" name="vehicle_id" required>
+        <option value="">—</option>
+        {% for v in vehicles %}
+          <option value="{{ v.id }}" {% if item and item.vehicle_id==v.id %}selected{% endif %}>{{ v.plate_no }}{% if v.label %} — {{ v.label }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">تاريخ الفاتورة</label>
+      <input class="form-control" type="date" name="invoice_day" value="{{ item.invoice_day if item and item.invoice_day else '' }}">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">رقم الفاتورة</label>
+      <input class="form-control" name="invoice_no" value="{{ item.invoice_no if item and item.invoice_no else '' }}">
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">الكراج (اختياري)</label>
+      <select class="form-select" name="garage_lookup_id">
+        <option value="">—</option>
+        {% for g in garages %}
+          <option value="{{ g.id }}" {% if item and item.garage_lookup_id==g.id %}selected{% endif %}>{{ g.label }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">إذا لم تظهر خيارات، أضف HR Lookup للفئة: {{ 'TRANSPORT_GARAGE' }}</div>
+    </div>
+
+    <div class="col-md-6">
+      <label class="form-label">ملاحظات</label>
+      <input class="form-control" name="notes" value="{{ item.notes if item and item.notes else '' }}">
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_maintenance_list') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

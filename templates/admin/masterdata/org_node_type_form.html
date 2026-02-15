@@ -1,0 +1,91 @@
+{% extends "layout.html" %}
+{% block content %}
+
+{% set selected_ids = (t.allowed_parent_type_ids() if t else []) %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">{% if t %}✏️ تعديل نوع الهيكلية{% else %}➕ إضافة نوع هيكلية{% endif %}</h3>
+    <small class="text-muted">(B) يمكنك اختيار أكثر من نوع أب مسموح لهذا النوع</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">❓ الدليل</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.org_node_types_list') }}">رجوع</a>
+  </div>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label fw-bold">Code (ثابت)</label>
+        <input class="form-control" name="code" value="{{ t.code if t else '' }}" placeholder="مثال: DIRECTORATE" required>
+        <div class="form-text">يفضل أحرف كبيرة وبدون مسافات (سيتم تحويل المسافات إلى _).</div>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الاسم (AR)</label>
+        <input class="form-control" name="name_ar" value="{{ t.name_ar if t else '' }}" required>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الاسم (EN)</label>
+        <input class="form-control" name="name_en" value="{{ t.name_en if t else '' }}">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-bold">ترتيب</label>
+        <input class="form-control" type="number" name="sort_order" value="{{ t.sort_order if t else 0 }}">
+      </div>
+
+      <div class="col-md-10 d-flex flex-wrap gap-4 align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="allow_in_approvals" value="1" id="allow_in_approvals" {% if not t or t.allow_in_approvals %}checked{% endif %}>
+          <label class="form-check-label" for="allow_in_approvals">الدخول في الموافقات</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="show_in_chart" value="1" id="show_in_chart" {% if not t or t.show_in_chart %}checked{% endif %}>
+          <label class="form-check-label" for="show_in_chart">الظهور في المخطط</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="show_in_routes" value="1" id="show_in_routes" {% if not t or t.show_in_routes %}checked{% endif %}>
+          <label class="form-check-label" for="show_in_routes">الظهور في المسارات</label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if not t or t.is_active %}checked{% endif %}>
+          <label class="form-check-label" for="is_active">نشط</label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <div class="border rounded p-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="fw-bold">التبعية (الأب المسموح) — (B)</div>
+            <div class="text-muted small">اختر أكثر من نوع أب، أو اتركها فارغة ليصبح النوع جذريًا فقط</div>
+          </div>
+
+          <div class="row g-2">
+            {% for x in types %}
+              <div class="col-md-3 col-sm-6">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" name="allowed_parent_type_ids" value="{{ x.id }}" id="pt{{ x.id }}"
+                         {% if t and x.id == t.id %}disabled{% endif %}
+                         {% if x.id in selected_ids %}checked{% endif %}>
+                  <label class="form-check-label" for="pt{{ x.id }}">
+                    {{ x.name_ar }} {% if x.code %}<span class="text-muted">(<code>{{ x.code }}</code>)</span>{% endif %}
+                  </label>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">حفظ</button>
+      </div>
+    </div>
+
+  </div>
+</form>
+
+{% endblock %}

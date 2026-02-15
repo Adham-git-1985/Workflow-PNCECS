@@ -1,0 +1,98 @@
+{% extends "portal/layout.html" %}
+{% block title %}طلبات الصلاحيات{% endblock %}
+
+{% block content %}
+{% set f = portal_flags if portal_flags is defined else {} %}
+{% set back_url = (url_for('portal.index') if can_enter_portal else url_for('portal.portal_entry')) %}
+
+<div class="p-4 bg-white rounded-3 shadow-sm" id="myAccessReqPrint">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#myAccessReqPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_access_requests_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <div>
+      <h4 class="mb-1">طلبات الصلاحيات</h4>
+      <div class="text-muted">هنا تتابع الطلبات التي قمت بإرسالها للإدارة.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-soft-blue" href="{{ url_for('portal.access_request_new') }}">
+        <i class="bi bi-plus-circle"></i> طلب جديد
+      </a>
+      <a class="btn btn-outline-secondary" href="{{ back_url }}">العودة</a>
+    </div>
+  </div>
+
+  <hr class="my-3" />
+
+  {% if rows and rows|length > 0 %}
+    <div class="table-responsive">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th style="width:90px">#</th>
+            <th>{{ portal_sort_link('الخدمة', 'service') }}</th>
+            <th>الصلاحيات المطلوبة</th>
+            <th style="width:140px">{{ portal_sort_link('الحالة', 'status') }}</th>
+            <th style="width:170px">{{ portal_sort_link('تاريخ الطلب', 'created_at') }}</th>
+            <th style="width:170px">{{ portal_sort_link('تاريخ القرار', 'decided_at') }}</th>
+            <th style="width:140px">إجراء</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            {% set svc = defs.get(r.service, {}) %}
+            <tr>
+              <td>#{{ r.id }}</td>
+              <td>
+                <div class="fw-semibold">{{ svc.get('label', r.service) }}</div>
+                {% if r.note %}
+                  <div class="text-muted small">{{ r.note }}</div>
+                {% endif %}
+              </td>
+              <td>
+                {% for k in r.keys_list %}
+                  <span class="badge text-bg-light border me-1 mb-1">{{ k }}</span>
+                {% endfor %}
+              </td>
+              <td>
+                {% if r.status == 'PENDING' %}
+                  <span class="badge text-bg-warning">قيد المراجعة</span>
+                {% elif r.status == 'APPROVED' %}
+                  <span class="badge text-bg-success">تمت الموافقة</span>
+                {% elif r.status == 'REJECTED' %}
+                  <span class="badge text-bg-danger">مرفوض</span>
+                {% elif r.status == 'CANCELLED' %}
+                  <span class="badge text-bg-secondary">ملغي</span>
+                {% else %}
+                  <span class="badge text-bg-light border">{{ r.status }}</span>
+                {% endif %}
+
+                {% if r.decision_note %}
+                  <div class="text-muted small mt-1">{{ r.decision_note }}</div>
+                {% endif %}
+              </td>
+              <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '-' }}</td>
+              <td class="text-muted small">{{ r.decided_at.strftime('%Y-%m-%d %H:%M') if r.decided_at else '-' }}</td>
+              <td>
+                {% if r.status == 'PENDING' %}
+                  <form method="post" action="{{ url_for('portal.my_access_request_cancel', req_id=r.id) }}" onsubmit="return confirm('هل تريد إلغاء هذا الطلب؟');">
+                    <button class="btn btn-sm btn-outline-danger">إلغاء</button>
+                  </form>
+                {% else %}
+                  <span class="text-muted small">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد طلبات حتى الآن.</div>
+  {% endif %}
+</div>
+{% endblock %}

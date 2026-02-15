@@ -1,0 +1,60 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set selected_year = selected_year if selected_year is defined else '' %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">الجدول السنوي للسندات</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_report_yearly_qty') }}"><i class="bi bi-bar-chart"></i> الجدول السنوي للكميات</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">السنة (اختياري)</label>
+        <input name="year" class="form-control" value="{{ selected_year }}" placeholder="مثال: 2026">
+      </div>
+      <div class="col-md-9 d-flex align-items-end gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> عرض</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_report_yearly_vouchers') }}">تفريغ</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:120px;">السنة</th>
+            <th>إدخال</th>
+            <th>صرف</th>
+            <th>إرجاع</th>
+            <th>إتلاف</th>
+            <th>جرد</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="fw-bold">{{ r.year }}</td>
+            <td>{{ r.data.get('إدخال', 0) }}</td>
+            <td>{{ r.data.get('صرف', 0) }}</td>
+            <td>{{ r.data.get('إرجاع', 0) }}</td>
+            <td>{{ r.data.get('إتلاف', 0) }}</td>
+            <td>{{ r.data.get('جرد', 0) }}</td>
+          </tr>
+          {% endfor %}
+          {% if not rows %}
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

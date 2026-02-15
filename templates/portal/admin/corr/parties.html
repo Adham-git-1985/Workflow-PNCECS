@@ -1,0 +1,140 @@
+{% extends "portal/layout.html" %}
+{% block title %}جهات المراسلات{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">جهات المراسلات</h5>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_corr_index') }}">إعدادات المراسلات</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">البوابة الإدارية</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label">بحث</label>
+      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="اسم...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">النوع</label>
+      <select class="form-select" name="kind">
+        <option value="" {% if not kind %}selected{% endif %}>الكل</option>
+        <option value="SENDER" {% if kind=='SENDER' %}selected{% endif %}>مرسل</option>
+        <option value="RECIPIENT" {% if kind=='RECIPIENT' %}selected{% endif %}>مستلم</option>
+        <option value="BOTH" {% if kind=='BOTH' %}selected{% endif %}>كلاهما</option>
+      </select>
+    </div>
+    <div class="col-md-5 text-end">
+      <button class="btn btn-primary">تطبيق</button>
+      <a class="btn btn-outline-success" href="{{ url_for('portal.portal_admin_corr_parties', q=q, export=1) }}">تصدير Excel</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_corr_parties') }}">تفريغ</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <h6 class="mb-3">إضافة جهة</h6>
+  <form method="post" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">النوع</label>
+      <select class="form-select" name="kind" required>
+        <option value="SENDER">مرسل</option>
+        <option value="RECIPIENT">مستلم</option>
+        <option value="BOTH">كلاهما</option>
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">الاسم (AR)</label>
+      <input class="form-control" name="name_ar" placeholder="مثال: وزارة التربية" required>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">الاسم (EN)</label>
+      <input class="form-control" name="name_en" placeholder="Ministry of Education">
+    </div>
+    <div class="col-md-1">
+      <label class="form-label">نشط</label>
+      <select class="form-select" name="is_active">
+        <option value="1" selected>نعم</option>
+        <option value="0">لا</option>
+      </select>
+    </div>
+    <div class="col-12">
+      <button class="btn btn-success">إضافة</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>النوع</th>
+          <th>{{ portal_sort_link('الاسم (AR)', 'name_ar') }}</th>
+          <th>{{ portal_sort_link('الاسم (EN)', 'name_en') }}</th>
+          <th>نشط</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>
+              {% if r.kind == 'SENDER' %}
+                <span class="badge text-bg-primary">مرسل</span>
+              {% elif r.kind == 'RECIPIENT' %}
+                <span class="badge text-bg-success">مستلم</span>
+              {% else %}
+                <span class="badge text-bg-secondary">كلاهما</span>
+              {% endif %}
+            </td>
+            <td>{{ r.name_ar }}</td>
+            <td class="text-muted">{{ r.name_en or '-' }}</td>
+            <td>{% if r.is_active %}<span class="badge text-bg-success">نعم</span>{% else %}<span class="badge text-bg-secondary">لا</span>{% endif %}</td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#edit{{ r.id }}">تعديل</button>
+              <form method="post" action="{{ url_for('portal.portal_admin_corr_party_delete', party_id=r.id) }}" class="d-inline" onsubmit="return confirm('حذف الجهة؟');">
+                <button class="btn btn-sm btn-outline-danger">حذف</button>
+              </form>
+            </td>
+          </tr>
+          <tr class="collapse" id="edit{{ r.id }}">
+            <td colspan="5">
+              <form method="post" action="{{ url_for('portal.portal_admin_corr_party_edit', party_id=r.id) }}" class="row g-2 align-items-end">
+                <div class="col-md-3">
+                  <label class="form-label">النوع</label>
+                  <select class="form-select" name="kind">
+                    <option value="SENDER" {% if r.kind=='SENDER' %}selected{% endif %}>مرسل</option>
+                    <option value="RECIPIENT" {% if r.kind=='RECIPIENT' %}selected{% endif %}>مستلم</option>
+                    <option value="BOTH" {% if r.kind=='BOTH' %}selected{% endif %}>كلاهما</option>
+                  </select>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">AR</label>
+                  <input class="form-control" name="name_ar" value="{{ r.name_ar }}" required>
+                </div>
+                <div class="col-md-4">
+                  <label class="form-label">EN</label>
+                  <input class="form-control" name="name_en" value="{{ r.name_en or '' }}">
+                </div>
+                <div class="col-md-1">
+                  <label class="form-label">نشط</label>
+                  <select class="form-select" name="is_active">
+                    <option value="1" {% if r.is_active %}selected{% endif %}>نعم</option>
+                    <option value="0" {% if not r.is_active %}selected{% endif %}>لا</option>
+                  </select>
+                </div>
+                <div class="col-md-1">
+                  <button class="btn btn-primary">حفظ</button>
+                </div>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا يوجد بيانات.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

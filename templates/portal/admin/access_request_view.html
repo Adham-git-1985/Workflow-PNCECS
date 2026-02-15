@@ -1,0 +1,104 @@
+{% extends "portal/layout.html" %}
+{% block title %}طلب صلاحية{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm" id="adminAccessReqViewPrint">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#adminAccessReqViewPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_access_requests_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <div>
+      <h4 class="mb-1">طلب صلاحية #{{ r.id }}</h4>
+      <div class="text-muted">{{ defs.get(r.service, {}).get('label', r.service) }}</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.admin_access_requests') }}">
+        <i class="bi bi-arrow-right"></i> الرجوع
+      </a>
+    </div>
+  </div>
+
+  <div class="row g-3 mt-2">
+    <div class="col-md-6">
+      <div class="border rounded-3 p-3 h-100">
+        <div class="text-muted small">الموظف</div>
+        <div class="fw-semibold">{{ user.name or '—' }}</div>
+        <div class="text-muted">{{ user.email }}</div>
+
+        <div class="mt-2">
+          <div class="text-muted small">المعين إلى</div>
+          {% if r.assigned_to %}
+            <div class="small">{{ r.assigned_to.name or '—' }} <span class="text-muted">({{ r.assigned_to.email }})</span></div>
+          {% else %}
+            <div class="small text-muted">غير معيّن</div>
+          {% endif %}
+        </div>
+
+        <hr>
+
+        <div class="text-muted small">الصلاحيات المطلوبة</div>
+        <div class="mt-2">
+          {% for k in r.keys_list %}
+            <span class="badge text-bg-light border">{{ k }}</span>
+          {% endfor %}
+        </div>
+
+        {% if r.note %}
+          <hr>
+          <div class="text-muted small">ملاحظة الموظف</div>
+          <div>{{ r.note }}</div>
+        {% endif %}
+
+        <hr>
+        <div class="d-flex gap-2 flex-wrap">
+          <div class="text-muted small">الحالة:</div>
+          {% if r.status=='PENDING' %}
+            <span class="badge text-bg-warning">قيد المراجعة</span>
+          {% elif r.status=='APPROVED' %}
+            <span class="badge text-bg-success">موافق</span>
+          {% elif r.status=='REJECTED' %}
+            <span class="badge text-bg-danger">مرفوض</span>
+          {% else %}
+            <span class="badge text-bg-secondary">{{ r.status }}</span>
+          {% endif %}
+        </div>
+        <div class="text-muted small mt-2">تاريخ الطلب: {{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '—' }}</div>
+        {% if r.decided_at %}
+          <div class="text-muted small">تاريخ القرار: {{ r.decided_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        {% endif %}
+        {% if r.decision_note %}
+          <div class="text-muted small">ملاحظة القرار: {{ r.decision_note }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="col-md-6">
+      <div class="border rounded-3 p-3 h-100">
+        <h6 class="mb-3">اتخاذ إجراء</h6>
+
+        {% if r.status != 'PENDING' %}
+          <div class="alert alert-info mb-0">تمت معالجة هذا الطلب.</div>
+        {% else %}
+          <form method="post" class="mb-3">
+            <input type="hidden" name="action" value="approve">
+            <label class="form-label">ملاحظة (اختياري)</label>
+            <textarea class="form-control" name="decision_note" rows="2" placeholder="مثال: تم التفعيل للعرض فقط"></textarea>
+            <button class="btn btn-success mt-2">موافقة ومنح الصلاحيات</button>
+          </form>
+
+          <form method="post">
+            <input type="hidden" name="action" value="reject">
+            <label class="form-label">سبب الرفض (اختياري)</label>
+            <textarea class="form-control" name="decision_note" rows="2" placeholder="مثال: يرجى توجيه الطلب عبر المدير المباشر"></textarea>
+            <button class="btn btn-danger mt-2">رفض</button>
+          </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

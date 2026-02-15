@@ -1,0 +1,54 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إضافة مهمة رسمية{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-plus-circle"></i> إضافة مهمة رسمية</h4>
+      <div class="text-muted">تسجيل مهمة رسمية لموظف ضمن نطاق تاريخ.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_official_missions') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-2">
+    <div class="col-md-6">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id" required>
+        <option value="">-- اختر --</option>
+        {% for u in users %}
+          <option value="{{ u.id }}">{{ u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">عنوان المهمة</label>
+      <input class="form-control" name="title" required placeholder="مثال: مهمة رسمية">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">من</label>
+      <input class="form-control" type="date" name="start_day" value="{{ today }}" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إلى</label>
+      <input class="form-control" type="date" name="end_day" value="{{ today }}" required>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">الوجهة (اختياري)</label>
+      <input class="form-control" name="destination" placeholder="مثال: رام الله">
+    </div>
+    <div class="col-12">
+      <label class="form-label">ملاحظات (اختياري)</label>
+      <textarea class="form-control" name="note" rows="3"></textarea>
+    </div>
+    <div class="col-12 d-flex justify-content-end gap-2">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_official_missions') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

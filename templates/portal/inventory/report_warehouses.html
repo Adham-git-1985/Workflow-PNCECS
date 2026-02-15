@@ -1,0 +1,36 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">تقرير المخازن ومحتوياتها</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_report_items_all') }}"><i class="bi bi-boxes"></i> الأصناف والكميات</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>المخزن</th>
+            <th style="width:140px;">عدد الأصناف</th>
+            <th style="width:160px;">إجمالي الكميات</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td class="fw-semibold">{{ r.warehouse.name }}</td>
+            <td>{{ r.item_count }}</td>
+            <td>{{ '%.2f'|format(r.total_qty or 0) }}</td>
+          </tr>
+          {% endfor %}
+          {% if not rows %}
+          <tr><td colspan="3" class="text-muted">لا توجد بيانات.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

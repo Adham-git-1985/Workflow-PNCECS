@@ -1,0 +1,54 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}المناسبات الرسمية{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="occPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-balloon"></i> المناسبات الرسمية</h4>
+      <div class="text-muted">إدارة قائمة المناسبات/العطل الرسمية.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-primary" href="{{ url_for('portal.hr_official_occasion_new') }}"><i class="bi bi-plus-lg"></i> إضافة/تعديل</a>
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>التاريخ</th>
+          <th>المناسبة</th>
+          <th>يوم عطلة؟</th>
+          <th>ملاحظة</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r.day }}</td>
+          <td>{{ r.title }}</td>
+          <td>
+            {% if r.is_day_off %}<span class="badge text-bg-success">نعم</span>{% else %}<span class="badge text-bg-secondary">لا</span>{% endif %}
+          </td>
+          <td class="text-muted">{{ r.note or '' }}</td>
+          <td class="text-end">
+            {% if can_manage %}
+              <form method="post" action="{{ url_for('portal.hr_official_occasion_delete', row_id=r.id) }}" class="d-inline" onsubmit="return confirm('حذف المناسبة؟')">
+                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

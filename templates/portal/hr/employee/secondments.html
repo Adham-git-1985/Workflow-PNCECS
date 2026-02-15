@@ -1,0 +1,68 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <h5 class="mb-0"><i class="bi bi-diagram-3"></i> التكليفات</h5>
+      <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_employee_secondment_new', user_id=u.id) }}"><i class="bi bi-plus-lg"></i> إضافة</a>
+    </div>
+    <div class="card-body">
+      {% if items %}
+        <div class="table-responsive">
+          <table class="table table-striped align-middle">
+            <thead>
+              <tr>
+                <th>من</th>
+                <th>إلى</th>
+                <th>الإدارة/الدائرة/القسم/الشعبة</th>
+                <th>المسؤول المباشر</th>
+                <th>الموقع</th>
+                <th>المسمى الإداري</th>
+                <th style="width: 140px;">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in items %}
+                <tr>
+                  <td>{{ it.date_from or '—' }}</td>
+                  <td>{{ it.date_to or '—' }}</td>
+                  <td>
+                    <div class="small">
+                      <div>{{ org_map.get(it.organization_id, '—') }}</div>
+                      <div>{{ dir_map.get(it.directorate_id, '—') }}{% if it.department_id %} • {{ dept_map.get(it.department_id, '—') }}{% endif %}{% if it.division_id %} • {{ div_map.get(it.division_id, '—') }}{% endif %}</div>
+                    </div>
+                  </td>
+                  <td>{{ manager_map.get(it.direct_manager_user_id, '—') }}</td>
+                  <td>
+                    <div class="small">
+                      <div>{{ lookup_label.get(it.work_governorate_lookup_id, '—') }}</div>
+                      <div>{{ lookup_label.get(it.work_location_lookup_id, '—') }}</div>
+                    </div>
+                  </td>
+                  <td>{{ lookup_label.get(it.admin_title_lookup_id, '—') }}</td>
+                  <td>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_secondment_edit', user_id=u.id, sec_id=it.id) }}"><i class="bi bi-pencil"></i></a>
+                    <form method="post" action="{{ url_for('portal.hr_employee_secondment_delete', user_id=u.id, sec_id=it.id) }}" style="display:inline-block" onsubmit="return confirm('تأكيد التعطيل/الحذف؟');">
+                      <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                    </form>
+                  </td>
+                </tr>
+                {% if it.details %}
+                  <tr>
+                    <td colspan="7" class="bg-light">
+                      <div class="text-muted small">{{ it.details }}</div>
+                    </td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد بيانات.</div>
+      {% endif %}
+    </div>
+  </div>
+{% endblock %}

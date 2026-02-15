@@ -1,0 +1,26 @@
+{% extends "layout.html" %}
+
+{% block title %}لا يوجد لديك صلاحية{% endblock %}
+
+{% block content %}
+
+<div class="container py-5">
+  <div class="row justify-content-center">
+    <div class="col-12 col-md-8 col-lg-6">
+      <div class="card shadow-sm">
+        <div class="card-body text-center p-4">
+          <div class="display-6 mb-2">⛔</div>
+          <h4 class="mb-2">لا يوجد لديك صلاحية</h4>
+          <p class="text-muted mb-4">لا يمكنك الوصول إلى هذه الصفحة. إذا كنت تعتقد أن هذا خطأ، تواصل مع مدير النظام لمنحك الصلاحية المطلوبة.</p>
+
+          <div class="d-flex gap-2 justify-content-center">
+            <a class="btn btn-outline-secondary" href="javascript:history.back()">رجوع</a>
+            <a class="btn btn-primary" href="{{ url_for('index') }}">الصفحة الرئيسية</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

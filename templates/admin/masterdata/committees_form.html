@@ -1,0 +1,220 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">{% if c %}✏️ تعديل لجنة{% else %}➕ لجنة جديدة{% endif %}</h3>
+    <small class="text-muted">اللجنة مصدر توجيه مستقل يمكن ربطه بخطوات المسارات (Approver Kind = COMMITTEE)</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.committees_list') }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">الاسم (AR) <span class="text-danger">*</span></label>
+          <input class="form-control" name="name_ar" value="{{ c.name_ar if c else '' }}" required>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">Name (EN)</label>
+          <input class="form-control" name="name_en" value="{{ c.name_en if c else '' }}">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">Code (اختياري)</label>
+          <input class="form-control" name="code" value="{{ c.code if c else '' }}" placeholder="مثال: FIN_COMMITTEE">
+        </div>
+
+        <div class="col-md-3">
+          <div class="form-check mt-4">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if not c or c.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Active</label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label fw-bold">ملاحظات (اختياري)</label>
+          <textarea class="form-control" name="notes" rows="3" placeholder="وصف مختصر…">{{ c.notes if c and c.notes else '' }}</textarea>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary">حفظ</button>
+        </div>
+
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if c %}
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div>
+        <h5 class="mb-0">👤 أعضاء اللجنة</h5>
+        <small class="text-muted">يمكن إضافة User محدد أو Role كامل. (Chair/Secretary/Member اختياري)</small>
+      </div>
+      <div class="d-flex gap-2 align-items-center flex-wrap">
+        <a class="btn btn-sm btn-outline-success" href="{{ url_for('masterdata.committee_members_export_excel', committee_id=c.id) }}">⬇️ Excel</a>
+        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.committee_members_import', committee_id=c.id) }}">⬆️ استيراد Excel</a>
+        <span class="badge bg-light text-dark border">#{{ c.id }}</span>
+      </div>
+    </div>
+
+    <form method="post" action="{{ url_for('masterdata.committee_member_add', committee_id=c.id) }}" class="border rounded p-3 mb-3">
+      <div class="row g-3 align-items-end">
+
+        <div class="col-md-2">
+          <label class="form-label fw-bold">Kind</label>
+          <select class="form-select" name="kind" id="member_kind">
+            <option value="USER" selected>USER</option>
+            <option value="ROLE">ROLE</option>
+          </select>
+        </div>
+
+        <div class="col-md-4" id="member_box_user">
+          <label class="form-label fw-bold">User</label>
+          <select class="form-select" name="user_id">
+            <option value="">— اختر —</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.email }}{% if u.role %} ({{ u.role }}){% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4" id="member_box_role" style="display:none;">
+          <label class="form-label fw-bold">Role</label>
+          <select class="form-select" name="role">
+            <option value="">— اختر —</option>
+            {% for r in roles %}
+              <option value="{{ r.code }}">{{ r.code }}{% if r.name_ar %} — {{ r.name_ar }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label fw-bold">دور العضو داخل اللجنة</label>
+          <select class="form-select" name="member_role">
+            <option value="MEMBER" selected>عضو</option>
+            <option value="CHAIR">رئيس</option>
+            <option value="SECRETARY">مقرر</option>
+          </select>
+          <div class="form-text">مسموح رئيس واحد ومقرر واحد (نشط) لكل لجنة.</div>
+        </div>
+
+        <div class="col-md-2">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="m_active" checked>
+            <label class="form-check-label" for="m_active">Active</label>
+          </div>
+        </div>
+
+        <div class="col-md-2">
+          <button class="btn btn-success w-100">إضافة</button>
+        </div>
+
+      </div>
+    </form>
+
+    {% if members and members|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Kind</th>
+              <th>العضو</th>
+              <th>Role داخل اللجنة</th>
+              <th>Active</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for m in members %}
+              <tr>
+                <td>{{ m.id }}</td>
+                <td>
+                  {% if (m.kind or '')|upper == 'USER' %}
+                    <span class="badge bg-primary">USER</span>
+                  {% else %}
+                    <span class="badge bg-secondary">ROLE</span>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if (m.kind or '')|upper == 'USER' %}
+                    {{ m.user.email if m.user else ('User #' ~ m.user_id) }}
+                  {% else %}
+                    <code>{{ m.role }}</code>
+                  {% endif %}
+                </td>
+                <td>
+                  <form method="post" action="{{ url_for('masterdata.committee_member_update', member_id=m.id) }}" class="d-flex gap-2 align-items-center">
+                    <select class="form-select form-select-sm" name="member_role" style="max-width: 160px;">
+                      <option value="MEMBER" {% if (m.member_role or 'MEMBER')|upper == 'MEMBER' %}selected{% endif %}>عضو</option>
+                      <option value="CHAIR" {% if (m.member_role or '')|upper == 'CHAIR' %}selected{% endif %}>رئيس</option>
+                      <option value="SECRETARY" {% if (m.member_role or '')|upper == 'SECRETARY' %}selected{% endif %}>مقرر</option>
+                    </select>
+                    <div class="form-check m-0">
+                      <input class="form-check-input" type="checkbox" name="is_active" value="1" id="act_{{ m.id }}" {% if m.is_active %}checked{% endif %}>
+                      <label class="form-check-label" for="act_{{ m.id }}">نشط</label>
+                    </div>
+                    <button class="btn btn-sm btn-outline-primary">تحديث</button>
+                  </form>
+                </td>
+                <td>
+                  {% if m.is_active %}
+                    <span class="badge bg-success">Yes</span>
+                  {% else %}
+                    <span class="badge bg-secondary">No</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <form method="post" action="{{ url_for('masterdata.committee_member_delete', member_id=m.id) }}"
+                        onsubmit="return confirm('حذف العضو؟');" style="display:inline-block;">
+                    <button class="btn btn-sm btn-outline-danger">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا يوجد أعضاء بعد. أضف أعضاء من الأعلى.</div>
+    {% endif %}
+
+  </div>
+</div>
+
+<script>
+(function() {
+  const kind = document.getElementById('member_kind');
+  const boxUser = document.getElementById('member_box_user');
+  const boxRole = document.getElementById('member_box_role');
+
+  function toggle() {
+    const v = (kind.value || 'USER').toUpperCase();
+    boxUser.style.display = (v === 'USER') ? 'block' : 'none';
+    boxRole.style.display = (v === 'ROLE') ? 'block' : 'none';
+
+    const userSel = boxUser.querySelector('select[name="user_id"]');
+    const roleSel = boxRole.querySelector('select[name="role"]');
+    userSel.disabled = (v !== 'USER');
+    roleSel.disabled = (v !== 'ROLE');
+    if (v !== 'USER') userSel.value = '';
+    if (v !== 'ROLE') roleSel.value = '';
+  }
+
+  kind.addEventListener('change', toggle);
+  toggle();
+})();
+</script>
+
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,179 @@
+{% extends 'portal/hr/base.html' %}
+
+{% block title %}شروط الانتساب{% endblock %}
+
+{% block hr_content %}
+  {% include 'portal/hr/training/_wizard_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-header">إضافة شرط</div>
+    <div class="card-body">
+      <form method="post" class="row g-3 align-items-end">
+        <input type="hidden" name="action" value="add">
+        <div class="col-md-4">
+          <label class="form-label">الشرط (حقل)</label>
+          <select name="field_lookup_id" id="cond_field" class="form-select" required>
+            <option value="">-- اختر --</option>
+            {% for f in fields %}
+              <option value="{{ f.id }}">{{ f.name_ar }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">المقارنة</label>
+          <select name="operator" id="cond_op" class="form-select">
+            <option value="EQ">يساوي</option>
+            <option value="NEQ">لا يساوي</option>
+            <option value="GT">أكبر من</option>
+            <option value="GTE">أكبر من أو يساوي</option>
+            <option value="LT">أقل من</option>
+            <option value="LTE">أقل من أو يساوي</option>
+            <option value="BETWEEN">بين</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">القيمة</label>
+          <div id="value1_text_wrap">
+            <input type="text" name="value1" id="value1_input" class="form-control" placeholder="قيمة">
+          </div>
+          <div id="value1_select_wrap" class="d-none">
+            <select name="value1" id="value1_select" class="form-select" disabled></select>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">القيمة 2 (لـ بين)</label>
+          <input type="text" name="value2" id="value2_input" class="form-control" placeholder="اختياري">
+        </div>
+        <div class="col-md-1">
+          <button class="btn btn-primary w-100" type="submit">إضافة</button>
+        </div>
+        <div class="col-12">
+          <div class="form-text">ملاحظة: عند اختيار حقل مرتبط بثوابت النظام/الهيكل التنظيمي، ستظهر قائمة للاختيار مباشرة.</div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">الشروط الحالية</div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm mb-0">
+          <thead>
+            <tr>
+              <th>الحقل</th>
+              <th>المقارنة</th>
+              <th>القيمة</th>
+              <th>القيمة 2</th>
+              <th style="width:120px"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in program.conditions %}
+              <tr>
+                <td>{{ c.field_lookup.name_ar if c.field_lookup else '-' }}</td>
+                <td>{{ c.operator }}</td>
+                <td>
+                  {% set _code = ((c.field_lookup.code if c.field_lookup else '') or '').upper() %}
+                  {% set _v1 = (c.value1 or '') %}
+                  {% if value_label_map.get(_code) and _v1 and _v1.isdigit() %}
+                    {{ value_label_map.get(_code).get(_v1|int) or c.value1 }}
+                  {% else %}
+                    {{ c.value1 or '-' }}
+                  {% endif %}
+                </td>
+                <td>{{ c.value2 or '-' }}</td>
+                <td>
+                  <form method="post" class="d-inline">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="cond_id" value="{{ c.id }}">
+                    <button class="btn btn-sm btn-outline-danger" onclick="return confirm('حذف الشرط؟')">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">لا يوجد شروط</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-3 d-flex justify-content-end gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_training_program_info', program_id=program.id) }}">السابق</a>
+    <a class="btn btn-primary" href="{{ url_for('portal.hr_training_program_attachments', program_id=program.id) }}">التالي</a>
+  </div>
+
+  <script>
+    (function() {
+      const fieldEl = document.getElementById('cond_field');
+      const opEl = document.getElementById('cond_op');
+      const v1TextWrap = document.getElementById('value1_text_wrap');
+      const v1Input = document.getElementById('value1_input');
+      const v1SelectWrap = document.getElementById('value1_select_wrap');
+      const v1Select = document.getElementById('value1_select');
+      const v2Input = document.getElementById('value2_input');
+
+      const fieldCodeMap = {{ field_code_map|tojson }};
+      const optionsMap = {{ value_options|tojson }};
+      const numericCodes = new Set({{ numeric_codes|tojson }});
+
+      function refreshValueUI() {
+        const fieldId = parseInt(fieldEl.value || '0', 10);
+        const code = (fieldCodeMap[fieldId] || '').toUpperCase();
+
+        // BETWEEN shows value2
+        const op = (opEl.value || 'EQ').toUpperCase();
+        if (op === 'BETWEEN') {
+          v2Input.closest('.col-md-2').classList.remove('d-none');
+        } else {
+          v2Input.closest('.col-md-2').classList.add('d-none');
+          v2Input.value = '';
+        }
+
+        // Numeric input
+        if (numericCodes.has(code)) {
+          v1TextWrap.classList.remove('d-none');
+          v1Input.type = 'number';
+          v1SelectWrap.classList.add('d-none');
+          v1Select.disabled = true;
+          return;
+        }
+
+        // Lookup/select input
+        if (optionsMap[code] && Array.isArray(optionsMap[code]) && optionsMap[code].length) {
+          v1Select.innerHTML = '';
+          const opt0 = document.createElement('option');
+          opt0.value = '';
+          opt0.textContent = '-- اختر --';
+          v1Select.appendChild(opt0);
+          optionsMap[code].forEach(function(o) {
+            const opt = document.createElement('option');
+            opt.value = o.id;
+            opt.textContent = o.label;
+            v1Select.appendChild(opt);
+          });
+
+          v1TextWrap.classList.add('d-none');
+          v1Input.value = '';
+          v1SelectWrap.classList.remove('d-none');
+          v1Select.disabled = false;
+          return;
+        }
+
+        // Default text
+        v1TextWrap.classList.remove('d-none');
+        v1Input.type = 'text';
+        v1SelectWrap.classList.add('d-none');
+        v1Select.disabled = true;
+      }
+
+      if (fieldEl && opEl) {
+        fieldEl.addEventListener('change', refreshValueUI);
+        opEl.addEventListener('change', refreshValueUI);
+        refreshValueUI();
+      }
+    })();
+  </script>
+{% endblock %}

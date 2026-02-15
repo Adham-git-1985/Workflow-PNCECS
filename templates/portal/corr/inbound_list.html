@@ -1,0 +1,169 @@
+{% extends "portal/layout.html" %}
+{% block title %}الوارد{% endblock %}
+{% block content %}
+
+{% set qs = request.query_string.decode() if request.query_string else '' %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">الوارد</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#inboundPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inbound_export_csv') }}{% if qs %}?{{ qs }}{% endif %}">CSV</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inbound_export_pdf') }}{% if qs %}?{{ qs }}{% endif %}">PDF</a>
+    <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.inbound_list') }}{% if qs %}?{{ qs }}&export=1{% else %}?export=1{% endif %}">Excel</a>
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inbound_new') }}">تسجيل وارد</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="inboundPrint">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-lg-3">
+      <label class="form-label">بحث عام</label>
+      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="رقم/موضوع/نص...">
+    </div>
+
+    <div class="col-lg-2">
+      <label class="form-label">التصنيف</label>
+      <select class="form-select" name="category" multiple size="4">
+        {% for c in cat_rows %}
+          <option value="{{ c.code }}" {% if categories and (c.code in categories) %}selected{% endif %}>{{ c.label }} ({{ c.code }})</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">يمكن اختيار أكثر من تصنيف.</div>
+    </div>
+
+    <div class="col-lg-3">
+      <label class="form-label">الجهة المرسلة</label>
+      <select class="form-select" name="sender" multiple size="4">
+        {% for p in sender_rows %}
+          <option value="{{ p.label }}" {% if senders and (p.label in senders) %}selected{% endif %}>{{ p.label }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">أو استخدم بحث جزئي أدناه.</div>
+    </div>
+
+    <div class="col-lg-2">
+      <label class="form-label">بحث جزئي بالمرسل</label>
+      <input class="form-control" name="sender_like" value="{{ sender_like or '' }}" placeholder="جزء من الاسم">
+    </div>
+
+    <div class="col-lg-2">
+      <label class="form-label">مرفقات</label>
+      <select class="form-select" name="has_attach">
+        <option value="" {% if not has_attach %}selected{% endif %}>الكل</option>
+        <option value="1" {% if has_attach == '1' %}selected{% endif %}>مع مرفقات</option>
+        <option value="0" {% if has_attach == '0' %}selected{% endif %}>بدون مرفقات</option>
+      </select>
+    </div>
+
+    <div class="col-lg-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="date_from" value="{{ date_from or '' }}">
+    </div>
+    <div class="col-lg-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="date_to" value="{{ date_to or '' }}">
+    </div>
+
+    <div class="col-lg-4 d-flex gap-2">
+      <button class="btn btn-primary">تطبيق</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.inbound_list') }}">تفريغ</a>
+    </div>
+  </form>
+
+  {# Chips #}
+  <div class="mt-3 d-flex flex-wrap gap-2">
+    {% if q %}<span class="badge text-bg-light border">بحث: {{ q }}</span>{% endif %}
+    {% if categories %}
+      {% for c in categories %}<span class="badge text-bg-light border">تصنيف: {{ c }}</span>{% endfor %}
+    {% endif %}
+    {% if senders %}
+      {% for s in senders %}<span class="badge text-bg-light border">مرسل: {{ s }}</span>{% endfor %}
+    {% endif %}
+    {% if sender_like %}<span class="badge text-bg-light border">مرسل~ {{ sender_like }}</span>{% endif %}
+    {% if date_from %}<span class="badge text-bg-light border">من: {{ date_from }}</span>{% endif %}
+    {% if date_to %}<span class="badge text-bg-light border">إلى: {{ date_to }}</span>{% endif %}
+    {% if has_attach == '1' %}<span class="badge text-bg-light border">مع مرفقات</span>{% endif %}
+    {% if has_attach == '0' %}<span class="badge text-bg-light border">بدون مرفقات</span>{% endif %}
+  </div>
+
+  {# Saved filters #}
+  <div class="mt-3 border-top pt-3">
+    <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+      <div class="d-flex align-items-center gap-2 flex-wrap">
+        <span class="text-muted">فلاتر محفوظة:</span>
+        {% if saved_filters %}
+          {% for f in saved_filters %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_apply_filter', filter_id=f.id) }}">{{ f.name }}</a>
+            <form method="post" action="{{ url_for('portal.portal_delete_filter', filter_id=f.id) }}" class="d-inline">
+              <input type="hidden" name="back" value="{{ url_for('portal.inbound_list') }}{% if qs %}?{{ qs }}{% endif %}">
+              <button class="btn btn-sm btn-outline-danger" title="حذف">×</button>
+            </form>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted">لا يوجد.</span>
+        {% endif %}
+      </div>
+
+      <form method="post" action="{{ url_for('portal.portal_save_filter') }}" class="d-flex gap-2 align-items-center">
+        <input type="hidden" name="scope" value="CORR_INBOUND">
+        <input type="hidden" name="path" value="{{ request.path }}">
+        <input type="hidden" name="query_string" value="{{ qs }}">
+        <input class="form-control form-control-sm" name="name" placeholder="اسم فلتر جديد" style="max-width: 220px;">
+        <button class="btn btn-sm btn-success" type="submit">حفظ الفلتر</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>{{ portal_sort_link('التاريخ', 'received_date') }}</th>
+          <th>{{ portal_sort_link('التصنيف', 'category') }}</th>
+          <th>{{ portal_sort_link('المرسل', 'sender') }}</th>
+          <th>{{ portal_sort_link('الموضوع', 'subject') }}</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td>{{ it.ref_no or it.id }}</td>
+            <td>{{ it.received_date }}</td>
+            <td><span class="badge text-bg-light border">{{ it.category }}</span></td>
+            <td>{{ it.sender or "-" }}</td>
+            <td>{{ it.subject }}</td>
+            <td class="text-end">
+              <div class="btn-group">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inbound_view', inbound_id=it.id) }}">عرض</a>
+                {% if can_update %}
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inbound_edit', inbound_id=it.id) }}">تعديل</a>
+                {% endif %}
+                <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('portal.inbound_print_pdf', inbound_id=it.id) }}">بطاقة</a>
+                {% if can_delete %}
+                  <form method="post" action="{{ url_for('portal.inbound_delete', inbound_id=it.id) }}" class="d-inline" onsubmit="return confirm('حذف الوارد نهائياً؟');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد نتائج.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

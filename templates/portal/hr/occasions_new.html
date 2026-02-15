@@ -1,0 +1,76 @@
+{% extends 'portal/hr/base.html' %}
+{% block hr_content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0">إنشاء مناسبة رسمية</h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_official_occasions') }}">سجل المناسبات الرسمية</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">محافظة العمل</label>
+        <select class="form-select" name="work_governorate_lookup_id">
+          <option value="">— الكل —</option>
+          {% for g in lookups.govs %}
+            <option value="{{ g.id }}">{{ g.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">موقع العمل</label>
+        <select class="form-select" name="work_location_lookup_id">
+          <option value="">— الكل —</option>
+          {% for l in lookups.locs %}
+            <option value="{{ l.id }}">{{ l.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">نوع المناسبة</label>
+        <select class="form-select" name="type_id" required>
+          <option value="">— اختر —</option>
+          {% for t in types %}
+            <option value="{{ t.id }}">{{ t.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">عنوان المناسبة</label>
+        <input class="form-control" name="title" required>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">تفاصيل</label>
+        <input class="form-control" name="note">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input class="form-control" type="date" name="start_day" value="{{ today }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input class="form-control" type="date" name="end_day" value="{{ today }}" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">هل تُحتسب عطلة؟</label>
+        <select class="form-select" name="is_day_off">
+          <option value="1">نعم</option>
+          <option value="0">لا</option>
+        </select>
+      </div>
+
+    </div>
+  </div>
+  <div class="card-footer d-flex gap-2">
+    <button class="btn btn-primary" type="submit">حفظ</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_official_occasions') }}">إلغاء</a>
+  </div>
+</form>
+
+{% endblock %}
+{% block content %}{{ self.hr_content() }}{% endblock %}

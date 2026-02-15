@@ -1,0 +1,99 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}قسائم الراتب{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-file-earmark-pdf"></i> قسائم الراتب</h4>
+  <div class="text-muted">عرض قسائم الراتب بصيغة PDF (عرض فقط). يمكنك مشاهدة القسيمة مباشرة داخل المتصفح.</div>
+
+  <div class="mt-3 d-flex flex-wrap gap-2">
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_my_payslip_current') }}">
+      <i class="bi bi-calendar2-event"></i> قسيمة هذا الشهر
+    </a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_my_payslip_latest') }}">
+      <i class="bi bi-clock"></i> آخر قسيمة
+    </a>
+    {% if latest_slip %}
+      <span class="badge bg-light text-dark border align-self-center">
+        آخر فترة: {{ latest_slip.payslip_period_label }}
+      </span>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form class="row g-2 align-items-end" method="get" action="{{ url_for('portal.hr_my_payslips') }}">
+    <div class="col-12 col-md-3">
+      <label class="form-label">السنة</label>
+      <select class="form-select" name="year">
+        <option value="">كل السنوات</option>
+        {% for y in (years or []) %}
+          <option value="{{ y }}" {% if sel_year == y %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-3">
+      <label class="form-label">الشهر</label>
+      <select class="form-select" name="month">
+        <option value="">كل الأشهر</option>
+        {% for m in range(1, 13) %}
+          <option value="{{ m }}" {% if sel_month == m %}selected{% endif %}>{{ '%02d'|format(m) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-6 text-md-end">
+      <button class="btn btn-primary"><i class="bi bi-funnel"></i> تطبيق</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_my_payslips') }}">إعادة ضبط</a>
+      {% if now_year and now_month %}
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_my_payslips', year=now_year, month=now_month) }}">
+          هذا الشهر
+        </a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  {% if slips and slips|length > 0 %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>{{ portal_sort_link('الشهر/السنة', 'payslip_period_label') }}</th>
+            <th>{{ portal_sort_link('القسيمة', 'original_name') }}</th>
+            <th>{{ portal_sort_link('الملاحظة', 'note') }}</th>
+            <th>{{ portal_sort_link('التاريخ', 'uploaded_at') }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in slips %}
+            <tr>
+              <td class="text-muted small">{{ s.payslip_period_label }}</td>
+              <td class="fw-semibold">{{ s.original_name or 'Payslip.pdf' }}</td>
+              <td class="text-muted small">{{ s.note or '-' }}</td>
+              <td class="text-muted small">{{ s.uploaded_at.strftime('%Y-%m-%d %H:%M') if s.uploaded_at else '' }}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary" target="_blank"
+                   href="{{ url_for('portal.hr_my_payslip_view', att_id=s.id) }}">
+                  <i class="bi bi-eye"></i> عرض
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا يوجد قسائم راتب مرفوعة لك بعد.</div>
+  {% endif %}
+</div>
+
+<div class="alert alert-info mt-3">
+  ملاحظة: يمكن لمشرف الموارد البشرية رفع قسيمة راتب لك من صفحة <b>ملفات الموظفين</b> (كمرفق من نوع <b>قسيمة راتب</b>).
+</div>
+
+<div class="mt-3">
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}"><i class="bi bi-arrow-right"></i> العودة للموارد البشرية</a>
+</div>
+{% endblock %}

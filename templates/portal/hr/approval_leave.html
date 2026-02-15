@@ -1,0 +1,168 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}مراجعة طلب إجازة{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-calendar2-check"></i> مراجعة طلب إجازة #{{ r.id }}</h4>
+  <div class="text-muted">تحقق من البيانات ثم اعتمد أو ارفض.</div>
+</div>
+
+{% set st = (r.status or '').upper() %}
+{% set badge = 'secondary' %}
+{% if st == 'SUBMITTED' %}{% set badge = 'warning' %}{% endif %}
+{% if st == 'APPROVED' %}{% set badge = 'success' %}{% endif %}
+{% if st == 'REJECTED' %}{% set badge = 'danger' %}{% endif %}
+{% if st == 'CANCELLED' %}{% set badge = 'secondary' %}{% endif %}
+
+{% if exceptional %}
+  <div class="alert alert-warning">
+    <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle"></i> طلب استثنائي</div>
+    <div>هذا الطلب يتجاوز الحدّ الطبيعي لهذا النوع، وسيتم التعامل معه كحالة استثنائية.</div>
+    <ul class="mb-0 mt-2">
+      {% if requires_hr %}<li>لا يمكن اعتماده إلا من مدير الموارد البشرية.</li>{% endif %}
+      {% if note_required %}<li>يلزم كتابة ملاحظة توضيحية عند الاعتماد.</li>{% endif %}
+    </ul>
+  </div>
+{% endif %}
+
+{% if started and st == 'APPROVED' %}
+  <div class="alert alert-info">
+    <div class="fw-semibold mb-1"><i class="bi bi-info-circle"></i> تنبيه</div>
+    <div>بدأت الإجازة بالفعل. لا يمكن للموظف إلغاء الطلب بعد بدء الإجازة، ويمكن لمدير الموارد البشرية فقط إيقاف الخصم للأيام القادمة عبر الإلغاء.</div>
+  </div>
+{% endif %}
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="row g-3">
+    <div class="col-12 col-md-6">
+      <div class="text-muted small">الموظف</div>
+      <div class="fw-semibold">{{ r.user.full_name if r.user else '-' }}</div>
+      {% if r.user and r.user.email %}<div class="text-muted small">{{ r.user.email }}</div>{% endif %}
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="text-muted small">الحالة</div>
+      <div><span class="badge bg-{{ badge }}">{{ st }}</span></div>
+      {% if st == 'CANCELLED' and r.cancel_note %}
+        <div class="text-muted small mt-1">سبب الإلغاء: {{ r.cancel_note }}</div>
+      {% endif %}
+    </div>
+
+    <div class="col-12 col-md-6">
+      <div class="text-muted small">نوع الإجازة</div>
+      <div class="fw-semibold">{{ r.leave_type.name_ar if r.leave_type else '-' }}</div>
+      {% if r.leave_type and r.leave_type.requires_documents and r.leave_type.documents_hint %}
+        <div class="text-muted small">ملاحظة: {{ r.leave_type.documents_hint }}</div>
+      {% endif %}
+    </div>
+    <div class="col-12 col-md-6">
+      <div class="text-muted small">المدة</div>
+      <div class="fw-semibold">{{ r.start_date }} → {{ r.end_date }}{% if r.days %} ({{ r.days }} يوم){% endif %}</div>
+    </div>
+
+    {% if r.leave_type and r.leave_type.is_external %}
+      <div class="col-12">
+        <div class="border rounded-3 p-3 bg-light">
+          <div class="fw-semibold mb-2"><i class="bi bi-globe2"></i> تفاصيل الإجازة الخارجية</div>
+          <div class="row g-2">
+            <div class="col-12 col-md-6"><span class="text-muted">الوجهة:</span> {{ r.destination_country or '-' }}</div>
+            <div class="col-12 col-md-6"><span class="text-muted">الغرض:</span> {{ r.travel_purpose or '-' }}</div>
+            <div class="col-12 col-md-6"><span class="text-muted">تكلفة التذاكر:</span> {{ r.ticket_cost if r.ticket_cost is not none else '-' }}</div>
+            <div class="col-12 col-md-6"><span class="text-muted">تكلفة الإقامة:</span> {{ r.accommodation_cost if r.accommodation_cost is not none else '-' }}</div>
+            <div class="col-12"><span class="text-muted">اسم المعبر:</span> {{ r.border_crossing or '-' }}</div>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+
+    <div class="col-12">
+      <div class="text-muted small">ملاحظات الموظف</div>
+      <div style="white-space:pre-wrap">{{ r.note or '-' }}</div>
+    </div>
+
+    {% if r.decision_note %}
+      <div class="col-12">
+        <div class="text-muted small">ملاحظة الاعتماد/الرفض</div>
+        <div style="white-space:pre-wrap">{{ r.decision_note }}</div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <div class="fw-semibold"><i class="bi bi-paperclip"></i> المرفقات</div>
+    {% if r.leave_type and r.leave_type.requires_documents and (attachments|length == 0) %}
+      <span class="badge bg-danger">مطلوب</span>
+    {% endif %}
+  </div>
+
+  {% if r.leave_type and r.leave_type.requires_documents and (attachments|length == 0) %}
+    <div class="alert alert-danger mb-2">
+      هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند. يمكن للموظف رفع المرفقات من صفحة "إجازاتي" حتى بعد إرسال الطلب.
+    </div>
+  {% endif %}
+
+  {% if attachments and attachments|length > 0 %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>الملف</th>
+            <th>ملاحظة</th>
+            <th>تاريخ الرفع</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in attachments %}
+            <tr>
+              <td class="fw-semibold">{{ a.original_name }}</td>
+              <td class="text-muted small">{{ a.note or '—' }}</td>
+              <td class="text-muted small">{{ a.uploaded_at.strftime('%Y-%m-%d %H:%M') if a.uploaded_at else '' }}</td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_leave_attachment_download', req_id=r.id, att_id=a.id) }}">
+                  <i class="bi bi-download"></i> تنزيل
+                </a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا يوجد مرفقات.</div>
+  {% endif %}
+</div>
+
+{% if st == 'SUBMITTED' %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="post">
+    <div class="mb-2">
+      <label class="form-label">ملاحظة {% if note_required %}(مطلوبة){% else %}(اختياري){% endif %}</label>
+      <textarea name="decision_note" class="form-control" rows="2" placeholder="سبب الرفض أو أي توضيح" {% if note_required %}required{% endif %}></textarea>
+      {% if note_required %}
+        <div class="text-muted small mt-1">هذه الملاحظة مطلوبة في الحالات الاستثنائية التي تتطلب توضيحًا.</div>
+      {% endif %}
+    </div>
+
+    <div class="d-flex gap-2 flex-wrap">
+      <button class="btn btn-success" type="submit" name="action" value="APPROVE"><i class="bi bi-check2"></i> اعتماد</button>
+      <button class="btn btn-danger" type="submit" name="action" value="REJECT" onclick="return confirm('هل تريد رفض الطلب؟');"><i class="bi bi-x"></i> رفض</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="mt-3 d-flex gap-2 flex-wrap">
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+
+  {% if can_hr_cancel and st in ('APPROVED','SUBMITTED','DRAFT') %}
+    <form method="post" action="{{ url_for('portal.hr_leave_cancel_by_hr', req_id=r.id) }}" class="d-flex gap-2 flex-wrap" onsubmit="return confirm('هل تريد إلغاء الطلب؟');">
+      <input name="cancel_note" class="form-control" style="min-width:260px" placeholder="سبب الإلغاء (اختياري)">
+      <button class="btn btn-outline-danger" type="submit"><i class="bi bi-slash-circle"></i> إلغاء من الموارد البشرية</button>
+    </form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,57 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}اعتماد طلب{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-check2-square"></i> اعتماد طلب #{{ r.id }}</h4>
+    <div class="text-muted small">الموظف: {{ r.requester.full_name }} · النوع: {{ r.type_code }} · الخطوة: {{ appr.step_no }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_approvals') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-7">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">تفاصيل الطلب</div>
+      <div class="small">
+        {% for k,v in payload.items() %}
+          <div class="mb-1"><span class="text-muted">{{ k }}:</span> {{ v }}</div>
+        {% endfor %}
+      </div>
+
+      <hr/>
+      <div class="fw-bold mb-2">المرفقات</div>
+      {% if attachments %}
+        <ul class="list-group">
+          {% for a in attachments %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <div class="fw-bold">{{ a.original_name }}</div>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_ss_download_attachment', req_id=r.id, att_id=a.id) }}">تنزيل</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="text-muted">لا يوجد مرفقات.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">قرار الاعتماد</div>
+      <form method="post">
+        <div class="mb-2">
+          <label class="form-label">ملاحظة (اختياري)</label>
+          <textarea class="form-control" name="note" rows="3"></textarea>
+        </div>
+        <div class="d-grid gap-2">
+          <button class="btn btn-success" name="action" value="approve" type="submit"><i class="bi bi-check2"></i> موافقة</button>
+          <button class="btn btn-danger" name="action" value="reject" type="submit"><i class="bi bi-x"></i> رفض</button>
+          <button class="btn btn-warning" name="action" value="return" type="submit"><i class="bi bi-arrow-return-left"></i> إرجاع للموظف</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

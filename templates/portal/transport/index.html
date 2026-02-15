@@ -1,0 +1,66 @@
+{% extends "portal/layout.html" %}
+{% block title %}الحركة والنقل{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-truck"></i> لوحة الحركة والنقل</h5>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_vehicles') }}">السيارات</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_drivers') }}">السائقون</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_permits') }}">أذون الحركة</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_trips') }}">الرحلات</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_tasks') }}">المهام</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 h-100">
+      <div class="text-muted">السيارات</div>
+      <div class="fs-3 fw-semibold">{{ stats.vehicles }}</div>
+      <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('portal.transport_vehicles') }}">عرض</a>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 h-100">
+      <div class="text-muted">السائقون</div>
+      <div class="fs-3 fw-semibold">{{ stats.drivers }}</div>
+      <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('portal.transport_drivers') }}">عرض</a>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 h-100">
+      <div class="text-muted">أذون قيد الاعتماد</div>
+      <div class="fs-3 fw-semibold">{{ stats.permits_pending }}</div>
+      <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('portal.transport_permits', status='SUBMITTED') }}">عرض</a>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 h-100">
+      <div class="text-muted">رحلات هذا الشهر</div>
+      <div class="fs-3 fw-semibold">{{ stats.trips_month }}</div>
+      <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('portal.transport_trips') }}">عرض</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mt-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <div class="fw-semibold">ميزة التتبع (الخيار C)</div>
+      <div class="text-muted small">
+        تم تجهيز واجهة إعدادات التتبع وربط المركبات مع مُعرّف جهاز التتبع. عند شراء أجهزة التتبع لاحقاً، نقوم بتفعيل التكامل حسب المزود.
+      </div>
+    </div>
+    {% if current_user.has_perm('TRANSPORT_TRACKING_READ') %}
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.transport_tracking_settings') }}">
+        <i class="bi bi-broadcast"></i> إعدادات التتبع
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

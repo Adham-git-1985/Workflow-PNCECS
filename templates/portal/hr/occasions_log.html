@@ -1,0 +1,51 @@
+{% extends 'portal/hr/base.html' %}
+{% block hr_content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0">سجل المناسبات الرسمية</h4>
+  {% if can_manage %}
+    <a class="btn btn-primary btn-sm" href="{{ url_for('portal.hr_official_occasion_new') }}">إنشاء مناسبة رسمية</a>
+  {% endif %}
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>محافظة العمل</th>
+          <th>موقع العمل</th>
+          <th>النوع</th>
+          <th>العنوان</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>عطلة؟</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.work_governorate_lookup.name_ar if r.work_governorate_lookup else '—' }}</td>
+          <td>{{ r.work_location_lookup.name_ar if r.work_location_lookup else '—' }}</td>
+          <td>{{ r.type.name_ar if r.type else '—' }}</td>
+          <td>{{ r.title }}</td>
+          <td>{{ r.start_day }}</td>
+          <td>{{ r.end_day }}</td>
+          <td>{{ 'نعم' if r.is_day_off else 'لا' }}</td>
+          <td class="text-end">
+            {% if can_manage %}
+              <form method="post" action="{{ url_for('portal.hr_official_occasion_delete', row_id=r.id) }}" class="d-inline" onsubmit="return confirm('حذف المناسبة؟');">
+                <button class="btn btn-outline-danger btn-sm" type="submit">حذف</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+{% block content %}{{ self.hr_content() }}{% endblock %}

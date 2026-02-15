@@ -1,0 +1,75 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set edit = edit if edit is defined else None %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">الوحدات</h5>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <input type="hidden" name="action" value="{% if edit %}update{% else %}create{% endif %}">
+      {% if edit %}<input type="hidden" name="id" value="{{ edit.id }}">{% endif %}
+
+      <div class="row g-2">
+        <div class="col-md-6">
+          <label class="form-label">اسم الوحدة</label>
+          <input name="name" class="form-control" required value="{{ edit.name if edit else '' }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">الحالة</label>
+          <select name="is_active" class="form-select">
+            <option value="1" {% if not edit or edit.is_active %}selected{% endif %}>فعال</option>
+            <option value="0" {% if edit and not edit.is_active %}selected{% endif %}>غير فعال</option>
+          </select>
+        </div>
+        <div class="col-md-3 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+        </div>
+      </div>
+      {% if edit %}
+        <div class="mt-2">
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_admin_units') }}"><i class="bi bi-x"></i> إلغاء التعديل</a>
+        </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>اسم الوحدة</th>
+            <th style="width:120px;">الحالة</th>
+            <th style="width:160px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in rows %}
+          <tr>
+            <td>{{ u.name }}</td>
+            <td>{% if u.is_active %}<span class="badge bg-success">فعال</span>{% else %}<span class="badge bg-secondary">غير فعال</span>{% endif %}</td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_units', edit_id=u.id) }}"><i class="bi bi-pencil"></i> تعديل</a>
+              <form method="post" class="d-inline" onsubmit="return confirm('حذف السجل؟');">
+                <input type="hidden" name="action" value="delete">
+                <input type="hidden" name="id" value="{{ u.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="text-center text-muted">لا يوجد بيانات</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

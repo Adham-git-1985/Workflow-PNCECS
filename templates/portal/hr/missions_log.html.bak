@@ -1,0 +1,58 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}المهمات الرسمية{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="missionsPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-briefcase"></i> المهمات الرسمية</h4>
+      <div class="text-muted">إدارة المهمات الرسمية المرتبطة بالموظفين.</div>
+    </div>
+    <div class="d-flex gap-2">
+      {% if can_manage %}
+        <a class="btn btn-primary" href="{{ url_for('portal.hr_official_mission_new') }}"><i class="bi bi-plus-lg"></i> إضافة</a>
+      {% endif %}
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الموظف</th>
+          <th>العنوان</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>الوجهة</th>
+          <th>ملاحظات</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td>{{ r.user.name if r.user else '-' }}</td>
+            <td>{{ r.title }}</td>
+            <td>{{ r.start_day }}</td>
+            <td>{{ r.end_day }}</td>
+            <td class="text-muted">{{ r.destination or '-' }}</td>
+            <td class="text-muted">{{ r.note or '-' }}</td>
+            <td class="text-end">
+              {% if can_manage %}
+                <form method="post" action="{{ url_for('portal.hr_official_mission_delete', mission_id=r.id) }}" class="d-inline" onsubmit="return confirm('حذف المهمة؟');">
+                  <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

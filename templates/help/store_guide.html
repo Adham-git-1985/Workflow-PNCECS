@@ -1,0 +1,173 @@
+
+<div class="alert alert-info">
+  هذا الدليل خاص بـ <strong>المستودع داخل البوابة الإدارية</strong> (السندات والعهدة والإدارة).
+  للوصول: من القائمة الجانبية في البوابة الإدارية ← <strong>المستودع</strong>.
+</div>
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل المستودع" %}
+{% set page_subtitle = "سندات المخازن (صرف/إدخال/جرد/إتلاف/إرجاع) + التقارير + العهدة + ثوابت النظام." %}
+
+{% block guide_body %}
+
+<div class="alert alert-secondary py-2 mb-3">
+  <div class="fw-bold">ملخص سريع</div>
+  <div class="small text-muted">
+    المستودع هنا مخصّص لإدارة المخازن والأصناف والسندات (الحركة) والتقارير والعهدة.
+    أغلب القوائم في السايدبار أصبحت <strong>قابلة للطي/التوسيع</strong> لتسهيل الوصول.
+  </div>
+</div>
+
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) أين أجد المستودع؟</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>من البوابة: من الشريط العلوي اضغط <strong>المستودع</strong>.</li>
+      <li>ستظهر قائمة جانبية (يمين) فيها مجموعات: <strong>الطلبات</strong> / <strong>السندات</strong> / <strong>التقارير</strong> / <strong>العهدة</strong> / <strong>لوحة التحكم</strong>.</li>
+      <li>اضغط على عنوان المجموعة أو السهم لعمل <strong>Expand/Collapse</strong>.</li>
+    </ul>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">2) الصلاحيات (من يستطيع ماذا؟)</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>STORE_READ:</strong> عرض السجلات والتقارير وفتح السندات.</li>
+      <li><strong>STORE_MANAGE:</strong> إدخال سندات + إدارة الثوابت (مخازن/أصناف/غرف...) + إعدادات.</li>
+    </ul>
+    <div class="small text-muted">إذا لم تظهر لك شاشة معينة فهذا غالبًا بسبب الصلاحية.</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">3) قبل البدء (ثوابت النظام)</summary>
+  <div class="mt-2">
+    <div class="mb-2">حتى تعمل شاشات السندات بشكل صحيح، تأكد من تجهيز الثوابت التالية من: <strong>لوحة التحكم → ثوابت النظام</strong>:</div>
+    <ul class="mb-2">
+      <li><strong>المخازن:</strong> إضافة المخازن الفعلية التي ستسجّل عليها الحركة.</li>
+      <li><strong>الغرف:</strong> غرف/جهات الصرف أو الإرجاع (تظهر في الصرف إلى غرفة والإرجاع من غرفة).</li>
+      <li><strong>الوحدات:</strong> وحدة القياس (قطعة/علبة/كرتون...).</li>
+      <li><strong>التصنيفات:</strong> تنظيم الأصناف ضمن فئات.</li>
+      <li><strong>الأصناف:</strong> تعريف الصنف (اسم/كود/وحدة/تصنيف).</li>
+      <li><strong>صلاحيات الموظفين على المخازن:</strong> من يستطيع الاطلاع/الإدارة لكل مخزن.</li>
+      <li><strong>المستخدمون القادرون على طلب مواد للغرف:</strong> تحديد من يحق له إنشاء طلبات مواد (إن كانت مفعّلة).</li>
+    </ul>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">4) الطلبات → سجل الطلبات</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>تستخدم هذه الشاشة لمراجعة طلبات المواد (إن كانت مفعّلة).</li>
+      <li>الفلاتر تشمل عادةً: الإدارة العامة، موقع العمل، بواسطة (اسم المدخل)، من/إلى تاريخ، حالة الطلبية، موافقة المسؤول.</li>
+    </ul>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">5) السندات (الحركة) — إدخال + سجل</summary>
+  <div class="mt-2">
+    <div class="fw-bold mb-2">أ) سندات الصرف</div>
+    <ol class="mb-3">
+      <li>اذهب إلى: <strong>السندات → سندات الصرف → إدخال سند</strong>.</li>
+      <li>اختر <strong>نوع الصرف</strong> (صرف إلى غرفة / صرف إلى مستودع).</li>
+      <li>املأ: رقم السند، تاريخ السند، <strong>من مستودع</strong>، ثم (إلى غرفة/إلى مستودع حسب النوع).</li>
+      <li>أضف <strong>تفاصيل أصناف السند</strong> (صنف/كمية/سيريال/تواريخ ضمان/تفاصيل).</li>
+      <li>أضف <strong>مرفقات</strong> (اختياري) ثم احفظ.</li>
+      <li>للمراجعة: <strong>سجل سندات الصرف</strong> ثم افتح السند من القائمة.</li>
+    </ol>
+
+    <div class="fw-bold mb-2">ب) سندات الإدخال</div>
+    <ol class="mb-3">
+      <li>اذهب إلى: <strong>السندات → سندات الإدخال → إدخال سند</strong>.</li>
+      <li>املأ: رقم السند، تاريخ السند، <strong>إلى مستودع</strong>، ملاحظات.</li>
+      <li>أضف تفاصيل الأصناف + المرفقات ثم احفظ.</li>
+      <li>للمراجعة: <strong>سجل سندات الإدخال</strong>.</li>
+    </ol>
+
+    <div class="fw-bold mb-2">ج) سندات الجرد</div>
+    <ol class="mb-3">
+      <li>اذهب إلى: <strong>السندات → سندات الجرد → إدخال سند</strong>.</li>
+      <li>اختر المخزن ثم أدخل كميات الأصناف كما هي على أرض الواقع.</li>
+      <li>بعد الحفظ يمكنك الرجوع إلى <strong>سجل سندات الجرد</strong> لفتح السند.</li>
+    </ol>
+    <div class="alert alert-info py-2 mb-3">
+      <strong>ملاحظة:</strong> سند الجرد يُستخدم كـ “نقطة مرجعية” لاحتساب المخزون في التقارير.
+    </div>
+
+    <div class="fw-bold mb-2">د) سندات الإتلاف</div>
+    <ol class="mb-3">
+      <li>اذهب إلى: <strong>السندات → سندات الإتلاف → إدخال سند</strong>.</li>
+      <li>حدد من مستودع ثم الأصناف والكميات وأرفق مستند الإتلاف إن وجد.</li>
+      <li>راجع من: <strong>سجل سندات الإتلاف</strong>.</li>
+    </ol>
+
+    <div class="fw-bold mb-2">هـ) سندات الإرجاع</div>
+    <ol class="mb-0">
+      <li>اذهب إلى: <strong>السندات → سندات الإرجاع → إدخال سند</strong>.</li>
+      <li>حدد <strong>من جهة/غرفة</strong> (يمكن اختيار غرفة من القائمة أو كتابة الاسم يدويًا).</li>
+      <li>حدد <strong>إلى مستودع</strong> ثم الأصناف والكميات + المرفقات.</li>
+      <li>راجع من: <strong>سجل سندات الإرجاع</strong>.</li>
+    </ol>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">6) التقارير</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>تقرير المخازن ومحتوياتها:</strong> ملخص محتويات مخزن محدد.</li>
+      <li><strong>تقرير الأصناف والكميات في كافة المخازن:</strong> نظرة شاملة على الكميات.</li>
+      <li><strong>تقرير بطاقة الصنف:</strong> حركة صنف (إدخال/صرف/إرجاع/إتلاف...) خلال فترة.</li>
+      <li><strong>الجدول السنوي للسندات:</strong> ملخص عدد السندات حسب السنة/النوع.</li>
+      <li><strong>الجدول السنوي للكميات:</strong> ملخص كميات الحركة خلال السنة.</li>
+      <li><strong>تقرير سجلات الصرف:</strong> تقرير تفصيلي على مستوى أسطر السندات.</li>
+    </ul>
+    <div class="small text-muted">استخدم فلاتر (من/إلى تاريخ، مخزن، صنف) للحصول على نتيجة أدق.</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">7) العهدة</summary>
+  <div class="mt-2">
+    <ol class="mb-2">
+      <li>لإضافة/تحديث عهدة: <strong>العهدة → سند جرد عهدة</strong>.</li>
+      <li>اختر نوع العهدة: <strong>موظف</strong> أو <strong>غرفة</strong> ثم حدّد الشخص/الغرفة.</li>
+      <li>أضف الأصناف والكميات واحفظ.</li>
+      <li>للمراجعة: <strong>سجل سندات العهدة</strong> ثم افتح السند.</li>
+      <li>للعرض: <strong>عرض العهدة</strong> أو <strong>الأصناف والعهدة</strong> حسب ما تحتاجه.</li>
+    </ol>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">8) ملاحظات سريعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>المرفقات:</strong> يمكن إدخال سندات متعددة مع كل سند (اختياري).</li>
+      <li><strong>البحث/الفلاتر:</strong> استخدم “السند يحتوي” للبحث باسم/كود الصنف.</li>
+      <li><strong>الطباعة:</strong> يمكنك طباعة أي دليل من زر “طباعة” داخل صفحات الدليل.</li>
+    </ul>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">9) المستودع (معلومة سريعة)</summary>
+  <div class="mt-2">
+    <div class="small text-muted mb-2">
+      يوجد في النظام أيضًا “مستودع ملفات” خاص برفع الملفات ومشاركتها (ليس المخازن). إن كنت تبحث عن الملفات/المشاركات/التصنيفات الخاصة بالملفات، ستجده في قسم الأرشفة/الملفات حسب الواجهة.
+    </div>
+  </div>
+</details>
+
+{% endblock %}

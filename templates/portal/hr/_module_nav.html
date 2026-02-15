@@ -1,0 +1,259 @@
+{#
+  HR module navigation (matches the structure in the reference screenshots):
+  الرئيسية | الموظفين | الدوام | الإجازات و المهمات | التقارير | برامج فرعية | لوحة التحكم
+#}
+
+<nav class="navbar navbar-expand-lg hr-subnav" aria-label="HR navigation" dir="rtl">
+  <div class="container-fluid px-0">
+    <a class="navbar-brand" href="{{ url_for('portal.hr_home') }}">
+      <i class="bi bi-people-fill"></i>
+      شؤون الموظفين
+    </a>
+
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#hrSubnav" aria-controls="hrSubnav" aria-expanded="false" aria-label="Toggle navigation">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div class="collapse navbar-collapse" id="hrSubnav">
+      <ul class="navbar-nav ms-auto gap-1">
+          <a class="nav-link" href="{{ url_for('portal.hr_home') }}">
+            <i class="bi bi-house"></i> الرئيسية
+          </a>
+        </li>
+
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-person-badge"></i> الموظفين
+          </a>
+          <ul class="dropdown-menu">
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_employee_new') }}">
+                موظف جديد
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_employee_followup') }}">
+                متابعة الإدخال
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_employees') }}">
+                قائمة الموظفين
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_org_assignments') }}">
+                تعديل المسؤول
+              </a>
+            </li>
+          </ul>
+        </li>
+
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-clock"></i> الدوام
+          </a>
+          <ul class="dropdown-menu">
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_attendance_events') }}">السجلات</a>
+            </li>
+
+            <li class="dropdown-submenu">
+              <a class="dropdown-item dropdown-toggle" href="#">حالات خاصة</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_att_special_status_new') }}">إدخال حالة</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_att_special_exception_new') }}">إدخال استثناء</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_att_special_log') }}">السجل</a></li>
+              </ul>
+            </li>
+
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_att_mass_closing') }}">الإغلاق الجماعي</a>
+            </li>
+
+            <li class="dropdown-submenu">
+              <a class="dropdown-item dropdown-toggle" href="#">المغادرات</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_permission_request_new') }}">إدخال المغادرات</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_permissions') }}">السجل</a></li>
+              </ul>
+            </li>
+
+            <li class="dropdown-submenu">
+              <a class="dropdown-item dropdown-toggle" href="#">الخصم</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_run') }}">تنفيذ الخصم</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_log') }}">سجل الخصومات</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_yearly') }}">الجدول السنوي</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_deductions_settings') }}">إعدادات الخصم</a></li>
+              </ul>
+            </li>
+
+            <li class="dropdown-submenu">
+              <a class="dropdown-item dropdown-toggle" href="#">جدول الدوام المتغير</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_monthly_schedule_new') }}">إضافة جدول شهري</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_monthly_schedule_log') }}">سجل الجداول</a></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-calendar2-week"></i> الإجازات و المهمات
+          </a>
+          <ul class="dropdown-menu">
+            <li class="dropdown-submenu">
+              <a class="dropdown-item dropdown-toggle" href="#">الإجازات</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_leave_request_new') }}">تقديم إجازة</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_leaves') }}">إجازاتي</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">أنواع الإجازات</a></li>
+              </ul>
+            </li>
+
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_official_missions') }}">المهمات الرسمية</a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_official_occasions') }}">المناسبات الرسمية</a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_weekly_holidays') }}">العطل الأسبوعية</a>
+            </li>
+          </ul>
+        </li>
+        {% if current_user.has_perm('HR_REPORTS_VIEW') %}
+        <li class="nav-item">
+          <a class="nav-link" data-bs-toggle="offcanvas" href="#hrReportsCanvas" role="button" aria-controls="hrReportsCanvas">
+            <i class="bi bi-graph-up"></i> التقارير
+          </a>
+        </li>
+        {% endif %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-grid"></i> برامج فرعية
+          </a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_docs_home') }}">التعميمات</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_room_bookings') }}">حجز القاعة</a></li>
+            <li><hr class="dropdown-divider"></li>
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_log') }}">سجل التدريبات</a></li>
+            {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMP_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_REPORTS_VIEW') %}
+              <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_program_new') }}">إضافة تدريب</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_admin_dashboard') }}">لوحة تحكم التدريب</a></li>
+            {% endif %}
+          </ul>
+        </li>
+
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-gear"></i> لوحة التحكم
+          </a>
+          <ul class="dropdown-menu">
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">الثوابت العامة</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('users.list_users') }}">المستخدمين</a></li>
+            <li class="dropdown-submenu">
+              <a class="dropdown-item dropdown-toggle" href="#">الإجازات والدوام</a>
+              <ul class="dropdown-menu">
+                <li><a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">لوحة موارد بشرية</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_schedule_templates') }}">قوالب الدوام</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_work_policies') }}">سياسات الدوام</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_work_assignments') }}">تعيين الدوام</a></li>
+              </ul>
+            </li>
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_system_screens') }}">شاشات النظام</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('users.list_users') }}">إدخال موظفين</a></li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </div>
+</nav>
+
+<!-- HR Reports Offcanvas (replaces long dropdown) -->
+<div class="offcanvas offcanvas-end hr-reports-canvas" tabindex="-1" id="hrReportsCanvas" aria-labelledby="hrReportsCanvasLabel">
+  <div class="offcanvas-header">
+    <div>
+      <h5 class="offcanvas-title mb-0" id="hrReportsCanvasLabel"><i class="bi bi-graph-up"></i> التقارير</h5>
+      <div class="small opacity-75">ابحث وافتح أي تقرير بسرعة</div>
+    </div>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body">
+    <div class="mb-3">
+      <input id="hrReportsSearch" type="text" class="form-control form-control-sm" placeholder="ابحث عن تقرير..." autocomplete="off">
+    </div>
+
+    <div id="hrReportsNoResults" class="alert alert-light border small d-none">لا يوجد نتائج مطابقة.</div>
+
+    <div class="accordion" id="hrReportsAccordion">
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="hrRepHeadEmp">
+          <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#hrRepEmp" aria-expanded="true" aria-controls="hrRepEmp">
+            <i class="bi bi-person-badge me-2"></i> الموظفين
+          </button>
+        </h2>
+        <div id="hrRepEmp" class="accordion-collapse collapse show" aria-labelledby="hrRepHeadEmp" data-bs-parent="#hrReportsAccordion">
+          <div class="accordion-body">
+            <a class="list-group-item list-group-item-action" data-report-label="الاستعلامات الموظفين" href="{{ url_for('portal.hr_employee_lookups_index') }}"><i class="bi bi-search"></i> الإستعلامات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="الترقيات المستحقة" href="{{ url_for('portal.hr_report_promotions') }}"><i class="bi bi-award"></i> الترقيات المستحقة</a>
+            <a class="list-group-item list-group-item-action" data-report-label="التقاعد" href="{{ url_for('portal.hr_report_retirement') }}"><i class="bi bi-person-check"></i> التقاعد</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="hrRepHeadAtt">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#hrRepAtt" aria-expanded="false" aria-controls="hrRepAtt">
+            <i class="bi bi-clock me-2"></i> الدوام
+          </button>
+        </h2>
+        <div id="hrRepAtt" class="accordion-collapse collapse" aria-labelledby="hrRepHeadAtt" data-bs-parent="#hrReportsAccordion">
+          <div class="accordion-body">
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الغياب" href="{{ url_for('portal.hr_report_absence') }}"><i class="bi bi-person-x"></i> تقرير الغياب</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير البصمات" href="{{ url_for('portal.hr_report_fingerprints') }}"><i class="bi bi-fingerprint"></i> تقرير البصمات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير المغادرات مع البصمة" href="{{ url_for('portal.hr_report_permissions_fingerprint') }}"><i class="bi bi-arrow-left-right"></i> تقرير المغادرات مع البصمة</a>
+            <a class="list-group-item list-group-item-action" data-report-label="التقرير اليومي" href="{{ url_for('portal.hr_report_attendance_daily') }}"><i class="bi bi-calendar-date"></i> التقرير اليومي</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير مراقبة تعديلات الدوام" href="{{ url_for('portal.hr_report_attendance_edits') }}"><i class="bi bi-pencil-square"></i> مراقبة تعديلات الدوام</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الحركات السالبة" href="{{ url_for('portal.hr_report_negative_movements') }}"><i class="bi bi-graph-down"></i> تقرير الحركات السالبة</a>
+            <hr class="my-3">
+            <a class="list-group-item list-group-item-action" data-report-label="آخر دخول ناجح" href="{{ url_for('portal.hr_report_last_login') }}"><i class="bi bi-shield-check"></i> آخر دخول ناجح</a>
+            <a class="list-group-item list-group-item-action" data-report-label="الحضور والانصراف والمغادرات" href="{{ url_for('portal.hr_report_attendance_permissions') }}"><i class="bi bi-clock-history"></i> الحضور والانصراف والمغادرات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="التأخير" href="{{ url_for('portal.hr_report_delay') }}"><i class="bi bi-exclamation-triangle"></i> التأخير</a>
+            <a class="list-group-item list-group-item-action" data-report-label="دوام موظف" href="{{ url_for('portal.hr_report_employee_attendance') }}"><i class="bi bi-person-lines-fill"></i> دوام موظف</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير تجميعي لحركات الدوام" href="{{ url_for('portal.hr_report_diwan') }}"><i class="bi bi-building"></i> تقرير تجميعي لحركات الدوام</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير دوام موظفين" href="{{ url_for('portal.hr_report_employees_attendance') }}"><i class="bi bi-people"></i> تقرير دوام موظفين</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير دوام تجميعي" href="{{ url_for('portal.hr_report_attendance_summary') }}"><i class="bi bi-collection"></i> تقرير دوام تجميعي</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="hrRepHeadLeave">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#hrRepLeave" aria-expanded="false" aria-controls="hrRepLeave">
+            <i class="bi bi-calendar2-week me-2"></i> الإجازات
+          </button>
+        </h2>
+        <div id="hrRepLeave" class="accordion-collapse collapse" aria-labelledby="hrRepHeadLeave" data-bs-parent="#hrReportsAccordion">
+          <div class="accordion-body">
+            <a class="list-group-item list-group-item-action" data-report-label="أرصدة الموظفين" href="{{ url_for('portal.hr_report_leave_employee_balances') }}"><i class="bi bi-wallet"></i> أرصدة الموظفين</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الخصم من الراتب" href="{{ url_for('portal.hr_report_salary_deductions') }}"><i class="bi bi-cash-coin"></i> تقرير الخصم من الراتب</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير إجازات الإضافي" href="{{ url_for('portal.hr_report_overtime_leaves') }}"><i class="bi bi-clock-history"></i> تقرير إجازات الإضافي</a>
+            <hr class="my-3">
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الإجازات" href="{{ url_for('portal.hr_leaves_report') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="التقرير الشهري للإجازات" href="{{ url_for('portal.hr_monthly_leave_report') }}"><i class="bi bi-calendar2-week"></i> التقرير الشهري للإجازات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="أرصدة الإجازات" href="{{ url_for('portal.hr_leave_balances') }}"><i class="bi bi-wallet2"></i> أرصدة الإجازات</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-grid"></i> فتح صفحة التقارير</a>
+    </div>
+
+  </div>
+</div>
+

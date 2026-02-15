@@ -1,0 +1,72 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تعيين الموظفين على الهيكلية الموحدة{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h4 class="mb-0">تعيين الموظفين على الهيكلية الموحدة</h4>
+    <div class="text-muted small">اختَر موظفًا ثم اربطه بعنصر من الهيكلية الموحدة (OrgNode) لاستخدامه في المسارات وقواعد التوجيه.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-8">
+        <label class="form-label">بحث عن موظف (اسم أو بريد)</label>
+        <input name="q" class="form-control" value="{{ q or '' }}" placeholder="مثال: ahmad أو ahmad@example.com">
+      </div>
+      <div class="col-md-4 d-flex gap-2">
+        <button class="btn btn-primary mt-4 w-100" type="submit">بحث</button>
+        <a class="btn btn-outline-secondary mt-4" href="{{ url_for('portal.hr_org_node_assignments') }}">مسح</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if q and (users|length == 0) %}
+  <div class="alert alert-light text-center text-muted">لا توجد نتائج.</div>
+{% endif %}
+
+{% if users and users|length > 0 %}
+  <div class="card shadow-sm">
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width:60px">#</th>
+              <th>الاسم</th>
+              <th>البريد</th>
+              <th>التبعية الحالية (OrgNode)</th>
+              <th style="width:160px">إجراء</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for u in users %}
+              {% set n = (node_map.get(u.org_node_id) if node_map is defined else None) %}
+              <tr>
+                <td class="text-muted">{{ loop.index }}</td>
+                <td class="fw-semibold">{{ u.full_name if u.full_name is defined else (u.name or '—') }}</td>
+                <td><span dir="ltr">{{ u.email }}</span></td>
+                <td>
+                  {% if n %}
+                    <span class="badge bg-success-subtle text-success border">{{ n.name_ar }}</span>
+                    {% if n.code %}<span class="text-muted small">(<code>{{ n.code }}</code>)</span>{% endif %}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_node_assign_user', user_id=u.id) }}">فتح التعيين</a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

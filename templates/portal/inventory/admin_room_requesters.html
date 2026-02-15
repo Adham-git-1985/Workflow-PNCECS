@@ -1,0 +1,106 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set edit = edit if edit is defined else None %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">المستخدمون القادرون على طلب مواد للغرف</h5>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <input type="hidden" name="action" value="{% if edit %}update{% else %}create{% endif %}">
+      {% if edit %}
+        <input type="hidden" name="id" value="{{ edit.id }}">
+      {% endif %}
+
+      <div class="row g-2">
+        <div class="col-md-4">
+          <label class="form-label">الموظف</label>
+          <select name="user_id" class="form-select" required>
+            <option value="">اختر</option>
+            {% for u in users %}
+              <option value="{{ u.id }}" {% if edit and edit.user_id==u.id %}selected{% endif %}>{{ u.full_name }} ({{ u.email }})</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label">غرفة (اختياري)</label>
+          <select name="room_id" class="form-select">
+            <option value="">بدون تحديد</option>
+            {% for r in rooms %}
+              <option value="{{ r.id }}" {% if edit and edit.room_id==r.id %}selected{% endif %}>{{ r.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-2">
+          <label class="form-label">الحالة</label>
+          <select name="is_active" class="form-select">
+            <option value="1" {% if not edit or edit.is_active %}selected{% endif %}>فعّال</option>
+            <option value="0" {% if edit and not edit.is_active %}selected{% endif %}>غير فعّال</option>
+          </select>
+        </div>
+
+        <div class="col-md-2 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+        </div>
+      </div>
+
+      {% if edit %}
+        <div class="mt-2">
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_admin_room_requesters') }}"><i class="bi bi-x"></i> إلغاء التعديل</a>
+        </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-sm table-striped align-middle">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>الموظف</th>
+            <th>الغرفة</th>
+            <th>الحالة</th>
+            <th style="width:160px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.id }}</td>
+              <td>{{ row.user.full_name if row.user else '-' }}</td>
+              <td>{{ row.room.label if row.room else 'بدون تحديد' }}</td>
+              <td>
+                {% if row.is_active %}
+                  <span class="badge bg-success">فعّال</span>
+                {% else %}
+                  <span class="badge bg-secondary">غير فعّال</span>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_room_requesters', edit_id=row.id) }}"><i class="bi bi-pencil"></i></a>
+                <form method="post" class="d-inline" onsubmit="return confirm('حذف السجل؟');">
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="{{ row.id }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+          {% if not rows %}
+            <tr><td colspan="5" class="text-muted">لا توجد بيانات.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

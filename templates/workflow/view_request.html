@@ -1,0 +1,558 @@
+{# templates/workflow/view_request.html #}
+{% extends "layout.html" %}
+{% block title %}عرض الطلب{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">📄 الطلب #{{ req.id }}</h3>
+    <small class="text-muted">
+      الحالة: <strong>{{ req.status }}</strong>
+      {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
+      {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% endif %}
+    </small>
+  </div>
+
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
+      PDF
+    </a>
+
+    {% if current_user.has_role('SUPER_ADMIN') %}
+    <form method="post"
+          action="{{ url_for('workflow.delete_request', request_id=req.id) }}"
+          onsubmit="return confirm('هل أنت متأكد من حذف الطلب نهائياً؟ سيتم تسجيل ذلك في سجل التدقيق.');">
+      <button type="submit" class="btn btn-sm btn-danger">
+        🗑️ حذف
+      </button>
+    </form>
+    {% endif %}
+    {% if can_escalate %}
+    <a class="btn btn-sm btn-outline-danger" href="{{ url_for('workflow.escalate_request', request_id=req.id) }}">
+      🚨 تصعيد
+    </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <div class="col-lg-7">
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+      {% if current_step.mode == "PARALLEL_SYNC" %}
+      <div class="alert alert-info py-2 mb-3">
+        هذه خطوة <strong>متزامنة</strong>؛ ردّك هنا للتوثيق ولن يغيّر مسار القرار.
+      </div>
+      {% endif %}
+        <h5 class="mb-2">{{ req.title }}</h5>
+        <div class="text-muted">{{ req.description or "—" }}</div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white">
+        <strong>📎 المرفقات</strong>
+      </div>
+      <div class="card-body">
+        {% if attachments %}
+          <ul class="list-group">
+            {% for a in attachments %}
+              {% set f = files_map.get(a.archived_file_id) %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div>
+                  <strong>{{ f.original_name if f else ("File #" ~ a.archived_file_id) }}</strong>
+                  {% if f %}
+                    <div class="small text-muted">
+                      {{ f.file_type }} · {{ (f.file_size or 0)//1024 }} KB
+                    </div>
+                  {% endif %}
+                </div>
+                {% if f %}
+                  <div class="d-flex gap-2">
+                    <a class="btn btn-sm btn-outline-primary"
+                       href="{{ url_for('workflow.download_workflow_attachment', file_id=f.id) }}">
+                      تنزيل
+                    </a>
+                    <a class="btn btn-sm btn-outline-secondary"
+                       href="{{ url_for('workflow.preview_workflow_attachment', file_id=f.id) }}">
+                      معاينة
+                    </a>
+                  </div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">لا توجد مرفقات.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card shadow-sm mb-3">
+  <div class="card-header bg-white">
+    <strong>🚨 التصعيدات</strong>
+        <a class="btn btn-sm btn-outline-danger" target="_blank" href="{{ url_for('workflow.request_escalations', request_id=req.id) }}">عرض</a>
+  </div>
+  <div class="card-body">
+    {% if req.escalations %}
+      <ul class="list-group">
+        {% for e in req.escalations|sort(attribute='created_at', reverse=True) %}
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between">
+              <strong>{{ e.category }}</strong>
+              {% if e.step_order %}<span class="badge bg-danger ms-2">Step {{ e.step_order }}</span>{% endif %}
+              <span class="small text-muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+            </div>
+            <div class="small text-muted mt-1">
+              من: {{ e.from_user.email if e.from_user else ('#' ~ e.from_user_id) }}
+              → إلى: {% if e.targets %}{% set tids = e.targets.split(',') %}{% for tid in tids %}{% set tid2 = tid|trim %}{% if tid2 %}{% set tu = users_map.get(tid2|int) %}{{ tu.email if tu else ('#' ~ tid2) }}{% if not loop.last %}, {% endif %}{% endif %}{% endfor %}{% else %}{{ e.to_user.email if e.to_user else ('#' ~ e.to_user_id) }}{% endif %}
+            </div>
+            <div class="mt-2">{{ e.description }}</div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-muted">لا يوجد تصعيدات.</div>
+    {% endif %}
+  </div>
+</div>
+
+    <div class="card shadow-sm">
+      <div class="card-header bg-white">
+        <strong>🧾 سجل الإجراءات (Audit)</strong>
+      </div>
+      <div class="card-body">
+        {% if audit %}
+          <ul class="list-group">
+            {% for log in audit %}
+              <li class="list-group-item">
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <strong>{{ log.action }}</strong>
+                    <div class="small text-muted mt-1">
+                      {% if log.user %}
+                        بواسطة: <strong>{{ log.user.full_name }}</strong>
+                      {% else %}
+                        بواسطة: <strong>النظام</strong>
+                      {% endif %}
+                      {% if log.on_behalf_of_user %}
+                        <span class="badge bg-info text-dark ms-2">مفوّض عن {{ log.on_behalf_of_user.full_name }}</span>
+                      {% endif %}
+                    </div>
+                  </div>
+                  <span class="small text-muted">{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+                </div>
+                {% if log.note %}
+                  <div class="small text-muted mt-1">{{ log.note }}</div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-muted">لا يوجد سجل بعد.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <strong>🧩 المسار</strong>
+        <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('workflow.request_attachments', request_id=req.id) }}">📎 مرفقات المسار{% if attachments %} ({{ attachments|length }}){% endif %}</a>
+      </div>
+      <div class="card-body">
+        {% if steps %}
+
+          {# ===== Pre attachments (step 0) ===== #}
+          {% if pre_att_items %}
+            <div class="mb-3">
+              <div class="small fw-bold text-muted mb-1">📌 مرفقات عند إنشاء الطلب / الإرفاق</div>
+              <ul class="list-unstyled small mb-0">
+                {% for it in pre_att_items %}
+                  <li class="mb-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                      <div class="text-truncate">
+                        <i class="bi bi-paperclip"></i>
+                        <a class="text-decoration-none" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">{{ it.name }}</a>
+                        <span class="text-muted">· {{ it.size_human }}</span>
+                      </div>
+                      <div class="text-nowrap ms-2">
+                        <a class="btn btn-sm btn-outline-secondary py-0 px-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">عرض</a>
+                        <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('workflow.download_workflow_attachment', file_id=it.file_id) }}">تنزيل</a>
+                      </div>
+                    </div>
+                    <div class="text-muted" style="font-size:12px">
+                      {{ it.source_label }}{% if it.uploaded_by %} · {{ it.uploaded_by }}{% endif %}{% if it.uploaded_at %} · {{ it.uploaded_at }}{% endif %}
+                    </div>
+                  </li>
+                {% endfor %}
+              </ul>
+            </div>
+            <hr class="my-2">
+          {% endif %}
+
+          <ol class="mb-0">
+            {% for s in steps %}
+              <li class="mb-2">
+                <div class="d-flex justify-content-between">
+                  <div>
+                    <strong>Step {{ s.step_order }}</strong>
+                    {% if (s.mode or '')|upper == 'PARALLEL_SYNC' %}
+                      <span class="badge bg-info text-dark ms-2">متزامن</span>
+                    {% endif %}
+                    <div class="small text-muted">
+  {% set k = (s.approver_kind or '')|upper %}
+  الوجهة:
+  {% if k == "ROLE" %}
+    <span class="badge bg-secondary">ROLE</span> {{ s.approver_role }}
+  {% elif k == "USER" %}
+    <span class="badge bg-secondary">USER</span>
+    {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
+      {{ users_map.get(s.approver_user_id).email }}
+    {% else %}
+      #{{ s.approver_user_id }}
+    {% endif %}
+  {% elif k == "DIRECTORATE" %}
+    <span class="badge bg-secondary">DIRECTORATE</span>
+    {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
+      {{ dirs_map.get(s.approver_directorate_id).name_ar }}
+    {% else %}
+      #{{ s.approver_directorate_id }}
+    {% endif %}
+    → <span class="text-muted">المدير العام (directorate_head)</span>
+  {% elif k == "COMMITTEE" %}
+    <span class="badge bg-secondary">COMMITTEE</span>
+    {% if s.approver_committee_id and committees_map and committees_map.get(s.approver_committee_id) %}
+      {{ committees_map.get(s.approver_committee_id).name_ar }}
+    {% else %}
+      #{{ s.approver_committee_id }}
+    {% endif %}
+    {% set cmode = (s.committee_delivery_mode or "Committee_ALL") %}
+    {% set cmode_up = cmode|upper %}
+    {% if cmode_up == "COMMITTEE_CHAIR" or cmode == "Committee_CHAIR" %}
+      → <span class="text-muted">رئيس اللجنة</span>
+    {% elif cmode_up == "COMMITTEE_SECRETARY" or cmode == "Committee_SECRETARY" %}
+      → <span class="text-muted">مقرر اللجنة</span>
+    {% else %}
+      → <span class="text-muted">كل الأعضاء</span>
+    {% endif %}
+  {% elif k == "DEPARTMENT" or ((s.approver_kind or '')|trim) == '' %}
+    <span class="badge bg-secondary">DEPARTMENT</span>
+    {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}
+      {{ depts_map.get(s.approver_department_id).name_ar }}
+    {% else %}
+      #{{ s.approver_department_id }}
+    {% endif %}
+    → <span class="text-muted">رئيس الدائرة (dept_head)</span>
+  {% else %}
+    <span class="badge bg-danger">UNKNOWN</span>
+    <span class="ms-1">{{ s.approver_kind }}</span>
+  {% endif %}
+</div>
+                  </div>
+                  <span class="badge
+                    {% if s.status == 'PENDING' %}bg-warning text-dark
+                    {% elif s.status == 'APPROVED' %}bg-success
+                    {% elif s.status == 'REJECTED' %}bg-danger
+                    {% else %}bg-secondary{% endif %}">
+                    {{ s.status }}
+                  </span>
+                </div>
+                {% if s.due_at %}
+                  {% set rem = (sla_days_remaining_map.get(s.step_order) if sla_days_remaining_map else None) %}
+                  {% set sla_val = (step_sla_days_map.get(s.step_order) if step_sla_days_map else None) %}
+                  {% if (sla_val is none) and template %}{% set sla_val = template.sla_days_default %}{% endif %}
+                  <div class="small text-muted">
+                    <a href="#" class="text-decoration-none sla-link"
+                       data-bs-toggle="modal" data-bs-target="#slaInfoModal"
+                       data-sla-label="SLA لهذه الخطوة (الخطوة {{ s.step_order }})"
+                       data-sla-value="{{ sla_val if sla_val is not none else '-' }}">
+                      SLA: {{ s.due_at.strftime("%Y-%m-%d %H:%M") }}{% if rem is not none %} ({{ rem }} يوم){% endif %}
+                    </a>
+                  </div>
+                {% endif %}
+
+                {% set c = (step_att_counts.get(s.step_order, 0) if step_att_counts else 0) %}
+                {% if c %}
+                  <div class="small text-muted">📎 مرفقات هذه الخطوة: {{ c }}</div>
+                {% endif %}
+
+                {% set ec = (step_escalation_counts.get(s.step_order, 0) if step_escalation_counts else 0) %}
+                {% if ec %}
+                  <div class="small">
+                    <a class="text-danger text-decoration-none" target="_blank" href="{{ url_for('workflow.request_escalations', request_id=req.id, step=s.step_order) }}">🚨 تصعيدات هذه الخطوة ({{ ec }})</a>
+                  </div>
+                {% endif %}
+
+                {# ===== Step attachments (detailed list) ===== #}
+                {% set items = (step_att_items.get(s.step_order) if step_att_items else None) %}
+                {% if items %}
+                  <div class="mt-2">
+                    <div class="small fw-bold text-muted mb-1">📎 ملفات هذه الخطوة</div>
+                    <ul class="list-unstyled small mb-0">
+                      {% for it in items %}
+                        <li class="mb-2">
+                          <div class="d-flex justify-content-between align-items-center">
+                            <div class="text-truncate">
+                              <i class="bi bi-paperclip"></i>
+                              <a class="text-decoration-none" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">{{ it.name }}</a>
+                              <span class="text-muted">· {{ it.size_human }}</span>
+                            </div>
+                            <div class="text-nowrap ms-2">
+                              <a class="btn btn-sm btn-outline-secondary py-0 px-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">عرض</a>
+                              <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('workflow.download_workflow_attachment', file_id=it.file_id) }}">تنزيل</a>
+                            </div>
+                          </div>
+                          <div class="text-muted" style="font-size:12px">
+                            {{ it.source_label }}{% if it.uploaded_by %} · {{ it.uploaded_by }}{% endif %}{% if it.uploaded_at %} · {{ it.uploaded_at }}{% endif %}
+                          </div>
+                        </li>
+                      {% endfor %}
+                    </ul>
+                    <div class="mt-1">
+                      <a class="small text-muted" target="_blank" href="{{ url_for('workflow.request_attachments', request_id=req.id) }}">عرض كل المرفقات بالتفاصيل</a>
+                    </div>
+                  </div>
+                {% endif %}
+              </li>
+            {% endfor %}
+          </ol>
+        {% else %}
+          <div class="text-muted">لا يوجد مسار منشأ لهذا الطلب.</div>
+        {% endif %}
+      </div>
+    </div>
+
+    {# =========================
+       PARALLEL_SYNC متابعة الخطوة المتزامنة + زر التجاوز
+       ========================= #}
+    {% if current_step and (current_step.mode or '')|upper == 'PARALLEL_SYNC' %}
+      <div class="card shadow-sm mb-3">
+        <div class="card-header bg-white d-flex justify-content-between align-items-center">
+          <div>
+            <strong>👥 متابعة الخطوة المتزامنة (الخطوة {{ current_step.step_order }})</strong>
+            <div class="small text-muted">الردود للتوثيق ولا تغيّر قرار المسار.</div>
+          </div>
+          <span class="badge bg-info text-dark">متزامن</span>
+        </div>
+        <div class="card-body">
+          {% if parallel_tasks %}
+            {# count progress #}
+            {% set ns = namespace(done=0) %}
+            {% for t in parallel_tasks %}
+              {% if (t.status or '') in ['RESPONDED','BYPASSED'] %}
+                {% set ns.done = ns.done + 1 %}
+              {% endif %}
+            {% endfor %}
+
+            <div class="small text-muted mb-2">التقدم: {{ ns.done }}/{{ parallel_tasks|length }} (لن ننتقل حتى يرد الجميع أو يتم تجاوزهم)</div>
+
+            {% if can_bypass_parallel %}
+              <div class="alert alert-warning py-2 mb-3">
+                <div class="d-flex flex-wrap align-items-end justify-content-between gap-2">
+                  <div>
+                    <div class="fw-bold">تجاوز المتبقين (كل من حالته PENDING)</div>
+                    <div class="small text-muted">هذا الخيار متاح لمنفّذ الخطوة السابقة أو Admin/Super Admin.</div>
+                  </div>
+                  <form method="post" class="d-flex gap-2" action="{{ url_for('workflow.bypass_parallel_assignee', request_id=req.id, step_order=current_step.step_order) }}">
+                    <input type="hidden" name="bypass_all" value="1">
+                    <input class="form-control form-control-sm" name="reason" placeholder="سبب التجاوز" required>
+                    <button class="btn btn-sm btn-danger" type="submit">تجاوز المتبقين</button>
+                  </form>
+                </div>
+              </div>
+            {% endif %}
+
+            <div class="table-responsive">
+              <table class="table table-sm align-middle mb-0">
+                <thead class="table-light">
+                  <tr>
+                    <th>المستخدم</th>
+                    <th style="width:140px">الحالة</th>
+                    <th style="width:110px">الرد</th>
+                    <th style="width:150px">التاريخ</th>
+                    <th style="width:360px">التجاوز</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for t in parallel_tasks %}
+                    <tr {% if my_parallel_task and t.id == my_parallel_task.id %}class="table-warning"{% endif %}>
+                      <td>
+                        {{ (t.assignee.full_name if t.assignee and t.assignee.full_name else None) or (t.assignee.email if t.assignee else ('#' ~ t.assignee_user_id)) }}
+                        {% if my_parallel_task and t.id == my_parallel_task.id %}
+                          <span class="badge bg-warning text-dark ms-1">أنت</span>
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% set st = (t.status or '') %}
+                        <span class="badge
+                          {% if st == 'PENDING' %}bg-warning text-dark
+                          {% elif st == 'RESPONDED' %}bg-success
+                          {% elif st == 'BYPASSED' %}bg-secondary
+                          {% else %}bg-secondary{% endif %}">
+                          {{ st or '-' }}
+                        </span>
+                      </td>
+                      <td>
+                        {% if (t.response or '') == 'APPROVED' %}
+                          <span class="badge bg-success">موافقة</span>
+                        {% elif (t.response or '') == 'REJECTED' %}
+                          <span class="badge bg-danger">رفض</span>
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+                      <td class="small text-muted">
+                        {% if t.responded_at %}
+                          {{ t.responded_at.strftime('%Y-%m-%d %H:%M') }}
+                        {% elif t.bypassed_at %}
+                          {{ t.bypassed_at.strftime('%Y-%m-%d %H:%M') }}
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+                      <td>
+                        {% if can_bypass_parallel and (t.status or '') == 'PENDING' %}
+                          <form method="post" class="d-flex gap-2" action="{{ url_for('workflow.bypass_parallel_assignee', request_id=req.id, step_order=current_step.step_order) }}">
+                            <input type="hidden" name="assignee_user_id" value="{{ t.assignee_user_id }}">
+                            <input class="form-control form-control-sm" name="reason" placeholder="سبب التجاوز" required>
+                            <button class="btn btn-sm btn-outline-danger" type="submit">تجاوز</button>
+                          </form>
+                        {% elif (t.status or '') == 'BYPASSED' %}
+                          <div class="small text-muted">
+                            {% if t.bypass_reason %}السبب: {{ t.bypass_reason }}{% endif %}
+                            {% if t.bypassed_by %} · بواسطة: {{ t.bypassed_by.email }}{% elif t.bypassed_by_id %} · بواسطة: #{{ t.bypassed_by_id }}{% endif %}
+                          </div>
+                        {% else %}
+                          -
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+
+            {% if can_bypass_parallel %}
+              <div class="form-text mt-2">صلاحية التجاوز: منفّذ الخطوة السابقة أو Admin/Super Admin.</div>
+            {% endif %}
+          {% else %}
+            <div class="text-muted">لا توجد مهام متزامنة لهذه الخطوة (سيتم إنشاؤها عند دخول الخطوة).</div>
+          {% endif %}
+        </div>
+      </div>
+    {% endif %}
+
+    {% if can_decide and current_step %}
+    <div class="card shadow-sm">
+      <div class="card-header bg-white">
+        <strong>✅ الإجراء (الخطوة {{ current_step.step_order }})</strong>
+      </div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data"
+              action="{{ url_for('workflow.decide_request_step', request_id=req.id, step_order=current_step.step_order) }}">
+          <div class="mb-3">
+            <label class="form-label">الملاحظة</label>
+            <textarea class="form-control" name="note" rows="3" placeholder="ملاحظة اختيارية"></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">📎 مرفقات (اختياري)</label>
+            <input type="file" name="files" multiple class="form-control">
+            <div class="form-text">يمكنك رفع أكثر من ملف مع الإجراء.</div>
+          </div>
+
+          <div class="d-flex gap-2">
+            <button class="btn btn-success w-100" name="decision" value="APPROVED">موافقة</button>
+            <button class="btn btn-danger w-100" name="decision" value="REJECTED">رفض</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <div class="alert alert-light text-muted">
+      لا يوجد إجراء مطلوب منك حالياً.
+    </div>
+    
+
+
+    {% endif %}
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-header bg-white">
+        <strong>💬 تعليق / رد</strong>
+      </div>
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
+          <div class="mb-3">
+            <label class="form-label">النص</label>
+            <textarea class="form-control" name="note" rows="3" placeholder="اكتب التعليق أو الرد هنا"></textarea>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">📎 مرفقات (اختياري)</label>
+            <input type="file" name="files" multiple class="form-control">
+            <div class="form-text">يمكنك رفع أكثر من ملف مع التعليق/الرد.</div>
+          </div>
+
+          {% if current_user.id == req.requester_id %}
+            <button class="btn btn-primary w-100" name="kind" value="REPLY">إرسال رد للمراجع</button>
+          {% else %}
+            <div class="d-flex gap-2">
+              <button class="btn btn-outline-primary w-100" name="kind" value="COMMENT">إرسال تعليق</button>
+              <button class="btn btn-primary w-100" name="kind" value="REPLY">إرسال رد</button>
+            </div>
+          {% endif %}
+        </form>
+        <div class="small text-muted mt-2">سيصل تنبيه تلقائي للطرف الآخر.</div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+{# =========================
+   SLA Info Modal
+   ========================= #}
+<div class="modal fade" id="slaInfoModal" tabindex="-1" aria-labelledby="slaInfoModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="slaInfoModalLabel">ما هو SLA؟</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">
+          <b>SLA</b> اختصار لـ <b>Service Level Agreement</b>، ويعني <b>اتفاقية مستوى الخدمة</b>.
+          في النظام: هي <b>مدة زمنية (بالأيام)</b> تحدد الحد الأقصى لإنجاز الخطوة/المسار قبل اعتباره متأخرًا.
+        </p>
+        <div class="alert alert-light mb-0">
+          <div class="fw-bold" id="slaInfoScope">SLA</div>
+          <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted">يوم</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var modalEl = document.getElementById('slaInfoModal');
+    if (!modalEl) return;
+    modalEl.addEventListener('show.bs.modal', function (event) {
+      var trigger = event.relatedTarget;
+      if (!trigger) return;
+      var label = trigger.getAttribute('data-sla-label') || 'SLA';
+      var value = trigger.getAttribute('data-sla-value') || '-';
+      var scopeEl = modalEl.querySelector('#slaInfoScope');
+      var valEl = modalEl.querySelector('#slaInfoValue');
+      if (scopeEl) scopeEl.textContent = label;
+      if (valEl) valEl.textContent = value;
+    });
+  });
+</script>
+
+{% endblock %}

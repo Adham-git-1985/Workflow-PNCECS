@@ -1,0 +1,240 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}دليل الصلاحيات{% endblock %}
+
+{% block head %}
+<style>
+  .perm-key { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  .perm-desc { color:#6c757d; font-size:.85rem; margin-top:2px; }
+  .perm-item { border: 1px solid rgba(0,0,0,.08); border-radius: .6rem; padding: .75rem; }
+  .sticky-topbar { position: sticky; top: 8px; z-index: 5; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1">دليل الصلاحيات</h4>
+    <div class="text-muted small">
+      هنا تجد كل المفاتيح (Keys) المتاحة. <strong>صلاحيات البوابة</strong> هي التي تستخدم مثل: <span class="perm-key">HR_REQUESTS_READ</span> و <span class="perm-key">HR_SS_READ</span>.
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_permissions') }}">
+      <i class="bi bi-arrow-right"></i> رجوع
+    </a>
+    <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.portal_admin_permission_presets') }}">
+      <i class="bi bi-sliders"></i> اختصارات الصلاحيات
+    </a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3 sticky-topbar">
+  <div class="card-body">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-md-6">
+        <label class="form-label">بحث</label>
+        <input id="permQ" class="form-control" placeholder="ابحث بالمفتاح أو الاسم...">
+        <div class="form-text">يعمل على القوائم كلها.</div>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">خيارات</label>
+        <div class="d-flex gap-2 flex-wrap">
+          <button type="button" class="btn btn-outline-secondary" onclick="expandAll()"><i class="bi bi-arrows-expand"></i> فتح الكل</button>
+          <button type="button" class="btn btn-outline-secondary" onclick="collapseAll()"><i class="bi bi-arrows-collapse"></i> طي الكل</button>
+          <button type="button" class="btn btn-outline-danger" onclick="clearSearch()"><i class="bi bi-x-circle"></i> مسح البحث</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<ul class="nav nav-tabs mb-3" role="tablist">
+  <li class="nav-item" role="presentation">
+    <button class="nav-link active" id="tab-portal" data-bs-toggle="tab" data-bs-target="#pane-portal" type="button" role="tab">
+      <i class="bi bi-grid"></i> صلاحيات البوابة (Portal)
+    </button>
+  </li>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link" id="tab-system" data-bs-toggle="tab" data-bs-target="#pane-system" type="button" role="tab">
+      <i class="bi bi-gear"></i> صلاحيات النظام/المسار
+    </button>
+  </li>
+</ul>
+
+<div class="tab-content">
+
+  {# ---------------- Portal perms ---------------- #}
+  <div class="tab-pane fade show active" id="pane-portal" role="tabpanel">
+
+    {% if portal_groups %}
+      <div class="accordion" id="permCatalogAccordion">
+        {% for group_name, perms in portal_groups.items() %}
+          {% set i = loop.index %}
+          <div class="accordion-item" data-group>
+            <h2 class="accordion-header" id="ph{{ i }}">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#pc{{ i }}">
+                {{ group_name }}
+                <span class="badge bg-secondary ms-2">{{ perms|length }}</span>
+              </button>
+            </h2>
+            <div id="pc{{ i }}" class="accordion-collapse collapse" data-bs-parent="#permCatalogAccordion">
+              <div class="accordion-body">
+
+                <div class="row g-2">
+                  {% for p in perms %}
+                    {% set hay = (p.key ~ ' ' ~ p.label ~ ' ' ~ (p.desc or '') ~ ' ' ~ (p.module or '')) %}
+                    <div class="col-12" data-perm-row data-hay="{{ hay|e }}">
+                      <div class="perm-item">
+                        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                          <div>
+                            <div class="fw-semibold">{{ p.label }}</div>
+                            <div class="text-muted perm-key">{{ p.key }}</div>
+                            {% if p.desc %}<div class="perm-desc">{{ p.desc }}</div>{% endif %}
+                            {% if p.module %}<div class="small text-muted mt-1">Module: <span class="perm-key">{{ p.module }}</span></div>{% endif %}
+                          </div>
+                          <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="copyKey('{{ p.key }}')">
+                              <i class="bi bi-clipboard"></i> نسخ
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-warning">لم يتم تحميل تعريف صلاحيات البوابة.</div>
+    {% endif %}
+
+  </div>
+
+  {# ---------------- System perms ---------------- #}
+  <div class="tab-pane fade" id="pane-system" role="tabpanel">
+
+    <div class="alert alert-info">
+      <div class="fw-semibold mb-1">ملاحظة</div>
+      <div class="small">
+        هذه مفاتيح يتم اكتشافها من النظام (مثل <span class="perm-key">SIGN_ARCHIVE</span>) عبر فحص الملفات وقاعدة البيانات.
+        قد تختلف عن صلاحيات البوابة.
+      </div>
+    </div>
+
+    {% if system_items and system_items|length %}
+      <div class="row g-2">
+        {% for it in system_items %}
+          {% set hay = (it.key ~ ' ' ~ (it.sources|join(' '))) %}
+          <div class="col-12" data-perm-row data-hay="{{ hay|e }}">
+            <div class="perm-item">
+              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                <div>
+                  <div class="fw-semibold">{{ it.key }}</div>
+                  <div class="small text-muted mt-1">مصادر: {{ it.sources|join(', ') }}</div>
+                </div>
+                <div class="d-flex gap-2">
+                  <button type="button" class="btn btn-sm btn-outline-primary" onclick="copyKey('{{ it.key }}')">
+                    <i class="bi bi-clipboard"></i> نسخ
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="alert alert-warning">لا توجد صلاحيات نظامية مكتشفة.</div>
+    {% endif %}
+
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const qEl = document.getElementById('permQ');
+
+  function filterPerms() {
+    const term = (qEl && qEl.value ? qEl.value.trim().toLowerCase() : '');
+    const rows = document.querySelectorAll('[data-perm-row]');
+    rows.forEach(el => {
+      const hay = (el.getAttribute('data-hay') || '').toLowerCase();
+      const ok = !term || hay.indexOf(term) !== -1;
+      el.classList.toggle('d-none', !ok);
+    });
+  }
+
+  function clearSearch() {
+    if (!qEl) return;
+    qEl.value = '';
+    filterPerms();
+  }
+
+  function copyKey(key) {
+    const txt = key || '';
+    if (!txt) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(() => {
+        toast('تم النسخ: ' + txt);
+      }).catch(() => {
+        fallbackCopy(txt);
+      });
+    } else {
+      fallbackCopy(txt);
+    }
+  }
+
+  function fallbackCopy(txt) {
+    const ta = document.createElement('textarea');
+    ta.value = txt;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch(e) {}
+    document.body.removeChild(ta);
+    toast('تم النسخ: ' + txt);
+  }
+
+  function toast(msg) {
+    try {
+      const el = document.createElement('div');
+      el.className = 'toast align-items-center text-bg-dark border-0 position-fixed bottom-0 start-50 translate-middle-x mb-3';
+      el.setAttribute('role', 'alert');
+      el.style.zIndex = 9999;
+      el.innerHTML = '<div class="d-flex"><div class="toast-body">' + msg + '</div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>';
+      document.body.appendChild(el);
+      const t = new bootstrap.Toast(el, { delay: 1800 });
+      t.show();
+      el.addEventListener('hidden.bs.toast', () => el.remove());
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function expandAll() {
+    document.querySelectorAll('#permCatalogAccordion .accordion-collapse').forEach(c => {
+      if (!c.classList.contains('show')) {
+        new bootstrap.Collapse(c, { toggle: true });
+      }
+    });
+  }
+
+  function collapseAll() {
+    document.querySelectorAll('#permCatalogAccordion .accordion-collapse.show').forEach(c => {
+      new bootstrap.Collapse(c, { toggle: true });
+    });
+  }
+
+  if (qEl) {
+    qEl.addEventListener('input', filterPerms);
+  }
+</script>
+{% endblock %}

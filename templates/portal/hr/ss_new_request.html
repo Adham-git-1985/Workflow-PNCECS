@@ -1,0 +1,104 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إنشاء طلب{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-plus-circle"></i> إنشاء طلب: {{ defn.name_ar }}</h4>
+    <div class="text-muted small">{{ defn.code }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_home') }}">رجوع</a>
+</div>
+
+<form class="p-3 bg-white rounded-3 shadow-sm" method="post" enctype="multipart/form-data">
+  <input type="hidden" name="type_code" value="{{ defn.code }}"/>
+
+  {% if defn.code == 'CERTIFICATE' %}
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label">نوع الشهادة</label>
+        <select class="form-select" name="certificate_kind" required>
+          <option value="SALARY">شهادة راتب</option>
+          <option value="DEFINITION">تعريف</option>
+          <option value="ATTENDANCE">إفادة دوام</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">اللغة</label>
+        <select class="form-select" name="language" required>
+          <option value="AR">عربي</option>
+          <option value="EN">English</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">موجهة إلى (اختياري)</label>
+        <input class="form-control" name="to_whom" placeholder="مثال: بنك..."/>
+      </div>
+      <div class="col-12">
+        <label class="form-label">ملاحظات (اختياري)</label>
+        <textarea class="form-control" name="notes" rows="3"></textarea>
+      </div>
+    </div>
+  {% elif defn.code == 'UPDATE_PROFILE' %}
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <label class="form-label">هاتف جديد (اختياري)</label>
+        <input class="form-control" name="new_phone"/>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">عنوان جديد (اختياري)</label>
+        <input class="form-control" name="new_address"/>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">اسم البنك (اختياري)</label>
+        <input class="form-control" name="new_bank_name"/>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label">رقم الحساب/IBAN (اختياري)</label>
+        <input class="form-control" name="new_bank_account"/>
+      </div>
+      <div class="col-12">
+        <label class="form-label">مرفق داعم (اختياري)</label>
+        <input class="form-control" type="file" name="files" multiple/>
+        <div class="form-text">الملفات المسموحة: pdf, صور، docx، xlsx ...</div>
+      </div>
+      <div class="col-12">
+        <label class="form-label">ملاحظات (اختياري)</label>
+        <textarea class="form-control" name="notes" rows="3"></textarea>
+      </div>
+    </div>
+  {% elif defn.code == 'UPLOAD_DOCUMENTS' %}
+    <div class="row g-3">
+      <div class="col-12 col-md-4">
+        <label class="form-label">نوع المستند</label>
+        <select class="form-select" name="doc_kind" required>
+          <option value="ID_CARD">تجديد هوية</option>
+          <option value="CERTIFICATE">شهادة</option>
+          <option value="BANK">حساب بنكي</option>
+          <option value="OTHER">أخرى</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">تاريخ الانتهاء (اختياري)</label>
+        <input class="form-control" type="date" name="expiry_date"/>
+      </div>
+      <div class="col-12">
+        <label class="form-label">الملفات</label>
+        <input class="form-control" type="file" name="files" multiple required/>
+        <div class="form-text">يمكن رفع أكثر من ملف.</div>
+      </div>
+      <div class="col-12">
+        <label class="form-label">ملاحظات (اختياري)</label>
+        <textarea class="form-control" name="notes" rows="3"></textarea>
+      </div>
+    </div>
+  {% else %}
+    <div class="text-muted">نموذج غير معروف.</div>
+  {% endif %}
+
+  <div class="d-flex gap-2 mt-3">
+    <button class="btn btn-success" type="submit"><i class="bi bi-save"></i> حفظ كمسودة</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_home') }}">إلغاء</a>
+  </div>
+</form>
+{% endblock %}

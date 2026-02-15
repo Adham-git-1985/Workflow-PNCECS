@@ -1,0 +1,139 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">🚨 التصعيدات</h3>
+        <small class="text-muted">سجل جميع التصعيدات (المستخدمة + النظام) + الطلبات المتجاوزة مدة SLA</small>
+    </div>
+    <div>
+        <a class="btn btn-outline-success"
+           href="{{ url_for('admin.escalations_export_excel') }}">
+            <i class="bi bi-file-earmark-excel"></i>
+            تصدير Excel
+        </a>
+    </div>
+</div>
+
+{# ========================= #}
+{# Escalation Log (manual/system) #}
+{# ========================= #}
+<div class="card shadow-sm mb-4">
+    <div class="card-header bg-light d-flex justify-content-between align-items-center">
+        <div>
+            <strong>📌 سجل التصعيدات</strong>
+            <div class="text-muted small">يعرض آخر 500 تصعيد (للعرض). التصدير يشمل حتى 10,000 (يمكن تغيير limit).</div>
+        </div>
+        <div class="text-muted small">عدد المعروض: {{ escalations|length }}</div>
+    </div>
+    <div class="card-body p-0">
+        {% if escalations %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>الطلب</th>
+                        <th class="text-center">الخطوة</th>
+                        <th>النوع</th>
+                        <th>من</th>
+                        <th>إلى</th>
+                        <th class="text-center">التاريخ</th>
+                        <th>تفاصيل</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for e in escalations %}
+                    <tr>
+                        <td>{{ e.id }}</td>
+                        <td>
+                            <a href="{{ url_for('workflow.view_request', request_id=e.request_id) }}">
+                                #{{ e.request_id }}
+                            </a>
+                            <div class="text-muted small">
+                                <a class="text-decoration-none" href="{{ url_for('workflow.request_escalations', request_id=e.request_id, step=e.step_order) }}">
+                                    عرض كل تصعيدات الطلب
+                                </a>
+                            </div>
+                        </td>
+                        <td class="text-center">{{ e.step_order or '—' }}</td>
+                        <td><span class="badge bg-warning text-dark">{{ e.category }}</span></td>
+                        <td>{{ e.from_user.email if e.from_user else 'System' }}</td>
+                        <td>{{ e.to_user.email if e.to_user else '—' }}</td>
+                        <td class="text-center">{{ e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else '' }}</td>
+                        <td style="max-width: 420px">
+                            <div class="small">{{ (e.description or '')[:180] }}{% if e.description and e.description|length > 180 %}…{% endif %}</div>
+                            {% if e.targets %}
+                                <div class="text-muted small mt-1">Targets: {{ e.targets }}</div>
+                            {% endif %}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد تصعيدات مسجلة حالياً
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+
+{# ========================= #}
+{# SLA Overdue Requests (legacy) #}
+{# ========================= #}
+<div class="card border-danger shadow-sm">
+    <div class="card-header bg-light">
+        <strong>⏱️ طلبات متجاوزة مدة SLA (Legacy)</strong>
+        <div class="text-muted small">الطلبات التي تجاوزت مدة SLA + مدة التصعيد المعرفة في الإعدادات</div>
+    </div>
+    <div class="card-body p-0">
+
+        {% if requests %}
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>العنوان</th>
+                        <th>المكلّف الحالي</th>
+                        <th class="text-center">تاريخ الإنشاء</th>
+                        <th class="text-center">الحالة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for req in requests %}
+                    <tr class="table-danger">
+                        <td>{{ req.id }}</td>
+                        <td>
+                            <strong>{{ req.title }}</strong>
+                            <div class="text-muted small">
+                                <a href="{{ url_for('workflow.view_request', request_id=req.id) }}">فتح الطلب</a>
+                            </div>
+                        </td>
+                        <td>
+                            {{ req.current_assignee.name if req.current_assignee else "—" }}
+                        </td>
+                        <td class="text-center">
+                            {{ req.created_at.strftime("%Y-%m-%d") if req.created_at else '' }}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-danger">Escalated</span>
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد طلبات متجاوزة SLA حالياً
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% endblock %}

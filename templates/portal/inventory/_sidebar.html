@@ -1,0 +1,164 @@
+<style>
+  .inv-sec-toggle{cursor:pointer; user-select:none; font-weight:700;}
+  .inv-sec-toggle .chev{transition:transform .2s ease;}
+  .inv-sec-toggle[aria-expanded="true"] .chev{transform:rotate(180deg);}
+  .inv-sub{padding-inline-start: 2rem; font-size:.95rem;}
+  .inv-subhead{padding-inline-start: 2rem; margin-top:.35rem;}
+  .inv-sub-toggle{cursor:pointer; user-select:none; padding-inline-start:2rem; background:#f8f9fa;}
+  .inv-sub-toggle .chev{transition:transform .2s ease;}
+  .inv-sub-toggle[aria-expanded="true"] .chev{transform:rotate(180deg);}
+</style>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <div class="fw-bold"><i class="bi bi-box-seam"></i> المستودع</div>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.index') }}"><i class="bi bi-house"></i></a>
+    </div>
+
+    <div class="list-group list-group-flush">
+
+      {# الطلبات #}
+      <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecRequests" role="button" aria-expanded="true" aria-controls="invSecRequests">
+        <span><i class="bi bi-inboxes"></i> الطلبات</span>
+        <i class="bi bi-chevron-down chev"></i>
+      </a>
+      <div class="collapse show" id="invSecRequests">
+        <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/requests') %}active{% endif %}" href="{{ url_for('portal.inventory_requests_log') }}">
+          سجل الطلبات
+        </a>
+      </div>
+
+      {# السندات #}
+      <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecVouchers" role="button" aria-expanded="true" aria-controls="invSecVouchers">
+        <span><i class="bi bi-journal-text"></i> السندات</span>
+        <i class="bi bi-chevron-down chev"></i>
+      </a>
+      <div class="collapse show" id="invSecVouchers">
+
+        {# سندات الصرف #}
+        <a class="list-group-item list-group-item-action inv-sub-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invVIssue" role="button" aria-expanded="true" aria-controls="invVIssue">
+          <span class="small text-muted fw-semibold">سندات الصرف</span>
+          <i class="bi bi-chevron-down chev"></i>
+        </a>
+        <div class="collapse show" id="invVIssue">
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path == '/portal/inventory/vouchers/issue/new' %}active{% endif %}" href="{{ url_for('portal.inventory_issue_voucher_new') }}">
+            <i class="bi bi-plus-circle"></i> إدخال سند
+          </a>
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/vouchers/issue') and request.path.endswith('/list') %}active{% endif %}" href="{{ url_for('portal.inventory_issue_voucher_list') }}">
+            <i class="bi bi-journal-text"></i> سجل سندات الصرف
+          </a>
+        </div>
+
+        {# سندات الإدخال #}
+        <a class="list-group-item list-group-item-action inv-sub-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invVInbound" role="button" aria-expanded="true" aria-controls="invVInbound">
+          <span class="small text-muted fw-semibold">سندات الإدخال</span>
+          <i class="bi bi-chevron-down chev"></i>
+        </a>
+        <div class="collapse show" id="invVInbound">
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path == '/portal/inventory/vouchers/inbound/new' %}active{% endif %}" href="{{ url_for('portal.inventory_inbound_voucher_new') }}">
+            <i class="bi bi-plus-circle"></i> إدخال سند
+          </a>
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/vouchers/inbound') and request.path.endswith('/list') %}active{% endif %}" href="{{ url_for('portal.inventory_inbound_voucher_list') }}">
+            <i class="bi bi-journal-text"></i> سجل سندات الإدخال
+          </a>
+        </div>
+
+        {# سندات الجرد #}
+        <a class="list-group-item list-group-item-action inv-sub-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invVStocktake" role="button" aria-expanded="false" aria-controls="invVStocktake">
+          <span class="small text-muted fw-semibold">سندات الجرد</span>
+          <i class="bi bi-chevron-down chev"></i>
+        </a>
+        <div class="collapse" id="invVStocktake">
+          <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_stocktake_voucher_new') }}">
+            <i class="bi bi-plus-circle"></i> إدخال سند
+          </a>
+          <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_stocktake_voucher_list') }}">
+            <i class="bi bi-journal-text"></i> سجل سندات الجرد
+          </a>
+        </div>
+
+        {# سندات الإتلاف #}
+        <a class="list-group-item list-group-item-action inv-sub-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invVScrap" role="button" aria-expanded="false" aria-controls="invVScrap">
+          <span class="small text-muted fw-semibold">سندات الإتلاف</span>
+          <i class="bi bi-chevron-down chev"></i>
+        </a>
+        <div class="collapse" id="invVScrap">
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path == '/portal/inventory/vouchers/scrap/new' %}active{% endif %}" href="{{ url_for('portal.inventory_scrap_voucher_new') }}">
+            <i class="bi bi-plus-circle"></i> إدخال سند
+          </a>
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/vouchers/scrap') and request.path.endswith('/list') %}active{% endif %}" href="{{ url_for('portal.inventory_scrap_voucher_list') }}">
+            <i class="bi bi-journal-text"></i> سجل سندات الإتلاف
+          </a>
+        </div>
+
+        {# سندات الإرجاع #}
+        <a class="list-group-item list-group-item-action inv-sub-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invVReturn" role="button" aria-expanded="false" aria-controls="invVReturn">
+          <span class="small text-muted fw-semibold">سندات الإرجاع</span>
+          <i class="bi bi-chevron-down chev"></i>
+        </a>
+        <div class="collapse" id="invVReturn">
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path == '/portal/inventory/vouchers/return/new' %}active{% endif %}" href="{{ url_for('portal.inventory_return_voucher_new') }}">
+            <i class="bi bi-plus-circle"></i> إدخال سند
+          </a>
+          <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/vouchers/return') and request.path.endswith('/list') %}active{% endif %}" href="{{ url_for('portal.inventory_return_voucher_list') }}">
+            <i class="bi bi-journal-text"></i> سجل سندات الإرجاع
+          </a>
+        </div>
+
+      </div>
+
+      {# التقارير #}
+      <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecReports" role="button" aria-expanded="false" aria-controls="invSecReports">
+        <span><i class="bi bi-bar-chart"></i> التقارير</span>
+        <i class="bi bi-chevron-down chev"></i>
+      </a>
+      <div class="collapse" id="invSecReports">
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_warehouses') }}">تقرير المخازن ومحتوياتها</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_items_all') }}">تقرير الأصناف والكميات في كافة المخازن</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_item_card') }}">تقرير بطاقة الصنف</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_yearly_vouchers') }}">الجدول السنوي للسندات</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_yearly_qty') }}">الجدول السنوي للكميات</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_issue_log') }}">تقرير سجلات الصرف</a>
+      </div>
+
+      {# العهدة #}
+      <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecCustody" role="button" aria-expanded="false" aria-controls="invSecCustody">
+        <span><i class="bi bi-clipboard-check"></i> العهدة</span>
+        <i class="bi bi-chevron-down chev"></i>
+      </a>
+      <div class="collapse" id="invSecCustody">
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_custody_voucher_new') }}">سند جرد عهدة</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_custody_voucher_list') }}">سجل سندات العهدة</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_custody_overview') }}">عرض العهدة</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_custody_items') }}">الأصناف والعهدة</a>
+      </div>
+
+      {# لوحة التحكم #}
+      <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecAdmin" role="button" aria-expanded="true" aria-controls="invSecAdmin">
+        <span><i class="bi bi-gear"></i> لوحة التحكم</span>
+        <i class="bi bi-chevron-down chev"></i>
+      </a>
+      <div class="collapse show" id="invSecAdmin">
+
+        <a class="list-group-item list-group-item-action inv-sub-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invAdminConsts" role="button" aria-expanded="true" aria-controls="invAdminConsts">
+          <span><i class="bi bi-sliders"></i> ثوابت النظام</span>
+          <i class="bi bi-chevron-down chev"></i>
+        </a>
+        <div class="collapse show" id="invAdminConsts">
+          <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_warehouses') }}"><i class="bi bi-building"></i> المخازن</a>
+          <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_rooms') }}"><i class="bi bi-door-open"></i> الغرف</a>
+          <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_suppliers') }}"><i class="bi bi-truck"></i> الموردون</a>
+          <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_units') }}"><i class="bi bi-diagram-3"></i> الوحدات</a>
+        </div>
+
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_items') }}"><i class="bi bi-boxes"></i> إدارة الأصناف</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_categories') }}"><i class="bi bi-tags"></i> إدارة التصنيفات</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_room_requesters') }}"><i class="bi bi-person-check"></i> المستخدمون القادرون على طلب مواد للغرف</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_warehouse_perms') }}"><i class="bi bi-shield-lock"></i> صلاحيات الموظفين على المخازن</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_settings') }}"><i class="bi bi-gear"></i> الإعدادات العامة</a>
+      </div>
+    </div>
+
+  </div>
+</div>

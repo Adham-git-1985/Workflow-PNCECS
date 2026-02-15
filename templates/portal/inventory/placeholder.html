@@ -1,0 +1,14 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="d-flex align-items-center justify-content-between">
+      <h5 class="m-0">{{ title }}</h5>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_home') }}"><i class="bi bi-arrow-right"></i> عودة</a>
+    </div>
+    <hr>
+    <div class="alert alert-info m-0">هذه الشاشة قيد التطوير وسيتم تزويد تفاصيلها لاحقًا.</div>
+  </div>
+</div>
+{% endblock %}

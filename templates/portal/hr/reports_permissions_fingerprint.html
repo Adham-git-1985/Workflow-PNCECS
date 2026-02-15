@@ -1,0 +1,152 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير المغادرات مع البصمة{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-arrow-left-right"></i> تقرير المغادرات مع البصمة</h4>
+      <div class="text-muted">الموظف/موقع العمل/نطاق التاريخ + نوع المغادرة + المشاكل.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_permissions_fingerprint', user_id=selected_user_id, work_location_id=selected_work_location_id, from_date=from_date, to_date=to_date, permission_type_id=selected_permission_type_id, issue=issue, export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-4">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="">— الكل —</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user_id==u.id %}selected{% endif %}>{{ u.full_name or u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">— الكل —</option>
+        {% for x in work_locations %}
+          <option value="{{ x.id }}" {% if selected_work_location_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from_date" value="{{ from_date }}">
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to_date" value="{{ to_date }}">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">نوع المغادرة</label>
+      <select class="form-select" name="permission_type_id">
+        <option value="">— الكل —</option>
+        {% for p in perm_types %}
+          <option value="{{ p.id }}" {% if selected_permission_type_id==p.id %}selected{% endif %}>{{ p.name_ar or p.code }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label">المشاكل</label>
+      <select class="form-select" name="issue">
+        <option value="" {% if not issue %}selected{% endif %}>بدون تحديد</option>
+        <option value="ok" {% if issue=='ok' %}selected{% endif %}>بلا مشاكل</option>
+        <option value="perm_no_fp" {% if issue=='perm_no_fp' %}selected{% endif %}>مغادرة مدخلة بدون بصمة</option>
+        <option value="mismatch" {% if issue=='mismatch' %}selected{% endif %}>مغادرة بنوع والبصمة بنوع آخر</option>
+        <option value="fp_no_perm" {% if issue=='fp_no_perm' %}selected{% endif %}>بصمة مدخلة بدون إدخال إذن مغادرة</option>
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+
+    <div class="col-md-12">
+      <div class="text-muted small">ملاحظة: يجب تحديد (من/إلى) لعرض النتائج.</div>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div class="text-muted small">عدد النتائج: {{ rows|length }}</div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>الموظف</th>
+          <th>موقع العمل</th>
+          <th>نوع المغادرة</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>بصمة من</th>
+          <th>بصمة إلى</th>
+          <th>المشكلة</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.day or '—' }}</td>
+            <td>
+              <div class="fw-semibold">{{ r.name or '—' }}</div>
+              <div class="text-muted small">{{ r.employee_no or '' }}</div>
+            </td>
+            <td>{{ r.work_location or '—' }}</td>
+            <td>{{ r.permission_type or '—' }}</td>
+            <td>{{ r.from_time or '—' }}</td>
+            <td>{{ r.to_time or '—' }}</td>
+            <td>
+              {% if r.fp_from_dt %}
+                {{ r.fp_from_dt.strftime('%H:%M:%S') }}
+                <span class="badge text-bg-light text-dark">{{ 'خروج' if (r.fp_from_type or '')=='O' else ('دخول' if (r.fp_from_type or '')=='I' else (r.fp_from_type or '')) }}</span>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if r.fp_to_dt %}
+                {{ r.fp_to_dt.strftime('%H:%M:%S') }}
+                <span class="badge text-bg-light text-dark">{{ 'دخول' if (r.fp_to_type or '')=='I' else ('خروج' if (r.fp_to_type or '')=='O' else (r.fp_to_type or '')) }}</span>
+              {% else %}
+                —
+              {% endif %}
+            </td>
+            <td>
+              {% if r.issue == 'ok' %}
+                <span class="badge text-bg-success">بلا مشاكل</span>
+              {% elif r.issue == 'perm_no_fp' %}
+                <span class="badge text-bg-warning">مغادرة بدون بصمة</span>
+              {% elif r.issue == 'mismatch' %}
+                <span class="badge text-bg-danger">عدم تطابق النوع</span>
+              {% elif r.issue == 'fp_no_perm' %}
+                <span class="badge text-bg-secondary">بصمة بدون مغادرة</span>
+              {% else %}
+                <span class="badge text-bg-light text-dark">{{ r.issue or '—' }}</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

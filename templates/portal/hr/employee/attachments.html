@@ -1,0 +1,83 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="card shadow-sm">
+        <div class="card-header"><h5 class="mb-0"><i class="bi bi-upload"></i> رفع مرفق</h5></div>
+        <div class="card-body">
+          <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.hr_employee_attachments_upload', user_id=u.id) }}">
+            <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
+            <div class="mb-2">
+              <label class="form-label">نوع المرفق</label>
+              <select name="attachment_type_lookup_id" class="form-select" required>
+                <option value="">—</option>
+                {% for it in lookups.ATTACH_TYPE %}
+                  <option value="{{ it.id }}">{{ it.name_ar }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">يمكن إدارة القائمة من إعدادات ملف الموظف.</div>
+            </div>
+            <div class="mb-2">
+              <label class="form-label">ملاحظات</label>
+              <input type="text" name="note" class="form-control" placeholder="اختياري">
+            </div>
+            <div class="mb-3">
+              <label class="form-label">الملف</label>
+              <input class="form-control" type="file" name="file" required>
+            </div>
+            <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع</button>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="card shadow-sm">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h5 class="mb-0"><i class="bi bi-paperclip"></i> المرفقات</h5>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_index') }}"><i class="bi bi-gear"></i> إعدادات الأنواع</a>
+        </div>
+        <div class="card-body">
+          {% if items %}
+            <div class="table-responsive">
+              <table class="table table-striped align-middle">
+                <thead>
+                  <tr>
+                    <th>الملف</th>
+                    <th>النوع</th>
+                    <th>ملاحظات</th>
+                    <th>تاريخ الرفع</th>
+                    <th style="width: 170px;">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for a in items %}
+                    <tr>
+                      <td class="text-truncate" style="max-width: 220px;">{{ a.original_name }}</td>
+                      <td>{{ lookup_label.get(a.attachment_type_lookup_id, '—') }}</td>
+                      <td>{{ a.note or '—' }}</td>
+                      <td>{{ a.uploaded_at.strftime('%Y-%m-%d') if a.uploaded_at else '—' }}</td>
+                      <td>
+                        <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=a.id) }}"><i class="bi bi-download"></i></a>
+                        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_attachment_edit', user_id=u.id, att_id=a.id) }}"><i class="bi bi-pencil"></i></a>
+                        <form method="post" action="{{ url_for('portal.hr_employee_attachment_delete', user_id=u.id, att_id=a.id) }}" style="display:inline-block" onsubmit="return confirm('حذف المرفق؟');">
+                          <input type="hidden" name="next" value="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
+                          <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                        </form>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% else %}
+            <div class="text-muted">لا توجد مرفقات.</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+{% endblock %}

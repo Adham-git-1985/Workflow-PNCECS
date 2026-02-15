@@ -1,0 +1,80 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">ثوابت النظام - المخازن</h5>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-5">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="fw-bold mb-2">{{ 'تعديل مخزن' if edit else 'إضافة مخزن' }}</div>
+        <form method="post">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+          {% if edit %}<input type="hidden" name="id" value="{{ edit.id }}">{% endif %}
+          <div class="mb-2">
+            <label class="form-label">الاسم</label>
+            <input name="name" class="form-control" required value="{{ edit.name if edit else '' }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">الكود</label>
+            <input name="code" class="form-control" value="{{ edit.code if edit else '' }}">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">ملاحظات</label>
+            <textarea name="note" class="form-control" rows="3">{{ edit.note if edit else '' }}</textarea>
+          </div>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="wActive" {% if (edit and edit.is_active) or (not edit) %}checked{% endif %}>
+            <label class="form-check-label" for="wActive">فعال</label>
+          </div>
+          <div class="d-flex justify-content-end gap-2">
+            {% if edit %}
+              <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_admin_warehouses') }}">إلغاء</a>
+            {% endif %}
+            <button class="btn btn-primary" type="submit">حفظ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-7">
+    <div class="card shadow-sm">
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-striped mb-0">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>الاسم</th>
+                <th>الكود</th>
+                <th>الحالة</th>
+                <th class="text-center" style="width:120px;">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for w in rows %}
+              <tr>
+                <td>{{ w.id }}</td>
+                <td>{{ w.name }}</td>
+                <td>{{ w.code or '-' }}</td>
+                <td>
+                  {% if w.is_active %}<span class="badge text-bg-success">فعال</span>{% else %}<span class="badge text-bg-secondary">غير فعال</span>{% endif %}
+                </td>
+                <td class="text-center">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_warehouses', edit_id=w.id) }}">تعديل</a>
+                </td>
+              </tr>
+              {% else %}
+              <tr><td colspan="5" class="text-center text-muted py-4">لا توجد مخازن.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,105 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="m-0">لوحة المستودع</h4>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_issue_voucher_new') }}"><i class="bi bi-plus-circle"></i> سند صرف جديد</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_inbound_voucher_new') }}"><i class="bi bi-plus-circle"></i> سند إدخال جديد</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_custody_voucher_new') }}"><i class="bi bi-plus-circle"></i> سند عهدة جديد</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_requests_log') }}"><i class="bi bi-inboxes"></i> سجل الطلبات</a>
+  </div>
+</div>
+
+<div class="row g-3">
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-receipt"></i> سندات الصرف</div>
+        <div class="text-muted small mb-3">إدخال سند + سجل السندات + المرفقات</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_issue_voucher_new') }}">إدخال سند</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_issue_voucher_list') }}">سجل السندات</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-box-arrow-in-down"></i> سندات الإدخال</div>
+        <div class="text-muted small mb-3">توريد/إضافة أصناف إلى المخزن</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_inbound_voucher_new') }}">إدخال سند</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_inbound_voucher_list') }}">سجل السندات</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-arrow-counterclockwise"></i> سندات الإرجاع</div>
+        <div class="text-muted small mb-3">إرجاع أصناف إلى المخزن</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_return_voucher_new') }}">إدخال سند</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_return_voucher_list') }}">سجل السندات</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-clipboard-data"></i> سندات الجرد</div>
+        <div class="text-muted small mb-3">جرد المخزون ومطابقة الكميات</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_stocktake_voucher_new') }}">إدخال سند</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_stocktake_voucher_list') }}">سجل السندات</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-trash3"></i> سندات الإتلاف</div>
+        <div class="text-muted small mb-3">إتلاف مواد/أصناف حسب الإجراءات</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_scrap_voucher_new') }}">إدخال سند</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_scrap_voucher_list') }}">سجل السندات</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6 col-lg-4">
+    <div class="card shadow-sm h-100">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-clipboard-check"></i> العهدة</div>
+        <div class="text-muted small mb-3">سند عهدة + سجل + نظرة عامة</div>
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_custody_voucher_new') }}">سند عهدة</a>
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_custody_voucher_list') }}">سجل العهدة</a>
+        <a class="btn btn-sm btn-outline-secondary mt-2" href="{{ url_for('portal.inventory_custody_overview') }}">نظرة عامة</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <div class="fw-bold mb-1"><i class="bi bi-gear"></i> لوحة التحكم</div>
+        <div class="text-muted small mb-3">المخازن + الأصناف + التصنيفات + الصلاحيات + الإعدادات</div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_warehouses') }}">المخازن</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_items') }}">الأصناف</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories') }}">التصنيفات</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_room_requesters') }}">طالبي الغرف</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_warehouse_perms') }}">صلاحيات المخازن</a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_settings') }}">الإعدادات</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<hr class="my-4">
+
+{% endblock %}

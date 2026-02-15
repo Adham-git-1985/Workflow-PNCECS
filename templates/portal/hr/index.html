@@ -1,0 +1,119 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}شؤون الموظفين{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+	  <div class="d-flex flex-wrap justify-content-between align-items-center gap-3">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-people"></i> شؤون الموظفين</h4>
+      <div class="text-muted">
+        تجميع وظائف الموارد البشرية بنفس ترتيب النظام المرجعي (الموظفين، الدوام، الإجازات والمهام، التقارير، البرامج الفرعية، لوحة التحكم).
+      </div>
+    </div>
+	    <div class="" style="min-width:260px; max-width:420px; flex:1">
+      <div class="input-group">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input id="hrSearch" type="text" class="form-control" placeholder="ابحث داخل وظائف الموارد البشرية...">
+        <button id="hrSearchClear" class="btn btn-outline-secondary" type="button" title="مسح"><i class="bi bi-x"></i></button>
+      </div>
+      <div id="hrSearchHint" class="text-muted small mt-1" style="display:none">لا توجد نتائج مطابقة.</div>
+    </div>
+
+	    <div class="btn-group" role="group">
+	      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.index') }}">
+	        <i class="bi bi-house"></i> الرئيسية
+	      </a>
+	      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="window.history.back()">
+	        <i class="bi bi-arrow-right"></i> رجوع
+	      </button>
+	    </div>
+  </div>
+</div>
+
+{% if sections and sections|length > 0 %}
+  <div class="accordion" id="hrSections">
+    {% for sec in sections %}
+      <div class="accordion-item mb-2 border-0 shadow-sm">
+        <h2 class="accordion-header" id="hrHeading{{ loop.index }}">
+          <button class="accordion-button {% if not loop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#hrCollapse{{ loop.index }}" aria-expanded="{{ 'true' if loop.first else 'false' }}" aria-controls="hrCollapse{{ loop.index }}">
+            <i class="bi {{ sec.icon }} me-2"></i>
+            <span class="fw-semibold">{{ sec.title }}</span>
+            <span class="badge bg-dark ms-2">{{ sec['items']|length }}</span>
+          </button>
+        </h2>
+        <div id="hrCollapse{{ loop.index }}" class="accordion-collapse collapse {% if loop.first %}show{% endif %}" aria-labelledby="hrHeading{{ loop.index }}" data-bs-parent="#hrSections">
+          <div class="accordion-body bg-white">
+            <div class="row g-2">
+              {% for it in sec['items'] %}
+                <div class="col-md-6 col-xl-4 hr-tile-wrap">
+                  <a class="d-block border rounded-3 p-3 text-decoration-none hr-tile" href="{{ it.url }}"
+                     data-filter="{{ (sec.title ~ ' ' ~ it.title ~ ' ' ~ it.desc)|lower }}">
+                    <div class="d-flex align-items-start gap-2">
+                      <div class="fs-5 text-primary"><i class="bi {{ it.icon }}"></i></div>
+                      <div>
+                        <div class="fw-semibold">{{ it.title }}</div>
+                        <div class="text-muted small">{{ it.desc }}</div>
+                      </div>
+                    </div>
+                  </a>
+                </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <div class="alert alert-warning">لا توجد صفحات HR متاحة لك حسب صلاحياتك الحالية.</div>
+{% endif %}
+
+<div class="mt-4">
+  <div class="bg-white rounded-3 shadow-sm p-3">
+    <div class="fw-semibold mb-1">ملاحظة</div>
+    <div class="text-muted small">
+      صفحات <b>الإجازات</b> و<b>المغادرات</b> حالياً للعرض/الإدارة حسب الصلاحية — وسيتم تطوير تفاصيل إضافية لاحقاً.
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    (function () {
+      function norm(s) {
+        try { return (s || '').toString().toLowerCase(); } catch(e) { return ''; }
+      }
+      function filterTiles(q) {
+        var tiles = document.querySelectorAll('.hr-tile');
+        var any = false;
+        tiles.forEach(function (a) {
+          var txt = norm(a.getAttribute('data-filter'));
+          var ok = !q || txt.indexOf(q) !== -1;
+          var wrap = a.closest('.hr-tile-wrap');
+          if (wrap) wrap.style.display = ok ? '' : 'none';
+          if (ok) any = true;
+        });
+        var hint = document.getElementById('hrSearchHint');
+        if (hint) hint.style.display = any ? 'none' : '';
+      }
+      document.addEventListener('DOMContentLoaded', function () {
+        var inp = document.getElementById('hrSearch');
+        var clr = document.getElementById('hrSearchClear');
+        if (inp) {
+          inp.addEventListener('input', function () {
+            filterTiles(norm(inp.value).trim());
+          });
+        }
+        if (clr) {
+          clr.addEventListener('click', function () {
+            if (inp) inp.value = '';
+            filterTiles('');
+            if (inp) inp.focus();
+          });
+        }
+      });
+    })();
+  </script>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إضافة جدول شهري{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-calendar-plus"></i> إضافة جدول شهري</h4>
+      <div class="text-muted">إنشاء تخصيص دوام (Work Assignment) لفترة زمنية، لموظف/قسم/دور.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_monthly_schedule_log') }}"><i class="bi bi-list"></i> سجل الجداول</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-2">
+    <div class="col-md-6">
+      <label class="form-label">اسم الجدول</label>
+      <input class="form-control" name="name" placeholder="مثال: جدول شهر 02/2026">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">قالب الدوام</label>
+      <select class="form-select" name="schedule_id" required>
+        <option value="">— اختر —</option>
+        {% for s in schedules %}
+          <option value="{{ s.id }}">{{ s.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">من</label>
+      <input class="form-control" type="date" name="day_from" value="{{ today }}" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إلى</label>
+      <input class="form-control" type="date" name="day_to" value="{{ today }}" required>
+    </div>
+
+    <div class="col-md-6">
+      <div class="alert alert-info mb-0">اختر مستهدفًا واحدًا فقط: <b>موظف</b> أو <b>قسم</b> أو <b>دور</b>.</div>
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label">موظف (اختياري)</label>
+      <select class="form-select" name="target_user_id">
+        <option value="">—</option>
+        {% for u in users %}
+          <option value="{{ u.id }}">{{ u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">قسم (اختياري)</label>
+      <select class="form-select" name="target_dept_id">
+        <option value="">—</option>
+        {% for d in departments %}
+          <option value="{{ d.id }}">{{ d.name_ar or d.name_en or d.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">دور (اختياري)</label>
+      <input class="form-control" name="target_role" placeholder="مثال: HR_ADMIN">
+    </div>
+
+    <div class="col-12 d-flex gap-2 justify-content-end mt-2">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_monthly_schedule_log') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

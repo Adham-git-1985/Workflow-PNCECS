@@ -1,0 +1,41 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">تقرير الأصناف والكميات في كافة المخازن</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_report_item_card') }}"><i class="bi bi-card-list"></i> بطاقة الصنف</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:120px;">الكود</th>
+            <th>الصنف</th>
+            <th style="width:160px;">الكمية الإجمالية</th>
+            <th style="width:110px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.item.code }}</td>
+            <td>{{ r.item.name }}</td>
+            <td class="fw-bold">{{ '%.2f'|format(r.qty) }}</td>
+            <td class="text-center">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_report_item_card', item_id=r.item.id) }}">بطاقة</a>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not rows %}
+          <tr><td colspan="4" class="text-center text-muted">لا يوجد بيانات.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

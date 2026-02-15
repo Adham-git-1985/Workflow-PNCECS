@@ -1,0 +1,59 @@
+{% extends "layout.html" %}
+{% block title %}معاينة المرفق{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">👁️ معاينة المرفق</h3>
+    <small class="text-muted">هذا النوع من الملفات لا يدعم المعاينة داخل المتصفح. يمكنك تنزيله لفتحه على جهازك.</small>
+  </div>
+  <div class="d-flex gap-2">
+    {% if back_url %}
+      <a class="btn btn-outline-secondary" href="{{ back_url }}">↩️ الرجوع للمرفقات</a>
+    {% endif %}
+    {% if request_obj %}
+      <a class="btn btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=request_obj.id) }}">🧩 الرجوع للطلب</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-8">
+        <div class="mb-2">
+          <strong>الملف:</strong>
+          <span class="ms-1">{{ file.original_name }}</span>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <span class="badge bg-dark">{{ file.file_type or "FILE" }}</span>
+          <span class="badge bg-secondary">{{ mime }}</span>
+          {% if file.file_size %}
+            <span class="badge bg-info text-dark">{{ (file.file_size / 1024) | round(1) }} KB</span>
+          {% endif %}
+          {% if file.upload_date %}
+            <span class="badge bg-light text-dark">{{ file.upload_date.strftime('%Y-%m-%d %H:%M') }}</span>
+          {% endif %}
+        </div>
+
+        <div class="alert alert-warning mt-3 mb-0">
+          <div class="fw-semibold mb-1">⚠️ لا توجد معاينة مباشرة لهذا الملف</div>
+          <div>
+            ملفات مثل <strong>Word/Excel/PowerPoint</strong> غالبًا لا يمكن عرضها داخل المتصفح بدون إضافات.
+            استخدم زر <strong>تنزيل</strong> لفتحها.
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <div class="d-grid gap-2">
+          <a class="btn btn-primary" href="{{ download_url }}">⬇️ تنزيل الملف</a>
+          {% if request_obj %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('workflow.request_attachments', request_id=request_obj.id) }}">📎 كل مرفقات المسار</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

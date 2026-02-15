@@ -1,0 +1,305 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إعدادات الدوام{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <h5 class="mb-0"><i class="bi bi-gear"></i> إعدادات الدوام</h5>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_import') }}">الدوام</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_daily') }}">ملخص يومي</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_integrations') }}">التكاملات</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_index') }}">إعدادات ملف الموظف</a>
+    </div>
+  </div>
+
+  <hr class="my-4">
+
+  
+<div class="alert alert-info small mb-3">
+  <div class="fw-semibold">إضافات جديدة</div>
+  <div class="mt-1 d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-primary btn-sm" href="{{ url_for('portal.hr_status_defs') }}">حالات الإجازات والمهمات</a>
+    <a class="btn btn-outline-primary btn-sm" href="{{ url_for('portal.hr_occasion_types') }}">أنواع المناسبات الرسمية</a>
+  </div>
+</div>
+<div class="row g-4">
+    <div class="col-lg-6">
+      <div class="p-3 border rounded-3">
+        <h6 class="mb-3"><i class="bi bi-calendar-week"></i> الجداول (Work Schedules)</h6>
+
+        <form method="post" action="{{ url_for('portal.hr_masterdata_set_default_schedule') }}" class="row g-2 align-items-end">
+          <div class="col-md-8">
+            <label class="form-label">الجدول الافتراضي</label>
+            <select name="schedule_id" class="form-select">
+              <option value="">— بدون —</option>
+              {% for s in schedules %}
+                <option value="{{ s.id }}" {% if default_schedule_id and default_schedule_id|int == s.id %}selected{% endif %}>
+                  #{{ s.id }} — {{ s.name }} ({{ s.kind }})
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4">
+            <button class="btn btn-primary w-100" type="submit">حفظ</button>
+          </div>
+        </form>
+
+        <hr class="my-3">
+
+        <form method="post" action="{{ url_for('portal.hr_schedule_new') }}" class="row g-2">
+          <div class="col-12">
+            <label class="form-label">إنشاء جدول جديد</label>
+          </div>
+          <div class="col-md-6">
+            <input class="form-control" name="name" placeholder="اسم الجدول" required>
+          </div>
+          <div class="col-md-6">
+            <select class="form-select" name="kind">
+              <option value="FIXED">ثابت FIXED</option>
+              <option value="FLEX">مرن FLEX</option>
+              <option value="SHIFT">مناوبات SHIFT</option>
+              <option value="RAMADAN">رمضان RAMADAN</option>
+              <option value="REMOTE">عمل عن بعد REMOTE</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <input class="form-control" name="start_time" placeholder="بداية (HH:MM)">
+          </div>
+          <div class="col-md-3">
+            <input class="form-control" name="end_time" placeholder="نهاية (HH:MM)">
+          </div>
+          <div class="col-md-3">
+            <input class="form-control" name="required_minutes" placeholder="دقائق مطلوبة (مرن)" type="number" min="0">
+          </div>
+          <div class="col-md-3">
+            <input class="form-control" name="break_minutes" placeholder="استراحة (دقيقة)" type="number" min="0" value="0">
+          </div>
+          <div class="col-md-4">
+            <input class="form-control" name="grace_minutes" placeholder="سماح (دقيقة)" type="number" min="0" value="0">
+          </div>
+          <div class="col-md-4">
+            <input class="form-control" name="overtime_threshold_minutes" placeholder="بدء الإضافي بعد (دقيقة)" type="number" min="0">
+          </div>
+          <div class="col-md-4">
+            <button class="btn btn-success w-100" type="submit">إضافة</button>
+          </div>
+        </form>
+
+        <div class="table-responsive mt-3">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>{{ portal_sort_link('الاسم', 'name') }}</th>
+                <th>{{ portal_sort_link('النوع', 'kind') }}</th>
+                <th>{{ portal_sort_link('الوقت', 'start_time') }}</th>
+                <th>{{ portal_sort_link('استراحة', 'break_minutes') }}</th>
+                <th>نشط</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for s in schedules %}
+              <tr>
+                <td>{{ s.id }}</td>
+                <td>{{ s.name }}</td>
+                <td><span class="badge bg-secondary">{{ s.kind }}</span></td>
+                <td>
+                  {% if s.start_time and s.end_time %}
+                    {{ s.start_time }} - {{ s.end_time }}
+                  {% else %}
+                    <span class="text-muted">—</span>
+                  {% endif %}
+                </td>
+                <td>{{ s.break_minutes }}</td>
+                <td>
+                  {% if s.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-danger">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_schedule_edit', schedule_id=s.id) }}">تعديل</a>
+                  <form method="post" action="{{ url_for('portal.hr_schedule_toggle', schedule_id=s.id) }}" class="d-inline">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">تبديل</button>
+                  </form>
+                  <form method="post" action="{{ url_for('portal.hr_schedule_delete', schedule_id=s.id) }}" class="d-inline" onsubmit="return confirm('هل تريد حذف الجدول؟ إذا كان مستخدماً سيتم تعطيله فقط.');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+              {% if s.kind == 'SHIFT' %}
+              <tr>
+                <td colspan="7">
+                  <div class="p-2 border rounded-3 bg-light">
+                    <div class="small text-muted mb-2">تحديد أوقات لكل يوم (0=الاثنين … 6=الأحد)</div>
+                    <form method="post" action="{{ url_for('portal.hr_schedule_set_day', schedule_id=s.id) }}" class="row g-2">
+                      <div class="col-md-2"><input class="form-control" name="weekday" placeholder="0-6" type="number" min="0" max="6" required></div>
+                      <div class="col-md-2"><input class="form-control" name="start_time" placeholder="HH:MM"></div>
+                      <div class="col-md-2"><input class="form-control" name="end_time" placeholder="HH:MM"></div>
+                      <div class="col-md-2"><input class="form-control" name="break_minutes" placeholder="استراحة" type="number" min="0" value="0"></div>
+                      <div class="col-md-2"><input class="form-control" name="grace_minutes" placeholder="سماح" type="number" min="0" value="0"></div>
+                      <div class="col-md-2"><button class="btn btn-sm btn-primary w-100" type="submit">حفظ اليوم</button></div>
+                    </form>
+                    {% if s.days %}
+                      <div class="table-responsive mt-2">
+                        <table class="table table-sm mb-0">
+                          <thead><tr><th>اليوم</th><th>الوقت</th><th>استراحة</th><th>سماح</th></tr></thead>
+                          <tbody>
+                            {% for d in s.days %}
+                              <tr>
+                                <td>{{ d.weekday }}</td>
+                                <td>{{ d.start_time or '—' }} - {{ d.end_time or '—' }}</td>
+                                <td>{{ d.break_minutes }}</td>
+                                <td>{{ d.grace_minutes }}</td>
+                              </tr>
+                            {% endfor %}
+                          </tbody>
+                        </table>
+                      </div>
+                    {% endif %}
+                  </div>
+                </td>
+              </tr>
+              {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="col-lg-6">
+      <div class="p-3 border rounded-3">
+        <h6 class="mb-3"><i class="bi bi-door-open"></i> أنواع المغادرات/الأذونات</h6>
+
+        <form method="post" action="{{ url_for('portal.hr_permission_type_new') }}" class="row g-2">
+          <div class="col-md-3"><input class="form-control" name="code" placeholder="CODE" required></div>
+          <div class="col-md-5"><input class="form-control" name="name_ar" placeholder="الاسم بالعربية" required></div>
+          <div class="col-md-2">
+            <select class="form-select" name="requires_approval">
+              <option value="1">تحتاج موافقة</option>
+              <option value="0">لا تحتاج</option>
+            </select>
+          </div>
+          <div class="col-md-2"><input class="form-control" name="max_hours" placeholder="حد ساعات" type="number" min="0"></div>
+          <div class="col-md-3">
+            <select class="form-select" name="counts_as_work">
+              <option value="0">تخصم من الدوام</option>
+              <option value="1">تُحسب دوام</option>
+            </select>
+          </div>
+          <div class="col-md-9"><input class="form-control" name="name_en" placeholder="Name (EN)"></div>
+          <div class="col-12"><button class="btn btn-success w-100" type="submit">إضافة</button></div>
+        </form>
+
+        <div class="table-responsive mt-3">
+          <table class="table table-sm align-middle">
+            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد', 'max_hours') }}</th><th>دوام</th><th>نشط</th><th></th></tr></thead>
+            <tbody>
+              {% for t in perm_types %}
+              <tr>
+                <td><code>{{ t.code }}</code></td>
+                <td>{{ t.name_ar }}</td>
+                <td>{{ 'نعم' if t.requires_approval else 'لا' }}</td>
+                <td>{{ t.max_hours or '—' }}</td>
+                <td>{{ 'نعم' if t.counts_as_work else 'لا' }}</td>
+                <td>{% if t.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-danger">لا</span>{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_permission_type_edit', pt_id=t.id) }}">تعديل</a>
+                  <form method="post" action="{{ url_for('portal.hr_permission_type_toggle', pt_id=t.id) }}" class="d-inline">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">تبديل</button>
+                  </form>
+                  <form method="post" action="{{ url_for('portal.hr_permission_type_delete', pt_id=t.id) }}" class="d-inline" onsubmit="return confirm('هل تريد حذف النوع؟');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                  </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <hr class="my-3">
+
+        <h6 class="mb-3"><i class="bi bi-calendar2-check"></i> أنواع الإجازات</h6>
+        <form method="post" action="{{ url_for('portal.hr_leave_type_new') }}" class="row g-2">
+          <div class="col-md-3"><input class="form-control" name="code" placeholder="CODE" required></div>
+          <div class="col-md-5"><input class="form-control" name="name_ar" placeholder="الاسم بالعربية" required></div>
+          <div class="col-md-2">
+            <select class="form-select" name="requires_approval">
+              <option value="1">تحتاج موافقة</option>
+              <option value="0">لا تحتاج</option>
+            </select>
+          </div>
+          <div class="col-md-2"><input class="form-control" name="max_days" placeholder="حد أيام" type="number" min="0"></div>
+          <div class="col-md-2"><input class="form-control" name="exception_max_days" placeholder="حد استثنائي" type="number" min="0"></div>
+          <div class="col-md-2">
+            <select class="form-select" name="exception_requires_hr">
+              <option value="1" selected>استثنائي يتطلب HR</option>
+              <option value="0">لا يتطلب HR</option>
+            </select>
+          </div>
+          <div class="col-md-2">
+            <select class="form-select" name="exception_requires_note">
+              <option value="0" selected>ملاحظة غير إلزامية</option>
+              <option value="1">ملاحظة إلزامية</option>
+            </select>
+          </div>
+          <div class="col-md-2"><input class="form-control" name="default_balance_days" placeholder="رصيد سنوي" type="number" min="0"></div>
+          <div class="col-md-3">
+            <select class="form-select" name="is_external">
+              <option value="0">داخلية</option>
+              <option value="1">خارجية</option>
+            </select>
+          </div>
+
+          <div class="col-md-2">
+            <select class="form-select" name="requires_documents">
+              <option value="0" selected>لا تتطلب مرفقات</option>
+              <option value="1">تتطلب مرفقات</option>
+            </select>
+          </div>
+          <div class="col-md-4"><input class="form-control" name="documents_hint" placeholder="نوع المستند/ملاحظة (مثال: تقرير طبي مختوم)"></div>
+
+          <div class="col-md-12"><input class="form-control" name="name_en" placeholder="Name (EN)"></div>
+          <div class="col-12"><button class="btn btn-success w-100" type="submit">إضافة</button></div>
+        </form>
+
+        <div class="table-responsive mt-3">
+          <table class="table table-sm align-middle">
+            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد أيام', 'max_days') }}</th><th>حد استثنائي</th><th>الرصيد السنوي</th><th>خارجية</th><th>مرفقات</th><th>نشط</th><th></th></tr></thead>
+            <tbody>
+              {% for t in leave_types %}
+              <tr>
+                <td><code>{{ t.code }}</code></td>
+                <td>{{ t.name_ar }}</td>
+                <td>{{ 'نعم' if t.requires_approval else 'لا' }}</td>
+                <td>{{ t.max_days or '—' }}</td>
+                <td>{{ t.exception_max_days if t.exception_max_days is not none else '—' }}</td>
+                <td>{{ t.default_balance_days if t.default_balance_days is not none else '—' }}</td>
+                <td>{{ 'نعم' if t.is_external else 'لا' }}</td>
+                <td>{{ 'نعم' if t.requires_documents else 'لا' }}</td>
+                <td>{% if t.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-danger">لا</span>{% endif %}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_leave_type_edit', lt_id=t.id) }}">تعديل</a>
+                  <form method="post" action="{{ url_for('portal.hr_leave_type_toggle', lt_id=t.id) }}" class="d-inline">
+                    <button class="btn btn-sm btn-outline-primary" type="submit">تبديل</button>
+                  </form>
+                  <form method="post" action="{{ url_for('portal.hr_leave_type_delete', lt_id=t.id) }}" class="d-inline" onsubmit="return confirm('هل تريد حذف النوع؟');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

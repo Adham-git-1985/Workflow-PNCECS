@@ -1,0 +1,95 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}قضية{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-shield-exclamation"></i> قضية #{{ c.id }}</h4>
+    <div class="text-muted small">{{ c.employee.full_name }} · {{ c.category }} · {{ c.status }}</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_discipline_home') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-7">
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <div class="fw-bold mb-2">التفاصيل</div>
+      <div class="small">
+        <div><span class="text-muted">العنوان:</span> {{ c.title }}</div>
+        <div><span class="text-muted">الخطورة:</span> {{ c.severity }}</div>
+        <div><span class="text-muted">الوصف:</span> {{ c.description or '-' }}</div>
+      </div>
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">الإجراءات</div>
+      {% if actions %}
+        <ul class="list-group">
+          {% for a in actions %}
+            <li class="list-group-item">
+              <div class="d-flex justify-content-between">
+                <div class="fw-bold">{{ a.action_type }}</div>
+                <div class="text-muted small">{{ a.action_date.strftime('%Y-%m-%d %H:%M') if a.action_date else '' }}</div>
+              </div>
+              <div class="small">{{ a.note or '' }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="text-muted">لا يوجد إجراءات.</div>
+      {% endif %}
+
+      {% if can_manage %}
+      <hr/>
+      <form method="post" action="{{ url_for('portal.hr_discipline_add_action', case_id=c.id) }}">
+        <div class="row g-2">
+          <div class="col-12 col-md-4">
+            <select class="form-select" name="action_type">
+              <option value="NOTE">NOTE</option>
+              <option value="WARNING">WARNING</option>
+              <option value="HEARING">HEARING</option>
+              <option value="DECISION">DECISION</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-8">
+            <input class="form-control" name="note" placeholder="ملاحظة/قرار..."/>
+          </div>
+        </div>
+        <button class="btn btn-primary mt-2" type="submit">إضافة إجراء</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <div class="fw-bold mb-2">المرفقات</div>
+      {% if atts %}
+        <ul class="list-group">
+          {% for a in atts %}
+            <li class="list-group-item d-flex justify-content-between align-items-center">
+              <div class="fw-bold">{{ a.original_name }}</div>
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_discipline_download_attachment', case_id=c.id, att_id=a.id) }}">تنزيل</a>
+            </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <div class="text-muted">لا يوجد مرفقات.</div>
+      {% endif %}
+
+      {% if can_manage %}
+      <hr/>
+      <form method="post" action="{{ url_for('portal.hr_discipline_upload_attachment', case_id=c.id) }}" enctype="multipart/form-data">
+        <div class="mb-2">
+          <input class="form-control" type="file" name="file" required/>
+        </div>
+        <div class="mb-2">
+          <input class="form-control" name="note" placeholder="ملاحظة (اختياري)"/>
+        </div>
+        <button class="btn btn-primary w-100" type="submit">رفع</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

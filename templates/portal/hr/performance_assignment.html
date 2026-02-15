@@ -1,0 +1,92 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقييم 360{% endblock %}
+
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-clipboard2-check"></i> تقييم 360</h5>
+      <div class="text-muted small">
+        الدورة: <b>{{ cycle.name }}</b> — تقييم: <b>{{ a.evaluatee.full_name if a.evaluatee else a.evaluatee_user_id }}</b>
+      </div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_perf_home') }}">
+      <i class="bi bi-arrow-right"></i> رجوع
+    </a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  {% if a.status == 'SUBMITTED' and not can_edit %}
+    <div class="alert alert-success">تم إرسال التقييم. يمكنك عرض الإجابات فقط.</div>
+  {% endif %}
+
+  <form method="post" autocomplete="off">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token else '' }}">
+
+    {% for s in sections %}
+      <div class="mb-4">
+        <h6 class="mb-2"><i class="bi bi-list"></i> {{ s.title }}</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th style="min-width: 320px">السؤال</th>
+                <th style="width: 180px">الإجابة</th>
+                <th>ملاحظة</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for q in s.questions %}
+                {% set ans = answers.get(q.id|string, {}) %}
+                <tr>
+                  <td>
+                    {{ q.prompt }}
+                    {% if q.is_required %}
+                      <span class="badge bg-danger">مطلوب</span>
+                    {% endif %}
+                  </td>
+                  <td>
+                    {% if q.q_type == 'RATING_1_5' %}
+                      <select class="form-select form-select-sm" name="q_{{ q.id }}" {% if not can_edit %}disabled{% endif %}>
+                        <option value="">—</option>
+                        {% for i in range(1,6) %}
+                          <option value="{{ i }}" {% if ans.get('value')|int == i %}selected{% endif %}>{{ i }}</option>
+                        {% endfor %}
+                      </select>
+                    {% elif q.q_type == 'YESNO' %}
+                      <select class="form-select form-select-sm" name="q_{{ q.id }}" {% if not can_edit %}disabled{% endif %}>
+                        <option value="">—</option>
+                        <option value="YES" {% if ans.get('value') == 'YES' %}selected{% endif %}>نعم</option>
+                        <option value="NO" {% if ans.get('value') == 'NO' %}selected{% endif %}>لا</option>
+                      </select>
+                    {% elif q.q_type == 'NUMBER' %}
+                      <input class="form-control form-control-sm" type="number" step="0.01" name="q_{{ q.id }}" value="{{ ans.get('value','') }}" {% if not can_edit %}disabled{% endif %}>
+                    {% else %}
+                      <textarea class="form-control form-control-sm" rows="2" name="q_{{ q.id }}" {% if not can_edit %}disabled{% endif %}>{{ ans.get('value','') }}</textarea>
+                    {% endif %}
+                  </td>
+                  <td>
+                    <input class="form-control form-control-sm" type="text" name="c_{{ q.id }}" value="{{ ans.get('comment','') }}" {% if not can_edit %}disabled{% endif %}>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    {% endfor %}
+
+    <div class="mb-3">
+      <label class="form-label fw-semibold">ملاحظة عامة</label>
+      <textarea class="form-control" rows="3" name="overall_comment" {% if not can_edit %}disabled{% endif %}>{{ answers.get('overall_comment','') }}</textarea>
+    </div>
+
+    {% if can_edit %}
+      <div class="d-flex justify-content-end gap-2">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-send"></i> إرسال التقييم</button>
+      </div>
+    {% endif %}
+  </form>
+</div>
+{% endblock %}

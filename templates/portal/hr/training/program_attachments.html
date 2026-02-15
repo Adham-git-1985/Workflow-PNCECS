@@ -1,0 +1,64 @@
+{% extends 'portal/hr/base.html' %}
+
+{% block title %}مرفقات التدريب{% endblock %}
+
+{% block hr_content %}
+  {% include 'portal/hr/training/_wizard_nav.html' %}
+
+  <div class="card mb-3">
+    <div class="card-header">رفع مرفقات</div>
+    <div class="card-body">
+      <form method="post" enctype="multipart/form-data" class="row g-3">
+        <input type="hidden" name="action" value="upload">
+        <div class="col-md-4">
+          <label class="form-label">اسم المرفق</label>
+          <input type="text" name="title" class="form-control" placeholder="مثال: برنامج التدريب">
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">المرفقات (يمكن اختيار أكثر من ملف)</label>
+          <input type="file" name="files" class="form-control" multiple required>
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary">رفع</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">المرفقات الحالية</div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-striped mb-0">
+          <thead>
+            <tr>
+              <th>الاسم</th>
+              <th>الملف</th>
+              <th>التاريخ</th>
+              <th style="width: 160px">إجراء</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in attachments %}
+              <tr>
+                <td>{{ a.title or '-' }}</td>
+                <td>{{ a.original_name }}</td>
+                <td>{{ a.uploaded_at.strftime('%Y-%m-%d %H:%M') if a.uploaded_at else '' }}</td>
+                <td>
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_training_attachment_download', program_id=program.id, att_id=a.id) }}">تحميل</a>
+                  <form method="post" class="d-inline" onsubmit="return confirm('حذف المرفق؟');">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="att_id" value="{{ a.id }}">
+                    <button class="btn btn-sm btn-outline-danger">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="4" class="text-center text-muted p-3">لا توجد مرفقات.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% endblock %}

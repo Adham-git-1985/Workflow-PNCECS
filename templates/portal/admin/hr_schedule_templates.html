@@ -1,0 +1,176 @@
+{% extends "portal/layout.html" %}
+{% block title %}قوالب الدوام{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-clock"></i> قوالب الدوام</h5>
+      <div class="text-muted small">قالب الدوام = وقت بداية/نهاية + السماح (Grace) + خيارات إضافية.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
+        <i class="bi bi-clipboard2-data"></i> لوحة HR
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">
+        <i class="bi bi-grid"></i> لوحة الإدارة
+      </a>
+    </div>
+  </div>
+
+  <div class="alert alert-light border small mb-3">
+    <strong>الافتراضي:</strong>
+    {% if default_schedule_id %}
+      <span class="badge text-bg-dark">ID: {{ default_schedule_id }}</span>
+    {% else %}
+      <span class="text-muted">غير محدد</span>
+    {% endif %}
+  </div>
+
+  <div class="border rounded-3 p-3 mb-4">
+    <h6 class="mb-3"><i class="bi bi-plus-circle"></i> إضافة قالب</h6>
+    <form method="post" class="row g-2 align-items-end">
+      <input type="hidden" name="op" value="create">
+
+      <div class="col-md-4">
+        <label class="form-label">اسم القالب</label>
+        <input class="form-control" name="name" placeholder="مثال: 08:00-15:00 + سماح">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">النوع</label>
+        <select class="form-select" name="kind">
+          <option value="FIXED" selected>FIXED</option>
+        </select>
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">بداية</label>
+        <input class="form-control" name="start_time" value="08:00" placeholder="HH:MM">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">نهاية</label>
+        <input class="form-control" name="end_time" value="15:00" placeholder="HH:MM">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">سماح (دقيقة)</label>
+        <input class="form-control" name="grace_minutes" value="0" type="number" min="0">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">استراحة (دقيقة)</label>
+        <input class="form-control" name="break_minutes" value="0" type="number" min="0">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">مطلوب (دقيقة)</label>
+        <input class="form-control" name="required_minutes" type="number" min="0" placeholder="اختياري">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">حد وقت إضافي (دقيقة)</label>
+        <input class="form-control" name="overtime_threshold_minutes" type="number" min="0" placeholder="اختياري">
+      </div>
+
+      <div class="col-md-2">
+        <div class="form-check mt-4">
+          <input class="form-check-input" type="checkbox" name="is_active" id="new_active" checked>
+          <label class="form-check-label" for="new_active">نشط</label>
+        </div>
+      </div>
+
+      <div class="col-md-3">
+        <button class="btn btn-primary w-100" type="submit">
+          <i class="bi bi-save"></i> حفظ
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{{ portal_sort_link('الاسم', 'name') }}</th>
+          <th>النوع</th>
+          <th>{{ portal_sort_link('بداية', 'start_time') }}</th>
+          <th>{{ portal_sort_link('نهاية', 'end_time') }}</th>
+          <th>{{ portal_sort_link('سماح', 'grace_minutes') }}</th>
+          <th>{{ portal_sort_link('استراحة', 'break_minutes') }}</th>
+          <th>{{ portal_sort_link('مطلوب', 'required_minutes') }}</th>
+          <th>نشط</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in schedules %}
+          <tr>
+            <form method="post">
+              <input type="hidden" name="op" value="save">
+              <input type="hidden" name="id" value="{{ s.id }}">
+              <td class="text-muted">{{ s.id }}</td>
+              <td style="min-width:220px;">
+                <input class="form-control form-control-sm" name="name" value="{{ s.name }}">
+              </td>
+              <td style="min-width:120px;">
+                <select class="form-select form-select-sm" name="kind">
+                  <option value="FIXED" {% if (s.kind or '').upper()=='FIXED' %}selected{% endif %}>FIXED</option>
+                  <option value="SHIFT" {% if (s.kind or '').upper()=='SHIFT' %}selected{% endif %}>SHIFT</option>
+                  <option value="FLEX" {% if (s.kind or '').upper()=='FLEX' %}selected{% endif %}>FLEX</option>
+                </select>
+              </td>
+              <td style="width:110px;"><input class="form-control form-control-sm" name="start_time" value="{{ s.start_time }}"></td>
+              <td style="width:110px;"><input class="form-control form-control-sm" name="end_time" value="{{ s.end_time }}"></td>
+              <td style="width:90px;"><input class="form-control form-control-sm" name="grace_minutes" type="number" min="0" value="{{ s.grace_minutes or 0 }}"></td>
+              <td style="width:90px;"><input class="form-control form-control-sm" name="break_minutes" type="number" min="0" value="{{ s.break_minutes or 0 }}"></td>
+              <td style="width:90px;"><input class="form-control form-control-sm" name="required_minutes" type="number" min="0" value="{{ s.required_minutes or '' }}"></td>
+              <td>
+                <span class="badge {% if s.is_active %}text-bg-success{% else %}text-bg-secondary{% endif %}">
+                  {% if s.is_active %}نعم{% else %}لا{% endif %}
+                </span>
+                <input type="hidden" name="is_active" value="{% if s.is_active %}1{% endif %}">
+              </td>
+              <td class="text-end" style="min-width:220px;">
+                <button class="btn btn-sm btn-outline-primary" type="submit" title="حفظ" data-bs-tooltip="1"><i class="bi bi-save"></i></button>
+              </td>
+            </form>
+          </tr>
+          <tr>
+            <td colspan="10" class="text-end">
+              <div class="d-flex justify-content-end gap-2 flex-wrap">
+                <form method="post" class="d-inline">
+                  <input type="hidden" name="op" value="toggle">
+                  <input type="hidden" name="id" value="{{ s.id }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">
+                    <i class="bi bi-toggle2-on"></i> تفعيل/تعطيل
+                  </button>
+                </form>
+                <form method="post" class="d-inline">
+                  <input type="hidden" name="op" value="set_default">
+                  <input type="hidden" name="id" value="{{ s.id }}">
+                  <button class="btn btn-sm {% if default_schedule_id and default_schedule_id|string == s.id|string %}btn-dark{% else %}btn-outline-dark{% endif %}" type="submit">
+                    <i class="bi bi-star"></i> اجعله افتراضيًا
+                  </button>
+                </form>
+
+                <form method="post" class="d-inline" onsubmit="return confirm('حذف قالب الدوام؟ إذا كان مرتبطاً بتعيينات سيتم إيقافه فقط.');">
+                  <input type="hidden" name="op" value="delete">
+                  <input type="hidden" name="id" value="{{ s.id }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">
+                    <i class="bi bi-trash"></i> حذف
+                  </button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="10" class="text-muted">لا توجد قوالب.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

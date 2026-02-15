@@ -1,0 +1,38 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">الأصناف والعهدة</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_custody_overview') }}"><i class="bi bi-arrow-return-left"></i> عرض العهدة</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    {% if not rows %}
+      <div class="text-muted">لا يوجد بيانات.</div>
+    {% else %}
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>الصنف</th>
+              <th style="width:140px;">إجمالي الكمية</th>
+              <th style="width:140px;">عدد الحاملين</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>{{ r.item.label if r.item else '-' }}</td>
+                <td class="text-center">{{ '%.2f'|format(r.qty or 0) }}</td>
+                <td class="text-center">{{ r.holders or 0 }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

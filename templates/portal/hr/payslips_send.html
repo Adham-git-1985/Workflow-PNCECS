@@ -1,0 +1,149 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إرسال قسائم الرواتب{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-send"></i> إرسال قسائم الرواتب</h4>
+  <div class="text-muted">
+    اختر الشهر/السنة لعرض القسائم المرفوعة. القسائم تُحفظ كـ <b>مسودات</b> بعد الرفع، ولا تصبح مرئية للموظف إلا بعد الإرسال.
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form class="row g-2 align-items-end" method="get" action="{{ url_for('portal.hr_payslips_send') }}">
+    <div class="col-12 col-md-3">
+      <label class="form-label">السنة</label>
+      <select class="form-select" name="year" required>
+        {% for y in range((year|int) - 3, (year|int) + 2) %}
+          <option value="{{ y }}" {% if y == (year|int) %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-3">
+      <label class="form-label">الشهر</label>
+      <select class="form-select" name="month" required>
+        {% for mm in range(1, 13) %}
+          <option value="{{ mm }}" {% if mm == (month|int) %}selected{% endif %}>{{ "%02d"|format(mm) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-6 text-md-end">
+      <button class="btn btn-primary"><i class="bi bi-funnel"></i> عرض</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}">رجوع</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_payslips_bulk_upload', year=year, month=month) }}"><i class="bi bi-upload"></i> صفحة الرفع</a>
+    </div>
+  </form>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted">مسودات هذا الشهر</div>
+      <div class="fs-4 fw-bold">{{ drafts_count or 0 }}</div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted">تم الإرسال</div>
+      <div class="fs-4 fw-bold">{{ sent_count or 0 }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  {% if slips and slips|length > 0 %}
+
+    <form method="post" action="{{ url_for('portal.hr_payslips_send', year=year, month=month) }}">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <button class="btn btn-success" name="action" value="send_selected">
+          <i class="bi bi-send-check"></i> إرسال المحدد
+        </button>
+        <button class="btn btn-outline-success" name="action" value="send_all" onclick="return confirm('هل تريد إرسال جميع المسودات لهذا الشهر؟');">
+          <i class="bi bi-send"></i> إرسال جميع المسودات
+        </button>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th style="width:44px"></th>
+              <th>الرقم الوظيفي</th>
+              <th>الموظف</th>
+              <th>الملف</th>
+              <th class="text-muted">تاريخ الرفع</th>
+              <th>الحالة</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for s in slips %}
+              {% set emp_no = (s.user.employee_file.employee_no if s.user and s.user.employee_file else '') %}
+              <tr>
+                <td>
+                  {% if s.is_published is not defined or s.is_published or s.is_published is none %}
+                    <span class="text-muted">—</span>
+                  {% else %}
+                    <input class="form-check-input" type="checkbox" name="att_ids" value="{{ s.id }}">
+                  {% endif %}
+                </td>
+                <td class="fw-semibold">{{ emp_no or '-' }}</td>
+                <td>
+                  <div class="fw-semibold">{{ s.user.name if s.user and s.user.name else (s.user.email if s.user else '-') }}</div>
+                  <div class="text-muted small">{{ s.user.job_title if s.user and s.user.job_title else '' }}</div>
+                </td>
+                <td class="text-muted small">{{ s.original_name or 'Payslip.pdf' }}</td>
+                <td class="text-muted small">{{ s.uploaded_at.strftime('%Y-%m-%d %H:%M') if s.uploaded_at else '' }}</td>
+                <td>
+                  {% if s.is_published is not defined or s.is_published or s.is_published is none %}
+                    <span class="badge bg-success">تم الإرسال</span>
+                    {% if s.published_at %}
+                      <div class="text-muted small mt-1">{{ s.published_at.strftime('%Y-%m-%d %H:%M') }}</div>
+                    {% endif %}
+                  {% else %}
+                    <span class="badge bg-warning text-dark">مسودة</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('portal.hr_payslips_admin_view', att_id=s.id) }}">
+                    <i class="bi bi-eye"></i> معاينة
+                  </a>
+                  {% if not (s.is_published is not defined or s.is_published or s.is_published is none) %}
+                    <button class="btn btn-sm btn-success" name="action" value="send_one" type="submit" onclick="this.form.att_id.value='{{ s.id }}';">
+                      <i class="bi bi-send"></i> إرسال
+                    </button>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <input type="hidden" name="att_id" value="">
+
+    </form>
+
+  {% else %}
+    <div class="text-muted">لا يوجد قسائم لهذا الشهر بعد.</div>
+  {% endif %}
+</div>
+
+{% if results and results.errors and results.errors|length > 0 %}
+  <div class="alert alert-warning mt-3 mb-0">
+    <div class="fw-semibold mb-2">ملاحظات/أخطاء أثناء الإرسال</div>
+    <ul class="mb-0">
+      {% for e in results.errors[:30] %}
+        <li>{{ e }}</li>
+      {% endfor %}
+    </ul>
+    {% if results.errors|length > 30 %}
+      <div class="small text-muted mt-2">تم إظهار أول 30 ملاحظة فقط.</div>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% endblock %}

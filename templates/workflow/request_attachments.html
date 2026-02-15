@@ -1,0 +1,94 @@
+{# templates/workflow/request_attachments.html #}
+{% extends "layout.html" %}
+{% block title %}مرفقات المسار{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">📎 مرفقات المسار للطلب #{{ req.id }}</h3>
+    <div class="text-muted small">
+      <strong>{{ req.title or "" }}</strong>
+      {% if template %} · المسار: <strong>{{ template.name }}</strong>{% endif %}
+      · إجمالي المرفقات: <strong>{{ total_count }}</strong>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">
+      ← العودة للطلب
+    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
+      PDF
+    </a>
+  </div>
+</div>
+
+{% if not groups %}
+  <div class="alert alert-light text-muted">لا توجد مرفقات مرتبطة بهذا الطلب.</div>
+{% else %}
+  <div class="alert alert-info">
+    <div class="small">
+      ✅ المعاينة تعمل بشكل أفضل للـ PDF والصور. للملفات الأخرى، استخدم تنزيل.
+    </div>
+  </div>
+
+  {% for g in groups %}
+    <div class="card shadow-sm mb-3">
+      <div class="card-header bg-white d-flex justify-content-between align-items-center">
+        <strong>{{ g.title }}</strong>
+        <span class="badge bg-secondary">{{ g['items']|length }}</span>
+      </div>
+
+      <div class="card-body p-0">
+        <div class="table-responsive">
+          <table class="table table-sm mb-0 align-middle">
+            <thead class="table-light">
+              <tr>
+                <th style="width:40px">#</th>
+                <th>الملف</th>
+                <th style="width:90px">النوع</th>
+                <th style="width:110px">الحجم</th>
+                <th style="width:200px">رفع بواسطة</th>
+                <th style="width:160px">بتاريخ</th>
+                <th style="width:140px">المصدر</th>
+                <th style="width:170px">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for it in g['items'] %}
+                <tr>
+                  <td>{{ loop.index }}</td>
+                  <td>
+                    <strong>{{ it.name }}</strong>
+                    <div class="small text-muted">{{ it.mime_type or "-" }}</div>
+                  </td>
+                  <td>
+                    <span class="badge bg-light text-dark">{{ it.file_type or "-" }}</span>
+                  </td>
+                  <td>{{ it.size_human }}</td>
+                  <td>{{ it.uploaded_by or "-" }}</td>
+                  <td><span class="small text-muted">{{ it.uploaded_at or "-" }}</span></td>
+                  <td>
+                    <span class="badge bg-info text-dark">{{ it.source_label or "-" }}</span>
+                  </td>
+                  <td class="text-nowrap">
+                    <a class="btn btn-sm btn-outline-secondary" target="_blank"
+                       href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">
+                      معاينة
+                    </a>
+                    <a class="btn btn-sm btn-outline-primary"
+                       href="{{ url_for('workflow.download_workflow_attachment', file_id=it.file_id) }}">
+                      تنزيل
+                    </a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+{% endif %}
+
+{% endblock %}

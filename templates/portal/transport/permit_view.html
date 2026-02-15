@@ -1,0 +1,134 @@
+{% extends "portal/layout.html" %}
+{% block title %}إذن حركة #{{ item.id }}{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="mb-1"><i class="bi bi-file-earmark-check"></i> إذن حركة #{{ item.id }}</h5>
+    <div class="text-muted small">
+      مقدم الطلب: <b>{{ item.requester.name or item.requester.email }}</b> —
+      تاريخ الإنشاء: {{ item.created_at.strftime('%Y-%m-%d %H:%M') }}
+    </div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_permits') }}">رجوع</a>
+    {% if current_user.has_perm('TRANSPORT_CREATE') %}
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_trip_new') }}">تسجيل رحلة</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="d-flex justify-content-between align-items-start">
+        <div>
+          <div class="fw-semibold fs-5">{{ item.purpose }}</div>
+          <div class="text-muted small">
+            {{ item.origin_zone.name if item.origin_zone else (item.origin_text or '-') }}
+            →
+            {{ item.dest_zone.name if item.dest_zone else (item.dest_text or '-') }}
+          </div>
+        </div>
+        <div>
+          {% if item.status == 'SUBMITTED' %}
+            <span class="badge text-bg-warning">قيد الاعتماد</span>
+          {% elif item.status == 'APPROVED' %}
+            <span class="badge text-bg-success">معتمد</span>
+          {% elif item.status == 'REJECTED' %}
+            <span class="badge text-bg-danger">مرفوض</span>
+          {% elif item.status == 'COMPLETED' %}
+            <span class="badge text-bg-primary">مكتمل</span>
+          {% else %}
+            <span class="badge text-bg-secondary">{{ item.status }}</span>
+          {% endif %}
+        </div>
+      </div>
+
+      <hr>
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="text-muted">السيارة</div>
+          <div class="fw-semibold">{{ item.vehicle.plate_no if item.vehicle else '-' }}</div>
+          <div class="text-muted small">{{ item.vehicle.label if item.vehicle and item.vehicle.label else '' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="text-muted">السائق</div>
+          <div class="fw-semibold">{{ item.driver.name if item.driver else '-' }}</div>
+          <div class="text-muted small">{{ item.driver.phone if item.driver and item.driver.phone else '' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="text-muted">وقت الانطلاق</div>
+          <div class="fw-semibold">{% if item.depart_at %}{{ item.depart_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="text-muted">وقت العودة</div>
+          <div class="fw-semibold">{% if item.return_at %}{{ item.return_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="text-muted">عدد الركاب</div>
+          <div class="fw-semibold">{{ item.passengers_count if item.passengers_count is not none else '-' }}</div>
+        </div>
+        <div class="col-md-6">
+          <div class="text-muted">ملاحظات</div>
+          <div class="fw-semibold">{{ item.note or '-' }}</div>
+        </div>
+      </div>
+
+      {% if item.decision_note %}
+        <hr>
+        <div class="alert alert-light mb-0">
+          <div class="fw-semibold">ملاحظة قرار الاعتماد</div>
+          <div>{{ item.decision_note }}</div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="fw-semibold mb-2">الاعتماد</div>
+
+      {% if item.status == 'SUBMITTED' %}
+        <div class="text-muted small mb-2">
+          هذا الإذن بانتظار اعتماد مسؤول الحركة.
+        </div>
+      {% elif item.status == 'APPROVED' %}
+        <div class="text-muted small mb-2">
+          معتمد بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
+          {% if item.decided_at %}— {{ item.decided_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+        </div>
+      {% elif item.status == 'REJECTED' %}
+        <div class="text-muted small mb-2">
+          مرفوض بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
+          {% if item.decided_at %}— {{ item.decided_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+        </div>
+      {% endif %}
+
+      {% if can_approve %}
+        <hr id="decision">
+        <form method="post" action="{{ url_for('portal.transport_permit_approve', permit_id=item.id) }}" class="mb-2">
+          <label class="form-label">ملاحظة (اختياري)</label>
+          <textarea class="form-control" name="decision_note" rows="2" placeholder="ملاحظة الاعتماد..."></textarea>
+          <button class="btn btn-success w-100 mt-2" type="submit" onclick="return confirm('اعتماد إذن الحركة؟');">اعتماد</button>
+        </form>
+
+        <form method="post" action="{{ url_for('portal.transport_permit_reject', permit_id=item.id) }}">
+          <label class="form-label">سبب الرفض (اختياري)</label>
+          <textarea class="form-control" name="decision_note" rows="2" placeholder="سبب الرفض..."></textarea>
+          <button class="btn btn-outline-danger w-100 mt-2" type="submit" onclick="return confirm('رفض إذن الحركة؟');">رفض</button>
+        </form>
+      {% else %}
+        <div class="alert alert-info mb-0">
+          لتفعيل الاعتماد، امنح المستخدم صلاحية <b>TRANSPORT_APPROVE</b>.
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

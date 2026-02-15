@@ -1,0 +1,53 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}حجز جديد{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-plus-circle"></i> حجز جديد</h4>
+      <div class="text-muted">حجز قاعة بتاريخ ووقت محدد.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_room_bookings', day=today) }}">رجوع</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label">القاعة</label>
+      <select class="form-select" name="room_id" required>
+        <option value="">-- اختر --</option>
+        {% for r in rooms %}
+          <option value="{{ r.id }}">{{ r.name }}{% if r.location %} - {{ r.location }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">العنوان</label>
+      <input class="form-control" name="title" required>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">التاريخ</label>
+      <input class="form-control" type="date" name="day" value="{{ today }}" required>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">من</label>
+      <input class="form-control" type="time" name="start_time" placeholder="09:00">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إلى</label>
+      <input class="form-control" type="time" name="end_time" placeholder="10:00">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label">ملاحظة</label>
+      <input class="form-control" name="note" placeholder="اختياري">
+    </div>
+    <div class="col-12">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

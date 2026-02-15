@@ -1,0 +1,100 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}متابعة الإدخال{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="followupPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-clipboard-check"></i> متابعة الإدخال</h4>
+      <div class="text-muted">قائمة بالموظفين الذين ينقصهم إدخال بيانات أساسية في ملف الموظف.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_employees') }}"><i class="bi bi-people"></i> قائمة الموظفين</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-6">
+      <label class="form-label">بحث (اسم/إيميل)</label>
+      <input class="form-control" name="q" value="{{ q }}" placeholder="اكتب جزء من الاسم أو البريد">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إظهار</label>
+      <select class="form-select" name="only_missing">
+        <option value="1" {% if only_missing=='1' %}selected{% endif %}>الناقص فقط</option>
+        <option value="0" {% if only_missing=='0' %}selected{% endif %}>الكل</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div class="text-muted small">عدد النتائج: {{ total }}</div>
+    <div class="text-muted small">الصفحة: {{ page }} / {{ pages }}</div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الموظف</th>
+          <th>البريد</th>
+          <th>الرقم الوظيفي</th>
+          <th>كود الساعة</th>
+          <th>رقم الهوية</th>
+          <th>الهاتف</th>
+          <th>ناقص</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          {% set u = r.user %}
+          {% set ef = r.ef %}
+          <tr>
+            <td>{{ loop.index + ((page-1) * 50) }}</td>
+            <td>{{ u.name or '-' }}</td>
+            <td class="text-muted">{{ u.email or '-' }}</td>
+            <td>{{ ef.employee_no if ef else '-' }}</td>
+            <td>{{ ef.timeclock_code if ef else '-' }}</td>
+            <td>{{ ef.national_id if ef else '-' }}</td>
+            <td>{{ ef.phone if ef else '-' }}</td>
+            <td>
+              {% if r.missing and r.missing|length>0 %}
+                <span class="badge text-bg-warning">{{ r.missing|join('، ') }}</span>
+              {% else %}
+                <span class="badge text-bg-success">مكتمل</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_file', user_id=u.id) }}">
+                <i class="bi bi-pencil"></i> تعديل ملف الموظف
+              </a>
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pages > 1 %}
+    <nav class="mt-3">
+      <ul class="pagination justify-content-center">
+        {% for p in range(1, pages+1) %}
+          <li class="page-item {% if p==page %}active{% endif %}">
+            <a class="page-link" href="{{ url_for('portal.hr_employee_followup', q=q, only_missing=only_missing, page=p) }}">{{ p }}</a>
+          </li>
+        {% endfor %}
+      </ul>
+    </nav>
+  {% endif %}
+</div>
+{% endblock %}

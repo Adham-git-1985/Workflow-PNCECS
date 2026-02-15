@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">{{ '✏️ تعديل وحدة' if u else '➕ إضافة وحدة' }}</h3>
+    <small class="text-muted">الوحدة تتبع منظمة (Organization).</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.units_list') }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <form method="post" class="row g-3">
+
+      <div class="col-md-4">
+        <label class="form-label">المنظمة</label>
+        <select class="form-select" name="organization_id" required>
+          <option value="">— اختر —</option>
+          {% for o in orgs %}
+            <option value="{{ o.id }}" {% if u and u.organization_id == o.id %}selected{% endif %}>
+              {{ o.name_ar }}{% if o.code %} ({{ o.code }}){% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">الاسم (AR)</label>
+        <input class="form-control" name="name_ar" value="{{ u.name_ar if u else '' }}" required>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">الاسم (EN)</label>
+        <input class="form-control" name="name_en" value="{{ u.name_en if u else '' }}">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Code</label>
+        <input class="form-control" name="code" value="{{ u.code if u else '' }}">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">نشط</label>
+        <select class="form-select" name="is_active">
+          <option value="1" {% if not u or u.is_active %}selected{% endif %}>نعم</option>
+          <option value="0" {% if u and not u.is_active %}selected{% endif %}>لا</option>
+        </select>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary" type="submit">💾 حفظ</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.units_list') }}">إلغاء</a>
+      </div>
+
+    </form>
+
+  </div>
+</div>
+
+{% endblock %}

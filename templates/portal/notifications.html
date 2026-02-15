@@ -1,0 +1,68 @@
+{% extends "portal/layout.html" %}
+{% block title %}الإشعارات{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-bell"></i> الإشعارات</h4>
+      <div class="text-muted">إشعارات النظام الخاصة بك داخل البوابة.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.index') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-outline-primary {% if unread_only %}active{% endif %}" href="{{ url_for('portal.portal_notifications', unread=1) }}">
+        غير مقروءة
+        {% if unread_count|int > 0 %}<span class="badge text-bg-danger ms-1">{{ unread_count }}</span>{% endif %}
+      </a>
+      <a class="btn btn-outline-primary {% if not unread_only %}active{% endif %}" href="{{ url_for('portal.portal_notifications') }}">الكل</a>
+      {% if unread_count|int > 0 %}
+      <form method="post" class="d-inline">
+        <input type="hidden" name="action" value="READ_ALL" />
+        <button class="btn btn-primary" type="submit"><i class="bi bi-check2-all"></i> تعليم الكل كمقروء</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <hr class="my-3" />
+
+  {% if rows and rows|length > 0 %}
+    <div class="list-group">
+      {% for n in rows %}
+        <div class="list-group-item d-flex justify-content-between align-items-start gap-3">
+          <div class="flex-grow-1">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              {% if not n.is_read %}
+                <span class="badge text-bg-danger">جديد</span>
+              {% endif %}
+              {% if n.type %}
+                {% set t = (n.type or '')|upper %}
+                {% if t == 'URGENT' %}
+                  <span class="badge text-bg-danger">مستعجل</span>
+                {% elif t == 'INFO' %}
+                  <span class="badge text-bg-secondary">معلومة</span>
+                {% else %}
+                  <span class="badge text-bg-light border">{{ n.type }}</span>
+                {% endif %}
+              {% endif %}
+              <span class="text-muted small">{{ (n.created_at or "") }}</span>
+            </div>
+            <div class="mt-2">{{ n.message }}</div>
+          </div>
+          <div class="text-end">
+            {% if not n.is_read %}
+              <form method="post" class="d-inline">
+                <input type="hidden" name="action" value="READ_ONE" />
+                <input type="hidden" name="id" value="{{ n.id }}" />
+                <button class="btn btn-sm btn-outline-secondary" type="submit">تم</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد إشعارات حالياً.</div>
+  {% endif %}
+</div>
+{% endblock %}

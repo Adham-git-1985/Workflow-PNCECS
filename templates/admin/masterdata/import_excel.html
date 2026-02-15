@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">📥 {{ title or 'استيراد Excel' }}</h3>
+    {% if hint %}<small class="text-muted">{{ hint }}</small>{% endif %}
+  </div>
+  {% if back_url %}
+    <a class="btn btn-outline-secondary" href="{{ back_url }}">رجوع</a>
+  {% endif %}
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <form method="post" enctype="multipart/form-data" class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label fw-bold">ملف Excel (.xlsx)</label>
+        <input class="form-control" type="file" name="file" accept=".xlsx" required>
+        <div class="form-text">يفضل أن يكون Sheet واحد، والصف الأول عناوين أعمدة.</div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">استيراد</button>
+      </div>
+    </form>
+
+    <hr>
+    <div class="alert alert-light mb-0">
+      <div class="fw-bold mb-1">ملاحظات</div>
+      <ul class="mb-0">
+        <li>الاستيراد يقوم بعمل <strong>Upsert</strong> (تحديث إن وجد / إنشاء إن لم يوجد).</li>
+        <li>حقل <code>Active</code> يقبل: نعم/لا أو 1/0 أو True/False.</li>
+        <li>إن كان لديك ملف صادر من زر <strong>Excel</strong> داخل نفس الصفحة، يمكنك استيراده مباشرة.</li>
+      </ul>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

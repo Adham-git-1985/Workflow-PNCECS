@@ -1,0 +1,157 @@
+{% extends "portal/layout.html" %}
+{% block title %}تعديل وارد: {{ item.ref_no or item.id }}{% endblock %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">تعديل وارد</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#inboundEditPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inbound_view', inbound_id=item.id) }}">عرض</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inbound_list') }}">رجوع</a>
+  </div>
+</div>
+
+<div id="inboundEditPrint">
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <form method="post" enctype="multipart/form-data">
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label class="form-label">رقم الوارد</label>
+            <input class="form-control" name="ref_no" value="{{ request.form.get('ref_no') or (item.ref_no or '') }}">
+            <div class="form-text">اختياري.</div>
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">تاريخ الاستلام <span class="text-danger">*</span></label>
+            <input class="form-control" type="date" name="received_date" required value="{{ request.form.get('received_date') or item.received_date }}">
+          </div>
+
+          <div class="col-md-3">
+            <label class="form-label">التصنيف</label>
+            {% set cur_cat = request.form.get('category_code') or selected_category_code %}
+            <select class="form-select" name="category_code" id="category_code">
+              {% for c in cat_rows %}
+                <option value="{{ c.code }}" {% if cur_cat == c.code %}selected{% endif %}>{{ c.label }} ({{ c.code }})</option>
+              {% endfor %}
+              <option value="__OTHER__" {% if cur_cat == "__OTHER__" %}selected{% endif %}>أخرى…</option>
+            </select>
+          </div>
+
+          <div class="col-md-3" id="category_other_wrap" style="display:none;">
+            <label class="form-label">تصنيف آخر</label>
+            <input class="form-control" name="category_other" value="{{ request.form.get('category_other') or category_other_value }}" placeholder="مثال: FIN / HR / ...">
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label">الجهة المرسلة</label>
+            {% set cur_sender = request.form.get('sender_val') or selected_sender_val %}
+            <select class="form-select" name="sender_val" id="sender_val">
+              <option value="" {% if not cur_sender %}selected{% endif %}>— اختر —</option>
+              {% for p in sender_rows %}
+                <option value="{{ p.label }}" {% if cur_sender == p.label %}selected{% endif %}>{{ p.label }}</option>
+              {% endfor %}
+              <option value="__OTHER__" {% if cur_sender == "__OTHER__" %}selected{% endif %}>أخرى…</option>
+            </select>
+          </div>
+
+          <div class="col-md-6" id="sender_other_wrap" style="display:none;">
+            <label class="form-label">جهة مرسلة أخرى</label>
+            <input class="form-control" name="sender_other" value="{{ request.form.get('sender_other') or sender_other_value }}" placeholder="اكتب اسم الجهة">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">الموضوع <span class="text-danger">*</span></label>
+            <input class="form-control" name="subject" required value="{{ request.form.get('subject') or item.subject }}">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">المحتوى</label>
+            <textarea class="form-control" name="body" rows="5">{{ request.form.get('body') or (item.body or '') }}</textarea>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">إضافة مرفقات (اختياري)</label>
+            <input class="form-control" type="file" name="files" multiple>
+            <div class="form-text">يمكنك إضافة مرفقات جديدة بدون حذف القديمة.</div>
+          </div>
+
+          <div class="col-12 d-flex gap-2">
+            <button class="btn btn-primary" type="submit">حفظ التعديلات</button>
+            <a class="btn btn-outline-secondary" href="{{ url_for('portal.inbound_view', inbound_id=item.id) }}">إلغاء</a>
+            {% if can_delete %}
+              <form method="post" action="{{ url_for('portal.inbound_delete', inbound_id=item.id) }}" onsubmit="return confirm('حذف الوارد نهائياً؟');">
+                <button class="btn btn-outline-danger" type="submit">حذف</button>
+              </form>
+            {% endif %}
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+      <h6 class="mb-3"><i class="bi bi-paperclip"></i> المرفقات الحالية</h6>
+      <ul class="list-group list-group-flush">
+        {% for a in attachments %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <span class="small">{{ a.original_name }}</span>
+            <div class="btn-group">
+              <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{{ url_for('portal.corr_attachment_view', att_id=a.id) }}"><i class="bi bi-eye"></i></a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.corr_attachment_download', att_id=a.id) }}"><i class="bi bi-download"></i></a>
+              <form method="post" action="{{ url_for('portal.corr_attachment_delete', att_id=a.id) }}" onsubmit="return confirm('حذف المرفق؟');">
+                <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i></button>
+              </form>
+            </div>
+          </li>
+        {% else %}
+          <li class="list-group-item text-muted">لا يوجد مرفقات.</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <h6 class="mb-3"><i class="bi bi-clock-history"></i> سجل النشاط</h6>
+      <ul class="list-group list-group-flush">
+        {% for l in logs %}
+          <li class="list-group-item">
+            <div class="small text-muted">{{ l.created_at.strftime('%Y-%m-%d %H:%M') if l.created_at else '' }}</div>
+            <div class="fw-semibold small">{{ l.action }}</div>
+            {% if l.user %}
+              <div class="small">بواسطة: {{ l.user.name or l.user.email }}</div>
+            {% endif %}
+            {% if l.note %}<div class="small text-muted">{{ l.note }}</div>{% endif %}
+          </li>
+        {% else %}
+          <li class="list-group-item text-muted">لا يوجد نشاط.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+(function(){
+  function toggleOther(selectId, wrapId){
+    var sel = document.getElementById(selectId);
+    var wrap = document.getElementById(wrapId);
+    if(!sel || !wrap) return;
+    function update(){ wrap.style.display = (sel.value === "__OTHER__") ? "" : "none"; }
+    sel.addEventListener("change", update);
+    update();
+  }
+  toggleOther("category_code","category_other_wrap");
+  toggleOther("sender_val","sender_other_wrap");
+})();
+</script>
+
+{% endblock %}

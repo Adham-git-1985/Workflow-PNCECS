@@ -1,0 +1,65 @@
+{% set ep = request.endpoint or '' %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employees') }}">
+      <i class="bi bi-arrow-right"></i> رجوع لقائمة الموظفين
+    </a>
+
+    <div class="d-flex flex-column">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <span class="badge bg-primary">{{ (emp_file.employee_no if emp_file else None) or '—' }}</span>
+        <strong class="fs-6">{{ (emp_file.full_name_quad if emp_file else None) or u.name or u.email }}</strong>
+      </div>
+      <div class="text-muted small">
+        <span>{{ u.email }}</span>
+        {% if emp_file and emp_file.timeclock_code %}
+          <span class="mx-2">•</span>
+          <span>كود الساعة: {{ emp_file.timeclock_code }}</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="text-muted small">
+    <span class="badge bg-light text-dark">يمكن الحفظ واستكمال الإدخال لاحقًا</span>
+  </div>
+</div>
+
+<ul class="nav nav-pills gap-2 mb-4">
+  <li class="nav-item">
+    <a class="nav-link {% if ep == 'portal.hr_employee_file' %}active{% endif %}" href="{{ url_for('portal.hr_employee_file', user_id=u.id) }}">
+      <i class="bi bi-person-vcard"></i> البيانات الأساسية
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if ep in ['portal.hr_employee_dependents','portal.hr_employee_dependent_new','portal.hr_employee_dependent_edit'] %}active{% endif %}" href="{{ url_for('portal.hr_employee_dependents', user_id=u.id) }}">
+      <i class="bi bi-people"></i> الأسرة
+      <span class="badge bg-light text-dark ms-1">{{ counts.deps if counts else 0 }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if ep in ['portal.hr_employee_qualifications','portal.hr_employee_qualification_new','portal.hr_employee_qualification_edit'] %}active{% endif %}" href="{{ url_for('portal.hr_employee_qualifications', user_id=u.id) }}">
+      <i class="bi bi-mortarboard"></i> المؤهلات
+      <span class="badge bg-light text-dark ms-1">{{ counts.quals if counts else 0 }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if ep in ['portal.hr_employee_secondments','portal.hr_employee_secondment_new','portal.hr_employee_secondment_edit'] %}active{% endif %}" href="{{ url_for('portal.hr_employee_secondments', user_id=u.id) }}">
+      <i class="bi bi-diagram-3"></i> التكليفات
+      <span class="badge bg-light text-dark ms-1">{{ counts.secondments if counts else 0 }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if ep in ['portal.hr_employee_attachments'] %}active{% endif %}" href="{{ url_for('portal.hr_employee_attachments', user_id=u.id) }}">
+      <i class="bi bi-paperclip"></i> المرفقات
+      <span class="badge bg-light text-dark ms-1">{{ counts.atts if counts else 0 }}</span>
+    </a>
+  </li>
+  <li class="nav-item">
+    <a class="nav-link {% if ep in ['portal.hr_employee_payslips'] %}active{% endif %}" href="{{ url_for('portal.hr_employee_payslips', user_id=u.id) }}">
+      <i class="bi bi-receipt"></i> قسائم الراتب
+      <span class="badge bg-light text-dark ms-1">{{ counts.payslips if counts else 0 }}</span>
+    </a>
+  </li>
+</ul>

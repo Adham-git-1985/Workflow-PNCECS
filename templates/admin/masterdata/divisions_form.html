@@ -1,0 +1,75 @@
+{% extends "layout.html" %}
+
+{% block title %}{{ 'تعديل شعبة' if division else 'إضافة شعبة' }}{% endblock %}
+
+{% block content %}
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h4 class="mb-3">{{ 'تعديل شعبة' if division else 'إضافة شعبة' }}</h4>
+
+    <form method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="alert alert-info py-2">
+        اختر <b>قسم</b> أو <b>دائرة</b> (واحدة على الأقل). إذا اخترت القسم، يمكن ترك الدائرة فارغة.
+      </div>
+
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label fw-bold">القسم (اختياري)</label>
+          <select class="form-select" name="section_id" data-searchable="1">
+            <option value="">-- لا يوجد --</option>
+            {% for s in sections %}
+              <option value="{{ s.id }}" {% if division and division.section_id == s.id %}selected{% endif %}>
+                {{ s.name_ar }} ({{ s.code }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-bold">الدائرة (اختياري)</label>
+          <select class="form-select" name="department_id" data-searchable="1">
+            <option value="">-- لا يوجد --</option>
+            {% for d in departments %}
+              <option value="{{ d.id }}" {% if division and division.department_id == d.id %}selected{% endif %}>
+                {{ d.name_ar }} ({{ d.code }})
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-bold">الاسم (AR)</label>
+          <input type="text" class="form-control" name="name_ar" value="{{ division.name_ar if division else '' }}" required>
+        </div>
+
+        <div class="col-md-6">
+          <label class="form-label fw-bold">الاسم (EN)</label>
+          <input type="text" class="form-control" name="name_en" value="{{ division.name_en if division else '' }}">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">Code</label>
+          <input type="text" class="form-control" name="code" value="{{ division.code if division else '' }}" required>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">نشط</label>
+          <select class="form-select" name="is_active">
+            {% set active = (division.is_active if division else True) %}
+            <option value="1" {% if active %}selected{% endif %}>نعم</option>
+            <option value="0" {% if not active %}selected{% endif %}>لا</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="mt-4 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">حفظ</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.divisions_list') }}">إلغاء</a>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}

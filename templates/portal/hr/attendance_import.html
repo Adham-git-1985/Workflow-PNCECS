@@ -1,0 +1,24 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}استيراد ملف الدوام{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <h5 class="mb-3"><i class="bi bi-upload"></i> استيراد ملف ساعة الدوام</h5>
+  <form method="post" enctype="multipart/form-data" class="row g-3">
+    <div class="col-md-8">
+      <input type="file" name="file" class="form-control" accept=".txt">
+      <div class="form-text">صيغة السطر: 30 حرف (YYYY-MM-DD + 9 أرقام + HHMMSS + I/O + رقم الجهاز).</div>
+    </div>
+    <div class="col-md-4">
+      <button class="btn btn-primary w-100" type="submit">استيراد</button>
+    </div>
+  </form>
+
+  <hr class="my-4">
+
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_batches') }}">سجل الاستيراد</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">عرض الأحداث</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_employees') }}">ربط أكواد الموظفين</a>
+  </div>
+</div>
+{% endblock %}

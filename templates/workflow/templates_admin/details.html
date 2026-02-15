@@ -1,0 +1,180 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">📄 تفاصيل المسار</h3>
+    <small class="text-muted">{{ t.name }}</small>
+  </div>
+  <div class="d-flex gap-2">
+  <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#wfTemplateDetailsPrint')"><i class="bi bi-printer"></i> طباعة</button>
+  <a class="btn btn-outline-secondary no-print" href="{{ url_for('users.help_workflow_guide') }}" target="_blank"><i class="bi bi-question-circle"></i> الدليل</a>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_list') }}">رجوع</a>
+</div>
+</div>
+
+<div id="wfTemplateDetailsPrint">
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6"><b>الاسم:</b> {{ t.name }}</div>
+      <div class="col-md-3"><b>Active:</b> {{ "Yes" if t.is_active else "No" }}</div>
+      <div class="col-md-3"><b>SLA Default:</b> {{ t.sla_days_default or "-" }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h5 class="mb-3">الخطوات</h5>
+
+    {% if steps %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Kind</th>
+              <th>USER</th>
+              <th>ROLE</th>
+              <th>DEPT</th>
+              <th>Mode</th>
+              <th>مرتبطون</th>
+              <th>SLA</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for s in steps %}
+            <tr>
+              <td>{{ s.step_order }}</td>
+              <td>{{ s.approver_kind }}</td>
+              <td>
+                {% if s.approver_user_id %}
+                  {{ users_map.get(s.approver_user_id).email if users_map.get(s.approver_user_id) else s.approver_user_id }}
+                
+                {% elif s.approver_kind == 'UNIT' %}
+                  {% if s.approver_unit_id and units_map.get(s.approver_unit_id) %}
+                    {{ units_map.get(s.approver_unit_id).name_ar }} [#{{ s.approver_unit_id }}]
+                  {% else %}
+                    {{ s.approver_unit_id or '-' }}
+                  {% endif %}
+                {% elif s.approver_kind == 'SECTION' %}
+                  {% if s.approver_section_id and sections_map.get(s.approver_section_id) %}
+                    {{ sections_map.get(s.approver_section_id).name_ar }} [#{{ s.approver_section_id }}]
+                  {% else %}
+                    {{ s.approver_section_id or '-' }}
+                  {% endif %}
+                {% elif s.approver_kind == 'DIVISION' %}
+                  {% if s.approver_division_id and divisions_map.get(s.approver_division_id) %}
+                    {{ divisions_map.get(s.approver_division_id).name_ar }} [#{{ s.approver_division_id }}]
+                  {% else %}
+                    {{ s.approver_division_id or '-' }}
+                  {% endif %}
+
+                {% elif s.approver_kind == 'ORG_NODE' %}
+                  {% if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) %}
+                    {{ org_nodes_map.get(s.approver_org_node_id).name_ar }} [#{{ s.approver_org_node_id }}]
+                  {% else %}
+                    {{ s.approver_org_node_id or '-' }}
+                  {% endif %}
+
+                {% elif s.approver_kind == 'COMMITTEE' %}
+                  {% if s.approver_committee_id and committees_map.get(s.approver_committee_id) %}
+                    {{ committees_map.get(s.approver_committee_id).name_ar }} [#{{ s.approver_committee_id }}]
+                  {% else %}
+                    {{ s.approver_committee_id or '-' }}
+                  {% endif %}
+                  {% set _cm = (s.committee_delivery_mode or 'Committee_ALL')|upper %}
+                  {% set _cm_lbl = 'كل الأعضاء' if _cm == 'COMMITTEE_ALL' else ('الرئيس فقط' if _cm == 'COMMITTEE_CHAIR' else ('المقرر فقط' if _cm == 'COMMITTEE_SECRETARY' else _cm)) %}
+                  <span class="badge bg-light text-dark border">{{ _cm_lbl }}</span>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>{{ s.approver_role or "-" }}</td>
+              <td>
+                {% if s.approver_kind == 'DEPARTMENT' %}
+                  {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}
+                    {{ depts_map.get(s.approver_department_id).name_ar }} [#{{ s.approver_department_id }}]
+                  {% else %}
+                    {{ s.approver_department_id or '-' }}
+                  {% endif %}
+                {% elif s.approver_kind == 'DIRECTORATE' %}
+                  {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
+                    {{ dirs_map.get(s.approver_directorate_id).name_ar }} [#{{ s.approver_directorate_id }}]
+                  {% else %}
+                    {{ s.approver_directorate_id or '-' }}
+                  {% endif %}
+                {% elif s.approver_kind == 'COMMITTEE' %}
+                  {% if s.approver_committee_id and committees_map.get(s.approver_committee_id) %}
+                    {{ committees_map.get(s.approver_committee_id).name_ar }} [#{{ s.approver_committee_id }}]
+                  {% else %}
+                    {{ s.approver_committee_id or '-' }}
+                  {% endif %}
+                  {% set _cm = (s.committee_delivery_mode or 'Committee_ALL')|upper %}
+                  {% set _cm_lbl = 'كل الأعضاء' if _cm == 'COMMITTEE_ALL' else ('الرئيس فقط' if _cm == 'COMMITTEE_CHAIR' else ('المقرر فقط' if _cm == 'COMMITTEE_SECRETARY' else _cm)) %}
+                  <span class="badge bg-light text-dark border">{{ _cm_lbl }}</span>
+                {% else %}
+                  -
+                {% endif %}
+              </td>
+              <td>
+                {% if (s.mode or 'SEQUENTIAL')|upper == 'PARALLEL_SYNC' %}
+                  <span class="badge bg-info text-dark">متزامن (Parallel Sync)</span>
+                {% else %}
+                  <span class="badge bg-secondary">تسلسلي</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if (s.mode or 'SEQUENTIAL')|upper == 'PARALLEL_SYNC' %}
+                  {% set extras = s.parallel_assignees or [] %}
+                  {% if extras|length == 0 %}
+                    <span class="text-muted">-</span>
+                  {% else %}
+                    <div class="small">
+                      <div class="text-muted mb-1">{{ extras|length }} مرتبط</div>
+                      {% for pa in extras %}
+                        {% if pa.approver_kind == 'USER' and pa.approver_user_id and users_map.get(pa.approver_user_id) %}
+                          <span class="badge bg-light text-dark border">{{ users_map.get(pa.approver_user_id).email }}</span>
+                        {% elif pa.approver_kind == 'ROLE' %}
+                          <span class="badge bg-light text-dark border">ROLE: {{ pa.approver_role }}</span>
+                        {% elif pa.approver_kind == 'DIRECTORATE' %}
+                          <span class="badge bg-light text-dark border">DIR: {{ dirs_map.get(pa.approver_directorate_id).name_ar if pa.approver_directorate_id and dirs_map.get(pa.approver_directorate_id) else (pa.approver_directorate_id) }}</span>
+                        {% elif pa.approver_kind == 'COMMITTEE' %}
+                          <span class="badge bg-light text-dark border">
+                            COMMITTEE: {{ committees_map.get(pa.approver_committee_id).name_ar if pa.approver_committee_id and committees_map.get(pa.approver_committee_id) else (pa.approver_committee_id) }}
+                            {% if pa.committee_delivery_mode %}
+                              {% set _pcm = pa.committee_delivery_mode|upper %}
+                              {% set _pcm_lbl = 'كل الأعضاء' if _pcm == 'COMMITTEE_ALL' else ('الرئيس فقط' if _pcm == 'COMMITTEE_CHAIR' else ('المقرر فقط' if _pcm == 'COMMITTEE_SECRETARY' else _pcm)) %}
+                              ({{ _pcm_lbl }})
+                            {% endif %}
+                          </span>
+                        {% elif pa.approver_kind == 'DEPARTMENT' %}
+                          <span class="badge bg-light text-dark border">DEPT: {{ depts_map.get(pa.approver_department_id).name_ar if pa.approver_department_id and depts_map.get(pa.approver_department_id) else (pa.approver_department_id) }}</span>
+                        {% else %}
+                          <span class="badge bg-light text-dark border">{{ pa.approver_kind }}</span>
+                        {% endif %}
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                {% else %}
+                  <span class="text-muted">-</span>
+                {% endif %}
+              </td>
+              <td>{{ s.sla_days or "-" }}</td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">
+        لا يوجد خطوات
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+
+</div>
+{% endblock %}

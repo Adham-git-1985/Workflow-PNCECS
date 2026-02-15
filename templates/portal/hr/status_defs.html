@@ -1,0 +1,65 @@
+{% extends 'portal/hr/base.html' %}
+{% block hr_content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0">حالات الإجازات والمهمات</h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_masterdata_index') }}">رجوع</a>
+</div>
+
+<form method="post" class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-md-2">
+        <select class="form-select" name="entity" required>
+          <option value="LEAVE">LEAVE</option>
+          <option value="MISSION">MISSION</option>
+        </select>
+      </div>
+      <div class="col-md-2"><input class="form-control" name="code" placeholder="CODE" required></div>
+      <div class="col-md-3"><input class="form-control" name="name_ar" placeholder="الاسم بالعربية" required></div>
+      <div class="col-md-3"><input class="form-control" name="name_en" placeholder="English name"></div>
+      <div class="col-md-1"><input class="form-control" type="number" name="sort_order" value="100"></div>
+      <div class="col-md-1 d-grid"><button class="btn btn-primary" type="submit">حفظ</button></div>
+    </div>
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>الكيان</th>
+          <th>CODE</th>
+          <th>العربية</th>
+          <th>English</th>
+          <th>الترتيب</th>
+          <th>نشط</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td>{{ r.entity }}</td>
+          <td>{{ r.code }}</td>
+          <td>{{ r.name_ar }}</td>
+          <td>{{ r.name_en or '—' }}</td>
+          <td>{{ r.sort_order }}</td>
+          <td>{{ 'نعم' if r.is_active else 'لا' }}</td>
+          <td class="text-end">
+            {% if can_manage %}
+              <form method="post" action="{{ url_for('portal.hr_status_def_toggle', row_id=r.id) }}" class="d-inline">
+                <button class="btn btn-outline-secondary btn-sm" type="submit">{{ 'تعطيل' if r.is_active else 'تفعيل' }}</button>
+              </form>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}
+{% block content %}{{ self.hr_content() }}{% endblock %}

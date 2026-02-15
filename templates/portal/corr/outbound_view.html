@@ -1,0 +1,116 @@
+{% extends "portal/layout.html" %}
+{% block title %}صادر: {{ item.ref_no or item.id }}{% endblock %}
+{% block content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0">تفاصيل صادر</h5>
+  <div class="d-flex gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#outboundViewPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.outbound_list') }}">رجوع</a>
+    <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('portal.outbound_print_pdf', outbound_id=item.id) }}">بطاقة PDF</a>
+    {% if can_update %}
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.outbound_edit', outbound_id=item.id) }}">تعديل</a>
+    {% endif %}
+    {% if can_delete %}
+      <form method="post" action="{{ url_for('portal.outbound_delete', outbound_id=item.id) }}" class="d-inline" onsubmit="return confirm('حذف الصادر نهائياً؟');">
+        <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+      </form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="bg-white rounded-3 shadow-sm p-4 mb-3 id="outboundViewPrint"">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <div class="text-muted small">رقم</div>
+          <div class="fw-semibold">{{ item.ref_no or item.id }}</div>
+        </div>
+        <div class="col-md-4">
+          <div class="text-muted small">تاريخ الإرسال</div>
+          <div class="fw-semibold">{{ item.sent_date }}</div>
+        </div>
+        <div class="col-md-4">
+          <div class="text-muted small">التصنيف</div>
+          <div><span class="badge text-bg-light border">{{ item.category }}</span></div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="text-muted small">الجهة المستلمة</div>
+          <div class="fw-semibold">{{ item.recipient or "-" }}</div>
+        </div>
+
+        <div class="col-12">
+          <div class="text-muted small">الموضوع</div>
+          <div class="fw-semibold">{{ item.subject }}</div>
+        </div>
+
+        {% if item.body %}
+        <div class="col-12">
+          <div class="text-muted small">المحتوى</div>
+          <div class="border rounded p-3 bg-light">{{ item.body | replace('\n','<br>') | safe }}</div>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <h6 class="mb-3"><i class="bi bi-clock-history"></i> سجل النشاط</h6>
+      <ul class="list-group list-group-flush">
+        {% for l in logs %}
+          <li class="list-group-item">
+            <div class="small text-muted">{{ l.created_at.strftime('%Y-%m-%d %H:%M') if l.created_at else '' }}</div>
+            <div class="fw-semibold small">{{ l.action }}</div>
+            {% if l.user %}
+              <div class="small">بواسطة: {{ l.user.name or l.user.email }}</div>
+            {% endif %}
+            {% if l.note %}<div class="small text-muted">{{ l.note }}</div>{% endif %}
+          </li>
+        {% else %}
+          <li class="list-group-item text-muted">لا يوجد نشاط.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <h6 class="mb-3"><i class="bi bi-paperclip"></i> المرفقات</h6>
+
+      {% if can_upload %}
+      <form method="post" action="{{ url_for('portal.outbound_upload', outbound_id=item.id) }}" enctype="multipart/form-data" class="mb-3">
+        <input class="form-control mb-2" type="file" name="files" multiple required>
+        <button class="btn btn-sm btn-primary">رفع</button>
+      </form>
+      {% endif %}
+
+      <ul class="list-group list-group-flush">
+        {% for a in attachments %}
+          <li class="list-group-item d-flex justify-content-between align-items-center">
+            <span class="small">{{ a.original_name }}</span>
+            <div class="btn-group">
+              <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{{ url_for('portal.corr_attachment_view', att_id=a.id) }}"><i class="bi bi-eye"></i></a>
+              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.corr_attachment_download', att_id=a.id) }}"><i class="bi bi-download"></i></a>
+              {% if can_update %}
+                <form method="post" action="{{ url_for('portal.corr_attachment_delete', att_id=a.id) }}" onsubmit="return confirm('حذف المرفق؟');">
+                  <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i></button>
+                </form>
+              {% endif %}
+            </div>
+          </li>
+        {% else %}
+          <li class="list-group-item text-muted">لا يوجد مرفقات.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

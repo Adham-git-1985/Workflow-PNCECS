@@ -1,0 +1,74 @@
+{% extends "portal/layout.html" %}
+{% block title %}{% if item %}تعديل مهمة{% else %}مهمة جديدة{% endif %}{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-list-check"></i> {% if item %}تعديل مهمة #{{ item.id }}{% else %}مهمة جديدة{% endif %}</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_tasks') }}">رجوع</a>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3">
+    <div class="col-md-4">
+      <label class="form-label">السائق *</label>
+      <select class="form-select" name="driver_id" required>
+        <option value="">—</option>
+        {% for d in drivers %}
+          <option value="{{ d.id }}" {% if item and item.driver_id == d.id %}selected{% endif %}>{{ d.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">ربط بإذن (اختياري)</label>
+      <select class="form-select" name="permit_id">
+        <option value="">—</option>
+        {% for p in permits %}
+          <option value="{{ p.id }}" {% if item and item.permit_id == p.id %}selected{% endif %}>#{{ p.id }} — {{ p.purpose }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">ربط برحلة (اختياري)</label>
+      <select class="form-select" name="trip_id">
+        <option value="">—</option>
+        {% for t in trips %}
+          <option value="{{ t.id }}" {% if item and item.trip_id == t.id %}selected{% endif %}>#{{ t.id }} — {{ t.vehicle.plate_no if t.vehicle else '-' }} — {{ t.started_at.strftime('%Y-%m-%d') if t.started_at else '-' }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-8">
+      <label class="form-label">عنوان المهمة *</label>
+      <input class="form-control" name="title" required placeholder="مثال: توصيل ملفات إلى ..." value="{{ item.title if item and item.title else '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">تاريخ الاستحقاق</label>
+      <input class="form-control" type="date" name="due_date" value="{{ item.due_date if item and item.due_date else '' }}">
+    </div>
+
+    <div class="col-12">
+      <label class="form-label">وصف</label>
+      <textarea class="form-control" name="description" rows="3">{{ item.description if item and item.description else '' }}</textarea>
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="status">
+        <option value="PENDING" {% if item and item.status=='PENDING' %}selected{% endif %}>قيد التنفيذ</option>
+        <option value="IN_PROGRESS" {% if item and item.status=='IN_PROGRESS' %}selected{% endif %}>جاري</option>
+        <option value="DONE" {% if item and item.status=='DONE' %}selected{% endif %}>منجزة</option>
+        <option value="CANCELLED" {% if item and item.status=='CANCELLED' %}selected{% endif %}>ملغاة</option>
+      </select>
+    </div>
+
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_tasks') }}">إلغاء</a>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

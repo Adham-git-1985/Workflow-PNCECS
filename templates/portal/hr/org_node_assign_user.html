@@ -1,0 +1,205 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تعيين موظف على الهيكلية الموحدة{% endblock %}
+
+{% block hr_content %}
+
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h4 class="mb-0">تعيين موظف على الهيكلية الموحدة</h4>
+    <div class="text-muted small">استخدم الشجرة لاختيار عنصر الهيكلية، ثم احفظ.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_org_node_assignments', q=request.args.get('q','')) }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-2 align-items-center">
+      <div class="col-md-6">
+        <div class="fw-bold">{{ emp.full_name if emp.full_name is defined else (emp.name or '—') }}</div>
+        <div class="text-muted"><span dir="ltr">{{ emp.email }}</span></div>
+      </div>
+      <div class="col-md-6 text-md-end">
+        {% if selected_id %}
+          <span class="badge bg-success-subtle text-success border">التبعية الأساسية محفوظة (id: {{ selected_id }})</span>
+        {% else %}
+          <span class="badge bg-secondary-subtle text-secondary border">لا توجد تبعية أساسية</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post" class="row g-3">
+      <div class="col-12">
+        <label class="form-label">عنصر الهيكلية (OrgNode)</label>
+        <div class="d-flex flex-wrap gap-2 align-items-center">
+          <input type="hidden" name="node_id" id="assign_node_id" value="">
+          <input class="form-control" id="assign_node_label" value="—" readonly style="max-width: 520px;">
+          <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#assignOrgNodePickerModal">🌳 اختيار من الشجرة</button>
+          <button type="button" class="btn btn-outline-danger" id="assign_node_clear">مسح</button>
+        </div>
+        <div class="form-text text-muted">سيتم استخدام هذا التعيين في قواعد التوجيه والمسارات (حسب إعدادات الأنواع).</div>
+      </div>
+
+      <div class="col-md-8">
+        <label class="form-label">المسمى/الوصف (اختياري)</label>
+        <input class="form-control" name="title" placeholder="مثال: مسؤول متابعة" maxlength="120">
+      </div>
+
+      <div class="col-md-4 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" value="1" name="is_primary" id="is_primary" checked>
+          <label class="form-check-label" for="is_primary">تعيين كأساسي</label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-success" type="submit">حفظ التعيين</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white">
+    <div class="fw-bold">تعيينات هذا الموظف</div>
+  </div>
+  <div class="card-body p-0">
+    {% if assignments and assignments|length > 0 %}
+      <div class="table-responsive">
+        <table class="table table-hover mb-0 align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>العنصر</th>
+              <th>وصف</th>
+              <th style="width:120px">أساسي</th>
+              <th style="width:220px">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in assignments %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ a.node.name_ar if a.node else ('#' ~ a.node_id) }}</div>
+                  {% if a.node and a.node.code %}<div class="text-muted small">(<code>{{ a.node.code }}</code>)</div>{% endif %}
+                </td>
+                <td class="text-muted">{{ a.title or '—' }}</td>
+                <td>
+                  {% if a.is_primary %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="d-flex gap-2 flex-wrap">
+                  {% if not a.is_primary %}
+                    <form method="post" action="{{ url_for('portal.hr_org_node_assign_make_primary', user_id=emp.id, assign_id=a.id) }}">
+                      <button class="btn btn-sm btn-outline-success" type="submit">جعلها أساسية</button>
+                    </form>
+                  {% endif %}
+                  <form method="post" action="{{ url_for('portal.hr_org_node_assign_delete', user_id=emp.id, assign_id=a.id) }}" onsubmit="return confirm('حذف التعيين؟');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="p-3 text-center text-muted">لا توجد تعيينات حتى الآن.</div>
+    {% endif %}
+  </div>
+</div>
+
+
+<!-- Modal: OrgNode Tree Picker -->
+<div class="modal fade" id="assignOrgNodePickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">🌳 اختيار عنصر الهيكلية</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="assignOrgNodeTreeContainer">
+          {% include "components/_org_node_picker_tree.html" %}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إغلاق</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const nodeId = document.getElementById('assign_node_id');
+  const nodeLabel = document.getElementById('assign_node_label');
+  const clearBtn = document.getElementById('assign_node_clear');
+  const modalEl = document.getElementById('assignOrgNodePickerModal');
+  const container = document.getElementById('assignOrgNodeTreeContainer');
+
+  function wireTreeUI(container){
+    const tree = container ? container.querySelector('[data-tree-root]') : null;
+    const search = container ? container.querySelector('[data-tree-search]') : null;
+    const expandAll = container ? container.querySelector('[data-tree-expand]') : null;
+    const collapseAll = container ? container.querySelector('[data-tree-collapse]') : null;
+
+    function setAll(open){
+      if (!tree) return;
+      tree.querySelectorAll('details.org-details').forEach(d => { d.open = !!open; });
+    }
+    if (expandAll) expandAll.onclick = () => setAll(true);
+    if (collapseAll) collapseAll.onclick = () => setAll(false);
+
+    if (search) {
+      search.oninput = function(){
+        const q = (this.value || '').trim().toLowerCase();
+        if (!tree) return;
+        const items = tree.querySelectorAll('li.org-li');
+        if (!q) {
+          items.forEach(li => li.classList.remove('d-none'));
+          return;
+        }
+        items.forEach(li => {
+          const t = (li.getAttribute('data-node-text') || '');
+          li.classList.toggle('d-none', t.indexOf(q) === -1);
+        });
+        setAll(true);
+      };
+    }
+  }
+
+  if (container) {
+    wireTreeUI(container);
+
+    container.addEventListener('click', function(ev){
+      const btn = ev.target.closest('.pick-node');
+      if (!btn) return;
+      ev.preventDefault();
+      if (btn.disabled) return;
+
+      const id = btn.getAttribute('data-id') || '';
+      const label = btn.getAttribute('data-label') || '';
+      if (nodeId) nodeId.value = id;
+      if (nodeLabel) nodeLabel.value = label || '—';
+
+      try {
+        const m = bootstrap.Modal.getInstance(modalEl);
+        if (m) m.hide();
+      } catch(e) {}
+    });
+  }
+
+  if (clearBtn) clearBtn.addEventListener('click', function(){
+    if (nodeId) nodeId.value = '';
+    if (nodeLabel) nodeLabel.value = '—';
+  });
+})();
+</script>
+
+{% endblock %}

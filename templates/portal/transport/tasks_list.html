@@ -1,0 +1,96 @@
+{% extends "portal/layout.html" %}
+{% block title %}مهام السائقين{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-list-check"></i> مهام السائقين</h5>
+  {% if can_create %}
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_task_new') }}">مهمة جديدة</a>
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-6">
+      <label class="form-label">بحث</label>
+      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="عنوان/وصف...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="status">
+        <option value="" {% if not status %}selected{% endif %}>الكل</option>
+        <option value="PENDING" {% if status=='PENDING' %}selected{% endif %}>قيد التنفيذ</option>
+        <option value="IN_PROGRESS" {% if status=='IN_PROGRESS' %}selected{% endif %}>جاري</option>
+        <option value="DONE" {% if status=='DONE' %}selected{% endif %}>منجزة</option>
+        <option value="CANCELLED" {% if status=='CANCELLED' %}selected{% endif %}>ملغاة</option>
+      </select>
+    </div>
+    <div class="col-md-3 d-flex gap-2">
+      <button class="btn btn-primary">تطبيق</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_tasks') }}">تفريغ</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>#</th>
+          <th>المهمة</th>
+          <th>السائق</th>
+          <th>تاريخ الاستحقاق</th>
+          <th>الحالة</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td class="text-muted">#{{ it.id }}</td>
+            <td>
+              <div class="fw-semibold">{{ it.title }}</div>
+              <div class="text-muted small">{{ it.description or '' }}</div>
+            </td>
+            <td>{{ it.driver.name if it.driver else '-' }}</td>
+            <td class="text-muted">{{ it.due_date or '-' }}</td>
+            <td>
+              {% if it.status == 'PENDING' %}
+                <span class="badge text-bg-warning">قيد التنفيذ</span>
+              {% elif it.status == 'IN_PROGRESS' %}
+                <span class="badge text-bg-info">جاري</span>
+              {% elif it.status == 'DONE' %}
+                <span class="badge text-bg-success">منجزة</span>
+              {% else %}
+                <span class="badge text-bg-secondary">ملغاة</span>
+              {% endif %}
+            </td>
+
+<td class="text-end">
+  {% if can_edit %}
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_task_edit', task_id=it.id) }}">تعديل</a>
+  {% endif %}
+  {% if can_cancel and it.status not in ['CANCELLED','DONE'] %}
+    <form method="post" action="{{ url_for('portal.transport_task_cancel', task_id=it.id) }}" class="d-inline"
+          onsubmit="return confirm('هل تريد إلغاء هذه المهمة؟');">
+      <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء</button>
+    </form>
+  {% endif %}
+  {% if not can_edit and not can_cancel %}
+    <span class="text-muted">-</span>
+  {% endif %}
+</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

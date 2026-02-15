@@ -1,0 +1,96 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إدخال/تعديل حالة خاصة{% endblock %}
+
+{% set status_opts = [
+  ('PRESENT','حضور'),
+  ('ABSENT','غياب'),
+  ('MISSION','مأمورية/مهمة'),
+  ('LEAVE','إجازة'),
+  ('HOLIDAY','عطلة'),
+  ('OFF','راحة')
+] %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-exclamation-circle"></i> إدخال/تعديل حالة خاصة</h4>
+      <div class="text-muted">تُستخدم لاحقًا كاستثناءات من الخصومات حسب القواعد.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_special_log', kind='STATUS') }}">
+      <i class="bi bi-list"></i> السجل
+    </a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post" class="row g-3" autocomplete="off">
+    <input type="hidden" name="target_kind" value="USER">
+    <input type="hidden" name="action" id="actionField" value="save">
+
+    <div class="col-md-4">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id" required>
+        <option value="">اختر موظفًا</option>
+        {% for u in users %}
+          <option value="{{ u.id }}">{{ u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-4">
+      <label class="form-label">نوع الحالة</label>
+      <select class="form-select" name="status_type" required>
+        {% for k, label in status_opts %}
+          <option value="{{ k }}">{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="day_from" value="{{ today }}" required>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="day_to" value="{{ today }}" required>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">من وقت (اختياري)</label>
+      <input class="form-control" type="time" name="start_time">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">إلى وقت (اختياري)</label>
+      <input class="form-control" type="time" name="end_time">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">سماح صباحي (دقائق)</label>
+      <input class="form-control" type="number" name="allow_morning_minutes" min="0" placeholder="0">
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">سماح مسائي (دقائق)</label>
+      <input class="form-control" type="number" name="allow_evening_minutes" min="0" placeholder="0">
+    </div>
+
+    <div class="col-12">
+      <label class="form-label">ملاحظات</label>
+      <textarea class="form-control" name="note" rows="2" placeholder="اكتب ملاحظة (اختياري)"></textarea>
+    </div>
+
+    <div class="col-12 d-flex gap-2 justify-content-end">
+      <button type="reset" class="btn btn-info">إعادة تعيين</button>
+      <button type="submit" class="btn btn-primary" onclick="document.getElementById('actionField').value='save'">
+        حفظ
+      </button>
+      <button type="submit" class="btn btn-outline-primary" onclick="document.getElementById('actionField').value='calc'">
+        حفظ واحتساب
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

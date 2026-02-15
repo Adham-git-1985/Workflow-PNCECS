@@ -1,0 +1,93 @@
+{# Partial: OrgNode tree picker (HTML snippet) #}
+
+{% set _selected = selected_id if selected_id is defined else None %}
+
+<style>
+  .org-tree-wrap { border: 1px solid rgba(0,0,0,.08); border-radius: 10px; padding: 12px; background: #fff; }
+  .org-tree ul { list-style: none; margin: 0; padding: 0; }
+  .org-tree .org-ul { padding-right: 1.25rem; }
+  .org-tree .org-li { position: relative; margin: 6px 0; }
+  .org-tree .org-li::before { content: ''; position: absolute; right: .35rem; top: 0; bottom: 0; width: 1px; background: rgba(0,0,0,.08); }
+  .org-tree .org-li.level-0::before { display: none; }
+  .org-tree details { border-right: 3px solid rgba(13,110,253,.18); padding-right: .75rem; }
+  .org-tree .org-leaf { border-right: 3px solid rgba(25,135,84,.18); padding-right: .75rem; padding-top: .25rem; padding-bottom: .25rem; }
+  .org-tree summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; padding: .25rem .25rem; }
+  .org-tree summary::-webkit-details-marker { display: none; }
+  .org-tree .org-title { font-weight: 600; }
+  .org-tree .org-meta { color: #6c757d; font-size: .85rem; }
+  .org-tree code { font-size: .85em; }
+</style>
+
+
+<div class="d-flex flex-wrap gap-2 align-items-center mb-2">
+  <input class="form-control form-control-sm" data-tree-search placeholder="ابحث داخل الشجرة…" style="max-width: 280px;">
+  <button class="btn btn-sm btn-outline-secondary" type="button" data-tree-expand>توسيع</button>
+  <button class="btn btn-sm btn-outline-secondary" type="button" data-tree-collapse>طيّ</button>
+  {% if mode %}
+    <span class="badge bg-secondary-subtle text-secondary border">{{ mode }}</span>
+  {% endif %}
+</div>
+
+{% if tree and tree|length > 0 %}
+  <div class="org-tree-wrap org-tree" data-tree-root style="max-height: 60vh; overflow: auto;">
+
+    {% macro render_node(node, level=0) %}
+      <li class="org-li level-{{ level }}" data-node-text="{{ (node.type_name ~ ' ' ~ node.name_ar ~ ' ' ~ (node.code or '') )|lower }}">
+        {% if node.children and node.children|length > 0 %}
+          <details class="org-details" {% if level < 1 %}open{% endif %}>
+            <summary class="d-flex align-items-center gap-2 flex-wrap">
+              <span class="badge bg-primary-subtle text-primary border">{{ node.type_name or node.type_code or 'NODE' }}</span>
+              <span class="org-title">{{ node.name_ar }}</span>
+              {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
+
+              {% if _selected and _selected == node.id %}
+                <span class="badge bg-success-subtle text-success border">مختار</span>
+              {% endif %}
+
+              <span class="ms-auto"></span>
+
+              {% if node.eligible %}
+                <button class="btn btn-sm btn-outline-primary pick-node" type="button" data-id="{{ node.id }}" data-label="{{ node.label|e }}">اختيار</button>
+              {% else %}
+                <button class="btn btn-sm btn-outline-secondary" type="button" disabled>غير مسموح</button>
+              {% endif %}
+
+            </summary>
+            <ul class="org-ul">
+              {% for ch in node.children %}
+                {{ render_node(ch, level + 1) }}
+              {% endfor %}
+            </ul>
+          </details>
+        {% else %}
+          <div class="org-leaf d-flex align-items-center gap-2 flex-wrap">
+            <span class="badge bg-success-subtle text-success border">{{ node.type_name or node.type_code or 'NODE' }}</span>
+            <span class="org-title">{{ node.name_ar }}</span>
+            {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
+
+            {% if _selected and _selected == node.id %}
+              <span class="badge bg-success-subtle text-success border">مختار</span>
+            {% endif %}
+
+            <span class="ms-auto"></span>
+
+            {% if node.eligible %}
+              <button class="btn btn-sm btn-outline-primary pick-node" type="button" data-id="{{ node.id }}" data-label="{{ node.label|e }}">اختيار</button>
+            {% else %}
+              <button class="btn btn-sm btn-outline-secondary" type="button" disabled>غير مسموح</button>
+            {% endif %}
+          </div>
+        {% endif %}
+      </li>
+    {% endmacro %}
+
+    <ul class="org-ul">
+      {% for node in tree %}
+        {{ render_node(node, 0) }}
+      {% endfor %}
+    </ul>
+  </div>
+
+{% else %}
+  <div class="alert alert-light text-center text-muted mb-0">لا توجد عناصر لعرضها في الشجرة.</div>
+{% endif %}

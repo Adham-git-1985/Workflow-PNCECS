@@ -1,0 +1,83 @@
+{% extends 'portal/hr/base.html' %}
+{% block hr_content %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h4 class="mb-0">{{ 'تعديل مهمة رسمية' if edit_mode else 'إدخال مهمة رسمية' }}</h4>
+  <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_official_missions') }}">سجل المهمات الرسمية</a>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-6">
+        <label class="form-label">الموظف</label>
+        <select class="form-select" name="user_id" {{ 'disabled' if edit_mode else '' }}>
+          <option value="">— اختر —</option>
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if (row and row.user_id==u.id) %}selected{% endif %}>{{ u.full_name or u.email }}</option>
+          {% endfor %}
+        </select>
+        {% if edit_mode %}<input type="hidden" name="user_id" value="{{ row.user_id }}">{% endif %}
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">الحالة</label>
+        <select class="form-select" name="status_def_id">
+          <option value="">— بدون —</option>
+          {% for s in status_defs %}
+            <option value="{{ s.id }}" {% if row and row.status_def_id==s.id %}selected{% endif %}>{{ s.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">عنوان المهمة</label>
+        <input class="form-control" name="title" value="{{ row.title if row else '' }}" required>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input class="form-control" type="date" name="start_day" value="{{ row.start_day if row else today }}" required>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input class="form-control" type="date" name="end_day" value="{{ row.end_day if row else today }}" required>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">عدد الأيام</label>
+        <input class="form-control" type="number" min="0" name="days" value="{{ row.days if row and row.days is not none else '' }}" placeholder="تلقائي">
+      </div>
+
+      <div class="col-md-9">
+        <label class="form-label">مكان انعقاد المهمة</label>
+        <input class="form-control" name="destination" value="{{ row.destination if row else '' }}">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">تفاصيل</label>
+        <textarea class="form-control" name="note" rows="3">{{ row.note if row else '' }}</textarea>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">رفع مرفق</label>
+        <input class="form-control" type="file" name="attachment">
+        {% if edit_mode and row.attachments %}
+          <div class="mt-2 small">
+            <div class="fw-semibold mb-1">المرفقات الحالية:</div>
+            {% for a in row.attachments %}
+              <a href="{{ url_for('portal.hr_mission_attachment_download', att_id=a.id) }}">{{ a.original_name or 'ملف' }}</a>{% if not loop.last %} • {% endif %}
+            {% endfor %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="card-footer d-flex gap-2">
+    <button class="btn btn-primary" type="submit">حفظ</button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_official_missions') }}">إلغاء</a>
+  </div>
+</form>
+
+{% endblock %}
+{% block content %}{{ self.hr_content() }}{% endblock %}

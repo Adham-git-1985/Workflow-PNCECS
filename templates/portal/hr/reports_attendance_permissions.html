@@ -1,0 +1,138 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير الحضور والانصراف والمغادرات{% endblock %}
+
+{% macro fmt_dt(v) -%}
+  {% if v is none %}—
+  {% elif v is string %}{{ v }}
+  {% else %}{{ v.strftime('%Y-%m-%d %H:%M') }}
+  {% endif %}
+{%- endmacro %}
+
+{% macro fmt_time(v) -%}
+  {% if v is none %}—
+  {% elif v is string %}{{ v }}
+  {% else %}{{ v.strftime('%H:%M') }}
+  {% endif %}
+{%- endmacro %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-clock-history"></i> تقرير الحضور والانصراف والمغادرات</h4>
+      <div class="text-muted">فلترة حسب الموظف/موقع العمل/نطاق التاريخ + نوع التعيين + نوع الحركات + مقارنة المدة الفعلية.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_attendance_permissions', user_id=selected_user_id or '', work_location_id=selected_work_location_id or '', appointment_type_id=selected_appointment_type_id or '', from_date=from_date, to_date=to_date, move_kind=move_kind, dur_op=dur_op, hours=hours_value, export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="" {% if not selected_user_id %}selected{% endif %}>الكل</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user_id==u.id %}selected{% endif %}>{{ u.full_name or u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="" {% if not selected_work_location_id %}selected{% endif %}>بدون اختيار</option>
+        {% for it in work_locations %}
+          <option value="{{ it.id }}" {% if selected_work_location_id==it.id %}selected{% endif %}>{{ it.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from_date" value="{{ from_date }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to_date" value="{{ to_date }}">
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">نوع التعيين</label>
+      <select class="form-select" name="appointment_type_id">
+        <option value="" {% if not selected_appointment_type_id %}selected{% endif %}>بدون اختيار</option>
+        {% for it in appointment_types %}
+          <option value="{{ it.id }}" {% if selected_appointment_type_id==it.id %}selected{% endif %}>{{ it.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">نوع الحركات</label>
+      <select class="form-select" name="move_kind">
+        <option value="" {% if not move_kind %}selected{% endif %}>بدون اختيار</option>
+        <option value="attendance" {% if move_kind=='attendance' %}selected{% endif %}>الدوام فقط</option>
+        <option value="private" {% if move_kind=='private' %}selected{% endif %}>المغادرات الخاصة فقط</option>
+        <option value="official" {% if move_kind=='official' %}selected{% endif %}>المغادرات الرسمية فقط</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">المدة الفعلية</label>
+      <select class="form-select" name="dur_op">
+        <option value="" {% if not dur_op %}selected{% endif %}>بدون اختيار</option>
+        <option value="eq" {% if dur_op=='eq' %}selected{% endif %}>يساوي</option>
+        <option value="gt" {% if dur_op=='gt' %}selected{% endif %}>أكبر من</option>
+        <option value="gte" {% if dur_op=='gte' %}selected{% endif %}>أكبر من أو يساوي</option>
+        <option value="lt" {% if dur_op=='lt' %}selected{% endif %}>أقل من</option>
+        <option value="lte" {% if dur_op=='lte' %}selected{% endif %}>أقل من أو يساوي</option>
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">عدد الساعات</label>
+      <input class="form-control" type="number" step="0.25" min="0" name="hours" value="{{ hours_value }}">
+    </div>
+
+    <div class="col-md-4">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="text-muted small mb-2">عدد النتائج: {{ rows|length }}</div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>الموظف</th>
+          <th>نوع الحركة</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>المدة (ساعات)</th>
+          <th>ملاحظات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.get('date') or '—' }}</td>
+            <td>{{ (r.get('user').full_name or r.get('user').name or r.get('user').email) if r.get('user') else '—' }}</td>
+            <td>{{ r.get('label') or '—' }}</td>
+            <td>{{ fmt_time(r.get('from')) }}</td>
+            <td>{{ fmt_time(r.get('to')) }}</td>
+            <td>{% if r.get('hours') is not none %}{{ '%.2f'|format(r.get('hours')) }}{% else %}—{% endif %}</td>
+            <td>{{ r.get('note') or '' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

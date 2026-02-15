@@ -1,0 +1,100 @@
+{% extends "portal/layout.html" %}
+{% block title %}تسجيل صادر{% endblock %}
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4" id="outboundNewPrint">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h5 class="mb-0">تسجيل صادر</h5>
+    <div class="d-flex gap-2">
+      <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#outboundNewPrint')">
+        <i class="bi bi-printer"></i> طباعة
+      </button>
+      <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">
+        <i class="bi bi-question-circle"></i> الدليل
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.outbound_list') }}">رجوع</a>
+    </div>
+  </div>
+
+  <form method="post" enctype="multipart/form-data">
+    <div class="row g-3">
+      <div class="col-md-3">
+        <label class="form-label">رقم الصادر</label>
+        <input class="form-control" name="ref_no" value="{{ request.form.get('ref_no','') }}">
+        <div class="form-text">اختياري (يمكن تركه فارغًا).</div>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">تاريخ الإرسال <span class="text-danger">*</span></label>
+        <input class="form-control" type="date" name="sent_date" required value="{{ request.form.get('sent_date','') }}">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">التصنيف</label>
+        <select class="form-select" name="category_code" id="category_code">
+          {% for c in cat_rows %}
+            <option value="{{ c.code }}">{{ c.label }} ({{ c.code }})</option>
+          {% endfor %}
+          <option value="__OTHER__">أخرى…</option>
+        </select>
+      </div>
+
+      <div class="col-md-3" id="category_other_wrap" style="display:none;">
+        <label class="form-label">تصنيف آخر</label>
+        <input class="form-control" name="category_other" placeholder="مثال: FIN / HR / ...">
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label">الجهة المستلمة</label>
+        <select class="form-select" name="recipient_val" id="recipient_val">
+          <option value="">— اختر —</option>
+          {% for p in recipient_rows %}
+            <option value="{{ p.label }}">{{ p.label }}</option>
+          {% endfor %}
+          <option value="__OTHER__">أخرى…</option>
+        </select>
+      </div>
+
+      <div class="col-md-6" id="recipient_other_wrap" style="display:none;">
+        <label class="form-label">جهة مستلمة أخرى</label>
+        <input class="form-control" name="recipient_other" placeholder="اكتب اسم الجهة">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">الموضوع <span class="text-danger">*</span></label>
+        <input class="form-control" name="subject" required value="{{ request.form.get('subject','') }}">
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">المحتوى</label>
+        <textarea class="form-control" name="body" rows="5">{{ request.form.get('body','') }}</textarea>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">مرفقات (يمكن اختيار عدة ملفات)</label>
+        <input class="form-control" type="file" name="files" multiple required>
+        <div class="form-text">الأنواع المدعومة: PDF/صور/Word/Excel/PPT/ZIP…</div>
+      </div>
+
+      <div class="col-12 d-flex gap-2">
+        <button class="btn btn-primary" type="submit">حفظ</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.outbound_list') }}">إلغاء</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+<script>
+(function(){
+  function toggleOther(selectId, wrapId){
+    var sel = document.getElementById(selectId);
+    var wrap = document.getElementById(wrapId);
+    if(!sel || !wrap) return;
+    function update(){ wrap.style.display = (sel.value === "__OTHER__") ? "" : "none"; }
+    sel.addEventListener("change", update);
+    update();
+  }
+  toggleOther("category_code","category_other_wrap");
+  toggleOther("recipient_val","recipient_other_wrap");
+})();
+</script>
+{% endblock %}

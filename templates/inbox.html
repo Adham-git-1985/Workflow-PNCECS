@@ -1,0 +1,137 @@
+{% extends "layout.html" %}
+{% block title %}Inbox{% endblock %}
+
+{% block content %}
+
+{% include "components/advanced_filters.html" %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h3 class="mb-1">📥 صندوق الوارد</h3>
+        <small class="text-muted">الطلبات التي تحتاج إلى إجراء</small>
+    </div>
+    <a href="{{ url_for('create_request') }}" class="btn btn-soft-blue">
+        ➕ طلب جديد
+    </a>
+</div>
+
+<!-- Main Counters -->
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card text-center shadow-sm border-primary">
+      <div class="card-body">
+        <small class="text-muted">Total</small>
+        <h3 class="text-primary">{{ counters.total }}</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card text-center shadow-sm border-success">
+      <div class="card-body">
+        <small class="text-muted">Approved</small>
+        <h3 class="text-success">{{ counters.approved }}</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card text-center shadow-sm border-danger">
+      <div class="card-body">
+        <small class="text-muted">Rejected</small>
+        <h3 class="text-danger">{{ counters.rejected }}</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-3">
+    <div class="card text-center shadow-sm border-warning">
+      <div class="card-body">
+        <small class="text-muted">In Progress</small>
+        <h3 class="text-warning">{{ counters.in_progress }}</h3>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SLA Counters -->
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card text-center shadow-sm border-success">
+      <div class="card-body">
+        <small class="text-muted">On Track</small>
+        <h3 class="text-success">{{ sla_counters.on_track }}</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card text-center shadow-sm border-warning">
+      <div class="card-body">
+        <small class="text-muted">SLA Breached</small>
+        <h3 class="text-warning">{{ sla_counters.breached }}</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card text-center shadow-sm border-danger">
+      <div class="card-body">
+        <small class="text-muted">Escalated</small>
+        <h3 class="text-danger">{{ sla_counters.escalated }}</h3>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Requests Table -->
+<div class="table-responsive">
+<table class="table table-hover align-middle">
+  <thead class="table-light">
+    <tr>
+      <th>رقم</th>
+      <th>العنوان</th>
+      <th>الحالة</th>
+      <th>SLA</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for req in requests %}
+    <tr>
+      <td>{{ req.id }}</td>
+      <td>{{ req.title }}</td>
+      <td>
+        <span class="badge bg-primary">{{ req.status }}</span>
+      </td>
+      <td>
+        {% set sla = get_sla_state(req) %}
+        {% if sla == "ON_TRACK" %}
+          <span class="badge bg-success">On Track</span>
+        {% elif sla == "BREACHED" %}
+          <span class="badge bg-warning text-dark">Breached</span>
+        {% elif sla == "ESCALATED" %}
+          <span class="badge bg-danger">Escalated</span>
+        {% else %}
+          <span class="text-muted">—</span>
+        {% endif %}
+      </td>
+      <td>
+        <a href="{{ url_for('workflow.view_request', request_id=req.id) }}"
+           class="btn btn-sm btn-primary">
+          إجراء
+        </a>
+      </td>
+    </tr>
+  {% else %}
+    <tr>
+      <td colspan="5" class="text-center text-muted py-4">
+        لا توجد طلبات حالياً
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% endblock %}

@@ -1,0 +1,142 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}سجل الحالات الخاصة{% endblock %}
+
+{% set status_opts = ['PRESENT','ABSENT','MISSION','LEAVE','HOLIDAY','OFF'] %}
+{% set exc_opts = ['MORNING_LATE','EARLY_EXIT','SPECIAL_PERMISSION','UNAUTHORIZED_PERMISSION','LEAVES'] %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="specialLogPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-list-check"></i> سجل الحالات الخاصة</h4>
+      <div class="text-muted">عرض حالات/استثناءات الموظفين المستخدمة لاحقًا في خصومات الدوام.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_att_special_status_new') }}"><i class="bi bi-plus-circle"></i> إدخال حالة</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_att_special_exception_new') }}"><i class="bi bi-plus-circle"></i> إدخال استثناء</a>
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">النوع</label>
+      <select class="form-select" name="kind">
+        <option value="" {% if not kind %}selected{% endif %}>بدون تحديد</option>
+        <option value="STATUS" {% if kind == 'STATUS' %}selected{% endif %}>حالة</option>
+        <option value="EXCEPTION" {% if kind == 'EXCEPTION' %}selected{% endif %}>استثناء</option>
+      </select>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="">بدون تحديد</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if user_id|int == u.id %}selected{% endif %}>{{ u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="date_from" value="{{ date_from }}">
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="date_to" value="{{ date_to }}">
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">حالة</label>
+      <select class="form-select" name="status">
+        <option value="">بدون تحديد</option>
+        {% for k in status_opts %}
+          <option value="{{ k }}" {% if status_filter == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">(يُستخدم عند نوع = حالة)</div>
+    </div>
+
+    <div class="col-md-2">
+      <label class="form-label">استثناء</label>
+      <select class="form-select" name="exception">
+        <option value="">بدون تحديد</option>
+        {% for k in exc_opts %}
+          <option value="{{ k }}" {% if exception_filter == k %}selected{% endif %}>{{ k }}</option>
+        {% endfor %}
+      </select>
+      <div class="form-text">(يُستخدم عند نوع = استثناء)</div>
+    </div>
+
+    <div class="col-md-2">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الموظف</th>
+          <th>النوع</th>
+          <th>القيمة</th>
+          <th>من</th>
+          <th>إلى</th>
+          <th>وقت</th>
+          <th>سماح</th>
+          <th>ملاحظة</th>
+          <th>تاريخ</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td>
+              <div class="fw-bold">{{ r.user.name if r.user else r.user_id }}</div>
+              <div class="text-muted small">{{ r.user.email if r.user else '' }}</div>
+            </td>
+            <td>
+              {% if r.kind == 'STATUS' %}<span class="badge text-bg-primary">حالة</span>
+              {% elif r.kind == 'EXCEPTION' %}<span class="badge text-bg-warning">استثناء</span>
+              {% else %}<span class="badge text-bg-secondary">{{ r.kind }}</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">
+              {% if r.kind == 'STATUS' %}{{ r.status }}{% else %}{{ r.field }}{% endif %}
+            </td>
+            <td class="text-muted">{{ r.day }}</td>
+            <td class="text-muted">{{ r.day_to or r.day }}</td>
+            <td class="text-muted small">
+              {% if r.start_time or r.end_time %}{{ (r.start_time or '') }} → {{ (r.end_time or '') }}{% else %}-{% endif %}
+            </td>
+            <td class="text-muted small">
+              {{ (r.allow_morning_minutes or 0) }} / {{ (r.allow_evening_minutes or 0) }}
+            </td>
+            <td class="text-muted small">{{ r.note or '' }}</td>
+            <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
+            <td class="text-end">
+              {% if can_manage %}
+                <form method="post" action="{{ url_for('portal.hr_att_special_delete', row_id=r.id) }}" onsubmit="return confirm('حذف السجل؟');" class="d-inline">
+                  <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i></button>
+                </form>
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        {% if not rows %}
+          <tr><td colspan="11" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,67 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل أدمن المستودع" %}
+{% set page_subtitle = "إدارة ملفات المستودع + السجلات + الصلاحيات والتقارير" %}
+
+{% block guide_body %}
+
+<div class="alert alert-info py-2 mb-3">
+  <div class="fw-bold">هذه الصفحة خاصة بالمشرفين</div>
+  <div class="small text-muted">تظهر فقط لمن لديه صلاحيات إدارة المستودع (STORE_MANAGE / STORE_EXPORT).</div>
+</div>
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) الصلاحيات الأساسية</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>STORE_READ</strong> عرض المستودع.</li>
+      <li><strong>STORE_MANAGE</strong> رفع/تعديل/حذف/تنظيم.</li>
+      <li><strong>STORE_EXPORT</strong> تصدير/تحميل جماعي حسب السياسة.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">2) هيكلية المستودع (أفضل ممارسة)</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>اعتماد تصنيف واضح: <strong>نوع الملف</strong> → <strong>السنة</strong> → <strong>القسم</strong> (حسب شاشات النظام).</li>
+      <li>توحيد أسماء الملفات: (التاريخ - الموضوع - رقم المرجع).</li>
+      <li>اعتماد سياسة: ما الذي يرفع للمستودع؟ وما الذي يرفع للأرشفة؟</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">3) الرفع والتنظيم</summary>
+  <div class="mt-2">
+    <ol class="mb-0">
+      <li>افتح صفحة <strong>المستودع</strong> ثم اختر <strong>رفع ملف</strong>.</li>
+      <li>حدد التصنيف/المجلد، ثم ارفع الملف.</li>
+      <li>تأكد من ظهور الملف في <strong>السجل</strong> مع بياناته الصحيحة.</li>
+    </ol>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">4) السجلات + الطباعة</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>صفحات السجل تحتوي زر <strong>طباعة</strong> (أو من الشريط العلوي).</li>
+      <li>عند الطباعة: يتم طباعة المحتوى المركزي فقط لتسهيل الأرشفة الورقية.</li>
+    </ul>
+    <div class="small text-muted">يفضل الطباعة بعد فرز السجل/التصفية للحصول على تقرير مختصر.</div>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">5) ملاحظات أمان</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>لا تمنح <strong>STORE_EXPORT</strong> إلا عند الحاجة (لأنه يسمح بتنزيل جماعي).</li>
+      <li>التزم بسياسة حذف/أرشفة الملفات حسب تعليمات الإدارة.</li>
+      <li>يفضل ربط كل عملية تغيير بسجل تدقيق (Audit) عند توفره في الشاشة.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">📋 تفاصيل التقييم</h3>
+    <small class="text-muted">تحويل الدرجة: (0..100) → (0..5) مع تقريب 0.1.</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('admin.evaluations_index') }}">← رجوع</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('users.help_performance_admin_guide') }}"><i class="bi bi-book"></i> دليل</a>
+    <button class="btn btn-outline-primary" onclick="window.print()">🖨️ طباعة</button>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    {% set emp = run.user.name or run.user.username or run.user.email %}
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="mb-1"><strong>الموظف:</strong> {{ emp }}</div>
+        <div class="mb-1"><strong>الفترة:</strong>
+          {% if run.period_type == 'MONTHLY' %}
+            شهري {{ run.year }}-{{ '%02d'|format(run.month or 0) }}
+          {% else %}
+            سنوي {{ run.year }}
+          {% endif %}
+        </div>
+        <div class="mb-1"><strong>التاريخ:</strong> {{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '' }}</div>
+      </div>
+      <div class="col-md-6 text-md-end">
+        <div class="fs-5"><strong>النتيجة:</strong> {{ '%.1f'|format(run.score_5 or 0) }}/5</div>
+        <div class="text-muted">({{ run.score_100 or 0 }}/100)</div>
+      </div>
+    </div>
+
+    {% if run.summary %}
+      <hr>
+      <div><strong>ملخص:</strong> {{ run.summary }}</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <h5 class="mb-3">المؤشرات</h5>
+    {% set m = breakdown.metrics or {} %}
+    <div class="row g-3">
+      <div class="col-md-3"><div class="border rounded p-2"><strong>الحركات</strong><div>{{ m.total_actions or 0 }}</div></div></div>
+      <div class="col-md-3"><div class="border rounded p-2"><strong>الموافقات</strong><div>{{ m.approvals or 0 }}</div></div></div>
+      <div class="col-md-3"><div class="border rounded p-2"><strong>الرفض</strong><div>{{ m.rejections or 0 }}</div></div></div>
+      <div class="col-md-3"><div class="border rounded p-2"><strong>الملفات</strong><div>{{ (m.archive_uploads or 0) + (m.audit_archive_uploads or 0) }}</div></div></div>
+    </div>
+
+    <div class="row g-3 mt-1">
+      <div class="col-md-4"><div class="border rounded p-2"><strong>التزام الوقت (SLA)</strong><div>{{ (m.sla_ratio*100)|round|int if m.sla_ratio is not none else '—' }}%</div></div></div>
+      <div class="col-md-4"><div class="border rounded p-2"><strong>توثيق الرفض</strong><div>{{ (m.rej_note_ratio*100)|round|int if m.rej_note_ratio is not none else '—' }}%</div></div></div>
+      <div class="col-md-4"><div class="border rounded p-2"><strong>إغلاق طلباته (كمقدّم)</strong><div>{{ (m.requester_closure_ratio*100)|round|int if m.requester_closure_ratio is not none else '—' }}%</div></div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h5 class="mb-3">تفصيل احتساب الدرجة</h5>
+    {% set comps = breakdown.components or {} %}
+    <div class="table-responsive">
+      <table class="table table-sm table-striped align-middle">
+        <thead>
+          <tr>
+            <th>المحور</th>
+            <th>الوزن الفعلي %</th>
+            <th>القيمة</th>
+            <th>الناتج</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for key, c in comps.items() %}
+            <tr>
+              <td>{{ key }}</td>
+              <td>{{ c.effective_weight or '' }}</td>
+              <td>
+                {% if c.value is mapping %}
+                  <ul class="mb-0 small">
+                    {% for k, v in c.value.items() %}
+                      <li><strong>{{ k }}:</strong> {{ v }}</li>
+                    {% endfor %}
+                  </ul>
+                {% elif c.value is sequence and c.value is not string %}
+                  <span class="small">{{ c.value|join('، ') }}</span>
+                {% else %}
+                  {{ c.value }}
+                {% endif %}
+              </td>
+              <td>{{ c.score_part or '' }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="4" class="text-muted">لا يوجد تفصيل.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if breakdown.notes %}
+      <hr>
+      <ul class="mb-0">
+        {% for n in breakdown.notes %}
+          <li>{{ n }}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

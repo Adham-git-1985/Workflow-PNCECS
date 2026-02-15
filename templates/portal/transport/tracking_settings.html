@@ -1,0 +1,105 @@
+{% extends "portal/layout.html" %}
+{% block title %}إعدادات التتبع{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-broadcast"></i> إعدادات تتبع المركبات (الخيار C)</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_home') }}">رجوع</a>
+</div>
+
+<div class="alert alert-info">
+  <b>الخيار C:</b> تم تجهيز شاشة الإعدادات وربط المركبات بحقول (TrackerId/IMEI) + تفعيل/إيقاف التتبع لكل مركبة.
+  عند توفير أجهزة التتبع لاحقاً (ومعرفة نوع الـ API للمزوّد)، يمكننا تنفيذ المزامنة الفعلية للنقاط والمسارات.
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <form method="post">
+    <div class="row g-3">
+      <div class="col-md-2">
+        <label class="form-label">تفعيل التتبع</label>
+        <select class="form-select" name="enabled" {% if not can_manage %}disabled{% endif %}>
+          <option value="0" {% if settings.enabled != '1' %}selected{% endif %}>لا</option>
+          <option value="1" {% if settings.enabled == '1' %}selected{% endif %}>نعم</option>
+        </select>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">المزوّد</label>
+        <input class="form-control" name="provider" value="{{ settings.provider }}" placeholder="اسم المزوّد" {% if not can_manage %}disabled{% endif %}>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label">Base URL</label>
+        <input class="form-control" name="base_url" value="{{ settings.base_url }}" placeholder="https://api.vendor.com" {% if not can_manage %}disabled{% endif %}>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">Sync Interval (sec)</label>
+        <input class="form-control" type="number" min="10" name="sync_sec" value="{{ settings.sync_sec }}" {% if not can_manage %}disabled{% endif %}>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label">API Token</label>
+        <input class="form-control" name="token" value="{{ settings.token }}" placeholder="token..." {% if not can_manage %}disabled{% endif %}>
+        <div class="form-text">
+          ملاحظة: حالياً يتم تخزين القيمة في SystemSetting (حد 255 حرف). إذا كان التوكن أطول، الأفضل وضعه في Environment Variable.
+        </div>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <div class="fw-semibold">ربط المركبات بأجهزة التتبع</div>
+      {% if not can_manage %}
+        <span class="badge text-bg-secondary">عرض فقط</span>
+      {% endif %}
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>المركبة</th>
+            <th>TrackerId / IMEI</th>
+            <th>تتبع؟</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v in vehicles %}
+            <tr>
+              <td class="fw-semibold">{{ v.plate_no }}{% if v.label %}<div class="text-muted small">{{ v.label }}</div>{% endif %}</td>
+              <td>
+                <input class="form-control form-control-sm" name="veh_{{ v.id }}_device" value="{{ v.tracking_device_uid or '' }}" {% if not can_manage %}disabled{% endif %}>
+              </td>
+              <td style="width: 120px;">
+                <select class="form-select form-select-sm" name="veh_{{ v.id }}_enabled" {% if not can_manage %}disabled{% endif %}>
+                  <option value="0" {% if not v.tracking_enabled %}selected{% endif %}>لا</option>
+                  <option value="1" {% if v.tracking_enabled %}selected{% endif %}>نعم</option>
+                </select>
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="text-center text-muted py-4">لا توجد مركبات.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if can_manage %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-primary" type="submit">حفظ الإعدادات</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_tracking_settings') }}">إلغاء</a>
+      </div>
+    {% else %}
+      <div class="alert alert-warning mb-0">
+        لتعديل الإعدادات، امنح المستخدم صلاحية <b>TRANSPORT_TRACKING_MANAGE</b>.
+      </div>
+    {% endif %}
+  </form>
+</div>
+
+{% endblock %}

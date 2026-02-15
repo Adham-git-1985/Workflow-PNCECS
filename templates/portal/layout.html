@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}البوابة الإدارية{% endblock %}</title>
+
+  <!-- Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Tajawal:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons/font/bootstrap-icons.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=portal">
+  <style>
+    /* Portal top navbar tweaks */
+    .portal-topnav .navbar-brand{white-space:nowrap; display:inline-flex; align-items:center; gap:.35rem;}
+    .portal-topnav .navbar-nav .nav-link{white-space:nowrap;}
+    .portal-topnav .navbar-nav{gap:.15rem;}
+    .portal-topnav .portal-top-links{flex-wrap:wrap; overflow:visible; white-space:normal; min-width:0;}
+    .portal-topnav .portal-top-links::-webkit-scrollbar{display:none;}
+    .portal-topnav .portal-top-actions{flex-shrink:0; white-space:nowrap;}
+    .portal-topnav .navbar-collapse{gap:.5rem;flex-wrap:wrap;min-width:0; overflow:visible;}
+    [dir="rtl"] .portal-topnav .navbar-collapse{flex-direction:row-reverse;}
+    .portal-topnav .navbar-nav{min-width:0;}
+    .portal-topnav .dropdown-menu{z-index: 2000;}
+    .portal-topnav .portal-user-dd{white-space:nowrap; max-width: 220px; overflow:hidden; text-overflow:ellipsis;}
+    .portal-utilbar{background:#072130;border-bottom:1px solid rgba(255,255,255,.10);} 
+    .portal-utilbar .btn{white-space:nowrap;}
+    .portal-utilbar .container-fluid{gap:.5rem;}
+    .portal-admin-split .portal-admin-toggle{padding-inline:.35rem;}
+    .portal-admin-split .nav-link{white-space:nowrap;}
+
+    .ltr{direction:ltr; text-align:left;}
+    @media (max-width: 991.98px){
+      .portal-topnav .navbar-nav .nav-link{padding-inline:.5rem;}
+      .portal-topnav .portal-user-dd{max-width: 140px;}
+    }
+  </style>
+
+  {% block head %}{% endblock %}
+</head>
+<body class="bg-light">
+
+{% set _flags = portal_flags if portal_flags is defined else {} %}
+{# Delegation-aware UI:
+   - When acting as a delegatee: show permissions/navigation for the effective user.
+   - BUT: SUPER_ADMIN/SUPERADMIN must not lose access or hide navigation even if delegation is active.
+#}
+{% set au = current_user %}
+{% if g is defined and g.effective_user is defined and g.effective_user %}
+  {% set _role_raw = (current_user.role ~ '')|upper %}
+  {% set _is_super = _role_raw.startswith('SUPER') %}
+  {% if not (_is_super or current_user.has_role('SUPERADMIN') or current_user.has_role('SUPER_ADMIN')) %}
+    {% set au = g.effective_user %}
+  {% endif %}
+{% endif %}
+{% set can_enter_portal = (au.has_perm('PORTAL_READ') or au.has_perm('PORTAL_VIEW')) %}
+{% set home_url = (url_for('portal.index') if can_enter_portal else url_for('portal.portal_entry')) %}
+{% set can_corr = _flags.get('can_corr', au.has_perm('CORR_READ')) %}
+{% set can_att  = _flags.get('can_att', au.has_perm('HR_ATTENDANCE_READ')) %}
+{% set can_hr   = _flags.get('can_hr', (
+  au.has_perm('HR_READ')
+  or au.has_perm('HR_ATTENDANCE_READ')
+  or au.has_perm('HR_EMPLOYEE_READ')
+  or au.has_perm('HR_ORGSTRUCTURE_READ')
+  or au.has_perm('HR_MASTERDATA_MANAGE')
+  or au.has_perm('HR_REQUESTS_READ')
+  or au.has_perm('HR_REQUESTS_CREATE')
+  or au.has_perm('HR_REQUESTS_APPROVE')
+  or au.has_perm('HR_REQUESTS_VIEW_ALL')
+)) %}
+{% set can_store = _flags.get('can_store', (au.has_perm('STORE_READ') or au.has_perm('STORE_MANAGE'))) %}
+{% set can_transport = _flags.get('can_transport', (
+  au.has_perm('TRANSPORT_READ')
+  or au.has_perm('TRANSPORT_CREATE')
+  or au.has_perm('TRANSPORT_UPDATE')
+  or au.has_perm('TRANSPORT_DELETE')
+  or au.has_perm('TRANSPORT_APPROVE')
+  or au.has_perm('TRANSPORT_TRACKING_READ')
+  or au.has_perm('TRANSPORT_TRACKING_MANAGE')
+)) %}
+{% set can_admin = _flags.get('can_portal_admin', (au.has_perm('PORTAL_ADMIN_READ') or au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE'))) %}
+{% set can_approve = _flags.get('can_approve', (au.has_perm('HR_REQUESTS_APPROVE') or au.has_perm('HR_REQUESTS_VIEW_ALL'))) %}
+
+{# Attendance default target (used in HR dropdown). #}
+{% set att_url = url_for('portal.hr_my_attendance') %}
+{% if can_att and au.has_perm('HR_ATTENDANCE_CREATE') %}
+  {% set att_url = url_for('portal.hr_attendance_import') %}
+{% endif %}
+
+<div class="portal-utilbar no-print">
+  <div class="container-fluid d-flex align-items-center justify-content-end gap-2">
+
+    {# Quick guide link depends on current module #}
+    {% set _g = None %}
+    {% if request.path.startswith('/portal/transport') %}
+      {% set _g = url_for('users.help_transport_guide') %}
+    {% elif request.path.startswith('/portal/hr') %}
+      {% set _g = url_for('users.help_hr_guide') %}
+    {% elif request.path.startswith('/portal/corr') %}
+      {% set _g = url_for('users.help_correspondence_guide') %}
+    {% elif request.path.startswith('/portal/store') %}
+      {% set _g = url_for('users.help_store_guide') %}
+    {% endif %}
+
+    {% if _g %}
+      <a class="btn btn-outline-light btn-sm" href="{{ _g }}" target="_blank" title="دليل هذا النظام">
+        <i class="bi bi-journal-text"></i>
+        <span class="d-none d-md-inline">دليل النظام</span>
+      </a>
+    {% endif %}
+
+    <button type="button" class="btn btn-outline-light btn-sm" data-bs-toggle="modal" data-bs-target="#systemSearchModal" title="بحث (Ctrl+K)" data-bs-tooltip="1">
+      <i class="bi bi-search"></i>
+    </button>
+
+    <button type="button" class="btn btn-outline-light btn-sm" onclick="wfPrintAuto()" title="طباعة">
+      <i class="bi bi-printer"></i>
+    </button>
+
+    <div class="dropdown">
+      <button class="btn btn-outline-light btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-question-circle"></i> المساعدة
+      </button>
+      <ul class="dropdown-menu">
+        <li><a class="dropdown-item" href="{{ url_for('users.help_index') }}" target="_blank">🧭 مركز الأدلة</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('users.system_search_page') }}" target="_blank">🔎 بحث في النظام</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('users.help_employee_guide') }}" target="_blank">📗 دليل الموظف</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('users.help_workflow_user_guide') }}" target="_blank">🧾 دليل المستخدم: الطلبات والمسارات</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('users.help_leaves_guide') }}" target="_blank">📘 دليل الإجازات</a></li>
+
+        {# HR guides: user guide for anyone with HR access; admin guide only for HR admins #}
+        {% if au.has_perm('HR_READ') or au.has_perm('HR_REQUESTS_VIEW_ALL') or au.has_perm('HR_EMPLOYEE_READ') or au.has_perm('HR_EMPLOYEE_MANAGE') or au.has_perm('HR_MASTERDATA_MANAGE') or au.has_perm('HR_REQUESTS_APPROVE') or au.has_perm('HR_REPORTS_VIEW') or au.has_role('HR_ADMIN') or au.has_role('ADMIN') or au.has_role('SUPER_ADMIN') or au.has_role('SUPERADMIN') or (au.role and 'أدمن' in au.role and ('الموارد' in au.role or 'الموارد البشرية' in au.role)) %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_hr_guide') }}" target="_blank">🧑‍💼 دليل الموارد البشرية</a></li>
+        {% if au.has_perm('HR_MASTERDATA_MANAGE') or au.has_perm('HR_EMPLOYEE_MANAGE') or au.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or au.has_perm('HR_DOCS_MANAGE') or au.has_perm('HR_REQUESTS_VIEW_ALL') or au.has_perm('HR_PERFORMANCE_MANAGE') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_hr_admin_guide') }}" target="_blank">📙 دليل أدمن الموارد البشرية</a></li>
+        {% endif %}
+        {% if au.has_perm('HR_ORG_DYNAMIC_GUIDE_VIEW') or au.has_perm('HR_ORGSTRUCTURE_MANAGE') or au.has_perm('HR_MASTERDATA_MANAGE') or au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or au.has_role('HR_ADMIN') or au.has_role('ADMIN') or au.has_role('SUPER_ADMIN') or au.has_role('SUPERADMIN') or (au.role and 'أدمن' in au.role and ('الموارد' in au.role or 'الموارد البشرية' in au.role)) %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_org_structure_dynamic_guide') }}" target="_blank">🌳 دليل الهيكلية الموحدة (Dynamic)</a></li>
+        {% endif %}
+        {% endif %}
+
+        {% if au.has_perm('WORKFLOW_TEMPLATES_READ') or au.has_perm('WORKFLOW_TEMPLATES_MANAGE') or au.has_perm('WORKFLOW_ROUTING_READ') or au.has_perm('WORKFLOW_ROUTING_MANAGE') or au.has_perm('REQUEST_TYPES_READ') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_workflow_admin_guide') }}" target="_blank">🧩 دليل المسارات والتوجيه (أدمن)</a></li>
+        {% endif %}
+
+        {% if au.has_perm('CORR_READ') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">✉️ دليل الصادر والوارد</a></li>
+        {% if au.has_perm('CORR_LOOKUPS_MANAGE') or au.has_perm('CORR_UPDATE') or au.has_perm('CORR_DELETE') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_correspondence_admin_guide') }}" target="_blank">📙 دليل أدمن الصادر والوارد</a></li>
+        {% endif %}
+        {% endif %}
+
+        {% if au.has_perm('STORE_READ') or au.has_perm('STORE_MANAGE') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_store_guide') }}" target="_blank">📦 دليل المستودع</a></li>
+        {% if au.has_perm('STORE_MANAGE') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_store_admin_guide') }}" target="_blank">📙 دليل أدمن المستودع</a></li>
+        {% endif %}
+        {% endif %}
+
+        {% if au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or au.has_perm('USER_PERMISSIONS_MANAGE') or au.has_perm('PORTAL_ADMIN_READ') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_access_requests_guide') }}" target="_blank">🔑 دليل طلبات الصلاحيات</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('users.help_access_requests_admin_guide') }}" target="_blank">📙 دليل أدمن طلبات الصلاحيات</a></li>
+        {% endif %}
+
+        {% if au.has_perm('TRANSPORT_READ') or au.has_perm('TRANSPORT_CREATE') or au.has_perm('TRANSPORT_APPROVE') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_transport_guide') }}" target="_blank">🚗 دليل الحركة</a></li>
+        {% if au.has_perm('TRANSPORT_UPDATE') or au.has_perm('TRANSPORT_APPROVE') %}
+        <li><a class="dropdown-item" href="{{ url_for('users.help_transport_admin_guide') }}" target="_blank">📙 دليل أدمن الحركة</a></li>
+        {% endif %}
+        {% endif %}
+      </ul>
+    </div>
+
+    <div class="dropdown">
+      <button class="btn btn-outline-light btn-sm dropdown-toggle portal-user-dd" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+        <i class="bi bi-person-circle"></i>
+        <span class="d-none d-md-inline">{{ current_user.full_name }}</span>
+        <span class="d-inline d-md-none">حسابي</span>
+      </button>
+      <ul class="dropdown-menu dropdown-menu-end text-end" style="min-width:260px;">
+        <li class="px-3 py-2">
+          <div class="fw-bold">{{ current_user.full_name }}</div>
+          <div class="small text-muted ltr">{{ current_user.email }}</div>
+        </li>
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <a class="dropdown-item" href="{{ url_for('users.profile') }}" target="_blank">
+            <i class="bi bi-box-arrow-up-left"></i> فتح ملفي في مسار
+          </a>
+        </li>
+      </ul>
+    </div>
+
+    <a class="btn btn-outline-light btn-sm" href="{{ url_for('index') }}" title="العودة لمسار">
+      <i class="bi bi-arrow-return-right"></i><span class="d-none d-md-inline"> العودة لمسار</span>
+    </a>
+
+  </div>
+</div>
+
+<!-- ================= SYSTEM SEARCH MODAL ================= -->
+<div class="modal fade" id="systemSearchModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" style="max-width:720px">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title"><i class="bi bi-search"></i> بحث في النظام</h6>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form id="systemSearchForm" class="mb-2" autocomplete="off">
+          <div class="input-group">
+            <span class="input-group-text"><i class="bi bi-search"></i></span>
+            <input id="systemSearchInput" type="text" class="form-control" placeholder="اكتب اسم شاشة/ميزة/دليل..." />
+            <button class="btn btn-primary" type="submit">بحث</button>
+          </div>
+        </form>
+        <div class="d-flex justify-content-between align-items-center">
+          <div id="systemSearchHint" class="text-muted small">اقتراحات</div>
+          <div class="text-muted small">Ctrl+K</div>
+        </div>
+        <div id="systemSearchResults" class="list-group mt-2" style="max-height: 340px; overflow:auto"></div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <a class="small text-muted" href="{{ url_for('users.system_search_page') }}">فتح صفحة البحث</a>
+        <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">إغلاق</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<nav class="navbar navbar-expand-lg navbar-dark portal-topnav" style="background:#0b2b3d;">
+  <div class="container-fluid">
+    <a class="navbar-brand" href="{{ home_url }}">
+          <span class="d-inline-flex align-items-center gap-2 me-2">
+            <img src="{{ url_for('static', filename='images/logo.png') }}" class="brand-logo portal-brand-logo" alt="Masar">
+            <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" class="brand-logo portal-brand-logo" alt="PNCECS">
+          </span>
+<i class="bi bi-grid-3x3-gap"></i> البوابة الإدارية
+    </a>
+
+    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navPortal">
+      <span class="navbar-toggler-icon"></span>
+    </button>
+
+    <div id="navPortal" class="collapse navbar-collapse">
+      <ul class="navbar-nav me-auto mb-2 mb-lg-0 portal-top-links">
+
+        <li class="nav-item">
+          <a class="nav-link" href="{{ home_url }}">
+            <i class="bi bi-house"></i> الرئيسية
+          </a>
+        </li>
+
+        {% if can_enter_portal %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.circulars_list') }}">
+            <i class="bi bi-megaphone"></i> التعميمات
+          </a>
+        </li>
+        {% endif %}
+
+	        {# الصادر/الوارد (مراسلات) #}
+	        {% if au.has_perm('CORR_READ') %}
+	        <li class="nav-item">
+	          <a class="nav-link" href="{{ url_for('portal.corr_index') }}">
+	            <i class="bi bi-envelope-paper"></i> الصادر والوارد
+	          </a>
+	        </li>
+	        {% endif %}
+
+        {# HR navigation (top bar). #}
+	        {#
+	          IMPORTANT:
+	          - Employees have HR_READ/HR_ATTENDANCE_READ for self-service.
+	          - "شؤون الموظفين" must NOT appear for normal employees.
+	          So we only treat users as HR-admin if they have at least one *administrative* HR permission.
+	        #}
+	        {% set can_hr_admin_tools = (
+	            au.has_perm('HR_MASTERDATA_MANAGE')
+	            or au.has_perm('HR_REQUESTS_VIEW_ALL')
+	            or au.has_perm('HR_EMPLOYEE_MANAGE')
+	            or au.has_perm('HR_ORGSTRUCTURE_MANAGE')
+	            or au.has_perm('HR_ATTENDANCE_CREATE')
+	            or au.has_perm('HR_DOCS_MANAGE')
+	            or au.has_perm('HR_PERFORMANCE_MANAGE')
+	        ) %}
+
+        {% if can_enter_portal %}
+        <li class="nav-item dropdown">
+          <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+            <i class="bi bi-people"></i> إدارة الموارد البشرية
+          </a>
+          <ul class="dropdown-menu">
+            {#
+              Navigation simplification (requested):
+              Under "إدارة الموارد البشرية" keep the same dropdown design, but show ONLY these sections:
+              - خدمات الموظف  (as a single link)
+              - شؤون الموظفين  (as a single link)
+              - التقارير      (as a single link)
+              - إعدادات الدوام (with its children)
+              - إدارة الهيكل التنظيمي (with its children)
+              Each section separated by a divider line.
+            #}
+
+	            {% set _has_hr_affairs = can_hr_admin_tools %}
+            {% set _has_reports = (current_user.is_authenticated and current_user.has_perm('HR_REPORTS_VIEW')) %}
+            {% set _has_att_settings = au.has_perm('HR_MASTERDATA_MANAGE') %}
+            {% set _has_org_manage = (au.has_perm('HR_MASTERDATA_MANAGE') or au.has_perm('HR_ORGSTRUCTURE_READ') or au.has_perm('HR_ORGSTRUCTURE_MANAGE')) %}
+
+            <li>
+              <a class="dropdown-item fw-bold" href="{{ url_for('portal.hr_me_home') }}">
+                <i class="bi bi-person-lines-fill"></i> خدمات الموظف
+              </a>
+            </li>
+
+            {% if _has_hr_affairs %}
+              <li><hr class="dropdown-divider"></li>
+              <li>
+                <a class="dropdown-item fw-bold" href="{{ url_for('portal.hr_home') }}">
+                  <i class="bi bi-people"></i> شؤون الموظفين
+                </a>
+              </li>
+            {% endif %}
+
+            {% if _has_reports %}
+              <li><hr class="dropdown-divider"></li>
+              <li>
+                <a class="dropdown-item fw-bold" href="{{ url_for('portal.hr_reports_home') }}">
+                  <i class="bi bi-graph-up"></i> التقارير
+                </a>
+              </li>
+            {% endif %}
+
+            {% if _has_att_settings %}
+              <li><hr class="dropdown-divider"></li>
+              <li><h6 class="dropdown-header">إعدادات الدوام</h6></li>
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">
+                  <i class="bi bi-gear"></i> إعدادات الدوام
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_schedule_templates') }}">
+                  <i class="bi bi-clock"></i> قوالب الدوام
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_work_policies') }}">
+                  <i class="bi bi-shield-check"></i> سياسات الدوام
+                </a>
+              </li>
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_work_assignments') }}">
+                  <i class="bi bi-person-check"></i> تعيين الدوام
+                </a>
+              </li>
+            {% endif %}
+
+            {% if _has_org_manage %}
+              <li><hr class="dropdown-divider"></li>
+              <li><h6 class="dropdown-header">إدارة الهيكل التنظيمي</h6></li>
+              {% if au.has_perm('HR_MASTERDATA_MANAGE') %}
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.portal_admin_hr_org_structure') }}">
+                  <i class="bi bi-diagram-3"></i> إدارة الهيكل التنظيمي
+                </a>
+              </li>
+              {% endif %}
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.hr_org_structure') }}">
+                  <i class="bi bi-diagram-3"></i> مخطط الهيكل
+                </a>
+              </li>
+              {% if au.has_perm('HR_ORGSTRUCTURE_MANAGE') or au.has_perm('HR_MASTERDATA_MANAGE') %}
+              <li>
+                <a class="dropdown-item" href="{{ url_for('portal.hr_org_assignments') }}">
+                  <i class="bi bi-people"></i> تعيين الموظفين
+                </a>
+              </li>
+              {% endif %}
+            {% endif %}
+          </ul>
+        </li>
+        {% endif %}
+
+
+        {% if can_transport %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.transport_home') }}">
+            <i class="bi bi-truck"></i> الحركة والنقل
+          </a>
+        </li>
+        {% endif %}
+
+        {% if can_store %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.inventory_home') }}">
+            <i class="bi bi-box-seam"></i> المستودع
+          </a>
+        </li>
+        {% endif %}
+
+        {# For admins, keep the top bar cleaner: move "my access requests" inside "إدارة البوابة". #}
+        {% if not can_admin %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.my_access_requests') }}">
+            <i class="bi bi-key"></i> طلبات الصلاحيات
+            {% if portal_my_access_requests_pending is defined and portal_my_access_requests_pending|int > 0 %}
+              <span class="badge text-bg-warning ms-1">{{ portal_my_access_requests_pending }}</span>
+            {% endif %}
+          </a>
+        </li>
+        {% endif %}
+
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.portal_notifications') }}">
+            <i class="bi bi-bell"></i> الإشعارات
+            {% if portal_notif_unread is defined and portal_notif_unread|int > 0 %}
+              <span class="badge text-bg-danger ms-1">{{ portal_notif_unread }}</span>
+            {% endif %}
+          </a>
+        </li>
+
+        {% if can_admin %}
+        <li class="nav-item dropdown">
+          <div class="d-flex align-items-center portal-admin-split">
+          <a class="nav-link d-inline-flex align-items-center gap-1" href="{{ url_for('portal.portal_admin_dashboard') }}">
+            <i class="bi bi-shield-lock"></i> إدارة البوابة
+          </a>
+          <button class="nav-link dropdown-toggle dropdown-toggle-split portal-admin-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false" aria-label="قائمة إدارة البوابة"></button>
+          <ul class="dropdown-menu">
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.portal_admin_dashboard') }}">
+                <i class="bi bi-grid"></i> لوحة الإدارة
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.my_access_requests') }}">
+                <i class="bi bi-key"></i> طلباتي (طلبات الصلاحيات)
+                {% if portal_my_access_requests_pending is defined and portal_my_access_requests_pending|int > 0 %}
+                  <span class="badge text-bg-warning ms-2">{{ portal_my_access_requests_pending }}</span>
+                {% endif %}
+              </a>
+            </li>
+            <li><hr class="dropdown-divider"></li>
+            {% if au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.admin_access_requests') }}">
+                <i class="bi bi-inboxes"></i> طلبات الصلاحيات
+                {% if portal_access_requests_pending is defined and portal_access_requests_pending|int > 0 %}
+                  <span class="badge text-bg-warning ms-2">{{ portal_access_requests_pending }}</span>
+                {% endif %}
+              </a>
+            </li>
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.portal_admin_permissions') }}">
+                <i class="bi bi-person-gear"></i> صلاحيات البوابة
+              </a>
+            </li>
+            {% endif %}
+
+            {% if au.has_perm('HR_MASTERDATA_MANAGE') %}
+            {# HR menu moved under "الموارد البشرية" dropdown to avoid duplication. #}
+            {% endif %}
+
+            {% if au.has_perm('HR_MASTERDATA_MANAGE') or au.has_perm('HR_EMPLOYEE_READ') or au.has_perm('HR_ATTENDANCE_READ') or au.has_perm('HR_REQUESTS_VIEW_ALL') or au.has_perm('HR_REQUESTS_APPROVE') %}
+            {# HR dashboard link moved under "الموارد البشرية" dropdown. #}
+            {% endif %}
+
+            {% if au.has_perm('HR_MASTERDATA_MANAGE') %}
+            {# HR settings/schedules menu moved under "الموارد البشرية" dropdown. #}
+            {% endif %}
+
+            {% if au.has_perm('HR_REQUESTS_APPROVE') %}
+            {# Approvals moved under "الموارد البشرية" dropdown. #}
+            {% endif %}
+
+            {% if au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.portal_admin_delegations') }}">
+                <i class="bi bi-arrow-left-right"></i> التفويض
+              </a>
+            </li>
+            {% endif %}
+          </ul>
+          </div>
+        </li>
+
+
+        {% endif %}
+
+      </ul>
+</div>
+  </div>
+</nav>
+
+<div class="container py-4">
+  {% include '_flash_messages.html' %}
+
+  {%- set _ep = request.endpoint or '' -%}
+  {%- if _ep not in ['portal.index', 'portal.hr_me_home', 'portal.portal_admin_dashboard'] -%}
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div class="btn-group" role="group">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.index') }}">
+        <i class="bi bi-house"></i> الرئيسية
+      </a>
+      <button class="btn btn-sm btn-outline-secondary" type="button" onclick="window.history.back()">
+        <i class="bi bi-arrow-right"></i> رجوع
+      </button>
+    </div>
+    <div class="text-muted small"></div>
+  </div>
+  {%- endif -%}
+
+  {%- if portal_excel_can_export(_ep) or portal_excel_can_import(_ep) -%}
+  {%- set _full = request.full_path -%}
+  {%- if _full.endswith('?') -%}{%- set _full = _full[:-1] -%}{%- endif -%}
+  {%- set _sep = '&' if '?' in _full else '?' -%}
+  <div class="d-flex justify-content-end align-items-center flex-wrap gap-2 mb-3">
+    {%- if portal_excel_can_import(_ep) -%}
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_excel_import', key=_ep, next=_full) }}">
+        <i class="bi bi-upload"></i> استيراد Excel
+      </a>
+    {%- endif -%}
+    {%- if portal_excel_can_export(_ep) -%}
+      <a class="btn btn-sm btn-outline-success" href="{{ _full ~ _sep ~ 'export=1' }}">
+        <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+      </a>
+    {%- endif -%}
+  </div>
+  {%- endif -%}
+
+  <div id="wfPrintArea">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+
+<footer class="main-footer">
+  <div class="container text-center">
+    <small>© اللجنة الوطنية الفلسطينية للتربية والثقافة والعلوم</small>
+    <div class="mt-1"><small class="text-muted" style="opacity:.65">طور النظام بواسطة ادهم حنون</small></div>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/print_helpers.js') }}?v=20260206"></script>
+
+<script src="{{ url_for('static', filename='js/system_search.js') }}?v=20260214"></script>
+
+
+<script>
+  // Enable Bootstrap tooltips (we support both data-bs-toggle="tooltip" and custom marker data-bs-tooltip="1").
+  document.addEventListener('DOMContentLoaded', function () {
+    try {
+      var els = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"], [data-bs-tooltip="1"]'));
+      els.forEach(function (el) {
+        try { new bootstrap.Tooltip(el); } catch (e) {}
+      });
+    } catch (e) {}
+  });
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

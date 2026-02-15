@@ -1,0 +1,83 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set selected = selected if selected is defined else {} %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">تقرير سجلات الصرف</h5>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_issue_voucher_list') }}"><i class="bi bi-journal-text"></i> سجل السندات</a>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="from_date" class="form-control" value="{{ selected.from_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="to_date" class="form-control" value="{{ selected.to_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">من مخزن</label>
+        <select name="warehouse_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for w in warehouses %}
+            <option value="{{ w.id }}" {% if selected.warehouse_id==w.id %}selected{% endif %}>{{ w.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">السند يحتوي</label>
+        <input name="contains" class="form-control" value="{{ selected.contains|default('') }}" placeholder="اسم/كود الصنف">
+      </div>
+      <div class="col-12 d-flex justify-content-end gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_report_issue_log') }}">تفريغ</a>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="table-responsive">
+      <table class="table table-bordered table-hover align-middle">
+        <thead class="table-light">
+          <tr>
+            <th style="width:140px;">التاريخ</th>
+            <th style="width:140px;">رقم السند</th>
+            <th style="width:160px;">من مخزن</th>
+            <th style="width:140px;">نوع الصرف</th>
+            <th>الصنف</th>
+            <th style="width:110px;">الكمية</th>
+            <th style="width:110px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for v, ln in rows %}
+          <tr>
+            <td>{{ v.voucher_date }}</td>
+            <td>{{ v.voucher_no }}</td>
+            <td>{{ v.from_warehouse.name if v.from_warehouse else '-' }}</td>
+            <td>
+              {% if v.issue_kind=='ROOM' %}صرف إلى غرفة{% elif v.issue_kind=='WAREHOUSE' %}صرف إلى مستودع{% else %}-{% endif %}
+            </td>
+            <td>{{ ln.item.label if ln.item else '-' }}</td>
+            <td class="text-end">{{ '%.2f'|format(ln.qty or 0) }}</td>
+            <td class="text-center">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_issue_voucher_view', v_id=v.id) }}"><i class="bi bi-eye"></i></a>
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not rows %}
+          <tr><td colspan="7" class="text-center text-muted">لا توجد بيانات.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,47 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}موافقات الطلبات الداخلية{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-check2-circle"></i> موافقات الطلبات الداخلية</h4>
+    <div class="text-muted small">الطلبات المطلوب منك اعتمادها.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_ss_home') }}">رجوع</a>
+</div>
+
+<div class="p-3 bg-white rounded-3 shadow-sm">
+  {% if rows %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>{{ portal_sort_link('ID', 'req') }}</th>
+            <th>{{ portal_sort_link('الموظف', 'req') }}</th>
+            <th>{{ portal_sort_link('النوع', 'req') }}</th>
+            <th>{{ portal_sort_link('الخطوة', 'appr') }}</th>
+            <th>{{ portal_sort_link('تاريخ التقديم', 'req') }}</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in rows %}
+          <tr>
+            <td>{{ item.req.id }}</td>
+            <td>{{ item.req.requester.full_name }}</td>
+            <td>{{ item.req.type_code }}</td>
+            <td>{{ item.appr.step_no }}</td>
+            <td class="text-muted small">{{ item.req.submitted_at.strftime('%Y-%m-%d %H:%M') if item.req.submitted_at else '' }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_ss_approval_view', req_id=item.req.id) }}">فتح</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا يوجد طلبات قيد الاعتماد.</div>
+  {% endif %}
+</div>
+{% endblock %}

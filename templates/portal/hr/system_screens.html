@@ -1,0 +1,67 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}شاشات النظام{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="sysScreensPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-display"></i> شاشات النظام</h4>
+      <div class="text-muted">روابط مختصرة للصفحات الإدارية التي كانت "قيد التطوير".</div>
+    </div>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <h6 class="mb-3">الموظفين</h6>
+      <div class="d-grid gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_employee_followup') }}"><i class="bi bi-clipboard-check"></i> متابعة الإدخال</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_employees') }}"><i class="bi bi-people"></i> قائمة الموظفين</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <h6 class="mb-3">الدوام</h6>
+      <div class="d-grid gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_att_special_status_new') }}">إدخال حالة</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_att_special_exception_new') }}">إدخال استثناء</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_special_log') }}">سجل الحالات الخاصة</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_mass_closing') }}">الإغلاق الجماعي</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_monthly_schedule_new') }}">إضافة جدول شهري</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_monthly_schedule_log') }}">سجل الجداول</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <h6 class="mb-3">الخصم</h6>
+      <div class="d-grid gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_run') }}">تنفيذ الخصم</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}">سجل الخصومات</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_yearly') }}">الجدول السنوي</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_settings') }}">إعدادات الخصم</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <h6 class="mb-3">تنظيم الدوام</h6>
+      <div class="d-grid gap-2">
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_official_missions') }}">المهمات الرسمية</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_official_occasions') }}">المناسبات الرسمية</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_weekly_holidays') }}">العطل الأسبوعية</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_room_bookings') }}">حجز القاعة</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_rooms_manage') }}">إدارة القاعات</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

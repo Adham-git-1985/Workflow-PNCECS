@@ -1,0 +1,79 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div>
+    <h5 class="m-0">عرض سند عهدة</h5>
+    <div class="text-muted small">رقم السند: <span class="fw-bold">{{ v.voucher_no }}</span> &nbsp;|&nbsp; التاريخ: {{ v.voucher_date }}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_custody_voucher_list') }}"><i class="bi bi-journal-text"></i> سجل السندات</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_custody_voucher_new') }}"><i class="bi bi-plus"></i> إدخال سند</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="row g-2">
+      <div class="col-md-3"><div class="small text-muted">نوع الحامل</div><div class="fw-bold">{% if v.holder_kind=='ROOM' %}غرفة{% else %}موظف{% endif %}</div></div>
+      <div class="col-md-5"><div class="small text-muted">الحامل</div><div class="fw-bold">{% if v.holder_kind=='ROOM' %}{{ v.holder_room.label if v.holder_room else '-' }}{% else %}{{ v.holder_user.full_name if v.holder_user else '-' }}{% endif %}</div></div>
+      <div class="col-md-4"><div class="small text-muted">المدخل</div><div class="fw-bold">{{ v.created_by.full_name if v.created_by else '-' }}</div></div>
+      <div class="col-12"><div class="small text-muted">ملاحظات</div><div class="fw-bold">{{ v.note or '-' }}</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <div class="fw-bold mb-2">تفاصيل أصناف السند</div>
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>الصنف</th>
+            <th style="width:120px;">الكمية</th>
+            <th>السيريال</th>
+            <th style="width:160px;">بداية الصلاحية/الضمان</th>
+            <th style="width:160px;">نهاية الصلاحية/الضمان</th>
+            <th>تفاصيل</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ln in lines %}
+          <tr>
+            <td>{{ ln.item.label if ln.item else '-' }}</td>
+            <td>{{ '%.2f'|format(ln.qty or 0) }}</td>
+            <td>{{ ln.serial or '-' }}</td>
+            <td>{{ ln.warranty_start or '-' }}</td>
+            <td>{{ ln.warranty_end or '-' }}</td>
+            <td>{{ ln.details or '-' }}</td>
+          </tr>
+          {% endfor %}
+          {% if not lines %}
+          <tr><td colspan="6" class="text-center text-muted">لا يوجد</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <div class="fw-bold mb-2">المرفقات</div>
+    {% if attachments %}
+      <ul class="mb-0">
+        {% for a in attachments %}
+          <li>
+            <a href="{{ url_for('portal.inventory_custody_attachment_download', att_id=a.id) }}">{{ a.original_name }}</a>
+            <span class="text-muted small">({{ a.uploaded_at.strftime('%Y-%m-%d %H:%M') if a.uploaded_at else '' }})</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <div class="text-muted">لا يوجد مرفقات.</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

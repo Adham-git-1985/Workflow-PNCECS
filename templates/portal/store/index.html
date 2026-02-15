@@ -1,0 +1,213 @@
+{% extends "portal/layout.html" %}
+{% block title %}المستودع{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex flex-wrap align-items-center gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#storeIndexPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_store_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <h4 class="mb-0"><i class="bi bi-box-seam"></i> المستودع</h4>
+
+    <div class="ms-auto d-flex gap-2">
+      
+      <a class="btn btn-outline-success" href="{{ url_for('portal.store_home', view=view, folder=folder_id, q=q, export=1) }}">
+        <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+      </a>
+{% if can_manage %}
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.store_categories') }}">
+          <i class="bi bi-folder"></i> المجلدات
+        </a>
+      {% endif %}
+    </div>
+  </div>
+  <div class="text-muted mt-2">
+    ارفع ملفات المؤسسة، صنّفها، وابحث عنها بسرعة.
+  </div>
+</div>
+
+<div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+  <form class="row g-2" method="get" action="{{ url_for('portal.store_home') }}">
+    <div class="col-md-6">
+      <div class="input-group">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input class="form-control" name="q" value="{{ q }}" placeholder="ابحث بالاسم أو الوصف...">
+      </div>
+    </div>
+    <div class="col-md-3">
+      <select class="form-select" name="folder">
+        <option value="">كل المجلدات</option>
+        {% for cid, label in category_options %}
+          <option value="{{ cid }}" {% if folder_id and folder_id|int == cid %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-2">
+      {% if can_read_all %}
+        <select class="form-select" name="view">
+          <option value="all" {% if view == 'all' %}selected{% endif %}>كل الملفات</option>
+          <option value="shared" {% if view == 'shared' %}selected{% endif %}>مشارَكة معي</option>
+        </select>
+      {% else %}
+        <input type="hidden" name="view" value="shared">
+        <span class="form-control bg-light text-muted">مشارَكة معي</span>
+      {% endif %}
+    </div>
+
+    <div class="col-md-1 d-grid">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i></button>
+    </div>
+  </form>
+
+  {% if breadcrumb %}
+  <nav class="mt-3" aria-label="breadcrumb">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{{ url_for('portal.store_home', view=view) }}">المستودع</a></li>
+      {% for b in breadcrumb %}
+        {% if loop.last %}
+          <li class="breadcrumb-item active" aria-current="page">{{ b.name }}</li>
+        {% else %}
+          <li class="breadcrumb-item"><a href="{{ url_for('portal.store_home', folder=b.id, view=view) }}">{{ b.name }}</a></li>
+        {% endif %}
+      {% endfor %}
+    </ol>
+  </nav>
+  {% endif %}
+
+  {% if folders %}
+  <div class="mt-3 d-flex flex-wrap gap-2">
+    {% for fo in folders %}
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.store_home', folder=fo.id, view=view, q=q) }}">
+        <i class="bi bi-folder2-open"></i> {{ fo.name }}
+      </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if can_manage %}
+  <hr class="my-3">
+  <button class="btn btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#uploadBox">
+    <i class="bi bi-upload"></i> رفع ملف
+  </button>
+
+  <div class="collapse mt-3 {% if request.args.get('upload') == '1' %}show{% endif %}" id="uploadBox">
+    <form method="post" action="{{ url_for('portal.store_upload') }}" enctype="multipart/form-data" class="row g-2">
+      <input type="hidden" name="parent_id" value="{{ folder_id if folder_id else '' }}">
+      <div class="col-md-6">
+        <input class="form-control" type="file" name="file" required>
+        <div class="form-text">أنواع مسموحة: PDF / صور / Word / Excel / PowerPoint / TXT / CSV / ZIP</div>
+      </div>
+      <div class="col-md-6">
+        <input class="form-control" name="title" placeholder="عنوان (اختياري)">
+      </div>
+
+      <div class="col-md-4">
+        <select class="form-select" name="category_id">
+          <option value="">بدون تصنيف</option>
+          {% for cid, label in category_options %}
+            <option value="{{ cid }}" {% if folder_id and folder_id|int == cid %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <input class="form-control" name="category_new" placeholder="مجلد جديد (اختياري)">
+        <div class="form-text">سيتم إنشاء المجلد داخل المجلد الحالي إن كنت داخله.</div>
+      </div>
+      <div class="col-md-4">
+        <button class="btn btn-success w-100" type="submit">
+          <i class="bi bi-cloud-arrow-up"></i> رفع
+        </button>
+      </div>
+
+      <div class="col-12">
+        <textarea class="form-control" name="description" rows="2" placeholder="وصف (اختياري)"></textarea>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden id="storeIndexPrint"">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>{{ portal_sort_link('الملف', 'display_name') }}</th>
+          <th class="text-nowrap">{{ portal_sort_link('المجلد', 'category') }}</th>
+          <th class="text-nowrap">{{ portal_sort_link('الرافع', 'uploader') }}</th>
+          <th class="text-nowrap">{{ portal_sort_link('التاريخ', 'uploaded_at') }}</th>
+          <th class="text-nowrap">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% if not items %}
+          <tr>
+            <td colspan="5" class="text-center text-muted py-4">لا توجد ملفات.</td>
+          </tr>
+        {% else %}
+          {% for f in items %}
+          <tr>
+            <td>
+              <div class="fw-semibold">{{ f.display_name }}</div>
+              <div class="text-muted small">{{ f.original_name }}{% if f.file_ext %} • {{ f.file_ext }}{% endif %}</div>
+              {% if f.description %}<div class="text-muted small">{{ f.description }}</div>{% endif %}
+            </td>
+            <td class="text-nowrap">{{ f.category.name if f.category else "-" }}</td>
+            <td class="text-nowrap">{{ f.uploader.full_name if f.uploader else "-" }}</td>
+            <td class="text-nowrap">{{ f.uploaded_at.strftime('%Y-%m-%d %H:%M') if f.uploaded_at else "-" }}</td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.store_file_view', file_id=f.id) }}" target="_blank">
+                <i class="bi bi-eye"></i> عرض
+              </a>
+              {% if f._can_download %}
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.store_file_download', file_id=f.id) }}">
+                  <i class="bi bi-download"></i> تنزيل
+                </a>
+              {% else %}
+                <button class="btn btn-sm btn-outline-secondary" disabled title="لا تملك صلاحية التنزيل">
+                  <i class="bi bi-download"></i> تنزيل
+                </button>
+              {% endif %}
+              {% if can_manage %}
+                <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.store_file_share', file_id=f.id) }}">
+                  <i class="bi bi-share"></i>
+                </a>
+              {% endif %}
+              {% if can_manage %}
+              <form method="post" action="{{ url_for('portal.store_file_delete', file_id=f.id) }}" class="d-inline" onsubmit="return confirm('حذف الملف من المستودع؟');">
+                <button class="btn btn-sm btn-outline-danger" type="submit">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if pagination and pagination.pages > 1 %}
+  <div class="p-3">
+    <nav>
+      <ul class="pagination mb-0">
+        <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}">
+          <a class="page-link" href="{{ url_for('portal.store_home', q=q, folder=folder_id, view=view, page=pagination.prev_num) }}">السابق</a>
+        </li>
+        <li class="page-item disabled"><span class="page-link">صفحة {{ pagination.page }} / {{ pagination.pages }}</span></li>
+        <li class="page-item {% if not pagination.has_next %}disabled{% endif %}">
+          <a class="page-link" href="{{ url_for('portal.store_home', q=q, folder=folder_id, view=view, page=pagination.next_num) }}">التالي</a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}

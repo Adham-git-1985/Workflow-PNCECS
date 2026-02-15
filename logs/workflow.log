@@ -1,0 +1,33 @@
+2026-02-09 10:53:13,972 | INFO | [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:5000
+2026-02-09 10:53:13,972 | INFO | [33mPress CTRL+C to quit[0m
+2026-02-09 10:53:42,749 | INFO | 127.0.0.1 - - [09/Feb/2026 10:53:42] "GET /portal/hr/me/leaves/new HTTP/1.1" 200 -
+2026-02-09 10:53:42,810 | INFO | 127.0.0.1 - - [09/Feb/2026 10:53:42] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:53:42,814 | INFO | 127.0.0.1 - - [09/Feb/2026 10:53:42] "[36mGET /static/css/main.css?v=portal HTTP/1.1[0m" 304 -
+2026-02-09 10:53:43,101 | INFO | 127.0.0.1 - - [09/Feb/2026 10:53:43] "[36mGET /static/images/pncecs_logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:53:43,112 | INFO | 127.0.0.1 - - [09/Feb/2026 10:53:43] "[36mGET /static/js/print_helpers.js?v=20260206 HTTP/1.1[0m" 304 -
+2026-02-09 10:54:07,046 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:07] "GET /portal/hr/holidays/weekly HTTP/1.1" 200 -
+2026-02-09 10:54:07,079 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:07] "[36mGET /static/css/main.css?v=portal HTTP/1.1[0m" 304 -
+2026-02-09 10:54:07,282 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:07] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:07,403 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:07] "[36mGET /static/images/pncecs_logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:07,404 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:07] "[36mGET /static/js/print_helpers.js?v=20260206 HTTP/1.1[0m" 304 -
+2026-02-09 10:54:10,561 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:10] "GET /portal/hr/missions HTTP/1.1" 200 -
+2026-02-09 10:54:10,608 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:10] "[36mGET /static/css/main.css?v=portal HTTP/1.1[0m" 304 -
+2026-02-09 10:54:10,817 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:10] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:10,904 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:10] "[36mGET /static/images/pncecs_logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:10,905 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:10] "[36mGET /static/js/print_helpers.js?v=20260206 HTTP/1.1[0m" 304 -
+2026-02-09 10:54:14,334 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:14] "GET /portal/hr/occasions HTTP/1.1" 200 -
+2026-02-09 10:54:14,722 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:14] "[36mGET /static/css/main.css?v=portal HTTP/1.1[0m" 304 -
+2026-02-09 10:54:14,726 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:14] "[36mGET /static/images/pncecs_logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:14,734 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:14] "[36mGET /static/js/print_helpers.js?v=20260206 HTTP/1.1[0m" 304 -
+2026-02-09 10:54:14,735 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:14] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:16,179 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:16] "GET /portal/hr/occasions/new HTTP/1.1" 200 -
+2026-02-09 10:54:16,250 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:16] "[36mGET /static/css/main.css?v=portal HTTP/1.1[0m" 304 -
+2026-02-09 10:54:16,430 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:16] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:16,522 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:16] "[36mGET /static/images/pncecs_logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:16,522 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:16] "[36mGET /static/js/print_helpers.js?v=20260206 HTTP/1.1[0m" 304 -
+2026-02-09 10:54:26,322 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:26] "GET /portal/hr/holidays/weekly HTTP/1.1" 200 -
+2026-02-09 10:54:26,630 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:26] "[36mGET /static/css/main.css?v=portal HTTP/1.1[0m" 304 -
+2026-02-09 10:54:26,646 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:26] "[36mGET /static/images/pncecs_logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:26,646 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:26] "[36mGET /static/images/logo.png HTTP/1.1[0m" 304 -
+2026-02-09 10:54:26,653 | INFO | 127.0.0.1 - - [09/Feb/2026 10:54:26] "[36mGET /static/js/print_helpers.js?v=20260206 HTTP/1.1[0m" 304 -

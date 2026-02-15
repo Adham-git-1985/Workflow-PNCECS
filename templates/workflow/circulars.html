@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-megaphone"></i> التعميمات</h3>
+    <div class="text-muted">أحدث التعميمات الصادرة داخل النظام.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.inbox') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>العنوان</th>
+          <th>التاريخ</th>
+          <th>الوسم</th>
+          <th class="text-end"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in rows %}
+        <tr>
+          <td class="fw-semibold">{{ c.title }}</td>
+          <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
+          <td>
+            {% if c.is_urgent %}
+              <span class="badge bg-danger">مستعجل</span>
+            {% else %}
+              <span class="badge bg-secondary">معلومة</span>
+            {% endif %}
+          </td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.circulars_view', circular_id=c.id) }}">فتح</a>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="4" class="text-center text-muted py-4">لا توجد تعميمات.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

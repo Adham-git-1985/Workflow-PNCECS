@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+{% block title %}بحث في النظام{% endblock %}
+
+{% block content %}
+<div class="container my-3" dir="rtl">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="mb-1">بحث في النظام</h4>
+      <div class="text-muted small">اكتب اسم ميزة/شاشة/دليل (مثال: <b>إنشاء تعميم</b>، <b>التعميمات</b>، <b>الهيكلية</b>).</div>
+    </div>
+  </div>
+
+  <form method="get" action="{{ url_for('users.system_search_page') }}" class="mb-3">
+    <div class="input-group">
+      <span class="input-group-text"><i class="bi bi-search"></i></span>
+      <input type="text" class="form-control" name="q" value="{{ q }}" placeholder="ابحث..." autocomplete="off">
+      <button class="btn btn-primary" type="submit">بحث</button>
+    </div>
+  </form>
+
+  {% if q and not results %}
+    <div class="alert alert-warning">لا توجد نتائج مطابقة.</div>
+  {% endif %}
+
+  {% if results %}
+    {% for grp in results|groupby('category') %}
+      {% set cat = grp.grouper %}
+      {% set rows = grp.list %}
+      <div class="mt-4">
+        <h6 class="text-secondary mb-2">{{ cat }}</h6>
+        <div class="list-group">
+          {% for r in rows %}
+            <a class="list-group-item list-group-item-action" href="{{ r.href }}">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <div class="fw-bold">{{ r.title }}</div>
+                  {% if r.desc %}<div class="text-muted small">{{ r.desc }}</div>{% endif %}
+                </div>
+                <span class="badge bg-light text-dark border">{{ r.category }}</span>
+              </div>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <div class="text-muted small">اكتب كلمة في مربع البحث بالأعلى لعرض النتائج.</div>
+  {% endif %}
+
+</div>
+{% endblock %}

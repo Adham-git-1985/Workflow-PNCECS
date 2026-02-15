@@ -1,0 +1,86 @@
+{% extends "portal/layout.html" %}
+{% block title %}طلب صلاحية{% endblock %}
+
+{% block content %}
+{% set back_url = (url_for('portal.index') if can_enter_portal else url_for('portal.portal_entry')) %}
+{% set svc = defs.get(service) if defs is defined else None %}
+
+<div class="p-4 bg-white rounded-3 shadow-sm" id="newAccessReqPrint">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+    <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#newAccessReqPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_access_requests_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+
+    <div>
+      <h4 class="mb-1"><i class="bi bi-key"></i> طلب صلاحية</h4>
+      <div class="text-muted">اختر القسم ثم اضغط زر واحد لإرسال الطلب للإدارة داخل البوابة.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ back_url }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.my_access_requests') }}">متابعة طلباتي</a>
+    </div>
+  </div>
+
+  {% if not can_enter_portal %}
+    <div class="alert alert-warning mt-3 mb-0">
+      لا تملك صلاحية دخول البوابة بعد. يمكنك طلب <b>تفعيل دخول البوابة</b> أولاً.
+    </div>
+  {% endif %}
+
+  <hr class="my-3" />
+
+  <div class="mb-2 fw-bold">اختر القسم</div>
+  <div class="row g-2">
+    {% for k, d in defs.items() %}
+      {% if can_enter_portal or k == 'portal' %}
+      <div class="col-12 col-md-6 col-lg-4">
+        <a class="text-decoration-none" href="{{ url_for('portal.access_request_new', service=k) }}">
+          <div class="p-3 rounded-3 border h-100 {% if k == service %}border-primary shadow-sm{% else %}bg-light{% endif %}">
+            <div class="fw-bold mb-1">{{ d.label }}</div>
+            <div class="text-muted small">{{ d.desc }}</div>
+            {% if k == service %}
+              <div class="mt-2 small text-primary"><i class="bi bi-check-circle"></i> محدد</div>
+            {% endif %}
+          </div>
+        </a>
+      </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+  {% if svc %}
+    <form method="post" class="mt-4">
+      <input type="hidden" name="service" value="{{ service }}" />
+
+      <div class="mb-2 fw-bold">اختر نوع التفعيل (Preset)</div>
+      <div class="row g-2">
+        {% for code, label, keys in (svc.options if svc else []) %}
+          <div class="col-12 col-lg-6">
+            <label class="p-3 rounded-3 border w-100 d-flex gap-2 align-items-start">
+              <input class="form-check-input mt-1" type="radio" name="opt" value="{{ code }}"
+                     {% if selected_opt == code or (not selected_opt and loop.first) %}checked{% endif %}>
+              <div>
+                <div class="fw-bold">{{ label }}</div>
+                <div class="text-muted small">يشمل: {{ keys | join(' ، ') }}</div>
+              </div>
+            </label>
+          </div>
+        {% endfor %}
+      </div>
+
+      <div class="mt-3">
+        <label class="form-label">ملاحظة (اختياري)</label>
+        <textarea class="form-control" name="note" rows="2" placeholder="مثال: أحتاجها لإنجاز مهام عملي..."></textarea>
+      </div>
+
+      <div class="mt-3 d-flex flex-wrap gap-2 align-items-center">
+        <button class="btn btn-primary" type="submit"><i class="bi bi-send"></i> اطلب تفعيل هذا القسم</button>
+        <div class="text-muted small">سيصل الطلب للإدارة مع إشعار داخل البوابة، ويمكنك متابعة حالته من صفحة طلباتك.</div>
+      </div>
+    </form>
+  {% endif %}
+</div>
+{% endblock %}

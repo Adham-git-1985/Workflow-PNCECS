@@ -1,0 +1,108 @@
+{% extends "layout.html" %}
+{% block title %}المراسلات | صندوق الوارد{% endblock %}
+
+{% block content %}
+<div class="container-fluid mt-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+      <h3 class="mb-1">💬 المراسلات - صندوق الوارد</h3>
+      <small class="text-muted">رسائل داخلية بين المستخدمين/الدوائر/الإدارات</small>
+    </div>
+    <div class="d-flex gap-2">
+      <a href="{{ url_for('messages.compose') }}" class="btn btn-primary">✉️ رسالة جديدة</a>
+      <a href="{{ url_for('messages.sent') }}" class="btn btn-outline-secondary">📤 المرسلة</a>
+    </div>
+  </div>
+
+  <form method="get" class="row g-2 align-items-center mb-3">
+    <div class="col-sm-7 col-md-6 col-lg-5">
+      <div class="input-group">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input type="text" class="form-control" name="q" value="{{ q or '' }}" placeholder="ابحث بالموضوع/النص/البريد..." />
+      </div>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-outline-primary">بحث</button>
+    </div>
+    {% if q %}
+    <div class="col-auto">
+      <a class="btn btn-outline-secondary" href="{{ url_for('messages.inbox') }}">إلغاء</a>
+    </div>
+    {% endif %}
+  </form>
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      {% if items %}
+        <div class="table-responsive">
+          <table class="table align-middle mb-0">
+            <thead>
+              <tr>
+                <th style="width:36px"></th>
+                <th>من</th>
+                <th>الموضوع</th>
+                <th style="width:170px">التاريخ</th>
+                <th style="width:180px">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for rec in items %}
+                <tr class="{% if not rec.is_read %}table-warning{% endif %}">
+                  <td>
+                    {% if not rec.is_read %}
+                      <span class="badge bg-danger">جديد</span>
+                    {% else %}
+                      <span class="text-muted">•</span>
+                    {% endif %}
+                  </td>
+                  <td>{{ rec.message.sender.email }}</td>
+                  <td>
+                    <a href="{{ url_for('messages.view_message', message_id=rec.message_id) }}" class="text-decoration-none">
+                      <strong>{{ rec.message.subject or 'بدون موضوع' }}</strong>
+                      <div class="text-muted small text-truncate" style="max-width:520px">{{ rec.message.body }}</div>
+                    </a>
+                  </td>
+                  <td class="text-muted">
+                    {{ rec.message.created_at.strftime('%Y-%m-%d %H:%M') }}
+                  </td>
+                  <td>
+                    <div class="d-flex gap-1">
+                      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('messages.view_message', message_id=rec.message_id) }}">عرض</a>
+                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('messages.reply', message_id=rec.message_id) }}">رد</a>
+                      <form method="post" action="{{ url_for('messages.delete_message', message_id=rec.message_id) }}" onsubmit="return confirm('حذف الرسالة؟')">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">حذف</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {% if pagination.pages > 1 %}
+        <nav class="mt-3">
+          <ul class="pagination justify-content-center mb-0">
+            {% if pagination.has_prev %}
+              <li class="page-item"><a class="page-link" href="{{ url_for('messages.inbox', page=pagination.prev_num, q=q) }}">السابق</a></li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">السابق</span></li>
+            {% endif %}
+
+            <li class="page-item disabled"><span class="page-link">{{ pagination.page }} / {{ pagination.pages }}</span></li>
+
+            {% if pagination.has_next %}
+              <li class="page-item"><a class="page-link" href="{{ url_for('messages.inbox', page=pagination.next_num, q=q) }}">التالي</a></li>
+            {% else %}
+              <li class="page-item disabled"><span class="page-link">التالي</span></li>
+            {% endif %}
+          </ul>
+        </nav>
+        {% endif %}
+      {% else %}
+        <div class="alert alert-info mb-0">لا توجد رسائل.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

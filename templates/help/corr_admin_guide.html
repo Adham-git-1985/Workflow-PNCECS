@@ -1,0 +1,68 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل أدمن الصادر والوارد" %}
+{% set page_subtitle = "إدارة التصنيفات والجهات والمرفقات والسياسات" %}
+
+{% block guide_body %}
+
+<div class="alert alert-info py-2 mb-3">
+  <div class="fw-bold">هذه الصفحة خاصة بالمشرفين</div>
+  <div class="small text-muted">تظهر فقط لمن لديه صلاحيات إدارة إعدادات المراسلات (CORR_LOOKUPS_MANAGE) أو صلاحيات التعديل/الحذف.</div>
+</div>
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) الصلاحيات المهمة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>CORR_READ</strong> عرض قوائم الوارد/الصادر.</li>
+      <li><strong>CORR_CREATE</strong> تسجيل مراسلة جديدة.</li>
+      <li><strong>CORR_UPDATE</strong> تعديل مراسلة.</li>
+      <li><strong>CORR_DELETE</strong> حذف/أرشفة مراسلة.</li>
+      <li><strong>CORR_EXPORT</strong> تصدير/طباعة تقارير.</li>
+      <li><strong>CORR_LOOKUPS_MANAGE</strong> إدارة الثوابت (تصنيفات/جهات/سلاسل...).</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">2) إعداد الثوابت (Lookups)</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>تأكد من وجود <strong>تصنيفات</strong> واضحة للوارد/الصادر (مالي، إداري، مشاريع، ...).</li>
+      <li>إدارة <strong>الجهات</strong> (مرسل/مستلم) لتسهيل البحث والتقارير.</li>
+      <li>اعتماد أسماء موحدة لتفادي التكرار (مثال: لا تُكرر نفس الجهة بتهجئات مختلفة).</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">3) سياسات الترقيم والملفات</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>اعتماد قاعدة لترقيم المراسلات: <strong>سنة/تسلسل</strong> أو <strong>تسلسل لكل نوع</strong>.</li>
+      <li>المرفقات: استخدم أسماء ملفات واضحة (رقم الكتاب + الموضوع + التاريخ).</li>
+      <li>عند تعديل مراسلة بعد التوثيق، يُفضل إضافة <strong>ملاحظة</strong> للسبب.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">4) السجلات + الطباعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>صفحات السجل تحتوي زر <strong>طباعة</strong> (أو من الشريط العلوي).</li>
+      <li>اطبع بعد تطبيق الفلاتر للحصول على تقرير مختصر (مثل شهر/جهة/نوع).</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">5) تدقيق ومراجعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>راجع السجلات دوريًا للتأكد من اكتمال الحقول الإلزامية.</li>
+      <li>تأكد من أن الأذونات لا تسمح بحذف غير مبرر (خصوصًا للمراسلات الحساسة).</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

@@ -1,0 +1,272 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">{% if is_new %}➕ إضافة قاعدة توجيه{% else %}✏️ تعديل قاعدة توجيه{% endif %}</h3>
+    <small class="text-muted">Routing Rule</small>
+  </div>
+  <div class="d-flex gap-2">
+  <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#wfRoutingFormPrint')">🖨️ طباعة</button>
+  <a class="btn btn-outline-secondary no-print" href="{{ url_for('users.help_workflow_guide') }}" target="_blank">❓ الدليل</a>
+  <a class="btn btn-outline-secondary" href="{{ url_for('admin.workflow_routing_list') }}">رجوع</a>
+</div>
+</div>
+
+<form method="post" id="wfRoutingFormPrint" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">نوع الطلب</label>
+        <select class="form-select" name="request_type_id" required>
+          <option value="">— اختر —</option>
+          {% for rt in request_types %}
+            <option value="{{ rt.id }}" {% if r.request_type_id == rt.id %}selected{% endif %}>
+              {{ rt.name_ar }} ({{ rt.code }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">المسار</label>
+        <select class="form-select" name="template_id" required>
+          <option value="">— اختر —</option>
+          {% for t in templates %}
+            <option value="{{ t.id }}" {% if r.template_id == t.id %}selected{% endif %}>
+              {{ t.name }} (#{{ t.id }})
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-8">
+        <label class="form-label fw-bold">عنصر الهيكلية الموحدة (اختياري)</label>
+        <input type="hidden" name="org_node_id" id="routing_org_node_id" value="{{ r.org_node_id or '' }}">
+        <div class="input-group">
+          <input class="form-control" id="routing_org_node_label" value="{% if r.org_node %}{{ (r.org_node.type.name_ar ~ ' — ' if r.org_node.type else '') ~ r.org_node.name_ar }}{% else %}—{% endif %}" readonly>
+          <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#routingOrgNodePickerModal">🌳 شجرة</button>
+          <button class="btn btn-outline-danger" type="button" id="routing_org_node_clear" title="مسح">✖</button>
+        </div>
+        <div class="form-text">إذا اخترت عنصرًا من الهيكلية الموحدة سيتم تجاهل (منظمة/إدارة/دائرة) التقليدية.</div>
+      </div>
+
+      <div class="col-md-4 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="match_subtree" value="1" id="match_subtree" {% if (r.org_node_id is none) or r.match_subtree %}checked{% endif %}>
+          <label class="form-check-label" for="match_subtree">يشمل الفروع (Subtree)</label>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">منظمة (اختياري)</label>
+        <select class="form-select" id="orgSelect" name="organization_id">
+          <option value="">— بدون —</option>
+          {% for o in orgs %}
+            <option value="{{ o.id }}" {% if r.organization_id == o.id %}selected{% endif %}>{{ o.name_ar }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">إن تركتها فارغة → القاعدة تطبّق على كل المنظمات</div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">إدارة (اختياري)</label>
+        <select class="form-select" id="dirSelect" name="directorate_id">
+          <option value="">— بدون —</option>
+          {% for d in dirs %}
+            <option value="{{ d.id }}" data-org="{{ d.organization_id }}" {% if r.directorate_id == d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">يتطلب اختيار منظمة</div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">دائرة (اختياري)</label>
+        <select class="form-select" id="deptSelect" name="department_id">
+          <option value="">— بدون —</option>
+          {% for dep in depts %}
+            <option value="{{ dep.id }}" data-dir="{{ dep.directorate_id }}" {% if r.department_id == dep.id %}selected{% endif %}>{{ dep.name_ar }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">يتطلب اختيار إدارة</div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الأولوية (رقم أصغر = أعلى)</label>
+        <input class="form-control" type="number" name="priority" value="{{ r.priority if r.priority is not none else 100 }}">
+      </div>
+
+      <div class="col-md-4 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if is_new or r.is_active %}checked{% endif %}>
+          <label class="form-check-label" for="is_active">نشط</label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">حفظ</button>
+      </div>
+
+    </div>
+  </div>
+</form>
+
+<!-- OrgNode Picker Modal (Routing) -->
+<div class="modal fade" id="routingOrgNodePickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">اختيار عنصر الهيكلية الموحدة</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="routingOrgNodeTreeContainer"><div class="text-muted">جاري تحميل الشجرة…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const org = document.getElementById('orgSelect');
+  const dir = document.getElementById('dirSelect');
+  const dept = document.getElementById('deptSelect');
+
+  const nodeId = document.getElementById('routing_org_node_id');
+  const nodeLabel = document.getElementById('routing_org_node_label');
+  const nodeClear = document.getElementById('routing_org_node_clear');
+  const nodeModalEl = document.getElementById('routingOrgNodePickerModal');
+  const nodeTreeContainer = document.getElementById('routingOrgNodeTreeContainer');
+
+  function filterDirs() {
+    const orgId = org.value;
+    Array.from(dir.options).forEach(opt => {
+      if (!opt.value) return;
+      const ok = !orgId || opt.dataset.org === orgId;
+      opt.hidden = !ok;
+      if (!ok && opt.selected) opt.selected = false;
+    });
+  }
+
+  function filterDepts() {
+    const dirId = dir.value;
+    Array.from(dept.options).forEach(opt => {
+      if (!opt.value) return;
+      const ok = !dirId || opt.dataset.dir === dirId;
+      opt.hidden = !ok;
+      if (!ok && opt.selected) opt.selected = false;
+    });
+  }
+
+  org.addEventListener('change', () => {
+    filterDirs();
+    filterDepts();
+  });
+
+  dir.addEventListener('change', () => {
+    filterDepts();
+  });
+
+  // initial
+  filterDirs();
+  filterDepts();
+
+  function syncLegacyState() {
+    const hasNode = !!(nodeId && nodeId.value);
+    if (hasNode) {
+      org.value = '';
+      dir.value = '';
+      dept.value = '';
+    }
+    org.disabled = hasNode;
+    dir.disabled = hasNode;
+    dept.disabled = hasNode;
+  }
+
+  // -------------------------
+  // OrgNode Tree Picker (Routing)
+  // -------------------------
+  function wireTreeUI(container){
+    const tree = container ? container.querySelector('[data-tree-root]') : null;
+    const search = container ? container.querySelector('[data-tree-search]') : null;
+    const expandAll = container ? container.querySelector('[data-tree-expand]') : null;
+    const collapseAll = container ? container.querySelector('[data-tree-collapse]') : null;
+
+    function setAll(open){
+      if (!tree) return;
+      tree.querySelectorAll('details.org-details').forEach(d => { d.open = !!open; });
+    }
+    if (expandAll) expandAll.onclick = () => setAll(true);
+    if (collapseAll) collapseAll.onclick = () => setAll(false);
+
+    if (search) {
+      search.oninput = function(){
+        const q = (this.value || '').trim().toLowerCase();
+        if (!tree) return;
+        const items = tree.querySelectorAll('li.org-li');
+        if (!q) {
+          items.forEach(li => li.classList.remove('d-none'));
+          return;
+        }
+        items.forEach(li => {
+          const t = (li.getAttribute('data-node-text') || '');
+          li.classList.toggle('d-none', t.indexOf(q) === -1);
+        });
+        setAll(true);
+      };
+    }
+  }
+
+  async function loadNodeTree(){
+    if (!nodeTreeContainer) return;
+    const selected = (nodeId && nodeId.value) ? nodeId.value : '';
+    const url = new URL('{{ url_for("admin.workflow_routing_org_node_tree") }}', window.location.origin);
+    url.searchParams.set('mode', 'routes');
+    if (selected) url.searchParams.set('selected', selected);
+
+    nodeTreeContainer.innerHTML = '<div class="text-muted">جاري تحميل الشجرة…</div>';
+    try {
+      const res = await fetch(url.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      const html = await res.text();
+      nodeTreeContainer.innerHTML = html;
+      wireTreeUI(nodeTreeContainer);
+    } catch(e){
+      nodeTreeContainer.innerHTML = '<div class="alert alert-warning">تعذر تحميل الشجرة.</div>';
+    }
+  }
+
+  if (nodeModalEl) {
+    nodeModalEl.addEventListener('shown.bs.modal', loadNodeTree);
+  }
+
+  if (nodeClear) nodeClear.addEventListener('click', function(){
+    if (nodeId) nodeId.value = '';
+    if (nodeLabel) nodeLabel.value = '—';
+    syncLegacyState();
+  });
+
+  if (nodeTreeContainer) {
+    nodeTreeContainer.addEventListener('click', function(ev){
+      const btn = ev.target.closest('.pick-node');
+      if (!btn) return;
+      ev.preventDefault();
+      if (btn.disabled) return;
+      const id = btn.getAttribute('data-id') || '';
+      const label = btn.getAttribute('data-label') || '';
+      if (nodeId) nodeId.value = id;
+      if (nodeLabel) nodeLabel.value = label;
+      syncLegacyState();
+      try {
+        const m = bootstrap.Modal.getInstance(nodeModalEl);
+        if (m) m.hide();
+      } catch(e) {}
+    });
+  }
+
+  // initial state
+  syncLegacyState();
+})();
+</script>
+
+{% endblock %}

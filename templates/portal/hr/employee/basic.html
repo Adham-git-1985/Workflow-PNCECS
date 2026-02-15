@@ -1,0 +1,367 @@
+{% extends "portal/hr/base.html" %}
+
+{% block hr_content %}
+  {% include "portal/hr/employee/_nav.html" %}
+
+  <form method="post" class="needs-validation" novalidate>
+    <div class="card shadow-sm mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-person-vcard"></i> البيانات الأساسية</h5>
+        {% if emp_file and emp_file.updated_at %}
+          <span class="text-muted small">آخر تحديث: {{ emp_file.updated_at.strftime('%Y-%m-%d %H:%M') }}</span>
+        {% endif %}
+      </div>
+      <div class="card-body">
+
+        <!-- Employee No + Quad Name -->
+        <div class="row g-3 mb-4">
+          <div class="col-md-3">
+            <label class="form-label">الرقم الوظيفي</label>
+            <input type="text" name="employee_no" class="form-control" value="{{ (emp_file.employee_no if emp_file else '') or '' }}" placeholder="مثال: 187464">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">الإسم الرباعي</label>
+            <input type="text" name="full_name_quad" class="form-control" value="{{ (emp_file.full_name_quad if emp_file else '') or '' }}" placeholder="الاسم الرباعي كما في الهوية">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label">كود ساعة الدوام (9 أرقام)</label>
+            <input type="text" name="timeclock_code" class="form-control" value="{{ (emp_file.timeclock_code if emp_file else '') or '' }}" placeholder="000080439">
+          </div>
+        </div>
+
+        <div class="accordion" id="empBasicAccordion">
+
+          <!-- Section 1: Personal -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="hPersonal">
+              <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#cPersonal" aria-expanded="true" aria-controls="cPersonal">
+                1) البيانات الشخصية
+              </button>
+            </h2>
+            <div id="cPersonal" class="accordion-collapse collapse show" aria-labelledby="hPersonal" data-bs-parent="#empBasicAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-md-3">
+                    <label class="form-label">نوع الهوية</label>
+                    <select name="identity_type_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.IDENTITY_TYPE %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.identity_type_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">رقم الهوية</label>
+                    <input type="text" name="national_id" class="form-control" value="{{ (emp_file.national_id if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الجنس</label>
+                    <select name="gender_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.GENDER %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.gender_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الحالة الاجتماعية</label>
+                    <select name="marital_status_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.MARITAL_STATUS %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.marital_status_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-md-3">
+                    <label class="form-label">تاريخ الميلاد</label>
+                    <input type="date" name="birth_date" class="form-control" value="{{ (emp_file.birth_date if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الديانة</label>
+                    <select name="religion_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.RELIGION %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.religion_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الإعاقة</label>
+                    <select name="disability_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.DISABILITY %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.disability_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">محافظة السكن</label>
+                    <select name="home_governorate_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.HOME_GOV %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.home_governorate_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-md-4">
+                    <label class="form-label">التجمع السكاني</label>
+                    <select name="locality_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.LOCALITY %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.locality_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-8">
+                    <label class="form-label">العنوان</label>
+                    <input type="text" name="address" class="form-control" value="{{ (emp_file.address if emp_file else '') or '' }}">
+                  </div>
+
+                  <div class="col-md-3">
+                    <label class="form-label">الهاتف</label>
+                    <input type="text" name="phone" class="form-control" value="{{ (emp_file.phone if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الموبايل</label>
+                    <input type="text" name="mobile" class="form-control" value="{{ (emp_file.mobile if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label">البريد الإلكتروني</label>
+                    <input type="email" name="email" class="form-control" value="{{ ((emp_file.email if emp_file else None) or u.email) or '' }}">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 2: Work -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="hWork">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cWork" aria-expanded="false" aria-controls="cWork">
+                2) بيانات العمل
+              </button>
+            </h2>
+            <div id="cWork" class="accordion-collapse collapse" aria-labelledby="hWork" data-bs-parent="#empBasicAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-md-3">
+                    <label class="form-label">محافظة العمل</label>
+                    <select name="work_governorate_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.WORK_GOV %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.work_governorate_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">موقع العمل</label>
+                    <select name="work_location_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.WORK_LOCATION %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.work_location_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">حالة الموظف</label>
+                    <select name="employee_status_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.EMP_STATUS %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.employee_status_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">تاريخ الحالة</label>
+                    <input type="date" name="status_date" class="form-control" value="{{ (emp_file.status_date if emp_file else '') or '' }}">
+                  </div>
+
+                  <div class="col-md-6">
+                    <label class="form-label">ملاحظة الحالة</label>
+                    <input type="text" name="status_note" class="form-control" value="{{ (emp_file.status_note if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الوردية</label>
+                    <select name="shift_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.SHIFT %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.shift_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الرقم في الساعة</label>
+                    <input type="number" step="0.01" name="hourly_number" class="form-control" value="{{ (emp_file.hourly_number if emp_file and emp_file.hourly_number is not none else '') }}">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 3: Assignment/Placement -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="hPlacement">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cPlacement" aria-expanded="false" aria-controls="cPlacement">
+                3) بيانات التعيين والتسكين
+              </button>
+            </h2>
+            <div id="cPlacement" class="accordion-collapse collapse" aria-labelledby="hPlacement" data-bs-parent="#empBasicAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-md-3">
+                    <label class="form-label">الإدارة العامة</label>
+                    <select name="organization_id" class="form-select">
+                      <option value="">—</option>
+                      {% for o in orgs %}
+                        <option value="{{ o.id }}" {% if emp_file and emp_file.organization_id == o.id %}selected{% endif %}>{{ o.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الدائرة</label>
+                    <select name="directorate_id" class="form-select">
+                      <option value="">—</option>
+                      {% for d in dirs %}
+                        <option value="{{ d.id }}" {% if emp_file and emp_file.directorate_id == d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">القسم</label>
+                    <select name="department_id" class="form-select">
+                      <option value="">—</option>
+                      {% for dep in depts %}
+                        <option value="{{ dep.id }}" {% if emp_file and emp_file.department_id == dep.id %}selected{% endif %}>{{ dep.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">الشعبة</label>
+                    <select name="division_id" class="form-select">
+                      <option value="">—</option>
+                      {% for v in divs %}
+                        <option value="{{ v.id }}" {% if emp_file and emp_file.division_id == v.id %}selected{% endif %}>{{ v.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-md-4">
+                    <label class="form-label">المسؤول المباشر</label>
+                    <select name="direct_manager_user_id" class="form-select">
+                      <option value="">—</option>
+                      {% for m in managers %}
+                        <option value="{{ m.id }}" {% if emp_file and emp_file.direct_manager_user_id == m.id %}selected{% endif %}>{{ m.name or m.email }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label">المشروع</label>
+                    <select name="project_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.PROJECT %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.project_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-4">
+                    <label class="form-label">نوع التعيين</label>
+                    <select name="appointment_type_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.APPOINTMENT_TYPE %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.appointment_type_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-md-3">
+                    <label class="form-label">تاريخ التعيين</label>
+                    <input type="date" name="hire_date" class="form-control" value="{{ (emp_file.hire_date if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">تاريخ آخر ترقية</label>
+                    <input type="date" name="last_promotion_date" class="form-control" value="{{ (emp_file.last_promotion_date if emp_file else '') or '' }}">
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label">الفئة</label>
+                    <select name="job_category_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.JOB_CATEGORY %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.job_category_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-2">
+                    <label class="form-label">الدرجة</label>
+                    <select name="job_grade_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.JOB_GRADE %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.job_grade_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label">المسمى الوظيفي</label>
+                    <select name="job_title_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.JOB_TITLE %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.job_title_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label">المسمى الإداري</label>
+                    <select name="admin_title_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.ADMIN_TITLE %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.admin_title_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Section 4: Bank -->
+          <div class="accordion-item">
+            <h2 class="accordion-header" id="hBank">
+              <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#cBank" aria-expanded="false" aria-controls="cBank">
+                4) المعلومات البنكية
+              </button>
+            </h2>
+            <div id="cBank" class="accordion-collapse collapse" aria-labelledby="hBank" data-bs-parent="#empBasicAccordion">
+              <div class="accordion-body">
+                <div class="row g-3">
+                  <div class="col-md-6">
+                    <label class="form-label">البنك</label>
+                    <select name="bank_lookup_id" class="form-select">
+                      <option value="">—</option>
+                      {% for it in lookups.BANK %}
+                        <option value="{{ it.id }}" {% if emp_file and emp_file.bank_lookup_id == it.id %}selected{% endif %}>{{ it.name_ar }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-6">
+                    <label class="form-label">رقم الحساب</label>
+                    <input type="text" name="bank_account" class="form-control" value="{{ (emp_file.bank_account if emp_file else '') or '' }}">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+      <div class="card-footer d-flex justify-content-between align-items-center">
+        <div class="text-muted small">
+          لإدارة القوائم (الاختيارات) استخدم: <a href="{{ url_for('portal.hr_employee_lookups_index') }}">إعدادات ملف الموظف</a>
+        </div>
+        <button type="submit" class="btn btn-primary">
+          <i class="bi bi-save"></i> حفظ
+        </button>
+      </div>
+    </div>
+  </form>
+{% endblock %}

@@ -1,0 +1,95 @@
+{% extends "portal/inventory/base.html" %}
+
+{% set selected = selected if selected is defined else {} %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">تقرير بطاقة الصنف</h5>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_report_items_all') }}"><i class="bi bi-boxes"></i> تقرير الأصناف</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_report_issue_log') }}"><i class="bi bi-journal-text"></i> سجلات الصرف</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-4">
+        <label class="form-label">الصنف</label>
+        <select name="item_id" class="form-select">
+          <option value="">اختر</option>
+          {% for it in items %}
+            <option value="{{ it.id }}" {% if selected.item_id==it.id %}selected{% endif %}>{{ it.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">المخزن</label>
+        <select name="warehouse_id" class="form-select">
+          <option value="">الكل</option>
+          {% for w in warehouses %}
+            <option value="{{ w.id }}" {% if selected.warehouse_id==w.id %}selected{% endif %}>{{ w.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="from_date" class="form-control" value="{{ selected.from_date|default('') }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="to_date" class="form-control" value="{{ selected.to_date|default('') }}">
+      </div>
+      <div class="col-md-1 d-flex align-items-end">
+        <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i></button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    {% if not item %}
+      <div class="text-muted">اختر صنفًا لعرض الحركات.</div>
+    {% else %}
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="fw-bold">{{ item.label }}</div>
+        <div class="text-muted small">عدد الحركات: {{ movements|length }}</div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead class="table-light">
+            <tr>
+              <th style="width:140px;">التاريخ</th>
+              <th style="width:110px;">النوع</th>
+              <th style="width:170px;">رقم السند</th>
+              <th>المخزن</th>
+              <th style="width:140px;">الكمية (+/-)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set total = 0 %}
+            {% for m in movements %}
+              {% set total = total + (m.qty or 0) %}
+              <tr>
+                <td>{{ m.date }}</td>
+                <td>{{ m.type }}</td>
+                <td>{{ m.voucher_no }}</td>
+                <td>{{ m.warehouse.name if m.warehouse else '-' }}</td>
+                <td class="text-end">{{ '%.2f'|format(m.qty or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot class="table-light">
+            <tr>
+              <th colspan="4" class="text-end">الصافي</th>
+              <th class="text-end">{{ '%.2f'|format(total) }}</th>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

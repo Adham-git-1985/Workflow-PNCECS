@@ -1,0 +1,81 @@
+{% extends "portal/layout.html" %}
+{% block title %}الوجهات{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="mb-0"><i class="bi bi-geo-alt"></i> الوجهات</h5>
+  {% if can_create %}
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_destination_new') }}">وجهة جديدة</a>
+  {% endif %}
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-7">
+      <label class="form-label">بحث</label>
+      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="اسم الوجهة...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="active">
+        <option value="" {% if not active %}selected{% endif %}>الكل</option>
+        <option value="1" {% if active=='1' %}selected{% endif %}>فعّالة</option>
+        <option value="0" {% if active=='0' %}selected{% endif %}>غير فعّالة</option>
+      </select>
+    </div>
+    <div class="col-md-2 d-flex gap-2">
+      <button class="btn btn-primary">تطبيق</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_destinations') }}">تفريغ</a>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th>الاسم</th>
+          <th>الحالة</th>
+          <th>ملاحظات</th>
+          <th style="width: 1%;">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for it in items %}
+          <tr>
+            <td class="fw-semibold">{{ it.name }}</td>
+            <td>
+              {% if it.is_active %}
+                <span class="badge text-bg-success">فعّالة</span>
+              {% else %}
+                <span class="badge text-bg-secondary">غير فعّالة</span>
+              {% endif %}
+            </td>
+            <td class="text-muted">{{ it.notes or '-' }}</td>
+            <td class="text-nowrap">
+              {% if can_edit %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_destination_edit', dest_id=it.id) }}">تعديل</a>
+              {% endif %}
+              {% if can_delete %}
+                <form method="post" action="{{ url_for('portal.transport_destination_delete', dest_id=it.id) }}" class="d-inline"
+                      onsubmit="return confirm('هل تريد حذف هذه الوجهة؟');">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                </form>
+              {% endif %}
+              {% if not can_edit and not can_delete %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,101 @@
+{% extends "portal/layout.html" %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1">استيراد Excel</h4>
+    <div class="text-muted small">{{ meta.title or key }}</div>
+  </div>
+  <a class="btn btn-sm btn-outline-secondary" href="{{ next }}">
+    <i class="bi bi-arrow-right"></i> رجوع
+  </a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card">
+      <div class="card-body">
+        <form method="post" enctype="multipart/form-data">
+          {% if meta.modes and meta.modes|length > 1 %}
+            <div class="mb-3">
+              <label class="form-label">نوع الاستيراد</label>
+              <select class="form-select" name="mode" id="modeSelect" required>
+                {% for k, m in meta.modes.items() %}
+                  <option value="{{ k }}" {% if k == meta.default_mode %}selected{% endif %}>{{ m.label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">اختر النوع ثم ارفع ملف Excel.</div>
+            </div>
+          {% else %}
+            <input type="hidden" name="mode" value="{{ meta.default_mode or 'default' }}">
+          {% endif %}
+
+          <div class="mb-3">
+            <label class="form-label">ملف Excel</label>
+            <input class="form-control" type="file" name="file" accept=".xlsx" required>
+            <div class="form-text">يقبل فقط ملفات .xlsx</div>
+          </div>
+
+          <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-primary" type="submit">
+              <i class="bi bi-upload"></i> استيراد
+            </button>
+
+            <a class="btn btn-outline-success" id="tmplLink" data-base="{{ url_for('portal.portal_excel_template', key=key, mode='__MODE__') }}" href="{{ url_for('portal.portal_excel_template', key=key, mode=(meta.default_mode or 'default')) }}">
+              <i class="bi bi-file-earmark-excel"></i> تنزيل قالب Excel
+            </a>
+
+            <a class="btn btn-outline-secondary" href="{{ next }}">إلغاء</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-body">
+        <h6 class="mb-2">تنبيه مهم</h6>
+        <ul class="small text-muted mb-0">
+          <li>الصف الأول يجب أن يحتوي أسماء الأعمدة (Headers).</li>
+          <li>يمكنك تنزيل قالب جاهز ثم تعبئته.</li>
+          <li>أي صف فارغ سيتم تجاهله.</li>
+          <li>في حال وجود عنصر بنفس المفتاح (مثل code أو email) سيتم تحديثه، وإلا سيتم إنشاؤه.</li>
+        </ul>
+      </div>
+    </div>
+
+    {% if meta.modes %}
+      <div class="card mt-3">
+        <div class="card-body">
+          <h6 class="mb-2">الأعمدة المتوقعة</h6>
+          {% for k, m in meta.modes.items() %}
+            <div class="mb-2">
+              <div class="fw-semibold">{{ m.label }}</div>
+              <div class="small text-muted">{{ m.columns|join(' , ') }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function(){
+    const sel = document.getElementById('modeSelect');
+    const a = document.getElementById('tmplLink');
+    if (!sel || !a) return;
+    const base = a.getAttribute('data-base') || a.href;
+    const setHref = () => {
+      const m = sel.value || 'default';
+      a.href = base.replace('__MODE__', encodeURIComponent(m));
+    };
+    sel.addEventListener('change', setHref);
+    setHref();
+  })();
+</script>
+{% endblock %}

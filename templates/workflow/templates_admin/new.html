@@ -1,0 +1,288 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">➕ إنشاء مسار جديد</h3>
+    <small class="text-muted">حدد الخطوات ومن سيستلم كل خطوة</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#wfTplNewPrint')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-outline-secondary no-print" href="{{ url_for('users.help_workflow_guide') }}" target="_blank">
+      <i class="bi bi-question-circle"></i> الدليل
+    </a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_list') }}">رجوع</a>
+  </div>
+</div>
+
+<form method="post" id="wfTplNewPrint" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="row g-3 mb-3">
+      <div class="col-md-6">
+        <label class="form-label fw-bold">اسم المسار</label>
+        <input class="form-control" name="name" required>
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label fw-bold">SLA Default (days)</label>
+        <input class="form-control" name="sla_days_default" type="number" min="1" placeholder="اختياري">
+      </div>
+
+      <div class="col-md-3 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" checked>
+          <label class="form-check-label fw-bold" for="is_active">Active</label>
+        </div>
+      </div>
+    </div>
+
+    <hr>
+
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <h5 class="mb-0">الخطوات</h5>
+      <button class="btn btn-sm btn-outline-primary" type="button" onclick="addRow()">➕ إضافة خطوة</button>
+    </div>
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle" id="stepsTable">
+        <thead>
+          <tr>
+            <th style="width:60px">#</th>
+            <th style="width:220px">نوع المعتمد</th>
+            <th>القيمة</th>
+            <th style="width:200px">طريقة التنفيذ</th>
+            <th style="width:200px">تسليم للجنة</th>
+            <th style="width:140px">SLA أيام</th>
+            <th style="width:90px"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="step-no">1</td>
+
+            <td>
+              <select class="form-select form-select-sm" name="approver_kind" onchange="toggleFields(this)">
+                <option value="USER" selected>مستخدم (USER)</option>
+                <option value="ROLE">دور (ROLE)</option>
+                <option value="DEPARTMENT">دائرة/قسم (DEPARTMENT)</option>
+                <option value="DIRECTORATE">إدارة (DIRECTORATE)</option>
+                <option value="UNIT">وحدة (UNIT)</option>
+                <option value="SECTION">قسم (SECTION)</option>
+                <option value="DIVISION">شعبة (DIVISION)</option>
+                <option value="COMMITTEE">لجنة (COMMITTEE)</option>
+              </select>
+            </td>
+
+            <td>
+              <div class="target-box" data-kind="USER">
+                <select class="form-select form-select-sm" name="approver_user_id">
+                  <option value="">-- اختر مستخدم --</option>
+                  {% for u in users %}
+                    <option value="{{ u.id }}">{{ u.email }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="ROLE" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_role">
+                  <option value="">-- اختر دور --</option>
+                  {% for r in role_choices %}
+                    <option value="{{ r }}">{{ r }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="DEPARTMENT" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_department_id">
+                  <option value="">-- اختر دائرة/قسم --</option>
+                  {% for d in departments %}
+                    <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="DIRECTORATE" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_directorate_id">
+                  <option value="">-- اختر إدارة --</option>
+                  {% for d in directorates %}
+                    <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="UNIT" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_unit_id">
+                  <option value="">-- اختر وحدة --</option>
+                  {% for uo in units %}
+                    <option value="{{ uo.id }}">{{ uo.name_ar }}{% if uo.code %} ({{ uo.code }}){% endif %} [#{{ uo.id }}]</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="SECTION" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_section_id">
+                  <option value="">-- اختر قسم (Section) --</option>
+                  {% for s in sections %}
+                    <option value="{{ s.id }}">{{ s.name_ar }}{% if s.code %} ({{ s.code }}){% endif %} [#{{ s.id }}]</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="DIVISION" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_division_id">
+                  <option value="">-- اختر شعبة (Division) --</option>
+                  {% for dv in divisions %}
+                    <option value="{{ dv.id }}">{{ dv.name_ar }}{% if dv.code %} ({{ dv.code }}){% endif %} [#{{ dv.id }}]</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="target-box" data-kind="COMMITTEE" style="display:none;">
+                <select class="form-select form-select-sm" name="approver_committee_id">
+                  <option value="">-- اختر لجنة --</option>
+                  {% for c in committees %}
+                    <option value="{{ c.id }}">{{ c.name_ar }}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </td>
+
+            <td>
+              <select class="form-select form-select-sm" name="step_mode">
+                <option value="SEQUENTIAL" selected>تسلسلي</option>
+                <option value="PARALLEL_SYNC">متزامن (Parallel Sync)</option>
+              </select>
+              <div class="form-text">في المتزامن: الردود للتوثيق ولا تغيّر قرار المسار.</div>
+            </td>
+
+            <td>
+              <div class="committee-mode-box" style="display:none;">
+                <select class="form-select form-select-sm" name="committee_delivery_mode">
+                  <option value="Committee_ALL" selected>كل الأعضاء</option>
+                  <option value="Committee_CHAIR">الرئيس فقط</option>
+                  <option value="Committee_SECRETARY">المقرر فقط</option>
+                </select>
+                <div class="form-text">يطبق فقط عند اختيار لجنة.</div>
+              </div>
+            </td>
+
+            <td>
+              <input class="form-control form-control-sm" name="step_sla_days" type="number" min="1" placeholder="اختياري">
+            </td>
+
+            <td class="text-end">
+              <div class="btn-group btn-group-sm" role="group">
+                <button class="btn btn-outline-secondary" type="button" onclick="moveUp(this)">↑</button>
+                <button class="btn btn-outline-secondary" type="button" onclick="moveDown(this)">↓</button>
+                <button class="btn btn-outline-danger" type="button" onclick="removeRow(this)">حذف</button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="d-flex justify-content-end mt-3">
+      <button class="btn btn-primary" type="submit">حفظ</button>
+    </div>
+
+  </div>
+</form>
+
+<script>
+function renumber(){
+  document.querySelectorAll("#stepsTable tbody tr").forEach((tr, i) => {
+    tr.querySelector(".step-no").innerText = (i + 1);
+  });
+}
+
+function toggleFields(sel){
+  const tr = sel.closest("tr");
+  const kind = (sel.value || "").toUpperCase();
+
+  // show only the selected target box
+  tr.querySelectorAll(".target-box").forEach(box => {
+    const k = (box.getAttribute("data-kind") || "").toUpperCase();
+    box.style.display = (k === kind) ? "block" : "none";
+  });
+
+  // committee delivery mode
+  const cmBox = tr.querySelector(".committee-mode-box");
+  if (cmBox) cmBox.style.display = (kind === "COMMITTEE") ? "block" : "none";
+
+  // clear irrelevant values (keep selects enabled so getlist lengths stay aligned)
+  const clearSelect = (name, active) => {
+    const el = tr.querySelector(`select[name="${name}"]`);
+    if(!el) return;
+    if(!active) el.value = "";
+  };
+
+  clearSelect("approver_user_id", kind === "USER");
+  clearSelect("approver_role", kind === "ROLE");
+  clearSelect("approver_department_id", kind === "DEPARTMENT");
+  clearSelect("approver_directorate_id", kind === "DIRECTORATE");
+  clearSelect("approver_unit_id", kind === "UNIT");
+  clearSelect("approver_section_id", kind === "SECTION");
+  clearSelect("approver_division_id", kind === "DIVISION");
+  clearSelect("approver_committee_id", kind === "COMMITTEE");
+
+  const cmSel = tr.querySelector('select[name="committee_delivery_mode"]');
+  if(cmSel && kind !== "COMMITTEE") cmSel.value = "Committee_ALL";
+}
+
+function addRow(){
+  const tbody = document.querySelector("#stepsTable tbody");
+  const first = tbody.querySelector("tr");
+  const clone = first.cloneNode(true);
+
+  // reset values
+  clone.querySelectorAll("input").forEach(i => i.value = "");
+  clone.querySelectorAll("select").forEach(s => { s.selectedIndex = 0; });
+
+  // defaults
+  const kindSel = clone.querySelector('select[name="approver_kind"]');
+  if(kindSel) kindSel.value = "USER";
+
+  const modeSel = clone.querySelector('select[name="step_mode"]');
+  if(modeSel) modeSel.value = "SEQUENTIAL";
+
+  const cmSel = clone.querySelector('select[name="committee_delivery_mode"]');
+  if(cmSel) cmSel.value = "Committee_ALL";
+
+  tbody.appendChild(clone);
+  renumber();
+  if(kindSel) toggleFields(kindSel);
+}
+
+function removeRow(btn){
+  const tbody = document.querySelector("#stepsTable tbody");
+  if (tbody.querySelectorAll("tr").length <= 1) return;
+  btn.closest("tr").remove();
+  renumber();
+}
+
+function moveUp(btn){
+  const tr = btn.closest("tr");
+  const prev = tr.previousElementSibling;
+  if(!prev) return;
+  tr.parentNode.insertBefore(tr, prev);
+  renumber();
+}
+
+function moveDown(btn){
+  const tr = btn.closest("tr");
+  const next = tr.nextElementSibling;
+  if(!next) return;
+  tr.parentNode.insertBefore(next, tr);
+  renumber();
+}
+
+// init
+const firstKind = document.querySelector('#stepsTable tbody tr select[name="approver_kind"]');
+if(firstKind) toggleFields(firstKind);
+</script>
+
+{% endblock %}

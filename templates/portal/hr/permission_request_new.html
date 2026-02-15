@@ -1,0 +1,89 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إدخال/تعديل المغادرات{% endblock %}
+
+{% set is_edit = edit_mode|default(false) %}
+{% set r = req|default(None) %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="permFormPrint">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-box-arrow-in-left"></i> إدخال/تعديل المغادرات</h4>
+      <div class="text-muted small">للأدمن/المدير يمكن اختيار الموظف، وللموظف يتم تعيينه تلقائيًا.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_my_permissions') }}"><i class="bi bi-list-ul"></i> السجل</a>
+      <button class="btn btn-outline-secondary btn-sm" type="button" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+
+  <hr class="my-3"/>
+
+  <form method="post" enctype="multipart/form-data" class="mt-2">
+    <div class="row g-3">
+      {% if is_admin_entry %}
+        <div class="col-12 col-md-4">
+          <label class="form-label">الموظف</label>
+          <select class="form-select" name="user_id">
+            {% for u in users %}
+              <option value="{{ u.id }}" {% if (r and r.user_id==u.id) or (not r and selected_user_id==u.id) %}selected{% endif %}>
+                {{ u.employee_file.emp_no if u.employee_file else '' }} - {{ u.name or u.email }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      {% else %}
+        <div class="col-12 col-md-4">
+          <label class="form-label">الموظف</label>
+          <input class="form-control" value="{{ current_user.name or current_user.email }}" readonly>
+        </div>
+      {% endif %}
+
+      <div class="col-12 col-md-4">
+        <label class="form-label">نوع المغادرة</label>
+        <select class="form-select" name="permission_type_id" required>
+          <option value="">-- اختر --</option>
+          {% for t in types %}
+            <option value="{{ t.id }}" {% if r and r.permission_type_id==t.id %}selected{% endif %}>{{ t.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-6 col-md-2">
+        <label class="form-label">من</label>
+        <input type="time" class="form-control" name="from_time" value="{{ r.from_time if r else '' }}">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label">إلى</label>
+        <input type="time" class="form-control" name="to_time" value="{{ r.to_time if r else '' }}">
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">التاريخ</label>
+        <input type="date" class="form-control" name="day" value="{{ r.day if r else '' }}" required>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <label class="form-label">التفاصيل</label>
+        <input class="form-control" name="note" value="{{ r.note if r else '' }}" placeholder="مثال: مغادرة خاصة / مهمة / ظرف طارئ">
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">مرفق (اختياري)</label>
+        <input type="file" class="form-control" name="attachment">
+        {% if r and r.attachment_name %}
+          <div class="small mt-1 text-muted">المرفق الحالي: {{ r.attachment_name }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="d-flex justify-content-end gap-2 mt-4">
+      <button type="reset" class="btn btn-info"><i class="bi bi-arrow-counterclockwise"></i> إعادة تعيين</button>
+      <button type="submit" class="btn btn-primary">
+        <i class="bi bi-check2-circle"></i>
+        {{ 'حفظ التعديل' if is_edit else 'حفظ' }}
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,115 @@
+{% extends "portal/layout.html" %}
+{% block title %}التفويض{% endblock %}
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-arrow-left-right"></i> التفويض</h5>
+      <div class="text-muted small">تعيين موظف بديل ليستلم صلاحيات/متابعة بدلاً من موظف آخر لفترة محددة.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">
+      <i class="bi bi-grid"></i> لوحة الإدارة
+    </a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-5">
+      <div class="border rounded-3 p-3">
+        <h6 class="mb-3">إنشاء تفويض</h6>
+        <form method="post" class="row g-2">
+          <input type="hidden" name="op" value="create">
+
+          <div class="col-12">
+            <label class="form-label small">المفوِّض (الأصل)</label>
+            <select class="form-select" name="from_user_id" required>
+              <option value="">-- اختر --</option>
+              {% for u in users %}
+                <option value="{{ u.id }}">{{ u.email }}{% if u.name %} - {{ u.name }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label small">المفوَّض إليه (البديل)</label>
+            <select class="form-select" name="to_user_id" required>
+              <option value="">-- اختر --</option>
+              {% for u in users %}
+                <option value="{{ u.id }}">{{ u.email }}{% if u.name %} - {{ u.name }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-6">
+            <label class="form-label small">بداية (ISO)</label>
+            <input type="text" class="form-control" name="starts_at" placeholder="2026-01-30T10:00">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label small">نهاية (اختياري)</label>
+            <input type="text" class="form-control" name="expires_at" placeholder="2026-02-10T16:00">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label small">ملاحظة (اختياري)</label>
+            <input type="text" class="form-control" name="note" placeholder="سبب التفويض أو أي تفاصيل">
+          </div>
+
+          <div class="col-12">
+            <button class="btn btn-primary w-100" type="submit"><i class="bi bi-check2"></i> حفظ</button>
+          </div>
+
+          <div class="col-12 text-muted small">
+            إذا لم تُدخل تاريخ/وقت البداية سيتم اعتبارها الآن. وإذا لم تُدخل النهاية سيتم ضبطها 30 يومًا افتراضيًا.
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      <div class="border rounded-3 p-3">
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+          <h6 class="mb-0">قائمة التفويضات</h6>
+          <span class="text-muted small">آخر الأحدث بالأعلى</span>
+        </div>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead>
+              <tr>
+                <th>الحالة</th>
+                <th>{{ portal_sort_link('المفوِّض', 'from_user') }}</th>
+                <th>{{ portal_sort_link('المفوَّض إليه', 'to_user') }}</th>
+                <th>{{ portal_sort_link('من', 'starts_at') }}</th>
+                <th>{{ portal_sort_link('إلى', 'expires_at') }}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for d in delegations %}
+                <tr>
+                  <td>
+                    {% if d.is_active %}<span class="badge bg-success">نشط</span>{% else %}<span class="badge bg-secondary">موقوف</span>{% endif %}
+                  </td>
+                  <td>{{ d.from_user.email if d.from_user else d.from_user_id }}</td>
+                  <td>{{ d.to_user.email if d.to_user else d.to_user_id }}</td>
+                  <td class="text-muted small">{{ d.starts_at }}</td>
+                  <td class="text-muted small">{{ d.expires_at }}</td>
+                  <td class="text-nowrap">
+                    {% if d.is_active %}
+                      <form method="post" class="d-inline" onsubmit="return confirm('إلغاء التفويض؟');">
+                        <input type="hidden" name="op" value="deactivate">
+                        <input type="hidden" name="id" value="{{ d.id }}">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء</button>
+                      </form>
+                    {% endif %}
+                  </td>
+                </tr>
+              {% else %}
+                <tr><td colspan="6" class="text-muted">لا توجد تفويضات.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

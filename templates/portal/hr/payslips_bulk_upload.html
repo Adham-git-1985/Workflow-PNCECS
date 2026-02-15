@@ -1,0 +1,82 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}رفع قسائم الرواتب (شهرياً){% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <h4 class="mb-1"><i class="bi bi-upload"></i> رفع قسائم الرواتب (شهرياً)</h4>
+  <div class="text-muted">
+    ارفع جميع قسائم الموظفين دفعة واحدة لشهر محدد. <b>شرط التسمية</b>: اسم كل ملف يجب أن يكون <b>الرقم الوظيفي</b> للموظف (مثال: <code>12345.pdf</code>).
+    بعد الرفع، تُحفظ القسائم كـ <b>مسودات</b> (لن يتم إرسالها تلقائياً). يمكنك لاحقاً إرسالها من صفحة <b>إرسال قسائم الرواتب</b>.
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <form method="post" enctype="multipart/form-data">
+    <div class="row g-3 align-items-end">
+      <div class="col-md-3">
+        <label class="form-label">السنة</label>
+        <select class="form-select" name="year" required>
+          {% for y in range((default_year|int) - 3, (default_year|int) + 2) %}
+            <option value="{{ y }}" {% if y == (default_year|int) %}selected{% endif %}>{{ y }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">الشهر</label>
+        <select class="form-select" name="month" required>
+          {% for mm in range(1, 13) %}
+            <option value="{{ mm }}" {% if mm == (default_month|int) %}selected{% endif %}>{{ "%02d"|format(mm) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">ملفات قسائم الرواتب (PDF)</label>
+        <input class="form-control" type="file" name="files" accept="application/pdf" multiple required>
+        <div class="form-text">
+          ارفع عدة ملفات PDF دفعة واحدة. كل ملف يجب أن يحمل الرقم الوظيفي كاسم للملف.
+        </div>
+      </div>
+<div class="col-12">
+        <button class="btn btn-primary"><i class="bi bi-cloud-arrow-up"></i> تنفيذ الرفع</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}">رجوع</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=default_year, month=default_month) }}"><i class="bi bi-send"></i> صفحة الإرسال</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{% if results %}
+  <div class="bg-white rounded-3 shadow-sm p-4">
+    <h6 class="mb-3">نتيجة العملية</h6>
+    <div class="row g-3">
+      <div class="col-md-6">
+        <div class="p-3 border rounded">
+          <div class="text-muted">تم حفظ كمسودات</div>
+          <div class="fs-4 fw-bold">{{ results.saved or 0 }}</div>
+        </div>
+      </div>
+<div class="col-md-6">
+        <div class="p-3 border rounded">
+          <div class="text-muted">تم تخطي</div>
+          <div class="fs-4 fw-bold">{{ results.skipped or 0 }}</div>
+        </div>
+      </div>
+    </div>
+
+    {% if results.errors and results.errors|length > 0 %}
+      <div class="alert alert-warning mt-3 mb-0">
+        <div class="fw-semibold mb-2">ملاحظات/أخطاء</div>
+        <ul class="mb-0">
+          {% for e in results.errors[:30] %}
+            <li>{{ e }}</li>
+          {% endfor %}
+        </ul>
+        {% if results.errors|length > 30 %}
+          <div class="small text-muted mt-2">تم إظهار أول 30 ملاحظة فقط.</div>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+{% endif %}
+
+{% endblock %}

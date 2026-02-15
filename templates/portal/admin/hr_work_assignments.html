@@ -1,0 +1,326 @@
+{% extends "portal/layout.html" %}
+{% block title %}تعيين الدوام{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-person-check"></i> تعيين الدوام</h5>
+      <div class="text-muted small">ربط (قالب الدوام + سياسة الدوام) بمستخدم/دور/قسم مع تاريخ من/إلى.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
+        <i class="bi bi-clipboard2-data"></i> لوحة HR
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">
+        <i class="bi bi-grid"></i> لوحة الإدارة
+      </a>
+    </div>
+  </div>
+
+  <div class="alert alert-info small mb-3">
+    <strong>ملخص سريع:</strong> يمكنك إنشاء تعيينات مثل: <span class="badge text-bg-dark">اعتيادي</span> (ثابت + On-site)،
+    <span class="badge text-bg-dark">طوارئ رواتب</span> (Hybrid quota)، أو <span class="badge text-bg-dark">عن بعد</span>.
+  </div>
+
+  <div class="border rounded-3 p-3 mb-4">
+    <h6 class="mb-3"><i class="bi bi-plus-circle"></i> إضافة تعيين</h6>
+    <form method="post" class="row g-2" id="assignForm">
+      <input type="hidden" name="op" value="create">
+
+      <div class="col-lg-3">
+        <label class="form-label">النوع/الوصف</label>
+        <input class="form-control" name="name" placeholder="مثال: اعتيادي / عن بعد">
+      </div>
+
+      <div class="col-lg-3">
+        <label class="form-label">قالب الدوام</label>
+        <select class="form-select" name="schedule_id" required>
+          <option value="">—</option>
+          {% for s in schedules %}
+            <option value="{{ s.id }}">{{ s.name }} ({{ s.start_time }}–{{ s.end_time }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-lg-3">
+        <label class="form-label">سياسة الدوام</label>
+        <select class="form-select" name="policy_id">
+          <option value="">—</option>
+          {% for p in policies %}
+            <option value="{{ p.id }}">{{ p.name }} — {{ days_label(p) }} / {{ place_label(p) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-lg-3">
+        <label class="form-label">نوع التعيين</label>
+        <select class="form-select" name="target_type" id="target_type" required>
+          <option value="USER">مستخدم</option>
+          <option value="ROLE">دور</option>
+          <option value="DEPARTMENT">دائرة</option>
+        </select>
+      </div>
+
+      <div class="col-lg-4" id="target_user_wrap">
+        <label class="form-label">المستخدم</label>
+        <select class="form-select" name="target_user_id">
+          <option value="">—</option>
+          {% for u in users %}
+            <option value="{{ u.id }}">{{ u.full_name }}{% if u.username %} ({{ u.username }}){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-lg-4 d-none" id="target_role_wrap">
+        <label class="form-label">الدور</label>
+        <select class="form-select" name="target_role">
+          <option value="">—</option>
+          {% for r in roles %}
+            <option value="{{ r }}">{{ r }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-lg-4 d-none" id="target_dept_wrap">
+        <label class="form-label">الدائرة</label>
+        <select class="form-select" name="target_department_id">
+          <option value="">—</option>
+          {% for d in departments %}
+            <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-lg-2">
+        <label class="form-label">من</label>
+        <input type="date" class="form-control" name="start_date">
+      </div>
+      <div class="col-lg-2">
+        <label class="form-label">إلى</label>
+        <input type="date" class="form-control" name="end_date">
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary"><i class="bi bi-save"></i> حفظ</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>{{ portal_sort_link('النوع', 'name') }}</th>
+          <th>{{ portal_sort_link('الهدف', 'user') }}</th>
+          <th>{{ portal_sort_link('قالب', 'schedule') }}</th>
+          <th>سياسة الأيام</th>
+          <th>سياسة المكان</th>
+          <th class="text-muted">{{ portal_sort_link('من/إلى', 'start_date') }}</th>
+          <th>الحالة</th>
+          <th class="text-muted">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in assignments %}
+          <tr>
+            <td class="fw-semibold">{{ a.name or '—' }}</td>
+            <td>
+              {% if a.target_type == 'USER' %}
+                <span class="badge text-bg-primary">مستخدم</span>
+                {{ a.user.full_name if a.user else (a.target_user_id or '') }}
+              {% elif a.target_type == 'ROLE' %}
+                <span class="badge text-bg-dark">دور</span>
+                {{ a.target_role or '—' }}
+              {% elif a.target_type == 'DEPARTMENT' %}
+                <span class="badge text-bg-secondary">قسم</span>
+                {{ a.department.name_ar if a.department else (a.target_department_id or '') }}
+              {% else %}
+                {{ a.target_type }}
+              {% endif %}
+            </td>
+            <td>
+              {% if a.schedule %}
+                {{ a.schedule.name }}
+                <div class="text-muted small">{{ a.schedule.start_time }}–{{ a.schedule.end_time }}</div>
+              {% else %}
+                #{{ a.schedule_id }}
+              {% endif %}
+            </td>
+            <td>{{ days_label(a.policy) }}</td>
+            <td>{{ place_label(a.policy) }}</td>
+            <td class="text-muted">{{ a.start_date or '—' }} → {{ a.end_date or '—' }}</td>
+            <td>
+              {% if a.is_active %}
+                <span class="badge text-bg-success">نشط</span>
+              {% else %}
+                <span class="badge text-bg-secondary">موقف</span>
+              {% endif %}
+            </td>
+            <td>
+              <div class="d-flex gap-1">
+                <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse" data-bs-target="#editRow{{ a.id }}" aria-expanded="false">
+                  تعديل
+                </button>
+                <form method="post">
+                  <input type="hidden" name="op" value="toggle">
+                  <input type="hidden" name="id" value="{{ a.id }}">
+                  <button class="btn btn-sm btn-outline-secondary" type="submit">تبديل</button>
+                </form>
+                <form method="post" onsubmit="return confirm('حذف التعيين؟');">
+                  <input type="hidden" name="op" value="delete">
+                  <input type="hidden" name="id" value="{{ a.id }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+
+          <tr class="collapse" id="editRow{{ a.id }}">
+            <td colspan="8">
+              <div class="border rounded-3 p-3 bg-light">
+                <h6 class="mb-3"><i class="bi bi-pencil"></i> تعديل التعيين #{{ a.id }}</h6>
+                <form method="post" class="row g-2">
+                  <input type="hidden" name="op" value="save">
+                  <input type="hidden" name="id" value="{{ a.id }}">
+
+                  <div class="col-lg-3">
+                    <label class="form-label">النوع/الوصف</label>
+                    <input class="form-control" name="name" value="{{ a.name or '' }}" placeholder="مثال: اعتيادي / عن بعد">
+                  </div>
+
+                  <div class="col-lg-3">
+                    <label class="form-label">قالب الدوام</label>
+                    <select class="form-select" name="schedule_id" required>
+                      <option value="">—</option>
+                      {% for s in schedules %}
+                        <option value="{{ s.id }}" {% if a.schedule_id == s.id %}selected{% endif %}>{{ s.name }} ({{ s.start_time }}–{{ s.end_time }})</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-lg-3">
+                    <label class="form-label">سياسة الدوام</label>
+                    <select class="form-select" name="policy_id">
+                      <option value="">—</option>
+                      {% for p in policies %}
+                        <option value="{{ p.id }}" {% if a.policy_id == p.id %}selected{% endif %}>{{ p.name }} — {{ days_label(p) }} / {{ place_label(p) }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-lg-3">
+                    <label class="form-label">نوع التعيين</label>
+                    <select class="form-select target-type" name="target_type" data-prefix="{{ a.id }}" required>
+                      <option value="USER" {% if a.target_type == 'USER' %}selected{% endif %}>مستخدم</option>
+                      <option value="ROLE" {% if a.target_type == 'ROLE' %}selected{% endif %}>دور</option>
+                      <option value="DEPARTMENT" {% if a.target_type == 'DEPARTMENT' %}selected{% endif %}>دائرة</option>
+                    </select>
+                  </div>
+
+                  <div class="col-lg-4" id="target_user_wrap_{{ a.id }}">
+                    <label class="form-label">المستخدم</label>
+                    <select class="form-select" name="target_user_id">
+                      <option value="">—</option>
+                      {% for u in users %}
+                        <option value="{{ u.id }}" {% if a.target_user_id == u.id %}selected{% endif %}>{{ u.full_name }}{% if u.username %} ({{ u.username }}){% endif %}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-lg-4 d-none" id="target_role_wrap_{{ a.id }}">
+                    <label class="form-label">الدور</label>
+                    <select class="form-select" name="target_role">
+                      <option value="">—</option>
+                      {% for r in roles %}
+                        <option value="{{ r }}" {% if a.target_role == r %}selected{% endif %}>{{ r }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-lg-4 d-none" id="target_dept_wrap_{{ a.id }}">
+                    <label class="form-label">الدائرة</label>
+                    <select class="form-select" name="target_department_id">
+                      <option value="">—</option>
+                      {% for d in departments %}
+                        <option value="{{ d.id }}" {% if a.target_department_id == d.id %}selected{% endif %}>{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+
+                  <div class="col-lg-2">
+                    <label class="form-label">من</label>
+                    <input type="date" class="form-control" name="start_date" value="{{ a.start_date or '' }}">
+                  </div>
+                  <div class="col-lg-2">
+                    <label class="form-label">إلى</label>
+                    <input type="date" class="form-control" name="end_date" value="{{ a.end_date or '' }}">
+                  </div>
+
+                  <div class="col-lg-2">
+                    <label class="form-label">الحالة</label>
+                    <select class="form-select" name="is_active">
+                      <option value="1" {% if a.is_active %}selected{% endif %}>نشط</option>
+                      <option value="0" {% if not a.is_active %}selected{% endif %}>موقوف</option>
+                    </select>
+                  </div>
+
+                  <div class="col-12">
+                    <button class="btn btn-primary"><i class="bi bi-save"></i> حفظ التعديلات</button>
+                  </div>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="8" class="text-muted">لا توجد تعيينات بعد.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function(){
+  function updateTargetUI(prefix, value){
+    var userWrap = document.getElementById(prefix ? ('target_user_wrap_' + prefix) : 'target_user_wrap');
+    var roleWrap = document.getElementById(prefix ? ('target_role_wrap_' + prefix) : 'target_role_wrap');
+    var deptWrap = document.getElementById(prefix ? ('target_dept_wrap_' + prefix) : 'target_dept_wrap');
+    if(!userWrap || !roleWrap || !deptWrap) return;
+    userWrap.classList.add('d-none');
+    roleWrap.classList.add('d-none');
+    deptWrap.classList.add('d-none');
+    if(value === 'ROLE') roleWrap.classList.remove('d-none');
+    else if(value === 'DEPARTMENT') deptWrap.classList.remove('d-none');
+    else userWrap.classList.remove('d-none');
+  }
+
+  // Create form
+  (function(){
+    var t = document.getElementById('target_type');
+    if(!t) return;
+    function run(){ updateTargetUI('', t.value); }
+    document.addEventListener('change', function(e){
+      if(e.target && e.target.id === 'target_type') run();
+    });
+    run();
+  })();
+
+  // Edit forms
+  document.addEventListener('change', function(e){
+    if(!e.target) return;
+    if(e.target.classList && e.target.classList.contains('target-type')){
+      var p = e.target.getAttribute('data-prefix') || '';
+      updateTargetUI(p, e.target.value);
+    }
+  });
+  var all = document.querySelectorAll('select.target-type');
+  for(var i=0;i<all.length;i++){
+    var p = all[i].getAttribute('data-prefix') || '';
+    updateTargetUI(p, all[i].value);
+  }
+})();
+</script>
+{% endblock %}

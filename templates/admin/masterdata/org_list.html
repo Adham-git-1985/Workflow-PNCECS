@@ -1,0 +1,96 @@
+{% extends "layout.html" %}
+{% block content %}
+
+{% set _q = q or '' %}
+{% set _sort = sort or 'name_ar' %}
+{% set _dir = direction or 'asc' %}
+
+{% macro sort_link(field, label) %}
+  {% set new_dir = 'desc' if _sort == field and _dir == 'asc' else 'asc' %}
+  <a class="text-decoration-none text-dark" href="{{ url_for('masterdata.org_list', q=_q, sort=field, dir=new_dir) }}">
+    {{ label }}
+    {% if _sort == field %}
+      <small class="text-muted">{{ '▲' if _dir == 'asc' else '▼' }}</small>
+    {% endif %}
+  </a>
+{% endmacro %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🏢 المنظمات</h3>
+    <small class="text-muted">إدارة المنظمات</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdOrgPrint\')">🖨️ طباعة</button>
+    <a class="btn btn-outline-secondary no-print" href="{{ url_for(\'users.help_hr_guide\') }}" target="_blank">❓ الدليل</a>
+
+    <a class="btn btn-outline-success" href="{{ url_for('masterdata.org_export_excel', q=_q, sort=_sort, dir=_dir) }}">⬇️ Excel</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('masterdata.import_excel', screen='organizations') }}">⬆️ استيراد Excel</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.org_new') }}">➕ إضافة منظمة</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+<form method="get" class="mb-3">
+  <div class="input-group">
+    <input class="form-control" type="text" name="q" value="{{ _q }}" placeholder="ابحث بالاسم أو الكود…">
+    <button class="btn btn-outline-secondary" type="submit">بحث</button>
+    {% if _q %}
+      <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+    {% endif %}
+  </div>
+  <input type="hidden" name="sort" value="{{ _sort }}">
+  <input type="hidden" name="dir" value="{{ _dir }}">
+</form>
+
+
+    {% if items %}
+      <div id="mdOrgPrint" class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>{{ sort_link('id', '#') }}</th>
+              <th>{{ sort_link('name_ar', 'الاسم (AR)') }}</th>
+              <th>{{ sort_link('name_en', 'الاسم (EN)') }}</th>
+              <th>{{ sort_link('code', 'Code') }}</th>
+              <th>{{ sort_link('is_active', 'نشط') }}</th>
+              <th class="text-end">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for o in items %}
+              <tr>
+                <td>{{ o.id }}</td>
+                <td>{{ o.name_ar }}</td>
+                <td>{{ o.name_en or '-' }}</td>
+                <td>{{ o.code or '-' }}</td>
+                <td>
+                  {% if o.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.org_edit', org_id=o.id) }}">✏️ تعديل</a>
+                  {% if current_user.has_perm('MASTERDATA_DELETE') %}
+                  <form method="post" action="{{ url_for('masterdata.org_delete', org_id=o.id) }}" class="d-inline"
+                        onsubmit="return confirm('هل أنت متأكد؟ إذا كانت هناك إدارات مرتبطة سيتم تعطيل المنظمة بدلاً من حذفها.');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

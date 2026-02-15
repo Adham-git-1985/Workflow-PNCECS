@@ -1,0 +1,69 @@
+{% extends "portal/layout.html" %}
+{% block title %}لا تملك صلاحية{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-8">
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <div class="d-flex align-items-center gap-3">
+        <div class="fs-1 text-warning"><i class="bi bi-shield-x"></i></div>
+        <div>
+          <h4 class="mb-1">لا تملك صلاحية الدخول للبوابة</h4>
+          <div class="text-muted">
+            لم يتم منحك صلاحية <strong>الدخول للبوابة الإدارية</strong> بعد.
+            تواصل مع مسؤول النظام ليتم تفعيل صلاحية <span class="badge bg-dark">PORTAL_READ</span>
+            (حسب الدور أو للمستخدم).
+          </div>
+        </div>
+      </div>
+
+      <hr>
+
+      {# Last portal-entry request status (if exists) #}
+      {% if last_req %}
+        <div class="border rounded-3 p-3 bg-light mb-3">
+          <div class="fw-semibold mb-1">آخر طلب دخول للبوابة</div>
+          <div class="small text-muted">رقم الطلب: #{{ last_req.id }} — {{ last_req.created_at.strftime('%Y-%m-%d %H:%M') if last_req.created_at else '' }}</div>
+          <div class="mt-2">
+            {% if last_req.status=='PENDING' %}
+              <span class="badge text-bg-warning">قيد المراجعة</span>
+            {% elif last_req.status=='APPROVED' %}
+              <span class="badge text-bg-success">تمت الموافقة</span>
+            {% elif last_req.status=='REJECTED' %}
+              <span class="badge text-bg-danger">مرفوض</span>
+            {% elif last_req.status=='CANCELLED' %}
+              <span class="badge text-bg-secondary">ملغي</span>
+            {% else %}
+              <span class="badge text-bg-secondary">{{ last_req.status }}</span>
+            {% endif %}
+            {% if last_req.decision_note %}
+              <div class="text-muted small mt-2">ملاحظة: {{ last_req.decision_note }}</div>
+            {% endif %}
+          </div>
+        </div>
+      {% endif %}
+
+      <div class="d-flex flex-wrap gap-2 mb-3">
+        <a class="btn btn-success" href="{{ url_for('portal.access_request_new', service='portal') }}">
+          <i class="bi bi-send"></i> طلب صلاحية دخول البوابة
+        </a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.my_access_requests') }}">
+          <i class="bi bi-key"></i> متابعة طلباتي
+        </a>
+      </div>
+
+      <div class="d-flex flex-wrap gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">
+          <i class="bi bi-arrow-return-right"></i> العودة لمسار
+        </a>
+
+        {% if current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+          <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_permissions') }}">
+            <i class="bi bi-person-gear"></i> إدارة صلاحيات البوابة
+          </a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

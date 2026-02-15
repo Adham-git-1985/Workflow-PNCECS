@@ -1,0 +1,115 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <h5 class="m-0">سجل الطلبات</h5>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_requests_log') }}"><i class="bi bi-arrow-clockwise"></i> تحديث</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-md-3">
+        <label class="form-label">الإدارة العامة</label>
+        <select name="department_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for d in departments %}
+            <option value="{{ d.id }}" {% if selected.department_id==d.id %}selected{% endif %}>{{ d.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">موقع العمل</label>
+        <select name="work_location_id" class="form-select">
+          <option value="">بدون تحديد</option>
+          {% for l in work_locations %}
+            <option value="{{ l.id }}" {% if selected.work_location_id==l.id %}selected{% endif %}>{{ l.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">بواسطة</label>
+        <input name="entered_by" class="form-control" value="{{ selected.entered_by|default('') }}" placeholder="بدون تحديد أو اسم المُدخل">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">الطلبية تحتوي</label>
+        <input name="contains" class="form-control" value="{{ selected.contains|default('') }}" placeholder="بدون تحديد">
+      </div>
+
+      <div class="col-md-3">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" name="from_date" class="form-control" value="{{ selected.from_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" name="to_date" class="form-control" value="{{ selected.to_date|default('') }}">
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">حالة الطلبية</label>
+        <select name="status" class="form-select">
+          <option value="">بدون تحديد</option>
+          <option value="IN_PROGRESS" {% if selected.status=='IN_PROGRESS' %}selected{% endif %}>قيد العمل</option>
+          <option value="ISSUED" {% if selected.status=='ISSUED' %}selected{% endif %}>مصروف</option>
+          <option value="CANCELLED" {% if selected.status=='CANCELLED' %}selected{% endif %}>ملغي</option>
+        </select>
+      </div>
+      <div class="col-md-3">
+        <label class="form-label">موافقة المسؤول</label>
+        <select name="manager_approval" class="form-select">
+          <option value="">بدون تحديد</option>
+          <option value="PENDING" {% if selected.manager_approval=='PENDING' %}selected{% endif %}>في الإنتظار</option>
+          <option value="APPROVED" {% if selected.manager_approval=='APPROVED' %}selected{% endif %}>موافقة</option>
+          <option value="REJECTED" {% if selected.manager_approval=='REJECTED' %}selected{% endif %}>رفض</option>
+        </select>
+      </div>
+
+      <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+        <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_requests_log') }}">مسح</a>
+        <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-striped mb-0">
+        <thead>
+          <tr>
+            <th style="width:90px;">#</th>
+            <th>تاريخ</th>
+            <th>الإدارة</th>
+            <th>موقع العمل</th>
+            <th>بواسطة</th>
+            <th>الطلبية تحتوي</th>
+            <th>الحالة</th>
+            <th>موافقة المسؤول</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td>{{ r.id }}</td>
+            <td>{{ r.request_date }}</td>
+            <td>{{ r.department.name_ar if r.department else '-' }}</td>
+            <td>{{ r.work_location.name_ar if r.work_location else '-' }}</td>
+            <td>{{ r.entered_by.full_name if r.entered_by else '-' }}</td>
+            <td class="text-truncate" style="max-width:280px;">{{ r.items_text or '-' }}</td>
+            <td>{{ {'IN_PROGRESS':'قيد العمل','ISSUED':'مصروف','CANCELLED':'ملغي'}.get(r.status, r.status) }}</td>
+            <td>{{ {'PENDING':'في الإنتظار','APPROVED':'موافقة','REJECTED':'رفض'}.get(r.manager_approval, r.manager_approval) }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="8" class="text-center text-muted py-4">لا توجد بيانات.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
