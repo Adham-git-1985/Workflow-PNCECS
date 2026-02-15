@@ -9525,10 +9525,16 @@ def _parse_timeclock_line(line: str):
     if len(parts) < 3:
         return None
 
+    # Detect event type (supports multiple exports)
     event_type = None
+    type_map = {
+        'I': 'I', 'IN': 'I', 'A': 'I', 'CHECKIN': 'I', 'CHECK-IN': 'I', '0': 'I',
+        'O': 'O', 'OUT': 'O', 'B': 'O', 'CHECKOUT': 'O', 'CHECK-OUT': 'O', '1': 'O',
+    }
     for p in parts:
-        if p in ("I", "O"):
-            event_type = p
+        key = (p or '').strip().upper()
+        if key in type_map:
+            event_type = type_map[key]
             break
     if event_type is None:
         return None
@@ -9540,49 +9546,97 @@ def _parse_timeclock_line(line: str):
             break
 
     emp_code = None
-    for p in parts:
-        if p.isdigit() and len(p) >= 4:
-            # avoid capturing YYYYMMDD
-            if len(p) == 8 and p.startswith(('19', '20')):
-                continue
-            emp_code = p
-            break
+    # Prefer first column as employee/identity number when it is numeric.
+    if parts and (parts[0] or '').isdigit():
+        emp_code = (parts[0] or '').strip()
+    else:
+        for p in parts:
+            if p.isdigit() and len(p) >= 4:
+                # avoid capturing YYYYMMDD
+                if len(p) == 8 and p.startswith(('19', '20')):
+                    continue
+                emp_code = p
+                break
     if emp_code is None:
         return None
 
     dt = None
-    # date + time columns
-    for i in range(len(parts) - 1):
-        d0 = parts[i]
-        t0 = parts[i + 1]
-        date_s = None
-        if len(d0) == 10 and d0[4] in ('-', '/') and d0[7] in ('-', '/'):
-            date_s = d0.replace('/', '-')
-        elif len(d0) == 8 and d0.isdigit() and d0.startswith(('19', '20')):
-            date_s = f"{d0[0:4]}-{d0[4:6]}-{d0[6:8]}"
-        if not date_s:
-            continue
 
-        time_s = None
-        if len(t0) == 8 and t0[2] == ':' and t0[5] == ':':
-            time_s = t0
-        elif len(t0) == 6 and t0.isdigit():
-            time_s = f"{t0[0:2]}:{t0[2:4]}:{t0[4:6]}"
-        if not time_s:
-            continue
+    # 1) Combined datetime token (e.g. "2/15/2026 7:17 AM")
+    dt_formats = [
+        "%m/%d/%Y %I:%M %p",
+        "%m/%d/%Y %I:%M:%S %p",
+        "%d/%m/%Y %I:%M %p",
+        "%d/%m/%Y %I:%M:%S %p",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+    ]
+    for p in parts:
+        pp = (p or '').strip()
+        if (('/' in pp or '-' in pp) and (':' in pp)):
+            for fmt in dt_formats:
+                try:
+                    dt = datetime.strptime(pp, fmt)
+                    break
+                except Exception:
+                    dt = None
+            if dt is not None:
+                break
 
-        try:
-            dt = datetime.fromisoformat(f"{date_s}T{time_s}")
-            break
-        except Exception:
-            dt = None
+    # 2) date + time columns (two tokens)
+    if dt is None:
+        for i in range(len(parts) - 1):
+            d0 = (parts[i] or '').strip()
+            t0 = (parts[i + 1] or '').strip()
+            date_s = None
+            if len(d0) == 10 and d0[4] in ('-', '/') and d0[7] in ('-', '/'):
+                date_s = d0.replace('/', '-')
+            elif len(d0) == 8 and d0.isdigit() and d0.startswith(('19', '20')):
+                date_s = f"{d0[0:4]}-{d0[4:6]}-{d0[6:8]}"
+            if not date_s:
+                continue
 
-    # combined token
+            # AM/PM time like "7:17 AM"
+            t_upper = t0.upper()
+            if (('AM' in t_upper) or ('PM' in t_upper)) and (':' in t0):
+                tt = ' '.join(t0.split())
+                for tfmt in ("%I:%M %p", "%I:%M:%S %p"):
+                    try:
+                        t_parsed = datetime.strptime(tt, tfmt).time()
+                        dt = datetime.fromisoformat(date_s + "T" + t_parsed.strftime("%H:%M:%S"))
+                        break
+                    except Exception:
+                        dt = None
+                if dt is not None:
+                    break
+
+            time_s = None
+            if len(t0) == 8 and t0[2] == ':' and t0[5] == ':':
+                time_s = t0
+            elif len(t0) == 5 and t0[2] == ':':
+                time_s = t0 + ":00"
+            elif len(t0) == 6 and t0.isdigit():
+                time_s = f"{t0[0:2]}:{t0[2:4]}:{t0[4:6]}"
+            if not time_s:
+                continue
+
+            try:
+                dt = datetime.fromisoformat(f"{date_s}T{time_s}")
+                break
+            except Exception:
+                dt = None
+
+    # 3) ISO token with 'T'
     if dt is None:
         for p in parts:
-            if 'T' in p and len(p) >= 19:
+            pp = (p or '').strip()
+            if 'T' in pp and len(pp) >= 16:
                 try:
-                    dt = datetime.fromisoformat(p.replace('Z', ''))
+                    dt = datetime.fromisoformat(pp.replace('Z', ''))
                     break
                 except Exception:
                     dt = None
@@ -13182,23 +13236,59 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
 
 def _timeclock_get_match_by() -> str:
     v = (_setting_get('TIMECLK_MATCH_BY') or '').strip().upper()
-    return v if v in {'TIMECLK_CODE', 'EMPLOYEE_NO'} else 'TIMECLK_CODE'
+    # Allowed values:
+    #  - TIMECLK_CODE: match EmployeeFile.timeclock_code
+    #  - EMPLOYEE_NO: match EmployeeFile.employee_no
+    #  - NATIONAL_ID: match EmployeeFile.national_id
+    #  - AUTO: try all (employee_no -> national_id -> timeclock_code)
+    return v if v in {'TIMECLK_CODE', 'EMPLOYEE_NO', 'NATIONAL_ID', 'AUTO'} else 'TIMECLK_CODE'
 
 
 def _timeclock_build_code_to_user(match_by: str) -> dict:
     match_by = (match_by or '').strip().upper()
+
+    def _add_aliases(m: dict):
+        # add normalized (no-leading-zeros) alias when safe
+        for k, uid in list(m.items()):
+            if isinstance(k, str) and k.isdigit():
+                alt = k.lstrip('0') or '0'
+                if alt not in m:
+                    m[alt] = uid
+
     if match_by == 'EMPLOYEE_NO':
         m = {
             (p.employee_no or '').strip(): p.user_id
             for p in EmployeeFile.query.filter(EmployeeFile.employee_no.isnot(None)).all()
             if (p.employee_no or '').strip()
         }
-        # add a normalized (no-leading-zeros) alias when safe
-        for k, uid in list(m.items()):
-            if k.isdigit():
-                alt = k.lstrip('0') or '0'
-                if alt not in m:
-                    m[alt] = uid
+        _add_aliases(m)
+        return m
+
+    if match_by == 'NATIONAL_ID':
+        m = {
+            (p.national_id or '').strip(): p.user_id
+            for p in EmployeeFile.query.filter(EmployeeFile.national_id.isnot(None)).all()
+            if (p.national_id or '').strip()
+        }
+        _add_aliases(m)
+        return m
+
+    if match_by == 'AUTO':
+        # Priority: employee_no -> national_id -> timeclock_code
+        m: dict = {}
+        for p in EmployeeFile.query.filter(
+            (EmployeeFile.employee_no.isnot(None)) | (EmployeeFile.national_id.isnot(None)) | (EmployeeFile.timeclock_code.isnot(None))
+        ).all():
+            eno = (p.employee_no or '').strip()
+            nid = (p.national_id or '').strip()
+            tcc = (p.timeclock_code or '').strip()
+            if eno:
+                m.setdefault(eno, p.user_id)
+            if nid:
+                m.setdefault(nid, p.user_id)
+            if tcc:
+                m.setdefault(tcc, p.user_id)
+        _add_aliases(m)
         return m
 
     # default: TIMECLK_CODE
@@ -13207,11 +13297,7 @@ def _timeclock_build_code_to_user(match_by: str) -> dict:
         for p in EmployeeFile.query.filter(EmployeeFile.timeclock_code.isnot(None)).all()
         if (p.timeclock_code or '').strip()
     }
-    for k, uid in list(m.items()):
-        if k.isdigit():
-            alt = k.lstrip('0') or '0'
-            if alt not in m:
-                m[alt] = uid
+    _add_aliases(m)
     return m
 
 
@@ -13354,7 +13440,7 @@ def portal_admin_integrations():
         if imp_id_int is not None:
             _setting_set('TIMECLK_IMPORTED_BY_USER_ID', str(imp_id_int))
 
-        if match_by in {'TIMECLK_CODE', 'EMPLOYEE_NO'}:
+        if match_by in {'TIMECLK_CODE', 'EMPLOYEE_NO', 'NATIONAL_ID', 'AUTO'}:
             _setting_set('TIMECLK_MATCH_BY', match_by)
 
         _portal_audit(

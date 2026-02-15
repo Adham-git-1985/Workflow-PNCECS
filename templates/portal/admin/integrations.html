@@ -28,8 +28,10 @@
           <div class="col-md-6">
             <label class="form-label">المطابقة حسب</label>
             <select class="form-select" name="match_by">
-              <option value="TIMECLK_CODE" {% if (match_by or '') == 'TIMECLK_CODE' %}selected{% endif %}>كود الساعة (timeclock_code)</option>
+              <option value="AUTO" {% if (match_by or '') == 'AUTO' %}selected{% endif %}>تلقائي (الرقم الوظيفي → رقم الهوية → كود الساعة)</option>
               <option value="EMPLOYEE_NO" {% if (match_by or '') == 'EMPLOYEE_NO' %}selected{% endif %}>الرقم الوظيفي (employee_no)</option>
+              <option value="NATIONAL_ID" {% if (match_by or '') == 'NATIONAL_ID' %}selected{% endif %}>رقم الهوية (national_id)</option>
+              <option value="TIMECLK_CODE" {% if (match_by or '') == 'TIMECLK_CODE' %}selected{% endif %}>كود الساعة (timeclock_code)</option>
             </select>
             <div class="form-text">يجب أن يطابق الرقم الموجود داخل ملف الساعة.</div>
           </div>
