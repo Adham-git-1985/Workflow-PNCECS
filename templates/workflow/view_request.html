@@ -100,7 +100,7 @@
         {% for e in req.escalations|sort(attribute='created_at', reverse=True) %}
           <li class="list-group-item">
             <div class="d-flex justify-content-between">
-              <strong>{{ e.category }}</strong>
+              <strong>{{ e.category|esc_category_ar }}</strong>
               {% if e.step_order %}<span class="badge bg-danger ms-2">Step {{ e.step_order }}</span>{% endif %}
               <span class="small text-muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
             </div>

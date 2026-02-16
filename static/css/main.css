@@ -20,6 +20,10 @@ table[data-sortable="true"] th.sorted-desc::after {
   margin-right: 6px;
 }
 
+:root{
+  --wf-header-h: 70px;
+}
+
 html {
     height: 100%;
 }
@@ -28,10 +32,15 @@ body {
     font-family: "Cairo", sans-serif;
     background-color: #f8f9fa;
     margin: 0;
-    padding-top: 70px; /* ارتفاع الهيدر */
+    padding-top: 0; /* default: no fixed header */
     min-height: 100%;
     overflow-y: auto;
 }
+
+body.has-fixed-header{
+    padding-top: var(--wf-header-h, 70px);
+}
+
 
 /* =========================
    Bootstrap handles .container
@@ -95,7 +104,7 @@ body {
 
 .admin-wrapper {
     display: flex;
-    min-height: calc(100vh - 70px); /* الهيدر */
+    min-height: calc(100vh - var(--wf-header-h, 70px)); /* الهيدر */
     align-items: flex-start; /* مهم جدًا */
 }
 
@@ -110,8 +119,8 @@ body {
     padding: 15px;
 
     position: sticky;
-    top: 70px; /* تحت الهيدر الثابت */
-    height: calc(100vh - 70px);
+    top: var(--wf-header-h, 70px); /* تحت الهيدر الثابت */
+    height: calc(100vh - var(--wf-header-h, 70px));
     overflow-y: auto;
     scrollbar-width: thin;
 }
@@ -363,7 +372,9 @@ button:hover,
 
 .chart-wrapper {
     width: 350px;
+    max-width: 100%;
     height: 350px;
+    max-height: 70vw;
 }
 
 /* =========================
@@ -652,3 +663,57 @@ body.wf-print-only-target .wf-print-target { position: absolute; inset: 0; paddi
 .sidebar-collapse-toggle[aria-expanded="true"] .chev { transform: rotate(180deg); }
 .help-menu a { display:block; padding:.35rem .75rem; border-radius:.55rem; margin:.1rem 0; }
 .help-menu a.active { background: rgba(255,255,255,.12); font-weight: 600; }
+
+
+/* =========================
+   Responsive
+========================= */
+
+/* Header wrapping on small screens */
+@media (max-width: 991.98px){
+  .main-header .container{
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .header-actions{
+    flex-wrap: wrap;
+    gap: 8px !important;
+    justify-content: flex-start;
+  }
+  .admin-content{
+    padding: 16px;
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 767.98px){
+  .brand-subtitle{ display:none; }
+}
+
+@media (max-width: 575.98px){
+  .brand-logos img:nth-child(2){ display:none; }
+}
+
+/* Offcanvas sidebar uses same menu styles but without sticky calc */
+.pncecs-offcanvas{
+  background: #0d3b66;
+}
+.admin-sidebar--offcanvas{
+  position: static;
+  top: auto;
+  height: auto;
+  overflow: visible;
+}
+
+/* Horizontal scrolling for wide tables on small screens */
+@media (max-width: 991.98px){
+  .wf-table-scroll{
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .wf-table-scroll > table{
+    min-width: 720px;
+  }
+}

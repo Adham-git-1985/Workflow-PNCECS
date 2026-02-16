@@ -57,7 +57,7 @@
                             </div>
                         </td>
                         <td class="text-center">{{ e.step_order or '—' }}</td>
-                        <td><span class="badge bg-warning text-dark">{{ e.category }}</span></td>
+                        <td><span class="badge bg-warning text-dark">{{ e.category|esc_category_ar }}</span></td>
                         <td>{{ e.from_user.email if e.from_user else 'System' }}</td>
                         <td>{{ e.to_user.email if e.to_user else '—' }}</td>
                         <td class="text-center">{{ e.created_at.strftime('%Y-%m-%d %H:%M') if e.created_at else '' }}</td>

@@ -114,11 +114,35 @@ UNREAD_TTL = 10  # seconds
 
 # ======================
 # App Init
+
+# ======================
+# Labels (Arabic)
+# ======================
+ESCALATION_CATEGORY_LABELS_AR = {
+    "SLA_RISK": "خطر تجاوز SLA",
+    "URGENT": "عاجل",
+    "MISSING_INFO": "نقص معلومات",
+    "BLOCKED": "معيق/متوقف",
+    "CONFLICT": "تعارض/خلاف",
+    "NEED_GUIDANCE": "بحاجة لتوجيه",
+    "OTHER": "أخرى",
+}
+
+def esc_category_ar(code):
+    if code is None:
+        return ""
+    try:
+        key = str(code).strip().upper()
+    except Exception:
+        return code
+    return ESCALATION_CATEGORY_LABELS_AR.get(key, code)
+
 # ======================
 
 app = Flask(__name__)
 app.jinja_env.globals["csrf_token"] = generate_csrf
 app.jinja_env.globals["get_sla_state"] = get_sla_state
+app.jinja_env.filters["esc_category_ar"] = esc_category_ar
 
 # Cache func
 def get_unread_count(user_id, source="workflow"):

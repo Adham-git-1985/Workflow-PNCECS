@@ -15,11 +15,11 @@
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.rtl.min.css">
 
     <!-- Global CSS (cache-bust) -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20260123">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20260216r1">
 
     {% block extra_css %}{% endblock %}
 </head>
-<body>
+<body class="has-fixed-header">
 
 {% set hide_shell = hide_shell|default(false) %}
 
@@ -44,6 +44,10 @@
 
         {% if current_user.is_authenticated and not hide_shell %}
         <div class="header-actions d-flex align-items-center gap-3">
+
+            <button type="button" class="btn btn-outline-light btn-sm d-lg-none no-print" data-bs-toggle="offcanvas" data-bs-target="#sidebarOffcanvas" aria-controls="sidebarOffcanvas" title="القائمة">
+                <i class="bi bi-list"></i>
+            </button>
             <div class="user-badge d-none d-md-flex align-items-center gap-2">
                 <img src="{% if current_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ current_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}" alt="avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.12);">
                 <span>{{ current_user.full_name }}</span>
@@ -123,404 +127,33 @@
         or current_user.has_perm('DELEGATION_SELF')
     ) %}
 
-    <!-- ===== SIDEBAR ===== -->
-    <aside class="admin-sidebar">
+    <!-- ===== SIDEBAR (Responsive) ===== -->
 
-        <!-- User box (appears on every authenticated page) -->
-        <div class="sidebar-user mb-3">
-            <div class="d-flex align-items-center gap-2">
-                <i class="bi bi-person-circle text-white fs-4"></i>
-                <div class="flex-grow-1">
-                    <div class="fw-bold text-white" style="line-height:1.2">{{ current_user.full_name }}</div>
-                    <small class="text-white-50">{{ current_user.role }}</small>
-
-                    {% if g.delegation and g.effective_user and g.effective_user.id != current_user.id %}
-                      <div class="mt-2">
-                        <span class="badge bg-warning text-dark">مفوّض عن {{ g.effective_user.full_name }}</span>
-                        {% if g.delegation.expires_at %}
-                          <div class="small text-white-50 mt-1">حتى {{ g.delegation.expires_at.strftime('%Y-%m-%d %H:%M') }}</div>
-                        {% endif %}
-                      </div>
-                    {% endif %}
-                </div>
-            </div>
+    {# Mobile sidebar (Offcanvas) #}
+    <div class="offcanvas offcanvas-start d-lg-none pncecs-offcanvas" tabindex="-1" id="sidebarOffcanvas" aria-labelledby="sidebarOffcanvasLabel">
+      <div class="offcanvas-header">
+        <h6 class="offcanvas-title text-white" id="sidebarOffcanvasLabel"><i class="bi bi-list"></i> القائمة</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+      </div>
+      <div class="offcanvas-body p-0">
+        <div class="admin-sidebar admin-sidebar--offcanvas">
+          {% set sidebar_prefix = 'oc' %}
+          {% include 'partials/sidebar_content.html' %}
         </div>
+      </div>
+    </div>
 
-        <a href="{{ url_for('users.profile') }}"
-           class="{% if request.path.startswith('/users/profile') %}active{% endif %}">
-            ⚙️ ملفي الشخصي
-        </a>
-
-        <a href="{{ url_for('portal.portal_entry') }}"
-           class="{% if request.path.startswith('/portal') %}active{% endif %}">
-            🧩 البوابة الإدارية
-        </a>
-
-
-        
-        {# ==========================
-           المساعدة (مطوية افتراضيًا)
-           ========================== #}
-        {% set help_open = request.path.startswith('/users/help') %}
-        <button class="sidebar-collapse-toggle mt-3 no-print"
-                type="button"
-                data-bs-toggle="collapse"
-                data-bs-target="#helpMenu"
-                aria-expanded="{{ 'true' if help_open else 'false' }}"
-                aria-controls="helpMenu">
-            <i class="bi bi-question-circle"></i>
-            <span class="menu-text">المساعدة</span>
-            <i class="bi bi-chevron-down chev"></i>
-        </button>
-
-        <div class="collapse help-menu {% if help_open %}show{% endif %}" id="helpMenu">
-            <a href="{{ url_for('users.help_index') }}" class="{% if request.path == '/users/help' %}active{% endif %}">
-                🧭 مركز الأدلة
-            </a>
-
-            <a href="{{ url_for('users.system_search_page') }}" class="{% if request.path.startswith('/users/search') %}active{% endif %}">
-                🔎 بحث في النظام
-            </a>
-
-            <a href="{{ url_for('users.help_system_master_guide') }}" class="{% if request.path.startswith('/users/help/system') %}active{% endif %}">
-                📕 الدليل الشامل للنظام
-            </a>
-
-            <a href="{{ url_for('users.help_employee_guide') }}" class="{% if request.path.startswith('/users/help/employee') %}active{% endif %}">
-                📗 دليل الموظف
-            </a>
-
-            <a href="{{ url_for('users.help_workflow_user_guide') }}" class="{% if request.path.startswith('/users/help/workflow-user') %}active{% endif %}">
-                🧾 دليل المستخدم: الطلبات والمسارات
-            </a>
-
-            <a href="{{ url_for('users.help_leaves_guide') }}" class="{% if request.path.startswith('/users/help/leaves') %}active{% endif %}">
-                📘 دليل الإجازات
-            </a>
-
-            {% if current_user.has_perm('HR_ORG_DYNAMIC_GUIDE_VIEW') or current_user.has_perm('HR_ORGSTRUCTURE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or current_user.has_role('HR_ADMIN') or current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') or (current_user.role and 'أدمن' in current_user.role and ('الموارد' in current_user.role or 'الموارد البشرية' in current_user.role)) %}
-            <a href="{{ url_for('users.help_org_structure_dynamic_guide') }}" class="{% if request.path.startswith('/users/help/org-structure-dynamic') %}active{% endif %}">
-                🌳 دليل الهيكلية الموحدة (Dynamic)
-            </a>
-            {% endif %}
-
-            {# HR guides: user guide for anyone with HR access; admin guide only for HR admins #}
-            {% if current_user.has_perm('HR_READ') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_EMPLOYEE_READ') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_REQUESTS_APPROVE') or current_user.has_perm('HR_REPORTS_VIEW') %}
-            <a href="{{ url_for('users.help_hr_guide') }}" class="{% if request.path.startswith('/users/help/hr') and not request.path.startswith('/users/help/hr-admin') %}active{% endif %}">
-                🧑‍💼 دليل الموارد البشرية
-            </a>
-            {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_perm('HR_DOCS_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
-            <a href="{{ url_for('users.help_hr_admin_guide') }}" class="{% if request.path.startswith('/users/help/hr-admin') %}active{% endif %}">
-                📙 دليل أدمن الموارد البشرية
-            </a>
-            {% endif %}
-            {% endif %}
-
-            {% if current_user.has_perm('WORKFLOW_TEMPLATES_READ') or current_user.has_perm('WORKFLOW_TEMPLATES_MANAGE') or current_user.has_perm('WORKFLOW_ROUTING_READ') or current_user.has_perm('WORKFLOW_ROUTING_MANAGE') or current_user.has_perm('REQUEST_TYPES_READ') %}
-            <a href="{{ url_for('users.help_workflow_admin_guide') }}" class="{% if request.path.startswith('/users/help/workflow') and not request.path.startswith('/users/help/workflow-user') %}active{% endif %}">
-                🧩 دليل المسارات والتوجيه (أدمن)
-            </a>
-            {% endif %}
-
-            {% if current_user.has_perm('CORR_READ') %}
-            <a href="{{ url_for('users.help_correspondence_guide') }}" class="{% if request.path.startswith('/users/help/correspondence') and not request.path.startswith('/users/help/correspondence-admin') %}active{% endif %}">
-                ✉️ دليل الصادر والوارد
-            </a>
-            {% if current_user.has_perm('CORR_LOOKUPS_MANAGE') or current_user.has_perm('CORR_UPDATE') or current_user.has_perm('CORR_DELETE') %}
-            <a href="{{ url_for('users.help_correspondence_admin_guide') }}" class="{% if request.path.startswith('/users/help/correspondence-admin') %}active{% endif %}">
-                📙 دليل أدمن الصادر والوارد
-            </a>
-            {% endif %}
-            {% endif %}
-
-            {% if current_user.has_perm('STORE_READ') or current_user.has_perm('STORE_MANAGE') %}
-            <a href="{{ url_for('users.help_store_guide') }}" class="{% if request.path.startswith('/users/help/store') and not request.path.startswith('/users/help/store-admin') %}active{% endif %}">
-                📦 دليل المستودع
-            </a>
-            {% if current_user.has_perm('STORE_MANAGE') %}
-            <a href="{{ url_for('users.help_store_admin_guide') }}" class="{% if request.path.startswith('/users/help/store-admin') %}active{% endif %}">
-                📙 دليل أدمن المستودع
-            </a>
-            {% endif %}
-            {% endif %}
-
-            {% if current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or current_user.has_perm('USER_PERMISSIONS_MANAGE') or current_user.has_perm('PORTAL_ADMIN_READ') %}
-            <a href="{{ url_for('users.help_access_requests_guide') }}" class="{% if request.path.startswith('/users/help/access-requests') and not request.path.startswith('/users/help/access-requests-admin') %}active{% endif %}">
-                🔑 دليل طلبات الصلاحيات
-            </a>
-            <a href="{{ url_for('users.help_access_requests_admin_guide') }}" class="{% if request.path.startswith('/users/help/access-requests-admin') %}active{% endif %}">
-                📙 دليل أدمن طلبات الصلاحيات
-            </a>
-            {% endif %}
-
-            {% if current_user.has_perm('TRANSPORT_READ') or current_user.has_perm('TRANSPORT_CREATE') or current_user.has_perm('TRANSPORT_APPROVE') %}
-            <a href="{{ url_for('users.help_transport_guide') }}" class="{% if request.path.startswith('/users/help/transport') and not request.path.startswith('/users/help/transport-admin') %}active{% endif %}">
-                🚗 دليل الحركة
-            </a>
-            {% if current_user.has_perm('TRANSPORT_UPDATE') or current_user.has_perm('TRANSPORT_APPROVE') %}
-            <a href="{{ url_for('users.help_transport_admin_guide') }}" class="{% if request.path.startswith('/users/help/transport-admin') %}active{% endif %}">
-                📙 دليل أدمن الحركة
-            </a>
-            {% endif %}
-            {% endif %}
-        </div>
-<h4 class="sidebar-title">
-            <i class="bi bi-grid"></i>
-            <span class="menu-text">الطلبات</span>
-        </h4>
-
-        {% if current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_perm('REQUESTS_ALL_READ') %}
-        <a href="{{ url_for('admin.admin_requests') }}"
-           class="{% if request.path.startswith('/admin/requests') %}active{% endif %}">
-            📋 جميع الطلبات
-        </a>
-        {% endif %}
-
-        <a href="{{ url_for('workflow.inbox') }}"
-           class="{% if request.path.startswith('/workflow/inbox') %}active{% endif %}">
-            📥 مهامي
-        </a>
-
-        <a href="{{ url_for('workflow.following') }}"
-           class="{% if request.path.startswith('/workflow/following') %}active{% endif %}">
-            👁️ متابعة المسارات
-        </a>
-
-        <a href="{{ url_for('my_requests') }}"
-           class="{% if request.path.startswith('/my-requests') %}active{% endif %}">
-            📂 طلباتي
-        </a>
-
-        <a href="{{ url_for('workflow.new_request') }}"
-           class="nav-cta {% if request.path.startswith('/workflow/new') %}active{% endif %}">
-            ➕ طلب جديد
-        </a>
-
-        <a href="{{ url_for('workflow.notifications') }}"
-           class="{% if request.path.startswith('/workflow/notifications') %}active{% endif %}">
-            🔔 الإشعارات
-        </a>
-
-        <a href="{{ url_for('messages.inbox') }}"
-           class="{% if request.path.startswith('/messages') %}active{% endif %}">
-            💬 المراسلات
-            {% if unread_msgs|default(0) > 0 %}
-              <span class="badge bg-danger ms-2">{{ unread_msgs }}</span>
-            {% endif %}
-        </a>
-
-        <h4 class="sidebar-title mt-4">
-            <i class="bi bi-archive"></i>
-            <span class="menu-text">الأرشيف</span>
-        </h4>
-
-        <a href="{{ url_for('archive.my_files') }}"
-           class="{% if request.path.startswith('/archive/my-files') %}active{% endif %}">
-            📁 ملفاتي
-        </a>
-
-        <a href="{{ url_for('archive.archive_files') }}"
-           class="{% if request.path.startswith('/archive/files') %}active{% endif %}">
-            🗂️ جميع الملفات
-        </a>
-
-        <a href="{{ url_for('archive.upload_file') }}"
-           class="nav-cta {% if request.path.startswith('/archive/upload') %}active{% endif %}">
-            ⬆️ رفع ملف
-        </a>
-
-        <a href="{{ url_for('archive.recycle_bin') }}"
-           class="{% if request.path.startswith('/archive/recycle-bin') %}active{% endif %}">
-            🗑️ سلة المحذوفات
-        </a>
-
-        {% if current_user.is_authenticated and (current_user.has_role("SUPER_ADMIN") or current_user.has_role("SUPERADMIN")) %}
-        <a href="{{ url_for('archive.super_trash') }}"
-           class="{% if request.path.startswith('/archive/super-trash') %}active{% endif %}">
-          🧹 سلة السوبر أدمن
-        </a>
-        {% endif %}
-
-
-        
-
-{% if can_templates or can_request_types or can_routing %}
-        <h4 class="sidebar-title mt-4">
-            <i class="bi bi-diagram-3"></i>
-            <span class="menu-text">لوحة التحكم - المسارات</span>
-        </h4>
-
-        {% if can_templates %}
-        <a href="{{ url_for('workflow.templates_list') }}"
-           class="{% if request.path.startswith('/workflow/templates') %}active{% endif %}">
-            🧩 المسارات
-        </a>
-        {% endif %}
-
-        {% if can_request_types %}
-        <a href="{{ url_for('masterdata.request_types_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/request-types') %}active{% endif %}">
-            🧾 أنواع الطلبات
-        </a>
-        {% endif %}
-
-        {% if can_routing %}
-        <a href="{{ url_for('admin.workflow_routing_list') }}"
-           class="{% if request.path.startswith('/admin/workflow-routing') %}active{% endif %}">
-            🧭 قواعد التوجيه
-        </a>
-        {% endif %}
-        {% endif %}
-
-        {% if can_masterdata or can_user_perms %}
-        <h4 class="sidebar-title mt-4">
-            <i class="bi bi-database"></i>
-            <span class="menu-text">لوحة التحكم - البيانات الأساسية</span>
-        </h4>
-
-        {% if can_masterdata %}
-        <a href="{{ url_for('masterdata.org_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/organizations') %}active{% endif %}">
-            🏢 المنظمات
-        </a>
-
-        <a href="{{ url_for('masterdata.dir_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/directorates') %}active{% endif %}">
-            🏛️ الإدارات
-        </a>
-
-        <a href="{{ url_for('masterdata.units_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/units') %}active{% endif %}">
-            🏢 الوحدات
-        </a>
-
-        <a href="{{ url_for('masterdata.dept_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/departments') %}active{% endif %}">
-            🧩 الدوائر
-        </a>
-
-        <a href="{{ url_for('masterdata.sections_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/sections') %}active{% endif %}">
-            🧩 الأقسام
-        </a>
-
-        <a href="{{ url_for('masterdata.divisions_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/divisions') %}active{% endif %}">
-            🧩 الشُعب
-        </a>
-
-        <a href="{{ url_for('masterdata.org_node_types_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/org-node-types') %}active{% endif %}">
-            🧱 أنواع الهيكلية (Dynamic)
-        </a>
-
-        <a href="{{ url_for('masterdata.org_nodes_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/org-nodes') %}active{% endif %}">
-            🌳 عناصر الهيكلية (Dynamic)
-        </a>
-
-        <a href="{{ url_for('masterdata.roles_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/roles') %}active{% endif %}">
-            🎭 الأدوار
-        </a>
-
-        <a href="{{ url_for('masterdata.committees_list') }}"
-           class="{% if request.path.startswith('/admin/masterdata/committees') %}active{% endif %}">
-            👥 اللجان
-        </a>
-        {% endif %}
-
-        {% if can_user_perms %}
-        <a href="{{ url_for('masterdata.permissions_manage') }}"
-           class="{% if request.path.startswith('/admin/masterdata/permissions') %}active{% endif %}">
-            🔐 الصلاحيات
-        </a>
-
-        {% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('admin.manage_permissions') }}"
-           class="{% if request.path.startswith('/admin/permissions') %}active{% endif %}">
-            🔐 صلاحيات الأدوار
-        </a>
-        {% endif %}
-
-        {% endif %}
-        {% endif %}
-
-{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_DASHBOARD') or current_user.has_role_perm('VIEW_ESCALATIONS') or can_delegations %}
-        <h4 class="sidebar-title mt-4">
-            <i class="bi bi-gear"></i>
-            <span class="menu-text">إدارة النظام</span>
-        </h4>
-
-{% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('users.list_users') }}"
-           class="{% if request.path.startswith('/users') %}active{% endif %}">
-            👤 المستخدمون
-        </a>
-{% endif %}
-
-{% if can_delegations %}
-        <a href="{{ url_for('delegation.index') }}"
-           class="{% if request.path.startswith('/delegation') %}active{% endif %}">
-            🧑‍🤝‍🧑 التفويض
-        </a>
-{% endif %}
-
-{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_DASHBOARD') %}
-        <a href="{{ url_for('admin.dashboard') }}"
-           class="{% if request.path.startswith('/admin/dashboard') %}active{% endif %}">
-            🧭 لوحة التحكم
-        </a>
-{% endif %}
-{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_ESCALATIONS') %}
-        <a href="{{ url_for('admin.escalations') }}"
-           class="{% if request.path.startswith('/admin/escalations') %}active{% endif %}">
-            🚨 التصعيدات
-            {% if escalation_alerts_count|default(0) > 0 %}
-                <span class="badge bg-danger ms-2">{{ escalation_alerts_count }}</span>
-            {% endif %}
-        </a>
-{% endif %}
-
-{% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('workflow.notifications_dashboard') }}">
-            📊 لوحة الإشعارات
-        </a>
-{% endif %}
-
-{% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('audit.audit_dashboard') }}">
-            📊 سجل التدقيق
-        </a>
-{% endif %}
-
-{% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('audit.system_timeline') }}">
-            🧭 الخط الزمني
-        </a>
-{% endif %}
-
-{% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('admin.evaluations_index') }}"
-           class="{% if request.path.startswith('/admin/evaluations') %}active{% endif %}">
-            ⭐ تقييم الموظفين
-        </a>
-{% endif %}
-
-{% if current_user.has_role('ADMIN') %}
-        <a href="{{ url_for('admin.backup_page') }}"
-           class="{% if request.path.startswith('/admin/backup') %}active{% endif %}">
-            💾 النسخ الاحتياطي
-        </a>
-{% endif %}
-
-        {% endif %}
-
+    {# Desktop sidebar #}
+    <aside class="admin-sidebar d-none d-lg-block">
+      {% set sidebar_prefix = 'desk' %}
+      {% include 'partials/sidebar_content.html' %}
     </aside>
-    {% endif %}
 
     <!-- ===== CONTENT ===== -->
     <div class="admin-content">
+    {% else %}
+    <div class="admin-content admin-content--full">
+    {% endif %}
 
         {% if breadcrumb %}
         <nav class="breadcrumb mb-3">
@@ -612,6 +245,8 @@
 
 {# Type-to-search dropdowns (Portal + Workflow) #}
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}"></script>
+
+<script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
 
 {% block extra_js %}{% endblock %}
 

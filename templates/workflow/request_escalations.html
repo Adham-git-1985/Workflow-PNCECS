@@ -58,7 +58,7 @@
                 <tr>
                   <td class="text-nowrap">{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
                   <td class="text-nowrap">{{ e.step_order if e.step_order else '-' }}</td>
-                  <td>{{ e.category }}</td>
+                  <td>{{ e.category|esc_category_ar }}</td>
                   <td class="text-nowrap">{{ e.from_user.email if e.from_user else ('#' ~ e.from_user_id) }}</td>
                   <td>
                     {% if e.targets %}

@@ -39,7 +39,8 @@
           <label class="form-label">نوع التصعيد</label>
           <select class="form-select" name="category" required>
             {% for c in categories %}
-              <option value="{{ c }}">{{ c }}</option>
+              {# keep DB value as code, but show Arabic label to users #}
+              <option value="{{ c }}">{{ c|esc_category_ar }}</option>
             {% endfor %}
           </select>
         </div>
