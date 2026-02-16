@@ -67,8 +67,18 @@ from flask import g
 # ======================
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 from sqlalchemy.exc import SQLAlchemyError
+
+# Ensure UTF-8 output on Windows services/console (prevents UnicodeEncodeError in logs)
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
 logging.basicConfig(
     level=logging.INFO,
@@ -86,7 +96,8 @@ if not os.path.exists("logs"):
 file_handler = RotatingFileHandler(
     "logs/workflow.log",
     maxBytes=1_000_000,   # 1MB
-    backupCount=5
+    backupCount=5,
+    encoding="utf-8"
 )
 
 file_handler.setLevel(logging.INFO)

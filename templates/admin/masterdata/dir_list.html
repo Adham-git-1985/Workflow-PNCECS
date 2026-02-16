@@ -22,7 +22,7 @@
   </div>
   <div class="d-flex gap-2">
     <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdDirPrint\')">🖨️ طباعة</button>
-    <a class="btn btn-outline-secondary no-print" href="{{ url_for(\'users.help_hr_guide\') }}" target="_blank">❓ الدليل</a>
+    <a class="btn btn-outline-secondary no-print" href="{{ url_for('users.help_hr_guide') }}" target="_blank">? الدليل</a>
 
     <a class="btn btn-outline-success" href="{{ url_for('masterdata.dir_export_excel', q=_q, sort=_sort, dir=_dir) }}">⬇️ Excel</a>
     <a class="btn btn-outline-primary" href="{{ url_for('masterdata.import_excel', screen='directorates') }}">⬆️ استيراد Excel</a>
