@@ -90,7 +90,7 @@ def get_trash_retention_days() -> int:
 # =========================
 @admin_bp.route("/update-sla", methods=["POST"])
 @login_required
-@roles_required("ADMIN")
+@perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")  # SUPER/SUPERADMIN bypass exists in User.has_perm
 def update_sla():
 
     sla_days = request.form.get("sla_days", type=int)
@@ -121,7 +121,7 @@ def update_sla():
 # =========================
 @admin_bp.route("/update-trash-retention", methods=["POST"])
 @login_required
-@roles_required("ADMIN")
+@perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")  # SUPER/SUPERADMIN bypass exists in User.has_perm
 def update_trash_retention():
     days = request.form.get("trash_retention_days", type=int)
     if days is None or days < 1:
@@ -349,7 +349,7 @@ def dashboard_export_excel():
 
 @admin_bp.route("/permissions", methods=["GET", "POST"])
 @login_required
-@roles_required("ADMIN")  # SUPER_ADMIN bypass exists in roles_required
+@perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")  # SUPER/SUPERADMIN bypass exists in User.has_perm
 def manage_permissions():
     """Manage permissions by ROLE (RolePermission table).
 
@@ -421,7 +421,7 @@ def manage_permissions():
 
 @admin_bp.route("/requests")
 @login_required
-@roles_required("ADMIN")
+@perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")  # SUPER/SUPERADMIN bypass exists in User.has_perm
 def admin_requests():
 
     base_query = WorkflowRequest.query
@@ -444,7 +444,7 @@ def admin_requests():
 
 @admin_bp.route("/requests/export.xlsx")
 @login_required
-@roles_required("ADMIN")
+@perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")  # SUPER/SUPERADMIN bypass exists in User.has_perm
 def admin_requests_export_excel():
     """Export admin requests list (with the same advanced filters) to Excel."""
     base_query = WorkflowRequest.query

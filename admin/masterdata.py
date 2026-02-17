@@ -2066,51 +2066,11 @@ def committees_export_excel():
 
     committees = query.order_by(Committee.id.desc()).all()
 
-    # Round-trip friendly export (can be imported back with chair/members)
-    headers = [
-        "ID",
-        "Code",
-        "الاسم (AR)",
-        "Name (EN)",
-        "Active",
-        "Notes",
-        "Chair Email",
-        "Secretary Email",
-        "Members Emails",
-        "Roles Codes",
-        "Members (Active)",
-        "Members (Total)",
-    ]
-
+    headers = ["ID", "Code", "الاسم (AR)", "Name (EN)", "Active", "Notes", "Members (Active)", "Members (Total)"]
     rows = []
     for c in committees:
-        assignees = list(c.assignees or [])
-        active_assignees = [m for m in assignees if m.is_active]
-
-        def _role(m):
-            return (m.member_role or "").strip().upper()
-
-        chair_email = ""
-        secretary_email = ""
-        for m in active_assignees:
-            if m.kind == "USER" and m.user and m.user.email:
-                if _role(m) == "CHAIR" and not chair_email:
-                    chair_email = m.user.email
-                elif _role(m) == "SECRETARY" and not secretary_email:
-                    secretary_email = m.user.email
-
-        members_emails = []
-        for m in active_assignees:
-            if m.kind == "USER" and m.user and m.user.email:
-                if _role(m) in ("CHAIR", "SECRETARY"):
-                    continue
-                members_emails.append(m.user.email)
-
-        roles_codes = [m.role for m in active_assignees if m.kind == "ROLE" and m.role]
-
-        total = len(assignees)
-        active_cnt = len(active_assignees)
-
+        total = len(c.assignees or [])
+        active_cnt = len([m for m in (c.assignees or []) if m.is_active])
         rows.append((
             c.id,
             c.code or "",
@@ -2118,23 +2078,13 @@ def committees_export_excel():
             c.name_en or "",
             "نعم" if c.is_active else "لا",
             (c.notes or ""),
-            chair_email,
-            secretary_email,
-            "; ".join(members_emails),
-            "; ".join(roles_codes),
             active_cnt,
             total,
         ))
 
     xbytes = make_xlsx_bytes("Committees", headers, rows)
     filename = f"committees_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
-    return send_file(
-        BytesIO(xbytes),
-        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True,
-        download_name=filename,
-    )
-
+    return send_file(BytesIO(xbytes), mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", as_attachment=True, download_name=filename)
 
 
 @masterdata_bp.route("/committees/<int:committee_id>/members/export.xlsx")
@@ -2204,42 +2154,6 @@ def _import_norm(val):
         return None
     s = str(val).strip()
     return s if s else None
-
-
-def _row_has_any_key(row, *names):
-    for n in names:
-        if n in row:
-            return True
-    return False
-
-
-def _split_list(val):
-    """Split a cell containing a list into values (comma/semicolon/newline + Arabic comma)."""
-    if val is None:
-        return []
-    s = str(val)
-    s = s.replace("،", ",")
-    # Normalize Windows newlines inside cells
-    s = s.replace("\r", "\n")
-
-    parts = []
-    for chunk in s.split("\n"):
-        chunk = chunk.replace(";", ",")
-        for p in chunk.split(","):
-            pp = str(p).strip()
-            if pp:
-                parts.append(pp)
-
-    # de-dup (case-insensitive) while preserving order
-    seen = set()
-    out = []
-    for p in parts:
-        k = p.lower()
-        if k in seen:
-            continue
-        seen.add(k)
-        out.append(p)
-    return out
 
 
 def _read_excel_rows_from_filestorage(file_storage):
@@ -2616,114 +2530,6 @@ def _import_roles(rows):
 
 def _import_committees(rows):
     created = updated = 0
-
-    # Cache lookups for membership resolution (by email/role code)
-    users_by_email = {u.email.lower(): u for u in User.query.all() if u.email}
-    roles_by_code = {r.code.lower(): r for r in Role.query.all() if r.code}
-
-    CHAIR_HDRS = (
-        "Chair Email", "Chair (Email)", "Chair", "رئيس اللجنة", "رئيس (Email)", "رئيس اللجنة (Email)",
-    )
-    SEC_HDRS = (
-        "Secretary Email", "Secretary (Email)", "Secretary", "مقرر اللجنة", "مقرر (Email)", "مقرر اللجنة (Email)",
-    )
-    MEM_HDRS = (
-        "Members Emails", "Members (Emails)", "Members", "الأعضاء", "أعضاء اللجنة",
-    )
-    ROLE_HDRS = (
-        "Roles Codes", "Roles (Codes)", "Roles", "الأدوار", "أدوار",
-    )
-
-    def _sync_members(c: Committee, row: dict):
-        # Only touch membership if the sheet contains membership columns
-        has_members_cols = _row_has_any_key(row, *(CHAIR_HDRS + SEC_HDRS + MEM_HDRS + ROLE_HDRS))
-        if not has_members_cols:
-            return
-
-        chair_vals = _split_list(_hdr(row, *CHAIR_HDRS))
-        sec_vals = _split_list(_hdr(row, *SEC_HDRS))
-        mem_vals = _split_list(_hdr(row, *MEM_HDRS))
-        role_vals = _split_list(_hdr(row, *ROLE_HDRS))
-
-        desired = {}  # (kind, id/code) -> member_role
-
-        def add_user(email: str, member_role: str):
-            if not email:
-                return
-            u = users_by_email.get(email.lower())
-            if not u:
-                return
-            desired[("USER", u.id)] = member_role
-
-        def add_role(code: str, member_role: str):
-            if not code:
-                return
-            rr = roles_by_code.get(code.lower())
-            if not rr:
-                return
-            desired[("ROLE", rr.code)] = member_role
-
-        chair_email = chair_vals[0] if chair_vals else None
-        if chair_email:
-            add_user(chair_email, "CHAIR")
-        for extra in chair_vals[1:]:
-            add_user(extra, "MEMBER")
-
-        sec_email = sec_vals[0] if sec_vals else None
-        if sec_email:
-            add_user(sec_email, "SECRETARY")
-        for extra in sec_vals[1:]:
-            add_user(extra, "MEMBER")
-
-        skip = {e.lower() for e in (chair_email, sec_email) if e}
-        for email in mem_vals:
-            if email.lower() in skip:
-                continue
-            add_user(email, "MEMBER")
-
-        for rc in role_vals:
-            add_role(rc, "MEMBER")
-
-        existing = CommitteeAssignee.query.filter_by(committee_id=c.id).all()
-        ex_map = {}
-        for m in existing:
-            if m.kind == "USER":
-                ex_map[("USER", m.user_id)] = m
-            else:
-                ex_map[("ROLE", (m.role or ""))] = m
-
-        # Deactivate removed, upsert desired
-        for k, m in ex_map.items():
-            if k in desired:
-                m.is_active = True
-                m.member_role = desired[k]
-            else:
-                m.is_active = False
-
-        for k, role in desired.items():
-            if k in ex_map:
-                continue
-            if k[0] == "USER":
-                _, uid = k
-                db.session.add(CommitteeAssignee(
-                    committee_id=c.id,
-                    kind="USER",
-                    user_id=uid,
-                    role=None,
-                    member_role=role,
-                    is_active=True,
-                ))
-            else:
-                _, rcode = k
-                db.session.add(CommitteeAssignee(
-                    committee_id=c.id,
-                    kind="ROLE",
-                    user_id=None,
-                    role=rcode,
-                    member_role=role,
-                    is_active=True,
-                ))
-
     for r in rows:
         name_ar = _import_norm(_hdr(r, "الاسم (AR)", "name_ar", "Name (AR)"))
         name_en = _import_norm(_hdr(r, "Name (EN)", "الاسم (EN)", "name_en"))
@@ -2736,8 +2542,10 @@ def _import_committees(rows):
 
         if code:
             obj = Committee.query.filter_by(code=code).first()
+            where = {"code": code}
         else:
             obj = Committee.query.filter_by(name_ar=name_ar).first()
+            where = {"name_ar": name_ar}
 
         if obj:
             obj.name_ar = name_ar or obj.name_ar
@@ -2748,20 +2556,14 @@ def _import_committees(rows):
                 obj.is_active = is_active
             updated += 1
         else:
-            obj = Committee(
+            db.session.add(Committee(
                 name_ar=name_ar,
                 name_en=name_en,
                 code=code,
                 notes=notes,
                 is_active=True if is_active is None else is_active,
-            )
-            db.session.add(obj)
-            db.session.flush()  # ensure obj.id for membership upserts
+            ))
             created += 1
-
-        # Optional: import chair/members when columns exist
-        _sync_members(obj, r)
-
     return created, updated
 
 
@@ -2866,7 +2668,7 @@ IMPORT_SCREENS = {
         "title": "استيراد Excel: اللجان",
         "back": "masterdata.committees_list",
         "importer": _import_committees,
-        "hint": "الأعمدة المتوقعة: الاسم (AR), Name (EN), Code, نشط, ملاحظات (+ اختياري: Chair Email, Secretary Email, Members Emails, Roles Codes)",
+        "hint": "الأعمدة المتوقعة: الاسم (AR), Name (EN), Code, نشط, ملاحظات",
     },
 }
 
