@@ -159,8 +159,28 @@
   <div class="col-lg-5">
     <div class="card shadow-sm mb-3">
       <div class="card-header bg-white d-flex justify-content-between align-items-center">
-        <strong>🧩 المسار</strong>
-        <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('workflow.request_attachments', request_id=req.id) }}">📎 مرفقات المسار{% if attachments %} ({{ attachments|length }}){% endif %}</a>
+        <div class="d-flex align-items-center gap-2">
+          <strong>🧩 المسار</strong>
+          {% if workflow_total_sla_days is not none %}
+            <a href="#" class="badge bg-light text-dark border text-decoration-none"
+               data-bs-toggle="modal" data-bs-target="#slaInfoModal"
+               data-sla-label="SLA الكلي للمسار" data-sla-value="{{ workflow_total_sla_days }}">
+              SLA الكلي: {{ workflow_total_sla_days }} يوم
+            </a>
+          {% endif %}
+        </div>
+        <div class="d-flex align-items-center gap-2">
+          {% if current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') %}
+            <form method="post" action="{{ url_for('workflow.recalculate_request_sla', request_id=req.id) }}" class="m-0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+              <button type="submit" class="btn btn-sm btn-outline-danger"
+                      onclick="return confirm('سيتم تحديث تواريخ الاستحقاق (due_at) للخطوات المعلقة من الخطوة الحالية فصاعدًا. هل أنت متأكد؟');">
+                ⏱️ إعادة احتساب SLA
+              </button>
+            </form>
+          {% endif %}
+          <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('workflow.request_attachments', request_id=req.id) }}">📎 مرفقات المسار{% if attachments %} ({{ attachments|length }}){% endif %}</a>
+        </div>
       </div>
       <div class="card-body">
         {% if steps %}
@@ -264,12 +284,13 @@
                   {% set rem = (sla_days_remaining_map.get(s.step_order) if sla_days_remaining_map else None) %}
                   {% set sla_val = (step_sla_days_map.get(s.step_order) if step_sla_days_map else None) %}
                   {% if (sla_val is none) and template %}{% set sla_val = template.sla_days_default %}{% endif %}
+                  {% if sla_val is none %}{% set sla_val = 3 %}{% endif %}
                   <div class="small text-muted">
                     <a href="#" class="text-decoration-none sla-link"
                        data-bs-toggle="modal" data-bs-target="#slaInfoModal"
                        data-sla-label="SLA لهذه الخطوة (الخطوة {{ s.step_order }})"
-                       data-sla-value="{{ sla_val if sla_val is not none else '-' }}">
-                      SLA: {{ s.due_at.strftime("%Y-%m-%d %H:%M") }}{% if rem is not none %} ({{ rem }} يوم){% endif %}
+                       data-sla-value="{{ sla_val }}">
+                      SLA الخطوة: {{ sla_val }} يوم · الاستحقاق: {{ s.due_at.strftime("%Y-%m-%d %H:%M") }}{% if rem is not none %} (متبقي: {{ rem }} يوم){% endif %}
                     </a>
                   </div>
                 {% endif %}
@@ -531,7 +552,7 @@
         </p>
         <div class="alert alert-light mb-0">
           <div class="fw-bold" id="slaInfoScope">SLA</div>
-          <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted">يوم</span></div>
+          <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted" id="slaInfoUnit">يوم</span></div>
         </div>
       </div>
     </div>
@@ -549,8 +570,18 @@
       var value = trigger.getAttribute('data-sla-value') || '-';
       var scopeEl = modalEl.querySelector('#slaInfoScope');
       var valEl = modalEl.querySelector('#slaInfoValue');
+      var unitEl = modalEl.querySelector('#slaInfoUnit');
       if (scopeEl) scopeEl.textContent = label;
-      if (valEl) valEl.textContent = value;
+      if (valEl) {
+        var v = (value || '').toString().trim();
+        if (!v || v === '-' || v.toLowerCase() === 'none' || v.toLowerCase() === 'null') {
+          valEl.textContent = 'غير محدد';
+          if (unitEl) unitEl.style.display = 'none';
+        } else {
+          valEl.textContent = v;
+          if (unitEl) unitEl.style.display = '';
+        }
+      }
     });
   });
 </script>

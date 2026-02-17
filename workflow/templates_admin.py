@@ -251,7 +251,22 @@ def templates_export_excel():
 @login_required
 @perm_required("WORKFLOW_TEMPLATES_READ")
 def templates_steps_export_excel(template_id: int):
-    """Export steps of a template to Excel."""
+    """Export steps of a template to Excel.
+
+    ⚠️ Important: this export is designed to be *round‑trippable* with the
+    "استيراد خطوات المسار" feature.
+
+    Columns are the same suggested in the UI:
+      step_order, mode, approver_kind, target, sla_days, committee_delivery_mode, parallel_assignees
+
+    `target` is exported as a value that the importer can resolve:
+      - USER: email
+      - ROLE: role code
+      - DEPARTMENT/DIRECTORATE/UNIT/SECTION/DIVISION/ORG_NODE/COMMITTEE: code (if exists) else numeric id
+
+    `parallel_assignees` format:
+      KIND:VALUE; KIND:VALUE; ...
+    """
     t = WorkflowTemplate.query.get_or_404(template_id)
 
     steps = (
@@ -260,57 +275,129 @@ def templates_steps_export_excel(template_id: int):
         .all()
     )
 
-    # map users/departments/directorates for readable targets
-    user_ids = [s.approver_user_id for s in steps if getattr(s, "approver_user_id", None)]
-    users = []
-    if user_ids:
-        users = User.query.filter(User.id.in_(user_ids)).all()
-    users_map = {u.id: u for u in users}
+    # Collect referenced ids (including parallel assignees)
+    user_ids, dept_ids, dir_ids = set(), set(), set()
+    unit_ids, section_ids, division_ids = set(), set(), set()
+    org_node_ids, committee_ids = set(), set()
 
-    dept_ids = [s.approver_department_id for s in steps if getattr(s, "approver_department_id", None)]
-    depts = []
-    if dept_ids:
-        depts = Department.query.filter(Department.id.in_(dept_ids)).all()
-    depts_map = {d.id: d for d in depts}
+    for s in steps:
+        if getattr(s, 'approver_user_id', None):
+            user_ids.add(s.approver_user_id)
+        if getattr(s, 'approver_department_id', None):
+            dept_ids.add(s.approver_department_id)
+        if getattr(s, 'approver_directorate_id', None):
+            dir_ids.add(s.approver_directorate_id)
+        if getattr(s, 'approver_unit_id', None):
+            unit_ids.add(s.approver_unit_id)
+        if getattr(s, 'approver_section_id', None):
+            section_ids.add(s.approver_section_id)
+        if getattr(s, 'approver_division_id', None):
+            division_ids.add(s.approver_division_id)
+        if getattr(s, 'approver_org_node_id', None):
+            org_node_ids.add(s.approver_org_node_id)
+        if getattr(s, 'approver_committee_id', None):
+            committee_ids.add(s.approver_committee_id)
 
-    dir_ids = [s.approver_directorate_id for s in steps if getattr(s, "approver_directorate_id", None)]
-    dirs = []
-    if dir_ids:
-        dirs = Directorate.query.filter(Directorate.id.in_(dir_ids)).all()
-    dirs_map = {d.id: d for d in dirs}
+        for a in (getattr(s, 'parallel_assignees', None) or []):
+            if getattr(a, 'approver_user_id', None):
+                user_ids.add(a.approver_user_id)
+            if getattr(a, 'approver_department_id', None):
+                dept_ids.add(a.approver_department_id)
+            if getattr(a, 'approver_directorate_id', None):
+                dir_ids.add(a.approver_directorate_id)
+            if getattr(a, 'approver_unit_id', None):
+                unit_ids.add(a.approver_unit_id)
+            if getattr(a, 'approver_section_id', None):
+                section_ids.add(a.approver_section_id)
+            if getattr(a, 'approver_division_id', None):
+                division_ids.add(a.approver_division_id)
+            if getattr(a, 'approver_org_node_id', None):
+                org_node_ids.add(a.approver_org_node_id)
+            if getattr(a, 'approver_committee_id', None):
+                committee_ids.add(a.approver_committee_id)
+
+    users_map = {u.id: u for u in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])}
+    depts_map = {d.id: d for d in (Department.query.filter(Department.id.in_(dept_ids)).all() if dept_ids else [])}
+    dirs_map  = {d.id: d for d in (Directorate.query.filter(Directorate.id.in_(dir_ids)).all() if dir_ids else [])}
+    units_map = {u.id: u for u in (Unit.query.filter(Unit.id.in_(unit_ids)).all() if unit_ids else [])}
+    sections_map = {s.id: s for s in (Section.query.filter(Section.id.in_(section_ids)).all() if section_ids else [])}
+    divisions_map = {d.id: d for d in (Division.query.filter(Division.id.in_(division_ids)).all() if division_ids else [])}
+    org_nodes_map = {n.id: n for n in (OrgNode.query.filter(OrgNode.id.in_(org_node_ids)).all() if org_node_ids else [])}
+    committees_map = {c.id: c for c in (Committee.query.filter(Committee.id.in_(committee_ids)).all() if committee_ids else [])}
+
+    def _code_or_id(obj):
+        if not obj:
+            return ''
+        code = getattr(obj, 'code', None)
+        if code and str(code).strip():
+            return str(code).strip()
+        oid = getattr(obj, 'id', None)
+        return str(oid) if oid is not None else ''
+
+    def _target_for(kind: str, step_or_assignee):
+        k = (kind or '').upper().strip()
+        if k == 'USER':
+            u = users_map.get(getattr(step_or_assignee, 'approver_user_id', None))
+            return (getattr(u, 'email', None) or '').strip() if u else (str(getattr(step_or_assignee, 'approver_user_id', '') or '').strip())
+        if k == 'ROLE':
+            return (getattr(step_or_assignee, 'approver_role', None) or '').strip()
+        if k == 'DEPARTMENT':
+            return _code_or_id(depts_map.get(getattr(step_or_assignee, 'approver_department_id', None))) or str(getattr(step_or_assignee, 'approver_department_id', '') or '').strip()
+        if k == 'DIRECTORATE':
+            return _code_or_id(dirs_map.get(getattr(step_or_assignee, 'approver_directorate_id', None))) or str(getattr(step_or_assignee, 'approver_directorate_id', '') or '').strip()
+        if k == 'UNIT':
+            return _code_or_id(units_map.get(getattr(step_or_assignee, 'approver_unit_id', None))) or str(getattr(step_or_assignee, 'approver_unit_id', '') or '').strip()
+        if k == 'SECTION':
+            return _code_or_id(sections_map.get(getattr(step_or_assignee, 'approver_section_id', None))) or str(getattr(step_or_assignee, 'approver_section_id', '') or '').strip()
+        if k == 'DIVISION':
+            return _code_or_id(divisions_map.get(getattr(step_or_assignee, 'approver_division_id', None))) or str(getattr(step_or_assignee, 'approver_division_id', '') or '').strip()
+        if k == 'ORG_NODE':
+            return _code_or_id(org_nodes_map.get(getattr(step_or_assignee, 'approver_org_node_id', None))) or str(getattr(step_or_assignee, 'approver_org_node_id', '') or '').strip()
+        if k == 'COMMITTEE':
+            return _code_or_id(committees_map.get(getattr(step_or_assignee, 'approver_committee_id', None))) or str(getattr(step_or_assignee, 'approver_committee_id', '') or '').strip()
+        # fallback
+        return (getattr(step_or_assignee, 'approver_role', None) or '').strip() or ''
 
     headers = [
-        "Template ID",
-        "Template Name",
-        "ترتيب الخطوة",
-        "Kind",
-        "Target",
-        "SLA (أيام)",
+        'template_id',
+        'template_name',
+        'step_order',
+        'mode',
+        'approver_kind',
+        'target',
+        'sla_days',
+        'committee_delivery_mode',
+        'parallel_assignees',
     ]
 
     rows = []
     for s in steps:
-        kind = getattr(s, "approver_kind", "")
-        target = ""
-        if kind == "USER":
-            u = users_map.get(getattr(s, "approver_user_id", None))
-            target = getattr(u, "email", "") if u else (getattr(s, "approver_user_id", "") or "")
-        elif kind == "ROLE":
-            target = getattr(s, "approver_role", "") or ""
-        elif kind == "DEPARTMENT":
-            d = depts_map.get(getattr(s, "approver_department_id", None))
-            target = f"{getattr(d, 'name_ar', '')} [#{d.id}]" if d else (getattr(s, "approver_department_id", "") or "")
-        elif kind == "DIRECTORATE":
-            d = dirs_map.get(getattr(s, "approver_directorate_id", None))
-            target = f"{getattr(d, 'name_ar', '')} [#{d.id}]" if d else (getattr(s, "approver_directorate_id", "") or "")
+        kind = getattr(s, 'approver_kind', '')
+        target = _target_for(kind, s)
+
+        cmode = getattr(s, 'committee_delivery_mode', None) or ''
+        if (kind or '').upper().strip() != 'COMMITTEE':
+            cmode = ''
+
+        extras = []
+        for a in (getattr(s, 'parallel_assignees', None) or []):
+            ak = (getattr(a, 'approver_kind', '') or '').upper().strip() or 'USER'
+            av = _target_for(ak, a)
+            if not av:
+                continue
+            extras.append(f"{ak}:{av}")
+        extras_str = '; '.join(extras)
 
         rows.append([
-            getattr(t, "id", ""),
-            getattr(t, "name", ""),
-            getattr(s, "step_order", ""),
-            kind,
+            getattr(t, 'id', ''),
+            getattr(t, 'name', ''),
+            getattr(s, 'step_order', ''),
+            (getattr(s, 'mode', None) or 'SEQUENTIAL'),
+            (kind or ''),
             target,
-            getattr(s, "sla_days", None) if getattr(s, "sla_days", None) is not None else "",
+            getattr(s, 'sla_days', None) if getattr(s, 'sla_days', None) is not None else '',
+            cmode,
+            extras_str,
         ])
 
     return _xlsx_response(
@@ -824,6 +911,34 @@ def templates_steps_import_excel(template_id: int):
     def _key(s):
         return (s or '').strip().lower()
 
+    import re
+
+    def _extract_id(text: str):
+        if not text:
+            return None
+        s = str(text)
+        # Common exported format: "Name [#123]"
+        m = re.search(r'\[#\s*(\d+)\s*\]', s)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                return None
+        m = re.search(r'#\s*(\d+)', s)
+        if m:
+            try:
+                return int(m.group(1))
+            except Exception:
+                return None
+        return None
+
+    def _strip_bracket_id(text: str) -> str:
+        if text is None:
+            return ''
+        s = str(text)
+        s = re.sub(r'\s*\[#\s*\d+\s*\]\s*', ' ', s)
+        return ' '.join(s.split()).strip()
+
     depts_by_code = {_key(getattr(d, 'code', None)): d for d in depts if getattr(d, 'code', None)}
     dirs_by_code  = {_key(getattr(d, 'code', None)): d for d in dirs if getattr(d, 'code', None)}
 
@@ -870,7 +985,13 @@ def templates_steps_import_excel(template_id: int):
         s = s.strip()
         if s.isdigit():
             return org_nodes_by_id.get(int(s))
-        return org_nodes_by_code.get(_key(s)) or org_nodes_by_name.get(_key(s))
+        sid = _extract_id(s)
+        if sid is not None:
+            obj = org_nodes_by_id.get(sid)
+            if obj:
+                return obj
+        clean = _strip_bracket_id(s)
+        return org_nodes_by_code.get(_key(clean)) or org_nodes_by_name.get(_key(clean))
 
     def _normalize_step_mode(v: str) -> str:
         s = (v or '').strip().upper()
@@ -886,17 +1007,31 @@ def templates_steps_import_excel(template_id: int):
         s = xl.to_str(val)
         if not s:
             return None
+        s = s.strip()
         if s.isdigit():
             return depts_by_id.get(int(s))
-        return depts_by_code.get(_key(s)) or depts_by_name.get(_key(s))
+        sid = _extract_id(s)
+        if sid is not None:
+            obj = depts_by_id.get(sid)
+            if obj:
+                return obj
+        clean = _strip_bracket_id(s)
+        return depts_by_code.get(_key(clean)) or depts_by_name.get(_key(clean))
 
     def _resolve_directorate(val):
         s = xl.to_str(val)
         if not s:
             return None
+        s = s.strip()
         if s.isdigit():
             return dirs_by_id.get(int(s))
-        return dirs_by_code.get(_key(s)) or dirs_by_name.get(_key(s))
+        sid = _extract_id(s)
+        if sid is not None:
+            obj = dirs_by_id.get(sid)
+            if obj:
+                return obj
+        clean = _strip_bracket_id(s)
+        return dirs_by_code.get(_key(clean)) or dirs_by_name.get(_key(clean))
     def _resolve_unit(target_val):
         if not target_val:
             return None
@@ -908,6 +1043,10 @@ def templates_steps_import_excel(template_id: int):
                 return units_by_id[sid]
         except Exception:
             pass
+        sid2 = _extract_id(s)
+        if sid2 is not None and sid2 in units_by_id:
+            return units_by_id[sid2]
+        s = _strip_bracket_id(s)
         key = _key(s)
         return units_by_code.get(key) or units_by_name.get(key)
 
@@ -921,6 +1060,10 @@ def templates_steps_import_excel(template_id: int):
                 return sections_by_id[sid]
         except Exception:
             pass
+        sid2 = _extract_id(s)
+        if sid2 is not None and sid2 in sections_by_id:
+            return sections_by_id[sid2]
+        s = _strip_bracket_id(s)
         key = _key(s)
         return sections_by_code.get(key) or sections_by_name.get(key)
 
@@ -934,6 +1077,10 @@ def templates_steps_import_excel(template_id: int):
                 return divisions_by_id[sid]
         except Exception:
             pass
+        sid2 = _extract_id(s)
+        if sid2 is not None and sid2 in divisions_by_id:
+            return divisions_by_id[sid2]
+        s = _strip_bracket_id(s)
         key = _key(s)
         return divisions_by_code.get(key) or divisions_by_name.get(key)
 
@@ -943,9 +1090,16 @@ def templates_steps_import_excel(template_id: int):
         s = xl.to_str(val)
         if not s:
             return None
+        s = s.strip()
         if s.isdigit():
             return committees_by_id.get(int(s))
-        return committees_by_code.get(_key(s)) or committees_by_name.get(_key(s))
+        sid = _extract_id(s)
+        if sid is not None:
+            obj = committees_by_id.get(sid)
+            if obj:
+                return obj
+        clean = _strip_bracket_id(s)
+        return committees_by_code.get(_key(clean)) or committees_by_name.get(_key(clean))
 
     if mode == 'replace':
         # delete existing steps for this template
@@ -956,7 +1110,7 @@ def templates_steps_import_excel(template_id: int):
     created = updated = skipped = 0
 
     for r in rows:
-        step_order = xl.to_int(xl.pick(r, 'step_order', 'step', 'رقم الخطوة'), default=None)
+        step_order = xl.to_int(xl.pick(r, 'step_order', 'step', 'رقم الخطوة', 'ترتيب الخطوة', 'الترتيب', 'step order'), default=None)
         if step_order is None:
             skipped += 1
             continue
@@ -964,7 +1118,7 @@ def templates_steps_import_excel(template_id: int):
         step_mode = _normalize_step_mode(xl.to_str(xl.pick(r, 'mode', 'execution_mode', 'طريقة التنفيذ')) or '')
         kind = _normalize_kind(xl.to_str(xl.pick(r, 'approver_kind', 'kind', 'النوع')) or '')
         target = xl.to_str(xl.pick(r, 'target', 'value', 'المستهدف'))
-        sla_days = xl.to_int(xl.pick(r, 'sla_days', 'sla', 'SLA'), default=None)
+        sla_days = xl.to_int(xl.pick(r, 'sla_days', 'sla', 'SLA', 'SLA (أيام)', 'SLA(أيام)', 'sla (أيام)', 'sla(أيام)', 'sla أيام', 'sla days'), default=None)
         cmode = xl.to_str(xl.pick(r, 'committee_delivery_mode', 'committee_mode'))
         cmode = _normalize_committee_delivery_mode(cmode)
 

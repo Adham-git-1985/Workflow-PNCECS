@@ -56,11 +56,12 @@
           </td>
           <td>{% if inst %}{{ inst.current_step_order }}{% else %}—{% endif %}</td>
           <td>
-            {% if tpl and tpl.sla_days_default %}
+            {% if tpl %}
+              {% set total_sla = tpl.sla_days_default if tpl.sla_days_default is not none else 3 %}
               <a href="#" class="text-decoration-none"
                  data-bs-toggle="modal" data-bs-target="#slaInfoModal"
-                 data-sla-label="SLA الكلي للمسار" data-sla-value="{{ tpl.sla_days_default }}">
-                {{ tpl.sla_days_default }} يوم
+                 data-sla-label="SLA الكلي للمسار" data-sla-value="{{ total_sla }}">
+                {{ total_sla }} يوم
               </a>
             {% else %}
               —
@@ -97,7 +98,7 @@
         </p>
         <div class="alert alert-light mb-0">
           <div class="fw-bold" id="slaInfoScope">SLA</div>
-          <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted">يوم</span></div>
+          <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted" id="slaInfoUnit">يوم</span></div>
         </div>
       </div>
     </div>
@@ -115,8 +116,18 @@
       var value = trigger.getAttribute('data-sla-value') || '-';
       var scopeEl = modalEl.querySelector('#slaInfoScope');
       var valEl = modalEl.querySelector('#slaInfoValue');
+      var unitEl = modalEl.querySelector('#slaInfoUnit');
       if (scopeEl) scopeEl.textContent = label;
-      if (valEl) valEl.textContent = value;
+      if (valEl) {
+        var v = (value || '').toString().trim();
+        if (!v || v === '-' || v.toLowerCase() === 'none' || v.toLowerCase() === 'null') {
+          valEl.textContent = 'غير محدد';
+          if (unitEl) unitEl.style.display = 'none';
+        } else {
+          valEl.textContent = v;
+          if (unitEl) unitEl.style.display = '';
+        }
+      }
     });
   });
 </script>

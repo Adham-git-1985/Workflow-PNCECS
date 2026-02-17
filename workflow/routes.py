@@ -74,7 +74,7 @@ from models import (
 
 from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
 
-from workflow.engine import start_workflow_for_request, decide_step, bypass_parallel_task, bypass_all_parallel_tasks
+from workflow.engine import start_workflow_for_request, decide_step, bypass_parallel_task, bypass_all_parallel_tasks, _system_sla_days
 
 logger = logging.getLogger(__name__)
 
@@ -2071,8 +2071,25 @@ def view_request(request_id):
     # =========================
     step_sla_days_map = {}
     sla_days_remaining_map = {}
+    workflow_total_sla_days = None
     try:
+        sys_sla = None
+        try:
+            # If workflow.engine._system_sla_days() is importable in this runtime,
+            # use it. Otherwise fall back to 3.
+            sys_sla = int(_system_sla_days())
+        except Exception:
+            sys_sla = 3
+
         if template:
+            # IMPORTANT:
+            # The UI "SLA الكلي للمسار" should reflect the workflow/template SLA
+            # (configured at the template level), and must NOT be the sum of step SLAs.
+            try:
+                workflow_total_sla_days = int(getattr(template, 'sla_days_default', None) or sys_sla)
+            except Exception:
+                workflow_total_sla_days = sys_sla
+
             tsteps = WorkflowTemplateStep.query.filter_by(template_id=template.id).all()
             for ts in tsteps:
                 try:
@@ -2082,7 +2099,12 @@ def view_request(request_id):
                 val = getattr(ts, 'sla_days', None)
                 if val is None:
                     val = getattr(template, 'sla_days_default', None)
-                step_sla_days_map[so] = val
+                if val is None:
+                    val = sys_sla
+                try:
+                    step_sla_days_map[so] = int(val)
+                except Exception:
+                    step_sla_days_map[so] = sys_sla
 
         now = datetime.utcnow()
         for s in (steps or []):
@@ -2098,6 +2120,7 @@ def view_request(request_id):
     except Exception:
         step_sla_days_map = {}
         sla_days_remaining_map = {}
+        workflow_total_sla_days = None
 
     # Attachments (linked table)
     atts = RequestAttachment.query.filter_by(request_id=req.id).all()
@@ -2370,6 +2393,7 @@ def view_request(request_id):
         step_att_items=step_att_items,
         pre_att_items=pre_att_items,
         template=template,
+        workflow_total_sla_days=workflow_total_sla_days,
         step_sla_days_map=step_sla_days_map,
         sla_days_remaining_map=sla_days_remaining_map,
         step_escalation_counts=step_esc_counts,
@@ -2378,6 +2402,121 @@ def view_request(request_id):
         my_parallel_task=my_parallel_task,
         can_bypass_parallel=can_bypass_parallel,
     )
+
+
+@workflow_bp.route("/request/<int:request_id>/recalculate_sla", methods=["POST"])
+@login_required
+@roles_required("SUPER_ADMIN")
+def recalculate_request_sla(request_id):
+    """Recalculate SLA due dates for an existing request.
+
+    - Updates only PENDING steps from the CURRENT step onward.
+    - Recomputes due_at cumulatively starting from "now".
+    - Adds an AuditLog entry.
+
+    Authorized: SUPER_ADMIN only.
+    """
+
+    req = WorkflowRequest.query.get_or_404(request_id)
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    if not inst:
+        flash("لا يوجد مسار مرتبط بهذا الطلب لإعادة احتساب SLA.", "warning")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    template = WorkflowTemplate.query.get(getattr(inst, 'template_id', None)) if getattr(inst, 'template_id', None) else None
+
+    # Resolve system default SLA
+    try:
+        sys_sla = int(_system_sla_days())
+    except Exception:
+        sys_sla = 3
+
+    # Build map: step_order -> effective sla days
+    step_sla = {}
+    try:
+        if template:
+            tsteps = WorkflowTemplateStep.query.filter_by(template_id=template.id).all()
+            for ts in tsteps:
+                try:
+                    so = int(getattr(ts, 'step_order', 0) or 0)
+                except Exception:
+                    continue
+                val = getattr(ts, 'sla_days', None)
+                if val is None:
+                    val = getattr(template, 'sla_days_default', None)
+                if val is None:
+                    val = sys_sla
+                try:
+                    v = int(val)
+                except Exception:
+                    v = sys_sla
+                if v < 0:
+                    v = 0
+                step_sla[so] = v
+    except Exception:
+        step_sla = {}
+
+    steps = (
+        WorkflowInstanceStep.query
+        .filter_by(instance_id=inst.id)
+        .order_by(WorkflowInstanceStep.step_order.asc())
+        .all()
+    )
+
+    try:
+        current_so = int(getattr(inst, 'current_step_order', 1) or 1)
+    except Exception:
+        current_so = 1
+
+    base = datetime.utcnow()
+    updated = 0
+
+    try:
+        for s in (steps or []):
+            try:
+                so = int(getattr(s, 'step_order', 0) or 0)
+            except Exception:
+                continue
+
+            # Only from current step onward
+            if so < current_so:
+                continue
+
+            # Update only PENDING (do not touch completed/decided steps)
+            if (getattr(s, 'status', None) or '').strip().upper() != 'PENDING':
+                continue
+
+            v = step_sla.get(so)
+            if v is None:
+                try:
+                    v = int(getattr(template, 'sla_days_default', None) or sys_sla) if template else sys_sla
+                except Exception:
+                    v = sys_sla
+            if v < 0:
+                v = 0
+
+            base = base + timedelta(days=int(v))
+            s.due_at = base
+            updated += 1
+
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="WORKFLOW_SLA_RECALCULATED",
+            old_status=None,
+            new_status=None,
+            note=f"Recalculated SLA due dates from step {current_so}. Updated steps: {updated}",
+            target_type="WORKFLOW",
+            target_id=getattr(inst, 'id', None),
+        ))
+
+        db.session.commit()
+        flash(f"تمت إعادة احتساب SLA بنجاح. تم تحديث {updated} خطوة.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("حدث خطأ أثناء إعادة احتساب SLA.", "danger")
+
+    return redirect(url_for("workflow.view_request", request_id=req.id))
 
 
 
