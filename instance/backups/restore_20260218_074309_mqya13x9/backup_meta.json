@@ -1,0 +1,10 @@
+{
+  "created_at_utc": "2026-02-18T07:37:18.270265Z",
+  "project": "Workflow-PNCECS",
+  "includes": [
+    "db/workflow.db",
+    "storage/archive/*",
+    "instance/uploads/*",
+    "static/uploads/*"
+  ]
+}

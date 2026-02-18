@@ -948,23 +948,34 @@ def manage_user_delete(user_id):
     email = user.email
     role = user.role
 
-    _audit("USER_DELETED", user, note=f"User {email} ({role}) deleted by SUPER_ADMIN")
+    try:
+        _audit("USER_DELETED", user, note=f"User {email} ({role}) deleted by SUPER_ADMIN")
 
-    emit_event(
-        actor_id=current_user.id,
-        action="USER_DELETED",
-        message=f"تم حذف المستخدم {email}",
-        target_type="User",
-        target_id=user.id,
-        notify_role="ADMIN",
-        level="CRITICAL",
-        auto_commit=False
-    )
+        emit_event(
+            actor_id=current_user.id,
+            action="USER_DELETED",
+            message=f"تم حذف المستخدم {email}",
+            target_type="User",
+            target_id=user.id,
+            notify_role="ADMIN",
+            level="CRITICAL",
+            auto_commit=False
+        )
 
-    db.session.delete(user)
-    db.session.commit()
+        # EmployeeFile.user_id is a PK/FK (non-nullable). Without cascade,
+        # SQLAlchemy may try to set it to NULL which raises an error.
+        if getattr(user, "employee_file", None) is not None:
+            db.session.delete(user.employee_file)
 
-    flash("تم حذف المستخدم", "success")
+        db.session.delete(user)
+        db.session.commit()
+
+        flash("تم حذف المستخدم", "success")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete user_id=%s", user_id)
+        flash("تعذر حذف المستخدم بسبب ارتباطات/بيانات مرتبطة به. تم التراجع عن العملية.", "danger")
+
     return redirect(url_for("users.list_users"))
 
 

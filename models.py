@@ -126,6 +126,9 @@ class User(db.Model, UserMixin):
         foreign_keys="EmployeeFile.user_id",
         back_populates="user",
         lazy="selectin",
+        cascade="all, delete-orphan",
+        single_parent=True,
+        passive_deletes=True,
     )
 
     def has_perm(self, key: str) -> bool:

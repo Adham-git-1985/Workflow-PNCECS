@@ -1,0 +1,11 @@
+copy instance\workflow.db instance\workflow_backup_before_fix.db
+
+
+python -m pip install --no-cache-dir pandas openpyxl
+
+python tools\import_employees_excel.py --excel "قائمة الموظفين معدلة.xlsx" --db "instance\workflow.db" --email-domain "gmail.com" --internal-domain "pncecs.plo.ps" --password 123 --update-email --reset-password
+
+
+
+--لعمل تحديث للايميلات فقط
+python tools\import_employees_excel.py --excel "قائمة الموظفين معدلة.xlsx" --db "instance\workflow.db" --update-email

@@ -1,0 +1,11 @@
+{
+  "stats": {
+    "rows_total": 39,
+    "processed": 39,
+    "created_users": 39,
+    "updated_users": 0,
+    "skipped_empty": 0,
+    "errors": 0
+  },
+  "errors": []
+}
