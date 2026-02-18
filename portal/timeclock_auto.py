@@ -1,6 +1,7 @@
 import os
 import time
 import threading
+from datetime import datetime
 
 from sqlalchemy import func
 
@@ -17,6 +18,17 @@ def _setting_get(key: str, default=None):
     if row and row.value is not None and row.value != "":
         return row.value
     return default
+
+
+def _setting_set(key: str, value: str | None):
+    """Upsert a SystemSetting (no auto-commit)."""
+    row = SystemSetting.query.filter_by(key=key).first()
+    if not row:
+        row = SystemSetting(key=key, value=(value or ""))
+        db.session.add(row)
+    else:
+        row.value = (value or "")
+    return row
 
 
 def _setting_get_int(key: str, default: int) -> int:
@@ -40,7 +52,7 @@ def _pick_imported_by_user_id() -> int | None:
     if raw:
         try:
             uid = int(str(raw).strip())
-            if User.query.get(uid):
+            if db.session.get(User, uid):
                 return uid
         except Exception:
             pass
@@ -73,9 +85,10 @@ def start_timeclock_auto_sync(app):
         if _started:
             return
 
-        # Avoid starting twice in Flask reloader
-        if app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-            return
+        # Avoid starting twice in the Flask dev reloader (but DO start under WSGI servers even if DEBUG=True)
+        if app.debug and (os.environ.get("FLASK_RUN_FROM_CLI") in {"1", "true", "True"}):
+            if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+                return
 
         t = threading.Thread(target=_worker, args=(app,), daemon=True, name="timeclock-auto-sync")
         t.start()
@@ -93,6 +106,13 @@ def _worker(app):
                 interval = max(10, _setting_get_int("TIMECLK_AUTO_SYNC_INTERVAL", 60))
                 append_only = _setting_get_bool("TIMECLK_APPEND_ONLY", True)
 
+                # Heartbeat: show the admin that polling is alive even if there is no new data
+                try:
+                    _setting_set("TIMECLK_LAST_CHECK_AT", datetime.utcnow().isoformat(timespec='seconds'))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
                 if (not enabled) or (not file_path):
                     time.sleep(interval)
                     continue
@@ -102,43 +122,111 @@ def _worker(app):
                     resolved = _timeclock_resolve_source_file(file_path)
                     if not resolved:
                         app.logger.warning("TIMECLK auto-sync: source is empty/unreachable: %s", file_path)
+                        try:
+                            _setting_set("TIMECLK_LAST_ERROR", "SOURCE_UNREACHABLE")
+                            db.session.commit()
+                        except Exception:
+                            db.session.rollback()
                         time.sleep(interval)
                         continue
 
                     st = os.stat(resolved)
-                    sig = (resolved, st.st_size, int(st.st_mtime))
+                    mtime_ns = getattr(st, 'st_mtime_ns', int(st.st_mtime * 1_000_000_000))
+                    sig = (resolved, st.st_size, mtime_ns)
                 except FileNotFoundError:
                     app.logger.warning("TIMECLK auto-sync: source file not found: %s", file_path)
+                    try:
+                        _setting_set("TIMECLK_LAST_ERROR", "SOURCE_NOT_FOUND")
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
                     time.sleep(interval)
                     continue
                 except Exception as e:
                     app.logger.exception("TIMECLK auto-sync: stat failed: %s", e)
+                    try:
+                        _setting_set("TIMECLK_LAST_ERROR", f"STAT_FAILED:{type(e).__name__}")
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
                     time.sleep(interval)
                     continue
 
-                if last_sig is None:
-                    last_sig = sig
-                    time.sleep(interval)
-                    continue
+                # Decide if we should run a sync now:
+                # - Always run on file rotation/change.
+                # - Also run if the file size differs from the persisted pointer (covers app restarts).
+                # - For full read mode, run on signature change.
+                try:
+                    stored_last_file = (_setting_get("TIMECLK_LAST_FILE", "") or "").strip()
+                    stored_last_size_raw = _setting_get("TIMECLK_LAST_SIZE", None)
+                    stored_last_size = None
+                    if stored_last_size_raw is not None:
+                        try:
+                            stored_last_size = int(str(stored_last_size_raw).strip())
+                        except Exception:
+                            stored_last_size = None
 
-                if sig != last_sig:
-                    imported_by_id = _pick_imported_by_user_id()
-                    if imported_by_id:
-                        from portal.routes import _timeclock_sync_simple  # local import to avoid circulars
-
-                        ins, skp, errs = _timeclock_sync_simple(
-                            file_path,
-                            imported_by_id=imported_by_id,
-                            append_only=append_only,
-                        )
-                        app.logger.info(
-                            "TIMECLK auto-sync: inserted=%s skipped=%s errors=%s source=%s",
-                            ins, skp, errs, sig[0]
-                        )
+                    should_sync = False
+                    if not stored_last_file:
+                        should_sync = True
+                    elif stored_last_file != sig[0]:
+                        should_sync = True
+                    elif append_only:
+                        # Sync if file grew OR was truncated
+                        if stored_last_size is None:
+                            should_sync = True
+                        elif sig[1] != stored_last_size:
+                            should_sync = True
                     else:
-                        app.logger.warning("TIMECLK auto-sync: no user available for imported_by_id")
+                        if last_sig is None or sig != last_sig:
+                            should_sync = True
 
-                    last_sig = sig
+                    if should_sync:
+                        imported_by_id = _pick_imported_by_user_id()
+                        if imported_by_id:
+                            from portal.routes import _timeclock_sync_simple  # local import to avoid circulars
+                            try:
+                                ins, skp, errs = _timeclock_sync_simple(
+                                    file_path,
+                                    imported_by_id=imported_by_id,
+                                    append_only=append_only,
+                                )
+                                app.logger.info(
+                                    "TIMECLK auto-sync: inserted=%s skipped=%s errors=%s source=%s",
+                                    ins, skp, errs, sig[0]
+                                )
+                                try:
+                                    _setting_set("TIMECLK_LAST_ERROR", "")
+                                    db.session.commit()
+                                except Exception:
+                                    db.session.rollback()
+                            except Exception as e:
+                                app.logger.exception("TIMECLK auto-sync: sync failed: %s", e)
+                                try:
+                                    db.session.rollback()
+                                except Exception:
+                                    pass
+                                try:
+                                    _setting_set("TIMECLK_LAST_ERROR", f"SYNC_FAILED:{type(e).__name__}")
+                                    db.session.commit()
+                                except Exception:
+                                    db.session.rollback()
+                        else:
+                            app.logger.warning("TIMECLK auto-sync: no user available for imported_by_id")
+                            try:
+                                _setting_set("TIMECLK_LAST_ERROR", "NO_IMPORTED_BY_USER")
+                                db.session.commit()
+                            except Exception:
+                                db.session.rollback()
+                except Exception as e:
+                    app.logger.exception("TIMECLK auto-sync: decision failed: %s", e)
+
+                last_sig = sig
+
+                try:
+                    db.session.remove()
+                except Exception:
+                    pass
 
                 time.sleep(interval)
 

@@ -1,0 +1,37 @@
+{#
+  Quick access to Correspondence (Inbound/Outbound) lookups.
+  Shown only to users who can manage CORR lookups.
+#}
+{% if au and (au.has_perm('CORR_LOOKUPS_MANAGE') or au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE')) %}
+  <div class="dropdown no-print">
+    <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+      <i class="bi bi-gear"></i> ثوابت الصادر والوارد
+    </button>
+    <ul class="dropdown-menu dropdown-menu-end">
+      <li>
+        <a class="dropdown-item" href="{{ url_for('portal.portal_admin_corr_index') }}">
+          <i class="bi bi-sliders"></i> إعدادات المراسلات
+        </a>
+      </li>
+      <li><hr class="dropdown-divider"></li>
+      <li>
+        <a class="dropdown-item" href="{{ url_for('portal.portal_admin_corr_categories') }}">
+          <i class="bi bi-tags"></i> التصنيفات
+        </a>
+      </li>
+      <li>
+        <a class="dropdown-item" href="{{ url_for('portal.portal_admin_corr_parties') }}">
+          <i class="bi bi-people"></i> الجهات (مرسلة/مستلمة)
+        </a>
+      </li>
+      {% if au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+        <li><hr class="dropdown-divider"></li>
+        <li>
+          <a class="dropdown-item" href="{{ url_for('portal.portal_admin_masterdata_hub') }}">
+            <i class="bi bi-grid"></i> مركز ثوابت النظام
+          </a>
+        </li>
+      {% endif %}
+    </ul>
+  </div>
+{% endif %}

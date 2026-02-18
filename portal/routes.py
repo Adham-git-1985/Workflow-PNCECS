@@ -4361,6 +4361,26 @@ def hr_report_diwan():
         start = date(datetime.utcnow().year, datetime.utcnow().month, 1)
         end = start
 
+    # Digits + date formatting helpers (force western digits 0123456789)
+    _ARABIC_INDIC = '٠١٢٣٤٥٦٧٨٩'
+    _PERSIAN_DIGITS = '۰۱۲۳۴۵۶۷۸۹'
+    _WESTERN_DIGITS = '0123456789'
+    _DIGITS_MAP = {ord(_ARABIC_INDIC[i]): _WESTERN_DIGITS[i] for i in range(10)}
+    _DIGITS_MAP.update({ord(_PERSIAN_DIGITS[i]): _WESTERN_DIGITS[i] for i in range(10)})
+
+    def _to_western_digits(s: str) -> str:
+        try:
+            return (s or '').translate(_DIGITS_MAP)
+        except Exception:
+            return s or ''
+
+    def _fmt_date_dmy(d: date | None) -> str:
+        """Return dd/mm/YYYY using western digits (0123456789)."""
+        try:
+            return _to_western_digits(d.strftime('%d/%m/%Y')) if d else ''
+        except Exception:
+            return ''
+
     # If a specific employee is selected, generate the report for that employee only
     # (even if they have no attendance/leave rows).
     if selected_user_id:
@@ -4499,12 +4519,6 @@ def hr_report_diwan():
         except Exception:
             users_map = {}
 
-        def _fmt_date_dmy(d: date | None) -> str:
-            try:
-                return d.strftime('%d/%m/%Y') if d else ''
-            except Exception:
-                return ''
-
         def _leave_rows(uid: int, lt: HRLeaveType | None, with_days: bool = True):
             if not lt:
                 return []
@@ -4561,18 +4575,65 @@ def hr_report_diwan():
             if not ministry:
                 ministry = 'اللجنة الوطنية الفلسطينية للتربية والثقافة والعلوم'
 
+            # "الإدارة / الدائرة" يجب أن تكون اسمًا (وليس رقمًا)
+            def _clean_org_name(v: str) -> str:
+                try:
+                    v = (v or '').strip()
+                except Exception:
+                    v = ''
+                # إذا كانت قيمة رقمية فقط -> تجاهل
+                if v and re.fullmatch(r'\d+', v):
+                    return ''
+                return v
+
             unit = ''
+            # prefer employee_file placement names
             try:
-                unit = (getattr(getattr(ef, 'department', None), 'name_ar', None) or '').strip()
+                unit = _clean_org_name(getattr(getattr(ef, 'department', None), 'name_ar', None))
             except Exception:
                 unit = ''
             if not unit:
                 try:
-                    unit = (getattr(getattr(ef, 'directorate', None), 'name_ar', None) or '').strip()
+                    unit = _clean_org_name(getattr(getattr(ef, 'department', None), 'name_en', None))
                 except Exception:
                     unit = ''
             if not unit:
-                unit = work_location_name if work_location_name and work_location_name != 'الكل' else ''
+                try:
+                    unit = _clean_org_name(getattr(getattr(ef, 'directorate', None), 'name_ar', None))
+                except Exception:
+                    unit = ''
+            if not unit:
+                try:
+                    unit = _clean_org_name(getattr(getattr(ef, 'directorate', None), 'name_en', None))
+                except Exception:
+                    unit = ''
+            # fallback to user's placement if employee_file is missing
+            if not unit:
+                try:
+                    if getattr(u, 'department_id', None):
+                        _d = Department.query.get(u.department_id)
+                        unit = _clean_org_name(getattr(_d, 'name_ar', None) or getattr(_d, 'name_en', None))
+                except Exception:
+                    pass
+            if not unit:
+                try:
+                    if getattr(u, 'directorate_id', None):
+                        _d2 = Directorate.query.get(u.directorate_id)
+                        unit = _clean_org_name(getattr(_d2, 'name_ar', None) or getattr(_d2, 'name_en', None))
+                except Exception:
+                    pass
+            # last resort: use work location label IF it's not a pure number
+            if not unit and ef and getattr(ef, 'work_location_lookup_id', None):
+                try:
+                    _loc = None
+                    for x in (work_locations or []):
+                        if getattr(x, 'id', None) == getattr(ef, 'work_location_lookup_id', None):
+                            _loc = x
+                            break
+                    if _loc:
+                        unit = _clean_org_name(getattr(_loc, 'name', None) or getattr(_loc, 'label', None) or '')
+                except Exception:
+                    pass
 
             name = (getattr(ef, 'full_name_quad', None) or getattr(u, 'full_name', None) or getattr(u, 'name', None) or getattr(u, 'email', None) or '').strip()
             employee_no = (getattr(ef, 'employee_no', None) or '').strip()
@@ -4680,6 +4741,9 @@ def hr_report_diwan():
 
         def _build_docx_bytes(rep: dict) -> bytes:
             from docx import Document  # python-docx
+            from docx.shared import Pt
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
             tpl_path = os.path.join(current_app.root_path, 'assets', 'templates', 'hr', 'diwan_leave_template.docx')
             if not os.path.exists(tpl_path):
                 # fallback (in case the folder structure changes)
@@ -4695,15 +4759,44 @@ def hr_report_diwan():
                 except Exception:
                     return text
 
-            def _fill_cell_dots(cell, value: str):
+            def _apply_run_style(run, font_name: str | None = None, size_pt: float | None = None, lang: str | None = None):
+                """Apply minimal styling without destroying the template formatting."""
+                try:
+                    if font_name:
+                        run.font.name = font_name
+                        try:
+                            rFonts = run._element.rPr.rFonts
+                            rFonts.set(qn('w:ascii'), font_name)
+                            rFonts.set(qn('w:hAnsi'), font_name)
+                            rFonts.set(qn('w:cs'), font_name)
+                        except Exception:
+                            pass
+                    if size_pt:
+                        run.font.size = Pt(size_pt)
+                    if lang:
+                        try:
+                            rPr = run._element.get_or_add_rPr()
+                            lang_el = rPr.find(qn('w:lang'))
+                            if lang_el is None:
+                                lang_el = OxmlElement('w:lang')
+                                rPr.append(lang_el)
+                            lang_el.set(qn('w:val'), lang)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+            def _fill_cell_dots(cell, value: str, *, font_name: str | None = None, size_pt: float | None = None, lang: str | None = None):
                 """Replace the first dots-sequence inside a cell without rewriting the whole cell."""
                 try:
                     if value in (None, ''):
                         return
+                    value = _to_western_digits(str(value))
                     for p in cell.paragraphs:
                         for run in p.runs:
                             if run.text and re.search(r'\.{3,}', run.text):
-                                run.text = _replace_first_dots(run.text, str(value))
+                                run.text = _replace_first_dots(run.text, value)
+                                _apply_run_style(run, font_name=font_name, size_pt=size_pt, lang=lang)
                                 return
                 except Exception:
                     pass
@@ -4726,6 +4819,7 @@ def hr_report_diwan():
             dt = (rep.get('report_date') or '').strip()  # expected dd/mm/yyyy
             dd = mm = yy = ''
             try:
+                dt = _to_western_digits(dt)
                 m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', dt)
                 if m:
                     dd = str(m.group(1)).zfill(2)
@@ -4737,33 +4831,74 @@ def hr_report_diwan():
             ministry = (rep.get('ministry') or '').strip()
             unit = (rep.get('unit') or '').strip()
             try:
+                # The first line in the Diwan template is where the user noticed
+                # inconsistent digits/font. The safest fix is to rebuild the
+                # entire line into ONE run using the original paragraph text,
+                # then apply a single font/size. This keeps the exact header
+                # layout (tabs/spaces) and guarantees uniform rendering.
                 if doc.paragraphs:
                     p0 = doc.paragraphs[0]
-                    for run in p0.runs:
-                        # Ministry + unit
-                        if '......................' in (run.text or '') and ministry:
-                            run.text = run.text.replace('......................', ministry)
-                        if '..................' in (run.text or '') and unit:
-                            run.text = run.text.replace('..................', unit)
-                        # Date pieces (keep original slashes/spaces)
-                        if 'التاريخ:' in (run.text or '') and '....' in (run.text or '') and dd:
-                            run.text = run.text.replace('....', dd)
-                        if '......' in (run.text or '') and mm:
-                            run.text = run.text.replace('......', mm)
-                        if (run.text or '').strip() == '20' and yy:
-                            run.text = f"20{yy}"
+                    txt = p0.text or ''
+
+                    # Label required by user
+                    txt = txt.replace('إدارة عامة / دائرة', 'إدارة عامة / الإدارة')
+
+                    # Fill placeholders (keep the same dotted look if value is empty)
+                    if ministry:
+                        if '......................' in txt:
+                            txt = txt.replace('......................', ministry, 1)
+                        else:
+                            txt = re.sub(r'(الوزارة\s*/\s*)\.{3,}', r'\1' + ministry, txt, count=1)
+                    if unit:
+                        if '..................' in txt:
+                            txt = txt.replace('..................', unit, 1)
+                        else:
+                            txt = re.sub(r'(الإدارة\s*\/?\s*)\.{3,}', r'\1' + unit, txt, count=1)
+
+                    # Date: ALWAYS dd/mm/YYYY with western digits (0-9) in ONE chunk
+                    full_date = _to_western_digits((rep.get('report_date') or '').strip())
+                    if full_date:
+                        # Replace whatever exists after "التاريخ:" in this paragraph
+                        txt = re.sub(r'(التاريخ\s*:\s*)([^\n\r]*)', r'\1' + full_date, txt, count=1)
+
+                    # Write into first run and clear the others
+                    if p0.runs:
+                        p0.runs[0].text = txt
+                        for rr in p0.runs[1:]:
+                            rr.text = ''
+                        # Slightly smaller to keep everything in ONE page
+                        _apply_run_style(p0.runs[0], font_name='Arial', size_pt=10.5, lang='ar-SA')
+            except Exception:
+                pass
+
+            # Tighten spacing in tables to avoid pushing the report into a second page
+            try:
+                from docx.shared import Pt
+                for tbl in getattr(doc, 'tables', []) or []:
+                    for row in tbl.rows:
+                        for cell in row.cells:
+                            for p in cell.paragraphs:
+                                try:
+                                    pf = p.paragraph_format
+                                    pf.space_before = Pt(0)
+                                    pf.space_after = Pt(0)
+                                    pf.line_spacing = 1.0
+                                except Exception:
+                                    continue
             except Exception:
                 pass
 
             # Info table (employee details) — replace dots only
             try:
                 t0 = doc.tables[0]
-                _fill_cell_dots(t0.cell(0, 0), rep.get('employee_name') or '')
-                _fill_cell_dots(t0.cell(0, 1), rep.get('personal_no') or '')
-                _fill_cell_dots(t0.cell(1, 0), rep.get('hire_date') or '')
-                _fill_cell_dots(t0.cell(1, 1), rep.get('grade') or '')
-                _fill_cell_dots(t0.cell(2, 0), rep.get('job_title') or '')
-                _fill_cell_dots(t0.cell(2, 1), str(rep.get('entitled_days') if rep.get('entitled_days') not in (None, '') else ''))
+                # Slightly smaller font for name + unit-related long fields to keep ONE page
+                # Keep values slightly smaller so the report stays within ONE page.
+                _fill_cell_dots(t0.cell(0, 0), rep.get('employee_name') or '', font_name='Arial', size_pt=10.2, lang='ar-SA')
+                _fill_cell_dots(t0.cell(0, 1), rep.get('personal_no') or '', font_name='Arial', size_pt=10.2, lang='en-US')
+                _fill_cell_dots(t0.cell(1, 0), rep.get('hire_date') or '', font_name='Arial', size_pt=10.2, lang='en-US')
+                _fill_cell_dots(t0.cell(1, 1), rep.get('grade') or '', font_name='Arial', size_pt=10.2, lang='ar-SA')
+                _fill_cell_dots(t0.cell(2, 0), rep.get('job_title') or '', font_name='Arial', size_pt=10.2, lang='ar-SA')
+                _fill_cell_dots(t0.cell(2, 1), str(rep.get('entitled_days') if rep.get('entitled_days') not in (None, '') else ''), font_name='Arial', size_pt=10.2, lang='en-US')
             except Exception:
                 pass
 
@@ -4857,7 +4992,9 @@ def hr_report_diwan():
             # If anything goes wrong, fall back to showing the HTML view (no hard crash).
             flash('تعذر إنشاء ملف Word في الوقت الحالي. تأكد من تثبيت python-docx وأن قالب تقرير الديوان موجود.', 'danger')
 
-    template_name = 'portal/hr/reports_diwan_council.html' if view in ('diwan', 'council', 'diwan_report') else 'portal/hr/reports_diwan.html'
+    # Render everything in ONE page (same template) and switch via tabs/`view` param.
+    # This avoids opening a "second page" for the Diwan layout.
+    template_name = 'portal/hr/reports_diwan.html'
 
     return render_template(
         template_name,
@@ -8860,7 +8997,9 @@ EMP_LOOKUP_CATEGORIES = [
     ("UNIVERSITY", "الجامعة"),
     ("COUNTRY", "الدولة"),
     ("ATTACH_TYPE", "نوع المرفق"),
+    ("HR_DOC_CATEGORY", "تصنيفات وثائق HR"),
 ]
+
 
 EMP_LOOKUP_LABEL = {k: v for k, v in EMP_LOOKUP_CATEGORIES}
 
@@ -11873,7 +12012,7 @@ def hr_masterdata_index():
 
 @portal_bp.route("/hr/masterdata/employee-lookups")
 @login_required
-@_perm_any(HR_MASTERDATA_MANAGE, HR_REPORTS_VIEW)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_REPORTS_VIEW, HR_DOCS_MANAGE)
 def hr_employee_lookups_index():
     # counts
     counts = {}
@@ -11886,7 +12025,13 @@ def hr_employee_lookups_index():
         counts = {c: int(n) for c, n in rows}
     except Exception:
         counts = {}
-    categories = [(k, EMP_LOOKUP_LABEL.get(k, k), counts.get(k, 0)) for k, _ in EMP_LOOKUP_CATEGORIES]
+    # If the user only has HR_DOCS_MANAGE (without HR_MASTERDATA_MANAGE/HR_REPORTS_VIEW), show only HR doc categories.
+    show_all = current_user.has_perm(HR_MASTERDATA_MANAGE) or current_user.has_perm(HR_REPORTS_VIEW)
+    if show_all:
+        cats = EMP_LOOKUP_CATEGORIES
+    else:
+        cats = [("HR_DOC_CATEGORY", EMP_LOOKUP_LABEL.get("HR_DOC_CATEGORY", "تصنيفات وثائق HR"))]
+    categories = [(k, EMP_LOOKUP_LABEL.get(k, k), counts.get(k, 0)) for k, _ in cats]
     return render_template("portal/hr/employee_lookups_index.html", categories=categories, counts=counts)
 
 
@@ -11900,13 +12045,21 @@ def _lookup_category_or_404(category: str) -> str:
 
 @portal_bp.route("/hr/masterdata/employee-lookups/<string:category>", methods=["GET", "POST"])
 @login_required
-@_perm_any(HR_MASTERDATA_MANAGE, HR_REPORTS_VIEW)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_REPORTS_VIEW, HR_DOCS_MANAGE)
 def hr_employee_lookups_category(category: str):
     cat = _lookup_category_or_404(category)
 
+    if cat == "HR_DOC_CATEGORY":
+        _seed_hr_doc_categories_if_empty()
+
+    # HR_DOCS_MANAGE users are allowed to manage only HR_DOC_CATEGORY; block access to other categories.
+    if cat != "HR_DOC_CATEGORY":
+        if not (current_user.has_perm(HR_MASTERDATA_MANAGE) or current_user.has_perm(HR_REPORTS_VIEW)):
+            abort(403)
+
     if request.method == 'POST':
         # Allow view via HR_REPORTS_VIEW, but restrict mutations to HR_MASTERDATA_MANAGE
-        if not current_user.has_perm(HR_MASTERDATA_MANAGE):
+        if not (current_user.has_perm(HR_MASTERDATA_MANAGE) or (cat == "HR_DOC_CATEGORY" and current_user.has_perm(HR_DOCS_MANAGE))):
             abort(403)
         code = (request.form.get('code') or '').strip()
         name_ar = (request.form.get('name_ar') or '').strip()
@@ -11976,9 +12129,13 @@ def hr_employee_lookups_category(category: str):
 
 @portal_bp.route("/hr/masterdata/employee-lookups/<string:category>/<int:item_id>/edit", methods=["GET", "POST"])
 @login_required
-@_perm(HR_MASTERDATA_MANAGE)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_DOCS_MANAGE)
 def hr_employee_lookup_edit(category: str, item_id: int):
     cat = _lookup_category_or_404(category)
+    # Only allow HR_DOCS_MANAGE to operate on HR_DOC_CATEGORY. Other categories require HR_MASTERDATA_MANAGE.
+    if cat != "HR_DOC_CATEGORY" and not current_user.has_perm(HR_MASTERDATA_MANAGE):
+        abort(403)
+
     item = HRLookupItem.query.filter_by(id=item_id, category=cat).first_or_404()
 
     if request.method == 'POST':
@@ -12035,9 +12192,13 @@ def hr_employee_lookup_edit(category: str, item_id: int):
 
 @portal_bp.route("/hr/masterdata/employee-lookups/<string:category>/<int:item_id>/delete", methods=["POST"])
 @login_required
-@_perm(HR_MASTERDATA_MANAGE)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_DOCS_MANAGE)
 def hr_employee_lookup_delete(category: str, item_id: int):
     cat = _lookup_category_or_404(category)
+    # Only allow HR_DOCS_MANAGE to operate on HR_DOC_CATEGORY. Other categories require HR_MASTERDATA_MANAGE.
+    if cat != "HR_DOC_CATEGORY" and not current_user.has_perm(HR_MASTERDATA_MANAGE):
+        abort(403)
+
     item = HRLookupItem.query.filter_by(id=item_id, category=cat).first_or_404()
 
     # Prefer soft delete to avoid FK issues
@@ -12057,9 +12218,13 @@ def hr_employee_lookup_delete(category: str, item_id: int):
 
 @portal_bp.route("/hr/masterdata/employee-lookups/<string:category>/export")
 @login_required
-@_perm(HR_MASTERDATA_MANAGE)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_DOCS_MANAGE)
 def hr_employee_lookups_export(category: str):
     cat = _lookup_category_or_404(category)
+    # Only allow HR_DOCS_MANAGE to operate on HR_DOC_CATEGORY. Other categories require HR_MASTERDATA_MANAGE.
+    if cat != "HR_DOC_CATEGORY" and not current_user.has_perm(HR_MASTERDATA_MANAGE):
+        abort(403)
+
     items = HRLookupItem.query.filter_by(category=cat).order_by(HRLookupItem.sort_order.asc(), HRLookupItem.name_ar.asc(), HRLookupItem.id.asc()).all()
 
     headers = ["code", "name_ar", "name_en", "sort_order", "is_active"]
@@ -12073,9 +12238,13 @@ def hr_employee_lookups_export(category: str):
 
 @portal_bp.route("/hr/masterdata/employee-lookups/<string:category>/template")
 @login_required
-@_perm(HR_MASTERDATA_MANAGE)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_DOCS_MANAGE)
 def hr_employee_lookups_template(category: str):
     cat = _lookup_category_or_404(category)
+    # Only allow HR_DOCS_MANAGE to operate on HR_DOC_CATEGORY. Other categories require HR_MASTERDATA_MANAGE.
+    if cat != "HR_DOC_CATEGORY" and not current_user.has_perm(HR_MASTERDATA_MANAGE):
+        abort(403)
+
     headers = ["code", "name_ar", "name_en", "sort_order", "is_active"]
     from utils.excel import make_xlsx_bytes
     xbytes = make_xlsx_bytes(cat, headers, [])
@@ -12085,9 +12254,13 @@ def hr_employee_lookups_template(category: str):
 
 @portal_bp.route("/hr/masterdata/employee-lookups/<string:category>/import", methods=["POST"])
 @login_required
-@_perm(HR_MASTERDATA_MANAGE)
+@_perm_any(HR_MASTERDATA_MANAGE, HR_DOCS_MANAGE)
 def hr_employee_lookups_import(category: str):
     cat = _lookup_category_or_404(category)
+    # Only allow HR_DOCS_MANAGE to operate on HR_DOC_CATEGORY. Other categories require HR_MASTERDATA_MANAGE.
+    if cat != "HR_DOC_CATEGORY" and not current_user.has_perm(HR_MASTERDATA_MANAGE):
+        abort(403)
+
 
     f = request.files.get('file')
     if not f or not getattr(f, 'filename', ''):
@@ -13912,6 +14085,8 @@ def portal_admin_integrations():
     append_only = (_setting_get('TIMECLK_APPEND_ONLY') or '1') == '1'
     last_size = _setting_get('TIMECLK_LAST_SIZE') or ''
     last_sync = _setting_get('TIMECLK_LAST_SYNC_AT') or ''
+    last_check = _setting_get('TIMECLK_LAST_CHECK_AT') or ''
+    last_error = _setting_get('TIMECLK_LAST_ERROR') or ''
 
     auto_enabled = (_setting_get('TIMECLK_AUTO_SYNC_ENABLED') or '0') == '1'
     auto_interval = _setting_get('TIMECLK_AUTO_SYNC_INTERVAL') or '60'
@@ -13924,6 +14099,8 @@ def portal_admin_integrations():
                            append_only=append_only,
                            last_size=last_size,
                            last_sync=last_sync,
+                           last_check=last_check,
+                           last_error=last_error,
                            auto_enabled=auto_enabled,
                            auto_interval=auto_interval,
                            imported_by_id=imported_by_id,
@@ -13988,6 +14165,15 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
         text = raw_bytes.decode(errors='ignore')
 
     lines = [ln for ln in text.splitlines() if (ln or '').strip()]
+
+    # If there is no new data (common in append-only polling), avoid creating empty batches,
+    # but still advance pointers & update the "last sync" stamp for visibility.
+    if not lines:
+        _setting_set('TIMECLK_LAST_FILE', str(resolved))
+        _setting_set('TIMECLK_LAST_SIZE', str(new_size))
+        _setting_set('TIMECLK_LAST_SYNC_AT', datetime.utcnow().isoformat(timespec='seconds'))
+        db.session.commit()
+        return 0, 0, 0
 
     batch = AttendanceImportBatch(
         filename=f"AUTO:{Path(resolved).name}",
@@ -15541,10 +15727,158 @@ def portal_admin_dashboard():
     # Corr admin
     add_card(CORR_LOOKUPS_MANAGE, "إعدادات المراسلات", "إدارة التصنيفات والجهات المرسلة/المستلمة.", "bi-tags", "portal.portal_admin_corr_index")
 
+    # Unified Masterdata hub (for discoverability)
+    add_card(PORTAL_ADMIN_READ, "ثوابت النظام", "مركز موحّد لثوابت (HR/الصادر-الوارد/المستودع/الحركة).", "bi-sliders", "portal.portal_admin_masterdata_hub")
+
+    # Inventory / Transport (quick discoverability)
+    add_card(STORE_MANAGE, "ثوابت المستودع", "المخازن/الأصناف/التصنيفات/الصلاحيات.", "bi-boxes", "portal.inventory_admin_warehouses")
+    add_card("TRANSPORT_UPDATE", "ثوابت الحركة", "السيارات/السائقون/المناطق/الوجهات.", "bi-truck", "portal.transport_home")
+
     # Integrations
     add_card(PORTAL_INTEGRATIONS_MANAGE, "التكاملات", "إعداد مزامنة ملف ساعة الدوام من السيرفر.", "bi-plug", "portal.hr_attendance_import")
 
     return render_template("portal/admin/index.html", cards=cards, pending_access=pending_access)
+
+
+@portal_bp.route("/admin/masterdata", methods=["GET"])
+@login_required
+@_perm(PORTAL_ADMIN_READ)
+def portal_admin_masterdata_hub():
+    """Unified hub for system masterdata/settings across modules."""
+
+    def _can(perm: str) -> bool:
+        try:
+            return current_user.has_perm(perm)
+        except Exception:
+            return False
+
+    sections = []
+
+    # HR
+    hr_items = []
+    if _can(HR_MASTERDATA_MANAGE):
+        hr_items.append({
+            "title": "إعدادات الدوام",
+            "desc": "تعريف الإجازات/المغادرات/الجداول والإعدادات العامة.",
+            "icon": "bi-gear",
+            "url": url_for("portal.hr_masterdata_index"),
+        })
+        hr_items.append({
+            "title": "إعدادات ملف الموظف",
+            "desc": "حقول ملف الموظف + أنواع المرفقات (تصنيف وثائق ملف الموظف).",
+            "icon": "bi-person-vcard",
+            "url": url_for("portal.hr_employee_lookups_index"),
+        })
+        hr_items.append({
+            "title": "الهيكل التنظيمي",
+            "desc": "المنظمات/الإدارات/الدوائر/الأقسام/الشُعب.",
+            "icon": "bi-diagram-3",
+            "url": url_for("portal.portal_admin_hr_org_structure"),
+        })
+
+    if _can(HR_READ):
+        hr_items.append({
+            "title": "إعدادات التدريب",
+            "desc": "تصنيفات التدريب/الجهات الممولة/الدول + إعدادات الانتساب.",
+            "icon": "bi-mortarboard",
+            "url": url_for("portal.hr_training_admin_dashboard"),
+        })
+
+    if _can(HR_PERF_MANAGE):
+        hr_items.append({
+            "title": "التقييمات والأداء",
+            "desc": "نماذج ودورات وتكليفات 360 وإعدادات التقييم.",
+            "icon": "bi-clipboard2-check",
+            "url": url_for("portal.portal_admin_hr_perf_dashboard"),
+        })
+
+    if _can(HR_DOCS_MANAGE):
+        hr_items.append({
+            "title": "وثائق HR",
+            "desc": "رفع الإصدارات المعتمدة للوثائق + إدارة المحتوى.",
+            "icon": "bi-journal-text",
+            "url": url_for("portal.hr_docs_admin"),
+        })
+        hr_items.append({
+            "title": "تصنيفات وثائق HR",
+            "desc": "إضافة/تعديل تصنيفات الوثائق (قابلة للإدارة).",
+            "icon": "bi-tags",
+            "url": url_for("portal.hr_employee_lookups_category", category="HR_DOC_CATEGORY"),
+        })
+
+
+    if hr_items:
+        sections.append({
+            "title": "الموارد البشرية",
+            "desc": "ثوابت وإعدادات HR.",
+            "items": hr_items,
+        })
+
+    # Correspondence (incoming/outgoing)
+    corr_items = []
+    if _can(CORR_LOOKUPS_MANAGE):
+        corr_items.append({
+            "title": "ثوابت الصادر/الوارد",
+            "desc": "التصنيفات + الجهات (مرسلة/مستلمة).",
+            "icon": "bi-envelope-paper",
+            "url": url_for("portal.portal_admin_corr_index"),
+        })
+    if corr_items:
+        sections.append({
+            "title": "الصادر/الوارد",
+            "desc": "ثوابت المراسلات (الوارد/الصادر).",
+            "items": corr_items,
+        })
+
+    # Inventory
+    inv_items = []
+    if _can(STORE_READ) or _can(STORE_MANAGE):
+        inv_items.append({
+            "title": "لوحة المستودع",
+            "desc": "الدخول للوحدة (السندات + لوحة التحكم).",
+            "icon": "bi-box-seam",
+            "url": url_for("portal.inventory_home"),
+        })
+    if _can(STORE_MANAGE):
+        inv_items.extend([
+            {"title": "المخازن", "desc": "تعريف المخازن.", "icon": "bi-house-gear", "url": url_for("portal.inventory_admin_warehouses")},
+            {"title": "التصنيفات", "desc": "تصنيف الأصناف.", "icon": "bi-tags", "url": url_for("portal.inventory_admin_categories")},
+            {"title": "الأصناف", "desc": "تعريف الأصناف ووحدات القياس.", "icon": "bi-boxes", "url": url_for("portal.inventory_admin_items")},
+            {"title": "صلاحيات المخازن", "desc": "تحديد صلاحيات الموظفين لكل مخزن.", "icon": "bi-person-lock", "url": url_for("portal.inventory_admin_warehouse_perms")},
+            {"title": "إعدادات المستودع", "desc": "مفاتيح وإعدادات عامة للمستودع.", "icon": "bi-sliders", "url": url_for("portal.inventory_admin_settings")},
+        ])
+    if inv_items:
+        sections.append({
+            "title": "المستودع",
+            "desc": "ثوابت وإعدادات نظام المستودع.",
+            "items": inv_items,
+        })
+
+    # Transport
+    tr_items = []
+    if _can("TRANSPORT_READ"):
+        tr_items.extend([
+            {"title": "لوحة الحركة", "desc": "الدخول للوحدة.", "icon": "bi-truck", "url": url_for("portal.transport_home")},
+            {"title": "السيارات", "desc": "تعريف السيارات وحالاتها.", "icon": "bi-car-front", "url": url_for("portal.transport_vehicles")},
+            {"title": "السائقون", "desc": "تعريف السائقين.", "icon": "bi-person-badge", "url": url_for("portal.transport_drivers")},
+            {"title": "المناطق", "desc": "مناطق/نطاقات الحركة.", "icon": "bi-geo", "url": url_for("portal.transport_zones")},
+            {"title": "الوجهات", "desc": "تعريف الوجهات.", "icon": "bi-geo-alt", "url": url_for("portal.transport_destinations")},
+        ])
+    if _can("TRANSPORT_TRACKING_READ"):
+        tr_items.append({
+            "title": "إعدادات التتبع",
+            "desc": "إعدادات التكامل مع أجهزة تتبع المركبات.",
+            "icon": "bi-broadcast",
+            "url": url_for("portal.transport_tracking_settings"),
+        })
+    if tr_items:
+        sections.append({
+            "title": "الحركة والنقل",
+            "desc": "ثوابت وإعدادات وحدة الحركة.",
+            "items": tr_items,
+        })
+
+    return render_template("portal/admin/masterdata_hub.html", sections=sections)
 
 
 
@@ -15590,7 +15924,10 @@ def portal_admin_hr_dashboard():
     add_card(HR_ATT_READ, "سجل الدوام", "عرض أحداث ساعة الدوام والدفعات.", "bi-clock-history", "portal.hr_attendance_events")
     add_card(HR_REQUESTS_APPROVE, "اعتمادات HR", "مراجعة طلبات الإجازات والمغادرات.", "bi-check2-square", "portal.hr_approvals")
     add_card(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "تعريف أنواع الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index")
+    add_card(HR_MASTERDATA_MANAGE, "إعدادات ملف الموظف", "حقول ملف الموظف + أنواع المرفقات (تصنيف مرفقات HR).", "bi-person-vcard", "portal.hr_employee_lookups_index")
     add_card(HR_MASTERDATA_MANAGE, "الهيكل التنظيمي", "إدارة المنظمات/الإدارات/الدوائر/الأقسام/الفرق.", "bi-diagram-3", "portal.portal_admin_hr_org_structure")
+    add_card(HR_READ, "إعدادات التدريب", "تصنيفات التدريب/الجهات الممولة/الدول + إعدادات الانتساب.", "bi-mortarboard", "portal.hr_training_admin_dashboard")
+    add_card(HR_DOCS_MANAGE, "وثائق HR", "تصنيف الوثائق + رفع الإصدارات.", "bi-journal-text", "portal.hr_docs_admin")
     add_card(HR_MASTERDATA_MANAGE, "قوالب الدوام", "تعريف قوالب زمنية (Schedule Templates).", "bi-clock", "portal.portal_admin_hr_schedule_templates")
     add_card(HR_MASTERDATA_MANAGE, "سياسات الدوام", "سياسات ثابت/Hybrid quota + سياسة مكان.", "bi-shield-check", "portal.portal_admin_hr_work_policies")
     add_card(HR_MASTERDATA_MANAGE, "تعيين الدوام", "ربط (قالب + سياسة) بمستخدم/دور/قسم لفترة محددة.", "bi-person-check", "portal.portal_admin_hr_work_assignments")
@@ -18228,6 +18565,51 @@ def hr_ss_approval_view(req_id: int):
 # HR Docs
 # -------------------------
 
+
+
+def _hr_doc_category_items(active_only: bool = True):
+    # Return HR doc categories as lookup items (category=HR_DOC_CATEGORY).
+    try:
+        return _lookup_items('HR_DOC_CATEGORY', active_only=active_only)
+    except Exception:
+        return []
+
+
+def _hr_doc_category_map() -> dict:
+    items = _hr_doc_category_items(active_only=True)
+    m = {}
+    for i in items:
+        try:
+            code = (i.code or '').strip()
+            if not code:
+                continue
+            m[code] = getattr(i, 'label', None) or (getattr(i, 'name_ar', '') or getattr(i, 'name_en', '') or code)
+        except Exception:
+            continue
+    return m
+
+
+def _seed_hr_doc_categories_if_empty():
+    # Create default HR doc categories if none exist.
+    cat = 'HR_DOC_CATEGORY'
+    try:
+        exists = HRLookupItem.query.filter_by(category=cat).first()
+        if exists:
+            return
+        defaults = [
+            ('POLICY', 'سياسة', 'Policy'),
+            ('FORM', 'نموذج', 'Form'),
+            ('PROCEDURE', 'إجراء', 'Procedure'),
+        ]
+        so = 10
+        for code, ar, en in defaults:
+            db.session.add(HRLookupItem(category=cat, code=code, name_ar=ar, name_en=en, sort_order=so, is_active=True, created_at=datetime.utcnow(), updated_at=datetime.utcnow()))
+            so += 10
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return
+
 @portal_bp.route("/hr/docs")
 @login_required
 @_perm(HR_DOCS_READ)
@@ -18238,7 +18620,7 @@ def hr_docs_home():
     for d in docs:
         cur = HRDocVersion.query.get(d.current_version_id) if d.current_version_id else None
         rows.append(type("Row", (), {"id": d.id, "title_ar": d.title_ar, "title_en": d.title_en, "category": d.category, "current_ver": cur, "created_at": d.created_at, "created_by": d.created_by}))
-    return render_template("portal/hr/docs_index.html", docs=rows)
+    return render_template("portal/hr/docs_index.html", docs=rows, doc_cat_map=_hr_doc_category_map())
 
 
 @portal_bp.route("/hr/docs/<int:doc_id>")
@@ -18247,7 +18629,7 @@ def hr_docs_home():
 def hr_docs_view(doc_id: int):
     doc = HRDoc.query.get_or_404(doc_id)
     versions = HRDocVersion.query.filter_by(doc_id=doc.id).order_by(HRDocVersion.version_no.desc()).all()
-    return render_template("portal/hr/docs_view.html", doc=doc, versions=versions)
+    return render_template("portal/hr/docs_view.html", doc=doc, versions=versions, doc_cat_map=_hr_doc_category_map())
 
 
 @portal_bp.route("/hr/docs/<int:doc_id>/download/<int:ver_id>")
@@ -18264,12 +18646,15 @@ def hr_docs_download(doc_id: int, ver_id: int):
 @_perm(HR_DOCS_MANAGE)
 def hr_docs_admin():
     focus = request.args.get("focus")
+    _seed_hr_doc_categories_if_empty()
+    doc_categories = _hr_doc_category_items(active_only=True)
+    doc_cat_map = _hr_doc_category_map()
     docs = HRDoc.query.order_by(HRDoc.created_at.desc()).all()
     rows = []
     for d in docs:
         cur = HRDocVersion.query.get(d.current_version_id) if d.current_version_id else None
         rows.append(type("Row", (), {"id": d.id, "title_ar": d.title_ar, "category": d.category, "current_ver": cur}))
-    return render_template("portal/hr/docs_admin.html", docs=rows, focus=focus)
+    return render_template("portal/hr/docs_admin.html", docs=rows, focus=focus, doc_categories=doc_categories, doc_cat_map=doc_cat_map)
 
 
 @portal_bp.route("/hr/docs/admin/create", methods=["POST"])
@@ -18277,7 +18662,14 @@ def hr_docs_admin():
 @_perm(HR_DOCS_MANAGE)
 def hr_docs_create():
     title_ar = (request.form.get("title_ar") or "").strip()
-    category = (request.form.get("category") or "POLICY").strip()
+    category = (request.form.get("category") or "").strip().upper()
+    # Validate against managed lookups (if any exist)
+    allowed = {i.code for i in _hr_doc_category_items(active_only=True) if i and getattr(i,'code',None)}
+    if allowed:
+        if not category or category not in allowed:
+            category = sorted(allowed)[0]
+    if not category:
+        category = 'POLICY'
     if not title_ar:
         flash("العنوان مطلوب.", "danger")
         return redirect(url_for("portal.hr_docs_admin"))

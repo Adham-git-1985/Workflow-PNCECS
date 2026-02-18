@@ -69,6 +69,10 @@
               <div class="small text-muted">آخر ملف: <b dir="ltr">{{ last_file or '—' }}</b></div>
               <div class="small text-muted">آخر حجم: <b>{{ last_size or '—' }}</b></div>
               <div class="small text-muted">آخر مزامنة: <b>{{ last_sync or '—' }}</b></div>
+              <div class="small text-muted">آخر فحص: <b>{{ last_check or '—' }}</b></div>
+              {% if last_error %}
+                <div class="small text-danger">آخر خطأ: <b>{{ last_error }}</b></div>
+              {% endif %}
             </div>
           </div>
           <div class="col-12">

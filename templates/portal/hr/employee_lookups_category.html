@@ -1,6 +1,6 @@
 {% extends "portal/hr/base.html" %}
 
-{% set can_manage = current_user.has_perm('HR_MASTERDATA_MANAGE') %}
+{% set can_manage = current_user.has_perm('HR_MASTERDATA_MANAGE') or (category_key=='HR_DOC_CATEGORY' and current_user.has_perm('HR_DOCS_MANAGE')) %}
 
 {% block hr_content %}
   <div class="d-flex justify-content-between align-items-center mb-3">

@@ -31,7 +31,7 @@
           {% for d in docs %}
           <tr>
             <td>{{ d.title_ar }}</td>
-            <td><span class="badge text-bg-light">{{ d.category }}</span></td>
+            <td><span class="badge text-bg-light">{{ doc_cat_map.get(d.category, d.category) }}</span></td>
             <td class="text-muted small">
               {% if d.current_ver %}v{{ d.current_ver.version_no }}{% else %}-{% endif %}
             </td>
