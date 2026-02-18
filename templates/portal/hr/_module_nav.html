@@ -212,20 +212,20 @@
         </h2>
         <div id="hrRepAtt" class="accordion-collapse collapse" aria-labelledby="hrRepHeadAtt" data-bs-parent="#hrReportsAccordion">
           <div class="accordion-body">
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير الغياب" href="{{ url_for('portal.hr_report_absence') }}"><i class="bi bi-person-x"></i> تقرير الغياب</a>
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير البصمات" href="{{ url_for('portal.hr_report_fingerprints') }}"><i class="bi bi-fingerprint"></i> تقرير البصمات</a>
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير المغادرات مع البصمة" href="{{ url_for('portal.hr_report_permissions_fingerprint') }}"><i class="bi bi-arrow-left-right"></i> تقرير المغادرات مع البصمة</a>
-            <a class="list-group-item list-group-item-action" data-report-label="التقرير اليومي" href="{{ url_for('portal.hr_report_attendance_daily') }}"><i class="bi bi-calendar-date"></i> التقرير اليومي</a>
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير مراقبة تعديلات الدوام" href="{{ url_for('portal.hr_report_attendance_edits') }}"><i class="bi bi-pencil-square"></i> مراقبة تعديلات الدوام</a>
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير الحركات السالبة" href="{{ url_for('portal.hr_report_negative_movements') }}"><i class="bi bi-graph-down"></i> تقرير الحركات السالبة</a>
-            <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="آخر دخول ناجح" href="{{ url_for('portal.hr_report_last_login') }}"><i class="bi bi-shield-check"></i> آخر دخول ناجح</a>
             <a class="list-group-item list-group-item-action" data-report-label="الحضور والانصراف والمغادرات" href="{{ url_for('portal.hr_report_attendance_permissions') }}"><i class="bi bi-clock-history"></i> الحضور والانصراف والمغادرات</a>
             <a class="list-group-item list-group-item-action" data-report-label="التأخير" href="{{ url_for('portal.hr_report_delay') }}"><i class="bi bi-exclamation-triangle"></i> التأخير</a>
             <a class="list-group-item list-group-item-action" data-report-label="دوام موظف" href="{{ url_for('portal.hr_report_employee_attendance') }}"><i class="bi bi-person-lines-fill"></i> دوام موظف</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الغياب" href="{{ url_for('portal.hr_report_absence') }}"><i class="bi bi-person-x"></i> تقرير الغياب</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير البصمات" href="{{ url_for('portal.hr_report_fingerprints') }}"><i class="bi bi-fingerprint"></i> تقرير البصمات</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير تجميعي لحركات الدوام" href="{{ url_for('portal.hr_report_diwan') }}"><i class="bi bi-building"></i> تقرير تجميعي لحركات الدوام</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير دوام موظفين" href="{{ url_for('portal.hr_report_employees_attendance') }}"><i class="bi bi-people"></i> تقرير دوام موظفين</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير دوام تجميعي" href="{{ url_for('portal.hr_report_attendance_summary') }}"><i class="bi bi-collection"></i> تقرير دوام تجميعي</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير المغادرات مع البصمة" href="{{ url_for('portal.hr_report_permissions_fingerprint') }}"><i class="bi bi-arrow-left-right"></i> تقرير المغادرات مع البصمة</a>
+            <a class="list-group-item list-group-item-action" data-report-label="التقرير اليومي" href="{{ url_for('portal.hr_report_attendance_daily') }}"><i class="bi bi-calendar-date"></i> التقرير اليومي</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير مراقبة تعديلات الدوام" href="{{ url_for('portal.hr_report_attendance_edits') }}"><i class="bi bi-pencil-square"></i> مراقبة تعديلات الدوام</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الحركات السالبة" href="{{ url_for('portal.hr_report_negative_movements') }}"><i class="bi bi-graph-down"></i> تقرير الحركات السالبة</a>
+          
           </div>
         </div>
       </div>
@@ -238,13 +238,13 @@
         </h2>
         <div id="hrRepLeave" class="accordion-collapse collapse" aria-labelledby="hrRepHeadLeave" data-bs-parent="#hrReportsAccordion">
           <div class="accordion-body">
-            <a class="list-group-item list-group-item-action" data-report-label="أرصدة الموظفين" href="{{ url_for('portal.hr_report_leave_employee_balances') }}"><i class="bi bi-wallet"></i> أرصدة الموظفين</a>
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير الخصم من الراتب" href="{{ url_for('portal.hr_report_salary_deductions') }}"><i class="bi bi-cash-coin"></i> تقرير الخصم من الراتب</a>
-            <a class="list-group-item list-group-item-action" data-report-label="تقرير إجازات الإضافي" href="{{ url_for('portal.hr_report_overtime_leaves') }}"><i class="bi bi-clock-history"></i> تقرير إجازات الإضافي</a>
-            <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="تقرير الإجازات" href="{{ url_for('portal.hr_leaves_report') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
             <a class="list-group-item list-group-item-action" data-report-label="التقرير الشهري للإجازات" href="{{ url_for('portal.hr_monthly_leave_report') }}"><i class="bi bi-calendar2-week"></i> التقرير الشهري للإجازات</a>
             <a class="list-group-item list-group-item-action" data-report-label="أرصدة الإجازات" href="{{ url_for('portal.hr_leave_balances') }}"><i class="bi bi-wallet2"></i> أرصدة الإجازات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="أرصدة الموظفين" href="{{ url_for('portal.hr_report_leave_employee_balances') }}"><i class="bi bi-wallet"></i> أرصدة الموظفين</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير الخصم من الراتب" href="{{ url_for('portal.hr_report_salary_deductions') }}"><i class="bi bi-cash-coin"></i> تقرير الخصم من الراتب</a>
+            <a class="list-group-item list-group-item-action" data-report-label="تقرير إجازات الإضافي" href="{{ url_for('portal.hr_report_overtime_leaves') }}"><i class="bi bi-clock-history"></i> تقرير إجازات الإضافي</a>
+          
           </div>
         </div>
       </div>

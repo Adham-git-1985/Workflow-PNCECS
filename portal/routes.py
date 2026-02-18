@@ -2696,17 +2696,15 @@ def hr_report_promotions():
 
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
+    work_location_map = {x.id: x.name for x in (work_locations or [])}
+
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
         headers = ['الرقم الوظيفي', 'الموظف', 'موقع العمل', 'تاريخ آخر ترقية/تعيين', 'تاريخ الاستحقاق']
         xrows = []
         for r in rows_view:
-            loc = ''
-            try:
-                loc = next((x.name for x in work_locations if x.id == r['ef'].work_location_lookup_id), '')
-            except Exception:
-                loc = ''
+            loc = work_location_map.get(getattr(r['ef'], 'work_location_lookup_id', None), '')
             xrows.append([
                 r['ef'].employee_no or '',
                 (r['ef'].full_name_quad or r['user'].full_name or r['user'].name or r['user'].email),
@@ -2720,6 +2718,7 @@ def hr_report_promotions():
         'portal/hr/reports_promotions.html',
         rows=rows_view,
         work_locations=work_locations,
+        work_location_map=work_location_map,
         selected_work_location_id=work_location_id,
         from_date=from_date.strftime('%Y-%m-%d') if from_date else '',
         to_date=to_date.strftime('%Y-%m-%d') if to_date else '',
@@ -2756,17 +2755,15 @@ def hr_report_retirement():
 
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
+    work_location_map = {x.id: x.name for x in (work_locations or [])}
+
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
         headers = ['الرقم الوظيفي', 'الموظف', 'موقع العمل', 'تاريخ الميلاد', 'تاريخ التقاعد المتوقع']
         xrows = []
         for r in rows_view:
-            loc = ''
-            try:
-                loc = next((x.name for x in work_locations if x.id == r['ef'].work_location_lookup_id), '')
-            except Exception:
-                loc = ''
+            loc = work_location_map.get(getattr(r['ef'], 'work_location_lookup_id', None), '')
             xrows.append([
                 r['ef'].employee_no or '',
                 (r['ef'].full_name_quad or r['user'].full_name or r['user'].name or r['user'].email),
@@ -2780,6 +2777,7 @@ def hr_report_retirement():
         'portal/hr/reports_retirement.html',
         rows=rows_view,
         work_locations=work_locations,
+        work_location_map=work_location_map,
         selected_work_location_id=work_location_id,
         from_date=from_date.strftime('%Y-%m-%d') if from_date else '',
         to_date=to_date.strftime('%Y-%m-%d') if to_date else '',

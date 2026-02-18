@@ -1682,6 +1682,11 @@ class HRLookupItem(db.Model):
     def label(self) -> str:
         return (self.name_ar or '').strip() or (self.name_en or '').strip() or (self.code or '').strip()
 
+    @property
+    def name(self) -> str:
+        """Backward-compatible alias for templates/old code that expects .name."""
+        return self.label
+
 
 class EmployeeFile(db.Model):
     """Employee file for HR portal (ملف الموظف).
