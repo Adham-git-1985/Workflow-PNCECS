@@ -1,16 +1,18 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}تقرير تجميعي لحركات الدوام{% endblock %}
+{% block title %}تقرير تجميعي لحركات الدوام (تقرير الديوان){% endblock %}
 
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <h4 class="mb-1"><i class="bi bi-building"></i> تقرير تجميعي لحركات الدوام</h4>
+      <h4 class="mb-1"><i class="bi bi-building"></i> تقرير تجميعي لحركات الدوام (تقرير الديوان)</h4>
       <div class="text-muted">موقع العمل + الشهر والسنة + نوع التعيين.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
-      {% if can_export %}
+      
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, user_id=selected_user_id, view='diwan') }}"><i class="bi bi-file-earmark-text"></i> اظهار على شكل تقرير الديوان</a>
+{% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, export='xlsx') }}">
           <i class="bi bi-file-earmark-excel"></i> Excel
         </a>
@@ -22,6 +24,21 @@
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="get" class="row g-2 align-items-end">
     <div class="col-md-4">
+      <label class="form-label">الموظف (اختياري)</label>
+      <select class="form-select" name="user_id">
+        <option value="">الكل</option>
+        {% for u in (users or []) %}
+          {% set ef = u.employee_file if u is not none else none %}
+          {% set emp_no = (ef.employee_no if ef and ef.employee_no else '') %}
+          {% set emp_name = (ef.full_name_quad if ef and ef.full_name_quad else (u.full_name or u.name or u.email)) %}
+          <option value="{{ u.id }}" {% if selected_user_id==u.id %}selected{% endif %}>
+            {% if emp_no %}{{ emp_no }} — {% endif %}{{ emp_name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-md-3">
       <label class="form-label">موقع العمل</label>
       <select class="form-select" name="work_location_id">
         <option value="">الكل</option>
@@ -30,7 +47,7 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label class="form-label">نوع التعيين</label>
       <select class="form-select" name="appointment_type_id">
         <option value="">بدون اختيار</option>
@@ -39,11 +56,11 @@
         {% endfor %}
       </select>
     </div>
-    <div class="col-md-2">
+    <div class="col-md-1">
       <label class="form-label">السنة</label>
       <input class="form-control" type="number" min="2000" max="2100" name="year" value="{{ year }}">
     </div>
-    <div class="col-md-2">
+    <div class="col-md-1">
       <label class="form-label">الشهر</label>
       <select class="form-select" name="month">
         {% for m in range(1,13) %}

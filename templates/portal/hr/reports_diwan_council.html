@@ -1,0 +1,418 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير تجميعي لحركات الدوام (تقرير الديوان){% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3 no-print">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-building"></i> تقرير تجميعي لحركات الدوام (تقرير الديوان)</h4>
+      <div class="text-muted">نموذج الديوان (لكل موظف تقرير) — نفس الترويسة والنموذج المرفق.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-outline-dark" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, user_id=selected_user_id) }}">
+        <i class="bi bi-layout-text-sidebar-reverse"></i> عرض النسخة العادية
+      </a>
+      {% if can_export %}
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, user_id=selected_user_id, view='diwan', export='docx') }}">
+          <i class="bi bi-file-earmark-word"></i> Word
+        </a>
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, user_id=selected_user_id, export='xlsx') }}">
+          <i class="bi bi-file-earmark-excel"></i> Excel
+        </a>
+      {% endif %}
+      <button class="btn btn-primary" type="button" onclick="wfPrintDiwan()"><i class="bi bi-printer"></i> طباعة</button>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3 no-print">
+  <form method="get" class="row g-2 align-items-end">
+    <input type="hidden" name="view" value="diwan">
+
+    <div class="col-md-4">
+      <label class="form-label">الموظف (اختياري)</label>
+      <select class="form-select" name="user_id">
+        <option value="">الكل</option>
+        {% for u in (users or []) %}
+          {% set ef = u.employee_file if u is not none else none %}
+          {% set emp_no = (ef.employee_no if ef and ef.employee_no else '') %}
+          {% set emp_name = (ef.full_name_quad if ef and ef.full_name_quad else (u.full_name or u.name or u.email)) %}
+          <option value="{{ u.id }}" {% if selected_user_id==u.id %}selected{% endif %}>
+            {% if emp_no %}{{ emp_no }} — {% endif %}{{ emp_name }}
+          </option>
+        {% endfor %}
+      </select>
+      <div class="form-text">اختر موظفًا لإظهار/تنزيل تقرير الديوان لهذا الموظف فقط.</div>
+    </div>
+
+    <div class="col-md-3">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">الكل</option>
+        {% for x in work_locations %}
+          <option value="{{ x.id }}" {% if selected_work_location_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">نوع التعيين</label>
+      <select class="form-select" name="appointment_type_id">
+        <option value="">بدون اختيار</option>
+        {% for x in appointment_types %}
+          <option value="{{ x.id }}" {% if selected_appointment_type_id==x.id %}selected{% endif %}>{{ x.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-1">
+      <label class="form-label">السنة</label>
+      <input class="form-control" type="number" min="2000" max="2100" name="year" value="{{ year }}">
+    </div>
+    <div class="col-md-1">
+      <label class="form-label">الشهر</label>
+      <select class="form-select" name="month">
+        {% for m in range(1,13) %}
+          <option value="{{ m }}" {% if month==m %}selected{% endif %}>{{ '%02d'|format(m) }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-1">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i></button>
+    </div>
+  </form>
+</div>
+
+<div class="wf-print-target">
+  {% if diwan_reports and diwan_reports|length > 0 %}
+    {% for rep in diwan_reports %}
+      <div class="diwan-page">
+        <table class="diwan-topline" dir="rtl">
+          <tr>
+            <td>الوزارة / <span class="fill">{{ rep.ministry or '......................' }}</span></td>
+            <td>إدارة عامة / دائرة <span class="fill">{{ rep.unit or '..................' }}</span></td>
+            <td class="text-start">التاريخ: <span class="fill">{{ rep.report_date or '' }}</span></td>
+          </tr>
+        </table>
+
+        <table class="diwan-info" dir="rtl">
+          <tr>
+            <td>إسم الموظف: <span class="dots">{{ rep.employee_name or '......................................' }}</span></td>
+            <td>الرقم الشخصي: <span class="dots">{{ rep.personal_no or '......................................' }}</span></td>
+          </tr>
+          <tr>
+            <td>تاريخ التعيين: <span class="dots">{{ rep.hire_date or '.....................................' }}</span></td>
+            <td>الدرجة الحالية: <span class="dots">{{ rep.grade or '......................................' }}</span></td>
+          </tr>
+          <tr>
+            <td>الوظيفة الحالية: <span class="dots">{{ rep.job_title or '...................................' }}</span></td>
+            <td>عدد أيام الإجازات المستحقة: <span class="dots">{{ rep.entitled_days if rep.entitled_days is not none else '.......................'}} </span></td>
+          </tr>
+        </table>
+
+        <div class="sec-title">الإجازات السنوية المستنفذة</div>
+        <table class="diwan-table" dir="rtl">
+          <thead>
+            <tr>
+              <th>من</th>
+              <th>إلى</th>
+              <th>عدد الأيام</th>
+              <th>الرصيد المتبقي</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set max_rows = 8 %}
+            {% set used_n = rep.annual_rows|length if rep.annual_rows else 0 %}
+            {% set shown_n = max_rows if used_n > max_rows else used_n %}
+            {% for r in (rep.annual_rows or [])[:max_rows] %}
+              <tr>
+                <td>{{ r.get('from') or '' }}</td>
+                <td>{{ r.get('to') or '' }}</td>
+                <td class="num">{{ r.get('days') or '' }}</td>
+                <td class="num">{% if loop.first %}{{ rep.annual_remaining }}{% endif %}</td>
+              </tr>
+            {% endfor %}
+            {% for i in range(max_rows - shown_n) %}
+              <tr>
+                <td></td><td></td><td class="num"></td><td class="num">{% if shown_n==0 and i==0 %}{{ rep.annual_remaining }}{% endif %}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="sec-title">الإجازات المرضية</div>
+        <table class="diwan-table" dir="rtl">
+          <thead>
+            <tr>
+              <th>من</th>
+              <th>إلى</th>
+              <th>عدد الأيام</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set max_rows = 8 %}
+            {% set used_n = rep.sick_rows|length if rep.sick_rows else 0 %}
+            {% set shown_n = max_rows if used_n > max_rows else used_n %}
+            {% for r in (rep.sick_rows or [])[:max_rows] %}
+              <tr>
+                <td>{{ r.get('from') or '' }}</td>
+                <td>{{ r.get('to') or '' }}</td>
+                <td class="num">{{ r.get('days') or '' }}</td>
+              </tr>
+            {% endfor %}
+            {% for i in range(max_rows - shown_n) %}
+              <tr><td></td><td></td><td class="num"></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="sec-title">الإجازات العارضة</div>
+        <table class="diwan-table" dir="rtl">
+          <thead>
+            <tr>
+              <th>من</th>
+              <th>إلى</th>
+              <th>عدد الأيام</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set max_rows = 8 %}
+            {% set used_n = rep.casual_rows|length if rep.casual_rows else 0 %}
+            {% set shown_n = max_rows if used_n > max_rows else used_n %}
+            {% for r in (rep.casual_rows or [])[:max_rows] %}
+              <tr>
+                <td>{{ r.get('from') or '' }}</td>
+                <td>{{ r.get('to') or '' }}</td>
+                <td class="num">{{ r.get('days') or '' }}</td>
+              </tr>
+            {% endfor %}
+            {% for i in range(max_rows - shown_n) %}
+              <tr><td></td><td></td><td class="num"></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="sec-title">إجازة بدون راتب</div>
+        <table class="diwan-table" dir="rtl">
+          <thead>
+            <tr>
+              <th>من</th>
+              <th>إلى</th>
+              <th>عدد الأيام</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% set max_rows = 3 %}
+            {% set used_n = rep.no_pay_rows|length if rep.no_pay_rows else 0 %}
+            {% set shown_n = max_rows if used_n > max_rows else used_n %}
+            {% for r in (rep.no_pay_rows or [])[:max_rows] %}
+              <tr>
+                <td>{{ r.get('from') or '' }}</td>
+                <td>{{ r.get('to') or '' }}</td>
+                <td class="num">{{ r.get('days') or '' }}</td>
+              </tr>
+            {% endfor %}
+            {% for i in range(max_rows - shown_n) %}
+              <tr><td></td><td></td><td class="num"></td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+
+        <div class="sec-title">إجازة الحج</div>
+        <table class="diwan-table" dir="rtl">
+          <thead>
+            <tr>
+              <th>من</th>
+              <th>إلى</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if rep.hajj_rows and rep.hajj_rows|length > 0 %}
+              <tr>
+                <td>{{ rep.hajj_rows[0].get('from') or '' }}</td>
+                <td>{{ rep.hajj_rows[0].get('to') or '' }}</td>
+              </tr>
+            {% else %}
+              <tr><td></td><td></td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+
+        <div class="sec-title">إجازة أمومة</div>
+        <table class="diwan-table" dir="rtl">
+          <thead>
+            <tr>
+              <th>من</th>
+              <th>إلى</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% if rep.maternity_rows and rep.maternity_rows|length > 0 %}
+              <tr>
+                <td>{{ rep.maternity_rows[0].get('from') or '' }}</td>
+                <td>{{ rep.maternity_rows[0].get('to') or '' }}</td>
+              </tr>
+            {% else %}
+              <tr><td></td><td></td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+
+        <div class="diwan-sign" dir="rtl">
+          <div>توقيع الموظف المختص: <span class="line"></span></div>
+          <div>توقيع مدير الشؤون الإدارية (الإسم): <span class="line"></span></div>
+          <div>ختم الوزارة (التوقيع): <span class="line"></span></div>
+        </div>
+      </div>
+
+      {% if not loop.last %}
+        <div class="page-break"></div>
+      {% endif %}
+    {% endfor %}
+  {% else %}
+    <div class="diwan-page">
+      <table class="diwan-topline" dir="rtl">
+        <tr>
+          <td>الوزارة / <span class="fill">......................</span></td>
+          <td>إدارة عامة / دائرة <span class="fill">..................</span></td>
+          <td class="text-start">التاريخ: <span class="fill">{{ (generated_on.strftime('%d/%m/%Y') if generated_on else '') }}</span></td>
+        </tr>
+      </table>
+
+      <table class="diwan-info" dir="rtl">
+        <tr>
+          <td>إسم الموظف: <span class="dots">......................................</span></td>
+          <td>الرقم الشخصي: <span class="dots">......................................</span></td>
+        </tr>
+        <tr>
+          <td>تاريخ التعيين: <span class="dots">.....................................</span></td>
+          <td>الدرجة الحالية: <span class="dots">......................................</span></td>
+        </tr>
+        <tr>
+          <td>الوظيفة الحالية: <span class="dots">...................................</span></td>
+          <td>عدد أيام الإجازات المستحقة: <span class="dots">.......................</span></td>
+        </tr>
+      </table>
+
+      <div class="sec-title">الإجازات السنوية المستنفذة</div>
+      <table class="diwan-table" dir="rtl">
+        <thead><tr><th>من</th><th>إلى</th><th>عدد الأيام</th><th>الرصيد المتبقي</th></tr></thead>
+        <tbody>
+          {% for i in range(8) %}<tr><td></td><td></td><td class="num"></td><td class="num"></td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      <div class="sec-title">الإجازات المرضية</div>
+      <table class="diwan-table" dir="rtl">
+        <thead><tr><th>من</th><th>إلى</th><th>عدد الأيام</th></tr></thead>
+        <tbody>
+          {% for i in range(8) %}<tr><td></td><td></td><td class="num"></td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      <div class="sec-title">الإجازات العارضة</div>
+      <table class="diwan-table" dir="rtl">
+        <thead><tr><th>من</th><th>إلى</th><th>عدد الأيام</th></tr></thead>
+        <tbody>
+          {% for i in range(8) %}<tr><td></td><td></td><td class="num"></td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      <div class="sec-title">إجازة بدون راتب</div>
+      <table class="diwan-table" dir="rtl">
+        <thead><tr><th>من</th><th>إلى</th><th>عدد الأيام</th></tr></thead>
+        <tbody>
+          {% for i in range(3) %}<tr><td></td><td></td><td class="num"></td></tr>{% endfor %}
+        </tbody>
+      </table>
+
+      <div class="sec-title">إجازة الحج</div>
+      <table class="diwan-table" dir="rtl">
+        <thead><tr><th>من</th><th>إلى</th></tr></thead>
+        <tbody><tr><td></td><td></td></tr></tbody>
+      </table>
+
+      <div class="sec-title">إجازة أمومة</div>
+      <table class="diwan-table" dir="rtl">
+        <thead><tr><th>من</th><th>إلى</th></tr></thead>
+        <tbody><tr><td></td><td></td></tr></tbody>
+      </table>
+
+      <div class="diwan-sign" dir="rtl">
+        <div>توقيع الموظف المختص: <span class="line"></span></div>
+        <div>توقيع مدير الشؤون الإدارية (الإسم): <span class="line"></span></div>
+        <div>ختم الوزارة (التوقيع): <span class="line"></span></div>
+      </div>
+
+      <div class="mt-3 text-muted text-center">لا توجد بيانات حسب الفلاتر الحالية، لكن تم عرض النموذج كما هو.</div>
+    </div>
+  {% endif %}
+</div>
+
+<style>
+  .diwan-page{
+    background:#fff;
+    border:1px solid #000;
+    padding:16px 18px;
+    max-width: 920px;
+    margin: 0 auto 14px;
+  }
+  .diwan-topline{
+    width:100%;
+    border-collapse:collapse;
+    margin-bottom: 10px;
+    font-size: 14px;
+  }
+  .diwan-topline td{ padding: 2px 4px; vertical-align:middle; }
+  .fill{ display:inline-block; min-width: 180px; border-bottom: 1px dotted #333; padding: 0 6px; }
+
+  .diwan-info{
+    width:100%;
+    border-collapse:collapse;
+    margin: 6px 0 10px;
+    font-size: 14px;
+  }
+  .diwan-info td{ padding: 4px 6px; }
+  .dots{ display:inline-block; min-width: 260px; border-bottom: 1px dotted #333; padding: 0 6px; }
+
+  .sec-title{
+    margin: 10px 0 6px;
+    font-weight: 700;
+    font-size: 14px;
+  }
+  .diwan-table{
+    width:100%;
+    border-collapse:collapse;
+    font-size: 13px;
+  }
+  .diwan-table th, .diwan-table td{
+    border:1px solid #000;
+    padding:5px 6px;
+    vertical-align:middle;
+  }
+  .diwan-table th{ background:#f7f7f7; text-align:center; font-weight:700; }
+  .diwan-table td.num{ text-align:center; white-space:nowrap; }
+
+  .diwan-sign{ margin-top: 12px; font-size: 13px; }
+  .diwan-sign > div{ margin: 6px 0; }
+  .line{ display:inline-block; min-width: 260px; border-bottom: 1px solid #000; }
+
+  .page-break{ height: 1px; }
+
+  @media print{
+    .diwan-page{ max-width: 100% !important; margin: 0 !important; border: 1px solid #000 !important; }
+    .page-break{ page-break-after: always; }
+  }
+</style>
+
+<script class="no-print">
+function wfPrintDiwan(){
+  try{
+    document.body.classList.add('wf-print-only-target');
+    window.print();
+  }finally{
+    setTimeout(function(){ document.body.classList.remove('wf-print-only-target'); }, 400);
+  }
+}
+</script>
+
+{% endblock %}

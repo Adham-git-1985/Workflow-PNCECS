@@ -62,7 +62,7 @@
           <tr>
             <td>{{ ef.employee_no if ef else '' }}</td>
             <td>{{ ef.full_name_quad if ef and ef.full_name_quad else (u.full_name or u.name or u.email) }}</td>
-            <td>{{ (work_location_map.get(ef.work_location_lookup_id) if (work_location_map and ef) else '') or '—' }}</td>
+            <td>{{ work_location_map.get(ef.work_location_lookup_id, '') if ef else '' }}</td>
             <td>{{ r.birth_date.strftime('%Y-%m-%d') if r.birth_date else '' }}</td>
             <td>{{ r.retirement_date.strftime('%Y-%m-%d') if r.retirement_date else '' }}</td>
           </tr>

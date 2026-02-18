@@ -1682,9 +1682,10 @@ class HRLookupItem(db.Model):
     def label(self) -> str:
         return (self.name_ar or '').strip() or (self.name_en or '').strip() or (self.code or '').strip()
 
+    # Backward-compatibility: older templates/routes used `name`.
+    # Keep it as an alias of the Arabic/English label.
     @property
     def name(self) -> str:
-        """Backward-compatible alias for templates/old code that expects .name."""
         return self.label
 
 

@@ -2695,7 +2695,6 @@ def hr_report_promotions():
         })
 
     work_locations = _hr_lookup_options('WORK_LOCATION')
-
     work_location_map = {x.id: x.name for x in (work_locations or [])}
 
     if (request.args.get('export') or '').lower() == 'xlsx':
@@ -2704,7 +2703,11 @@ def hr_report_promotions():
         headers = ['الرقم الوظيفي', 'الموظف', 'موقع العمل', 'تاريخ آخر ترقية/تعيين', 'تاريخ الاستحقاق']
         xrows = []
         for r in rows_view:
-            loc = work_location_map.get(getattr(r['ef'], 'work_location_lookup_id', None), '')
+            loc = ''
+            try:
+                loc = next((x.name for x in work_locations if x.id == r['ef'].work_location_lookup_id), '')
+            except Exception:
+                loc = ''
             xrows.append([
                 r['ef'].employee_no or '',
                 (r['ef'].full_name_quad or r['user'].full_name or r['user'].name or r['user'].email),
@@ -2754,7 +2757,6 @@ def hr_report_retirement():
         rows_view.append({'user': ef.user, 'ef': ef, 'birth_date': bd, 'retirement_date': ret_date})
 
     work_locations = _hr_lookup_options('WORK_LOCATION')
-
     work_location_map = {x.id: x.name for x in (work_locations or [])}
 
     if (request.args.get('export') or '').lower() == 'xlsx':
@@ -2763,7 +2765,11 @@ def hr_report_retirement():
         headers = ['الرقم الوظيفي', 'الموظف', 'موقع العمل', 'تاريخ الميلاد', 'تاريخ التقاعد المتوقع']
         xrows = []
         for r in rows_view:
-            loc = work_location_map.get(getattr(r['ef'], 'work_location_lookup_id', None), '')
+            loc = ''
+            try:
+                loc = next((x.name for x in work_locations if x.id == r['ef'].work_location_lookup_id), '')
+            except Exception:
+                loc = ''
             xrows.append([
                 r['ef'].employee_no or '',
                 (r['ef'].full_name_quad or r['user'].full_name or r['user'].name or r['user'].email),
@@ -4326,6 +4332,10 @@ def hr_report_diwan():
     appointment_type_id = (request.args.get('appointment_type_id') or '').strip()
     appointment_type_id = int(appointment_type_id) if appointment_type_id.isdigit() else None
 
+    # Optional: single-employee report (choose employee from the UI)
+    user_id_raw = (request.args.get('user_id') or '').strip()
+    selected_user_id = int(user_id_raw) if user_id_raw.isdigit() else None
+
     try:
         year = int(year_raw) if year_raw else datetime.utcnow().year
     except Exception:
@@ -4335,6 +4345,7 @@ def hr_report_diwan():
     except Exception:
         month = datetime.utcnow().month
 
+    view = (request.args.get('view') or '').strip().lower()
     users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     appointment_types = _hr_lookup_options('APPOINTMENT_TYPE')
@@ -4350,7 +4361,12 @@ def hr_report_diwan():
         start = date(datetime.utcnow().year, datetime.utcnow().month, 1)
         end = start
 
-    user_ids = _filtered_user_ids(work_location_id=work_location_id, appointment_type_id=appointment_type_id)
+    # If a specific employee is selected, generate the report for that employee only
+    # (even if they have no attendance/leave rows).
+    if selected_user_id:
+        user_ids = [selected_user_id]
+    else:
+        user_ids = _filtered_user_ids(work_location_id=work_location_id, appointment_type_id=appointment_type_id)
     rows_view = []
     if user_ids:
         q = AttendanceDailySummary.query.filter(AttendanceDailySummary.user_id.in_(user_ids))            .filter(AttendanceDailySummary.day >= start.strftime('%Y-%m-%d'))            .filter(AttendanceDailySummary.day <= end.strftime('%Y-%m-%d'))
@@ -4405,9 +4421,450 @@ def hr_report_diwan():
             ])
         return _export_xlsx('hr_diwan.xlsx', headers, xrows)
 
+
+    work_location_name = 'الكل'
+    if work_location_id:
+        for x in work_locations:
+            if x.id == work_location_id:
+                work_location_name = (getattr(x, 'name', None) or getattr(x, 'label', None) or '').strip() or work_location_name
+                break
+
+    appointment_type_name = 'بدون اختيار'
+    if appointment_type_id:
+        for x in appointment_types:
+            if x.id == appointment_type_id:
+                appointment_type_name = (getattr(x, 'name', None) or getattr(x, 'label', None) or '').strip() or appointment_type_name
+                break
+
+    # -------------------------
+    # Diwan (Council) view: generate per-employee "Diwan" report data
+    # (based on the attached Diwan Word template)
+    # -------------------------
+    diwan_reports = []
+    if view in ('diwan', 'council', 'diwan_report'):
+        # Prefer employees that appear in the month summary; fallback to filtered employee ids.
+        try:
+            ids_from_rows = [getattr(r.get('user'), 'id', None) for r in (rows_view or []) if r.get('user')]
+            employee_ids = [int(x) for x in ids_from_rows if x]
+        except Exception:
+            employee_ids = []
+        if not employee_ids:
+            employee_ids = list(user_ids or [])
+
+        # Lookup maps for grade/title
+        try:
+            _grade_items = _hr_lookup_items_for_category('JOB_GRADE')
+        except Exception:
+            _grade_items = []
+        try:
+            _title_items = _hr_lookup_items_for_category('JOB_TITLE')
+        except Exception:
+            _title_items = []
+        grade_map = {int(x.id): (getattr(x, 'label', None) or getattr(x, 'name', None) or '') for x in (_grade_items or []) if getattr(x, 'id', None)}
+        title_map = {int(x.id): (getattr(x, 'label', None) or getattr(x, 'name', None) or '') for x in (_title_items or []) if getattr(x, 'id', None)}
+
+        # Leave types by keywords (Arabic + code fallbacks)
+        leave_types = []
+        try:
+            leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all()
+        except Exception:
+            leave_types = []
+
+        def _pick_leave_type(ar_kw: list[str], code_kw: list[str]):
+            for lt in (leave_types or []):
+                try:
+                    n = (getattr(lt, 'name_ar', '') or '').strip()
+                    c = (getattr(lt, 'code', '') or '').upper().strip()
+                    if any(k in n for k in ar_kw) or any(k in c for k in code_kw):
+                        return lt
+                except Exception:
+                    continue
+            return None
+
+        lt_annual = _pick_leave_type(['سنوي'], ['ANNUAL', 'ANNUAL_LEAVE', 'PERSONAL'])
+        lt_sick = _pick_leave_type(['مرض'], ['SICK', 'MEDICAL'])
+        lt_casual = _pick_leave_type(['عارض'], ['CASUAL', 'EMERGENCY'])
+        lt_no_pay = _pick_leave_type(['بدون راتب'], ['NO_PAY', 'UNPAID'])
+        lt_hajj = _pick_leave_type(['حج'], ['HAJJ'])
+        lt_maternity = _pick_leave_type(['أمومة', 'امومة'], ['MATERNITY'])
+
+        y_start = date(year, 1, 1)
+        y_end = date(year, 12, 31)
+        as_of = min(date.today(), y_end) if year == date.today().year else y_end
+
+        # Prefetch users
+        users_map = {}
+        try:
+            users_map = {u.id: u for u in User.query.filter(User.id.in_(employee_ids)).all()}
+        except Exception:
+            users_map = {}
+
+        def _fmt_date_dmy(d: date | None) -> str:
+            try:
+                return d.strftime('%d/%m/%Y') if d else ''
+            except Exception:
+                return ''
+
+        def _leave_rows(uid: int, lt: HRLeaveType | None, with_days: bool = True):
+            if not lt:
+                return []
+            out = []
+            try:
+                q = (HRLeaveRequest.query
+                     .filter(HRLeaveRequest.user_id == uid)
+                     .filter(HRLeaveRequest.leave_type_id == lt.id)
+                     .filter(HRLeaveRequest.status.in_(['APPROVED', 'CANCELLED']))
+                     .order_by(HRLeaveRequest.start_date.asc(), HRLeaveRequest.id.asc()))
+                for r in q.all():
+                    # Count CANCELLED only if it was cancelled from APPROVED
+                    if (r.status or '').upper() == 'CANCELLED':
+                        if (r.cancelled_from_status or '').upper() != 'APPROVED':
+                            continue
+                    s0 = _parse_yyyy_mm_dd(getattr(r, 'start_date', None))
+                    e0 = _parse_yyyy_mm_dd(getattr(r, 'end_date', None))
+                    if not s0 or not e0:
+                        continue
+
+                    # Effective end (respect cancellation effective date)
+                    e_eff = e0
+                    if (r.status or '').upper() == 'CANCELLED' and getattr(r, 'cancel_effective_date', None):
+                        ce = _parse_yyyy_mm_dd(r.cancel_effective_date)
+                        if ce:
+                            e_eff = min(e_eff, ce)
+
+                    # Intersect with year
+                    s = max(s0, y_start)
+                    e = min(e_eff, y_end)
+                    if e < s:
+                        continue
+
+                    row = {'from': _fmt_date_dmy(s), 'to': _fmt_date_dmy(e)}
+                    if with_days:
+                        row['days'] = int((e - s).days + 1)
+                    out.append(row)
+            except Exception:
+                return []
+            return out
+
+        for uid in employee_ids:
+            u = users_map.get(uid)
+            if not u:
+                continue
+            ef = getattr(u, 'employee_file', None)
+
+            # Header values
+            ministry = None
+            try:
+                ministry = (getattr(getattr(ef, 'organization', None), 'name_ar', None) or '').strip()
+            except Exception:
+                ministry = None
+            if not ministry:
+                ministry = 'اللجنة الوطنية الفلسطينية للتربية والثقافة والعلوم'
+
+            unit = ''
+            try:
+                unit = (getattr(getattr(ef, 'department', None), 'name_ar', None) or '').strip()
+            except Exception:
+                unit = ''
+            if not unit:
+                try:
+                    unit = (getattr(getattr(ef, 'directorate', None), 'name_ar', None) or '').strip()
+                except Exception:
+                    unit = ''
+            if not unit:
+                unit = work_location_name if work_location_name and work_location_name != 'الكل' else ''
+
+            name = (getattr(ef, 'full_name_quad', None) or getattr(u, 'full_name', None) or getattr(u, 'name', None) or getattr(u, 'email', None) or '').strip()
+            employee_no = (getattr(ef, 'employee_no', None) or '').strip()
+            personal_no = (getattr(ef, 'national_id', None) or '').strip()
+            hire_date = (getattr(ef, 'hire_date', None) or '').strip()
+            try:
+                hd = _parse_yyyy_mm_dd(hire_date)
+                hire_date = _fmt_date_dmy(hd) if hd else hire_date
+            except Exception:
+                pass
+
+            grade = ''
+            try:
+                gid = getattr(ef, 'job_grade_lookup_id', None)
+                grade = grade_map.get(int(gid), '') if gid else ''
+            except Exception:
+                grade = ''
+
+            job_title = ''
+            try:
+                tid = getattr(ef, 'job_title_lookup_id', None)
+                job_title = title_map.get(int(tid), '') if tid else ''
+            except Exception:
+                job_title = ''
+            if not job_title:
+                try:
+                    tid = getattr(ef, 'admin_title_lookup_id', None)
+                    job_title = title_map.get(int(tid), '') if tid else ''
+                except Exception:
+                    job_title = ''
+
+            # Entitlement/remaining for annual leave
+            entitled_days = 0
+            used_days = 0.0
+            remaining_days = 0.0
+            if lt_annual:
+                try:
+                    entitled_days = int(_leave_entitlement_days(uid, lt_annual, year) or 0)
+                except Exception:
+                    entitled_days = 0
+                try:
+                    used_days = float(_leave_used_days_as_of(uid, lt_annual.id, year, as_of) or 0.0)
+                except Exception:
+                    used_days = 0.0
+                remaining_days = float(entitled_days) - float(used_days)
+
+            diwan_reports.append({
+                'ministry': ministry,
+                'unit': unit,
+                'report_date': _fmt_date_dmy(date.today()),
+                'employee_name': name,
+                'employee_no': employee_no,
+                'personal_no': personal_no,
+                'hire_date': hire_date,
+                'grade': grade,
+                'job_title': job_title,
+                'entitled_days': entitled_days,
+                'annual_remaining': round(float(remaining_days), 2),
+                'annual_rows': _leave_rows(uid, lt_annual, with_days=True),
+                'sick_rows': _leave_rows(uid, lt_sick, with_days=True),
+                'casual_rows': _leave_rows(uid, lt_casual, with_days=True),
+                'no_pay_rows': _leave_rows(uid, lt_no_pay, with_days=True),
+                'hajj_rows': _leave_rows(uid, lt_hajj, with_days=False),
+                'maternity_rows': _leave_rows(uid, lt_maternity, with_days=False),
+            })
+
+    
+    # Ensure the Diwan view always shows a report "page" even if there are no employees/results.
+    # This keeps the layout visible (per user request) and allows exporting an empty template too.
+    if view in ('diwan', 'council', 'diwan_report') and not diwan_reports:
+        diwan_reports = [{
+            'ministry': '',
+            'unit': '',
+            'report_date': _fmt_date_dmy(date.today()),
+            'employee_name': '',
+            'employee_no': '',
+            'personal_no': '',
+            'hire_date': '',
+            'grade': '',
+            'job_title': '',
+            'entitled_days': '',
+            'annual_remaining': '',
+            'annual_rows': [],
+            'sick_rows': [],
+            'casual_rows': [],
+            'no_pay_rows': [],
+            'hajj_rows': [],
+            'maternity_rows': [],
+        }]
+
+    # Word export (DOCX) — uses the official Diwan template (provided by user).
+    export_kind = (request.args.get('export') or '').strip().lower()
+    if export_kind in ('docx', 'word'):
+        if not current_user.has_perm(HR_REPORTS_EXPORT):
+            abort(403)
+
+        def _safe_part(s: str) -> str:
+            try:
+                s = (s or '').strip()
+            except Exception:
+                s = ''
+            s = re.sub(r'[^0-9A-Za-z_\-]+', '_', s)
+            s = re.sub(r'_+', '_', s).strip('_')
+            return s or 'report'
+
+        def _build_docx_bytes(rep: dict) -> bytes:
+            from docx import Document  # python-docx
+            tpl_path = os.path.join(current_app.root_path, 'assets', 'templates', 'hr', 'diwan_leave_template.docx')
+            if not os.path.exists(tpl_path):
+                # fallback (in case the folder structure changes)
+                tpl_path = os.path.join(current_app.root_path, 'assets', 'diwan_leave_template.docx')
+            doc = Document(tpl_path)
+
+            # --- Helpers that preserve the original Word template layout ---
+            def _replace_first_dots(text: str, value: str) -> str:
+                try:
+                    if not value:
+                        return text
+                    return re.sub(r'\.{3,}', str(value), text, count=1)
+                except Exception:
+                    return text
+
+            def _fill_cell_dots(cell, value: str):
+                """Replace the first dots-sequence inside a cell without rewriting the whole cell."""
+                try:
+                    if value in (None, ''):
+                        return
+                    for p in cell.paragraphs:
+                        for run in p.runs:
+                            if run.text and re.search(r'\.{3,}', run.text):
+                                run.text = _replace_first_dots(run.text, str(value))
+                                return
+                except Exception:
+                    pass
+
+            def _write_cell(table, r, c, value):
+                """Write text into a (usually empty) cell while keeping paragraph formatting."""
+                try:
+                    cell = table.cell(r, c)
+                    p = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph('')
+                    if p.runs:
+                        p.runs[0].text = str(value or '')
+                        for rr in p.runs[1:]:
+                            rr.text = ''
+                    else:
+                        p.add_run(str(value or ''))
+                except Exception:
+                    pass
+
+            # Top line (same as template) — fill placeholders without rewriting the whole paragraph
+            dt = (rep.get('report_date') or '').strip()  # expected dd/mm/yyyy
+            dd = mm = yy = ''
+            try:
+                m = re.match(r'^(\d{1,2})/(\d{1,2})/(\d{4})$', dt)
+                if m:
+                    dd = str(m.group(1)).zfill(2)
+                    mm = str(m.group(2)).zfill(2)
+                    yy = str(m.group(3))[-2:]
+            except Exception:
+                pass
+
+            ministry = (rep.get('ministry') or '').strip()
+            unit = (rep.get('unit') or '').strip()
+            try:
+                if doc.paragraphs:
+                    p0 = doc.paragraphs[0]
+                    for run in p0.runs:
+                        # Ministry + unit
+                        if '......................' in (run.text or '') and ministry:
+                            run.text = run.text.replace('......................', ministry)
+                        if '..................' in (run.text or '') and unit:
+                            run.text = run.text.replace('..................', unit)
+                        # Date pieces (keep original slashes/spaces)
+                        if 'التاريخ:' in (run.text or '') and '....' in (run.text or '') and dd:
+                            run.text = run.text.replace('....', dd)
+                        if '......' in (run.text or '') and mm:
+                            run.text = run.text.replace('......', mm)
+                        if (run.text or '').strip() == '20' and yy:
+                            run.text = f"20{yy}"
+            except Exception:
+                pass
+
+            # Info table (employee details) — replace dots only
+            try:
+                t0 = doc.tables[0]
+                _fill_cell_dots(t0.cell(0, 0), rep.get('employee_name') or '')
+                _fill_cell_dots(t0.cell(0, 1), rep.get('personal_no') or '')
+                _fill_cell_dots(t0.cell(1, 0), rep.get('hire_date') or '')
+                _fill_cell_dots(t0.cell(1, 1), rep.get('grade') or '')
+                _fill_cell_dots(t0.cell(2, 0), rep.get('job_title') or '')
+                _fill_cell_dots(t0.cell(2, 1), str(rep.get('entitled_days') if rep.get('entitled_days') not in (None, '') else ''))
+            except Exception:
+                pass
+
+            try:
+                t1 = doc.tables[1]
+
+                # Annual/Sick/Casual blocks — fill into the pre-made blank rows (2..10)
+                max_rows = 9
+                annual = rep.get('annual_rows') or []
+                sick = rep.get('sick_rows') or []
+                casual = rep.get('casual_rows') or []
+
+                for i in range(max_rows):
+                    rr = 2 + i
+                    # annual (cols: from=14, to=13, days=12, remaining=11 on first row)
+                    a = annual[i] if i < len(annual) else {}
+                    _write_cell(t1, rr, 14, a.get('from'))
+                    _write_cell(t1, rr, 13, a.get('to'))
+                    _write_cell(t1, rr, 12, a.get('days'))
+                    if i == 0:
+                        _write_cell(t1, rr, 11, rep.get('annual_remaining'))
+                    # sick (cols: from=9, to=8, days=7)
+                    s = sick[i] if i < len(sick) else {}
+                    _write_cell(t1, rr, 9, s.get('from'))
+                    _write_cell(t1, rr, 8, s.get('to'))
+                    _write_cell(t1, rr, 7, s.get('days'))
+                    # casual (cols: from=5, to=3/4, days=2)
+                    c = casual[i] if i < len(casual) else {}
+                    _write_cell(t1, rr, 5, c.get('from'))
+                    _write_cell(t1, rr, 3, c.get('to'))
+                    _write_cell(t1, rr, 4, c.get('to'))
+                    _write_cell(t1, rr, 2, c.get('days'))
+
+                # No-pay — rows 13..15
+                no_pay = rep.get('no_pay_rows') or []
+                for i in range(3):
+                    rr = 13 + i
+                    r0 = no_pay[i] if i < len(no_pay) else {}
+                    _write_cell(t1, rr, 5, r0.get('from'))
+                    _write_cell(t1, rr, 3, r0.get('to'))
+                    _write_cell(t1, rr, 4, r0.get('to'))
+                    _write_cell(t1, rr, 2, r0.get('days'))
+
+                # Hajj — row 18 (single range)
+                hajj = (rep.get('hajj_rows') or [])
+                h0 = hajj[0] if hajj else {}
+                _write_cell(t1, 18, 5, h0.get('from'))
+                _write_cell(t1, 18, 4, h0.get('from'))
+                _write_cell(t1, 18, 3, h0.get('to'))
+                _write_cell(t1, 18, 2, h0.get('to'))
+
+                # Maternity — row 21 (single range)
+                mat = (rep.get('maternity_rows') or [])
+                m0 = mat[0] if mat else {}
+                _write_cell(t1, 21, 5, m0.get('from'))
+                _write_cell(t1, 21, 4, m0.get('from'))
+                _write_cell(t1, 21, 3, m0.get('to'))
+                _write_cell(t1, 21, 2, m0.get('to'))
+
+            except Exception:
+                pass
+
+            bio = BytesIO()
+            doc.save(bio)
+            bio.seek(0)
+            return bio.getvalue()
+
+        # One employee -> direct DOCX, many -> ZIP of DOCX
+        try:
+            reps = diwan_reports or []
+            if len(reps) == 1:
+                rep = reps[0]
+                base = (rep.get('employee_no') or rep.get('personal_no') or 'diwan')
+                fn = f"diwan_{_safe_part(base)}_{year}.docx"
+                return send_file(BytesIO(_build_docx_bytes(rep)),
+                                 mimetype='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                 as_attachment=True,
+                                 download_name=fn)
+            else:
+                zbio = BytesIO()
+                import zipfile as _zipfile
+                with _zipfile.ZipFile(zbio, 'w', _zipfile.ZIP_DEFLATED) as zf:
+                    for i, rep in enumerate(reps, start=1):
+                        base = (rep.get('employee_no') or rep.get('personal_no') or str(i))
+                        fn = f"diwan_{_safe_part(base)}_{year}.docx"
+                        zf.writestr(fn, _build_docx_bytes(rep))
+                zbio.seek(0)
+                zip_name = f"diwan_reports_{year}_{month:02d}.zip"
+                return send_file(zbio, mimetype='application/zip', as_attachment=True, download_name=zip_name)
+        except Exception:
+            # If anything goes wrong, fall back to showing the HTML view (no hard crash).
+            flash('تعذر إنشاء ملف Word في الوقت الحالي. تأكد من تثبيت python-docx وأن قالب تقرير الديوان موجود.', 'danger')
+
+    template_name = 'portal/hr/reports_diwan_council.html' if view in ('diwan', 'council', 'diwan_report') else 'portal/hr/reports_diwan.html'
+
     return render_template(
-        'portal/hr/reports_diwan.html',
+        template_name,
         rows=rows_view,
+        diwan_reports=diwan_reports,
+        users=users,
+        selected_user_id=selected_user_id,
         work_locations=work_locations,
         selected_work_location_id=work_location_id,
         appointment_types=appointment_types,
@@ -4415,11 +4872,11 @@ def hr_report_diwan():
         year=year,
         month=month,
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
+        view=view,
+        work_location_name=work_location_name,
+        appointment_type_name=appointment_type_name,
+        generated_on=datetime.now(),
     )
-
-
-
-
 @portal_bp.route("/hr/coming-soon")
 @login_required
 def hr_coming_soon():
