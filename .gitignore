@@ -17,3 +17,16 @@ uploads/
 # OS
 .DS_Store
 Thumbs.db
+
+# Runtime files
+logs/
+*.log
+
+# SQLite runtime files
+instance/*.db-shm
+instance/*.db-wal
+
+# Backups and uploaded archive files
+instance/backups/
+storage/archive/
+storage/archive_before_restore_*/
