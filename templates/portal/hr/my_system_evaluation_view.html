@@ -46,7 +46,7 @@
     </div>
 
     <div class="row g-2 mb-3">
-      <div class="col-md-4"><div class="border rounded p-2"><strong>التزام الوقت (SLA)</strong><div>{{ (m.sla_ratio*100)|round|int if m.sla_ratio is not none else '—' }}%</div></div></div>
+      <div class="col-md-4"><div class="border rounded p-2"><strong>التزام الوقت (اتفاقية مستوى الخدمة)</strong><div>{{ (m.sla_ratio*100)|round|int if m.sla_ratio is not none else '—' }}%</div></div></div>
       <div class="col-md-4"><div class="border rounded p-2"><strong>توثيق الرفض</strong><div>{{ (m.rej_note_ratio*100)|round|int if m.rej_note_ratio is not none else '—' }}%</div></div></div>
       <div class="col-md-4"><div class="border rounded p-2"><strong>إغلاق طلباته (كمقدّم)</strong><div>{{ (m.requester_closure_ratio*100)|round|int if m.requester_closure_ratio is not none else '—' }}%</div></div></div>
     </div>

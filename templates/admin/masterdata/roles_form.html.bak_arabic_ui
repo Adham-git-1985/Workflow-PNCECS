@@ -1,0 +1,49 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">{% if r %}✏️ تعديل Role{% else %}➕ Role جديد{% endif %}</h3>
+    <small class="text-muted">سيظهر هذا الدور في القوائم المنسدلة (Role dropdown)</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.roles_list') }}">رجوع</a>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label fw-bold">Code</label>
+          <input class="form-control" name="code" value="{{ r.code if r else '' }}" required
+                 placeholder="مثال: finance أو dept_head">
+          <div class="form-text">يفضل بدون مسافات. سيتم تحويل المسافات إلى _ تلقائيًا.</div>
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">الاسم (عربي)</label>
+          <input class="form-control" name="name_ar" value="{{ r.name_ar if r else '' }}" placeholder="مثال: المالية">
+        </div>
+
+        <div class="col-md-4">
+          <label class="form-label fw-bold">Name (EN)</label>
+          <input class="form-control" name="name_en" value="{{ r.name_en if r else '' }}" placeholder="Finance">
+        </div>
+
+        <div class="col-md-3">
+          <div class="form-check mt-4">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active"
+                   {% if not r or r.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Active</label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary">حفظ</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

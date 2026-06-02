@@ -5,7 +5,7 @@
 <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
-      <h5 class="mb-0"><i class="bi bi-clock-history"></i> السجل الزمني (Timeline)</h5>
+      <h5 class="mb-0"><i class="bi bi-clock-history"></i> السجل الزمني (الخط الزمني)</h5>
       <div class="text-muted small">سجل موحّد لحركات البوابة الإدارية (موارد بشرية، مستودع، حركة، مراسلات، صلاحيات).</div>
     </div>
     <div class="d-flex gap-2">
@@ -29,23 +29,23 @@
   <form method="get" class="row g-2 align-items-end">
     <input type="hidden" name="module" value="{{ selected_module }}">
     <div class="col-md-3">
-      <label class="form-label small text-muted">بحث عام (Action/Note/Target)</label>
+      <label class="form-label small text-muted">بحث عام (إجراء/Note/Target)</label>
       <input class="form-control" name="q" value="{{ q }}" placeholder="كلمة مفتاحية...">
     </div>
     <div class="col-md-2">
-      <label class="form-label small text-muted">Action (contains)</label>
+      <label class="form-label small text-muted">إجراء (contains)</label>
       <input class="form-control" name="action" value="{{ q_action }}" placeholder="HR_ / INV_ ...">
     </div>
     <div class="col-md-3">
-      <label class="form-label small text-muted">User</label>
+      <label class="form-label small text-muted">المستخدم</label>
       <input class="form-control" name="user" value="{{ q_user }}" placeholder="email أو الاسم">
     </div>
     <div class="col-md-2">
-      <label class="form-label small text-muted">From</label>
+      <label class="form-label small text-muted">من</label>
       <input class="form-control" type="date" name="from" value="{{ q_from }}">
     </div>
     <div class="col-md-2">
-      <label class="form-label small text-muted">To</label>
+      <label class="form-label small text-muted">إلى</label>
       <input class="form-control" type="date" name="to" value="{{ q_to }}">
     </div>
     <div class="col-md-12 d-grid mt-2">

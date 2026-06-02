@@ -3,7 +3,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h3 class="mb-1">🧭 قواعد التوجيه (Routing Rules)</h3>
+    <h3 class="mb-1">🧭 قواعد التوجيه (التوجيه Rules)</h3>
     <small class="text-muted">ربط نوع الطلب بمسار العمل حسب الهيكلية التقليدية أو الهيكلية الموحدة (OrgNode)</small>
   </div>
   <div class="d-flex gap-2">
@@ -11,7 +11,7 @@
     <a class="btn btn-outline-secondary no-print" href="{{ url_for('users.help_workflow_guide') }}" target="_blank">❓ الدليل</a>
 
     <a class="btn btn-outline-success" href="{{ url_for('admin.workflow_routing_export_excel', q=q) }}">⬇️ Excel</a>
-    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importRoutingRulesModal">⬆️ Import</button>
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importRoutingRulesModal">⬆️ استيراد</button>
     <a class="btn btn-primary" href="{{ url_for('admin.workflow_routing_new') }}">➕ إضافة قاعدة</a>
   </div>
 </div>
@@ -108,7 +108,7 @@
     <form class="modal-content" method="post" action="{{ url_for('admin.workflow_routing_import_excel') }}" enctype="multipart/form-data">
       <div class="modal-header">
         <h5 class="modal-title">⬆️ استيراد قواعد التوجيه (Excel)</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <div class="row g-3">
@@ -123,7 +123,7 @@
           <div class="col-md-6">
             <label class="form-label">ملف Excel (.xlsx)</label>
             <input class="form-control" type="file" name="file" accept=".xlsx" required>
-            <div class="form-text">أعمدة شائعة: <code>RequestType Code</code>, <code>Organization</code>, <code>Directorate</code>, <code>Department</code>, <code>Template</code>, <code>Priority</code>, <code>Active</code>.</div>
+            <div class="form-text">أعمدة شائعة: <code>RequestType Code</code>, <code>Organization</code>, <code>Directorate</code>, <code>Department</code>, <code>قالب</code>, <code>Priority</code>, <code>فعّال</code>.</div>
           </div>
         </div>
       </div>

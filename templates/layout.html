@@ -133,7 +133,7 @@
     <div class="offcanvas offcanvas-start d-lg-none pncecs-offcanvas" tabindex="-1" id="sidebarOffcanvas" aria-labelledby="sidebarOffcanvasLabel">
       <div class="offcanvas-header">
         <h6 class="offcanvas-title text-white" id="sidebarOffcanvasLabel"><i class="bi bi-list"></i> القائمة</h6>
-        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="إغلاق"></button>
       </div>
       <div class="offcanvas-body p-0">
         <div class="admin-sidebar admin-sidebar--offcanvas">
@@ -176,7 +176,7 @@
                 {% set cat = category if category in ['success','danger','warning','info'] else 'info' %}
                 <div class="alert alert-{{ cat }} alert-dismissible fade show" role="alert">
                   {{ message }}
-                  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                  <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="إغلاق"></button>
                 </div>
               {% endfor %}
             </div>
@@ -199,7 +199,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h6 class="modal-title"><i class="bi bi-search"></i> بحث في النظام</h6>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <form id="systemSearchForm" class="mb-2" autocomplete="off">
@@ -243,7 +243,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
 
-{# Type-to-search dropdowns (Portal + Workflow) #}
+{# النوع-to-search dropdowns (البوابة + مسار العمل) #}
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}"></script>
 
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>

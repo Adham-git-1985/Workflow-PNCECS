@@ -3,7 +3,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h3 class="mb-1">🔐 Permission Matrix</h3>
+        <h3 class="mb-1">🔐 صلاحية Matrix</h3>
         <small class="text-muted">إدارة الصلاحيات حسب الدور</small>
     </div>
 </div>
@@ -14,7 +14,7 @@
         <form method="post" class="row g-3">
 
             <div class="col-md-6">
-                <label class="form-label">Role</label>
+                <label class="form-label">الدور</label>
                 <input name="role"
                        class="form-control"
                        placeholder="مثال: ADMIN / USER / FINANCE"
@@ -22,7 +22,7 @@
             </div>
 
             <div class="col-12">
-                <label class="form-label d-block mb-2">Permissions</label>
+                <label class="form-label d-block mb-2">الصلاحيات</label>
 
                 <div class="row">
                     {% for p in permissions %}
@@ -44,7 +44,7 @@
 
             <div class="col-12">
                 <button class="btn btn-primary px-4">
-                    💾 Save Permissions
+                    💾 حفظ الصلاحيات
                 </button>
             </div>
 
@@ -56,15 +56,15 @@
 <div class="card shadow-sm">
     <div class="card-body">
 
-        <h5 class="mb-3">Current Permissions</h5>
+        <h5 class="mb-3">Current الصلاحيات</h5>
 
         {% if data %}
         <div class="table-responsive">
             <table class="table table-hover align-middle">
                 <thead class="table-light">
                     <tr>
-                        <th>Role</th>
-                        <th>Permission</th>
+                        <th>الدور</th>
+                        <th>صلاحية</th>
                     </tr>
                 </thead>
                 <tbody>

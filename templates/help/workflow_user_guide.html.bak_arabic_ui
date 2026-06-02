@@ -1,0 +1,58 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل المستخدم: الطلبات والمسارات" %}
+{% set page_subtitle = "متابعة الطلبات، البحث، الطباعة، الإشعارات" %}
+
+{% block guide_body %}
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) أين أجد طلباتي؟</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>من القائمة: <strong>My Requests / طلباتي</strong> لمتابعة الحالة.</li>
+      <li>استخدم الفلاتر والعدادات للوصول السريع (قيد المراجعة، مكتمل، مرفوض).</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">2) صندوق الوارد (Inbox) واعتماد الطلبات</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>إذا كنت مُعتمد/مسؤول: ستجد الطلبات المطلوبة منك في <strong>Inbox</strong>.</li>
+      <li>افتح الطلب ثم اختر: <strong>موافقة / رفض / إرجاع</strong> حسب صلاحياتك.</li>
+      <li>أضف ملاحظة مختصرة عند الرفض أو الإرجاع لتسهيل المعالجة.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">3) الإشعارات</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>أيقونة الجرس تظهر عدد الإشعارات غير المقروءة.</li>
+      <li>من صفحة الإشعارات يمكنك تعليم الإشعار كمقروء.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">4) الطباعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>زر <strong>طباعة</strong> موجود في الشريط العلوي (ويطبع المحتوى المركزي فقط).</li>
+      <li>يفضل تطبيق الفلاتر قبل الطباعة للحصول على تقرير مختصر.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">5) نصائح سريعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>إذا لم تظهر لك شاشة معينة: اطلب من الأدمن منحك الصلاحية المناسبة.</li>
+      <li>عند غياب المسؤول: استخدم ميزة <strong>التفويض</strong> بدل مشاركة الحساب.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

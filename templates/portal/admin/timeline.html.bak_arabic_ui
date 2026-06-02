@@ -1,0 +1,127 @@
+{% extends "portal/layout.html" %}
+{% block title %}السجل الزمني{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-clock-history"></i> السجل الزمني (Timeline)</h5>
+      <div class="text-muted small">سجل موحّد لحركات البوابة الإدارية (موارد بشرية، مستودع، حركة، مراسلات، صلاحيات).</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_compliance') }}"><i class="bi bi-shield-check"></i> التدقيق</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex flex-wrap gap-2">
+    {% for m in modules %}
+      <a class="btn btn-sm {{ 'btn-primary' if m.key == selected_module else 'btn-outline-primary' }}" href="{{ url_for('portal.portal_admin_timeline', module=m.key, q=q, action=q_action, user=q_user, **({'from': q_from, 'to': q_to} if (q_from or q_to) else {})) }}">
+        <i class="bi {{ m.icon }}"></i> {{ m.label }}
+      </a>
+    {% endfor %}
+  </div>
+
+  <hr class="my-3">
+
+  <form method="get" class="row g-2 align-items-end">
+    <input type="hidden" name="module" value="{{ selected_module }}">
+    <div class="col-md-3">
+      <label class="form-label small text-muted">بحث عام (Action/Note/Target)</label>
+      <input class="form-control" name="q" value="{{ q }}" placeholder="كلمة مفتاحية...">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted">Action (contains)</label>
+      <input class="form-control" name="action" value="{{ q_action }}" placeholder="HR_ / INV_ ...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small text-muted">User</label>
+      <input class="form-control" name="user" value="{{ q_user }}" placeholder="email أو الاسم">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted">From</label>
+      <input class="form-control" type="date" name="from" value="{{ q_from }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted">To</label>
+      <input class="form-control" type="date" name="to" value="{{ q_to }}">
+    </div>
+    <div class="col-md-12 d-grid mt-2">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> تطبيق الفلاتر</button>
+    </div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+    <h6 class="mb-0"><i class="bi bi-list-ul"></i> النتائج</h6>
+    <div class="small text-muted">عرض {{ logs|length }} سجل</div>
+  </div>
+
+  {% if logs and logs|length > 0 %}
+    <ul class="timeline list-unstyled mb-0">
+      {% for r in logs %}
+        <li class="timeline-item">
+          <div class="timeline-badge"></div>
+          <div class="timeline-card">
+            <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+              <div>
+                <div class="fw-semibold">
+                  <code class="me-1">{{ r.action }}</code>
+                  {% if r._target_label %}
+                    {% if r._target_url %}
+                      <a href="{{ r._target_url }}" class="text-decoration-none">{{ r._target_label }}</a>
+                    {% else %}
+                      <span class="text-muted">{{ r._target_label }}</span>
+                    {% endif %}
+                  {% else %}
+                    <span class="text-muted small">{{ r.target_type }}{% if r.target_id %}:{{ r.target_id }}{% endif %}</span>
+                  {% endif %}
+                </div>
+                <div class="small text-muted">
+                  <i class="bi bi-person"></i>
+                  {{ r.user.full_name if r.user else (r.user_id or '') }}
+                  {% if r.note %}
+                    <span class="mx-2">•</span>
+                    <span>{{ r.note }}</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="text-muted small">
+                <i class="bi bi-calendar3"></i> {{ r.created_at }}
+              </div>
+            </div>
+          </div>
+        </li>
+      {% endfor %}
+    </ul>
+
+    <div class="d-flex justify-content-between align-items-center mt-3">
+      <div>
+        {% if has_prev %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_timeline', module=selected_module, page=page-1, q=q, action=q_action, user=q_user, **({'from': q_from, 'to': q_to} if (q_from or q_to) else {})) }}"><i class="bi bi-chevron-right"></i> أحدث</a>
+        {% endif %}
+      </div>
+      <div class="small text-muted">صفحة {{ page }}</div>
+      <div>
+        {% if has_next %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_timeline', module=selected_module, page=page+1, q=q, action=q_action, user=q_user, **({'from': q_from, 'to': q_to} if (q_from or q_to) else {})) }}">أقدم <i class="bi bi-chevron-left"></i></a>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد نتائج.</div>
+  {% endif %}
+</div>
+
+<style>
+  .timeline { position: relative; }
+  .timeline:before { content: ""; position: absolute; right: 10px; top: 0; bottom: 0; width: 2px; background: #e9ecef; }
+  .timeline-item { position: relative; padding-right: 34px; margin-bottom: 14px; }
+  .timeline-badge { position: absolute; right: 4px; top: 10px; width: 14px; height: 14px; border-radius: 50%; background: #0d6efd; border: 3px solid #fff; box-shadow: 0 0 0 2px #e9ecef; }
+  .timeline-card { background: #fff; border: 1px solid #eef1f4; border-radius: 12px; padding: 12px 14px; }
+</style>
+
+{% endblock %}

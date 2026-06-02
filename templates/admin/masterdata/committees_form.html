@@ -20,7 +20,7 @@
         </div>
 
         <div class="col-md-4">
-          <label class="form-label fw-bold">Name (EN)</label>
+          <label class="form-label fw-bold">الاسم (EN)</label>
           <input class="form-control" name="name_en" value="{{ c.name_en if c else '' }}">
         </div>
 
@@ -32,7 +32,7 @@
         <div class="col-md-3">
           <div class="form-check mt-4">
             <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if not c or c.is_active %}checked{% endif %}>
-            <label class="form-check-label" for="is_active">Active</label>
+            <label class="form-check-label" for="is_active">فعّال</label>
           </div>
         </div>
 
@@ -57,7 +57,7 @@
     <div class="d-flex justify-content-between align-items-center mb-2">
       <div>
         <h5 class="mb-0">👤 أعضاء اللجنة</h5>
-        <small class="text-muted">يمكن إضافة User محدد أو Role كامل. (Chair/Secretary/Member اختياري)</small>
+        <small class="text-muted">يمكن إضافة المستخدم محدد أو الدور كامل. (Chair/Secretary/Member اختياري)</small>
       </div>
       <div class="d-flex gap-2 align-items-center flex-wrap">
         <a class="btn btn-sm btn-outline-success" href="{{ url_for('masterdata.committee_members_export_excel', committee_id=c.id) }}">⬇️ Excel</a>
@@ -78,7 +78,7 @@
         </div>
 
         <div class="col-md-4" id="member_box_user">
-          <label class="form-label fw-bold">User</label>
+          <label class="form-label fw-bold">المستخدم</label>
           <select class="form-select" name="user_id">
             <option value="">— اختر —</option>
             {% for u in users %}
@@ -88,7 +88,7 @@
         </div>
 
         <div class="col-md-4" id="member_box_role" style="display:none;">
-          <label class="form-label fw-bold">Role</label>
+          <label class="form-label fw-bold">الدور</label>
           <select class="form-select" name="role">
             <option value="">— اختر —</option>
             {% for r in roles %}
@@ -110,7 +110,7 @@
         <div class="col-md-2">
           <div class="form-check">
             <input class="form-check-input" type="checkbox" name="is_active" value="1" id="m_active" checked>
-            <label class="form-check-label" for="m_active">Active</label>
+            <label class="form-check-label" for="m_active">فعّال</label>
           </div>
         </div>
 
@@ -129,8 +129,8 @@
               <th>#</th>
               <th>Kind</th>
               <th>العضو</th>
-              <th>Role داخل اللجنة</th>
-              <th>Active</th>
+              <th>الدور داخل اللجنة</th>
+              <th>فعّال</th>
               <th class="text-end">إجراءات</th>
             </tr>
           </thead>
@@ -168,9 +168,9 @@
                 </td>
                 <td>
                   {% if m.is_active %}
-                    <span class="badge bg-success">Yes</span>
+                    <span class="badge bg-success">نعم</span>
                   {% else %}
-                    <span class="badge bg-secondary">No</span>
+                    <span class="badge bg-secondary">لا</span>
                   {% endif %}
                 </td>
                 <td class="text-end">

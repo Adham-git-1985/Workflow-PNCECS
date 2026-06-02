@@ -4,13 +4,13 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">🧾 أنواع الطلبات</h3>
-    <small class="text-muted">إدارة أنواع الطلبات (Request Types)</small>
+    <small class="text-muted">إدارة أنواع الطلبات (أنواع الطلبات)</small>
   </div>
   <div class="d-flex gap-2">
     <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdReqTypePrint\')">🖨️ طباعة</button>
 
     <a class="btn btn-outline-success" href="{{ url_for('masterdata.request_types_export_excel', q=q) }}">⬇️ Excel</a>
-    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importRequestTypesModal">⬆️ Import</button>
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importRequestTypesModal">⬆️ استيراد</button>
     <a class="btn btn-primary" href="{{ url_for('masterdata.request_types_new') }}">➕ إضافة نوع</a>
   </div>
 </div>
@@ -81,7 +81,7 @@
     <form class="modal-content" method="post" action="{{ url_for('masterdata.request_types_import_excel') }}" enctype="multipart/form-data">
       <div class="modal-header">
         <h5 class="modal-title">⬆️ استيراد أنواع الطلبات (Excel)</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <div class="row g-3">

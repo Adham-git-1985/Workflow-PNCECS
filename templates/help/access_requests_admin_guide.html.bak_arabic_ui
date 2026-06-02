@@ -1,0 +1,66 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل أدمن طلبات الصلاحيات" %}
+{% set page_subtitle = "مراجعة الطلبات + إدارة صلاحيات البوابة + أفضل الممارسات" %}
+
+{% block guide_body %}
+
+<div class="alert alert-info py-2 mb-3">
+  <div class="fw-bold">هذه الصفحة خاصة بالمشرفين</div>
+  <div class="small text-muted">تظهر فقط لمن لديه صلاحيات إدارة صلاحيات البوابة (PORTAL_ADMIN_PERMISSIONS_MANAGE) أو إدارة صلاحيات المستخدمين.</div>
+</div>
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) أين أجد طلبات الصلاحيات؟</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>من السايدبار: <strong>إدارة البوابة</strong> → <strong>طلبات الصلاحيات</strong> (حسب الإعدادات).</li>
+      <li>أو من <strong>مركز الأدلة</strong> للعودة لصفحة المراجعة سريعًا.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">2) دورة المراجعة (Review Workflow)</summary>
+  <div class="mt-2">
+    <ol class="mb-0">
+      <li>افتح الطلب وتأكد من: <strong>المستخدم</strong>، <strong>الدور</strong>، <strong>الوحدة/القسم</strong> (إن وُجد)، وسبب الطلب.</li>
+      <li>قارن المطلوب مع سياسة المؤسسة (Least Privilege).</li>
+      <li>قرر: <strong>موافقة</strong> أو <strong>رفض</strong> مع ملاحظة مختصرة (سبب القرار).</li>
+      <li>تحقق أن الصلاحيات أصبحت فعّالة عند المستخدم بعد القرار.</li>
+    </ol>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">3) إدارة صلاحيات الأدوار (Role Permissions)</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>عند تعديل صلاحيات دور: راجع الوحدات (HR / CORR / STORE / TRANSPORT) ولا تمنح <strong>EXPORT</strong> إلا عند الحاجة.</li>
+      <li>إذا لديك أدوار كثيرة: اعتمد أدوار قياسية (User / Dept Head / HR Admin / Portal Admin) ثم خصص استثناءات قليلة.</li>
+      <li>بعد أي تعديل كبير: جرّب الدخول بحساب اختبار للتأكد من القوائم والصلاحيات.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">4) الطباعة والتوثيق</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>يمكنك طباعة سجل الطلبات بعد تطبيق الفلاتر (مثلاً: طلبات هذا الشهر).</li>
+      <li>الطباعة تطبع المحتوى المركزي فقط لتوثيق المراجعة.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">5) أفضل الممارسات</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>لا تمنح صلاحيات <strong>MANAGE</strong> إلا لعدد محدود.</li>
+      <li>أي موافقة على صلاحيات حساسة يجب أن تحتوي ملاحظة: (السبب + المدة إن كانت مؤقتة).</li>
+      <li>استخدم التفويض (Delegation) بدل مشاركة كلمة مرور عند غياب المسؤول.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

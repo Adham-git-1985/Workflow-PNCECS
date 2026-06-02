@@ -1,0 +1,62 @@
+{% extends "layout.html" %}
+{% block title %}تصعيد الطلب{% endblock %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🚨 تصعيد الطلب #{{ req.id }}</h3>
+    <small class="text-muted">{{ req.title }}</small>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">رجوع</a>
+</div>
+
+<div class="alert alert-warning">
+  <div class="mb-1"><b>الخطوة الحالية:</b> {{ step_order }} | <b>الجهة المسؤولة:</b> {{ target_label }}</div>
+  <div class="small text-muted">
+    عند الإرسال، سيتم إنشاء تنبيه <b>Warning</b> + رسالة في <b>المراسلات</b> للجهة التي عندها الخطوة، بالإضافة إلى <b>مدير عام الإدارة (directorate_head)</b>.
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="mb-3">
+      <label class="form-label">سيتم توجيه التصعيد إلى</label>
+      <div>
+        {% if recipients %}
+          {% for u in recipients %}
+            <span class="badge bg-light text-dark border">{{ u.email }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="text-muted">لا يوجد مستلمون معرفون للخطوة الحالية.</span>
+        {% endif %}
+      </div>
+    </div>
+
+    <form method="post" novalidate>
+      <div class="row g-3">
+        <div class="col-md-4">
+          <label class="form-label">نوع التصعيد</label>
+          <select class="form-select" name="category" required>
+            {% for c in categories %}
+              {# keep DB value as code, but show Arabic label to users #}
+              <option value="{{ c }}">{{ c|esc_category_ar }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-12">
+          <label class="form-label">وصف التصعيد</label>
+          <textarea class="form-control" name="description" rows="4" required placeholder="اكتب سبب/تفاصيل التصعيد"></textarea>
+        </div>
+      </div>
+
+      <hr class="my-4">
+
+      <button class="btn btn-danger" {% if not recipients %}disabled{% endif %}>إرسال التصعيد</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">إلغاء</a>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

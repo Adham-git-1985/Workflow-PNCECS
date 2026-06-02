@@ -19,7 +19,7 @@
         <input class="form-control" name="name_ar" value="{{ row.name_ar }}" required>
       </div>
       <div class="col-12 col-md-4">
-        <label class="form-label">Name (EN)</label>
+        <label class="form-label">الاسم (EN)</label>
         <input class="form-control" name="name_en" value="{{ row.name_en or '' }}">
       </div>
 
@@ -44,7 +44,7 @@
       </div>
 
       <div class="col-12 col-md-3">
-        <label class="form-label">الاستثناء يتطلب HR</label>
+        <label class="form-label">الاستثناء يتطلب الموارد البشرية</label>
         <select class="form-select" name="exception_requires_hr">
           <option value="1" {% if row.exception_requires_hr %}selected{% endif %}>نعم</option>
           <option value="0" {% if not row.exception_requires_hr %}selected{% endif %}>لا</option>

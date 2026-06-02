@@ -87,7 +87,7 @@
   {% endif %}
 
   {% if is_super_admin %}
-    <a class="btn btn-sm btn-outline-dark ms-1" href="{{ url_for('users.manage_user', user_id=user.id) }}">⚙️ Manage</a>
+    <a class="btn btn-sm btn-outline-dark ms-1" href="{{ url_for('users.manage_user', user_id=user.id) }}">⚙️ إدارة</a>
   {% endif %}
 </td>
           </tr>
@@ -129,7 +129,7 @@
     <form class="modal-content" method="post" action="{{ url_for('users.import_users_excel') }}" enctype="multipart/form-data">
       <div class="modal-header">
         <h5 class="modal-title">استيراد المستخدمين من Excel</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <div class="mb-2">
@@ -138,7 +138,7 @@
             <option value="safe" selected>Safe Replace (Upsert فقط)</option>
             <option value="replace">Replace (Upsert + محاولة حذف غير الموجود)</option>
           </select>
-          <div class="form-text">أعمدة مقترحة: Email, Name, Job Title, Role, Department Code, Directorate Code, Password</div>
+          <div class="form-text">أعمدة مقترحة: Email, الاسم, Job العنوان, الدور, Department Code, Directorate Code, Password</div>
         </div>
         <div class="mb-2">
           <input class="form-control" type="file" name="file" accept=".xlsx" required>

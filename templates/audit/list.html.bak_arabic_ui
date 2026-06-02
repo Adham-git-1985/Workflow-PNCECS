@@ -1,0 +1,186 @@
+{% extends "layout.html" %}
+
+{% block title %}سجل التدقيق{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h3>🧾 سجل التدقيق (Audit Log)</h3>
+</div>
+
+<form method="GET" class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+
+            <!-- Search -->
+            <div class="col-md-3">
+                <label class="form-label">بحث</label>
+                <input type="text"
+                       name="search"
+                       class="form-control"
+                       placeholder="بحث في الإجراء أو التفاصيل"
+                       value="{{ request.args.get('search','') }}">
+            </div>
+
+            <!-- User -->
+            <div class="col-md-2">
+                <label class="form-label">المستخدم</label>
+                <select name="user_id" class="form-select">
+                    <option value="">الكل</option>
+                    {% for u in users %}
+                        <option value="{{ u.id }}"
+                          {% if request.args.get('user_id') == u.id|string %}selected{% endif %}>
+                          {{ u.email }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Action -->
+            <div class="col-md-3">
+                <label class="form-label">الإجراء</label>
+                <select name="action" class="form-select">
+                    <option value="">الكل</option>
+                    {% for a in [
+                      "CREATE_REQUEST",
+                      "APPROVE_REQUEST",
+                      "REJECT_REQUEST",
+                      "CREATE_DELEGATION",
+                      "CANCEL_DELEGATION"
+                    ] %}
+                        <option value="{{ a }}"
+                          {% if request.args.get('action') == a %}selected{% endif %}>
+                          {{ a }}
+                        </option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <!-- Date From -->
+            <div class="col-md-2">
+                <label class="form-label">من</label>
+                <input type="date"
+                       name="date_from"
+                       class="form-control"
+                       value="{{ request.args.get('date_from','') }}">
+            </div>
+
+            <!-- Date To -->
+            <div class="col-md-2">
+                <label class="form-label">إلى</label>
+                <input type="date"
+                       name="date_to"
+                       class="form-control"
+                       value="{{ request.args.get('date_to','') }}">
+            </div>
+
+        </div>
+
+        <div class="mt-4 d-flex justify-content-end gap-2">
+            <button type="submit" class="btn btn-primary">
+                فلترة
+            </button>
+            <a href="{{ url_for('audit.list_audit_logs') }}"
+               class="btn btn-outline-secondary">
+                إعادة تعيين
+            </a>
+        </div>
+    </div>
+</form>
+
+<div class="card shadow-sm">
+    <div class="card-body p-0">
+
+        {% if logs %}
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>التاريخ</th>
+                        <th>المستخدم</th>
+                        <th>الإجراء</th>
+                        <th>التفاصيل</th>
+                        <th class="text-center">رقم المعاملة</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for log in logs %}
+                    <tr>
+                        <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+                        <td>{{ highlight(log.user.email if log.user else "-", search_terms) }}</td>
+                        <td>{{ highlight(log.action, search_terms) }}</td>
+                        <td>{{ highlight(log.note or "-", search_terms) }}</td>
+                        <td class="text-center">
+                            {{ log.request.id if log.request else "-" }}
+                        </td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-4 text-center text-muted">
+            لا توجد نتائج مطابقة للفلترة.
+        </div>
+        {% endif %}
+
+    </div>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-4 d-flex justify-content-center">
+    <ul class="pagination">
+
+        {% if pagination.has_prev %}
+        <li class="page-item">
+            <a class="page-link"
+               href="{{ url_for('audit.list_audit_logs',
+                                page=pagination.prev_num,
+                                **request.args) }}">
+                السابق
+            </a>
+        </li>
+        {% endif %}
+
+        {% for p in range(1, pagination.pages + 1) %}
+            <li class="page-item {% if p == pagination.page %}active{% endif %}">
+                <a class="page-link"
+                   href="{{ url_for('audit.list_audit_logs',
+                                    page=p,
+                                    **request.args) }}">
+                    {{ p }}
+                </a>
+            </li>
+        {% endfor %}
+
+        {% if pagination.has_next %}
+        <li class="page-item">
+            <a class="page-link"
+               href="{{ url_for('audit.list_audit_logs',
+                                page=pagination.next_num,
+                                **request.args) }}">
+                التالي
+            </a>
+        </li>
+        {% endif %}
+
+    </ul>
+</nav>
+{% endif %}
+
+{% endblock %}
+
+{% macro highlight(text, terms) %}
+  {% if text and terms %}
+    {% set result = text %}
+    {% for term in terms %}
+      {% set result = result | replace(
+        term,
+        '<span class="bg-warning fw-bold px-1 rounded">' ~ term ~ '</span>'
+      ) %}
+    {% endfor %}
+    {{ result | safe }}
+  {% else %}
+    {{ text }}
+  {% endif %}
+{% endmacro %}

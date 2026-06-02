@@ -1,6 +1,6 @@
 {% extends "help/_guide_base.html" %}
 {% set page_title = "دليل المسارات وأنواع الطلبات وقواعد التوجيه" %}
-{% set page_subtitle = "شرح عملي ومفصل لإدارة المسارات (Templates) وخطواتها (Steps) وقواعد التوجيه (Routing Rules) وكيفية اختيار المسار تلقائيًا." %}
+{% set page_subtitle = "شرح عملي ومفصل لإدارة المسارات (القوالب) وخطواتها (الخطوات) وقواعد التوجيه (التوجيه Rules) وكيفية اختيار المسار تلقائيًا." %}
 
 {% block guide_body %}
 
@@ -9,7 +9,7 @@
     <div class="fw-bold">ملخص سريع</div>
     <div class="small text-muted">
       المسار = قالب خطوات اعتماد. نوع الطلب = فئة المعاملة. قواعد التوجيه = منطق اختيار المسار تلقائيًا لنوع طلب محدد حسب (Organization/Directorate/Department).<br>
-      ملاحظة: <span class="fw-bold">اختيار المسار (Routing)</span> في هذه النسخة يعتمد على <span class="fw-bold">المنظمة + الإدارة + الدائرة</span>، بينما <span class="fw-bold">أنواع الموافقات داخل الخطوات</span> تدعم كذلك (Unit/Section/Division/Committee) عند الحاجة.
+      ملاحظة: <span class="fw-bold">اختيار المسار (التوجيه)</span> في هذه النسخة يعتمد على <span class="fw-bold">المنظمة + الإدارة + الدائرة</span>، بينما <span class="fw-bold">أنواع الموافقات داخل الخطوات</span> تدعم كذلك (Unit/Section/Division/Committee) عند الحاجة.
     </div>
   </div>
 
@@ -27,12 +27,12 @@
   <summary class="fw-bold">1) المفاهيم الأساسية (Definitions)</summary>
   <div class="mt-2">
     <ul class="mb-2">
-      <li><strong>نوع الطلب (Request Type):</strong> اسم الفئة (إجازة، إذن، مشتريات… إلخ). يُستخدم لتجميع الطلبات وتطبيق قواعد اختيار المسار.</li>
-      <li><strong>المسار (Workflow Template):</strong> قالب يحتوي خطوات اعتماد مرتبة (Step 1, Step 2…).</li>
-      <li><strong>خطوة المسار (Template Step):</strong> تحديد “من يعتمد” في خطوة معينة (مستخدم/دور/دائرة/إدارة/وحدة/قسم/شعبة/لجنة) + نمط الخطوة + SLA.</li>
-      <li><strong>مثيل المسار (Workflow Instance):</strong> نسخة تشغيل للمسار تُنشأ عندما يبدأ طلب حقيقي؛ تتحول الخطوات إلى “خطوات تشغيل” (Instance Steps).</li>
-      <li><strong>قواعد التوجيه (Routing Rules):</strong> تحدد أي Template يُستخدم لنوع طلب معين حسب سياق الطلب (حاليًا: Organization/Directorate/Department).</li>
-      <li><strong>SLA:</strong> عدد الأيام المسموح بها للخطوة/المسار قبل اعتبارها متأخرة (تظهر كبادج/تصعيد حسب إعدادات النظام).</li>
+      <li><strong>نوع الطلب (نوع الطلب):</strong> اسم الفئة (إجازة، إذن، مشتريات… إلخ). يُستخدم لتجميع الطلبات وتطبيق قواعد اختيار المسار.</li>
+      <li><strong>المسار (مسار العمل قالب):</strong> قالب يحتوي خطوات اعتماد مرتبة (الخطوة 1, الخطوة 2…).</li>
+      <li><strong>خطوة المسار (قالب الخطوة):</strong> تحديد “من يعتمد” في خطوة معينة (مستخدم/دور/دائرة/إدارة/وحدة/قسم/شعبة/لجنة) + نمط الخطوة + اتفاقية مستوى الخدمة.</li>
+      <li><strong>مثيل المسار (مسار العمل Instance):</strong> نسخة تشغيل للمسار تُنشأ عندما يبدأ طلب حقيقي؛ تتحول الخطوات إلى “خطوات تشغيل” (Instance الخطوات).</li>
+      <li><strong>قواعد التوجيه (التوجيه Rules):</strong> تحدد أي قالب يُستخدم لنوع طلب معين حسب سياق الطلب (حاليًا: Organization/Directorate/Department).</li>
+      <li><strong>اتفاقية مستوى الخدمة:</strong> عدد الأيام المسموح بها للخطوة/المسار قبل اعتبارها متأخرة (تظهر كبادج/تصعيد حسب إعدادات النظام).</li>
     </ul>
 
     <div class="alert alert-info py-2 mb-0">
@@ -43,15 +43,15 @@
 
 
 <details class="mb-2">
-  <summary class="fw-bold">2) إنشاء/تعديل مسار (Template)</summary>
+  <summary class="fw-bold">2) إنشاء/تعديل مسار (قالب)</summary>
   <div class="mt-2">
     <ol class="mb-2">
       <li>اذهب إلى شاشة <strong>إدارة المسارات</strong> ثم اختر <strong>إضافة مسار</strong>.</li>
       <li>املأ البيانات الأساسية:
         <ul>
           <li><strong>اسم المسار</strong> (إجباري)</li>
-          <li><strong>SLA Default</strong> (اختياري): يُستخدم كافتراضي عند ترك SLA الخطوة فارغًا</li>
-          <li><strong>Active</strong>: تفعيل/تعطيل المسار</li>
+          <li><strong>اتفاقية مستوى الخدمة Default</strong> (اختياري): يُستخدم كافتراضي عند ترك اتفاقية مستوى الخدمة الخطوة فارغًا</li>
+          <li><strong>فعّال</strong>: تفعيل/تعطيل المسار</li>
         </ul>
       </li>
       <li>احفظ، ثم انتقل لإضافة <strong>خطوات المسار</strong>.</li>
@@ -65,7 +65,7 @@
 
 
 <details class="mb-2">
-  <summary class="fw-bold">3) خطوات المسار (Steps): من يعتمد؟ وكيف؟</summary>
+  <summary class="fw-bold">3) خطوات المسار (الخطوات): من يعتمد؟ وكيف؟</summary>
   <div class="mt-2">
 
     <div class="mb-2">
@@ -100,7 +100,7 @@
 
 
 <details class="mb-2">
-  <summary class="fw-bold">4) قواعد التوجيه (Routing Rules): كيف يختار النظام المسار؟</summary>
+  <summary class="fw-bold">4) قواعد التوجيه (التوجيه Rules): كيف يختار النظام المسار؟</summary>
   <div class="mt-2">
 
     <div class="alert alert-info py-2">
@@ -109,13 +109,13 @@
 
     <div class="fw-bold">4.1 حقول القاعدة</div>
     <ul>
-      <li><strong>Request Type</strong> (إجباري)</li>
-      <li><strong>Template</strong> (إجباري)</li>
+      <li><strong>نوع الطلب</strong> (إجباري)</li>
+      <li><strong>قالب</strong> (إجباري)</li>
       <li><strong>Organization</strong> (اختياري)</li>
       <li><strong>Directorate</strong> (اختياري)</li>
       <li><strong>Department</strong> (اختياري)</li>
       <li><strong>Priority</strong> (رقم): كلما كان <span class="fw-bold">أصغر</span> كانت القاعدة <span class="fw-bold">أعلى</span></li>
-      <li><strong>Is Active</strong></li>
+      <li><strong>Is فعّال</strong></li>
     </ul>
 
     <hr>
@@ -137,19 +137,19 @@
     <div class="border rounded p-2 mb-2">
       <div class="fw-bold">مثال (A): نوع طلب “إجازة” — قواعد متعددة</div>
       <ul class="mb-2">
-        <li>قاعدة 1 (عامة): Leave → Template: "إجازة – موظف" (Priority=100)</li>
-        <li>قاعدة 2 (إدارة الموارد): Leave + Directorate=HR → Template: "إجازة – HR" (Priority=10)</li>
-        <li>قاعدة 3 (دائرة الرواتب): Leave + Directorate=HR + Dept=Payroll → Template: "إجازة – Payroll" (Priority=5)</li>
+        <li>قاعدة 1 (عامة): إجازة → قالب: "إجازة – موظف" (Priority=100)</li>
+        <li>قاعدة 2 (إدارة الموارد): إجازة + Directorate=الموارد البشرية → قالب: "إجازة – الموارد البشرية" (Priority=10)</li>
+        <li>قاعدة 3 (دائرة الرواتب): إجازة + Directorate=الموارد البشرية + Dept=Payroll → قالب: "إجازة – Payroll" (Priority=5)</li>
       </ul>
-      <div class="small text-muted">لو كان مقدم الطلب ضمن Payroll، سيختار النظام القاعدة 3 (الأكثر تخصيصًا). لو كان ضمن HR لكن ليس Payroll → القاعدة 2. غير ذلك → القاعدة 1.</div>
+      <div class="small text-muted">لو كان مقدم الطلب ضمن Payroll، سيختار النظام القاعدة 3 (الأكثر تخصيصًا). لو كان ضمن الموارد البشرية لكن ليس Payroll → القاعدة 2. غير ذلك → القاعدة 1.</div>
     </div>
 
     <div class="border rounded p-2 mb-2">
       <div class="fw-bold">مثال (B): تعارض داخل نفس المستوى</div>
-      <div class="small text-muted mb-2">قاعدتان لنفس Request Type وعلى نفس (Org+Dir) بدون Dept:</div>
+      <div class="small text-muted mb-2">قاعدتان لنفس نوع الطلب وعلى نفس (Org+Dir) بدون Dept:</div>
       <ul class="mb-2">
-        <li>Rule X: Priority=10 → Template A</li>
-        <li>Rule Y: Priority=10 → Template B</li>
+        <li>Rule X: Priority=10 → قالب A</li>
+        <li>Rule Y: Priority=10 → قالب B</li>
       </ul>
       <div class="small">هنا يُفضّل أن <strong>تغيّر Priority</strong> لتصبح قاعدة واحدة “أعلى” بوضوح. إن تُركت متساوية، سيختار النظام غالبًا الأحدث.</div>
     </div>

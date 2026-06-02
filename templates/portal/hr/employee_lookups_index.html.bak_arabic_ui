@@ -1,0 +1,55 @@
+{% extends "portal/hr/base.html" %}
+
+{% set can_manage = current_user.has_perm('HR_MASTERDATA_MANAGE') %}
+
+{% block hr_content %}
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0"><i class="bi bi-search"></i> الإستعلامات (ملف الموظف)</h5>
+
+    {% if can_manage %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}">
+        <i class="bi bi-arrow-right"></i> رجوع لإعدادات الموارد البشرية
+      </a>
+    {% else %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}">
+        <i class="bi bi-arrow-right"></i> رجوع للتقارير
+      </a>
+    {% endif %}
+  </div>
+
+  {% if can_manage %}
+    <div class="alert alert-info small">
+      هذه الإستعلامات/المرجعيات تدعم: إضافة/تعديل/حذف + استيراد/تصدير Excel (حسب الصلاحية).
+    </div>
+  {% else %}
+    <div class="alert alert-warning small mb-3">
+      لديك صلاحية عرض فقط. (لا يمكنك الإضافة/التعديل/الحذف أو الاستيراد/التصدير)
+    </div>
+  {% endif %}
+
+  <div class="row g-3">
+    {% for cat, label, cnt in categories %}
+      <div class="col-md-6 col-lg-4">
+        <div class="card shadow-sm h-100">
+          <div class="card-body">
+            <h6 class="card-title mb-2">{{ label }}</h6>
+            <div class="text-muted small mb-3">{{ cat }} • العناصر: {{ cnt }}</div>
+            <div class="d-flex flex-wrap gap-2">
+              <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_employee_lookups_category', category=cat) }}">
+                <i class="bi bi-list"></i> {{ 'إدارة' if can_manage else 'عرض' }}
+              </a>
+              {% if can_manage %}
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_template', category=cat) }}">
+                  <i class="bi bi-file-earmark-excel"></i> Template
+                </a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_lookups_export', category=cat) }}">
+                  <i class="bi bi-download"></i> Export
+                </a>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% endblock %}

@@ -1,0 +1,281 @@
+{% extends "layout.html" %}
+{% block title %}الملف الشخصي{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+  <div>
+    <h3 class="mb-1">👤 الملف الشخصي</h3>
+    <small class="text-muted">يمكنك تحديث بيانات حسابك (الاسم/المسمى/البريد/كلمة المرور). بيانات الموظف تُدار من الموارد البشرية في البوابة الإدارية.</small>
+  </div>
+  <div class="btn-group">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.index') }}">
+      <i class="bi bi-building"></i> فتح البوابة الإدارية
+    </a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_me_home') }}">
+      <i class="bi bi-person-lines-fill"></i> خدمات الموظف (البوابة)
+    </a>
+    {# HR/Admin shortcut: open the employee file page for self. #}
+    {% if current_user.has_perm('HR_EMPLOYEE_READ') or current_user.has_perm('HR_EMPLOYEE_MANAGE') %}
+      <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.hr_employee_file', user_id=current_user.id) }}">
+        <i class="bi bi-folder2-open"></i> ملفي (HR)
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+
+    <div class="card shadow-sm mb-3">
+      <div class="card-body">
+        <h5 class="mb-3">🖼️ صورة الملف الشخصي</h5>
+
+        <div class="d-flex align-items-center gap-3 flex-wrap">
+          <img
+            src="{% if current_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ current_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}"
+            alt="Avatar"
+            style="width:80px;height:80px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.15);"
+          >
+
+          <form method="post" enctype="multipart/form-data" class="flex-grow-1">
+            <input type="hidden" name="form_type" value="avatar">
+            <input class="form-control mb-2" type="file" name="avatar" accept="image/*" required>
+            <button class="btn btn-outline-primary btn-sm">تحديث الصورة</button>
+            <div class="text-muted mt-2" style="font-size:0.9rem">الامتدادات المسموحة: png, jpg, jpeg, gif, webp</div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🧾 بيانات الحساب</h5>
+        <form method="post">
+          <input type="hidden" name="form_type" value="profile">
+
+          <div class="mb-3">
+            <label class="form-label">الاسم</label>
+            <input type="text" name="name" class="form-control" value="{{ current_user.name or '' }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">المسمى الوظيفي</label>
+            <input type="text" name="job_title" class="form-control" value="{{ current_user.job_title or '' }}">
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">البريد الإلكتروني</label>
+            <input type="email" name="email" class="form-control" value="{{ current_user.email }}" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">الدور (غير قابل للتعديل)</label>
+            <input type="text" class="form-control" value="{{ current_user.role }}" readonly>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الحالية (لتأكيد التعديل)</label>
+            <input type="password" name="current_password" class="form-control" required>
+          </div>
+
+          <button class="btn btn-primary">حفظ التغييرات</button>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="mb-3">🏢 الهيكل التنظيمي</h5>
+        <div class="row g-2">
+          <div class="col-md-4">
+            <div class="small text-muted">المؤسسة</div>
+            <div>{{ organization.name if organization else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">المديرية</div>
+            <div>{{ directorate.name_ar if directorate else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">الوحدة</div>
+            <div>{{ unit.name_ar if unit else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">الدائرة</div>
+            <div>{{ dept.name_ar if dept else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">القسم</div>
+            <div>{{ section.name_ar if section else "—" }}</div>
+          </div>
+          <div class="col-md-4">
+            <div class="small text-muted">الشعبة</div>
+            <div>{{ division.name_ar if division else "—" }}</div>
+          </div>
+        </div>
+        <small class="text-muted d-block mt-2">هذه المعلومات تُدار من الإدارة.</small>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="col-lg-6" id="password">
+
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🔐 تغيير كلمة المرور</h5>
+
+        <form method="post">
+          <input type="hidden" name="form_type" value="password">
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الحالية</label>
+            <input type="password" name="current_password" class="form-control" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">كلمة المرور الجديدة</label>
+            <input type="password" name="new_password" class="form-control" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">تأكيد كلمة المرور</label>
+            <input type="password" name="confirm_password" class="form-control" required>
+          </div>
+
+          <button type="submit" class="btn btn-success">تحديث كلمة المرور</button>
+        </form>
+
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0">📄 ملف الموظف (من البوابة الإدارية)</h5>
+          {% if emp_file and emp_file.updated_at %}
+            <small class="text-muted">آخر تحديث: {{ emp_file.updated_at.strftime('%Y-%m-%d %H:%M') }}</small>
+          {% endif %}
+        </div>
+
+        {% if emp_file %}
+          <div class="row g-2 mb-3">
+            <div class="col-md-4">
+              <div class="small text-muted">الرقم الوظيفي</div>
+              <div class="fw-semibold">{{ emp_file.employee_no or "—" }}</div>
+            </div>
+            <div class="col-md-4">
+              <div class="small text-muted">كود الساعة</div>
+              <div class="fw-semibold">{{ emp_file.timeclock_code or "—" }}</div>
+            </div>
+            <div class="col-md-4">
+              <div class="small text-muted">الدرجة</div>
+              <div class="fw-semibold">{{ emp_file.grade or "—" }}</div>
+            </div>
+          </div>
+
+          <div class="border rounded-3 p-3 mb-3">
+            <div class="fw-semibold mb-2">🧍 بيانات شخصية</div>
+            <div class="row g-2">
+              <div class="col-md-6"><span class="text-muted">رقم الهوية:</span> {{ emp_file.national_id or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">تاريخ الميلاد:</span> {{ emp_file.birth_date or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">الهاتف:</span> {{ emp_file.phone or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">العنوان:</span> {{ emp_file.address or "—" }}</div>
+            </div>
+          </div>
+
+          <div class="border rounded-3 p-3 mb-3">
+            <div class="fw-semibold mb-2">🏷️ بيانات وظيفية</div>
+            <div class="row g-2">
+              <div class="col-md-6"><span class="text-muted">المسمى الوظيفي:</span> {{ emp_file.job_title or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">حالة التوظيف:</span> {{ emp_file.employment_status or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">تاريخ التعيين:</span> {{ emp_file.hire_date or "—" }}</div>
+            </div>
+          </div>
+
+          <div class="border rounded-3 p-3 mb-3">
+            <div class="fw-semibold mb-2">📑 العقد</div>
+            <div class="row g-2">
+              <div class="col-md-4"><span class="text-muted">نوع العقد:</span> {{ emp_file.contract_type or "—" }}</div>
+              <div class="col-md-4"><span class="text-muted">بداية العقد:</span> {{ emp_file.contract_start or "—" }}</div>
+              <div class="col-md-4"><span class="text-muted">نهاية العقد:</span> {{ emp_file.contract_end or "—" }}</div>
+            </div>
+          </div>
+
+          <div class="border rounded-3 p-3 mb-3">
+            <div class="fw-semibold mb-2">💰 الراتب والبنك</div>
+            <div class="row g-2">
+              <div class="col-md-4"><span class="text-muted">الراتب الأساسي:</span> {{ emp_file.salary_basic if emp_file.salary_basic is not none else "—" }}</div>
+              <div class="col-md-4"><span class="text-muted">العملة:</span> {{ emp_file.salary_currency or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">البنك:</span> {{ emp_file.bank_name or "—" }}</div>
+              <div class="col-md-6"><span class="text-muted">رقم الحساب:</span> {{ emp_file.bank_account or "—" }}</div>
+            </div>
+          </div>
+
+          {% if emp_file.notes %}
+            <div class="alert alert-secondary mb-0">
+              <div class="fw-semibold mb-1">📝 ملاحظات</div>
+              <div style="white-space:pre-wrap">{{ emp_file.notes }}</div>
+            </div>
+          {% else %}
+            <div class="text-muted">لا توجد ملاحظات.</div>
+          {% endif %}
+
+        {% else %}
+          <div class="text-muted">لا يوجد ملف موظف مُسجّل لك حتى الآن. تواصل مع الموارد البشرية لإكمال بياناتك.</div>
+        {% endif %}
+
+        <div class="text-muted mt-3" style="font-size:0.9rem">هذه البيانات للعرض فقط داخل مسار، ويتم تعديلها من البوابة الإدارية.</div>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3">
+      <div class="card-body">
+        <h5 class="mb-3">📎 الوثائق والمرفقات</h5>
+
+        {% if emp_atts and emp_atts|length > 0 %}
+          <div class="table-responsive">
+            <table class="table table-sm align-middle">
+              <thead>
+                <tr>
+                  <th>النوع</th>
+                  <th>الملف</th>
+                  <th>ملاحظة</th>
+                  <th>التاريخ</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for a in emp_atts %}
+                  <tr>
+                    <td>
+                      <span class="badge bg-secondary">{{ a.attachment_type }}</span>
+                      {% if a.attachment_type == 'PAYSLIP' %}
+                        <span class="badge bg-light text-dark">{{ a.payslip_period_label }}</span>
+                      {% endif %}
+                    </td>
+                    <td class="text-truncate" style="max-width:260px">{{ a.original_name }}</td>
+                    <td class="text-truncate" style="max-width:220px">{{ a.note or "—" }}</td>
+                    <td class="text-muted">{% if a.uploaded_at %}{{ a.uploaded_at.strftime('%Y-%m-%d') }}{% else %}—{% endif %}</td>
+                    <td class="text-end">
+                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.user_attachment_download', user_id=current_user.id, att_id=a.id) }}">
+                        تنزيل
+                      </a>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <div class="text-muted" style="font-size:0.9rem">* رفع/حذف الوثائق يتم من الموارد البشرية.</div>
+        {% else %}
+          <div class="text-muted">لا توجد وثائق مرفوعة.</div>
+        {% endif %}
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

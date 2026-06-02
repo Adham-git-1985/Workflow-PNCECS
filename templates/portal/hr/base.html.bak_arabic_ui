@@ -1,0 +1,215 @@
+{% extends "portal/layout.html" %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    /* HR module sub-navigation (inspired by the reference system) */
+    .hr-subnav {
+      background: #5a4a86;
+      border-radius: 10px;
+      padding: 10px 12px;
+      box-shadow: 0 8px 20px rgba(0,0,0,.08);
+    }
+    .hr-subnav .navbar-brand {
+      color: #fff;
+      font-weight: 700;
+      letter-spacing: .2px;
+    }
+    .hr-subnav .nav-link {
+      color: rgba(255,255,255,.92) !important;
+      font-weight: 600;
+      padding: .45rem .75rem;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .hr-subnav .nav-link:hover,
+    .hr-subnav .nav-link:focus {
+      background: rgba(255,255,255,.12);
+    }
+    .hr-subnav .dropdown-menu {
+      border: 0;
+      border-radius: 12px;
+      padding: .35rem;
+      box-shadow: 0 16px 30px rgba(0,0,0,.12);
+    }
+    .hr-subnav .dropdown-item {
+      border-radius: 10px;
+      padding: .55rem .75rem;
+      font-weight: 600;
+    }
+    .hr-subnav .dropdown-item:hover,
+    .hr-subnav .dropdown-item:focus {
+      background: rgba(90,74,134,.10);
+    }
+
+    /* Multi-level dropdown (RTL-friendly) */
+    .hr-subnav .dropdown-submenu {
+      position: relative;
+    }
+    .hr-subnav .dropdown-submenu > .dropdown-menu {
+      top: -4px;
+      right: 100%;
+      margin-right: .35rem;
+      margin-left: 0;
+      display: none;
+    }
+    .hr-subnav .dropdown-submenu.show > .dropdown-menu {
+      display: block;
+    }
+    .hr-subnav .dropdown-submenu > .dropdown-item.dropdown-toggle::after {
+      float: left;
+      transform: rotate(90deg);
+      margin-left: 0;
+      margin-right: .45rem;
+    }
+    @media (max-width: 991.98px) {
+      .hr-subnav .dropdown-submenu > .dropdown-menu {
+        position: static;
+        right: auto;
+        margin-right: 0;
+        margin-top: .25rem;
+      }
+      .hr-subnav .dropdown-submenu > .dropdown-item.dropdown-toggle::after {
+        transform: rotate(0deg);
+      }
+    }
+  
+
+    /* HR Reports offcanvas */
+    .hr-reports-canvas{ width: 420px; }
+    .hr-reports-canvas .offcanvas-header{ background:#5a4a86; color:#fff; }
+    .hr-reports-canvas .btn-close{ filter: invert(1) grayscale(1); opacity: .9; }
+    .hr-reports-canvas .accordion-button{ font-weight:800; }
+    .hr-reports-canvas .accordion-button:focus{ box-shadow:none; }
+    .hr-reports-canvas .accordion-body{ padding-top:.5rem; }
+    .hr-reports-canvas .list-group-item{ border:0; border-radius:10px; margin-bottom:.35rem; font-weight:700; }
+    .hr-reports-canvas .list-group-item i{ margin-left:.5rem; }
+    @media (max-width: 575.98px){
+      .hr-reports-canvas{ width: 100%; }
+    }
+</style>
+{% endblock %}
+
+
+{% block content %}
+  {#
+    IMPORTANT UX RULE:
+    - "شؤون الموظفين" (HR admin module navigation) must be visible ONLY to HR Admin users.
+    - Normal employees should NOT see this navigation when they access employee self-service pages.
+
+    We consider "HR Admin" any user who has one of the administrative HR permissions.
+    (Using manage/view-all keys instead of HR_READ to avoid showing the sidebar to employees.)
+  #}
+  {#
+    Show the HR admin sidebar ONLY for true HR-admin users.
+    Employees and normal managers may have HR_READ/HR_ATTENDANCE_READ/etc.
+    but they should NOT see "شؤون الموظفين" sidebar.
+  #}
+  {% set show_hr_admin_nav = (
+      current_user.has_perm('HR_MASTERDATA_MANAGE')
+      or current_user.has_perm('HR_REQUESTS_VIEW_ALL')
+      or current_user.has_perm('HR_REPORTS_VIEW')
+  ) %}
+
+  {% if show_hr_admin_nav %}
+    {% include "portal/hr/_module_nav.html" %}
+  {% endif %}
+  <div class="mt-3">
+    {% block hr_content %}{% endblock %}
+  </div>
+{% endblock %}
+
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    // Lightweight multi-level dropdown support (RTL-friendly).
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        document.querySelectorAll('.hr-subnav .dropdown-submenu > a.dropdown-toggle').forEach(function (a) {
+          a.addEventListener('click', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var li = a.closest('.dropdown-submenu');
+            if (!li) return;
+
+            // close siblings
+            var parentMenu = li.parentElement;
+            if (parentMenu) {
+              parentMenu.querySelectorAll('.dropdown-submenu.show').forEach(function (openLi) {
+                if (openLi !== li) openLi.classList.remove('show');
+              });
+            }
+
+            li.classList.toggle('show');
+          });
+        });
+
+        // close submenus when main dropdown closes
+        document.querySelectorAll('.hr-subnav .dropdown').forEach(function (dd) {
+          dd.addEventListener('hide.bs.dropdown', function () {
+            dd.querySelectorAll('.dropdown-submenu.show').forEach(function (openLi) {
+              openLi.classList.remove('show');
+            });
+          });
+        });
+      } catch (e) {}
+    });
+  </script>
+
+  <script>
+    // HR Reports offcanvas search (filters report links)
+    document.addEventListener('DOMContentLoaded', function () {
+      try {
+        var input = document.getElementById('hrReportsSearch');
+        var canvas = document.getElementById('hrReportsCanvas');
+        if (!input || !canvas) return;
+
+        var links = [].slice.call(canvas.querySelectorAll('a[data-report-label]'));
+        var noRes = document.getElementById('hrReportsNoResults');
+        var items = [].slice.call(canvas.querySelectorAll('#hrReportsAccordion .accordion-item'));
+
+        function norm(s){ return (s || '').toString().trim().toLowerCase(); }
+
+        function applyFilter(){
+          var q = norm(input.value);
+          var any = false;
+
+          links.forEach(function(a){
+            var label = norm(a.getAttribute('data-report-label'));
+            var show = (!q) || (label.indexOf(q) !== -1);
+            a.classList.toggle('d-none', !show);
+            if (show) any = true;
+          });
+
+          items.forEach(function(item){
+            if (!q){ item.classList.remove('d-none'); return; }
+            var visible = item.querySelector('a[data-report-label]:not(.d-none)');
+            item.classList.toggle('d-none', !visible);
+            if (visible){
+              var c = item.querySelector('.accordion-collapse');
+              if (c && !c.classList.contains('show')){
+                try { new bootstrap.Collapse(c, {toggle:true}); } catch(e) {}
+              }
+            }
+          });
+
+          if (noRes) noRes.classList.toggle('d-none', any);
+        }
+
+        input.addEventListener('input', applyFilter);
+
+        canvas.addEventListener('shown.bs.offcanvas', function(){
+          setTimeout(function(){ try{ input.focus(); }catch(e){} }, 40);
+        });
+        canvas.addEventListener('hidden.bs.offcanvas', function(){
+          input.value = '';
+          applyFilter();
+        });
+
+      } catch (e) {}
+    });
+  </script>
+{% endblock %}

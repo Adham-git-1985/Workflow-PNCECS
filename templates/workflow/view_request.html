@@ -515,22 +515,22 @@
 </div>
 
 {# =========================
-   SLA Info Modal
+   اتفاقية مستوى الخدمة معلومة Modal
    ========================= #}
 <div class="modal fade" id="slaInfoModal" tabindex="-1" aria-labelledby="slaInfoModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title" id="slaInfoModalLabel">ما هو SLA؟</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <h5 class="modal-title" id="slaInfoModalLabel">ما هو اتفاقية مستوى الخدمة؟</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <p class="mb-2">
-          <b>SLA</b> اختصار لـ <b>Service Level Agreement</b>، ويعني <b>اتفاقية مستوى الخدمة</b>.
+          <b>اتفاقية مستوى الخدمة</b> اختصار لـ <b>Service Level Agreement</b>، ويعني <b>اتفاقية مستوى الخدمة</b>.
           في النظام: هي <b>مدة زمنية (بالأيام)</b> تحدد الحد الأقصى لإنجاز الخطوة/المسار قبل اعتباره متأخرًا.
         </p>
         <div class="alert alert-light mb-0">
-          <div class="fw-bold" id="slaInfoScope">SLA</div>
+          <div class="fw-bold" id="slaInfoScope">اتفاقية مستوى الخدمة</div>
           <div class="mt-1">القيمة: <span id="slaInfoValue">-</span> <span class="text-muted">يوم</span></div>
         </div>
       </div>
@@ -545,7 +545,7 @@
     modalEl.addEventListener('show.bs.modal', function (event) {
       var trigger = event.relatedTarget;
       if (!trigger) return;
-      var label = trigger.getAttribute('data-sla-label') || 'SLA';
+      var label = trigger.getAttribute('data-sla-label') || 'اتفاقية مستوى الخدمة';
       var value = trigger.getAttribute('data-sla-value') || '-';
       var scopeEl = modalEl.querySelector('#slaInfoScope');
       var valEl = modalEl.querySelector('#slaInfoValue');

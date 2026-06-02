@@ -1,0 +1,243 @@
+{% extends "layout.html" %}
+{% block content %}
+
+{% set cur_parent_label = (n.parent.name_ar if n and n.parent else '') %}
+{% set selected_type_id = (selected_type.id if selected_type else (n.type_id if n else '')) %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">{% if n %}✏️ تعديل عنصر هيكلية{% else %}➕ إضافة عنصر هيكلية{% endif %}</h3>
+    <small class="text-muted">اختيار الأب: شجرة (B)</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">❓ الدليل</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.org_nodes_list') }}">رجوع</a>
+  </div>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="row g-3">
+      <div class="col-md-4">
+        <label class="form-label fw-bold">النوع</label>
+        <select class="form-select" name="type_id" id="type_id" required>
+          <option value="">— اختر —</option>
+          {% for t in types %}
+            <option value="{{ t.id }}" {% if (selected_type_id|string) == (t.id|string) %}selected{% endif %}>{{ t.name_ar }} ({{ t.code }})</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الاسم (AR)</label>
+        <input class="form-control" name="name_ar" value="{{ n.name_ar if n else '' }}" required>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الاسم (EN)</label>
+        <input class="form-control" name="name_en" value="{{ n.name_en if n else '' }}">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">Code</label>
+        <input class="form-control" name="code" value="{{ n.code if n else '' }}">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label fw-bold">ترتيب</label>
+        <input class="form-control" type="number" name="sort_order" value="{{ n.sort_order if n else 0 }}">
+      </div>
+
+      <div class="col-md-6 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if not n or n.is_active %}checked{% endif %}>
+          <label class="form-check-label" for="is_active">نشط</label>
+        </div>
+      </div>
+
+      <!-- Parent Picker -->
+      <div class="col-12">
+        <div class="border rounded p-3">
+          <div class="d-flex justify-content-between align-items-center mb-2">
+            <div class="fw-bold">الأب (شجرة اختيار الأب)</div>
+            <div class="d-flex gap-2">
+              <button type="button" class="btn btn-sm btn-outline-secondary" id="btnPickParent" data-bs-toggle="modal" data-bs-target="#parentPickerModal">🌳 اختيار من الشجرة</button>
+              <button type="button" class="btn btn-sm btn-outline-danger" id="btnMakeRoot" {% if not root_allowed %}disabled{% endif %}>جعلها جذرية</button>
+            </div>
+          </div>
+
+          <input type="hidden" name="parent_id" id="parent_id" value="{{ n.parent_id if n and n.parent_id else '' }}">
+
+          <div class="row g-2">
+            <div class="col-md-8">
+              <input class="form-control" id="parent_label" value="{% if n and n.parent %}{{ n.parent.name_ar }}{% else %}—{% endif %}" readonly>
+              <div class="form-text">
+                {% if selected_type %}
+                  {% set ap = selected_type.allowed_parent_type_ids() %}
+                  {% if ap and ap|length > 0 %}
+                    هذا النوع يقبل أب من أنواع محددة (B). استخدم الشجرة للاختيار.
+                  {% else %}
+                    هذا النوع مُعرّف كجذري فقط (لا يحتاج أب).
+                  {% endif %}
+                {% else %}
+                  اختر النوع أولاً ليتم تفعيل الشجرة حسب التبعية.
+                {% endif %}
+              </div>
+            </div>
+            <div class="col-md-4">
+              <div class="alert alert-light mb-0 py-2">
+                <div class="small text-muted">ملاحظة:</div>
+                <div class="small">لن يسمح النظام باختيار الأب من نفس العنصر أو من أحد أبنائه (منع الدائرة).</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">حفظ</button>
+      </div>
+    </div>
+
+  </div>
+</form>
+
+<!-- Parent Picker Modal -->
+<div class="modal fade" id="parentPickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">🌳 شجرة اختيار الأب</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="parentTreeContainer">
+          {% include 'admin/masterdata/_org_parent_tree.html' %}
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إغلاق</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const typeSel = document.getElementById('type_id');
+  const container = document.getElementById('parentTreeContainer');
+  const parentIdInput = document.getElementById('parent_id');
+  const parentLabelInput = document.getElementById('parent_label');
+  const btnMakeRoot = document.getElementById('btnMakeRoot');
+
+  const excludeId = {{ (n.id if n else 0) | int }};
+
+
+  function wireTreeUI(){
+    const tree = container ? container.querySelector('#orgParentTree') : null;
+    const search = container ? container.querySelector('#orgTreeSearch') : null;
+    const expandAll = container ? container.querySelector('#btnExpandAll') : null;
+    const collapseAll = container ? container.querySelector('#btnCollapseAll') : null;
+
+    function setAll(open){
+      if (!tree) return;
+      tree.querySelectorAll('details.org-details').forEach(d => { d.open = !!open; });
+    }
+
+    if (expandAll) expandAll.onclick = () => setAll(true);
+    if (collapseAll) collapseAll.onclick = () => setAll(false);
+
+    if (search) {
+      search.oninput = function(){
+        const q = (this.value || '').trim().toLowerCase();
+        if (!tree) return;
+        const items = tree.querySelectorAll('li.org-li');
+        if (!q) {
+          items.forEach(li => li.classList.remove('d-none'));
+          return;
+        }
+        items.forEach(li => {
+          const t = (li.getAttribute('data-node-text') || '');
+          li.classList.toggle('d-none', t.indexOf(q) === -1);
+        });
+        setAll(true);
+      };
+    }
+  }
+
+  async function loadTree(){
+    if (!container || !typeSel) return;
+    const typeId = typeSel.value || '';
+    const selectedParent = parentIdInput.value || '';
+
+    const url = new URL('{{ url_for("masterdata.org_nodes_parent_tree") }}', window.location.origin);
+    if (typeId) url.searchParams.set('type_id', typeId);
+    if (excludeId) url.searchParams.set('exclude_id', String(excludeId));
+    if (selectedParent) url.searchParams.set('selected_parent', selectedParent);
+
+    container.innerHTML = '<div class="text-muted">جاري تحميل الشجرة…</div>';
+    try {
+      const res = await fetch(url.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      const html = await res.text();
+      container.innerHTML = html;
+      wireTreeUI();
+
+      // root button enable/disable based on snippet attribute
+      const rootAllowed = container.querySelector('[data-root-allowed]');
+      if (btnMakeRoot && rootAllowed) {
+        const ok = rootAllowed.getAttribute('data-root-allowed') === '1';
+        btnMakeRoot.disabled = !ok;
+      }
+    } catch (e){
+      container.innerHTML = '<div class="alert alert-warning">تعذر تحميل الشجرة.</div>';
+    }
+  }
+
+  // reload tree when type changes
+  if (typeSel) typeSel.addEventListener('change', function(){
+    // reset parent when changing type
+    parentIdInput.value = '';
+    parentLabelInput.value = '—';
+    loadTree();
+  });
+
+  // root button
+  if (btnMakeRoot) btnMakeRoot.addEventListener('click', function(){
+    parentIdInput.value = '';
+    parentLabelInput.value = '—';
+  });
+
+  // event delegation for picking parent
+  document.addEventListener('click', function(ev){
+    const btn = ev.target.closest('.pick-parent');
+    if (!btn) return;
+    ev.preventDefault();
+    if (btn.disabled) return;
+
+    const id = btn.getAttribute('data-id') || '';
+    const label = btn.getAttribute('data-label') || '';
+
+    parentIdInput.value = id;
+    parentLabelInput.value = label;
+
+    // close modal
+    const modalEl = document.getElementById('parentPickerModal');
+    if (modalEl && window.bootstrap) {
+      const inst = window.bootstrap.Modal.getInstance(modalEl);
+      if (inst) inst.hide();
+    }
+  });
+
+  // initial tree state
+  wireTreeUI();
+  const rootAllowed = container ? container.querySelector('[data-root-allowed]') : null;
+  if (btnMakeRoot && rootAllowed) {
+    btnMakeRoot.disabled = (rootAllowed.getAttribute('data-root-allowed') !== '1');
+  }
+
+})();
+</script>
+
+{% endblock %}

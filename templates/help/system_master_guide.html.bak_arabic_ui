@@ -1,0 +1,233 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "الدليل الشامل للنظام (مسار + البوابة الإدارية)" %}
+{% set page_subtitle = "ابدأ من هنا إذا كنت تستخدم النظام لأول مرة. يشرح الفكرة العامة، أهم الوظائف، وكيف تصل للأدلة التفصيلية حسب صلاحياتك." %}
+
+{% block guide_body %}
+
+<div class="alert alert-primary py-2 mb-3">
+  <div class="fw-bold">مرحبًا بك 👋</div>
+  <div class="small">
+    هذا الدليل مخصص لمستخدمي <b>اللجنة الوطنية الفلسطينية للتربية والثقافة والعلوم</b>.
+    الهدف: فهم النظام بسرعة ثم الانتقال للأدلة التفصيلية لكل وحدة.
+  </div>
+</div>
+
+<details open>
+  <summary><strong>١) ما هو “مسار” وما هي “البوابة الإدارية”؟</strong></summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><b>مسار (Workflow):</b> نظام متابعة المعاملات والطلبات والموافقات؛ يركز على <b>سير الإجراءات</b>، المهام، الإشعارات، والتتبع.</li>
+      <li><b>البوابة الإدارية (Portal):</b> أنظمة تشغيلية مساندة (مثل الموارد البشرية، الصادر والوارد، المستودع، الحركة…) وتغذي مسار بالبيانات والعمليات.</li>
+    </ul>
+    <div class="alert alert-light small mb-0">
+      <b>مبدأ مهم:</b> قد ترى “خدمة” لا تظهر لديك — هذا يعني أنك تحتاج صلاحية. استخدم <b>طلبات الصلاحيات</b> أو تواصل مع المسؤول.
+    </div>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٢) ماذا أفعل أول مرة؟ (خطوات سريعة)</strong></summary>
+  <div class="mt-2">
+    <ol class="mb-2">
+      <li>ادخل إلى <b>مسار</b> ثم افتح <b>ملفي الشخصي</b> وتأكد من بياناتك الأساسية.</li>
+      <li>افتح <b>مركز الأدلة</b> واختر دليل وحدتك (الموارد البشرية/الحركة/… إلخ) حسب عملك.</li>
+      <li>إذا كانت لديك معاملات: استخدم <b>مهامي (Inbox)</b> لاستقبال المهام، و<b>طلباتي (My Requests)</b> لمتابعة ما قدمته.</li>
+      <li>إذا احتجت خدمة في البوابة الإدارية ولا تظهر لديك: قدّم <b>طلب صلاحية</b>.</li>
+    </ol>
+    <div class="d-flex gap-2 flex-wrap no-print">
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_index') }}"><i class="bi bi-compass"></i> فتح مركز الأدلة</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.profile') }}"><i class="bi bi-person"></i> ملفي الشخصي</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.inbox') }}"><i class="bi bi-inbox"></i> مهامي</a>
+    </div>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٣) المصطلحات الأساسية (حتى تفهم الشاشات بسرعة)</strong></summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><b>طلب (Request):</b> معاملة تبدأ من مستخدم وتتحرك عبر خطوات اعتماد.</li>
+      <li><b>مهمة (Task):</b> خطوة موافقة/مراجعة وصلت لدورك أو لك شخصيًا.</li>
+      <li><b>مسار/قالب (Template):</b> تعريف خطوات الموافقة لنوع طلب معين.</li>
+      <li><b>قواعد التوجيه (Routing Rules):</b> تحدد أي مسار يستخدم للطلب حسب شروط (جهة/نوع/فرع… إلخ).</li>
+      <li><b>الصلاحيات (Permissions):</b> ما الذي تستطيع رؤيته/فعله داخل النظام.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٤) كيف تعمل داخل مسار؟ (سلوك يومي)</strong></summary>
+  <div class="mt-2">
+    <ul>
+      <li><b>مهامي (Inbox):</b> هنا ترى المهام التي تحتاج إجراء (اعتماد/رفض/تعليق).</li>
+      <li><b>طلباتي (My Requests):</b> متابعة الطلبات التي قدمتها وحالتها الحالية وطباعة التفاصيل.</li>
+      <li><b>الإشعارات:</b> تنبهك بالقرارات والتعميمات والمهام الجديدة.</li>
+      <li><b>الطباعة:</b> معظم الصفحات تدعم طباعة منظمة (تأكد من استخدام زر الطباعة داخل الصفحة).</li>
+    </ul>
+    <div class="d-flex gap-2 flex-wrap no-print">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_workflow_user_guide') }}" target="_blank"><i class="bi bi-book"></i> دليل المستخدم: الطلبات والمسارات</a>
+      {% if current_user.has_perm('WORKFLOW_TEMPLATES_READ') or current_user.has_perm('WORKFLOW_TEMPLATES_MANAGE') or current_user.has_perm('WORKFLOW_ROUTING_READ') or current_user.has_perm('WORKFLOW_ROUTING_MANAGE') or current_user.has_perm('REQUEST_TYPES_READ') %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_workflow_admin_guide') }}" target="_blank"><i class="bi bi-gear"></i> دليل المسارات والتوجيه (أدمن)</a>
+      {% endif %}
+    </div>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٥) ماذا تقدم لك البوابة الإدارية؟ (وحدات رئيسية)</strong></summary>
+  <div class="mt-2">
+    <ul>
+      <li><b>الموارد البشرية:</b> ملفات الموظفين، الإجازات، الدوام، التقارير، التدريب، والأداء/التقييم.</li>
+      <li><b>الصادر والوارد:</b> تسجيل ومتابعة المراسلات والمرفقات والطباعة.</li>
+      <li><b>المستودع:</b> السجلات، القيود، المواد، الطباعة والتقارير.</li>
+      <li><b>الحركة والنقل:</b> المركبات، الأذون، الرحلات، المهام، والتنبيهات.</li>
+      <li><b>إدارة البوابة:</b> المستخدمون، الأدوار، الصلاحيات، وطلبات الصلاحيات.</li>
+    </ul>
+    <div class="alert alert-light small mb-0">
+      <b>ملاحظة:</b> الأدلة التفصيلية لهذه الوحدات تظهر في مركز الأدلة حسب صلاحياتك.
+    </div>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٦) الصلاحيات: كيف أحصل على خدمة غير ظاهرة؟</strong></summary>
+  <div class="mt-2">
+    <ol>
+      <li>اذهب إلى <b>طلبات الصلاحيات</b> (إن ظهرت لديك) وقدّم الطلب.</li>
+      <li>أو تواصل مع أدمن النظام/أدمن الموارد البشرية لمنح صلاحية مرتبطة بعملك.</li>
+      <li>بعد منح الصلاحية، أعد تسجيل الدخول إن لزم لتحديث القوائم.</li>
+    </ol>
+    {% if current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or current_user.has_perm('USER_PERMISSIONS_MANAGE') or current_user.has_perm('PORTAL_ADMIN_READ') %}
+    <div class="d-flex gap-2 flex-wrap no-print">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_access_requests_guide') }}" target="_blank"><i class="bi bi-key"></i> دليل طلبات الصلاحيات</a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_access_requests_admin_guide') }}" target="_blank"><i class="bi bi-shield-lock"></i> دليل أدمن طلبات الصلاحيات</a>
+    </div>
+    {% else %}
+    <div class="alert alert-light small mb-0">
+      إذا لم تظهر لك صفحة طلبات الصلاحيات، اطلب من المسؤول تفعيلها لك.
+    </div>
+    {% endif %}
+  </div>
+</details>
+
+<details>
+  <summary><strong>٧) الأدلة التفصيلية (حسب صلاحياتك)</strong></summary>
+  <div class="mt-2">
+    <div class="row g-2">
+      <div class="col-12 col-md-6">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="fw-bold mb-2">📌 أدلة عامة</div>
+          <ul class="mb-0">
+            <li><a href="{{ url_for('users.help_employee_guide') }}" target="_blank">دليل الموظف</a></li>
+            <li><a href="{{ url_for('users.help_workflow_user_guide') }}" target="_blank">دليل المستخدم: الطلبات والمسارات</a></li>
+            <li><a href="{{ url_for('users.help_leaves_guide') }}" target="_blank">دليل الإجازات</a></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="fw-bold mb-2">🧑‍💼 الموارد البشرية</div>
+          <ul class="mb-0">
+            {% if current_user.has_perm('HR_READ') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_EMPLOYEE_READ') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_REQUESTS_APPROVE') or current_user.has_perm('HR_REPORTS_VIEW') %}
+              <li><a href="{{ url_for('users.help_hr_guide') }}" target="_blank">دليل الموارد البشرية (للمستخدم)</a></li>
+            {% else %}
+              <li class="text-muted">دليل الموارد البشرية (قد لا يظهر بدون صلاحية)</li>
+            {% endif %}
+            {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_perm('HR_DOCS_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
+              <li><a href="{{ url_for('users.help_hr_admin_guide') }}" target="_blank">دليل أدمن الموارد البشرية</a></li>
+            {% endif %}
+            {% if current_user.has_perm('HR_ORG_DYNAMIC_GUIDE_VIEW') or current_user.has_perm('HR_ORGSTRUCTURE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+              <li><a href="{{ url_for('users.help_org_structure_dynamic_guide') }}" target="_blank">دليل الهيكلية الموحدة (Dynamic)</a></li>
+            {% endif %}
+            {% if current_user.has_perm('HR_PERFORMANCE_READ') or current_user.has_perm('HR_PERFORMANCE_SUBMIT') or current_user.has_perm('HR_SYSTEM_EVALUATION_VIEW') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
+              <li><a href="{{ url_for('users.help_performance_guide') }}" target="_blank">دليل الأداء والتقييم (للموظف)</a></li>
+            {% endif %}
+            {% if current_user.has_perm('HR_PERFORMANCE_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+              <li><a href="{{ url_for('users.help_performance_admin_guide') }}" target="_blank">دليل الأداء والتقييم (للأدمن)</a></li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="fw-bold mb-2">✉️ الصادر والوارد</div>
+          <ul class="mb-0">
+            {% if current_user.has_perm('CORR_READ') %}
+              <li><a href="{{ url_for('users.help_correspondence_guide') }}" target="_blank">دليل الصادر والوارد (للمستخدم)</a></li>
+              {% if current_user.has_perm('CORR_LOOKUPS_MANAGE') or current_user.has_perm('CORR_UPDATE') or current_user.has_perm('CORR_DELETE') %}
+                <li><a href="{{ url_for('users.help_correspondence_admin_guide') }}" target="_blank">دليل أدمن الصادر والوارد</a></li>
+              {% endif %}
+            {% else %}
+              <li class="text-muted">أدلة الصادر والوارد (قد لا تظهر بدون صلاحية)</li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="fw-bold mb-2">📦 المستودع</div>
+          <ul class="mb-0">
+            {% if current_user.has_perm('STORE_READ') or current_user.has_perm('STORE_MANAGE') %}
+              <li><a href="{{ url_for('users.help_store_guide') }}" target="_blank">دليل المستودع (للمستخدم)</a></li>
+              {% if current_user.has_perm('STORE_MANAGE') %}
+                <li><a href="{{ url_for('users.help_store_admin_guide') }}" target="_blank">دليل أدمن المستودع</a></li>
+              {% endif %}
+            {% else %}
+              <li class="text-muted">أدلة المستودع (قد لا تظهر بدون صلاحية)</li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="fw-bold mb-2">🚗 الحركة والنقل</div>
+          <ul class="mb-0">
+            {% if current_user.has_perm('TRANSPORT_READ') or current_user.has_perm('TRANSPORT_CREATE') or current_user.has_perm('TRANSPORT_APPROVE') %}
+              <li><a href="{{ url_for('users.help_transport_guide') }}" target="_blank">دليل الحركة (للمستخدم)</a></li>
+              {% if current_user.has_perm('TRANSPORT_UPDATE') or current_user.has_perm('TRANSPORT_APPROVE') %}
+                <li><a href="{{ url_for('users.help_transport_admin_guide') }}" target="_blank">دليل أدمن الحركة</a></li>
+              {% endif %}
+            {% else %}
+              <li class="text-muted">أدلة الحركة (قد لا تظهر بدون صلاحية)</li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+
+      <div class="col-12 col-md-6">
+        <div class="border rounded-3 p-2 h-100">
+          <div class="fw-bold mb-2">🧩 المسارات والتوجيه</div>
+          <ul class="mb-0">
+            <li><a href="{{ url_for('users.help_workflow_user_guide') }}" target="_blank">دليل المستخدم: الطلبات والمسارات</a></li>
+            {% if current_user.has_perm('WORKFLOW_TEMPLATES_READ') or current_user.has_perm('WORKFLOW_TEMPLATES_MANAGE') or current_user.has_perm('WORKFLOW_ROUTING_READ') or current_user.has_perm('WORKFLOW_ROUTING_MANAGE') or current_user.has_perm('REQUEST_TYPES_READ') %}
+              <li><a href="{{ url_for('users.help_workflow_admin_guide') }}" target="_blank">دليل المسارات والتوجيه (أدمن)</a></li>
+            {% endif %}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="alert alert-secondary small mt-3 mb-0">
+      <b>ملاحظة:</b> إذا ضغطت على دليل ولم يفتح، فغالبًا الدليل يحتاج صلاحية (403). ارجع إلى مركز الأدلة أو اطلب الصلاحية من المسؤول.
+    </div>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٨) أفضل ممارسات للمؤسسات (لماذا هذا النظام مهم؟)</strong></summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><b>شفافية وتتبّع:</b> كل خطوة لها سجل (Audit) ويمكن الرجوع لها.</li>
+      <li><b>توحيد الإجراءات:</b> نفس نوع الطلب يسير بنفس الخطوات، ويقلل الأخطاء والازدواجية.</li>
+      <li><b>تقليل الورقيات:</b> طباعة منظمة عند الحاجة، مع بقاء الأصل إلكترونيًا.</li>
+      <li><b>صلاحيات دقيقة:</b> كل مستخدم يرى ما يخصه فقط.</li>
+      <li><b>تحسين الأداء:</b> لوحات ومؤشرات (Counters/SLA) تساعد الإدارة على المتابعة واتخاذ القرار.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

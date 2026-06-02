@@ -1,0 +1,114 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل طلبات الصلاحية (Portal Access Requests)" %}
+{% set page_subtitle = "كيف يطلب الموظف صلاحية، وكيف يراجعها الأدمن، وما أثر القرار على حساب المستخدم." %}
+
+{% block guide_body %}
+
+<div class="alert alert-secondary py-2 mb-3">
+  <div class="fw-bold">ملخص سريع</div>
+  <div class="small text-muted">
+    طلب الصلاحية هو مسار خفيف داخل البوابة لتمكين المستخدم من خدمات مثل (الصادر/الوارد، الموارد البشرية، المستودع...إلخ). عند الموافقة تُمنح الصلاحيات تلقائيًا لحساب المستخدم.
+  </div>
+</div>
+
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) متى أستخدم طلب الصلاحية؟</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>عندما تظهر لك خدمة في البوابة ولكنها <strong>غير مفعّلة</strong> (زر/بطاقة غير نشطة) أو تظهر رسالة أن الصلاحية غير كافية.</li>
+      <li>عندما تحتاج صلاحيات إضافية داخل نفس الخدمة (مثال: تريد صلاحية إدارة الصادر/الوارد وليس فقط القراءة).</li>
+    </ul>
+    <div class="alert alert-info py-2 mb-0">
+      <strong>ملاحظة:</strong> المستخدمون الذين لا يمتلكون دخولًا للبوابة أصلًا يمكنهم طلب <strong>Portal Entry</strong> من شاشة “لا توجد صلاحيات”.
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">2) خطوات الموظف: إنشاء طلب جديد</summary>
+  <div class="mt-2">
+    <ol class="mb-2">
+      <li>افتح شاشة <strong>طلب صلاحية</strong> من البوابة.</li>
+      <li>اختر الخدمة المطلوبة (مثال: الصادر والوارد / الموارد البشرية / المستودع…).</li>
+      <li>اختر <strong>الخيار</strong> المناسب (مثال: “عرض فقط” أو “إدارة” بحسب المتاح).</li>
+      <li>اكتب <strong>ملاحظة</strong> مختصرة تشرح سبب الطلب (اختياري لكنه يُسهل على الأدمن القرار).</li>
+      <li>اضغط <strong>إرسال</strong>.</li>
+    </ol>
+
+    <div class="small text-muted">النظام يمنع تكرار نفس الطلب إذا كان هناك طلب مشابه <strong>PENDING</strong> بالفعل.</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">3) متابعة الطلب (My Requests)</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>ادخل إلى <strong>طلباتي</strong> لرؤية جميع طلبات الصلاحية التي قدمتها.</li>
+      <li>سترى الحالة: <span class="badge bg-warning text-dark">PENDING</span> أو <span class="badge bg-success">APPROVED</span> أو <span class="badge bg-danger">REJECTED</span> أو <span class="badge bg-secondary">CANCELLED</span>.</li>
+      <li>يمكنك <strong>إلغاء الطلب</strong> فقط إذا كان <strong>PENDING</strong>.</li>
+    </ul>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">4) كيف يوجّه النظام الطلب للأدمن؟ (Routing/Assignment)</summary>
+  <div class="mt-2">
+    <div class="mb-2">لتخفيف العبء، يحاول النظام تعيين الطلب تلقائيًا لأحد مديري البوابة حسب قربه من مقدم الطلب:</div>
+    <ul class="mb-2">
+      <li><strong>أولوية 1:</strong> Portal Admin في نفس <strong>الدائرة (Department)</strong>.</li>
+      <li><strong>أولوية 2:</strong> Portal Admin في نفس <strong>الإدارة (Directorate)</strong>.</li>
+      <li><strong>أولوية 3:</strong> Portal Admin في نفس <strong>المنظمة (Organization)</strong>.</li>
+      <li><strong>Fallback:</strong> أول Portal Admin متاح إذا لم تتوفر مطابقات.</li>
+    </ul>
+    <div class="alert alert-info py-2 mb-0">
+      <strong>ملاحظة:</strong> حتى مع التعيين، يتم إرسال إشعار لجميع Portal Admins (لتفادي ضياع الطلب).
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">5) خطوات الأدمن: مراجعة الطلبات واتخاذ القرار</summary>
+  <div class="mt-2">
+    <ol class="mb-2">
+      <li>من البوابة: <strong>إدارة البوابة → طلبات الصلاحيات</strong>.</li>
+      <li>استخدم الفلاتر: الحالة/الخدمة/البحث، ويمكن اختيار <strong>Mine</strong> لعرض الطلبات المعيّنة لك.</li>
+      <li>افتح الطلب لمراجعة التفاصيل والملاحظة.</li>
+      <li>اختر: <strong>موافقة</strong> أو <strong>رفض</strong>، ويمكنك كتابة <strong>سبب</strong> القرار.</li>
+    </ol>
+    <div class="alert alert-warning py-2 mb-0">
+      <strong>مهم:</strong> لا يمكن معالجة طلب غير PENDING (منع ازدواج القرارات).
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">6) أثر القرار على المستخدم (Impact)</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>عند الموافقة:</strong> تُمنح مفاتيح الصلاحيات المطلوبة لحساب المستخدم تلقائيًا، وتظهر الخدمة/الأزرار له مباشرة.</li>
+      <li><strong>عند الرفض:</strong> لا تُمنح الصلاحيات، ويصله إشعار بالرفض (مع السبب إن كُتب).</li>
+      <li><strong>عند الإلغاء:</strong> يتم إغلاق الطلب من قبل الموظف نفسه وهو PENDING.</li>
+    </ul>
+    <div class="small text-muted">يتم تسجيل إجراءات الموافقة/الرفض/الإلغاء ضمن سجل التدقيق (Audit).</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">7) أسئلة شائعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>لا أرى صفحة طلب الصلاحية؟</strong> ربما لا تمتلك صلاحية دخول البوابة بعد، اطلب <strong>Portal Entry</strong> أولًا.</li>
+      <li><strong>قدّمت طلبًا ولم يُعالج؟</strong> راجع الحالة من “طلباتي”، أو تواصل مع Portal Admin. الطلب أيضًا يُرسل كإشعار للمدراء.</li>
+      <li><strong>بعد الموافقة ما زالت الخدمة مقفلة؟</strong> جرّب تحديث الصفحة/تسجيل خروج ودخول، وإن استمر اتصل بالأدمن للتأكد من منح المفاتيح.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

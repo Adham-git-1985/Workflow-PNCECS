@@ -1,0 +1,559 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}الهيكل التنظيمي{% endblock %}
+
+{% block head %}
+<style>
+  .unit-row { border-left:3px solid #eee; padding-left:.75rem; }
+  .unit-actions { min-width: 170px; }
+  .unit-badge { font-size:.75rem; }
+  .mgr { font-size:.92rem; }
+</style>
+{% endblock %}
+
+{% block hr_content %}
+
+<style>
+  .org-tree-wrap { max-height: 620px; overflow: auto; border: 1px solid rgba(0,0,0,.08); border-radius: 10px; padding: 12px; background: #fff; }
+  .org-tree ul { list-style: none; margin: 0; padding: 0; }
+  .org-tree .org-ul { padding-right: 1.25rem; }
+  .org-tree .org-ul.root { padding-right: 0; }
+  .org-tree .org-li { position: relative; margin: 6px 0; }
+  .org-tree .org-li::before {
+    content: "";
+    position: absolute;
+    right: .35rem;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(0,0,0,.08);
+  }
+  .org-tree .org-li.level-0::before { display: none; }
+  .org-tree details { border-right: 3px solid rgba(13,110,253,.18); padding-right: .75rem; }
+  .org-tree .org-leaf { border-right: 3px solid rgba(25,135,84,.18); padding-right: .75rem; }
+  .org-tree summary { cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: .35rem .5rem; padding: .25rem .25rem; }
+  .org-tree summary::-webkit-details-marker { display: none; }
+  .org-tree .org-title { font-weight: 600; }
+  .org-tree .org-meta { color: #6c757d; font-size: .85rem; }
+  .org-tree .org-members { margin-top: .25rem; padding-right: 1.25rem; }
+  .org-tree .org-members li { padding: 2px 0; font-size: .92rem; }
+  .org-tree code { font-size: .85em; }
+</style>
+
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-light">
+      <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div>
+          <h5 class="mb-0">مخطط الهيكلية</h5>
+          <div class="text-muted small">شجرة تفاعلية (Portal) تُظهر الوحدات + المدير/البديل، ويمكن إظهار الموظفين داخل كل وحدة.</div>
+        </div>
+        <div class="d-flex align-items-center flex-wrap gap-2">
+          <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#orgTreePrint')">
+            <i class="bi bi-printer"></i> طباعة
+          </button>
+          <a class="btn btn-sm btn-outline-secondary no-print" href="{{ url_for('users.help_hr_guide') }}" target="_blank">
+            <i class="bi bi-question-circle"></i> الدليل
+          </a>
+
+          {% if can_manage_org %}
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_node_assignments') }}">
+            <i class="bi bi-diagram-3"></i> تعيين الموظفين (الهيكلية الموحدة)
+          </a>
+          {% if not legacy_locked %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_org_assignments') }}">
+            <i class="bi bi-people"></i> تعيين الموظفين (القديمة)
+          </a>
+          {% endif %}
+          {% endif %}
+
+          <div class="form-check form-switch mb-0">
+            <input class="form-check-input" type="checkbox" id="togglePeople" {% if include_people %}checked{% endif %}>
+            <label class="form-check-label small" for="togglePeople">إظهار الموظفين داخل المخطط</label>
+          </div>
+
+          <button class="btn btn-sm btn-outline-secondary" type="button" id="btnExpandAll">
+            <i class="bi bi-arrows-angle-expand"></i> توسيع
+          </button>
+          <button class="btn btn-sm btn-outline-secondary" type="button" id="btnCollapseAll">
+            <i class="bi bi-arrows-angle-contract"></i> طيّ
+          </button>
+
+          <div class="btn-group">
+            <button class="btn btn-sm btn-outline-dark dropdown-toggle" data-bs-toggle="dropdown">تصدير</button>
+            <ul class="dropdown-menu dropdown-menu-end">
+              <li><a class="dropdown-item" href="{{ url_for('portal.hr_org_structure_export', fmt='csv') }}">CSV (Nodes)</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('portal.hr_org_structure_export', fmt='json') }}">JSON (Nodes + Managers + Members)</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('portal.hr_org_structure_export', fmt='mermaid') }}">Mermaid</a></li>
+              <li><a class="dropdown-item" href="{{ url_for('portal.hr_org_structure_export', fmt='mermaid') }}?include_people=1">Mermaid + موظفين</a></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      {% if legacy_locked %}
+      <div class="alert alert-warning small mb-3">
+        الهيكلية الثابتة مقفلة (قراءة فقط). يفضل استخدام الهيكلية الموحدة (Dynamic) للتعيينات والمسارات والموافقات.
+      </div>
+      {% endif %}
+
+      {% set type_labels = {'ORGANIZATION':'مؤسسة','DIRECTORATE':'إدارة','UNIT':'وحدة','DEPARTMENT':'دائرة','SECTION':'قسم','TEAM':'فريق'} %}
+
+      {% macro render_node(node, level=0) %}
+        <li class="org-li level-{{ level }}">
+          {% if node.children and node.children|length > 0 %}
+            <details class="org-details" {% if level < 2 %}open{% endif %}>
+              <summary>
+                <span class="badge bg-primary-subtle text-primary border">{{ type_labels.get(node.type, node.type) }}</span>
+                <span class="org-title">{{ node.name_ar }}</span>
+                {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
+                <span class="org-meta">مدير: {{ node.manager }}</span>
+                <span class="org-meta">بديل: {{ node.deputy }}</span>
+              </summary>
+
+              {% if include_people and node.members and node.members|length > 0 %}
+                <ul class="org-members">
+                  {% for m in node.members %}
+                    <li>
+                      {% if m.is_primary %}
+                        <span class="badge bg-success-subtle text-success border">أساسي</span>
+                      {% else %}
+                        <span class="badge bg-secondary-subtle text-secondary border">عضو</span>
+                      {% endif %}
+                      <strong>{{ m.name }}</strong>
+                      {% if m.title %}<span class="text-muted">— {{ m.title }}</span>{% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+
+              <ul class="org-ul">
+                {% for ch in node.children %}
+                  {{ render_node(ch, level + 1) }}
+                {% endfor %}
+              </ul>
+            </details>
+          {% else %}
+            <div class="org-leaf">
+              <div class="d-flex align-items-center flex-wrap gap-2">
+                <span class="badge bg-success-subtle text-success border">{{ type_labels.get(node.type, node.type) }}</span>
+                <span class="org-title">{{ node.name_ar }}</span>
+                {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
+                <span class="org-meta">مدير: {{ node.manager }}</span>
+                <span class="org-meta">بديل: {{ node.deputy }}</span>
+              </div>
+
+              {% if include_people and node.members and node.members|length > 0 %}
+                <ul class="org-members">
+                  {% for m in node.members %}
+                    <li>
+                      {% if m.is_primary %}
+                        <span class="badge bg-success-subtle text-success border">أساسي</span>
+                      {% else %}
+                        <span class="badge bg-secondary-subtle text-secondary border">عضو</span>
+                      {% endif %}
+                      <strong>{{ m.name }}</strong>
+                      {% if m.title %}<span class="text-muted">— {{ m.title }}</span>{% endif %}
+                    </li>
+                  {% endfor %}
+                </ul>
+              {% endif %}
+            </div>
+          {% endif %}
+        </li>
+      {% endmacro %}
+
+      {# Print wrapper: print only the org tree (smart print target) #}
+      <div id="orgTreePrint">
+        <div class="org-tree-wrap org-tree" id="orgTree">
+          {% if org_tree and org_tree|length > 0 %}
+            <ul class="org-ul root">
+              {% for o in org_tree %}
+                {{ render_node(o, 0) }}
+              {% endfor %}
+            </ul>
+          {% else %}
+            <div class="text-muted">لا توجد بيانات للهيكلية.</div>
+          {% endif %}
+        </div>
+
+        <div class="text-muted small mt-2">
+          ملاحظة: هذا المخطط يعكس تعيينات البوابة الإدارية (Portal) وليس تعيينات مسار.
+        </div>
+      </div>
+    </div>
+  </div>
+
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-diagram-3"></i> الهيكل التنظيمي</h5>
+      <div class="text-muted small">مؤسسة → دوائر → إدارات → أقسام → فرق، مع تعيين المدير المباشر/البديل.</div>
+    </div>
+    <div class="d-flex flex-wrap align-items-center gap-2">
+      <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.hr_org_structure_export', fmt='mermaid') }}">
+        <i class="bi bi-download"></i> Mermaid
+      </a>
+      <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.hr_org_structure_export', fmt='csv') }}">
+        <i class="bi bi-download"></i> CSV
+      </a>
+      <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.hr_org_structure_export', fmt='json') }}">
+        <i class="bi bi-download"></i> JSON
+      </a>
+      {% if can_manage_org %}
+        <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_org_assignments') }}">
+          <i class="bi bi-people"></i> تعيين الموظفين
+        </a>
+        <span class="badge bg-light text-dark border">لديك صلاحية إدارة الهيكل</span>
+      {% endif %}
+    </div>
+  </div>
+
+  {% macro unit_assign_btn(unit_type, unit_id, current_mgr_id, current_dep_id) %}
+    {% if can_manage_org %}
+      <button type="button"
+              class="btn btn-sm btn-outline-primary"
+              data-bs-toggle="modal"
+              data-bs-target="#assignModal"
+              data-unit-type="{{ unit_type }}"
+              data-unit-id="{{ unit_id }}"
+              data-manager-id="{{ current_mgr_id or '' }}"
+              data-deputy-id="{{ current_dep_id or '' }}">
+        <i class="bi bi-person-check"></i> تعيين
+      </button>
+    {% endif %}
+  {% endmacro %}
+
+  {% macro team_edit_btn(team) %}
+    {% if can_manage_org %}
+      <button type="button" class="btn btn-sm btn-outline-secondary"
+              data-bs-toggle="modal" data-bs-target="#teamModal"
+              data-team-id="{{ team.id }}"
+              data-section-id="{{ team.section_id }}"
+              data-name-ar="{{ team.name_ar|e }}"
+              data-name-en="{{ (team.name_en or '')|e }}"
+              data-code="{{ (team.code or '')|e }}">
+        <i class="bi bi-pencil"></i>
+      </button>
+    {% endif %}
+  {% endmacro %}
+
+  {% macro team_add_btn(section_id) %}
+    {% if can_manage_org %}
+      <button type="button" class="btn btn-sm btn-outline-success"
+              data-bs-toggle="modal" data-bs-target="#teamModal"
+              data-team-id="" data-section-id="{{ section_id }}"
+              data-name-ar="" data-name-en="" data-code="">
+        <i class="bi bi-plus"></i> إضافة فريق
+      </button>
+    {% endif %}
+  {% endmacro %}
+
+  <div class="accordion" id="orgAcc">
+    {% for org in orgs %}
+      {% set a_org = assignments.get(('ORGANIZATION', org.id)) %}
+      <div class="accordion-item">
+        <h2 class="accordion-header" id="h_org_{{ org.id }}">
+          <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#c_org_{{ org.id }}">
+            <span class="fw-semibold">{{ org.name_ar }}</span>
+            {% if org.code %}<span class="badge bg-light text-dark border ms-2 unit-badge">{{ org.code }}</span>{% endif %}
+          </button>
+        </h2>
+        <div id="c_org_{{ org.id }}" class="accordion-collapse collapse" data-bs-parent="#orgAcc">
+          <div class="accordion-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2" id="u_ORGANIZATION_{{ org.id }}">
+              <div class="mgr">
+                <span class="text-muted">المدير:</span>
+                <span class="fw-semibold">{{ a_org.manager_user.full_name if a_org and a_org.manager_user else '—' }}</span>
+                <span class="text-muted ms-2">البديل:</span>
+                <span class="fw-semibold">{{ a_org.deputy_user.full_name if a_org and a_org.deputy_user else '—' }}</span>
+              </div>
+              <div class="unit-actions">
+                {{ unit_assign_btn('ORGANIZATION', org.id, a_org.manager_user_id if a_org else None, a_org.deputy_user_id if a_org else None) }}
+              </div>
+            </div>
+
+            {% for dir in org.directorates %}
+              {% set a_dir = assignments.get(('DIRECTORATE', dir.id)) %}
+              <div class="mt-3 unit-row" id="u_DIRECTORATE_{{ dir.id }}">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                  <div>
+                    <div class="fw-semibold">{{ dir.name_ar }} {% if dir.code %}<span class="badge bg-light text-dark border unit-badge">{{ dir.code }}</span>{% endif %}</div>
+                    <div class="mgr">
+                      <span class="text-muted">المدير:</span>
+                      <span class="fw-semibold">{{ a_dir.manager_user.full_name if a_dir and a_dir.manager_user else '—' }}</span>
+                      <span class="text-muted ms-2">البديل:</span>
+                      <span class="fw-semibold">{{ a_dir.deputy_user.full_name if a_dir and a_dir.deputy_user else '—' }}</span>
+                    </div>
+                  </div>
+                  <div class="unit-actions">{{ unit_assign_btn('DIRECTORATE', dir.id, a_dir.manager_user_id if a_dir else None, a_dir.deputy_user_id if a_dir else None) }}</div>
+                </div>
+
+                {% for dep in dir.departments %}
+                  {% set a_dep = assignments.get(('DEPARTMENT', dep.id)) %}
+                  <div class="mt-3 unit-row" id="u_DEPARTMENT_{{ dep.id }}">
+                    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                      <div>
+                        <div class="fw-semibold">{{ dep.name_ar }} {% if dep.code %}<span class="badge bg-light text-dark border unit-badge">{{ dep.code }}</span>{% endif %}</div>
+                        <div class="mgr">
+                          <span class="text-muted">المدير:</span>
+                          <span class="fw-semibold">{{ a_dep.manager_user.full_name if a_dep and a_dep.manager_user else '—' }}</span>
+                          <span class="text-muted ms-2">البديل:</span>
+                          <span class="fw-semibold">{{ a_dep.deputy_user.full_name if a_dep and a_dep.deputy_user else '—' }}</span>
+                        </div>
+                      </div>
+                      <div class="unit-actions">{{ unit_assign_btn('DEPARTMENT', dep.id, a_dep.manager_user_id if a_dep else None, a_dep.deputy_user_id if a_dep else None) }}</div>
+                    </div>
+
+                    {% for sec in dep.sections %}
+                      {% set a_sec = assignments.get(('SECTION', sec.id)) %}
+                      <div class="mt-3 unit-row" id="u_SECTION_{{ sec.id }}">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2" id="section_{{ sec.id }}">
+                          <div>
+                            <div class="fw-semibold">{{ sec.name_ar }} {% if sec.code %}<span class="badge bg-light text-dark border unit-badge">{{ sec.code }}</span>{% endif %}</div>
+                            <div class="mgr">
+                              <span class="text-muted">المدير:</span>
+                              <span class="fw-semibold">{{ a_sec.manager_user.full_name if a_sec and a_sec.manager_user else '—' }}</span>
+                              <span class="text-muted ms-2">البديل:</span>
+                              <span class="fw-semibold">{{ a_sec.deputy_user.full_name if a_sec and a_sec.deputy_user else '—' }}</span>
+                            </div>
+                          </div>
+                          <div class="d-flex flex-wrap gap-2 align-items-center unit-actions">
+                            {{ unit_assign_btn('SECTION', sec.id, a_sec.manager_user_id if a_sec else None, a_sec.deputy_user_id if a_sec else None) }}
+                            {{ team_add_btn(sec.id) }}
+                          </div>
+                        </div>
+
+                        {% if sec.teams|length > 0 %}
+                          <div class="table-responsive mt-2">
+                            <table class="table table-sm align-middle">
+                              <thead>
+                                <tr>
+                                  <th>{{ portal_sort_link('الفريق', 'name_ar') }}</th>
+                                  <th>{{ portal_sort_link('Code', 'code') }}</th>
+                                  <th></th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {% for team in sec.teams %}
+                                  {% set a_team = assignments.get(('TEAM', team.id)) %}
+                                  <tr id="u_TEAM_{{ team.id }}">
+                                    <td>
+                                      <div class="fw-semibold">{{ team.name_ar }}</div>
+                                      <div class="mgr">
+                                        <span class="text-muted">المدير:</span>
+                                        <span class="fw-semibold">{{ a_team.manager_user.full_name if a_team and a_team.manager_user else '—' }}</span>
+                                        <span class="text-muted ms-2">البديل:</span>
+                                        <span class="fw-semibold">{{ a_team.deputy_user.full_name if a_team and a_team.deputy_user else '—' }}</span>
+                                      </div>
+                                    </td>
+                                    <td class="text-muted">{{ team.code or '—' }}</td>
+                                    <td class="text-end">
+                                      <div class="d-flex gap-2 justify-content-end">
+                                        {{ unit_assign_btn('TEAM', team.id, a_team.manager_user_id if a_team else None, a_team.deputy_user_id if a_team else None) }}
+                                        {{ team_edit_btn(team) }}
+                                        {% if can_manage_org %}
+                                          <form method="post" action="{{ url_for('portal.hr_team_delete', team_id=team.id) }}" onsubmit="return confirm('حذف الفريق؟');">
+                                            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                          </form>
+                                        {% endif %}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                {% endfor %}
+                              </tbody>
+                            </table>
+                          </div>
+                        {% else %}
+                          <div class="text-muted small mt-2">لا توجد فرق داخل هذا القسم.</div>
+                        {% endif %}
+
+                      </div>
+                    {% endfor %}
+
+                  </div>
+                {% endfor %}
+
+              </div>
+            {% endfor %}
+
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <hr class="my-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+    <h6 class="mb-0"><i class="bi bi-person-lines-fill"></i> سلسلة المدراء لكل موظف</h6>
+    <div class="text-muted small">تعتمد على تعيين الموظف للوحدة (تعيين الموظفين) وعلى تعيين مدير كل وحدة.</div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>{{ portal_sort_link('الموظف', 'user') }}</th>
+          <th class="text-muted">{{ portal_sort_link('الوحدة (Portal)', 'assigned_unit') }}</th>
+          <th>{{ portal_sort_link('مدير الفريق', 'team_mgr') }}</th>
+          <th>{{ portal_sort_link('مدير القسم', 'section_mgr') }}</th>
+          <th>{{ portal_sort_link('مدير الدائرة', 'department_mgr') }}</th>
+          <th>{{ portal_sort_link('مدير الإدارة', 'directorate_mgr') }}</th>
+          <th>{{ portal_sort_link('مدير المؤسسة', 'organization_mgr') }}</th>
+          <th class="text-muted">{{ portal_sort_link('سلسلة', 'chain_text') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in employee_rows %}
+          <tr>
+            <td class="fw-semibold">{{ r.user.full_name }}</td>
+            <td class="text-muted">{{ r.assigned_unit }}</td>
+            <td>{{ r.team_mgr }}</td>
+            <td>{{ r.section_mgr }}</td>
+            <td>{{ r.department_mgr }}</td>
+            <td>{{ r.directorate_mgr }}</td>
+            <td>{{ r.organization_mgr }}</td>
+            <td class="text-muted small">{{ r.chain_text }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Assign modal -->
+<div class="modal fade" id="assignModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('portal.hr_org_set_manager') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">تعيين مدير/بديل</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="unit_type" id="assign_unit_type">
+          <input type="hidden" name="unit_id" id="assign_unit_id">
+
+          <div class="mb-3">
+            <label class="form-label">المدير المباشر</label>
+            <select name="manager_user_id" class="form-select" id="assign_manager">
+              <option value="">—</option>
+              {% for usr in users %}
+                <option value="{{ usr.id }}">{{ usr.full_name }} ({{ usr.email }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">البديل</label>
+            <select name="deputy_user_id" class="form-select" id="assign_deputy">
+              <option value="">—</option>
+              {% for usr in users %}
+                <option value="{{ usr.id }}">{{ usr.full_name }} ({{ usr.email }})</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="text-muted small">التعيين يستخدم جدول مستقل لتجنّب تعديل جداول البيانات الأساسية.</div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-primary">حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Team modal -->
+<div class="modal fade" id="teamModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <form method="post" action="{{ url_for('portal.hr_team_save') }}">
+        <div class="modal-header">
+          <h5 class="modal-title">إدارة فريق</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="team_id" id="team_id">
+          <input type="hidden" name="section_id" id="team_section_id">
+
+          <div class="mb-2">
+            <label class="form-label">اسم الفريق (AR)</label>
+            <input name="name_ar" id="team_name_ar" class="form-control" required>
+          </div>
+          <div class="mb-2">
+            <label class="form-label">اسم الفريق (EN)</label>
+            <input name="name_en" id="team_name_en" class="form-control">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Code</label>
+            <input name="code" id="team_code" class="form-control">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+          <button class="btn btn-primary">حفظ</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  const assignModal = document.getElementById('assignModal');
+  if (assignModal) {
+    assignModal.addEventListener('show.bs.modal', function (event) {
+      const button = event.relatedTarget;
+      document.getElementById('assign_unit_type').value = button.getAttribute('data-unit-type') || '';
+      document.getElementById('assign_unit_id').value = button.getAttribute('data-unit-id') || '';
+      const mgr = button.getAttribute('data-manager-id') || '';
+      const dep = button.getAttribute('data-deputy-id') || '';
+      document.getElementById('assign_manager').value = mgr;
+      document.getElementById('assign_deputy').value = dep;
+    });
+  }
+
+  const teamModal = document.getElementById('teamModal');
+  if (teamModal) {
+    teamModal.addEventListener('show.bs.modal', function (event) {
+      const button = event.relatedTarget;
+      document.getElementById('team_id').value = button.getAttribute('data-team-id') || '';
+      document.getElementById('team_section_id').value = button.getAttribute('data-section-id') || '';
+      document.getElementById('team_name_ar').value = button.getAttribute('data-name-ar') || '';
+      document.getElementById('team_name_en').value = button.getAttribute('data-name-en') || '';
+      document.getElementById('team_code').value = button.getAttribute('data-code') || '';
+    });
+  }
+</script>
+
+
+<script>
+  (function(){
+    const toggle = document.getElementById('togglePeople');
+    if (toggle) {
+      toggle.addEventListener('change', function(){
+        const url = new URL(window.location.href);
+        if (this.checked) {
+          url.searchParams.set('include_people', '1');
+        } else {
+          url.searchParams.delete('include_people');
+        }
+        window.location.href = url.toString();
+      });
+    }
+
+    const expandAll = document.getElementById('btnExpandAll');
+    const collapseAll = document.getElementById('btnCollapseAll');
+    const container = document.getElementById('orgTree');
+
+    function setAll(open){
+      if (!container) return;
+      container.querySelectorAll('details.org-details').forEach(d => { d.open = !!open; });
+    }
+
+    if (expandAll) expandAll.addEventListener('click', () => setAll(true));
+    if (collapseAll) collapseAll.addEventListener('click', () => setAll(false));
+  })();
+</script>
+
+{% endblock %}

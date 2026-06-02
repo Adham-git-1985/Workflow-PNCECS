@@ -83,8 +83,8 @@
     input.type = "text";
     input.autocomplete = "off";
     input.className = "form-control form-control-sm mb-1 ss-input";
-    input.placeholder = isRtl() ? "اكتب للبحث داخل القائمة..." : "Type to search...";
-    input.setAttribute("aria-label", isRtl() ? "بحث داخل القائمة" : "Search within list");
+    input.placeholder = isRtl() ? "اكتب للبحث داخل القائمة..." : "اكتب للبحث...";
+    input.setAttribute("aria-label", isRtl() ? "بحث داخل القائمة" : "بحث within list");
 
     // Move select inside wrapper
     wrapper.appendChild(input);
@@ -111,7 +111,7 @@
 
     // Enter = select first visible option
     input.addEventListener("keydown", function (e) {
-      if (e.key !== "Enter") return;
+      if (e.key !== "أدخل") return;
       const first = filterOptions(selectEl, input.value);
       if (first) {
         selectEl.value = first.value;

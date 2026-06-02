@@ -19,7 +19,7 @@
         <h5 class="mb-3">👤 البيانات</h5>
         <div class="mb-2"><strong>ID:</strong> {{ user.id }}</div>
         <div class="mb-2"><strong>Email:</strong> {{ user.email }}</div>
-        <div class="mb-3"><strong>Role:</strong> {{ user.role }}</div>
+        <div class="mb-3"><strong>الدور:</strong> {{ user.role }}</div>
 
         <form method="post" action="{{ url_for('users.manage_user_role', user_id=user.id) }}" class="row g-2">
           <div class="col-md-8">

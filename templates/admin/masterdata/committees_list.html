@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3 class="mb-1">👥 اللجان</h3>
-    <small class="text-muted">إدارة اللجان ككيان مستقل (مصدر توجيه للمسارات مثل Role/Department/Directorate)</small>
+    <small class="text-muted">إدارة اللجان ككيان مستقل (مصدر توجيه للمسارات مثل الدور/Department/Directorate)</small>
   </div>
   <div class="d-flex gap-2">
     <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdComPrint\')">🖨️ طباعة</button>
@@ -36,9 +36,9 @@
               <th>#</th>
               <th>Code</th>
               <th>الاسم (AR)</th>
-              <th>Name (EN)</th>
+              <th>الاسم (EN)</th>
               <th>الأعضاء</th>
-              <th>Active</th>
+              <th>فعّال</th>
               <th data-nosort></th>
             </tr>
           </thead>
@@ -56,9 +56,9 @@
                 </td>
                 <td>
                   {% if c.is_active %}
-                    <span class="badge bg-success">Yes</span>
+                    <span class="badge bg-success">نعم</span>
                   {% else %}
-                    <span class="badge bg-secondary">No</span>
+                    <span class="badge bg-secondary">لا</span>
                   {% endif %}
                 </td>
                 <td class="text-end d-flex gap-2 justify-content-end">

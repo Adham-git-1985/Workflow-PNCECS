@@ -1,0 +1,84 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل الموارد البشرية" %}
+{% set page_subtitle = "ملف الموظف، الطلبات، التقارير، وإدارة البيانات حسب الصلاحيات." %}
+
+{% block guide_body %}
+
+<div class="alert alert-secondary py-2 mb-3">
+  <div class="fw-bold">فهرس سريع حسب الشاشة</div>
+  <div class="small text-muted mb-2">
+    هذا الدليل مُرتّب “حسب الشاشة” ليسهّل على المستخدم الوصول لما يحتاجه بسرعة.
+    {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_perm('HR_DOCS_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
+      إذا كنت أدمن موارد بشرية، ستستفيد أيضًا من <a href="{{ url_for('users.help_hr_admin_guide') }}" target="_blank">دليل HR Admin</a>.
+    {% endif %}
+  </div>
+  <div class="row g-2 small">
+    <div class="col-md-6">
+      <ul class="mb-0">
+        <li><strong>ملف الموظف:</strong> بيانات الموظف + المرفقات.</li>
+        <li><strong>طلبات HR:</strong> إجازات + مغادرات/أذونات + نماذج (حسب التفعيل).</li>
+        <li><strong>الدوام:</strong> قوالب الدوام + السياسات + تعيين الدوام (للمخولين).</li>
+      </ul>
+    </div>
+    <div class="col-md-6">
+      <ul class="mb-0">
+        <li><strong>التقارير:</strong> تصدير/طباعة حسب الشاشة.</li>
+        <li><strong>المستندات:</strong> مرفقات الموظف/النماذج الداخلية.</li>
+        <li><strong>أدلة متخصصة:</strong> <a href="{{ url_for('users.help_leaves_guide') }}" target="_blank">الإجازات</a>، <a href="{{ url_for('users.help_transport_guide') }}" target="_blank">الحركة والنقل</a>.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<details>
+  <summary><strong>١) ملف الموظف</strong></summary>
+  <div class="mt-2">
+    <ul>
+      <li>من لوحة الموارد البشرية يمكنك فتح ملف الموظف.</li>
+      <li>يظهر الملف البيانات الأساسية والمرفقات (إن كانت صلاحياتك تسمح).</li>
+      <li>يمكن رفع مرفقات لملف الموظف (مثل وثائق/عقود) حسب الصلاحيات.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٢) طلبات الموارد البشرية</strong></summary>
+  <div class="mt-2">
+    <p>تشمل: الإجازات، الأذونات/المغادرات، وأي نماذج HR مرتبطة.</p>
+    <ul>
+      <li>الموظف يقدم الطلب من واجهة الطلبات.</li>
+      <li>الموافِق يعتمد أو يرفض حسب المسار.</li>
+      <li>التقارير تعرض النتائج الشهرية/السنوية حسب إعدادات النظام.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٣) التقارير</strong></summary>
+  <div class="mt-2">
+    <ul>
+      <li>تقرير الإجازات الشهري: يعرض أيام الإجازات المعتمدة وساعات الأذونات.</li>
+      <li>يمكن الطباعة من التقرير (طباعة المحتوى الرئيسي فقط).</li>
+      <li>قد تظهر حقول إضافية مثل “ساعات المغادرة المسموحة” إذا كانت مفعّلة في النظام.</li>
+    </ul>
+  </div>
+</details>
+
+<details>
+  <summary><strong>٤) تنبيهات ذكية</strong></summary>
+  <div class="mt-2">
+    <ul>
+      <li>تنبيه عند وجود طلبات بانتظار اعتماد.</li>
+      <li>تنبيه عند اقتراب بدء إجازة معتمدة أو وجود تعارض.</li>
+      <li>تنبيه عند نقص مرفقات مطلوبة (مثل تقارير الإجازة المرضية) إذا كان النوع يتطلب ذلك.</li>
+    </ul>
+  
+
+  <h5 class="mt-4">5) التدريب</h5>
+  <ul>
+    <li><strong>أين أرى التدريبات المنشورة؟</strong> من: <span class="badge text-bg-secondary">إدارة الموارد البشرية</span> → <span class="badge text-bg-secondary">برامج فرعية</span> → <span class="badge text-bg-secondary">سجل التدريبات</span> أو من صفحة <span class="badge text-bg-secondary">خدمات الموظف</span> عبر بطاقة <span class="badge text-bg-secondary">تدريباتي</span>.</li>
+    <li><strong>كيف أنتسب؟</strong> افتح <em>سجل التدريبات</em> ثم اضغط <span class="badge text-bg-success">انتساب</span> خلال فترة الترشيح. إذا كانت الشروط مفعّلة أو التدريب <em>حسب الشروط فقط</em> فسيتم التحقق تلقائيًا.</li>
+    <li><strong>كيف أنسحب؟</strong> من نفس السجل عبر زر <span class="badge text-bg-warning">انسحاب</span> (إن كان متاحًا).</li>
+  </ul>
+</div>
+</details>
+{% endblock %}

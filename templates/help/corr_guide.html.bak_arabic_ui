@@ -1,0 +1,120 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل الصادر والوارد" %}
+{% set page_subtitle = "كيفية تسجيل معاملات الصادر/الوارد، إدارة المرفقات، البحث، التصدير والطباعة." %}
+
+{% block guide_body %}
+
+<div class="alert alert-secondary py-2 mb-3">
+  <div class="fw-bold">ملخص سريع</div>
+  <div class="small text-muted">
+    الصادر/الوارد في البوابة الإدارية هو <strong>سجل مراسلات</strong> مستقل: تسجيل بيانات المعاملة + مرفقات + ملاحظات + نشاط، مع إمكانيات بحث وتصدير وطباعة.
+    <span class="fw-bold">التصنيفات</span> و <span class="fw-bold">الجهات (مرسل/مستلم)</span> يمكن إدارتها من <strong>إدارة البوابة → مراسلات</strong>.
+  </div>
+</div>
+
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) دورة العمل (من البداية للنهاية)</summary>
+  <div class="mt-2">
+    <ol class="mb-2">
+      <li><strong>تسجيل جديد</strong> (وارد/صادر) من شاشة التسجيل.</li>
+      <li><strong>إضافة مرفقات</strong> (ملف أو أكثر) أثناء التسجيل أو لاحقًا من شاشة التعديل.</li>
+      <li><strong>مراجعة/تحديث البيانات</strong> (العنوان، الجهة، التصنيف، الملخص… إلخ).</li>
+      <li><strong>البحث والتصفية</strong> من شاشة القائمة.</li>
+      <li><strong>الطباعة/التصدير</strong> PDF أو Excel/CSV حسب الشاشة المتاحة.</li>
+    </ol>
+    <div class="alert alert-info py-2 mb-0">
+      <strong>ملاحظة:</strong> رقم الصادر/الوارد <span class="fw-bold">اختياري</span> (يمكن تركه فارغًا إذا لم يصدر الرقم بعد).
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">2) تسجيل وارد (Inbound)</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>تاريخ الاستلام:</strong> مطلوب.</li>
+      <li><strong>التصنيف:</strong> اختر من القائمة. إذا كانت المعاملة خارج التصنيفات اختر <strong>أخرى</strong> وأدخل قيمة جديدة.</li>
+      <li><strong>الجهة المرسلة:</strong> اختر من الجهات المعرفة. إذا لم تكن موجودة اختر <strong>أخرى</strong> وأدخلها يدويًا.</li>
+      <li><strong>العنوان/الملخص:</strong> يُفضّل كتابة عنوان واضح + ملخص قصير.</li>
+      <li><strong>المرفقات:</strong> يمكنك رفع مرفقات متعددة.</li>
+    </ul>
+    <div class="small text-muted">بعد الحفظ ستظهر المعاملة في قائمة الوارد ويمكنك تعديلها أو طباعة بطاقة الوارد.</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">3) تسجيل صادر (Outbound)</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>تاريخ الإرسال:</strong> مطلوب.</li>
+      <li><strong>التصنيف:</strong> اختر من التصنيفات أو “أخرى”.</li>
+      <li><strong>الجهة المستلمة:</strong> اختر أو “أخرى”.</li>
+      <li><strong>العنوان/الملخص:</strong> ضع عنوانًا يُسهّل البحث لاحقًا (مثال: “كتاب رسمي – طلب ترشيح”).</li>
+      <li><strong>المرفقات:</strong> ارفع نسخة الكتاب/المرفقات.</li>
+    </ul>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">4) شاشة القائمة: البحث، التصفية، التصدير</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li><strong>البحث النصي:</strong> اكتب كلمة من العنوان/الملخص/الجهة/الرقم…</li>
+      <li><strong>التصفية:</strong> بالتصنيف، التاريخ (من/إلى)، والجهة حسب الشاشة.</li>
+      <li><strong>التصدير:</strong> استخدم زر التصدير (Excel/CSV) لإخراج القائمة الحالية وفق الفلاتر.</li>
+      <li><strong>الطباعة الذكية:</strong> زر الطباعة يطبع “القسم المركزي” (الجدول) بدل الصفحة كاملة.</li>
+    </ul>
+    <div class="alert alert-warning py-2 mb-0">
+      <strong>نصيحة:</strong> قبل التصدير، طبّق الفلاتر أولًا (مثل شهر/سنة) ثم صدّر؛ ستحصل على ملف أنظف وأسهل للمراجعة.
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">5) المرفقات: إضافة/تحميل/معاينة</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>في شاشة <strong>التعديل</strong> يمكنك رفع مرفقات إضافية.</li>
+      <li>يمكنك <strong>تحميل</strong> أي مرفق بالنقر عليه (حسب الواجهة).</li>
+      <li>تأكد أن أسماء الملفات واضحة (مثال: book_2026-02-01.pdf).</li>
+    </ul>
+    <div class="small text-muted">المرفقات تُحفظ ضمن النظام (وقد تظهر ضمن الأرشفة/المستودع حسب إعدادات مشروعك).</div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">6) إدارة التصنيفات والجهات (Portal Admin)</summary>
+  <div class="mt-2">
+    <div class="mb-2">
+      اذهب إلى: <strong>إدارة البوابة → مراسلات</strong>
+    </div>
+    <ul class="mb-2">
+      <li><strong>التصنيفات (Categories):</strong> أضف/عدّل/عطّل تصنيفات مثل “عام / اتفاقيات / مالية…”.</li>
+      <li><strong>الجهات (Parties):</strong> عرّف جهات مرسلة/مستلمة/كلاهما لتسهيل الاختيار أثناء التسجيل.</li>
+      <li><strong>التفعيل/التعطيل:</strong> يُفضّل تعطيل العناصر بدل حذفها إذا كانت مستخدمة في معاملات سابقة.</li>
+    </ul>
+    <div class="alert alert-info py-2 mb-0">
+      <strong>ملاحظة:</strong> وجود Lookup نظيف (تصنيفات/جهات) يقلل الأخطاء الإملائية ويسهّل التقارير لاحقًا.
+    </div>
+  </div>
+</details>
+
+
+<details class="mb-2">
+  <summary class="fw-bold">7) أسئلة شائعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>هل رقم الصادر/الوارد إلزامي؟</strong> لا، اختياري. يمكنك إدخاله لاحقًا من شاشة التعديل.</li>
+      <li><strong>لماذا لا أرى جهة/تصنيف في القوائم؟</strong> قد تكون <strong>غير مفعّلة</strong> أو لم تُضف من Portal Admin.</li>
+      <li><strong>كيف أطبع بطاقة المعاملة؟</strong> من شاشة العرض أو التعديل باستخدام زر <strong>طباعة</strong>.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">{% if s %}✏️ تعديل قسم{% else %}➕ إضافة قسم{% endif %}</h3>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.sections_list') }}">رجوع</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-12">
+        <div class="alert alert-info py-2 mb-0">
+          اختر <strong>إدارة</strong> أو <strong>دائرة</strong> أو <strong>وحدة</strong> (واحد فقط).
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الإدارة (اختياري)</label>
+        <select class="form-select" name="directorate_id" data-searchable="1">
+          <option value="">-- اختر --</option>
+          {% for d in directorates %}
+            <option value="{{ d.id }}" {% if s and s.directorate_id == d.id %}selected{% endif %}>
+              {{ d.name_ar }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الدائرة (اختياري)</label>
+        <select class="form-select" name="department_id" data-searchable="1">
+          <option value="">-- اختر --</option>
+          {% for d in departments %}
+            <option value="{{ d.id }}" {% if s and s.department_id == d.id %}selected{% endif %}>
+              {{ d.name_ar }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">الوحدة (اختياري)</label>
+        <select class="form-select" name="unit_id" data-searchable="1">
+          <option value="">-- اختر --</option>
+          {% for u in units %}
+            <option value="{{ u.id }}" {% if s and s.unit_id == u.id %}selected{% endif %}>
+              {{ u.name_ar }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">الاسم (AR)</label>
+        <input class="form-control" name="name_ar" value="{{ s.name_ar if s else '' }}" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold">الاسم (EN)</label>
+        <input class="form-control" name="name_en" value="{{ s.name_en if s else '' }}">
+      </div>
+
+      <div class="col-md-4">
+        <label class="form-label fw-bold">Code</label>
+        <input class="form-control" name="code" value="{{ s.code if s else '' }}">
+      </div>
+
+      <div class="col-md-4 d-flex align-items-end">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active" {% if not s or s.is_active %}checked{% endif %}>
+          <label class="form-check-label" for="is_active">Active</label>
+        </div>
+      </div>
+
+      <div class="col-12">
+        <button class="btn btn-primary">حفظ</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const dirSel = document.querySelector('select[name="directorate_id"]');
+    const depSel = document.querySelector('select[name="department_id"]');
+    const unitSel = document.querySelector('select[name="unit_id"]');
+    if (!dirSel || !depSel || !unitSel) return;
+
+    function clearOthers(changed) {
+      if (changed === dirSel && dirSel.value) {
+        depSel.value = '';
+        unitSel.value = '';
+      }
+      if (changed === depSel && depSel.value) {
+        dirSel.value = '';
+        unitSel.value = '';
+      }
+      if (changed === unitSel && unitSel.value) {
+        dirSel.value = '';
+        depSel.value = '';
+      }
+    }
+
+    dirSel.addEventListener('change', function () { clearOthers(dirSel); });
+    depSel.addEventListener('change', function () { clearOthers(depSel); });
+    unitSel.addEventListener('change', function () { clearOthers(unitSel); });
+  });
+</script>
+
+{% endblock %}

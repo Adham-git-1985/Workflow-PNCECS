@@ -1,0 +1,87 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">👥 اللجان</h3>
+    <small class="text-muted">إدارة اللجان ككيان مستقل (مصدر توجيه للمسارات مثل Role/Department/Directorate)</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdComPrint\')">🖨️ طباعة</button>
+
+    <a class="btn btn-outline-success" href="{{ url_for('masterdata.committees_export_excel', q=q) }}">⬇️ Excel</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('masterdata.import_excel', screen='committees') }}">⬆️ استيراد Excel</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.committees_new') }}">➕ لجنة جديدة</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <form method="get" class="mb-3">
+      <div class="input-group">
+        <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="ابحث بالاسم أو الكود…">
+        <button class="btn btn-outline-secondary" type="submit">بحث</button>
+        {% if q %}
+          <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+        {% endif %}
+      </div>
+    </form>
+
+    {% if committees %}
+      <div id="mdComPrint" class="table-responsive">
+        <table class="table table-sm align-middle" data-sortable="true">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>Code</th>
+              <th>الاسم (AR)</th>
+              <th>Name (EN)</th>
+              <th>الأعضاء</th>
+              <th>Active</th>
+              <th data-nosort></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for c in committees %}
+              {% set total = (c.assignees|length) if (c.assignees is not none) else 0 %}
+              {% set active_members = (c.assignees | selectattr('is_active') | list | length) if (c.assignees is not none) else 0 %}
+              <tr>
+                <td>{{ c.id }}</td>
+                <td>{% if c.code %}<code>{{ c.code }}</code>{% else %}-{% endif %}</td>
+                <td>{{ c.name_ar }}</td>
+                <td>{{ c.name_en or "-" }}</td>
+                <td>
+                  <span class="badge bg-light text-dark border">{{ active_members }}/{{ total }}</span>
+                </td>
+                <td>
+                  {% if c.is_active %}
+                    <span class="badge bg-success">Yes</span>
+                  {% else %}
+                    <span class="badge bg-secondary">No</span>
+                  {% endif %}
+                </td>
+                <td class="text-end d-flex gap-2 justify-content-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.committees_edit', committee_id=c.id) }}">إدارة</a>
+                  <form method="post" action="{{ url_for('masterdata.committees_delete', committee_id=c.id) }}"
+                        onsubmit="return confirm('حذف/تعطيل اللجنة؟');">
+                    <button class="btn btn-sm btn-outline-danger">حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا توجد لجان بعد.</div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/table_sort.js') }}"></script>
+{% endblock %}

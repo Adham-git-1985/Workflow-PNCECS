@@ -1,0 +1,94 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}ملخص الدوام اليومي{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <h5 class="mb-0"><i class="bi bi-graph-up"></i> ملخص الدوام اليومي</h5>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_import') }}">استيراد</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">الأحداث</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}">إعدادات HR</a>
+    </div>
+  </div>
+
+  <hr class="my-4">
+
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label">من</label>
+      <input type="date" class="form-control" name="day_from" value="{{ day_from }}">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">إلى</label>
+      <input type="date" class="form-control" name="day_to" value="{{ day_to }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="">— جميع الموظفين —</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if user_id and user_id|int == u.id %}selected{% endif %}>{{ u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2 d-grid">
+      <button class="btn btn-primary" type="submit">عرض</button>
+    </div>
+  </form>
+
+  <div class="d-flex flex-wrap gap-2 mt-3">
+    <form method="post" action="{{ url_for('portal.hr_attendance_daily_recompute') }}" class="d-inline">
+      <input type="hidden" name="day_from" value="{{ day_from }}">
+      <input type="hidden" name="day_to" value="{{ day_to }}">
+      <input type="hidden" name="user_id" value="{{ user_id }}">
+      <button class="btn btn-outline-primary" type="submit"><i class="bi bi-arrow-repeat"></i> إعادة احتساب</button>
+    </form>
+
+    <a class="btn btn-outline-success" href="{{ url_for('portal.hr_attendance_daily_export_xlsx', day_from=day_from, day_to=day_to, user_id=user_id) }}">
+      <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+    </a>
+  </div>
+
+  <hr class="my-3">
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>{{ portal_sort_link('اليوم', 'day') }}</th>
+          <th>{{ portal_sort_link('الموظف', 'user') }}</th>
+          <th>{{ portal_sort_link('أول دخول', 'first_in') }}</th>
+          <th>{{ portal_sort_link('آخر خروج', 'last_out') }}</th>
+          <th>ساعات العمل</th>
+          <th>{{ portal_sort_link('تأخير', 'late_minutes') }}</th>
+          <th>{{ portal_sort_link('خروج مبكر', 'early_leave_minutes') }}</th>
+          <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
+          <th>{{ portal_sort_link('الحالة', 'status') }}</th>
+          <th>{{ portal_sort_link('الجدول', 'schedule') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td><code>{{ r.day }}</code></td>
+          <td>{{ r.user.name or r.user.email }}</td>
+          <td class="text-muted">{{ r.first_in.strftime('%Y-%m-%d %H:%M:%S') if r.first_in else '—' }}</td>
+          <td class="text-muted">{{ r.last_out.strftime('%Y-%m-%d %H:%M:%S') if r.last_out else '—' }}</td>
+          <td>{{ '%.2f'|format((r.work_minutes or 0) / 60) }}</td>
+          <td>{% if r.late_minutes %}<span class="badge bg-warning text-dark">{{ r.late_minutes }} د</span>{% else %}—{% endif %}</td>
+          <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
+          <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
+          <td>
+            {% if r.status == 'OK' %}<span class="badge bg-success">OK</span>
+            {% elif r.status == 'INCOMPLETE' %}<span class="badge bg-danger">INCOMPLETE</span>
+            {% else %}<span class="badge bg-secondary">{{ r.status }}</span>
+            {% endif %}
+          </td>
+          <td class="text-muted">{{ r.schedule.name if r.schedule else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

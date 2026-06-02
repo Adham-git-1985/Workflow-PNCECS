@@ -1,0 +1,400 @@
+{
+  "generated_at": "2026-06-02T12:42:49",
+  "root": "C:\\Users\\Adham\\PycharmProjects\\Workflow\\Workflow-PNCECS",
+  "mode": "apply",
+  "changed_files": [
+    {
+      "file": "templates\\inbox.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\layout.html",
+      "replacements": 6
+    },
+    {
+      "file": "templates\\permissions.html",
+      "replacements": 8
+    },
+    {
+      "file": "templates\\admin\\dashboard.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\admin\\escalations.html",
+      "replacements": 7
+    },
+    {
+      "file": "templates\\admin\\evaluation_view.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\permissions.html",
+      "replacements": 7
+    },
+    {
+      "file": "templates\\admin\\requests.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\audit\\dashboard.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\audit\\deleted_request_snapshot.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\audit\\list.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\audit\\timeline.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\components\\advanced_filters.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\help\\access_requests_admin_guide.html",
+      "replacements": 8
+    },
+    {
+      "file": "templates\\help\\access_requests_guide.html",
+      "replacements": 12
+    },
+    {
+      "file": "templates\\help\\corr_guide.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\help\\hr_admin_guide.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\help\\hr_guide.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\help\\index.html",
+      "replacements": 5
+    },
+    {
+      "file": "templates\\help\\org_dynamic_guide.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\help\\performance_admin_guide.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\help\\system_master_guide.html",
+      "replacements": 11
+    },
+    {
+      "file": "templates\\help\\transport_admin_guide.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\help\\workflow_guide.html",
+      "replacements": 39
+    },
+    {
+      "file": "templates\\help\\workflow_user_guide.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\notifications\\dashboard.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\layout.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\users\\list.html",
+      "replacements": 5
+    },
+    {
+      "file": "templates\\users\\manage.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\users\\profile.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\workflow\\escalate.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\workflow\\following.html",
+      "replacements": 8
+    },
+    {
+      "file": "templates\\workflow\\new_request.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\workflow\\notifications.html",
+      "replacements": 5
+    },
+    {
+      "file": "templates\\workflow\\request_escalations.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\workflow\\view_request.html",
+      "replacements": 7
+    },
+    {
+      "file": "templates\\workflow\\templates_admin\\details.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\workflow\\templates_admin\\edit.html",
+      "replacements": 8
+    },
+    {
+      "file": "templates\\workflow\\templates_admin\\list.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\workflow\\templates_admin\\new.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\workflow\\templates_admin\\step_edit.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\portal\\admin\\compliance.html",
+      "replacements": 7
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_perf_cycle_detail.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_perf_dashboard.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_reports_dashboard.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_schedule_templates.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_ss_workflows.html",
+      "replacements": 9
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_work_assignments.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\portal\\admin\\hr_work_policies.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\admin\\integrations.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\admin\\masterdata_hub.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\portal\\admin\\permissions.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\portal\\admin\\permissions_catalog.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\portal\\admin\\permission_presets.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\admin\\timeline.html",
+      "replacements": 6
+    },
+    {
+      "file": "templates\\portal\\corr\\inbound_edit.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\corr\\inbound_new.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\corr\\outbound_edit.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\corr\\outbound_new.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\attendance_daily.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\base.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\portal\\hr\\deductions_run.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\portal\\hr\\docs_admin.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\employee_file.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\employee_lookups_category.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\hr\\employee_lookups_index.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\hr\\index.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\leave_balances.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\leave_type_edit.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\hr\\masterdata_index.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\portal\\hr\\me_home.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\hr\\my_system_evaluation_view.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\org_assignments.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\org_node_assign_user.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\org_structure.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\portal\\hr\\performance_home.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\permission_type_edit.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\reports_last_login.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\ss_home.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\portal\\hr\\_module_nav.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\portal\\hr\\employee\\payslips.html",
+      "replacements": 4
+    },
+    {
+      "file": "templates\\portal\\admin\\corr\\categories.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\admin\\masterdata\\committees_form.html",
+      "replacements": 11
+    },
+    {
+      "file": "templates\\admin\\masterdata\\committees_list.html",
+      "replacements": 5
+    },
+    {
+      "file": "templates\\admin\\masterdata\\dept_form.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\masterdata\\dir_form.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\masterdata\\import_excel.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\masterdata\\org_form.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\masterdata\\org_node_form.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\masterdata\\request_types_form.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\masterdata\\request_types_list.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\admin\\masterdata\\roles_form.html",
+      "replacements": 3
+    },
+    {
+      "file": "templates\\admin\\masterdata\\roles_list.html",
+      "replacements": 5
+    },
+    {
+      "file": "templates\\admin\\masterdata\\sections_form.html",
+      "replacements": 1
+    },
+    {
+      "file": "templates\\admin\\workflow_routing\\form.html",
+      "replacements": 2
+    },
+    {
+      "file": "templates\\admin\\workflow_routing\\list.html",
+      "replacements": 5
+    },
+    {
+      "file": "static\\js\\charts.js",
+      "replacements": 2
+    },
+    {
+      "file": "static\\js\\searchable_select.js",
+      "replacements": 3
+    }
+  ],
+  "total_replacements": 330
+}

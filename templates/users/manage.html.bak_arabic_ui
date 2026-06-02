@@ -1,0 +1,73 @@
+{% extends "layout.html" %}
+{% block title %}إدارة مستخدم{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">⚙️ إدارة المستخدم</h3>
+    <small class="text-muted">صلاحيات SUPER_ADMIN فقط</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('users.list_users') }}" class="btn btn-outline-secondary">← رجوع</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">👤 البيانات</h5>
+        <div class="mb-2"><strong>ID:</strong> {{ user.id }}</div>
+        <div class="mb-2"><strong>Email:</strong> {{ user.email }}</div>
+        <div class="mb-3"><strong>Role:</strong> {{ user.role }}</div>
+
+        <form method="post" action="{{ url_for('users.manage_user_role', user_id=user.id) }}" class="row g-2">
+          <div class="col-md-8">
+            <label class="form-label">تغيير الدور</label>
+            <select name="role" class="form-select" required>
+              {% for r in role_choices %}
+                <option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-4 d-flex align-items-end">
+            <button class="btn btn-primary w-100">تحديث</button>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h5 class="mb-3">🔑 إعادة تعيين كلمة المرور</h5>
+        <form method="post" action="{{ url_for('users.manage_user_password', user_id=user.id) }}" class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label">كلمة مرور جديدة</label>
+            <input type="password" name="new_password" class="form-control" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">تأكيد كلمة المرور</label>
+            <input type="password" name="confirm_password" class="form-control" required>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-warning">حفظ كلمة المرور</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="card shadow-sm mt-3 border-danger">
+      <div class="card-body">
+        <h5 class="mb-3 text-danger">🗑️ حذف المستخدم</h5>
+        <form method="post" action="{{ url_for('users.manage_user_delete', user_id=user.id) }}" onsubmit="return confirm('تأكيد حذف المستخدم؟ هذا الإجراء لا يمكن التراجع عنه.');">
+          <button class="btn btn-danger">حذف المستخدم</button>
+        </form>
+      </div>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

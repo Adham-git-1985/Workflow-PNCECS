@@ -1,0 +1,242 @@
+{% extends "portal/layout.html" %}
+{% block title %}سياسات الدوام{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-shield-check"></i> سياسات الدوام</h5>
+      <div class="text-muted small">سياسة الدوام = سياسة الأيام (ثابت/Hybrid quota) + سياسة المكان (On-site/Hybrid/Remote).</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
+        <i class="bi bi-clipboard2-data"></i> لوحة HR
+      </a>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">
+        <i class="bi bi-grid"></i> لوحة الإدارة
+      </a>
+    </div>
+  </div>
+
+  <div class="border rounded-3 p-3 mb-4">
+    <h6 class="mb-3">إضافة سياسة</h6>
+    <form method="post" class="row g-2 align-items-end">
+      <input type="hidden" name="op" value="create">
+
+      <div class="col-lg-3">
+        <label class="form-label">الاسم</label>
+        <input class="form-control" name="name" required>
+      </div>
+
+      <div class="col-lg-2">
+        <label class="form-label">سياسة الأيام</label>
+        <select class="form-select" name="days_policy" id="days_policy_new">
+          <option value="FIXED" selected>ثابت</option>
+          <option value="HYBRID_WEEKLY_QUOTA">Hybrid weekly quota</option>
+        </select>
+      </div>
+
+      <div class="col-lg-3" id="fixed_days_wrap_new">
+        <label class="form-label">الأيام الثابتة</label>
+        <div class="d-flex flex-wrap gap-2">
+          {% for idx, label in weekdays %}
+            <label class="form-check form-check-inline m-0">
+              <input class="form-check-input" type="checkbox" name="fixed_days" value="{{ idx }}">
+              <span class="form-check-label small">{{ label }}</span>
+            </label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <div class="col-lg-2 d-none" id="hybrid_wrap_new">
+        <label class="form-label">Hybrid quota (أسبوعي)</label>
+        <div class="d-flex gap-2">
+          <input class="form-control" type="number" min="0" name="hybrid_office_days" placeholder="مكتب">
+          <input class="form-control" type="number" min="0" name="hybrid_remote_days" placeholder="عن بعد">
+        </div>
+        <div class="text-muted small mt-1">مثال: 3 مكتب + 2 عن بعد</div>
+      </div>
+
+      <div class="col-lg-2">
+        <label class="form-label">سياسة المكان</label>
+        <select class="form-select" name="location_policy">
+          <option value="ONSITE" selected>On-site فقط</option>
+          <option value="HYBRID">Hybrid</option>
+          <option value="REMOTE">Remote فقط</option>
+        </select>
+      </div>
+
+      <div class="col-lg-1">
+        <div class="form-check">
+          <input class="form-check-input" type="checkbox" name="is_active" checked>
+          <label class="form-check-label">نشط</label>
+        </div>
+      </div>
+
+      <div class="col-12 col-lg-auto">
+        <button class="btn btn-primary"><i class="bi bi-plus-circle"></i> إضافة</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>{{ portal_sort_link('الاسم', 'name') }}</th>
+          <th>سياسة الأيام</th>
+          <th>سياسة المكان</th>
+          <th>الحالة</th>
+          <th class="text-end">إجراءات</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in policies %}
+          <tr>
+            <td class="text-muted">{{ p.id }}</td>
+            <td class="fw-semibold">{{ p.name }}</td>
+            <td>{{ days_label(p) }}</td>
+            <td>{{ place_label(p) }}</td>
+            <td>
+              {% if p.is_active %}
+                <span class="badge bg-success">نشط</span>
+              {% else %}
+                <span class="badge bg-secondary">موقوف</span>
+              {% endif %}
+            </td>
+            <td class="text-end">
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#editPolicy{{ p.id }}" title="تعديل" data-bs-tooltip="1">
+                <i class="bi bi-pencil"></i>
+              </button>
+              <form method="post" class="d-inline">
+                <input type="hidden" name="op" value="toggle">
+                <input type="hidden" name="id" value="{{ p.id }}">
+                <button class="btn btn-sm btn-outline-warning" type="submit" title="تفعيل/إيقاف" data-bs-tooltip="1"><i class="bi bi-power"></i></button>
+              </form>
+              <form method="post" class="d-inline" onsubmit="return confirm('حذف السياسة؟');">
+                <input type="hidden" name="op" value="delete">
+                <input type="hidden" name="id" value="{{ p.id }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف" data-bs-tooltip="1"><i class="bi bi-trash"></i></button>
+              </form>
+            </td>
+          </tr>
+          <tr class="collapse" id="editPolicy{{ p.id }}">
+            <td colspan="6">
+              <div class="border rounded-3 p-3 bg-light">
+                <form method="post" class="row g-2 align-items-end">
+                  <input type="hidden" name="op" value="save">
+                  <input type="hidden" name="id" value="{{ p.id }}">
+
+                  <div class="col-lg-3">
+                    <label class="form-label">الاسم</label>
+                    <input class="form-control" name="name" value="{{ p.name }}" required>
+                  </div>
+
+                  <div class="col-lg-2">
+                    <label class="form-label">سياسة الأيام</label>
+                    <select class="form-select days-policy" name="days_policy">
+                      <option value="FIXED" {% if (p.days_policy or '').upper() != 'HYBRID_WEEKLY_QUOTA' %}selected{% endif %}>ثابت</option>
+                      <option value="HYBRID_WEEKLY_QUOTA" {% if (p.days_policy or '').upper() == 'HYBRID_WEEKLY_QUOTA' %}selected{% endif %}>Hybrid weekly quota</option>
+                    </select>
+                  </div>
+
+                  <div class="col-lg-3 fixed-days-wrap">
+                    <label class="form-label">الأيام الثابتة</label>
+                    <div class="d-flex flex-wrap gap-2">
+                      {% set mask = p.fixed_days_mask or 0 %}
+                      {% for idx, label in weekdays %}
+                        <label class="form-check form-check-inline m-0">
+	                          {#
+	                            Jinja2 لا يدعم معاملات bitwise مثل & و <<.
+	                            نفحص البِت عبر العمليات الحسابية:
+	                              bit = (mask // (2 ** idx)) % 2
+	                          #}
+	                          <input class="form-check-input" type="checkbox" name="fixed_days" value="{{ idx }}" {% if ((mask // (2 ** idx)) % 2) == 1 %}checked{% endif %}>
+                          <span class="form-check-label small">{{ label }}</span>
+                        </label>
+                      {% endfor %}
+                    </div>
+                  </div>
+
+                  <div class="col-lg-2 hybrid-wrap">
+                    <label class="form-label">Hybrid quota (أسبوعي)</label>
+                    <div class="d-flex gap-2">
+                      <input class="form-control" type="number" min="0" name="hybrid_office_days" placeholder="مكتب" value="{{ p.hybrid_office_days or '' }}">
+                      <input class="form-control" type="number" min="0" name="hybrid_remote_days" placeholder="عن بعد" value="{{ p.hybrid_remote_days or '' }}">
+                    </div>
+                  </div>
+
+                  <div class="col-lg-2">
+                    <label class="form-label">سياسة المكان</label>
+                    <select class="form-select" name="location_policy">
+                      {% set lp = (p.location_policy or 'ONSITE').upper() %}
+                      <option value="ONSITE" {% if lp == 'ONSITE' %}selected{% endif %}>On-site فقط</option>
+                      <option value="HYBRID" {% if lp == 'HYBRID' %}selected{% endif %}>Hybrid</option>
+                      <option value="REMOTE" {% if lp == 'REMOTE' %}selected{% endif %}>Remote فقط</option>
+                    </select>
+                  </div>
+
+                  <div class="col-lg-1">
+                    <div class="form-check">
+                      <input class="form-check-input" type="checkbox" name="is_active" {% if p.is_active %}checked{% endif %}>
+                      <label class="form-check-label">نشط</label>
+                    </div>
+                  </div>
+
+                  <div class="col-12 col-lg-auto">
+                    <button class="btn btn-success"><i class="bi bi-check2"></i> حفظ</button>
+                  </div>
+                </form>
+              </div>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="text-muted">لا توجد سياسات بعد.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  function toggleNewPolicyFields() {
+    const v = (document.getElementById('days_policy_new')?.value || 'FIXED');
+    const fixedWrap = document.getElementById('fixed_days_wrap_new');
+    const hybridWrap = document.getElementById('hybrid_wrap_new');
+    if (!fixedWrap || !hybridWrap) return;
+    if (v === 'HYBRID_WEEKLY_QUOTA') {
+      fixedWrap.classList.add('d-none');
+      hybridWrap.classList.remove('d-none');
+    } else {
+      fixedWrap.classList.remove('d-none');
+      hybridWrap.classList.add('d-none');
+    }
+  }
+  document.getElementById('days_policy_new')?.addEventListener('change', toggleNewPolicyFields);
+  toggleNewPolicyFields();
+
+  function toggleRowFields(row) {
+    const sel = row.querySelector('select.days-policy');
+    const fixedWrap = row.querySelector('.fixed-days-wrap');
+    const hybridWrap = row.querySelector('.hybrid-wrap');
+    if (!sel || !fixedWrap || !hybridWrap) return;
+    const v = sel.value;
+    if (v === 'HYBRID_WEEKLY_QUOTA') {
+      fixedWrap.classList.add('d-none');
+      hybridWrap.classList.remove('d-none');
+    } else {
+      fixedWrap.classList.remove('d-none');
+      hybridWrap.classList.add('d-none');
+    }
+  }
+  document.querySelectorAll('tr.collapse').forEach(tr => {
+    const inner = tr;
+    const sel = inner.querySelector('select.days-policy');
+    if (sel) {
+      sel.addEventListener('change', () => toggleRowFields(inner));
+      toggleRowFields(inner);
+    }
+  });
+</script>
+{% endblock %}

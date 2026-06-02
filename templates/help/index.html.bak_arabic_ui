@@ -1,0 +1,221 @@
+{% extends "layout.html" %}
+{% block title %}مركز الأدلة{% endblock %}
+
+{% block content %}
+<div class="container my-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3 no-print">
+    <div>
+      <h4 class="mb-1">مركز الأدلة</h4>
+      <div class="text-muted small">تظهر الأدلة حسب صلاحياتك. لكل نظام يوجد دليل للمستخدم ودليل للمشرف (إن وُجد).</div>
+    </div>
+    <button class="btn btn-sm btn-primary" type="button" onclick="wfPrintSmart('.help-cards')">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+  </div>
+
+  <div class="row g-3 help-cards" dir="rtl">
+    <!-- General -->
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm border-primary">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>📕</span><h6 class="mb-0">الدليل الشامل للنظام</h6>
+            <span class="badge bg-primary ms-auto">ابدأ هنا</span>
+          </div>
+          <div class="text-muted small mb-3">مسار + البوابة الإدارية: فكرة النظام، أهم الوظائف، وروابط جميع الأدلة.</div>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_system_master_guide') }}">فتح الدليل</a>
+        </div>
+      </div>
+    </div>
+
+
+    {% if current_user.has_perm('HR_ORG_DYNAMIC_GUIDE_VIEW') or current_user.has_perm('HR_ORGSTRUCTURE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or current_user.has_role('HR_ADMIN') or current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') or (current_user.role and 'أدمن' in current_user.role and ('الموارد' in current_user.role or 'الموارد البشرية' in current_user.role)) %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm border-success">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>🌳</span><h6 class="mb-0">دليل الهيكلية الموحدة (Dynamic)</h6>
+            <span class="badge bg-success ms-auto">إداري</span>
+          </div>
+          <div class="text-muted small mb-3">تعريف المستويات ديناميكيًا + اختيار الأب بالشجرة + الربط بالمسارات والتوجيه والموافقات.</div>
+          <a class="btn btn-sm btn-outline-success" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">فتح الدليل</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>📗</span><h6 class="mb-0">دليل الموظف</h6>
+          </div>
+          <div class="text-muted small mb-3">استخدام مسار: الطلبات، المتابعة، الإشعارات.</div>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_employee_guide') }}">فتح الدليل</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>🧾</span><h6 class="mb-0">دليل المستخدم: الطلبات والمسارات</h6>
+          </div>
+          <div class="text-muted small mb-3">My Requests / Inbox / البحث / الطباعة.</div>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_workflow_user_guide') }}">فتح الدليل</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>📘</span><h6 class="mb-0">دليل الإجازات</h6>
+          </div>
+          <div class="text-muted small mb-3">طلب الإجازة، المرفقات، الإلغاء، التقارير.</div>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_leaves_guide') }}">فتح الدليل</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- HR -->
+    {% if current_user.has_perm('HR_READ') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_EMPLOYEE_READ') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_REQUESTS_APPROVE') or current_user.has_perm('HR_REPORTS_VIEW') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>🧑‍💼</span><h6 class="mb-0">الموارد البشرية</h6>
+          </div>
+          <div class="text-muted small mb-3">الملفات، الطلبات، الدوام، التقارير.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_hr_guide') }}">دليل المستخدم</a>
+            {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_perm('HR_DOCS_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_hr_admin_guide') }}">دليل الأدمن</a>
+            {% endif %}
+            {% if current_user.has_perm('HR_ORG_DYNAMIC_GUIDE_VIEW') or current_user.has_perm('HR_ORGSTRUCTURE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">دليل الهيكلية الموحدة</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Performance / Evaluations -->
+    {% if current_user.has_perm('HR_PERFORMANCE_READ') or current_user.has_perm('HR_PERFORMANCE_SUBMIT') or current_user.has_perm('HR_SYSTEM_EVALUATION_VIEW') or current_user.has_perm('HR_PERFORMANCE_MANAGE') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>⭐</span><h6 class="mb-0">الأداء والتقييم</h6>
+          </div>
+          <div class="text-muted small mb-3">تقييم النموذج (360) + التقييم النظامي (شهري/سنوي) + المقارنة.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_performance_guide') }}">دليل الموظف</a>
+            {% if current_user.has_perm('HR_PERFORMANCE_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_performance_admin_guide') }}">دليل الأدمن</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Correspondence -->
+    {% if current_user.has_perm('CORR_READ') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>✉️</span><h6 class="mb-0">الصادر والوارد</h6>
+          </div>
+          <div class="text-muted small mb-3">تسجيل، متابعة، طباعة، مرفقات.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_correspondence_guide') }}">دليل المستخدم</a>
+            {% if current_user.has_perm('CORR_LOOKUPS_MANAGE') or current_user.has_perm('CORR_UPDATE') or current_user.has_perm('CORR_DELETE') %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_correspondence_admin_guide') }}">دليل الأدمن</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Store -->
+    {% if current_user.has_perm('STORE_READ') or current_user.has_perm('STORE_MANAGE') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>📦</span><h6 class="mb-0">المستودع</h6>
+          </div>
+          <div class="text-muted small mb-3">ملفات المستودع + السجلات + الطباعة.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_store_guide') }}">دليل المستخدم</a>
+            {% if current_user.has_perm('STORE_MANAGE') %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_store_admin_guide') }}">دليل الأدمن</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Access Requests -->
+    {% if current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or current_user.has_perm('USER_PERMISSIONS_MANAGE') or current_user.has_perm('PORTAL_ADMIN_READ') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>🔑</span><h6 class="mb-0">طلبات الصلاحيات</h6>
+          </div>
+          <div class="text-muted small mb-3">التقديم، المراجعة، إدارة الصلاحيات.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_access_requests_guide') }}">دليل المستخدم</a>
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_access_requests_admin_guide') }}">دليل الأدمن</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Transport -->
+    {% if current_user.has_perm('TRANSPORT_READ') or current_user.has_perm('TRANSPORT_CREATE') or current_user.has_perm('TRANSPORT_APPROVE') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>🚗</span><h6 class="mb-0">الحركة والنقل</h6>
+          </div>
+          <div class="text-muted small mb-3">مركبات، سائقون، أذونات، رحلات، مهام.</div>
+          <div class="d-flex gap-2 flex-wrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.help_transport_guide') }}">دليل المستخدم</a>
+            {% if current_user.has_perm('TRANSPORT_UPDATE') or current_user.has_perm('TRANSPORT_APPROVE') %}
+            <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_transport_admin_guide') }}">دليل الأدمن</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Workflow Admin -->
+    {% if current_user.has_perm('WORKFLOW_TEMPLATES_READ') or current_user.has_perm('WORKFLOW_TEMPLATES_MANAGE') or current_user.has_perm('WORKFLOW_ROUTING_READ') or current_user.has_perm('WORKFLOW_ROUTING_MANAGE') or current_user.has_perm('REQUEST_TYPES_READ') %}
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>🧩</span><h6 class="mb-0">المسارات والتوجيه (أدمن)</h6>
+          </div>
+          <div class="text-muted small mb-3">Templates + Steps + Routing rules.</div>
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_workflow_admin_guide') }}">فتح دليل الأدمن</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

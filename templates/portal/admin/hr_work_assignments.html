@@ -10,7 +10,7 @@
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
-        <i class="bi bi-clipboard2-data"></i> لوحة HR
+        <i class="bi bi-clipboard2-data"></i> لوحة الموارد البشرية
       </a>
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}">
         <i class="bi bi-grid"></i> لوحة الإدارة
@@ -297,7 +297,7 @@
     else userWrap.classList.remove('d-none');
   }
 
-  // Create form
+  // إنشاء form
   (function(){
     var t = document.getElementById('target_type');
     if(!t) return;
@@ -308,7 +308,7 @@
     run();
   })();
 
-  // Edit forms
+  // تعديل forms
   document.addEventListener('change', function(e){
     if(!e.target) return;
     if(e.target.classList && e.target.classList.contains('target-type')){

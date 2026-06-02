@@ -12,7 +12,7 @@ document.addEventListener("DOMContentLoaded", function () {
     new Chart(ctx, {
         type: "pie",
         data: {
-            labels: ["Approved", "Rejected", "In Progress"],
+            labels: ["موافق عليه", "مرفوض", "In Progress"],
             datasets: [{
                 data: [
                     chartCanvas.dataset.approved,

@@ -2,7 +2,7 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <div class="btn-group" role="group" aria-label="Notifications scope">
+    <div class="btn-group" role="group" aria-label="الإشعارات scope">
         <a href="{{ url_for('workflow.notifications', scope='inbox') }}"
            class="btn btn-sm {% if scope == 'inbox' %}btn-primary{% else %}btn-outline-primary{% endif %}">
             📥 الوارد
@@ -44,8 +44,8 @@
             <label class="form-label fw-bold">نوع الإشعار</label>
             <select name="type" class="form-select">
                 <option value="">الكل</option>
-                <option value="INFO" {% if filters.type == "INFO" %}selected{% endif %}>Info</option>
-                <option value="WARNING" {% if filters.type == "WARNING" %}selected{% endif %}>Warning</option>
+                <option value="INFO" {% if filters.type == "INFO" %}selected{% endif %}>معلومة</option>
+                <option value="WARNING" {% if filters.type == "WARNING" %}selected{% endif %}>تحذير</option>
                 <option value="CRITICAL" {% if filters.type == "CRITICAL" %}selected{% endif %}>Critical</option>
             </select>
         </div>
@@ -131,9 +131,9 @@
             {% if n.type == "CRITICAL" %}
                 <span class="badge bg-danger ms-2">Critical</span>
             {% elif n.type == "WARNING" %}
-                <span class="badge bg-warning text-dark ms-2">Warning</span>
+                <span class="badge bg-warning text-dark ms-2">تحذير</span>
             {% else %}
-                <span class="badge bg-info text-dark ms-2">Info</span>
+                <span class="badge bg-info text-dark ms-2">معلومة</span>
             {% endif %}
 
             {% if n.role %}

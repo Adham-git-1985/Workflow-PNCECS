@@ -18,7 +18,7 @@
     {# HR/Admin shortcut: open the employee file page for self. #}
     {% if current_user.has_perm('HR_EMPLOYEE_READ') or current_user.has_perm('HR_EMPLOYEE_MANAGE') %}
       <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.hr_employee_file', user_id=current_user.id) }}">
-        <i class="bi bi-folder2-open"></i> ملفي (HR)
+        <i class="bi bi-folder2-open"></i> ملفي (الموارد البشرية)
       </a>
     {% endif %}
   </div>

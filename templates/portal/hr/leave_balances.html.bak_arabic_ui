@@ -1,0 +1,106 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}أرصدة الإجازات{% endblock %}
+
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-wallet2"></i> أرصدة الإجازات</h4>
+      <div class="text-muted">إدارة رصيد الإجازات السنوي (المعتمد) لكل موظف + عرض المستهلك والمتبقي.</div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}"><i class="bi bi-arrow-right"></i> رجوع لإعدادات HR</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_leaves_report', year=year, status='') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-6">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="">اختر موظفًا...</option>
+        {% for u in users %}
+          <option value="{{ u.id }}" {% if selected_user and u.id == selected_user.id %}selected{% endif %}>{{ u.name or u.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">السنة</label>
+      <input class="form-control" type="number" name="year" value="{{ year }}" min="2000" max="2100">
+    </div>
+    <div class="col-md-4">
+      <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </div>
+  </form>
+</div>
+
+{% if not selected_user %}
+  <div class="alert alert-info">اختر موظفًا لعرض وإدارة أرصدة الإجازات الخاصة به.</div>
+{% else %}
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+    <div>
+      <h6 class="mb-0">الموظف: <strong>{{ selected_user.name or selected_user.email }}</strong></h6>
+      <div class="text-muted small">السنة: {{ year }}</div>
+    </div>
+    {% if can_manage %}
+      <div class="small text-muted">يمكنك تعديل "الرصيد المعتمد" ثم حفظ.</div>
+    {% endif %}
+  </div>
+
+  <form method="post">
+    <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+    <input type="hidden" name="year" value="{{ year }}">
+
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>CODE</th>
+            <th>النوع</th>
+            <th style="width:180px">الرصيد المعتمد (أيام)</th>
+            <th>المستهلك</th>
+            <th>المتبقي</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+            <tr>
+              <td><code>{{ r.lt.code }}</code></td>
+              <td>{{ r.lt.name_ar }}</td>
+              <td>
+                {% if can_manage %}
+                  <input class="form-control form-control-sm" type="number" min="0" name="total_{{ r.lt.id }}" value="{{ r.total }}">
+                {% else %}
+                  {{ r.total }}
+                {% endif %}
+              </td>
+              <td>{{ r.used }}</td>
+              <td>
+                {% if r.remaining <= 0 %}
+                  <span class="badge bg-danger">{{ r.remaining }}</span>
+                {% elif r.remaining <= 2 %}
+                  <span class="badge bg-warning text-dark">{{ r.remaining }}</span>
+                {% else %}
+                  <span class="badge bg-success">{{ r.remaining }}</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if can_manage %}
+      <div class="d-flex gap-2">
+        <button class="btn btn-success" type="submit"><i class="bi bi-save"></i> حفظ الأرصدة</button>
+      </div>
+    {% endif %}
+  </form>
+</div>
+
+{% endif %}
+{% endblock %}

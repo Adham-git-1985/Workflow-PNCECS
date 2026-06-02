@@ -1,0 +1,60 @@
+{% extends "portal/layout.html" %}
+{% block title %}التقارير والمؤشرات{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-speedometer2"></i> التقارير والمؤشرات (HR)</h5>
+      <div class="text-muted small">لوحة خفيفة (Best-effort) حسب البيانات المتاحة، بتاريخ: <b>{{ kpis.day_str }}</b></div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6 col-lg-3">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">عدد الموظفين</div>
+      <div class="fs-3 fw-bold">{{ kpis.employees }}</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">معلّق: إجازات</div>
+      <div class="fs-3 fw-bold">{{ kpis.pending_leaves }}</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">معلّق: مغادرات</div>
+      <div class="fs-3 fw-bold">{{ kpis.pending_permissions }}</div>
+    </div>
+  </div>
+  <div class="col-md-6 col-lg-3">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">اليوم: غياب</div>
+      <div class="fs-3 fw-bold">{{ kpis.absent_today }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">اليوم: تأخير (وفق جدول الدوام + السماح إن وُجد)</div>
+      <div class="fs-3 fw-bold">{{ kpis.late_today }}</div>
+      <div class="text-muted small mt-2">هذه الأرقام تقريبية وتعتمد على وجود جدول دوام/سياسات وربطها بالمستخدمين.</div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <h6 class="mb-2"><i class="bi bi-lightning-charge"></i> تنبيهات ذكية (مبدئي)</h6>
+      <ul class="small text-muted mb-0">
+        <li>اعتبرنا أيام العمل الافتراضية: الأحد–الخميس، ما لم تُحدد سياسة أيام ثابتة.</li>
+        <li>يمكن لاحقًا إضافة قواعد أعمق (حد التأخير/نفاد الإجازات...) عبر Rules Engine.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}

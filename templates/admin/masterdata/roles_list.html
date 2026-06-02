@@ -3,7 +3,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h3 class="mb-1">🎭 Roles</h3>
+    <h3 class="mb-1">🎭 الأدوار</h3>
     <small class="text-muted">إدارة الأدوار التي تظهر في النظام (Dropdowns)</small>
   </div>
   <div class="d-flex gap-2">
@@ -11,7 +11,7 @@
 
     <a class="btn btn-outline-success" href="{{ url_for('masterdata.roles_export_excel', q=q) }}">⬇️ Excel</a>
     <a class="btn btn-outline-primary" href="{{ url_for('masterdata.import_excel', screen='roles') }}">⬆️ استيراد Excel</a>
-    <a class="btn btn-primary" href="{{ url_for('masterdata.roles_new') }}">➕ Role جديد</a>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.roles_new') }}">➕ الدور جديد</a>
   </div>
 </div>
 
@@ -38,7 +38,7 @@
             <th>Code</th>
             <th>الاسم (عربي)</th>
             <th>الاسم (EN)</th>
-            <th>Active</th>
+            <th>فعّال</th>
             <th data-nosort></th>
           </tr>
         </thead>
@@ -51,9 +51,9 @@
             <td>{{ r.name_en or "-" }}</td>
             <td>
               {% if r.is_active %}
-                <span class="badge bg-success">Yes</span>
+                <span class="badge bg-success">نعم</span>
               {% else %}
-                <span class="badge bg-secondary">No</span>
+                <span class="badge bg-secondary">لا</span>
               {% endif %}
             </td>
             <td class="text-end d-flex gap-2 justify-content-end">

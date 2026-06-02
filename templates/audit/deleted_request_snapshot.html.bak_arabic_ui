@@ -1,0 +1,138 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">🗑️ Snapshot لطلب محذوف</h3>
+    <small class="text-muted">Request #{{ request_id }}</small>
+  </div>
+  <div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('audit.system_timeline') }}">رجوع للـ Timeline</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    {% if snapshot %}
+      <div class="row g-3">
+        <div class="col-md-6">
+          <div class="text-muted small">العنوان</div>
+          <div class="fw-semibold">{{ snapshot.title or "-" }}</div>
+        </div>
+        <div class="col-md-3">
+          <div class="text-muted small">الحالة</div>
+          <div class="fw-semibold">{{ snapshot.status or "-" }}</div>
+        </div>
+        <div class="col-md-3">
+          <div class="text-muted small">تاريخ الإنشاء</div>
+          <div class="fw-semibold">{{ snapshot.created_at or "-" }}</div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="text-muted small">مقدم الطلب</div>
+          <div class="fw-semibold">
+            {{ (snapshot.requester.name if snapshot.requester else "") or "-" }}
+            {% if snapshot.requester and snapshot.requester.email %}<span class="text-muted">({{ snapshot.requester.email }})</span>{% endif %}
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <div class="text-muted small">المسار / القالب</div>
+          <div class="fw-semibold">{{ (snapshot.instance.template_name if snapshot.instance else "") or "-" }}</div>
+        </div>
+
+        <div class="col-12">
+          <div class="text-muted small">الوصف</div>
+          <div style="white-space:pre-wrap; line-height:1.7">{{ snapshot.description or "-" }}</div>
+        </div>
+      </div>
+
+      <hr class="my-3"/>
+
+      {% if snapshot.steps %}
+        <h6 class="mb-2">خطوات التنفيذ (آخر حالة قبل الحذف)</h6>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle">
+            <thead class="table-light">
+              <tr>
+                <th>#</th>
+                <th>Mode</th>
+                <th>Approver Kind</th>
+                <th>Status</th>
+                <th>Decided By</th>
+                <th>Decided At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for st in snapshot.steps %}
+              <tr>
+                <td>{{ st.step_order }}</td>
+                <td>
+                  {% if st.mode == "PARALLEL_SYNC" %}
+                    <span class="badge text-bg-info">متزامن</span>
+                  {% else %}
+                    <span class="badge text-bg-secondary">تسلسلي</span>
+                  {% endif %}
+                </td>
+                <td>{{ st.approver_kind }}</td>
+                <td>{{ st.status }}</td>
+                <td>{{ st.decided_by_email or "-" }}</td>
+                <td>{{ st.decided_at or "-" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+    {% else %}
+      <div class="alert alert-warning mb-0">
+        لا يوجد Snapshot محفوظ لهذا الطلب. (ربما تم حذفه قبل تفعيل حفظ الـ Snapshot).
+      </div>
+      {% if del_log and del_log.note %}
+        <details class="mt-2">
+          <summary class="text-muted small">عرض سجل الحذف</summary>
+          <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ del_log.note }}</pre>
+        </details>
+      {% endif %}
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <h6 class="mb-2">سجل التدقيق المرتبط بهذا الطلب</h6>
+    {% if logs %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead class="table-light">
+            <tr>
+              <th>الوقت</th>
+              <th>العملية</th>
+              <th>المستخدم</th>
+              <th>تفاصيل</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for l in logs %}
+            <tr>
+              <td class="text-muted small">{{ l.created_at }}</td>
+              <td><span class="badge text-bg-light">{{ l.action }}</span></td>
+              <td>{{ l.user.name if l.user else "-" }}</td>
+              <td class="small text-muted">
+                {% if l.note %}
+                  <details>
+                    <summary>عرض</summary>
+                    <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ l.note }}</pre>
+                  </details>
+                {% else %}—{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted small">لا يوجد سجلات.</div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

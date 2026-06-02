@@ -5,9 +5,9 @@
     <div>
         <h3 class="mb-1">🔐 صلاحيات الأدوار</h3>
         <small class="text-muted">
-            هذه الصفحة لإدارة صلاحيات حسب <strong>Role</strong> (مثل: عرض Dashboard / Escalations).
+            هذه الصفحة لإدارة صلاحيات حسب <strong>الدور</strong> (مثل: عرض لوحة التحكم / Escalations).
             <br>
-            <span class="text-muted">ملاحظة: صفحة "Permissions" ضمن البيانات الأساسية خاصة بصلاحيات المستخدمين (CRUD) وليست صلاحيات Roles.</span>
+            <span class="text-muted">ملاحظة: صفحة "الصلاحيات" ضمن البيانات الأساسية خاصة بصلاحيات المستخدمين (CRUD) وليست صلاحيات الأدوار.</span>
         </small>
     </div>
 </div>
@@ -17,7 +17,7 @@
 
         <form method="get" class="row g-3 mb-3">
             <div class="col-md-6">
-                <label class="form-label">اختر Role</label>
+                <label class="form-label">اختر الدور</label>
                 <select name="role" class="form-select" onchange="this.form.submit()">
                     <option value="">-- اختر --</option>
                     {% for r in role_codes %}
@@ -32,7 +32,7 @@
             <input type="hidden" name="role" value="{{ selected_role }}">
 
             <div class="col-12">
-                <label class="form-label d-block mb-2">Permissions</label>
+                <label class="form-label d-block mb-2">الصلاحيات</label>
 
                 <div class="row">
                     {% for p in permissions %}
@@ -61,7 +61,7 @@
         </form>
         {% else %}
             <div class="alert alert-info mb-0">
-                اختر Role أولاً لعرض/تعديل الصلاحيات.
+                اختر الدور أولاً لعرض/تعديل الصلاحيات.
             </div>
         {% endif %}
 

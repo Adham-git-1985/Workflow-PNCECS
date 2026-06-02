@@ -1,0 +1,115 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">🧾 أنواع الطلبات</h3>
+    <small class="text-muted">إدارة أنواع الطلبات (Request Types)</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart(\'#mdReqTypePrint\')">🖨️ طباعة</button>
+
+    <a class="btn btn-outline-success" href="{{ url_for('masterdata.request_types_export_excel', q=q) }}">⬇️ Excel</a>
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importRequestTypesModal">⬆️ Import</button>
+    <a class="btn btn-primary" href="{{ url_for('masterdata.request_types_new') }}">➕ إضافة نوع</a>
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+<form method="get" class="mb-3">
+  <div class="input-group">
+    <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="ابحث بالاسم أو الكود…">
+    <button class="btn btn-outline-secondary" type="submit">بحث</button>
+    {% if q %}
+      <a class="btn btn-outline-danger" href="{{ request.path }}">مسح</a>
+    {% endif %}
+  </div>
+</form>
+
+
+    {% if items %}
+      <div id="mdReqTypePrint" class="table-responsive">
+        <table class="table table-sm align-middle" data-sortable="true">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>CODE</th>
+              <th>الاسم (AR)</th>
+              <th>الاسم (EN)</th>
+              <th>نشط</th>
+              <th class="text-end" data-nosort>إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for rt in items %}
+              <tr>
+                <td>{{ rt.id }}</td>
+                <td><span class="badge bg-dark">{{ rt.code }}</span></td>
+                <td>{{ rt.name_ar }}</td>
+                <td>{{ rt.name_en or '-' }}</td>
+                <td>
+                  {% if rt.is_active %}
+                    <span class="badge bg-success">نعم</span>
+                  {% else %}
+                    <span class="badge bg-secondary">لا</span>
+                  {% endif %}
+                </td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('masterdata.request_types_edit', rt_id=rt.id) }}">✏️ تعديل</a>
+                  <form method="post" action="{{ url_for('masterdata.request_types_delete', rt_id=rt.id) }}" class="d-inline" onsubmit="return confirm('تأكيد حذف/تعطيل نوع الطلب؟');">
+                    <button class="btn btn-sm btn-outline-danger">🗑️ حذف</button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light text-center text-muted mb-0">لا توجد بيانات</div>
+    {% endif %}
+  </div>
+</div>
+
+
+
+<!-- Import Request Types Modal -->
+<div class="modal fade" id="importRequestTypesModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <form class="modal-content" method="post" action="{{ url_for('masterdata.request_types_import_excel') }}" enctype="multipart/form-data">
+      <div class="modal-header">
+        <h5 class="modal-title">⬆️ استيراد أنواع الطلبات (Excel)</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label">وضع الاستيراد</label>
+            <select class="form-select" name="mode" required>
+              <option value="safe" selected>Safe Replace (Upsert حسب code، بدون حذف)</option>
+              <option value="replace">Replace (محاولة مسح الكل ثم إدخال)</option>
+            </select>
+            <div class="form-text">إذا كان Replace غير ممكن بسبب قيود قاعدة البيانات، سيتم استخدام Soft Replace (تعطيل الكل ثم upsert).</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">ملف Excel (.xlsx)</label>
+            <input class="form-control" type="file" name="file" accept=".xlsx" required>
+            <div class="form-text">الأعمدة المطلوبة: <code>code</code> + <code>name_ar</code>. (اختياري: <code>name_en</code>, <code>is_active</code>).</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">ابدأ الاستيراد</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/table_sort.js') }}"></script>
+{% endblock %}

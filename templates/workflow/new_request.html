@@ -123,7 +123,7 @@
     if (titleEl) titleEl.addEventListener('input', saveDraft);
     if (descEl) descEl.addEventListener('input', saveDraft);
 
-    // Clear draft after successful submit (best-effort)
+    // مسح draft after successful submit (best-effort)
     if (form) {
       form.addEventListener('submit', function(){
         try { localStorage.removeItem(KEY); } catch(e) {}

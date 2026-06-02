@@ -104,7 +104,7 @@
 
 
         <div class="col-md-3">
-          <label class="form-label">SLA الافتراضي (أيام)</label>
+          <label class="form-label">اتفاقية مستوى الخدمة الافتراضي (أيام)</label>
           <input class="form-control" name="sla_days_default" type="number" min="1"
                  value="{{ t.sla_days_default if t.sla_days_default is not none else '' }}">
         </div>
@@ -113,7 +113,7 @@
           <div class="form-check">
             <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active"
                    {% if t.is_active %}checked{% endif %}>
-            <label class="form-check-label" for="is_active">Active</label>
+            <label class="form-check-label" for="is_active">فعّال</label>
           </div>
         </div>
 
@@ -130,7 +130,7 @@
   <strong>📌 خطوات المسار</strong>
   <button type="button" class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#importStepsModal">
   <i class="bi bi-upload"></i>
-  Import Steps
+  استيراد الخطوات
 </button>
 <a class="btn btn-success btn-sm"
      href="{{ url_for('workflow.templates_steps_export_excel', template_id=t.id) }}">
@@ -148,7 +148,7 @@
             <th>طريقة التنفيذ</th>
             <th>نوع المعتمد</th>
             <th>المستلم</th>
-            <th>SLA</th>
+            <th>اتفاقية مستوى الخدمة</th>
             <th></th>
           </tr>
         </thead>
@@ -414,7 +414,7 @@
         </div>
 
         <div class="col-md-3">
-          <label class="form-label">SLA (أيام)</label>
+          <label class="form-label">اتفاقية مستوى الخدمة (أيام)</label>
           <input class="form-control" name="sla_days" type="number" min="1" placeholder="اختياري">
         </div>
 
@@ -442,7 +442,7 @@
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title">اختيار عنصر الهيكلية الموحدة</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <div id="addOrgNodeTreeContainer"><div class="text-muted">جاري تحميل الشجرة…</div></div>
@@ -615,7 +615,7 @@
     <form class="modal-content" method="post" action="{{ url_for('workflow.templates_steps_import_excel', template_id=t.id) }}" enctype="multipart/form-data">
       <div class="modal-header">
         <h5 class="modal-title">استيراد خطوات المسار</h5>
-        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <div class="mb-2">

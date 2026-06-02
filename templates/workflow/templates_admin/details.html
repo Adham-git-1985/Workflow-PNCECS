@@ -18,8 +18,8 @@
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-6"><b>الاسم:</b> {{ t.name }}</div>
-      <div class="col-md-3"><b>Active:</b> {{ "Yes" if t.is_active else "No" }}</div>
-      <div class="col-md-3"><b>SLA Default:</b> {{ t.sla_days_default or "-" }}</div>
+      <div class="col-md-3"><b>فعّال:</b> {{ "Yes" if t.is_active else "No" }}</div>
+      <div class="col-md-3"><b>اتفاقية مستوى الخدمة Default:</b> {{ t.sla_days_default or "-" }}</div>
     </div>
   </div>
 </div>
@@ -40,7 +40,7 @@
               <th>DEPT</th>
               <th>Mode</th>
               <th>مرتبطون</th>
-              <th>SLA</th>
+              <th>اتفاقية مستوى الخدمة</th>
             </tr>
           </thead>
           <tbody>

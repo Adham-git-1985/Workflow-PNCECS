@@ -5,7 +5,7 @@
 <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
-      <h5 class="mb-0"><i class="bi bi-shield-check"></i> التدقيق والامتثال (Portal)</h5>
+      <h5 class="mb-0"><i class="bi bi-shield-check"></i> التدقيق والامتثال (البوابة)</h5>
       <div class="text-muted small">عرض سجلات التدقيق (AuditLog) مع فلترة وتصدير.</div>
     </div>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
@@ -15,19 +15,19 @@
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="get" class="row g-2 align-items-end">
     <div class="col-md-3">
-      <label class="form-label small text-muted">Action (contains)</label>
+      <label class="form-label small text-muted">إجراء (contains)</label>
       <input class="form-control" name="action" value="{{ q_action }}" placeholder="HR_...">
     </div>
     <div class="col-md-3">
-      <label class="form-label small text-muted">User</label>
+      <label class="form-label small text-muted">المستخدم</label>
       <input class="form-control" name="user" value="{{ q_user }}" placeholder="email أو الاسم">
     </div>
     <div class="col-md-2">
-      <label class="form-label small text-muted">From</label>
+      <label class="form-label small text-muted">من</label>
       <input class="form-control" type="date" name="from" value="{{ q_from }}">
     </div>
     <div class="col-md-2">
-      <label class="form-label small text-muted">To</label>
+      <label class="form-label small text-muted">إلى</label>
       <input class="form-control" type="date" name="to" value="{{ q_to }}">
     </div>
     <div class="col-md-2 d-grid">
@@ -35,7 +35,7 @@
     </div>
   </form>
   <div class="mt-2 d-flex gap-2 flex-wrap">
-    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_compliance_export_csv', action=q_action, user=q_user, from=q_from, to=q_to) }}"><i class="bi bi-download"></i> Export CSV</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_compliance_export_csv', action=q_action, user=q_user, from=q_from, to=q_to) }}"><i class="bi bi-download"></i> تصدير CSV</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_timeline') }}"><i class="bi bi-clock-history"></i> السجل الزمني</a>
   </div>
 </div>
@@ -50,7 +50,7 @@
             <th>#</th>
             <th>{{ portal_sort_link('التاريخ', 'created_at') }}</th>
             <th>{{ portal_sort_link('المستخدم', 'user') }}</th>
-            <th>Action</th>
+            <th>إجراء</th>
             <th>{{ portal_sort_link('Target', 'target_type') }}</th>
             <th>{{ portal_sort_link('ملاحظة', 'note') }}</th>
           </tr>

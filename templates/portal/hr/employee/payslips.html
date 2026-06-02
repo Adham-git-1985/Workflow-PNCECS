@@ -30,8 +30,8 @@
               <label class="form-label">الملف</label>
               <input class="form-control" type="file" name="file" required>
             </div>
-            <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع (Draft)</button>
-            <div class="form-text">يتم حفظ القسيمة كـ Draft ولا تُنشر إلا عند اختيار "نشر".</div>
+            <button class="btn btn-primary" type="submit"><i class="bi bi-cloud-arrow-up"></i> رفع (مسودة)</button>
+            <div class="form-text">يتم حفظ القسيمة كـ مسودة ولا تُنشر إلا عند اختيار "نشر".</div>
           </form>
         </div>
       </div>
@@ -41,7 +41,7 @@
       <div class="card shadow-sm">
         <div class="card-header d-flex justify-content-between align-items-center">
           <h5 class="mb-0"><i class="bi bi-receipt"></i> قسائم الراتب</h5>
-          <span class="text-muted small">Draft / Published</span>
+          <span class="text-muted small">مسودة / Published</span>
         </div>
         <div class="card-body">
           {% if items %}
@@ -65,7 +65,7 @@
                         {% if a.is_published %}
                           <span class="badge bg-success">Published</span>
                         {% else %}
-                          <span class="badge bg-warning text-dark">Draft</span>
+                          <span class="badge bg-warning text-dark">مسودة</span>
                         {% endif %}
                       </td>
                       <td>{{ a.uploaded_at.strftime('%Y-%m-%d') if a.uploaded_at else '—' }}</td>

@@ -1,0 +1,82 @@
+{% extends "help/_guide_base.html" %}
+{% set page_title = "دليل أدمن الحركة والنقل" %}
+{% set page_subtitle = "إدارة السيارات والسائقين والأذون والرحلات والمهام + الاعتماد والتقارير" %}
+
+{% block guide_body %}
+
+<div class="alert alert-info py-2 mb-3">
+  <div class="fw-bold">هذه الصفحة خاصة بالمشرفين</div>
+  <div class="small text-muted">تظهر فقط لمن لديه صلاحيات إدارة/اعتماد الحركة (مثل TRANSPORT_UPDATE / TRANSPORT_APPROVE).</div>
+</div>
+
+<details open class="mb-2">
+  <summary class="fw-bold">1) أهم الصلاحيات</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>TRANSPORT_READ</strong> عرض الوحدة.</li>
+      <li><strong>TRANSPORT_CREATE</strong> إنشاء أذون/رحلات/مهام.</li>
+      <li><strong>TRANSPORT_UPDATE</strong> تعديل السجلات.</li>
+      <li><strong>TRANSPORT_DELETE</strong> حذف/أرشفة السجلات حسب السياسة.</li>
+      <li><strong>TRANSPORT_APPROVE</strong> اعتماد/رفض الأذون.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">2) تهيئة الثوابت (قبل التشغيل)</summary>
+  <div class="mt-2">
+    <ol class="mb-0">
+      <li>إضافة <strong>السيارات</strong>: رقم اللوحة، النوع، الحالة، الملاحظات.</li>
+      <li>إضافة <strong>السائقين</strong>: الاسم، الهاتف، حالة التوفر، ربطه بمستخدم (إن وُجد).</li>
+      <li>ضبط <strong>الجهات/المواقع</strong> (إن كانت مطلوبة في الرحلات).</li>
+    </ol>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">3) إدارة أذون الحركة</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>إنشاء إذن حركة جديد ثم تحديد: الموظف/الجهة، التاريخ والوقت، السيارة/السائق، الوجهة، السبب.</li>
+      <li>الحالات: <span class="badge bg-secondary">Draft</span> → <span class="badge bg-warning text-dark">Pending</span> → <span class="badge bg-success">Approved</span> / <span class="badge bg-danger">Rejected</span>.</li>
+      <li>قبل الاعتماد: تأكد من <strong>تعارض السائق/السيارة</strong> في نفس الوقت.</li>
+    </ul>
+    <div class="alert alert-secondary py-2 mb-0">
+      <strong>نصيحة:</strong> اعتمد سياسة واضحة: من ينشئ؟ من يعتمد؟ ومن يحق له التعديل بعد الاعتماد؟
+    </div>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">4) الرحلات vs مهام السائقين</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li><strong>الرحلة:</strong> مسار/انتقال فعلي بوقت بداية/نهاية + ركاب/وجهات (عند الحاجة) وقد تُربط بإذن حركة.</li>
+      <li><strong>مهمة السائق:</strong> عمل مُسند للسائق (توصيل، استلام، متابعة صيانة) وقد لا تكون رحلة كاملة.</li>
+    </ul>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">5) السجلات + الطباعة</summary>
+  <div class="mt-2">
+    <ul class="mb-2">
+      <li>كل صفحة سجل تحتوي زر <strong>طباعة</strong> (أو من الشريط العلوي).</li>
+      <li>عند الطباعة: النظام يطبع <strong>المحتوى المركزي</strong> فقط (بدون السايدبار/الهيدر).</li>
+    </ul>
+    <div class="small text-muted">يمكن استخدام الطباعة لتوثيق الحركة في ملفات التدقيق أو للمتابعة اليومية.</div>
+  </div>
+</details>
+
+<details class="mb-2">
+  <summary class="fw-bold">6) أخطاء شائعة</summary>
+  <div class="mt-2">
+    <ul class="mb-0">
+      <li>تكرار حجز نفس السيارة/السائق بنفس الوقت → افحص السجل قبل الاعتماد.</li>
+      <li>إنشاء رحلة بدون تحديد مدة/وجهة واضحة → يسبب ضعف في التقارير.</li>
+      <li>تعديل بعد الاعتماد بدون Audit واضح → يفضّل إضافة ملاحظة عند أي تعديل.</li>
+    </ul>
+  </div>
+</details>
+
+{% endblock %}

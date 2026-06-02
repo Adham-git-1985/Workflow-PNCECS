@@ -1,0 +1,51 @@
+{% extends "portal/layout.html" %}
+{% block title %}الأداء والتقييم - إدارة{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-clipboard2-check"></i> الأداء والتقييم (360)</h5>
+      <div class="text-muted small">إدارة النماذج والدورات وتوليد التكليفات، مع تدقيق كامل.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
+      <i class="bi bi-arrow-right"></i> رجوع إلى لوحة HR
+    </a>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-md-6 col-lg-4">
+      <div class="border rounded-3 p-3 h-100">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <div class="fs-5 text-primary"><i class="bi bi-ui-checks"></i></div>
+          <h6 class="mb-0">النماذج</h6>
+        </div>
+        <div class="text-muted small mb-3">إنشاء نموذج تقييم، أقسام وأسئلة (مرن).</div>
+        <a class="btn btn-sm btn-primary w-100" href="{{ url_for('portal.portal_admin_hr_perf_forms') }}">فتح</a>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-lg-4">
+      <div class="border rounded-3 p-3 h-100">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <div class="fs-5 text-primary"><i class="bi bi-calendar2-range"></i></div>
+          <h6 class="mb-0">الدورات</h6>
+        </div>
+        <div class="text-muted small mb-3">إنشاء دورة، ربطها بنموذج، فتح/إغلاق وتوليد تكليفات.</div>
+        <a class="btn btn-sm btn-primary w-100" href="{{ url_for('portal.portal_admin_hr_perf_cycles') }}">فتح</a>
+      </div>
+    </div>
+
+    <div class="col-md-6 col-lg-4">
+      <div class="border rounded-3 p-3 h-100">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <div class="fs-5 text-primary"><i class="bi bi-bar-chart-line"></i></div>
+          <h6 class="mb-0">التقارير</h6>
+        </div>
+        <div class="text-muted small mb-3">لوحة مؤشرات HR + تصدير.</div>
+        <a class="btn btn-sm btn-outline-primary w-100" href="{{ url_for('portal.portal_admin_hr_reports_dashboard') }}">فتح</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

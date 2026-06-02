@@ -1,0 +1,155 @@
+{% extends "layout.html" %}
+{% block title %}إدارة المستخدمين{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+  <div>
+    <h3 class="mb-1">👥 المستخدمون</h3>
+    <small class="text-muted">إدارة المستخدمين وتحديث أدوارهم</small>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{{ url_for('users.create_user') }}" class="btn btn-primary">➕ مستخدم جديد</a>
+    <button type="button" class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#importUsersModal">
+      <i class="bi bi-upload"></i>
+      استيراد Excel
+    </button>
+<a href="{{ url_for('users.export_users_excel', q=q) }}" class="btn btn-outline-success">
+      <i class="bi bi-file-earmark-excel"></i>
+      تصدير Excel
+    </a>
+    <a href="{{ url_for('portal.hr_employees', q=q) }}" class="btn btn-outline-dark">
+      <i class="bi bi-box-arrow-up-right"></i>
+      فتح في البوابة الإدارية
+    </a>
+  </div>
+</div>
+
+
+<form method="get" class="row g-2 align-items-center mb-3">
+  <div class="col-md-6 col-lg-5">
+    <input type="text" name="q" class="form-control" placeholder="بحث بالاسم/الإيميل/الوظيفة/ID" value="{{ q or '' }}">
+  </div>
+  <div class="col-auto">
+    <button class="btn btn-outline-primary">بحث</button>
+    {% if q %}
+      <a class="btn btn-outline-secondary" href="{{ url_for('users.list_users') }}">إلغاء</a>
+    {% endif %}
+  </div>
+</form>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+
+    <div class="table-responsive">
+      <table class="table table-striped align-middle">
+        <thead>
+          <tr>
+            <th style="width:80px">#</th>
+            <th>الاسم</th>
+            <th>البريد الإلكتروني</th>
+            <th style="width:220px">الدور</th>
+            <th style="width:200px">إجراءات</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for user in users %}
+          {% set target_adminish = (user.role|string)|upper in ['ADMIN','SUPER_ADMIN'] %}
+          {% set target_super = (user.role|string)|upper == 'SUPER_ADMIN' %}
+          <tr>
+            <td>{{ user.id }}</td>
+            <td>{{ user.name or "—" }}</td>
+            <td>{{ user.email }}</td>
+            <td>
+              {% if is_super_admin or not target_adminish %}
+                <form method="post" action="{{ url_for('users.change_role', user_id=user.id) }}" class="d-flex gap-2">
+                  <select name="role" class="form-select form-select-sm">
+                    {% for r in role_choices %}
+                      {% if (not is_super_admin) and (r in ['ADMIN','SUPER_ADMIN']) %}
+                        {# hidden for normal admin #}
+                      {% else %}
+                        <option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r }}</option>
+                      {% endif %}
+                    {% endfor %}
+                  </select>
+                  <button class="btn btn-sm btn-outline-primary">تحديث</button>
+                </form>
+              {% else %}
+                <span class="badge bg-secondary">{{ user.role }}</span>
+              {% endif %}
+            </td>
+            <td>
+  {# ✅ Edit user for ADMIN (except SUPER_ADMIN unless current is SUPER_ADMIN) #}
+  {% if is_super_admin or (not target_super) %}
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('users.edit_user', user_id=user.id) }}">✏️ تعديل</a>
+  {% else %}
+    <span class="text-muted">—</span>
+  {% endif %}
+
+  {% if is_super_admin %}
+    <a class="btn btn-sm btn-outline-dark ms-1" href="{{ url_for('users.manage_user', user_id=user.id) }}">⚙️ Manage</a>
+  {% endif %}
+</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if pagination.pages > 1 %}
+    <nav>
+      <ul class="pagination justify-content-center mb-0">
+        {% if pagination.has_prev %}
+          <li class="page-item">
+            <a class="page-link" href="{{ url_for('users.list_users', page=pagination.prev_num, q=q) }}">السابق</a>
+          </li>
+        {% endif %}
+
+        <li class="page-item disabled">
+          <span class="page-link">صفحة {{ pagination.page }} من {{ pagination.pages }}</span>
+        </li>
+
+        {% if pagination.has_next %}
+          <li class="page-item">
+            <a class="page-link" href="{{ url_for('users.list_users', page=pagination.next_num, q=q) }}">التالي</a>
+          </li>
+        {% endif %}
+      </ul>
+    </nav>
+    {% endif %}
+
+  </div>
+</div>
+
+
+
+<!-- Import Users Modal -->
+<div class="modal fade" id="importUsersModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('users.import_users_excel') }}" enctype="multipart/form-data">
+      <div class="modal-header">
+        <h5 class="modal-title">استيراد المستخدمين من Excel</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label">Mode</label>
+          <select class="form-select" name="mode" required>
+            <option value="safe" selected>Safe Replace (Upsert فقط)</option>
+            <option value="replace">Replace (Upsert + محاولة حذف غير الموجود)</option>
+          </select>
+          <div class="form-text">أعمدة مقترحة: Email, Name, Job Title, Role, Department Code, Directorate Code, Password</div>
+        </div>
+        <div class="mb-2">
+          <input class="form-control" type="file" name="file" accept=".xlsx" required>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button class="btn btn-primary">استيراد</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

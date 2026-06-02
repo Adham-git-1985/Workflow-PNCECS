@@ -1,0 +1,300 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}ملف موظف{% endblock %}
+
+{% block head %}
+<style>
+  .section-title { font-weight:700; }
+  .kv { color:#6c757d; font-size:.9rem; }
+  .att-type { font-size:.85rem; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+</style>
+{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h4 class="mb-0"><i class="bi bi-person-badge"></i> ملف الموظف</h4>
+    <div class="kv">{{ u.full_name }} — <span class="mono">{{ u.email }}</span></div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('users.profile_view', user_id=u.id) }}"><i class="bi bi-box-arrow-up-right"></i> فتح في مسار</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_employees') }}"><i class="bi bi-arrow-right"></i> رجوع للقائمة</a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-lg-7">
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <div class="section-title mb-3">البيانات الأساسية</div>
+
+      <form method="post">
+        <div class="row g-2">
+          <div class="col-12 col-md-6">
+            <label class="form-label">رقم الموظف</label>
+            <input name="employee_no" class="form-control" value="{{ emp_file.employee_no if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">كود ساعة الدوام (9 أرقام)</label>
+            <input name="timeclock_code" class="form-control" value="{{ emp_file.timeclock_code if emp_file else '' }}" placeholder="000000000">
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label">رقم الهوية</label>
+            <input name="national_id" class="form-control" value="{{ emp_file.national_id if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">تاريخ الميلاد</label>
+            <input name="birth_date" type="date" class="form-control" value="{{ emp_file.birth_date if emp_file else '' }}">
+          </div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label">الهاتف</label>
+            <input name="phone" class="form-control" value="{{ emp_file.phone if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">العنوان</label>
+            <input name="address" class="form-control" value="{{ emp_file.address if emp_file else '' }}">
+          </div>
+
+          <hr class="my-3">
+
+          <div class="section-title mb-2">البيانات الوظيفية</div>
+
+          <div class="col-12 col-md-6">
+            <label class="form-label">المسمى الوظيفي</label>
+            <input name="job_title" class="form-control" value="{{ emp_file.job_title if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">الدرجة</label>
+            <input name="grade" class="form-control" value="{{ emp_file.grade if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-3">
+            <label class="form-label">الحالة</label>
+            <input name="employment_status" class="form-control" value="{{ emp_file.employment_status if emp_file else '' }}" placeholder="ACTIVE">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">تاريخ التعيين</label>
+            <input name="hire_date" type="date" class="form-control" value="{{ emp_file.hire_date if emp_file else '' }}">
+          </div>
+
+          <hr class="my-3">
+
+          <div class="section-title mb-2">العقد</div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">نوع العقد</label>
+            <input name="contract_type" class="form-control" value="{{ emp_file.contract_type if emp_file else '' }}" placeholder="FIXED/PERMANENT">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">بداية العقد</label>
+            <input name="contract_start" type="date" class="form-control" value="{{ emp_file.contract_start if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label">نهاية العقد</label>
+            <input name="contract_end" type="date" class="form-control" value="{{ emp_file.contract_end if emp_file else '' }}">
+          </div>
+
+          <hr class="my-3">
+
+          <div class="section-title mb-2">الراتب</div>
+
+          <div class="col-12 col-md-4">
+            <label class="form-label">الراتب الأساسي</label>
+            <input name="salary_basic" type="number" step="0.01" class="form-control" value="{{ emp_file.salary_basic if emp_file and emp_file.salary_basic is not none else '' }}">
+          </div>
+          <div class="col-12 col-md-2">
+            <label class="form-label">العملة</label>
+            <input name="salary_currency" class="form-control" value="{{ emp_file.salary_currency if emp_file and emp_file.salary_currency else 'ILS' }}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">البنك</label>
+            <input name="bank_name" class="form-control" value="{{ emp_file.bank_name if emp_file else '' }}">
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">رقم الحساب</label>
+            <input name="bank_account" class="form-control" value="{{ emp_file.bank_account if emp_file else '' }}">
+          </div>
+
+          <div class="col-12">
+            <label class="form-label">ملاحظات</label>
+            <textarea name="notes" class="form-control" rows="3">{{ emp_file.notes if emp_file and emp_file.notes else '' }}</textarea>
+          </div>
+        </div>
+
+        {% if current_user.has_perm('HR_EMPLOYEE_MANAGE') or current_user.has_role('ADMIN') %}
+          <div class="d-flex gap-2 mt-3">
+            <button class="btn btn-primary"><i class="bi bi-save"></i> حفظ</button>
+          </div>
+        {% else %}
+          <div class="alert alert-warning mt-3 mb-0">ليس لديك صلاحية تعديل ملف الموظف.</div>
+        {% endif %}
+      </form>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-5">
+    <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <div class="section-title">المرفقات</div>
+      </div>
+
+      {% if current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_role('ADMIN') %}
+      <form method="post" action="{{ url_for('portal.hr_employee_attachments_upload', user_id=u.id) }}" enctype="multipart/form-data" class="mb-3">
+        <div class="row g-2">
+          <div class="col-12">
+            <label class="form-label">الملفات</label>
+            <input type="file" name="files" multiple class="form-control" required>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">النوع</label>
+            <select name="attachment_type" id="attTypeSelect" class="form-select">
+              <option value="ID">هوية</option>
+              <option value="CONTRACT">عقد</option>
+              <option value="CERTIFICATE">شهادة</option>
+              <option value="PAYSLIP">قسيمة راتب</option>
+              <option value="OTHER" selected>أخرى</option>
+            </select>
+          </div>
+          <div class="col-12 col-md-6">
+            <label class="form-label">ملاحظة</label>
+            <input name="note" class="form-control" placeholder="اختياري">
+          </div>
+
+          <!-- Payslip period (Month/Year) -->
+          <div class="col-12" id="payslipPeriodBox" style="display:none;">
+            <div class="border rounded-3 p-3 bg-light">
+              <div class="fw-semibold mb-2"><i class="bi bi-calendar2"></i> فترة قسيمة الراتب</div>
+              <div class="row g-2">
+                <div class="col-12 col-md-3">
+                  <label class="form-label">السنة</label>
+                  <input type="number" id="payslipYear" name="payslip_year" class="form-control" min="2000" max="2100"
+                         value="{{ now_year if now_year else '' }}" placeholder="مثال: 2026">
+                </div>
+                <div class="col-12 col-md-3">
+                  <label class="form-label">الشهر</label>
+                  <select name="payslip_month" id="payslipMonth" class="form-select">
+                    <option value="">اختر</option>
+                    {% for m in range(1, 13) %}
+                      <option value="{{ m }}" {% if now_month == m %}selected{% endif %}>{{ '%02d'|format(m) }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div class="col-12 col-md-6 d-flex align-items-end">
+                  <div class="text-muted small">
+                    اختيار الشهر والسنة يساعد الموظف على عرض القسيمة بسهولة.
+                    إذا رفعت قسيمة لنفس الشهر والسنة مرة أخرى سيتم <b>استبدالها</b> تلقائياً.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col-12">
+            <button class="btn btn-outline-primary w-100"><i class="bi bi-upload"></i> رفع</button>
+          </div>
+        </div>
+      </form>
+      {% endif %}
+
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>{{ portal_sort_link('الملف', 'original_name') }}</th>
+              <th>{{ portal_sort_link('النوع', 'attachment_type') }}</th>
+              <th>{{ portal_sort_link('الفترة', 'payslip_period_label') }}</th>
+              <th>{{ portal_sort_link('تاريخ', 'uploaded_at') }}</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in attachments %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ a.original_name }}</div>
+                  {% if a.note %}<div class="text-muted small">{{ a.note }}</div>{% endif %}
+                </td>
+                <td><span class="badge bg-light text-dark border att-type">{{ a.attachment_type }}</span></td>
+                <td class="text-muted small">
+                  {% if (a.attachment_type or '').upper() == 'PAYSLIP' %}
+                    {{ a.payslip_period_label }}
+                  {% else %}
+                    -
+                  {% endif %}
+                </td>
+                <td class="text-muted small">{{ a.uploaded_at.strftime('%Y-%m-%d %H:%M') if a.uploaded_at else '' }}</td>
+                <td class="text-end">
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_employee_attachment_download', user_id=u.id, att_id=a.id) }}">
+                    <i class="bi bi-download"></i>
+                  </a>
+                  {% if current_user.has_perm('HR_EMPLOYEE_ATTACHMENTS_MANAGE') or current_user.has_role('ADMIN') %}
+                  <form method="post" action="{{ url_for('portal.hr_employee_attachment_delete', user_id=u.id, att_id=a.id) }}" class="d-inline" onsubmit="return confirm('حذف المرفق؟')">
+                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                  </form>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+            {% if attachments|length == 0 %}
+              <tr><td colspan="5" class="text-center text-muted py-3">لا يوجد مرفقات.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+
+      <script>
+        (function() {
+          const sel = document.getElementById('attTypeSelect');
+          const box = document.getElementById('payslipPeriodBox');
+          const y = document.getElementById('payslipYear');
+          const m = document.getElementById('payslipMonth');
+          if (!sel || !box) return;
+          function toggle() {
+            const v = (sel.value || '').toUpperCase();
+            box.style.display = (v === 'PAYSLIP') ? '' : 'none';
+            // Make month/year required for payslips to keep data clean and UX simple
+            if (y) y.required = (v === 'PAYSLIP');
+            if (m) m.required = (v === 'PAYSLIP');
+          }
+          sel.addEventListener('change', toggle);
+          toggle();
+        })();
+      </script>
+    </div>
+
+    <div class="bg-white rounded-3 shadow-sm p-4">
+      <div class="section-title mb-2">سجل التغييرات (Audit)</div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead>
+            <tr>
+              <th>{{ portal_sort_link('الوقت', 'created_at') }}</th>
+              <th>{{ portal_sort_link('الإجراء', 'action') }}</th>
+              <th>{{ portal_sort_link('من', 'user') }}</th>
+              <th>{{ portal_sort_link('ملاحظة', 'note') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for l in logs %}
+              <tr>
+                <td class="text-muted small">{{ l.created_at.strftime('%Y-%m-%d %H:%M') if l.created_at else '' }}</td>
+                <td><span class="badge bg-light text-dark border">{{ l.action }}</span></td>
+                <td class="text-muted small">
+                  {% if l.on_behalf_of %}
+                    {{ l.user.full_name }} ↦ {{ l.on_behalf_of.full_name }}
+                  {% else %}
+                    {{ l.user.full_name if l.user else '' }}
+                  {% endif %}
+                </td>
+                <td class="text-muted small">{{ l.note or '' }}</td>
+              </tr>
+            {% endfor %}
+            {% if logs|length == 0 %}
+              <tr><td colspan="4" class="text-center text-muted py-3">لا يوجد سجل.</td></tr>
+            {% endif %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

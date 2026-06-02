@@ -1,0 +1,643 @@
+{% extends "layout.html" %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <h3 class="mb-1">🧩 تعديل المسار #{{ t.id }}</h3>
+    <small class="text-muted">{{ t.name }}</small>
+  </div>
+  <div class="d-flex gap-2">
+    <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#wfTemplateEditPrint')"><i class="bi bi-printer"></i> طباعة</button>
+    <a class="btn btn-outline-secondary no-print" href="{{ url_for('users.help_workflow_guide') }}" target="_blank"><i class="bi bi-question-circle"></i> الدليل</a>
+
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.templates_list') }}">رجوع</a>
+    <form method="post" action="{{ url_for('workflow.templates_delete', template_id=t.id) }}"
+          onsubmit="return confirm('حذف المسار بالكامل؟');">
+      <button class="btn btn-outline-danger">حذف</button>
+    </form>
+  </div>
+</div>
+
+{# users map for display #}
+{% set users_map = {} %}
+{% if users %}
+  {% for u in users %}
+    {% set _ = users_map.update({u.id: u}) %}
+  {% endfor %}
+{% endif %}
+
+{# departments map for display #}
+{% set depts_map = {} %}
+{% if departments %}
+  {% for d in departments %}
+    {% set _ = depts_map.update({d.id: d}) %}
+  {% endfor %}
+{% endif %}
+
+{# directorates map for display #}
+{% set dirs_map = {} %}
+{% if directorates %}
+  {% for d in directorates %}
+    {% set _ = dirs_map.update({d.id: d}) %}
+  {% endfor %}
+{% endif %}
+
+{# committees map for display #}
+{% set committees_map = {} %}
+{% if committees %}
+  {% for c in committees %}
+    {% set _ = committees_map.update({c.id: c}) %}
+  {% endfor %}
+{% endif %}
+
+{# units/sections/divisions maps for display #}
+{% set units_map = {} %}
+{% if units %}
+  {% for u in units %}
+    {% set _ = units_map.update({u.id: u}) %}
+  {% endfor %}
+{% endif %}
+
+{% set sections_map = {} %}
+{% if sections %}
+  {% for s in sections %}
+    {% set _ = sections_map.update({s.id: s}) %}
+  {% endfor %}
+{% endif %}
+
+{% set divisions_map = {} %}
+{% if divisions %}
+  {% for d in divisions %}
+    {% set _ = divisions_map.update({d.id: d}) %}
+  {% endfor %}
+{% endif %}
+
+{% set org_nodes_map = {} %}
+{% if org_nodes %}
+  {% for n in org_nodes %}
+    {% set _ = org_nodes_map.update({n.id: n}) %}
+  {% endfor %}
+{% endif %}
+
+{# Arabic labels for kinds (keep codes in values) #}
+{% set KIND_LABELS = {
+  'USER':'مستخدم',
+  'ROLE':'دور',
+  'DEPARTMENT':'دائرة/قسم',
+  'DIRECTORATE':'إدارة',
+  'UNIT':'وحدة',
+  'SECTION':'قسم',
+  'DIVISION':'شعبة',
+  'ORG_NODE':'عنصر هيكلي (موحد)',
+  'COMMITTEE':'لجنة'
+} %}
+
+<div id="wfTemplateEditPrint">
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-3">
+        <div class="col-md-6">
+          <label class="form-label">اسم المسار</label>
+          <input class="form-control" name="name" value="{{ t.name }}" required>
+        </div>
+
+
+        <div class="col-md-3">
+          <label class="form-label">SLA الافتراضي (أيام)</label>
+          <input class="form-control" name="sla_days_default" type="number" min="1"
+                 value="{{ t.sla_days_default if t.sla_days_default is not none else '' }}">
+        </div>
+
+        <div class="col-md-3 d-flex align-items-end">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="is_active" value="1" id="is_active"
+                   {% if t.is_active %}checked{% endif %}>
+            <label class="form-check-label" for="is_active">Active</label>
+          </div>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-primary">حفظ بيانات المسار</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header bg-white d-flex justify-content-between align-items-center">
+  <strong>📌 خطوات المسار</strong>
+  <button type="button" class="btn btn-outline-primary me-2" data-bs-toggle="modal" data-bs-target="#importStepsModal">
+  <i class="bi bi-upload"></i>
+  Import Steps
+</button>
+<a class="btn btn-success btn-sm"
+     href="{{ url_for('workflow.templates_steps_export_excel', template_id=t.id) }}">
+    <i class="bi bi-file-earmark-excel"></i>
+    تصدير إلى Excel
+  </a>
+</div>
+  <div class="card-body">
+    {% if steps %}
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>الترتيب</th>
+            <th>طريقة التنفيذ</th>
+            <th>نوع المعتمد</th>
+            <th>المستلم</th>
+            <th>SLA</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in steps %}
+          <tr>
+            <td>
+              {{ s.step_order }}
+            </td>
+            <td>
+              {% if (s.mode or '').upper() == 'PARALLEL_SYNC' %}
+                <span class="badge bg-info text-dark">متزامن (Parallel Sync)</span>
+              {% else %}
+                <span class="badge bg-secondary">تسلسلي</span>
+              {% endif %}
+            </td>
+            <td>
+              {% set _k = (s.approver_kind or '')|upper %}
+              {% set _k_lbl = 'مستخدم' if _k=='USER' else ('دور وظيفي' if _k=='ROLE' else ('دائرة/قسم' if _k=='DEPARTMENT' else ('إدارة' if _k=='DIRECTORATE' else ('وحدة' if _k=='UNIT' else ('قسم (Section)' if _k=='SECTION' else ('شعبة (Division)' if _k=='DIVISION' else ('عنصر هيكلي (موحد)' if _k=='ORG_NODE' else ('لجنة' if _k=='COMMITTEE' else _k)))))))) %}
+              <span class="badge bg-light text-dark border">{{ _k_lbl }}</span>
+            </td>
+            <td>
+              {% if s.approver_kind == "USER" %}
+                <span class="text-muted">مستخدم:</span>
+                {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
+                  {{ users_map.get(s.approver_user_id).email }}
+                {% else %}
+                  {{ s.approver_user_id }}
+                {% endif %}
+              {% elif s.approver_kind == "ROLE" %}
+                <span class="text-muted">دور:</span> {{ s.approver_role }}
+              {% elif s.approver_kind == "DIRECTORATE" %}
+                <span class="text-muted">إدارة:</span>
+                {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
+                  {{ dirs_map.get(s.approver_directorate_id).name_ar }} [#{{ s.approver_directorate_id }}]
+                {% else %}
+                  {{ s.approver_directorate_id }}
+                {% endif %}
+              {% elif s.approver_kind == "UNIT" %}
+                <span class="text-muted">وحدة:</span>
+                {% if s.approver_unit_id and units_map.get(s.approver_unit_id) %}
+                  {{ units_map.get(s.approver_unit_id).name_ar }} [#{{ s.approver_unit_id }}]
+                {% else %}
+                  {{ s.approver_unit_id }}
+                {% endif %}
+              {% elif s.approver_kind == "SECTION" %}
+                <span class="text-muted">قسم (Section):</span>
+                {% if s.approver_section_id and sections_map.get(s.approver_section_id) %}
+                  {{ sections_map.get(s.approver_section_id).name_ar }} [#{{ s.approver_section_id }}]
+                {% else %}
+                  {{ s.approver_section_id }}
+                {% endif %}
+              {% elif s.approver_kind == "DIVISION" %}
+                <span class="text-muted">شعبة (Division):</span>
+                {% if s.approver_division_id and divisions_map.get(s.approver_division_id) %}
+                  {{ divisions_map.get(s.approver_division_id).name_ar }} [#{{ s.approver_division_id }}]
+                {% else %}
+                  {{ s.approver_division_id }}
+                {% endif %}
+              {% elif s.approver_kind == "ORG_NODE" %}
+                <span class="text-muted">عنصر هيكلي (موحد):</span>
+                {% if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) %}
+                  {{ org_nodes_map.get(s.approver_org_node_id).name_ar }} [#{{ s.approver_org_node_id }}]
+                {% else %}
+                  {{ s.approver_org_node_id }}
+                {% endif %}
+              {% elif s.approver_kind == "COMMITTEE" %}
+                <span class="text-muted">لجنة:</span>
+                {% if s.approver_committee_id and committees_map.get(s.approver_committee_id) %}
+                  {{ committees_map.get(s.approver_committee_id).name_ar }} [#{{ s.approver_committee_id }}]
+                {% else %}
+                  {{ s.approver_committee_id }}
+                {% endif %}
+                {% set _cm = (s.committee_delivery_mode or 'Committee_ALL')|upper %}
+                {% set _cm_lbl = 'كل الأعضاء' if _cm == 'COMMITTEE_ALL' else ('الرئيس فقط' if _cm == 'COMMITTEE_CHAIR' else ('المقرر فقط' if _cm == 'COMMITTEE_SECRETARY' else _cm)) %}
+                <span class="badge bg-light text-dark border">{{ _cm_lbl }}</span>
+              {% else %}
+                <span class="text-muted">دائرة/قسم:</span>
+                {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}
+                  {{ depts_map.get(s.approver_department_id).name_ar }} [#{{ s.approver_department_id }}]
+                {% else %}
+                  {{ s.approver_department_id }}
+                {% endif %}
+              {% endif %}
+
+              {% if (s.mode or '').upper() == 'PARALLEL_SYNC' %}
+                {% set extras = s.parallel_assignees or [] %}
+                <div class="mt-1 small text-muted">
+                  مرتبطون إضافيون: {{ extras|length }}
+                  {% for pa in extras %}
+                    {% if pa.approver_kind == 'USER' and pa.approver_user_id and users_map.get(pa.approver_user_id) %}
+                      <span class="badge bg-light text-dark border">{{ users_map.get(pa.approver_user_id).email }}</span>
+                    {% elif pa.approver_kind == 'ROLE' %}
+                      <span class="badge bg-light text-dark border">ROLE: {{ pa.approver_role }}</span>
+                    {% elif pa.approver_kind == 'DIRECTORATE' %}
+                      <span class="badge bg-light text-dark border">DIR: {{ dirs_map.get(pa.approver_directorate_id).name_ar if pa.approver_directorate_id and dirs_map.get(pa.approver_directorate_id) else (pa.approver_directorate_id) }}</span>
+                    {% elif pa.approver_kind == 'UNIT' %}
+                      <span class="badge bg-light text-dark border">وحدة: {{ units_map.get(pa.approver_unit_id).name_ar if pa.approver_unit_id and units_map.get(pa.approver_unit_id) else (pa.approver_unit_id) }}</span>
+                    {% elif pa.approver_kind == 'SECTION' %}
+                      <span class="badge bg-light text-dark border">قسم: {{ sections_map.get(pa.approver_section_id).name_ar if pa.approver_section_id and sections_map.get(pa.approver_section_id) else (pa.approver_section_id) }}</span>
+                    {% elif pa.approver_kind == 'DIVISION' %}
+                      <span class="badge bg-light text-dark border">شعبة: {{ divisions_map.get(pa.approver_division_id).name_ar if pa.approver_division_id and divisions_map.get(pa.approver_division_id) else (pa.approver_division_id) }}</span>
+                    {% elif pa.approver_kind == 'COMMITTEE' %}
+                          <span class="badge bg-light text-dark border">COMMITTEE: {{ committees_map.get(pa.approver_committee_id).name_ar if pa.approver_committee_id and committees_map.get(pa.approver_committee_id) else (pa.approver_committee_id) }}{% if pa.committee_delivery_mode %} ({{ pa.committee_delivery_mode }}){% endif %}</span>
+                        {% elif pa.approver_kind == 'DEPARTMENT' %}
+                      <span class="badge bg-light text-dark border">DEPT: {{ depts_map.get(pa.approver_department_id).name_ar if pa.approver_department_id and depts_map.get(pa.approver_department_id) else (pa.approver_department_id) }}</span>
+                    {% else %}
+                      <span class="badge bg-light text-dark border">{{ pa.approver_kind }}</span>
+                    {% endif %}
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </td>
+            <td>{{ s.sla_days if s.sla_days is not none else "-" }}</td>
+            <td class="text-end d-flex gap-2 justify-content-end">
+              <div class="d-inline-flex gap-1">
+  <form method="post" action="{{ url_for('workflow.templates_steps_move', step_id=s.id, direction='up') }}">
+    <button class="btn btn-sm btn-outline-secondary" title="أعلى">↑</button>
+  </form>
+  <form method="post" action="{{ url_for('workflow.templates_steps_move', step_id=s.id, direction='down') }}">
+    <button class="btn btn-sm btn-outline-secondary" title="أسفل">↓</button>
+  </form>
+  <a class="btn btn-sm btn-outline-primary"
+                 href="{{ url_for('workflow.templates_steps_edit', step_id=s.id) }}">تعديل</a>
+</div>
+
+              <form method="post" action="{{ url_for('workflow.templates_steps_delete', step_id=s.id) }}"
+                    onsubmit="return confirm('حذف الخطوة؟');">
+                <button class="btn btn-sm btn-outline-danger">حذف</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="text-muted">لا توجد خطوات بعد.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white"><strong>➕ إضافة خطوة</strong></div>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('workflow.templates_steps_add', template_id=t.id) }}">
+      <div class="row g-3">
+
+        <div class="col-md-3">
+          <label class="form-label">نوع المعتمد</label>
+          <select class="form-select" name="approver_kind" id="kind">
+            <option value="ROLE">دور وظيفي (ROLE)</option>
+            <option value="USER">مستخدم (USER)</option>
+            <option value="DEPARTMENT">دائرة/قسم (DEPARTMENT)</option>
+            <option value="DIRECTORATE">إدارة (DIRECTORATE)</option>
+            <option value="UNIT">وحدة (UNIT)</option>
+            <option value="SECTION">قسم (SECTION)</option>
+            <option value="DIVISION">شعبة (DIVISION)</option>
+            <option value="ORG_NODE">عنصر هيكلي (موحد)</option>
+            <option value="COMMITTEE">لجنة (COMMITTEE)</option>
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_role">
+          <label class="form-label">الدور</label>
+          <select class="form-select" name="approver_role">
+            <option value="">-- اختر --</option>
+            {% for r in role_choices %}
+              <option value="{{ r }}">{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_user" style="display:none;">
+          <label class="form-label">المستخدم</label>
+          <select class="form-select" name="approver_user_id">
+            <option value="">-- اختر --</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.email }} ({{ u.role }})</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_dept" style="display:none;">
+          <label class="form-label">الدائرة/القسم</label>
+          <select class="form-select" name="approver_department_id">
+            <option value="">-- اختر --</option>
+            {% for d in departments %}
+              <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_dir" style="display:none;">
+  <label class="form-label">الإدارة</label>
+  <select class="form-select" name="approver_directorate_id">
+    <option value="">-- اختر --</option>
+    {% for d in directorates %}
+      <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+    {% endfor %}
+  </select>
+</div>
+
+
+        <div class="col-md-3" id="box_unit" style="display:none;">
+          <label class="form-label">الوحدة</label>
+          <select class="form-select" name="approver_unit_id">
+            <option value="">-- اختر --</option>
+            {% for u in units %}
+              <option value="{{ u.id }}">{{ u.name_ar }}{% if u.code %} ({{ u.code }}){% endif %} [#{{ u.id }}]</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_section" style="display:none;">
+          <label class="form-label">القسم (Section)</label>
+          <select class="form-select" name="approver_section_id">
+            <option value="">-- اختر --</option>
+            {% for s in sections %}
+              <option value="{{ s.id }}">{{ s.name_ar }}{% if s.code %} ({{ s.code }}){% endif %} [#{{ s.id }}]</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_division" style="display:none;">
+          <label class="form-label">الشعبة (Division)</label>
+          <select class="form-select" name="approver_division_id">
+            <option value="">-- اختر --</option>
+            {% for d in divisions %}
+              <option value="{{ d.id }}">{{ d.name_ar }}{% if d.code %} ({{ d.code }}){% endif %} [#{{ d.id }}]</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_org_node" style="display:none;">
+          <label class="form-label">عنصر الهيكلية الموحدة</label>
+          <input type="hidden" name="approver_org_node_id" id="add_org_node_id" value="">
+          <div class="input-group">
+            <input class="form-control" id="add_org_node_label" value="—" readonly>
+            <button class="btn btn-outline-secondary" type="button" data-bs-toggle="modal" data-bs-target="#addOrgNodePickerModal">🌳 شجرة</button>
+            <button class="btn btn-outline-danger" type="button" id="add_org_node_clear" title="مسح">✖</button>
+          </div>
+          <div class="form-text">اختر عنصر ضمن الهيكلية الموحدة (مسموح للموافقات).</div>
+        </div>
+
+        <div class="col-md-3" id="box_committee" style="display:none;">
+          <label class="form-label">اللجنة</label>
+          <select class="form-select" name="approver_committee_id" id="committee_id">
+            <option value="">-- اختر --</option>
+            {% for c in committees %}
+              <option value="{{ c.id }}">{{ c.name_ar }}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-3" id="box_committee_mode" style="display:none;">
+          <label class="form-label">تسليم المهمة للجنة</label>
+          <select class="form-select" name="committee_delivery_mode" id="committee_mode">
+            <option value="Committee_ALL" selected>كل الأعضاء</option>
+            <option value="Committee_CHAIR">الرئيس فقط</option>
+            <option value="Committee_SECRETARY">المقرر فقط</option>
+          </select>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">SLA (أيام)</label>
+          <input class="form-control" name="sla_days" type="number" min="1" placeholder="اختياري">
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">طريقة التنفيذ</label>
+          <select class="form-select" name="mode">
+            <option value="SEQUENTIAL" selected>تسلسلي (Sequential)</option>
+            <option value="PARALLEL_SYNC">متزامن (Parallel Sync)</option>
+          </select>
+          <div class="form-text">في الوضع المتزامن، الردود للتوثيق ولا تغيّر قرار المسار.</div>
+        </div>
+
+        <div class="col-12">
+          <button class="btn btn-success">إضافة</button>
+        </div>
+
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- OrgNode Picker Modal (Add Step) -->
+<div class="modal fade" id="addOrgNodePickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">اختيار عنصر الهيكلية الموحدة</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div id="addOrgNodeTreeContainer"><div class="text-muted">جاري تحميل الشجرة…</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const kind = document.getElementById("kind");
+  const boxRole = document.getElementById("box_role");
+  const boxUser = document.getElementById("box_user");
+  const boxDept = document.getElementById("box_dept");
+  const boxDir = document.getElementById("box_dir");
+  const boxUnit = document.getElementById("box_unit");
+  const boxSection = document.getElementById("box_section");
+  const boxDivision = document.getElementById("box_division");
+  const boxOrgNode = document.getElementById("box_org_node");
+  const boxCommittee = document.getElementById("box_committee");
+  const boxCommitteeMode = document.getElementById("box_committee_mode");
+
+  function toggle() {
+    const v = kind.value;
+
+    boxRole.style.display = (v === "ROLE") ? "block" : "none";
+    boxUser.style.display = (v === "USER") ? "block" : "none";
+    boxDept.style.display = (v === "DEPARTMENT") ? "block" : "none";
+    boxDir.style.display = (v === "DIRECTORATE") ? "block" : "none";
+    boxUnit.style.display = (v === "UNIT") ? "block" : "none";
+    boxSection.style.display = (v === "SECTION") ? "block" : "none";
+    boxDivision.style.display = (v === "DIVISION") ? "block" : "none";
+    boxOrgNode.style.display = (v === "ORG_NODE") ? "block" : "none";
+    boxCommittee.style.display = (v === "COMMITTEE") ? "block" : "none";
+    boxCommitteeMode.style.display = (v === "COMMITTEE") ? "block" : "none";
+
+    // Disable unused fields to avoid posting junk values
+    const roleSel = boxRole.querySelector('select[name="approver_role"]');
+    const userSel = boxUser.querySelector('select[name="approver_user_id"]');
+    const deptSel = boxDept.querySelector('select[name="approver_department_id"]');
+    const dirSel = boxDir.querySelector('select[name="approver_directorate_id"]');
+    const unitSel = boxUnit.querySelector('select[name="approver_unit_id"]');
+    const sectionSel = boxSection.querySelector('select[name="approver_section_id"]');
+    const divisionSel = boxDivision.querySelector('select[name="approver_division_id"]');
+    const orgNodeIdInput = document.getElementById('add_org_node_id');
+    const orgNodeLabelInput = document.getElementById('add_org_node_label');
+    const comSel = boxCommittee.querySelector('select[name="approver_committee_id"]');
+    const comModeSel = boxCommitteeMode.querySelector('select[name="committee_delivery_mode"]');
+
+    roleSel.disabled = (v !== "ROLE");
+    userSel.disabled = (v !== "USER");
+    deptSel.disabled = (v !== "DEPARTMENT");
+    dirSel.disabled = (v !== "DIRECTORATE");
+    unitSel.disabled = (v !== "UNIT");
+    sectionSel.disabled = (v !== "SECTION");
+    divisionSel.disabled = (v !== "DIVISION");
+    // OrgNode is a hidden input; we clear it when not in use
+    comSel.disabled = (v !== "COMMITTEE");
+    comModeSel.disabled = (v !== "COMMITTEE");
+
+    if (v !== "ROLE") roleSel.value = "";
+    if (v !== "USER") userSel.value = "";
+    if (v !== "DEPARTMENT") deptSel.value = "";
+    if (v !== "DIRECTORATE") dirSel.value = "";
+    if (v !== "UNIT") unitSel.value = "";
+    if (v !== "SECTION") sectionSel.value = "";
+    if (v !== "DIVISION") divisionSel.value = "";
+    if (v !== "ORG_NODE") {
+      if (orgNodeIdInput) orgNodeIdInput.value = "";
+      if (orgNodeLabelInput) orgNodeLabelInput.value = "—";
+    }
+    if (v !== "COMMITTEE") {
+      comSel.value = "";
+      comModeSel.value = "Committee_ALL";
+    }
+  }
+
+  kind.addEventListener("change", toggle);
+  toggle();
+
+  // -------------------------
+  // OrgNode Tree Picker (Add)
+  // -------------------------
+  const addTreeContainer = document.getElementById('addOrgNodeTreeContainer');
+  const addOrgNodeId = document.getElementById('add_org_node_id');
+  const addOrgNodeLabel = document.getElementById('add_org_node_label');
+  const addClearBtn = document.getElementById('add_org_node_clear');
+  const addModalEl = document.getElementById('addOrgNodePickerModal');
+
+  function wireTreeUI(container){
+    const tree = container ? container.querySelector('[data-tree-root]') : null;
+    const search = container ? container.querySelector('[data-tree-search]') : null;
+    const expandAll = container ? container.querySelector('[data-tree-expand]') : null;
+    const collapseAll = container ? container.querySelector('[data-tree-collapse]') : null;
+
+    function setAll(open){
+      if (!tree) return;
+      tree.querySelectorAll('details.org-details').forEach(d => { d.open = !!open; });
+    }
+    if (expandAll) expandAll.onclick = () => setAll(true);
+    if (collapseAll) collapseAll.onclick = () => setAll(false);
+
+    if (search) {
+      search.oninput = function(){
+        const q = (this.value || '').trim().toLowerCase();
+        if (!tree) return;
+        const items = tree.querySelectorAll('li.org-li');
+        if (!q) {
+          items.forEach(li => li.classList.remove('d-none'));
+          return;
+        }
+        items.forEach(li => {
+          const t = (li.getAttribute('data-node-text') || '');
+          li.classList.toggle('d-none', t.indexOf(q) === -1);
+        });
+        setAll(true);
+      };
+    }
+  }
+
+  async function loadAddTree(){
+    if (!addTreeContainer) return;
+    const selected = (addOrgNodeId && addOrgNodeId.value) ? addOrgNodeId.value : '';
+    const url = new URL('{{ url_for("workflow.org_node_picker_tree") }}', window.location.origin);
+    url.searchParams.set('mode', 'approvals');
+    if (selected) url.searchParams.set('selected', selected);
+
+    addTreeContainer.innerHTML = '<div class="text-muted">جاري تحميل الشجرة…</div>';
+    try {
+      const res = await fetch(url.toString(), {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      const html = await res.text();
+      addTreeContainer.innerHTML = html;
+      wireTreeUI(addTreeContainer);
+    } catch(e){
+      addTreeContainer.innerHTML = '<div class="alert alert-warning">تعذر تحميل الشجرة.</div>';
+    }
+  }
+
+  if (addModalEl) {
+    addModalEl.addEventListener('shown.bs.modal', loadAddTree);
+  }
+
+  if (addClearBtn) addClearBtn.addEventListener('click', function(){
+    if (addOrgNodeId) addOrgNodeId.value = '';
+    if (addOrgNodeLabel) addOrgNodeLabel.value = '—';
+  });
+
+  if (addTreeContainer) {
+    addTreeContainer.addEventListener('click', function(ev){
+      const btn = ev.target.closest('.pick-node');
+      if (!btn) return;
+      ev.preventDefault();
+      if (btn.disabled) return;
+      const id = btn.getAttribute('data-id') || '';
+      const label = btn.getAttribute('data-label') || '';
+      if (addOrgNodeId) addOrgNodeId.value = id;
+      if (addOrgNodeLabel) addOrgNodeLabel.value = label;
+      try {
+        const m = bootstrap.Modal.getInstance(addModalEl);
+        if (m) m.hide();
+      } catch(e) {}
+    });
+  }
+</script>
+
+
+
+<!-- Import Steps Modal -->
+<div class="modal fade" id="importStepsModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form class="modal-content" method="post" action="{{ url_for('workflow.templates_steps_import_excel', template_id=t.id) }}" enctype="multipart/form-data">
+      <div class="modal-header">
+        <h5 class="modal-title">استيراد خطوات المسار</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-2">
+          <label class="form-label">Mode</label>
+          <select class="form-select" name="mode" required>
+            <option value="safe" selected>Safe Replace (Upsert حسب step_order)</option>
+            <option value="replace">Replace (مسح خطوات المسار ثم إعادة إدخال)</option>
+          </select>
+          <div class="form-text">أعمدة مقترحة: step_order, mode, approver_kind, target, sla_days, committee_delivery_mode, parallel_assignees</div>
+        </div>
+        <div class="mb-2">
+          <input class="form-control" type="file" name="file" accept=".xlsx" required>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button class="btn btn-primary">استيراد</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+
+</div>
+{% endblock %}

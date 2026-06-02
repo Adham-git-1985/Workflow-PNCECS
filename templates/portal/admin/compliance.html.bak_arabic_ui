@@ -1,0 +1,87 @@
+{% extends "portal/layout.html" %}
+{% block title %}التدقيق والامتثال{% endblock %}
+
+{% block content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <h5 class="mb-0"><i class="bi bi-shield-check"></i> التدقيق والامتثال (Portal)</h5>
+      <div class="text-muted small">عرض سجلات التدقيق (AuditLog) مع فلترة وتصدير.</div>
+    </div>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3">
+      <label class="form-label small text-muted">Action (contains)</label>
+      <input class="form-control" name="action" value="{{ q_action }}" placeholder="HR_...">
+    </div>
+    <div class="col-md-3">
+      <label class="form-label small text-muted">User</label>
+      <input class="form-control" name="user" value="{{ q_user }}" placeholder="email أو الاسم">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted">From</label>
+      <input class="form-control" type="date" name="from" value="{{ q_from }}">
+    </div>
+    <div class="col-md-2">
+      <label class="form-label small text-muted">To</label>
+      <input class="form-control" type="date" name="to" value="{{ q_to }}">
+    </div>
+    <div class="col-md-2 d-grid">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> فلترة</button>
+    </div>
+  </form>
+  <div class="mt-2 d-flex gap-2 flex-wrap">
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_compliance_export_csv', action=q_action, user=q_user, from=q_from, to=q_to) }}"><i class="bi bi-download"></i> Export CSV</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_timeline') }}"><i class="bi bi-clock-history"></i> السجل الزمني</a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <h6 class="mb-3"><i class="bi bi-clock-history"></i> آخر السجلات (حتى 500)</h6>
+  {% if logs and logs|length > 0 %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>{{ portal_sort_link('التاريخ', 'created_at') }}</th>
+            <th>{{ portal_sort_link('المستخدم', 'user') }}</th>
+            <th>Action</th>
+            <th>{{ portal_sort_link('Target', 'target_type') }}</th>
+            <th>{{ portal_sort_link('ملاحظة', 'note') }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in logs %}
+            <tr>
+              <td>{{ r.id }}</td>
+              <td class="small text-muted">{{ r.created_at }}</td>
+              <td>{{ r.user.full_name if r.user else r.user_id }}</td>
+              <td><code>{{ r.action }}</code></td>
+              <td class="small">
+                {% if r._target_label %}
+                  {% if r._target_url %}
+                    <a href="{{ r._target_url }}" class="text-decoration-none">{{ r._target_label }}</a>
+                  {% else %}
+                    <span class="text-muted">{{ r._target_label }}</span>
+                  {% endif %}
+                {% else %}
+                  <span class="text-muted">{{ r.target_type }}{% if r.target_id %}:{{ r.target_id }}{% endif %}</span>
+                {% endif %}
+              </td>
+              <td class="small">{{ r.note }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد نتائج.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

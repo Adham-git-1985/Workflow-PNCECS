@@ -1,5 +1,5 @@
 {% extends "help/_guide_base.html" %}
-{% set page_title = "دليل طلبات الصلاحية (Portal Access Requests)" %}
+{% set page_title = "دليل طلبات الصلاحية (البوابة Access الطلبات)" %}
 {% set page_subtitle = "كيف يطلب الموظف صلاحية، وكيف يراجعها الأدمن، وما أثر القرار على حساب المستخدم." %}
 
 {% block guide_body %}
@@ -20,7 +20,7 @@
       <li>عندما تحتاج صلاحيات إضافية داخل نفس الخدمة (مثال: تريد صلاحية إدارة الصادر/الوارد وليس فقط القراءة).</li>
     </ul>
     <div class="alert alert-info py-2 mb-0">
-      <strong>ملاحظة:</strong> المستخدمون الذين لا يمتلكون دخولًا للبوابة أصلًا يمكنهم طلب <strong>Portal Entry</strong> من شاشة “لا توجد صلاحيات”.
+      <strong>ملاحظة:</strong> المستخدمون الذين لا يمتلكون دخولًا للبوابة أصلًا يمكنهم طلب <strong>البوابة Entry</strong> من شاشة “لا توجد صلاحيات”.
     </div>
   </div>
 </details>
@@ -43,7 +43,7 @@
 
 
 <details class="mb-2">
-  <summary class="fw-bold">3) متابعة الطلب (My Requests)</summary>
+  <summary class="fw-bold">3) متابعة الطلب (طلباتي)</summary>
   <div class="mt-2">
     <ul class="mb-2">
       <li>ادخل إلى <strong>طلباتي</strong> لرؤية جميع طلبات الصلاحية التي قدمتها.</li>
@@ -55,17 +55,17 @@
 
 
 <details class="mb-2">
-  <summary class="fw-bold">4) كيف يوجّه النظام الطلب للأدمن؟ (Routing/Assignment)</summary>
+  <summary class="fw-bold">4) كيف يوجّه النظام الطلب للأدمن؟ (التوجيه/Assignment)</summary>
   <div class="mt-2">
     <div class="mb-2">لتخفيف العبء، يحاول النظام تعيين الطلب تلقائيًا لأحد مديري البوابة حسب قربه من مقدم الطلب:</div>
     <ul class="mb-2">
-      <li><strong>أولوية 1:</strong> Portal Admin في نفس <strong>الدائرة (Department)</strong>.</li>
-      <li><strong>أولوية 2:</strong> Portal Admin في نفس <strong>الإدارة (Directorate)</strong>.</li>
-      <li><strong>أولوية 3:</strong> Portal Admin في نفس <strong>المنظمة (Organization)</strong>.</li>
-      <li><strong>Fallback:</strong> أول Portal Admin متاح إذا لم تتوفر مطابقات.</li>
+      <li><strong>أولوية 1:</strong> البوابة Admin في نفس <strong>الدائرة (Department)</strong>.</li>
+      <li><strong>أولوية 2:</strong> البوابة Admin في نفس <strong>الإدارة (Directorate)</strong>.</li>
+      <li><strong>أولوية 3:</strong> البوابة Admin في نفس <strong>المنظمة (Organization)</strong>.</li>
+      <li><strong>Fallback:</strong> أول البوابة Admin متاح إذا لم تتوفر مطابقات.</li>
     </ul>
     <div class="alert alert-info py-2 mb-0">
-      <strong>ملاحظة:</strong> حتى مع التعيين، يتم إرسال إشعار لجميع Portal Admins (لتفادي ضياع الطلب).
+      <strong>ملاحظة:</strong> حتى مع التعيين، يتم إرسال إشعار لجميع البوابة Admins (لتفادي ضياع الطلب).
     </div>
   </div>
 </details>
@@ -104,8 +104,8 @@
   <summary class="fw-bold">7) أسئلة شائعة</summary>
   <div class="mt-2">
     <ul class="mb-0">
-      <li><strong>لا أرى صفحة طلب الصلاحية؟</strong> ربما لا تمتلك صلاحية دخول البوابة بعد، اطلب <strong>Portal Entry</strong> أولًا.</li>
-      <li><strong>قدّمت طلبًا ولم يُعالج؟</strong> راجع الحالة من “طلباتي”، أو تواصل مع Portal Admin. الطلب أيضًا يُرسل كإشعار للمدراء.</li>
+      <li><strong>لا أرى صفحة طلب الصلاحية؟</strong> ربما لا تمتلك صلاحية دخول البوابة بعد، اطلب <strong>البوابة Entry</strong> أولًا.</li>
+      <li><strong>قدّمت طلبًا ولم يُعالج؟</strong> راجع الحالة من “طلباتي”، أو تواصل مع البوابة Admin. الطلب أيضًا يُرسل كإشعار للمدراء.</li>
       <li><strong>بعد الموافقة ما زالت الخدمة مقفلة؟</strong> جرّب تحديث الصفحة/تسجيل خروج ودخول، وإن استمر اتصل بالأدمن للتأكد من منح المفاتيح.</li>
     </ul>
   </div>
