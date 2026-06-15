@@ -1,42 +1,171 @@
 {% extends "layout.html" %}
 {% block content %}
 
-<div class="d-flex justify-content-between align-items-center mb-4">
+{% set filters = filters if filters is defined else {} %}
+{% set summary = summary if summary is defined else {} %}
+{% set status_labels = {
+  'DRAFT': 'مسودة',
+  'IN_PROGRESS': 'قيد المعالجة',
+  'APPROVED': 'معتمد',
+  'REJECTED': 'مرفوض'
+} %}
+
+<div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
   <div>
     <h3 class="mb-1">👁️ متابعة المسارات</h3>
-    <small class="text-muted">الطلبات التي شاركت فيها (وافقت/رفضت) وتريد متابعة سيرها</small>
+    <small class="text-muted">الطلبات التي أنشأتها أو شاركت في معالجتها أو تتابع سيرها</small>
   </div>
 </div>
 
-<form method="get" class="row g-2 align-items-center mb-3">
-  <div class="col-sm-7 col-md-6 col-lg-5">
-    <div class="input-group">
-      <span class="input-group-text"><i class="bi bi-search"></i></span>
-      <input type="text"
-             class="form-control"
-             name="q"
-             value="{{ q or '' }}"
-             placeholder="ابحث برقم الطلب أو العنوان أو البريد..." />
+<div class="card shadow-sm mb-3">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div class="fw-semibold"><i class="bi bi-funnel"></i> فلتر متقدم</div>
+    <div class="small text-muted">
+      النتائج: <span class="fw-semibold">{{ summary.total or 0 }}</span>
+      {% if summary.active_filters %}
+        <span class="badge text-bg-primary ms-2">{{ summary.active_filters }} فلتر</span>
+      {% endif %}
     </div>
   </div>
-  <div class="col-auto">
-    <button class="btn btn-outline-primary">بحث</button>
+  <div class="card-body">
+    <form method="get" class="row g-3 align-items-end">
+      <div class="col-12 col-md-6 col-lg-4">
+        <label class="form-label">بحث عام</label>
+        <div class="input-group">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input type="text"
+                 class="form-control"
+                 name="q"
+                 value="{{ filters.q or q or '' }}"
+                 placeholder="رقم الطلب، العنوان، الوصف، طالب الطلب، البريد، اسم المسار..." />
+        </div>
+      </div>
+
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">الحالة</label>
+        <select class="form-select" name="status">
+          <option value="">الكل</option>
+          {% for st in status_options %}
+            <option value="{{ st }}" {% if filters.status == st %}selected{% endif %}>{{ status_labels.get(st, st) }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">نوع المتابعة</label>
+        <select class="form-select" name="relation">
+          <option value="" {% if not filters.relation %}selected{% endif %}>الكل</option>
+          <option value="created" {% if filters.relation == 'created' %}selected{% endif %}>طلبات أنشأتها</option>
+          <option value="decided" {% if filters.relation == 'decided' %}selected{% endif %}>شاركت بالقرار</option>
+          <option value="parallel" {% if filters.relation == 'parallel' %}selected{% endif %}>مكلف موازيًا</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-6 col-lg-4">
+        <label class="form-label">المسار / القالب</label>
+        <select class="form-select" name="template_id">
+          <option value="">كل المسارات</option>
+          {% for tpl in templates %}
+            <option value="{{ tpl.id }}" {% if filters.template_id|string == tpl.id|string %}selected{% endif %}>{{ tpl.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-12 col-md-6 col-lg-4">
+        <label class="form-label">نوع الطلب</label>
+        <select class="form-select" name="request_type_id">
+          <option value="">كل أنواع الطلبات</option>
+          {% for rt in request_types %}
+            <option value="{{ rt.id }}" {% if filters.request_type_id|string == rt.id|string %}selected{% endif %}>
+              {{ rt.name_ar or rt.name_en or ('نوع #' ~ rt.id) }}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">من تاريخ</label>
+        <input type="date" class="form-control" name="date_from" value="{{ filters.date_from or '' }}">
+      </div>
+
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">إلى تاريخ</label>
+        <input type="date" class="form-control" name="date_to" value="{{ filters.date_to or '' }}">
+      </div>
+
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">الخطوة الحالية</label>
+        <input type="number" min="0" class="form-control" name="current_step" value="{{ filters.current_step or '' }}" placeholder="مثال: 1">
+      </div>
+
+      <div class="col-6 col-md-3 col-lg-2">
+        <label class="form-label">SLA</label>
+        <select class="form-select" name="sla_state">
+          <option value="" {% if not filters.sla_state %}selected{% endif %}>الكل</option>
+          <option value="overdue" {% if filters.sla_state == 'overdue' %}selected{% endif %}>متأخر فقط</option>
+          <option value="on_time" {% if filters.sla_state == 'on_time' %}selected{% endif %}>غير متأخر</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-6 col-lg-4">
+        <label class="form-label">ترتيب النتائج</label>
+        <select class="form-select" name="sort">
+          <option value="id_desc" {% if filters.sort == 'id_desc' %}selected{% endif %}>الأحدث حسب رقم الطلب</option>
+          <option value="id_asc" {% if filters.sort == 'id_asc' %}selected{% endif %}>الأقدم حسب رقم الطلب</option>
+          <option value="created_desc" {% if filters.sort == 'created_desc' %}selected{% endif %}>الأحدث حسب تاريخ الإنشاء</option>
+          <option value="created_asc" {% if filters.sort == 'created_asc' %}selected{% endif %}>الأقدم حسب تاريخ الإنشاء</option>
+          <option value="title_asc" {% if filters.sort == 'title_asc' %}selected{% endif %}>العنوان أبجديًا</option>
+          <option value="status_asc" {% if filters.sort == 'status_asc' %}selected{% endif %}>الحالة</option>
+          <option value="step_asc" {% if filters.sort == 'step_asc' %}selected{% endif %}>الخطوة الحالية تصاعديًا</option>
+          <option value="step_desc" {% if filters.sort == 'step_desc' %}selected{% endif %}>الخطوة الحالية تنازليًا</option>
+        </select>
+      </div>
+
+      <div class="col-12 d-flex gap-2 flex-wrap">
+        <button class="btn btn-primary"><i class="bi bi-funnel"></i> تطبيق الفلتر</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('workflow.following') }}">تفريغ</a>
+      </div>
+    </form>
   </div>
-  {% if q %}
-  <div class="col-auto">
-    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.following') }}">إلغاء</a>
+</div>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 border h-100">
+      <div class="text-muted small">عدد النتائج</div>
+      <div class="fs-4 fw-semibold">{{ summary.total or 0 }}</div>
+    </div>
   </div>
-  {% endif %}
-</form>
+  <div class="col-6 col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 border h-100">
+      <div class="text-muted small">مسارات مفتوحة</div>
+      <div class="fs-4 fw-semibold">{{ summary.open or 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 border h-100">
+      <div class="text-muted small">مسارات منتهية</div>
+      <div class="fs-4 fw-semibold">{{ summary.closed or 0 }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="bg-white rounded-3 shadow-sm p-3 border h-100">
+      <div class="text-muted small">متأخرة SLA</div>
+      <div class="fs-4 fw-semibold">{{ summary.overdue or 0 }}</div>
+    </div>
+  </div>
+</div>
 
 {% if rows %}
 <div class="card shadow-sm">
   <div class="table-responsive">
-    <table class="table table-hover mb-0">
+    <table class="table table-hover mb-0 align-middle">
       <thead class="table-light">
         <tr>
           <th>#</th>
           <th>العنوان</th>
+          <th>طالب الطلب</th>
+          <th>المسار</th>
           <th>الحالة</th>
           <th>الخطوة الحالية</th>
           <th>اتفاقية مستوى الخدمة</th>
@@ -46,12 +175,27 @@
       </thead>
       <tbody>
         {% for req, inst, tpl in rows %}
+        {% set is_closed = req.status in ['APPROVED','REJECTED'] %}
         <tr>
-          <td>{{ req.id }}</td>
-          <td>{{ req.title }}</td>
+          <td class="fw-semibold">{{ req.id }}</td>
           <td>
-            <span class="badge {% if req.status in ['APPROVED','REJECTED'] %}bg-secondary{% else %}bg-primary{% endif %}">
-              {{ req.status }}
+            <div class="fw-semibold">{{ req.title }}</div>
+            {% if req.description %}
+              <div class="text-muted small text-truncate" style="max-width: 360px;">{{ req.description }}</div>
+            {% endif %}
+          </td>
+          <td>
+            {% if req.requester %}
+              <div>{{ req.requester.name or req.requester.email }}</div>
+              {% if req.requester.email %}<div class="text-muted small">{{ req.requester.email }}</div>{% endif %}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>{{ tpl.name if tpl else '—' }}</td>
+          <td>
+            <span class="badge {% if is_closed %}bg-secondary{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
+              {{ status_labels.get(req.status, req.status) }}
             </span>
           </td>
           <td>{% if inst %}{{ inst.current_step_order }}{% else %}—{% endif %}</td>
@@ -66,7 +210,7 @@
               —
             {% endif %}
           </td>
-          <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else '—' }}</td>
           <td class="text-end">
             <a class="btn btn-sm btn-outline-primary"
                href="{{ url_for('workflow.view_request', request_id=req.id) }}">
@@ -92,8 +236,8 @@
       </div>
       <div class="modal-body">
         <p class="mb-2">
-          <b>اتفاقية مستوى الخدمة</b> اختصار لـ <b>Service Level Agreement</b>، ويعني <b>اتفاقية مستوى الخدمة</b>.
-          في النظام: هي <b>مدة زمنية (بالأيام)</b> تحدد الحد الأقصى لإنجاز المسار قبل اعتباره متأخرًا.
+          <b>اتفاقية مستوى الخدمة</b> اختصار لـ <b>Service Level Agreement</b>.
+          في النظام: هي <b>مدة زمنية بالأيام</b> تحدد الحد الأقصى لإنجاز المسار قبل اعتباره متأخرًا.
         </p>
         <div class="alert alert-light mb-0">
           <div class="fw-bold" id="slaInfoScope">اتفاقية مستوى الخدمة</div>
@@ -122,7 +266,7 @@
 </script>
 {% else %}
 <div class="alert alert-light text-center text-muted py-4">
-  لا توجد مسارات تتابعها حالياً ✅
+  لا توجد مسارات مطابقة للفلتر الحالي ✅
 </div>
 {% endif %}
 

@@ -1,0 +1,194 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}قسائم الراتب - رفع ملف جماعي{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4" dir="rtl">
+
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+    <div>
+      <h3 class="mb-1">
+        <i class="bi bi-file-earmark-pdf"></i>
+        رفع قسائم الراتب
+      </h3>
+      <div class="text-muted">
+        ارفع ملف PDF واحد، وسيتم تقسيم كل صفحة حسب رقم الهوية، ثم حفظ القسائم كمسودات للشهر المختار.
+      </div>
+    </div>
+    <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=year, month=month) }}">
+      <i class="bi bi-send"></i>
+      صفحة إرسال القسائم
+    </a>
+  </div>
+
+  <div class="alert alert-info">
+    <div class="fw-bold mb-1">مهم</div>
+    <div>
+      القسائم المحفوظة هنا تظهر في صفحة إرسال القسائم حسب السنة والشهر المختارين. إذا لم تظهر قسيمة موظف، تأكد أن رقم الهوية موجود في ملف الموظف داخل النظام.
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white fw-bold">
+      رفع ملف قسائم الراتب الجماعي
+    </div>
+    <div class="card-body">
+      <form method="POST" enctype="multipart/form-data">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="row g-3">
+          <div class="col-md-2">
+            <label class="form-label">السنة</label>
+            <input type="number" name="year" class="form-control" min="2000" max="2100" value="{{ year }}" required>
+          </div>
+          <div class="col-md-2">
+            <label class="form-label">الشهر</label>
+            <select name="month" class="form-select" required>
+              {% for m in range(1, 13) %}
+                <option value="{{ m }}" {% if m == month %}selected{% endif %}>{{ "%02d"|format(m) }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-8">
+            <label class="form-label">ملف PDF الجماعي</label>
+            <input type="file" name="pdf_file" class="form-control" accept="application/pdf" required>
+            <div class="form-text">
+              يجب أن يحتوي كل صفحة على حقل رقم الهوية. سيتم مطابقة رقم الهوية مع ملف الموظف ثم حفظ القسيمة كمسودة.
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-3 d-flex align-items-center gap-2 flex-wrap">
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-scissors"></i>
+            رفع وتقسيم وحفظ كمسودات
+          </button>
+          <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_payslips_bulk_upload') }}">
+            تحديث الصفحة
+          </a>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {% if batch_id %}
+    <div class="alert alert-success d-flex align-items-center justify-content-between gap-3 flex-wrap">
+      <div>
+        <div class="fw-bold">تمت معالجة دفعة شهر {{ "%04d"|format(year) }}-{{ "%02d"|format(month) }}</div>
+        <div>
+          الصفحات: {{ counters.pages }}، المحفوظ كمسودات: {{ counters.saved }}، المتخطى: {{ counters.skipped }}.
+        </div>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a class="btn btn-success" href="{{ url_for('portal.hr_payslips_send', year=year, month=month) }}">
+          <i class="bi bi-send"></i>
+          الذهاب للإرسال
+        </a>
+        <a class="btn btn-outline-success" href="{{ url_for('portal.hr_payslips_bulk_download_zip', batch_id=batch_id) }}">
+          <i class="bi bi-download"></i>
+          تحميل ZIP للملفات المقسمة
+        </a>
+      </div>
+    </div>
+  {% endif %}
+
+  {% if warnings %}
+    <div class="alert alert-warning">
+      <strong>تنبيهات:</strong>
+      <ul class="mb-0">
+        {% for item in warnings %}
+          <li>{{ item }}</li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
+
+  {% if rows %}
+    <div class="card shadow-sm mb-4">
+      <div class="card-header bg-white fw-bold">
+        نتيجة الرفع والحفظ لشهر {{ "%04d"|format(year) }}-{{ "%02d"|format(month) }}
+      </div>
+      <div class="card-body table-responsive">
+        <table class="table table-bordered table-striped align-middle text-center">
+          <thead class="table-light">
+            <tr>
+              <th style="width:90px">الصفحة</th>
+              <th style="width:150px">رقم الهوية</th>
+              <th style="width:130px">الرقم الوظيفي</th>
+              <th>الموظف</th>
+              <th style="width:120px">الحالة</th>
+              <th>ملاحظة</th>
+              <th style="width:120px">تحميل</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in rows %}
+              <tr>
+                <td>{{ item.page }}</td>
+                <td class="ltr">{{ item.identity_number }}</td>
+                <td>{{ item.employee_no or '-' }}</td>
+                <td>{{ item.employee_name or '-' }}</td>
+                <td>
+                  {% if item.status == 'saved' %}
+                    <span class="badge bg-success">محفوظة كمسودة</span>
+                  {% else %}
+                    <span class="badge bg-warning text-dark">لم تحفظ</span>
+                  {% endif %}
+                </td>
+                <td class="text-start">{{ item.message }}</td>
+                <td>
+                  <a class="btn btn-sm btn-outline-primary"
+                     href="{{ url_for('portal.hr_payslips_bulk_download_file', batch_id=batch_id, filename=item.filename) }}">
+                    تحميل
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
+
+  <div class="card shadow-sm">
+    <div class="card-header bg-white fw-bold">
+      الأشهر التي تحتوي قسائم مرفوعة
+    </div>
+    <div class="card-body">
+      {% if recent_months %}
+        <div class="table-responsive">
+          <table class="table table-bordered table-hover align-middle text-center mb-0">
+            <thead class="table-light">
+              <tr>
+                <th>الشهر</th>
+                <th>إجمالي القسائم</th>
+                <th>مسودات غير مرسلة</th>
+                <th>مرسلة</th>
+                <th>الإرسال</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for r in recent_months %}
+                <tr>
+                  <td class="fw-bold">{{ "%04d"|format(r.year) }}-{{ "%02d"|format(r.month) }}</td>
+                  <td>{{ r.total }}</td>
+                  <td>{{ r.drafts }}</td>
+                  <td>{{ r.sent }}</td>
+                  <td>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=r.year, month=r.month) }}">
+                      فتح صفحة الإرسال
+                    </a>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد قسائم محفوظة في قاعدة البيانات حتى الآن.</div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from typing import Optional
 
 from flask import render_template, request, redirect, url_for, flash
 from flask_login import login_required, current_user
+from sqlalchemy import or_
 
 from . import portal_bp
 from extensions import db
@@ -592,13 +593,121 @@ def transport_permit_reject(permit_id: int):
 @perm_required("TRANSPORT_READ")
 def transport_trips():
     q = (request.args.get("q") or "").strip()
+    vehicle_id = _to_int(request.args.get("vehicle_id") or "")
+    driver_id = _to_int(request.args.get("driver_id") or "")
+    permit_id = _to_int(request.args.get("permit_id") or "")
+    trip_state = (request.args.get("trip_state") or "").strip().upper()
+    permit_status = (request.args.get("permit_status") or "").strip().upper()
+    started_from_raw = (request.args.get("started_from") or "").strip()
+    started_to_raw = (request.args.get("started_to") or "").strip()
+    min_km = _to_float(request.args.get("min_km") or "")
+    max_km = _to_float(request.args.get("max_km") or "")
+    sort = (request.args.get("sort") or "newest").strip().lower()
 
-    query = TransportTrip.query.filter(TransportTrip.is_deleted == False)  # noqa: E712
+    distance_expr = db.func.coalesce(
+        TransportTrip.distance_km,
+        TransportTrip.end_odometer - TransportTrip.start_odometer,
+    )
+
+    query = (
+        TransportTrip.query
+        .outerjoin(TransportVehicle, TransportTrip.vehicle_id == TransportVehicle.id)
+        .outerjoin(TransportDriver, TransportTrip.driver_id == TransportDriver.id)
+        .outerjoin(TransportPermit, TransportTrip.permit_id == TransportPermit.id)
+        .filter(TransportTrip.is_deleted == False)  # noqa: E712
+    )
+
     if q:
         like = f"%{q}%"
-        query = query.filter((TransportTrip.note.ilike(like)) | (TransportTrip.id.cast(db.String).ilike(like)))
+        query = query.filter(or_(
+            TransportTrip.id.cast(db.String).ilike(like),
+            TransportTrip.note.ilike(like),
+            TransportVehicle.plate_no.ilike(like),
+            TransportVehicle.label.ilike(like),
+            TransportDriver.name.ilike(like),
+            TransportDriver.phone.ilike(like),
+            TransportPermit.id.cast(db.String).ilike(like),
+            TransportPermit.ref_no.ilike(like),
+            TransportPermit.purpose.ilike(like),
+            TransportPermit.origin_text.ilike(like),
+            TransportPermit.dest_text.ilike(like),
+        ))
 
-    items = query.order_by(TransportTrip.started_at.desc(), TransportTrip.id.desc()).all()
+    if vehicle_id:
+        query = query.filter(TransportTrip.vehicle_id == vehicle_id)
+
+    if driver_id:
+        query = query.filter(TransportTrip.driver_id == driver_id)
+
+    if permit_id:
+        query = query.filter(TransportTrip.permit_id == permit_id)
+
+    if trip_state == "OPEN":
+        query = query.filter(TransportTrip.ended_at.is_(None))
+    elif trip_state == "CLOSED":
+        query = query.filter(TransportTrip.ended_at.isnot(None))
+
+    if permit_status in ("DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "COMPLETED"):
+        query = query.filter(TransportPermit.status == permit_status)
+
+    started_from = _parse_dt(started_from_raw)
+    if started_from:
+        query = query.filter(TransportTrip.started_at >= started_from)
+
+    started_to = _parse_dt(started_to_raw)
+    if started_to:
+        if "T" not in started_to_raw and len(started_to_raw) <= 10:
+            started_to = datetime.combine(started_to.date(), time.max)
+        query = query.filter(TransportTrip.started_at <= started_to)
+
+    if min_km is not None:
+        query = query.filter(distance_expr >= min_km)
+
+    if max_km is not None:
+        query = query.filter(distance_expr <= max_km)
+
+    if sort == "oldest":
+        query = query.order_by(TransportTrip.started_at.asc(), TransportTrip.id.asc())
+    elif sort == "distance_desc":
+        query = query.order_by(distance_expr.desc(), TransportTrip.started_at.desc(), TransportTrip.id.desc())
+    elif sort == "distance_asc":
+        query = query.order_by(distance_expr.asc(), TransportTrip.started_at.desc(), TransportTrip.id.desc())
+    else:
+        sort = "newest"
+        query = query.order_by(TransportTrip.started_at.desc(), TransportTrip.id.desc())
+
+    items = query.all()
+
+    total_distance = 0.0
+    for it in items:
+        d = it.distance_km
+        if d is None and it.start_odometer is not None and it.end_odometer is not None:
+            try:
+                d = float(it.end_odometer) - float(it.start_odometer)
+            except Exception:
+                d = None
+        if d is not None:
+            total_distance += float(d)
+
+    filters = {
+        "q": q,
+        "vehicle_id": vehicle_id or "",
+        "driver_id": driver_id or "",
+        "permit_id": permit_id or "",
+        "trip_state": trip_state,
+        "permit_status": permit_status,
+        "started_from": started_from_raw,
+        "started_to": started_to_raw,
+        "min_km": request.args.get("min_km") or "",
+        "max_km": request.args.get("max_km") or "",
+        "sort": sort,
+    }
+
+    applied_filters_count = sum(1 for value in filters.values() if value)
+
+    vehicles = TransportVehicle.query.order_by(TransportVehicle.plate_no.asc()).all()
+    drivers = TransportDriver.query.order_by(TransportDriver.name.asc()).all()
+
     can_create = current_user.has_perm("TRANSPORT_CREATE")
     can_edit = current_user.has_perm("TRANSPORT_UPDATE")
     can_delete = current_user.has_perm("TRANSPORT_DELETE")
@@ -606,6 +715,11 @@ def transport_trips():
         "portal/transport/trips_list.html",
         items=items,
         q=q,
+        filters=filters,
+        applied_filters_count=applied_filters_count,
+        vehicles=vehicles,
+        drivers=drivers,
+        total_distance=total_distance,
         can_create=can_create,
         can_edit=can_edit,
         can_delete=can_delete,

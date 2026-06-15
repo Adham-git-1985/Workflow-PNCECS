@@ -1914,13 +1914,35 @@ def circulars_view(circular_id: int):
 @workflow_bp.route("/following")
 @login_required
 def following():
-    """Requests I can follow.
-
-    - Regular users: requests they created OR requests they already decided on.
-    - PARALLEL_SYNC assignees: requests they are involved in (even if not the primary approver target).
-    - ADMIN / SUPER_ADMIN: see all requests.
-    """
+    """Requests I can follow, with advanced filters."""
     search = (request.args.get("q") or "").strip()
+    status = (request.args.get("status") or "").strip().upper()
+    relation = (request.args.get("relation") or "").strip().lower()
+    template_id = (request.args.get("template_id") or "").strip()
+    request_type_id = (request.args.get("request_type_id") or "").strip()
+    date_from = (request.args.get("date_from") or "").strip()
+    date_to = (request.args.get("date_to") or "").strip()
+    current_step = (request.args.get("current_step") or "").strip()
+    sla_state = (request.args.get("sla_state") or "").strip().lower()
+    sort = (request.args.get("sort") or "id_desc").strip().lower()
+
+    def _arg_int(value):
+        try:
+            return int(value)
+        except Exception:
+            return None
+
+    def _parse_day(value, *, end_of_day=False):
+        value = (value or "").strip()
+        if not value:
+            return None
+        try:
+            dt = datetime.strptime(value, "%Y-%m-%d")
+            if end_of_day:
+                return dt + timedelta(days=1)
+            return dt
+        except Exception:
+            return None
 
     effective_user = get_effective_user()
     delegations = get_active_delegations()
@@ -1940,6 +1962,7 @@ def following():
         .join(WorkflowInstance, WorkflowInstance.request_id == WorkflowRequest.id)
         .outerjoin(WorkflowTemplate, WorkflowTemplate.id == WorkflowInstance.template_id)
         .outerjoin(WorkflowInstanceStep, WorkflowInstanceStep.instance_id == WorkflowInstance.id)
+        .outerjoin(User, User.id == WorkflowRequest.requester_id)
     )
 
     # Visibility filter
@@ -1972,14 +1995,15 @@ def following():
             )
         )
 
-    # Search (by id/title/description/requester email)
+    # Advanced filters
     if search:
         like = f"%{search}%"
-        q = q.join(User, User.id == WorkflowRequest.requester_id)
         conds = [
             WorkflowRequest.title.ilike(like),
             WorkflowRequest.description.ilike(like),
+            User.name.ilike(like),
             User.email.ilike(like),
+            WorkflowTemplate.name.ilike(like),
         ]
         if search.isdigit():
             try:
@@ -1988,13 +2012,130 @@ def following():
                 pass
         q = q.filter(or_(*conds))
 
+    allowed_statuses = ["DRAFT", "IN_PROGRESS", "APPROVED", "REJECTED"]
+    if status in allowed_statuses:
+        q = q.filter(WorkflowRequest.status == status)
+
+    tid = _arg_int(template_id)
+    if tid:
+        q = q.filter(WorkflowInstance.template_id == tid)
+
+    rtid = _arg_int(request_type_id)
+    if rtid:
+        q = q.filter(WorkflowRequest.request_type_id == rtid)
+
+    step_no = _arg_int(current_step)
+    if step_no is not None:
+        q = q.filter(WorkflowInstance.current_step_order == step_no)
+
+    start_dt = _parse_day(date_from)
+    if start_dt:
+        q = q.filter(WorkflowRequest.created_at >= start_dt)
+
+    end_dt = _parse_day(date_to, end_of_day=True)
+    if end_dt:
+        q = q.filter(WorkflowRequest.created_at < end_dt)
+
+    if relation == "created" and actor_ids:
+        q = q.filter(WorkflowRequest.requester_id.in_(actor_ids))
+    elif relation == "decided" and actor_ids:
+        q = q.filter(WorkflowInstanceStep.decided_by_id.in_(actor_ids))
+    elif relation == "parallel" and actor_ids:
+        try:
+            q = q.filter(
+                db.session.query(WorkflowStepTask.id)
+                .filter(
+                    WorkflowStepTask.instance_id == WorkflowInstance.id,
+                    WorkflowStepTask.assignee_user_id.in_(actor_ids),
+                )
+                .exists()
+            )
+        except Exception:
+            pass
+
+    sort_map = {
+        "id_asc": WorkflowRequest.id.asc(),
+        "id_desc": WorkflowRequest.id.desc(),
+        "created_asc": WorkflowRequest.created_at.asc(),
+        "created_desc": WorkflowRequest.created_at.desc(),
+        "title_asc": WorkflowRequest.title.asc(),
+        "status_asc": WorkflowRequest.status.asc(),
+        "step_asc": WorkflowInstance.current_step_order.asc(),
+        "step_desc": WorkflowInstance.current_step_order.desc(),
+    }
+    order_expr = sort_map.get(sort, WorkflowRequest.id.desc())
+
     rows = (
         q.distinct(WorkflowRequest.id)
-        .order_by(WorkflowRequest.id.desc())
+        .order_by(order_expr, WorkflowRequest.id.desc())
         .all()
     )
 
-    return render_template("workflow/following.html", rows=rows, q=search)
+    # SLA filter is applied after loading because it depends on template SLA + current time.
+    now = datetime.utcnow()
+
+    def _is_overdue(req, tpl):
+        try:
+            days = int(getattr(tpl, "sla_days_default", 0) or 0)
+            created_at = getattr(req, "created_at", None)
+            if not days or not created_at:
+                return False
+            if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED"):
+                return False
+            return now > (created_at + timedelta(days=days))
+        except Exception:
+            return False
+
+    if sla_state == "overdue":
+        rows = [(req, inst, tpl) for (req, inst, tpl) in rows if _is_overdue(req, tpl)]
+    elif sla_state == "on_time":
+        rows = [(req, inst, tpl) for (req, inst, tpl) in rows if not _is_overdue(req, tpl)]
+
+    try:
+        templates = WorkflowTemplate.query.order_by(WorkflowTemplate.name.asc()).all()
+    except Exception:
+        templates = []
+
+    try:
+        request_types = RequestType.query.order_by(RequestType.name_ar.asc()).all()
+    except Exception:
+        request_types = []
+
+    filters = {
+        "q": search,
+        "status": status,
+        "relation": relation,
+        "template_id": template_id,
+        "request_type_id": request_type_id,
+        "date_from": date_from,
+        "date_to": date_to,
+        "current_step": current_step,
+        "sla_state": sla_state,
+        "sort": sort,
+    }
+    active_filters_count = sum(
+        1 for k, v in filters.items()
+        if v and not (k == "sort" and v == "id_desc")
+    )
+
+    summary = {
+        "total": len(rows),
+        "open": sum(1 for req, _inst, _tpl in rows if (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED")),
+        "closed": sum(1 for req, _inst, _tpl in rows if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED")),
+        "overdue": sum(1 for req, _inst, tpl in rows if _is_overdue(req, tpl)),
+        "active_filters": active_filters_count,
+    }
+
+    return render_template(
+        "workflow/following.html",
+        rows=rows,
+        q=search,
+        filters=filters,
+        templates=templates,
+        request_types=request_types,
+        status_options=allowed_statuses,
+        summary=summary,
+    )
 
 # =========================
 # View Request (Timeline + Action)

@@ -7816,204 +7816,9 @@ def hr_my_system_evaluation_view(run_id: int):
     )
 
 
-@portal_bp.route("/hr/payslips/bulk-upload", methods=["GET", "POST"])
-@login_required
-@_perm(HR_EMP_ATTACH)
-def hr_payslips_bulk_upload():
-    """HR Admin: bulk upload payslips for a given month.
-
-    Rules:
-      - Upload multiple PDF files.
-      - Each filename must be the employee number (employee_no) e.g. 12345.pdf
-      - Payslips are saved as DRAFTS (do NOT send automatically).
-      - HR can publish/send later from: HR → "إرسال قسائم الرواتب".
-    """
-    _ensure_employee_attachment_payslip_schema()
-
-    now = datetime.now()
-    # Allow pre-select via querystring ?year=YYYY&month=MM
-    try:
-        default_year = int((request.args.get("year") or now.year))
-    except Exception:
-        default_year = int(now.year)
-    try:
-        default_month = int((request.args.get("month") or now.month))
-    except Exception:
-        default_month = int(now.month)
-    if not (2000 <= default_year <= 2100):
-        default_year = int(now.year)
-    if not (1 <= default_month <= 12):
-        default_month = int(now.month)
-
-    results = {
-        "saved": 0,
-        "skipped": 0,
-        "errors": [],
-    }
-
-    if request.method == "POST":
-        y = (request.form.get("year") or "").strip()
-        m = (request.form.get("month") or "").strip()
-
-        try:
-            year = int(y)
-            month = int(m)
-        except Exception:
-            flash("الرجاء اختيار سنة/شهر صحيحين.", "danger")
-            return render_template(
-                "portal/hr/payslips_bulk_upload.html",
-                default_year=default_year,
-                default_month=default_month,
-                results=results,
-            )
-
-        if not (2000 <= year <= 2100) or not (1 <= month <= 12):
-            flash("السنة/الشهر غير صالحين.", "danger")
-            return render_template(
-                "portal/hr/payslips_bulk_upload.html",
-                default_year=default_year,
-                default_month=default_month,
-                results=results,
-            )
-
-        files = request.files.getlist("files") or []
-        if not files:
-            flash("اختر ملفات PDF لقسائم الرواتب.", "warning")
-            return render_template(
-                "portal/hr/payslips_bulk_upload.html",
-                default_year=year,
-                default_month=month,
-                results=results,
-            )
-
-        def _norm_emp_no(filename: str) -> str:
-            name = Path(filename or "").name
-            stem = (Path(name).stem or "").strip()
-            try:
-                stem = "".join(ch for ch in stem if unicodedata.category(ch) != "Cf")
-            except Exception:
-                pass
-            stem = stem.strip()
-            stem = re.split(r"[\s_\-]+", stem)[0].strip()
-            mm = re.search(r"(\d+)", stem)
-            if mm:
-                return mm.group(1)
-            return stem
-
-        for f in files:
-            if not f or not getattr(f, "filename", ""):
-                continue
-
-            original = Path(f.filename).name
-            ext = _clean_suffix(original)
-            if ext != ".pdf":
-                results["skipped"] += 1
-                results["errors"].append(f"{original}: يجب أن يكون الملف PDF.")
-                continue
-
-            emp_no = _norm_emp_no(original)
-            if not emp_no:
-                results["skipped"] += 1
-                results["errors"].append(f"{original}: لم أستطع استخراج الرقم الوظيفي من اسم الملف.")
-                continue
-
-            emp = (
-                EmployeeFile.query
-                .filter(func.trim(EmployeeFile.employee_no) == emp_no)
-                .first()
-            )
-            if not emp:
-                results["skipped"] += 1
-                results["errors"].append(f"{original}: لا يوجد موظف برقم وظيفي ({emp_no}).")
-                continue
-
-            user_id = int(emp.user_id)
-
-            stored = f"{uuid.uuid4().hex}{ext}"
-            dirp = _employee_upload_dir(user_id)
-            try:
-                f.save(dirp / stored)
-            except Exception as e:
-                results["skipped"] += 1
-                results["errors"].append(f"{original}: تعذر حفظ الملف ({str(e)}).")
-                continue
-
-            att = EmployeeAttachment.query.filter_by(
-                user_id=user_id,
-                attachment_type="PAYSLIP",
-                payslip_year=year,
-                payslip_month=month,
-            ).first()
-
-            if att:
-                try:
-                    old_fp = dirp / (att.stored_name or "")
-                    if old_fp.exists():
-                        old_fp.unlink()
-                except Exception:
-                    pass
-                att.original_name = original
-                att.stored_name = stored
-                att.note = None
-                att.uploaded_by_id = current_user.id
-                att.uploaded_at = datetime.utcnow()
-            else:
-                att = EmployeeAttachment(
-                    user_id=user_id,
-                    attachment_type="PAYSLIP",
-                    original_name=original,
-                    stored_name=stored,
-                    note=None,
-                    payslip_year=year,
-                    payslip_month=month,
-                    uploaded_by_id=current_user.id,
-                    uploaded_at=datetime.utcnow(),
-                )
-                db.session.add(att)
-
-            # Draft by default (not visible to employee until sent)
-            try:
-                att.is_published = False
-                att.published_at = None
-                att.published_by_id = None
-            except Exception:
-                pass
-
-            results["saved"] += 1
-
-        try:
-            _portal_audit(
-                action="HR_PAYSLIPS_BULK_UPLOAD",
-                note=f"رفع مسودات قسائم رواتب شهر {year:04d}-{month:02d} (تم حفظ {results['saved']})",
-                target_type="PAYSLIP",
-                target_id=0,
-            )
-        except Exception:
-            pass
-
-        try:
-            db.session.commit()
-            flash(
-                f"تمت العملية: حفظ {results['saved']} مسودة، تخطي {results['skipped']}.",
-                "success",
-            )
-        except Exception:
-            db.session.rollback()
-            flash("حدث خطأ أثناء الحفظ في قاعدة البيانات.", "danger")
-
-        return render_template(
-            "portal/hr/payslips_bulk_upload.html",
-            default_year=year,
-            default_month=month,
-            results=results,
-        )
-
-    return render_template(
-        "portal/hr/payslips_bulk_upload.html",
-        default_year=default_year,
-        default_month=default_month,
-        results=results,
-    )
+# NOTE: Old bulk payslip upload page was removed.
+# The endpoint portal.hr_payslips_bulk_upload is now provided by portal/payslips_bulk.py
+# and keeps the same URL: /portal/hr/payslips/bulk-upload.
 
 
 @portal_bp.route("/hr/payslips/send", methods=["GET", "POST"])
@@ -17505,7 +17310,7 @@ def portal_admin_permissions():
     - ROLE scope writes to RolePermission.
     - USER scope writes to UserPermission (additive to role permissions).
     """
-    from models import Role, RolePermission, User, UserPermission
+    from models import Role, RolePermission, User, UserPermission, EmployeeFile
     from sqlalchemy import func
     from extensions import db
 
@@ -17573,17 +17378,57 @@ def portal_admin_permissions():
     selected_user_id = (request.args.get("user_id") or "").strip()
 
     if scope == "user":
-        uqry = User.query
+        # Search users using REAL database columns only.
+        # Do NOT use User.full_name here because in this project it is a Python @property,
+        # not a SQLAlchemy column, and SQLite cannot bind/order by a property object.
+        try:
+            uqry = User.query.outerjoin(EmployeeFile, EmployeeFile.user_id == User.id)
+        except Exception:
+            uqry = User.query
+
         if q:
-            # Global-ish search for users (excluding sensitive hashes).
-            uqry = apply_search_all_columns(uqry, User, q, exclude_columns={"password_hash"})
-        uqry = uqry.order_by(User.name.asc(), User.email.asc())
-        users = uqry.limit(60).all()
+            like = f"%{q}%"
+            search_conditions = []
+
+            def _add_search_col(model, col_name: str) -> None:
+                try:
+                    col = getattr(model, col_name, None)
+                    # SQLAlchemy InstrumentedAttribute supports ilike(); @property does not.
+                    if col is not None and hasattr(col, "ilike"):
+                        search_conditions.append(col.ilike(like))
+                except Exception:
+                    pass
+
+            # Users table columns
+            for _name in ("name", "email", "role", "job_title"):
+                _add_search_col(User, _name)
+
+            # HR employee file columns
+            try:
+                for _name in ("full_name_quad", "employee_no", "national_id", "timeclock_code", "phone"):
+                    _add_search_col(EmployeeFile, _name)
+            except Exception:
+                pass
+
+            if search_conditions:
+                uqry = uqry.filter(or_(*search_conditions))
+
+        # Stable ordering. Keep this limited to real DB columns only.
+        try:
+            uqry = uqry.order_by(func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc())
+        except Exception:
+            uqry = uqry.order_by(User.name.asc(), User.email.asc())
+
+        try:
+            users = uqry.distinct().limit(120).all()
+        except Exception:
+            # Safe fallback: keep the page alive even if an older DB is missing employee_file columns.
+            users = User.query.order_by(User.name.asc(), User.email.asc()).limit(120).all()
 
         if selected_user_id:
             try:
                 selected_user = User.query.get(int(selected_user_id))
-                if selected_user and (selected_user not in users):
+                if selected_user and all(getattr(u, "id", None) != selected_user.id for u in users):
                     users = [selected_user] + users
             except Exception:
                 selected_user = None

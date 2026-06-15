@@ -4,9 +4,11 @@
 
 {% include "portal/transport/_nav.html" %}
 
-
 <div class="d-flex align-items-center justify-content-between mb-3">
-  <h5 class="mb-0"><i class="bi bi-map"></i> الرحلات والمسافات</h5>
+  <div>
+    <h5 class="mb-1"><i class="bi bi-map"></i> الرحلات والمسافات</h5>
+    <div class="text-muted small">متابعة المسارات مع فلتر متقدم حسب التاريخ، السيارة، السائق، إذن الحركة، الحالة، والمسافة.</div>
+  </div>
   {% if can_create %}
     <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_trip_new') }}">تسجيل رحلة</a>
   {% endif %}
@@ -14,15 +16,125 @@
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="get" class="row g-2 align-items-end">
-    <div class="col-md-9">
-      <label class="form-label">بحث</label>
-      <input class="form-control" name="q" value="{{ q or '' }}" placeholder="ملاحظة/رقم الرحلة...">
+    {% set f = filters if filters is defined else {} %}
+
+    <div class="col-12 col-lg-4">
+      <label class="form-label">بحث عام</label>
+      <input class="form-control" name="q" value="{{ f.q or q or '' }}"
+             placeholder="رقم الرحلة، ملاحظة، لوحة السيارة، اسم السائق، رقم/غرض إذن الحركة...">
     </div>
-    <div class="col-md-3 d-flex gap-2">
-      <button class="btn btn-primary">تطبيق</button>
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.transport_trips') }}">تفريغ</a>
+
+    <div class="col-6 col-lg-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="started_from" value="{{ f.started_from or '' }}">
+    </div>
+
+    <div class="col-6 col-lg-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="started_to" value="{{ f.started_to or '' }}">
+    </div>
+
+    <div class="col-12 col-md-6 col-lg-2">
+      <label class="form-label">السيارة</label>
+      <select class="form-select" name="vehicle_id">
+        <option value="">الكل</option>
+        {% for v in vehicles %}
+          <option value="{{ v.id }}" {% if (f.vehicle_id|string) == (v.id|string) %}selected{% endif %}>
+            {{ v.plate_no }}{% if v.label %} — {{ v.label }}{% endif %}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12 col-md-6 col-lg-2">
+      <label class="form-label">السائق</label>
+      <select class="form-select" name="driver_id">
+        <option value="">الكل</option>
+        {% for d in drivers %}
+          <option value="{{ d.id }}" {% if (f.driver_id|string) == (d.id|string) %}selected{% endif %}>
+            {{ d.name }}
+          </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label">رقم إذن الحركة</label>
+      <input class="form-control" type="number" min="1" name="permit_id" value="{{ f.permit_id or '' }}" placeholder="مثال: 15">
+    </div>
+
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label">حالة الرحلة</label>
+      <select class="form-select" name="trip_state">
+        <option value="" {% if not f.trip_state %}selected{% endif %}>الكل</option>
+        <option value="OPEN" {% if f.trip_state == 'OPEN' %}selected{% endif %}>مفتوحة</option>
+        <option value="CLOSED" {% if f.trip_state == 'CLOSED' %}selected{% endif %}>مغلقة</option>
+      </select>
+    </div>
+
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label">حالة إذن الحركة</label>
+      <select class="form-select" name="permit_status">
+        <option value="" {% if not f.permit_status %}selected{% endif %}>الكل</option>
+        <option value="DRAFT" {% if f.permit_status == 'DRAFT' %}selected{% endif %}>مسودة</option>
+        <option value="SUBMITTED" {% if f.permit_status == 'SUBMITTED' %}selected{% endif %}>مرسل</option>
+        <option value="APPROVED" {% if f.permit_status == 'APPROVED' %}selected{% endif %}>معتمد</option>
+        <option value="REJECTED" {% if f.permit_status == 'REJECTED' %}selected{% endif %}>مرفوض</option>
+        <option value="CANCELLED" {% if f.permit_status == 'CANCELLED' %}selected{% endif %}>ملغى</option>
+        <option value="COMPLETED" {% if f.permit_status == 'COMPLETED' %}selected{% endif %}>مكتمل</option>
+      </select>
+    </div>
+
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label">المسافة من</label>
+      <input class="form-control" type="number" step="0.1" min="0" name="min_km" value="{{ f.min_km or '' }}" placeholder="كم">
+    </div>
+
+    <div class="col-6 col-md-4 col-lg-2">
+      <label class="form-label">المسافة إلى</label>
+      <input class="form-control" type="number" step="0.1" min="0" name="max_km" value="{{ f.max_km or '' }}" placeholder="كم">
+    </div>
+
+    <div class="col-12 col-md-4 col-lg-2">
+      <label class="form-label">الترتيب</label>
+      <select class="form-select" name="sort">
+        <option value="newest" {% if f.sort == 'newest' or not f.sort %}selected{% endif %}>الأحدث أولاً</option>
+        <option value="oldest" {% if f.sort == 'oldest' %}selected{% endif %}>الأقدم أولاً</option>
+        <option value="distance_desc" {% if f.sort == 'distance_desc' %}selected{% endif %}>الأطول مسافة</option>
+        <option value="distance_asc" {% if f.sort == 'distance_asc' %}selected{% endif %}>الأقصر مسافة</option>
+      </select>
+    </div>
+
+    <div class="col-12 col-lg-4 d-flex gap-2">
+      <button class="btn btn-primary flex-fill">
+        <i class="bi bi-funnel"></i> تطبيق الفلتر
+      </button>
+      <a class="btn btn-outline-secondary flex-fill" href="{{ url_for('portal.transport_trips') }}">
+        <i class="bi bi-x-circle"></i> تفريغ
+      </a>
     </div>
   </form>
+</div>
+
+<div class="row g-2 mb-3">
+  <div class="col-md-4">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">عدد النتائج</div>
+      <div class="fs-5 fw-semibold">{{ items|length }}</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">إجمالي المسافة</div>
+      <div class="fs-5 fw-semibold">{{ "%.1f"|format(total_distance or 0) }} كم</div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="text-muted small">عدد الفلاتر المستخدمة</div>
+      <div class="fs-5 fw-semibold">{{ applied_filters_count or 0 }}</div>
+    </div>
+  </div>
 </div>
 
 <div class="bg-white rounded-3 shadow-sm overflow-hidden">
@@ -33,6 +145,8 @@
           <th>#</th>
           <th>السيارة</th>
           <th>السائق</th>
+          <th>إذن الحركة</th>
+          <th>الحالة</th>
           <th>الانطلاق</th>
           <th>الوصول</th>
           <th>المسافة (كم)</th>
@@ -44,8 +158,37 @@
         {% for it in items %}
           <tr>
             <td class="text-muted">#{{ it.id }}</td>
-            <td class="fw-semibold">{{ it.vehicle.plate_no }}</td>
+            <td class="fw-semibold">
+              {% if it.vehicle %}
+                {{ it.vehicle.plate_no }}{% if it.vehicle.label %}<div class="text-muted small">{{ it.vehicle.label }}</div>{% endif %}
+              {% else %}
+                -
+              {% endif %}
+            </td>
             <td>{{ it.driver.name if it.driver else '-' }}</td>
+            <td class="small">
+              {% if it.permit_id %}
+                <a href="{{ url_for('portal.transport_permit_view', permit_id=it.permit_id) }}">#{{ it.permit_id }}</a>
+                {% if it.permit and it.permit.ref_no %}
+                  <div class="text-muted">{{ it.permit.ref_no }}</div>
+                {% endif %}
+                {% if it.permit and it.permit.purpose %}
+                  <div class="text-muted">{{ it.permit.purpose }}</div>
+                {% endif %}
+              {% else %}
+                -
+              {% endif %}
+            </td>
+            <td>
+              {% if it.ended_at %}
+                <span class="badge text-bg-success">مغلقة</span>
+              {% else %}
+                <span class="badge text-bg-warning">مفتوحة</span>
+              {% endif %}
+              {% if it.permit and it.permit.status %}
+                <div class="text-muted small mt-1">إذن: {{ it.permit.status }}</div>
+              {% endif %}
+            </td>
             <td class="text-muted small">{% if it.started_at %}{{ it.started_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>
             <td class="text-muted small">{% if it.ended_at %}{{ it.ended_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>
             <td>
@@ -59,23 +202,23 @@
             </td>
             <td class="text-muted">{{ it.note or '-' }}</td>
 
-<td class="text-end">
-  {% if can_edit %}
-    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_trip_edit', trip_id=it.id) }}">تعديل</a>
-  {% endif %}
-  {% if can_delete %}
-    <form method="post" action="{{ url_for('portal.transport_trip_delete', trip_id=it.id) }}" class="d-inline"
-          onsubmit="return confirm('هل تريد حذف هذه الرحلة؟');">
-      <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
-    </form>
-  {% endif %}
-  {% if not can_edit and not can_delete %}
-    <span class="text-muted">-</span>
-  {% endif %}
-</td>
+            <td class="text-end">
+              {% if can_edit %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_trip_edit', trip_id=it.id) }}">تعديل</a>
+              {% endif %}
+              {% if can_delete %}
+                <form method="post" action="{{ url_for('portal.transport_trip_delete', trip_id=it.id) }}" class="d-inline"
+                      onsubmit="return confirm('هل تريد حذف هذه الرحلة؟');">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                </form>
+              {% endif %}
+              {% if not can_edit and not can_delete %}
+                <span class="text-muted">-</span>
+              {% endif %}
+            </td>
           </tr>
         {% else %}
-          <tr><td colspan="8" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+          <tr><td colspan="10" class="text-center text-muted py-4">لا توجد بيانات مطابقة للفلتر.</td></tr>
         {% endfor %}
       </tbody>
     </table>

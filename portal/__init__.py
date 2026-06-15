@@ -73,5 +73,5 @@ def inject_portal_sort_helpers():
     }
 
 from . import routes  # noqa
-
+from . import payslips_bulk  # noqa
 from . import transport  # noqa
