@@ -1,4 +1,13 @@
-from models import Role, RolePermission, User
+from models import (
+    FilePermission,
+    InvWarehousePermission,
+    PortalPermissionPreset,
+    Role,
+    RolePermission,
+    StoreFilePermission,
+    User,
+    UserPermission,
+)
 from flask import (
     render_template, Blueprint,
     request, redirect, url_for, flash,
@@ -1104,6 +1113,17 @@ def workflow_routing_delete(rule_id):
 # Backup & Restore (Full System)
 # =========================
 
+PERMISSION_BACKUP_MODELS = [
+    ("roles", Role),
+    ("role_permissions", RolePermission),
+    ("user_permissions", UserPermission),
+    ("file_permissions", FilePermission),
+    ("store_file_permissions", StoreFilePermission),
+    ("inventory_warehouse_permissions", InvWarehousePermission),
+    ("portal_permission_presets", PortalPermissionPreset),
+]
+
+
 def _get_db_path() -> str:
     return os.path.join(current_app.instance_path, "workflow.db")
 
@@ -1126,6 +1146,50 @@ def _get_portal_uploads_dir() -> str:
 def _get_static_uploads_dir() -> str:
     """Static uploads live under static/uploads (e.g., user avatars/photos)."""
     return os.path.join(_get_project_root(), "static", "uploads")
+
+
+def _backup_json_value(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _build_permissions_export() -> dict:
+    """Export permission-related tables explicitly in addition to the DB snapshot."""
+    data = {
+        "version": 1,
+        "created_at_utc": datetime.utcnow().isoformat() + "Z",
+        "tables": {},
+    }
+
+    for export_name, model in PERMISSION_BACKUP_MODELS:
+        columns = [c.name for c in model.__table__.columns]
+        rows = []
+        query = model.query
+        if "id" in columns:
+            query = query.order_by(model.id.asc())
+
+        for row in query.all():
+            rows.append({
+                column: _backup_json_value(getattr(row, column))
+                for column in columns
+            })
+
+        data["tables"][export_name] = {
+            "table_name": model.__tablename__,
+            "columns": columns,
+            "rows": rows,
+            "count": len(rows),
+        }
+
+    return data
+
+
+def _permission_backup_counts(permissions_export: dict) -> dict:
+    return {
+        table_name: payload.get("count", 0)
+        for table_name, payload in permissions_export.get("tables", {}).items()
+    }
 
 
 def _get_backups_dir() -> str:
@@ -1171,20 +1235,27 @@ def _build_backup_zip() -> str:
 
     # DB snapshot
     _create_sqlite_snapshot(_get_db_path(), tmp_db_path)
+    permissions_export = _build_permissions_export()
 
     meta = {
         "created_at_utc": datetime.utcnow().isoformat() + "Z",
         "project": "Workflow-PNCECS",
         "includes": [
             "db/workflow.db",
+            "permissions/permissions_export.json",
             "storage/archive/*",
             "instance/uploads/*",
             "static/uploads/*",
         ],
+        "permission_counts": _permission_backup_counts(permissions_export),
     }
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
         z.writestr("backup_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
+        z.writestr(
+            "permissions/permissions_export.json",
+            json.dumps(permissions_export, ensure_ascii=False, indent=2)
+        )
         z.write(tmp_db_path, "db/workflow.db")
 
         # Archive storage
@@ -1251,6 +1322,55 @@ def _restore_sqlite_from_snapshot(snapshot_db: str, dest_db: str) -> None:
             dst.close()
     finally:
         src.close()
+
+
+def _restore_json_value(column, value):
+    if value is None:
+        return None
+
+    try:
+        if column.type.python_type is datetime and isinstance(value, str):
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+    except Exception:
+        pass
+
+    return value
+
+
+def _restore_permissions_export(extract_dir: str) -> bool:
+    """Restore explicit permission export if the backup contains it."""
+    export_path = os.path.join(extract_dir, "permissions", "permissions_export.json")
+    if not os.path.exists(export_path):
+        return False
+
+    with open(export_path, "r", encoding="utf-8") as f:
+        permissions_export = json.load(f)
+
+    tables = permissions_export.get("tables") or {}
+
+    try:
+        for _export_name, model in reversed(PERMISSION_BACKUP_MODELS):
+            db.session.query(model).delete(synchronize_session=False)
+
+        db.session.flush()
+
+        for export_name, model in PERMISSION_BACKUP_MODELS:
+            payload = tables.get(export_name) or {}
+            columns = {column.name: column for column in model.__table__.columns}
+
+            for item in payload.get("rows") or []:
+                values = {
+                    name: _restore_json_value(column, item[name])
+                    for name, column in columns.items()
+                    if name in item
+                }
+                db.session.add(model(**values))
+
+        db.session.commit()
+        return True
+    except Exception:
+        db.session.rollback()
+        raise
 
 
 def _copy_tree(src_dir: str, dst_dir: str) -> None:
@@ -1377,6 +1497,11 @@ def backup_restore():
             "danger"
         )
         return redirect(url_for("admin.backup_page"))
+
+    try:
+        _restore_permissions_export(extract_dir)
+    except Exception:
+        flash("Database restored, but permissions export could not be applied.", "warning")
 
     # Restore archive storage
     backup_archive = os.path.join(extract_dir, "storage", "archive")
