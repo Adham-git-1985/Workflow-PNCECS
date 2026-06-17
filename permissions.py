@@ -1,10 +1,86 @@
 from functools import wraps
 from flask_login import current_user
-from flask import abort
+from flask import abort, request
+import logging
 import unicodedata
 
 
 SUPER_ADMIN_ROLE = "SUPER_ADMIN"
+logger = logging.getLogger(__name__)
+
+
+def _normalize_role_text(value: str) -> str:
+    text = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    try:
+        text = unicodedata.normalize("NFKC", text)
+        text = "".join(ch for ch in text if (ch.isalnum() or ch == "_"))
+    except Exception:
+        pass
+    return text
+
+
+def _role_looks_like_super_admin(raw_role: str) -> bool:
+    norm = _normalize_role_text(raw_role)
+    if norm in ("SUPERADMIN", "SUPER_ADMIN"):
+        return True
+    if ("SUPER" in norm and "ADMIN" in norm) or ("SYSTEM" in norm and "ADMIN" in norm):
+        return True
+
+    raw = (raw_role or "").strip()
+    raw_lower = raw.lower()
+    if "super" in raw_lower and "admin" in raw_lower:
+        return True
+    if "سوبر" in raw and ("ادمن" in raw or "أدمن" in raw):
+        return True
+    if "مدير" in raw and "نظام" in raw and any(word in raw for word in ("أعلى", "اعلى", "عليا", "الأعلى", "الاعلى")):
+        return True
+    return False
+
+
+def _user_is_super_admin(user) -> bool:
+    try:
+        if getattr(user, "has_role", None) and (user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN")):
+            return True
+    except Exception:
+        pass
+
+    try:
+        if _role_looks_like_super_admin(getattr(user, "role", "") or ""):
+            return True
+    except Exception:
+        pass
+
+    try:
+        if getattr(user, "id", None) == 1:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _user_has_required_role(user, role: str) -> bool:
+    role = (role or "").strip()
+    if not role:
+        return False
+
+    try:
+        if getattr(user, "has_role", None) and user.has_role(role):
+            return True
+    except Exception:
+        pass
+
+    try:
+        want = _normalize_role_text(role)
+        mine = _normalize_role_text(getattr(user, "role", "") or "")
+        if mine == want:
+            return True
+        if mine in ("SUPERADMIN", "SUPER_ADMIN") and want == "ADMIN":
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def roles_required(*roles):
@@ -24,39 +100,23 @@ def roles_required(*roles):
             if not current_user.is_authenticated:
                 abort(401)
 
-                # Robust SUPER/ADMIN bypass even if has_role is missing or role is stored as a label
-                try:
-                    raw = (getattr(current_user, 'role', '') or '').strip()
-                    norm = raw.upper().replace('-', '_').replace(' ', '_')
-                    norm = unicodedata.normalize('NFKC', norm)
-                    norm = ''.join(ch for ch in norm if (ch.isalnum() or ch == '_'))
-                    if norm.startswith('SUPER') or ('SUPER' in norm and 'ADMIN' in norm):
-                        return f(*args, **kwargs)
-                except Exception:
-                    pass
-                # Ultimate safe fallback: first user (id=1) is treated as SUPER_ADMIN
-                try:
-                    if getattr(current_user, 'id', None) == 1:
-                        return f(*args, **kwargs)
-                except Exception:
-                    pass
-
-
             # SUPER ADMIN bypass (supports legacy SUPERADMIN)
-            try:
-                if current_user.has_role("SUPER_ADMIN") or current_user.has_role("SUPERADMIN"):
-                    return f(*args, **kwargs)
-            except Exception:
-                pass
+            if _user_is_super_admin(current_user):
+                return f(*args, **kwargs)
 
             # Any allowed role
             for r in allowed_roles:
-                try:
-                    if current_user.has_role(r):
-                        return f(*args, **kwargs)
-                except Exception:
-                    continue
+                if _user_has_required_role(current_user, r):
+                    return f(*args, **kwargs)
 
+            logger.warning(
+                "Forbidden by roles_required | path=%s | user_id=%s | email=%s | role=%s | required=%s",
+                getattr(request, "path", None),
+                getattr(current_user, "id", None),
+                getattr(current_user, "email", None),
+                getattr(current_user, "role", None),
+                allowed_roles,
+            )
             abort(403)
 
         return decorated_function
@@ -83,11 +143,8 @@ def role_perm_required(permission: str):
         @login_required
         def wrapper(*args, **kwargs):
             # ADMIN / SUPER_ADMIN always allowed here
-            try:
-                if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
-                    return f(*args, **kwargs)
-            except Exception:
-                pass
+            if _user_is_super_admin(current_user) or _user_has_required_role(current_user, "ADMIN"):
+                return f(*args, **kwargs)
 
             # Per-user override via UserPermission (optional)
             try:
@@ -116,6 +173,14 @@ def role_perm_required(permission: str):
             )
 
             if not ok:
+                logger.warning(
+                    "Forbidden by role_perm_required | path=%s | user_id=%s | email=%s | role=%s | permission=%s",
+                    getattr(request, "path", None),
+                    getattr(current_user, "id", None),
+                    getattr(current_user, "email", None),
+                    getattr(current_user, "role", None),
+                    permission,
+                )
                 abort(403)
 
             return f(*args, **kwargs)
