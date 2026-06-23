@@ -1,0 +1,147 @@
+{% extends "portal/layout.html" %}
+{% block title %}الاجتماعات والمتابعة{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-calendar2-week"></i> الاجتماعات والمتابعة</h4>
+    <div class="text-muted small">اجتماعات، أجندة، تذكيرات، محاضر، ومهام متابعة.</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% if can_manage %}
+      <a class="btn btn-primary" href="{{ url_for('portal.meeting_new') }}">
+        <i class="bi bi-plus-circle"></i> اجتماع جديد
+      </a>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.index') }}">
+      <i class="bi bi-house"></i> الرئيسية
+    </a>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="text-muted small">هذا الأسبوع</div>
+      <div class="fs-4 fw-bold">{{ stats.week }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="text-muted small">قادمة</div>
+      <div class="fs-4 fw-bold">{{ stats.upcoming }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="text-muted small">مهام مفتوحة</div>
+      <div class="fs-4 fw-bold">{{ stats.open_tasks }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="text-muted small">مهام متأخرة</div>
+      <div class="fs-4 fw-bold text-danger">{{ stats.overdue_tasks }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-12 col-lg-3">
+      <label class="form-label">بحث</label>
+      <input class="form-control" type="search" name="q" value="{{ filters.q }}" placeholder="عنوان، مكان، وصف">
+    </div>
+    <div class="col-6 col-lg-2">
+      <label class="form-label">من</label>
+      <input class="form-control" type="date" name="date_from" value="{{ filters.date_from }}">
+    </div>
+    <div class="col-6 col-lg-2">
+      <label class="form-label">إلى</label>
+      <input class="form-control" type="date" name="date_to" value="{{ filters.date_to }}">
+    </div>
+    <div class="col-12 col-lg-2">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="status">
+        <option value="">الكل</option>
+        {% for key, label in status_labels.items() %}
+          <option value="{{ key }}" {% if filters.status == key %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-lg-3 d-flex gap-2">
+      <button class="btn btn-outline-primary flex-fill" type="submit">
+        <i class="bi bi-funnel"></i> تطبيق
+      </button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.meetings_dashboard') }}">
+        <i class="bi bi-arrow-clockwise"></i>
+      </a>
+    </div>
+  </form>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-8">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex justify-content-between align-items-center mb-2">
+        <h5 class="mb-0"><i class="bi bi-calendar-event"></i> الجدول</h5>
+        {% if filters.week_default %}
+          <span class="badge text-bg-light border">الأسبوع الحالي</span>
+        {% endif %}
+      </div>
+
+      {% if meetings %}
+        <div class="list-group list-group-flush">
+          {% for m in meetings %}
+            <a class="list-group-item list-group-item-action px-0" href="{{ url_for('portal.meeting_view', meeting_id=m.id) }}">
+              <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+                <div>
+                  <div class="fw-bold">{{ m.title }}</div>
+                  <div class="text-muted small">
+                    <i class="bi bi-clock"></i>
+                    {{ m.start_at.strftime('%Y-%m-%d %H:%M') if m.start_at else '' }}
+                    {% if m.end_at %} - {{ m.end_at.strftime('%H:%M') if m.end_at.date() == m.start_at.date() else m.end_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+                    {% if m.location %}<span class="mx-1">|</span><i class="bi bi-geo-alt"></i> {{ m.location }}{% endif %}
+                  </div>
+                </div>
+                <div class="d-flex gap-1 flex-wrap">
+                  <span class="badge text-bg-secondary">{{ status_labels.get(m.status, m.status) }}</span>
+                  <span class="badge text-bg-light border">{{ m.participants|length }} مشارك</span>
+                  {% set _open_tasks = (m.tasks|selectattr('status', 'equalto', 'OPEN')|list|length) + (m.tasks|selectattr('status', 'equalto', 'IN_PROGRESS')|list|length) %}
+                  {% if _open_tasks %}
+                    <span class="badge text-bg-warning">{{ _open_tasks }} مهمة</span>
+                  {% endif %}
+                </div>
+              </div>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted py-4 text-center">لا توجد اجتماعات ضمن النطاق المحدد.</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <h5 class="mb-3"><i class="bi bi-check2-square"></i> مهام المتابعة</h5>
+      {% if open_tasks %}
+        <div class="list-group list-group-flush">
+          {% for t in open_tasks %}
+            <a class="list-group-item list-group-item-action px-0" href="{{ url_for('portal.meeting_view', meeting_id=t.meeting_id) }}">
+              <div class="fw-bold">{{ t.title }}</div>
+              <div class="small text-muted">
+                {{ t.meeting.title if t.meeting else '' }}
+                {% if t.due_date %}<span class="mx-1">|</span> {{ t.due_date.strftime('%Y-%m-%d') }}{% endif %}
+              </div>
+              <span class="badge text-bg-light border">{{ task_status_labels.get(t.status, t.status) }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted py-4 text-center">لا توجد مهام متابعة مفتوحة.</div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

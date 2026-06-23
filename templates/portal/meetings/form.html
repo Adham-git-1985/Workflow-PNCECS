@@ -1,0 +1,75 @@
+{% extends "portal/layout.html" %}
+{% block title %}اجتماع جديد{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-plus-circle"></i> اجتماع جديد</h4>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.meetings_dashboard') }}">
+    <i class="bi bi-arrow-right"></i> رجوع
+  </a>
+</div>
+
+<form method="post">
+  <div class="row g-3">
+    <div class="col-12 col-lg-8">
+      <div class="p-3 bg-white rounded-3 shadow-sm">
+        <div class="mb-3">
+          <label class="form-label">عنوان الاجتماع</label>
+          <input class="form-control" type="text" name="title" maxlength="200" value="{{ form.title }}" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">الوصف</label>
+          <textarea class="form-control" name="description" rows="4">{{ form.description }}</textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">الأجندة الأولية</label>
+          <textarea class="form-control" name="agenda_lines" rows="6" placeholder="بند في كل سطر">{{ form.agenda_lines }}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-4">
+      <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+        <div class="mb-3">
+          <label class="form-label">البداية</label>
+          <input class="form-control" type="datetime-local" name="start_at" value="{{ form.start_at }}" required>
+        </div>
+        <div class="mb-3">
+          <label class="form-label">النهاية</label>
+          <input class="form-control" type="datetime-local" name="end_at" value="{{ form.end_at }}">
+        </div>
+        <div class="mb-3">
+          <label class="form-label">المكان</label>
+          <input class="form-control" type="text" name="location" maxlength="200" value="{{ form.location }}">
+        </div>
+        <div class="mb-0">
+          <label class="form-label">التذكير قبل الموعد</label>
+          <select class="form-select" name="reminder_minutes_before">
+            {% for minutes, label in [(0, 'عند الموعد'), (15, '15 دقيقة'), (30, '30 دقيقة'), (60, 'ساعة'), (120, 'ساعتان'), (1440, 'يوم')] %}
+              <option value="{{ minutes }}" {% if form.reminder_minutes_before|string == minutes|string %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div class="p-3 bg-white rounded-3 shadow-sm">
+        <label class="form-label">المشاركون</label>
+        <select class="form-select" name="participant_ids" multiple size="12">
+          {% for u in users %}
+            <option value="{{ u.id }}" {% if u.id|string in form.participant_ids %}selected{% endif %}>
+              {{ u.name or u.email }}
+            </option>
+          {% endfor %}
+        </select>
+        <div class="d-grid mt-3">
+          <button class="btn btn-primary" type="submit">
+            <i class="bi bi-check2"></i> حفظ الاجتماع
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</form>
+{% endblock %}

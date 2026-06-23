@@ -412,6 +412,20 @@
         </li>
         {% endif %}
 
+        {% if au.has_perm('PORTAL_MEETINGS_MANAGE') or (portal_meetings_week_count is defined and portal_meetings_week_count|int > 0) or (portal_meeting_tasks_open is defined and portal_meeting_tasks_open|int > 0) %}
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.meetings_dashboard') }}">
+            <i class="bi bi-calendar2-week"></i> الاجتماعات
+            {% set _meet_badge = (portal_meeting_tasks_open if portal_meeting_tasks_open is defined else 0) %}
+            {% if _meet_badge|int > 0 %}
+              <span class="badge text-bg-warning ms-1">{{ _meet_badge }}</span>
+            {% elif portal_meetings_week_count is defined and portal_meetings_week_count|int > 0 %}
+              <span class="badge text-bg-light ms-1">{{ portal_meetings_week_count }}</span>
+            {% endif %}
+          </a>
+        </li>
+        {% endif %}
+
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('portal.portal_notifications') }}">
             <i class="bi bi-bell"></i> الإشعارات
@@ -479,6 +493,14 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('portal.portal_admin_delegations') }}">
                 <i class="bi bi-arrow-left-right"></i> التفويض
+              </a>
+            </li>
+            {% endif %}
+
+            {% if au.has_perm('PORTAL_MEETINGS_MANAGE') %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.meetings_dashboard') }}">
+                <i class="bi bi-calendar2-week"></i> الاجتماعات والمتابعة
               </a>
             </li>
             {% endif %}

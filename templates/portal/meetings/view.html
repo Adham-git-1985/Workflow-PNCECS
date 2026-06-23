@@ -1,0 +1,266 @@
+{% extends "portal/layout.html" %}
+{% block title %}{{ row.title }}{% endblock %}
+
+{% block content %}
+{% set participant_ids = row.participants|map(attribute='user_id')|list %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-calendar-event"></i> {{ row.title }}</h4>
+    <div class="text-muted small">
+      {{ row.start_at.strftime('%Y-%m-%d %H:%M') if row.start_at else '' }}
+      {% if row.end_at %} - {{ row.end_at.strftime('%H:%M') if row.end_at.date() == row.start_at.date() else row.end_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+      {% if row.location %}<span class="mx-1">|</span><i class="bi bi-geo-alt"></i> {{ row.location }}{% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <span class="badge text-bg-secondary align-self-center">{{ status_labels.get(row.status, row.status) }}</span>
+    {% if can_manage %}
+      <form method="post" action="{{ url_for('portal.meeting_send_reminder', meeting_id=row.id) }}">
+        <button class="btn btn-outline-warning" type="submit">
+          <i class="bi bi-bell"></i> إرسال تذكير
+        </button>
+      </form>
+    {% endif %}
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.meetings_dashboard') }}">
+      <i class="bi bi-arrow-right"></i> رجوع
+    </a>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-12 col-xl-8">
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        <h5 class="mb-0"><i class="bi bi-info-circle"></i> التفاصيل</h5>
+        {% if can_manage %}
+          <form class="d-flex gap-2" method="post" action="{{ url_for('portal.meeting_update_status', meeting_id=row.id) }}">
+            <select class="form-select form-select-sm" name="status">
+              {% for key, label in status_labels.items() %}
+                <option value="{{ key }}" {% if row.status == key %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+            <button class="btn btn-sm btn-outline-primary" type="submit">حفظ</button>
+          </form>
+        {% endif %}
+      </div>
+      {% if row.description %}
+        <div class="mt-3">{{ row.description|replace('\n', '<br>')|safe }}</div>
+      {% else %}
+        <div class="text-muted mt-3">لا يوجد وصف.</div>
+      {% endif %}
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <h5 class="mb-3"><i class="bi bi-list-check"></i> الأجندة</h5>
+      {% if row.agenda_items %}
+        <div class="accordion" id="agendaAccordion">
+          {% for item in row.agenda_items %}
+            <div class="accordion-item">
+              <h2 class="accordion-header">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#agenda{{ item.id }}">
+                  <span class="me-2">{{ item.sort_order }}.</span>
+                  <span class="{% if item.is_done %}text-decoration-line-through text-muted{% endif %}">{{ item.title }}</span>
+                </button>
+              </h2>
+              <div id="agenda{{ item.id }}" class="accordion-collapse collapse" data-bs-parent="#agendaAccordion">
+                <div class="accordion-body">
+                  {% if can_manage %}
+                    <form method="post" action="{{ url_for('portal.meeting_update_agenda_item', meeting_id=row.id, item_id=item.id) }}" class="row g-2">
+                      <div class="col-12">
+                        <label class="form-label">العنوان</label>
+                        <input class="form-control" type="text" name="title" value="{{ item.title }}" maxlength="255">
+                      </div>
+                      <div class="col-12 col-md-6">
+                        <label class="form-label">المسؤول</label>
+                        <select class="form-select" name="owner_user_id">
+                          <option value="">بدون</option>
+                          {% for u in users %}
+                            <option value="{{ u.id }}" {% if item.owner_user_id == u.id %}selected{% endif %}>{{ u.name or u.email }}</option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                      <div class="col-12">
+                        <label class="form-label">ملاحظات</label>
+                        <textarea class="form-control" name="notes" rows="3">{{ item.notes or '' }}</textarea>
+                      </div>
+                      <div class="col-12 d-flex justify-content-between align-items-center">
+                        <div class="form-check">
+                          <input class="form-check-input" type="checkbox" name="is_done" value="1" id="done{{ item.id }}" {% if item.is_done %}checked{% endif %}>
+                          <label class="form-check-label" for="done{{ item.id }}">تمت مناقشته</label>
+                        </div>
+                        <button class="btn btn-sm btn-outline-primary" type="submit">حفظ البند</button>
+                      </div>
+                    </form>
+                  {% else %}
+                    <div class="text-muted small mb-2">{{ item.owner.name if item.owner else '' }}</div>
+                    <div>{{ item.notes or 'لا توجد ملاحظات.' }}</div>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted">لا توجد بنود أجندة.</div>
+      {% endif %}
+
+      {% if can_manage %}
+        <form method="post" action="{{ url_for('portal.meeting_add_agenda_item', meeting_id=row.id) }}" class="row g-2 mt-3">
+          <div class="col-12 col-lg-6">
+            <input class="form-control" type="text" name="agenda_title" maxlength="255" placeholder="بند أجندة جديد">
+          </div>
+          <div class="col-12 col-lg-4">
+            <select class="form-select" name="agenda_owner_user_id">
+              <option value="">بدون مسؤول</option>
+              {% for u in users %}
+                <option value="{{ u.id }}">{{ u.name or u.email }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 col-lg-2 d-grid">
+            <button class="btn btn-outline-primary" type="submit">إضافة</button>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <h5 class="mb-3"><i class="bi bi-journal-text"></i> المحضر والقرارات</h5>
+      {% if can_manage %}
+        <form method="post" action="{{ url_for('portal.meeting_update_minutes', meeting_id=row.id) }}">
+          <div class="mb-3">
+            <label class="form-label">محضر الاجتماع</label>
+            <textarea class="form-control" name="minutes_text" rows="7">{{ row.minutes_text or '' }}</textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">القرارات</label>
+            <textarea class="form-control" name="decisions_text" rows="4">{{ row.decisions_text or '' }}</textarea>
+          </div>
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <div class="d-flex gap-3 flex-wrap">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="mark_done" value="1" id="markDone" {% if row.status == 'DONE' %}checked{% endif %}>
+                <label class="form-check-label" for="markDone">إنهاء الاجتماع</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="notify_minutes" value="1" id="notifyMinutes">
+                <label class="form-check-label" for="notifyMinutes">إشعار المشاركين</label>
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">
+              <i class="bi bi-save"></i> حفظ المحضر
+            </button>
+          </div>
+        </form>
+      {% else %}
+        <div class="mb-3">
+          <div class="fw-bold mb-1">محضر الاجتماع</div>
+          <div>{{ (row.minutes_text or 'لم يتم تسجيل محضر بعد.')|replace('\n', '<br>')|safe }}</div>
+        </div>
+        <div>
+          <div class="fw-bold mb-1">القرارات</div>
+          <div>{{ (row.decisions_text or 'لا توجد قرارات مسجلة.')|replace('\n', '<br>')|safe }}</div>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
+      <h5 class="mb-3"><i class="bi bi-people"></i> المشاركون</h5>
+      {% if can_manage %}
+        <form method="post" action="{{ url_for('portal.meeting_update_participants', meeting_id=row.id) }}" class="mb-3">
+          <select class="form-select" name="participant_ids" multiple size="9">
+            {% for u in users %}
+              <option value="{{ u.id }}" {% if u.id in participant_ids %}selected{% endif %}>{{ u.name or u.email }}</option>
+            {% endfor %}
+          </select>
+          <div class="d-grid mt-2">
+            <button class="btn btn-sm btn-outline-primary" type="submit">تحديث المشاركين</button>
+          </div>
+        </form>
+
+        <form method="post" action="{{ url_for('portal.meeting_update_attendance', meeting_id=row.id) }}">
+          <div class="vstack gap-2">
+            {% for p in row.participants %}
+              <div class="border rounded-3 p-2">
+                <div class="fw-bold small">{{ p.user.name if p.user else p.user_id }}</div>
+                <select class="form-select form-select-sm my-2" name="attendance_{{ p.id }}">
+                  {% for key, label in attendance_labels.items() %}
+                    <option value="{{ key }}" {% if p.attendance_status == key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <input class="form-control form-control-sm" type="text" name="note_{{ p.id }}" maxlength="300" value="{{ p.note or '' }}" placeholder="ملاحظة">
+              </div>
+            {% endfor %}
+          </div>
+          <div class="d-grid mt-2">
+            <button class="btn btn-sm btn-outline-secondary" type="submit">حفظ الحضور</button>
+          </div>
+        </form>
+      {% else %}
+        <div class="list-group list-group-flush">
+          {% for p in row.participants %}
+            <div class="list-group-item px-0 d-flex justify-content-between gap-2">
+              <span>{{ p.user.name if p.user else p.user_id }}</span>
+              <span class="badge text-bg-light border">{{ attendance_labels.get(p.attendance_status, p.attendance_status) }}</span>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    </div>
+
+    <div class="p-3 bg-white rounded-3 shadow-sm">
+      <h5 class="mb-3"><i class="bi bi-check2-square"></i> مهام ما بعد الاجتماع</h5>
+      {% if row.tasks %}
+        <div class="vstack gap-2 mb-3">
+          {% for t in row.tasks %}
+            <div class="border rounded-3 p-2">
+              <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                  <div class="fw-bold">{{ t.title }}</div>
+                  <div class="small text-muted">
+                    {{ t.assignee.name if t.assignee else 'بدون مسؤول' }}
+                    {% if t.due_date %}<span class="mx-1">|</span>{{ t.due_date.strftime('%Y-%m-%d') }}{% endif %}
+                  </div>
+                </div>
+                <span class="badge text-bg-light border">{{ task_status_labels.get(t.status, t.status) }}</span>
+              </div>
+              {% if t.description %}
+                <div class="small mt-2">{{ t.description }}</div>
+              {% endif %}
+              {% if can_manage or t.assignee_user_id == current_user.id %}
+                <form method="post" action="{{ url_for('portal.meeting_task_status', meeting_id=row.id, task_id=t.id) }}" class="d-flex gap-2 mt-2">
+                  <select class="form-select form-select-sm" name="status">
+                    {% for key, label in task_status_labels.items() %}
+                      <option value="{{ key }}" {% if t.status == key %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                  </select>
+                  <button class="btn btn-sm btn-outline-primary" type="submit">حفظ</button>
+                </form>
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <div class="text-muted mb-3">لا توجد مهام متابعة.</div>
+      {% endif %}
+
+      {% if can_manage %}
+        <form method="post" action="{{ url_for('portal.meeting_add_task', meeting_id=row.id) }}" class="vstack gap-2">
+          <input class="form-control" type="text" name="task_title" maxlength="255" placeholder="عنوان المهمة">
+          <select class="form-select" name="task_assignee_user_id">
+            <option value="">بدون مسؤول</option>
+            {% for u in users %}
+              <option value="{{ u.id }}">{{ u.name or u.email }}</option>
+            {% endfor %}
+          </select>
+          <input class="form-control" type="date" name="task_due_date">
+          <textarea class="form-control" name="task_description" rows="3" placeholder="تفاصيل المهمة"></textarea>
+          <button class="btn btn-outline-primary" type="submit">إضافة مهمة</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

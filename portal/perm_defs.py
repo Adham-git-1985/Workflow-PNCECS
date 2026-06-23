@@ -31,6 +31,9 @@ PERMS: Dict[str, List[PermDef]] = {
     "التعميمات": [
         PermDef("PORTAL_CIRCULARS_MANAGE", "إدارة التعميمات", "إصدار تعميمات وإرسال تنبيهات مستعجلة للمستخدمين.", module="PORTAL_CIRCULARS"),
     ],
+    "الاجتماعات والمتابعة": [
+        PermDef("PORTAL_MEETINGS_MANAGE", "إدارة الاجتماعات", "ترتيب الاجتماعات، الأجندة، التذكيرات، المحاضر، ومهام ما بعد الاجتماع.", module="PORTAL_MEETINGS"),
+    ],
 
     "المراسلات (الوارد/الصادر)": [
         PermDef("CORR_READ", "عرض المراسلات", "عرض صفحات الوارد/الصادر وقوائمها.", module="CORR"),

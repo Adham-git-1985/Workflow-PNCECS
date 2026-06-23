@@ -3658,6 +3658,122 @@ class PortalCircular(db.Model):
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], lazy="joined")
+
+
+class PortalMeeting(db.Model):
+    __tablename__ = "portal_meetings"
+
+    __table_args__ = (
+        db.Index("ix_portal_meetings_start", "start_at"),
+        db.Index("ix_portal_meetings_status_start", "status", "start_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    location = db.Column(db.String(200), nullable=True)
+
+    start_at = db.Column(db.DateTime, nullable=False)
+    end_at = db.Column(db.DateTime, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="SCHEDULED")
+
+    reminder_minutes_before = db.Column(db.Integer, nullable=False, default=60)
+    reminder_sent_at = db.Column(db.DateTime, nullable=True)
+
+    minutes_text = db.Column(db.Text, nullable=True)
+    decisions_text = db.Column(db.Text, nullable=True)
+
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], lazy="joined")
+    participants = db.relationship(
+        "PortalMeetingParticipant",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PortalMeetingParticipant.id",
+    )
+    agenda_items = db.relationship(
+        "PortalMeetingAgendaItem",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PortalMeetingAgendaItem.sort_order",
+    )
+    tasks = db.relationship(
+        "PortalMeetingTask",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PortalMeetingTask.created_at.desc()",
+    )
+
+
+class PortalMeetingParticipant(db.Model):
+    __tablename__ = "portal_meeting_participants"
+
+    __table_args__ = (
+        db.UniqueConstraint("meeting_id", "user_id", name="uq_portal_meeting_participant"),
+        db.Index("ix_portal_meeting_participants_meeting_id", "meeting_id"),
+        db.Index("ix_portal_meeting_participants_user", "user_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("portal_meetings.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    role = db.Column(db.String(30), nullable=False, default="ATTENDEE")
+    attendance_status = db.Column(db.String(20), nullable=False, default="INVITED")
+    note = db.Column(db.String(300), nullable=True)
+
+    meeting = db.relationship("PortalMeeting", back_populates="participants", lazy="joined")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+
+
+class PortalMeetingAgendaItem(db.Model):
+    __tablename__ = "portal_meeting_agenda_items"
+
+    __table_args__ = (
+        db.Index("ix_portal_meeting_agenda_meeting_order", "meeting_id", "sort_order"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("portal_meetings.id"), nullable=False, index=True)
+    title = db.Column(db.String(255), nullable=False)
+    notes = db.Column(db.Text, nullable=True)
+    owner_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    sort_order = db.Column(db.Integer, nullable=False, default=100)
+    is_done = db.Column(db.Boolean, default=False, nullable=False)
+
+    meeting = db.relationship("PortalMeeting", back_populates="agenda_items", lazy="joined")
+    owner = db.relationship("User", foreign_keys=[owner_user_id], lazy="joined")
+
+
+class PortalMeetingTask(db.Model):
+    __tablename__ = "portal_meeting_tasks"
+
+    __table_args__ = (
+        db.Index("ix_portal_meeting_tasks_status_due", "status", "due_date"),
+        db.Index("ix_portal_meeting_tasks_assignee_status", "assignee_user_id", "status"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("portal_meetings.id"), nullable=False, index=True)
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    assignee_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    due_date = db.Column(db.Date, nullable=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default="OPEN", index=True)
+
+    created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    completed_at = db.Column(db.DateTime, nullable=True)
+
+    meeting = db.relationship("PortalMeeting", back_populates="tasks", lazy="joined")
+    assignee = db.relationship("User", foreign_keys=[assignee_user_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_user_id], lazy="joined")
 # ======================
 # Portal: Saved Filters
 # ======================

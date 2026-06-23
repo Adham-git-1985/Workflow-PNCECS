@@ -37,6 +37,10 @@
         {% if f.get('can_hr') %}
           <span class="badge text-bg-light border"><i class="bi bi-person-check"></i> طلباتي قيد المراجعة: <b>{{ s.get('my_requests_open', 0) }}</b></span>
         {% endif %}
+        {% if f.get('can_meetings_manage') or s.get('meetings_week', 0)|int > 0 or s.get('meeting_tasks_open', 0)|int > 0 %}
+          <span class="badge text-bg-light border"><i class="bi bi-calendar2-week"></i> اجتماعات الأسبوع: <b>{{ s.get('meetings_week', 0) }}</b></span>
+          <span class="badge text-bg-light border"><i class="bi bi-check2-square"></i> مهام متابعة: <b>{{ s.get('meeting_tasks_open', 0) }}</b></span>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -77,6 +81,125 @@
       {% endif %}
     </div>
   </div>
+
+  <!-- Meetings -->
+  {% if f.get('can_meetings_manage') or s.get('meetings_week', 0)|int > 0 or s.get('meeting_tasks_open', 0)|int > 0 %}
+  <div class="col-12">
+    <div class="p-4 bg-white rounded-3 shadow-sm">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div>
+          <h5 class="mb-1"><i class="bi bi-calendar2-week"></i> اجتماعاتي ومواعيدي</h5>
+          <div class="text-muted small">نظرة مختصرة على جدولك، التذكيرات، ومهام ما بعد الاجتماع.</div>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.meetings_dashboard') }}">
+            <i class="bi bi-calendar-week"></i> فتح الجدول
+          </a>
+          {% if f.get('can_meetings_manage') %}
+            <a class="btn btn-sm btn-primary" href="{{ url_for('portal.meeting_new') }}">
+              <i class="bi bi-plus-circle"></i> اجتماع جديد
+            </a>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          <div class="border rounded-3 p-3 h-100">
+            <div class="text-muted small mb-2">الموعد القادم</div>
+            {% if next_meeting %}
+              <a class="text-decoration-none text-dark" href="{{ url_for('portal.meeting_view', meeting_id=next_meeting.id) }}">
+                <div class="fw-bold fs-6 mb-1">{{ next_meeting.title }}</div>
+                <div class="small text-muted">
+                  <i class="bi bi-clock"></i>
+                  {{ next_meeting.start_at.strftime('%Y-%m-%d %H:%M') if next_meeting.start_at else '' }}
+                  {% if next_meeting.end_at %} - {{ next_meeting.end_at.strftime('%H:%M') if next_meeting.end_at.date() == next_meeting.start_at.date() else next_meeting.end_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+                </div>
+                {% if next_meeting.location %}
+                  <div class="small text-muted mt-1"><i class="bi bi-geo-alt"></i> {{ next_meeting.location }}</div>
+                {% endif %}
+              </a>
+            {% else %}
+              <div class="text-muted">لا يوجد موعد قادم حالياً.</div>
+            {% endif %}
+          </div>
+        </div>
+
+        <div class="col-12 col-lg-8">
+          <div class="row g-2 mb-3">
+            <div class="col-6 col-md-3">
+              <div class="border rounded-3 p-2">
+                <div class="text-muted small">اليوم</div>
+                <div class="fw-bold fs-5">{{ s.get('meetings_today', 0) }}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="border rounded-3 p-2">
+                <div class="text-muted small">هذا الأسبوع</div>
+                <div class="fw-bold fs-5">{{ s.get('meetings_week', 0) }}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="border rounded-3 p-2">
+                <div class="text-muted small">مهام مفتوحة</div>
+                <div class="fw-bold fs-5">{{ s.get('meeting_tasks_open', 0) }}</div>
+              </div>
+            </div>
+            <div class="col-6 col-md-3">
+              <div class="border rounded-3 p-2">
+                <div class="text-muted small">متأخرة</div>
+                <div class="fw-bold fs-5 text-danger">{{ s.get('meeting_tasks_overdue', 0) }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="row g-3">
+            <div class="col-12 col-xl-7">
+              <div class="fw-bold mb-2">جدول الأسبوع</div>
+              {% if last_meetings %}
+                <div class="list-group list-group-flush">
+                  {% for m in last_meetings %}
+                    <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-2 px-0 py-2"
+                       href="{{ url_for('portal.meeting_view', meeting_id=m.id) }}">
+                      <div class="min-w-0">
+                        <div class="fw-semibold">{{ m.title }}</div>
+                        <div class="small text-muted">
+                          {{ m.start_at.strftime('%a %Y-%m-%d %H:%M') if m.start_at else '' }}
+                          {% if m.location %}<span class="mx-1">|</span>{{ m.location }}{% endif %}
+                        </div>
+                      </div>
+                      <span class="badge text-bg-secondary">{{ meeting_status_labels.get(m.status, m.status) }}</span>
+                    </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="text-muted small">لا توجد اجتماعات ضمن الأسبوع الحالي.</div>
+              {% endif %}
+            </div>
+            <div class="col-12 col-xl-5">
+              <div class="fw-bold mb-2">مهام المتابعة</div>
+              {% if meeting_open_tasks %}
+                <div class="list-group list-group-flush">
+                  {% for t in meeting_open_tasks %}
+                    <a class="list-group-item list-group-item-action px-0 py-2" href="{{ url_for('portal.meeting_view', meeting_id=t.meeting_id) }}">
+                      <div class="fw-semibold">{{ t.title }}</div>
+                      <div class="small text-muted">
+                        {{ t.meeting.title if t.meeting else '' }}
+                        {% if t.due_date %}<span class="mx-1">|</span>{{ t.due_date.strftime('%Y-%m-%d') }}{% endif %}
+                      </div>
+                    </a>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <div class="text-muted small">لا توجد مهام متابعة مفتوحة.</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
   <!-- Correspondence -->
   <div class="col-md-6">
     <div class="p-4 bg-white rounded-3 shadow-sm h-100">

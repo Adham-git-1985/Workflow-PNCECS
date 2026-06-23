@@ -99,6 +99,10 @@ from models import (
     StoreFilePermission,
     PortalAccessRequest,
     PortalCircular,
+    PortalMeeting,
+    PortalMeetingParticipant,
+    PortalMeetingAgendaItem,
+    PortalMeetingTask,
     Delegation,
     UserPermission,
     Notification,
@@ -177,6 +181,7 @@ PORTAL_ADMIN_READ = "PORTAL_ADMIN_READ"
 PORTAL_ADMIN_PERMISSIONS_MANAGE = "PORTAL_ADMIN_PERMISSIONS_MANAGE"
 
 PORTAL_CIRCULARS_MANAGE = "PORTAL_CIRCULARS_MANAGE"
+PORTAL_MEETINGS_MANAGE = "PORTAL_MEETINGS_MANAGE"
 
 HR_READ = "HR_READ"
 HR_ATT_READ = "HR_ATTENDANCE_READ"
@@ -513,7 +518,8 @@ def _portal_flags():
     can_transport_manage = any([has('TRANSPORT_CREATE'), has('TRANSPORT_UPDATE'), has('TRANSPORT_DELETE')])
     can_transport_track = any([has('TRANSPORT_TRACKING_READ'), has('TRANSPORT_TRACKING_MANAGE')])
 
-    can_portal_admin = has(PORTAL_ADMIN_READ) or has(PORTAL_ADMIN_PERMISSIONS_MANAGE)
+    can_meetings_manage = has(PORTAL_MEETINGS_MANAGE)
+    can_portal_admin = has(PORTAL_ADMIN_READ) or has(PORTAL_ADMIN_PERMISSIONS_MANAGE) or can_meetings_manage
     can_approve = (has(HR_REQUESTS_APPROVE) or has(HR_REQUESTS_VIEW_ALL) or has(HR_SS_APPROVE) or has(HR_SS_WORKFLOWS_MANAGE))
 
     return {
@@ -526,6 +532,7 @@ def _portal_flags():
         'can_transport_manage': can_transport_manage,
         'can_transport_track': can_transport_track,
         'can_portal_admin': can_portal_admin,
+        'can_meetings_manage': can_meetings_manage,
         'can_approve': can_approve,
         'can_corr_create': has(CORR_CREATE),
         'can_hr_req_create': has(HR_REQUESTS_CREATE),
@@ -854,6 +861,40 @@ def _inject_portal_context():
     except Exception:
         notif_unread = 0
 
+    # Meetings badges (visible when the user manages meetings or has assigned work)
+    meetings_week_count = 0
+    meeting_tasks_open = 0
+    try:
+        now = datetime.utcnow()
+        week_to = now + timedelta(days=7)
+        if current_user.has_perm(PORTAL_MEETINGS_MANAGE):
+            meetings_week_count = _safe_count(
+                PortalMeeting.query
+                .filter(PortalMeeting.status != 'CANCELLED')
+                .filter(PortalMeeting.start_at >= now)
+                .filter(PortalMeeting.start_at < week_to)
+            )
+        else:
+            meeting_ids_q = (
+                db.session.query(PortalMeetingParticipant.meeting_id)
+                .filter(PortalMeetingParticipant.user_id == current_user.id)
+            )
+            meetings_week_count = _safe_count(
+                PortalMeeting.query
+                .filter(PortalMeeting.id.in_(meeting_ids_q))
+                .filter(PortalMeeting.status != 'CANCELLED')
+                .filter(PortalMeeting.start_at >= now)
+                .filter(PortalMeeting.start_at < week_to)
+            )
+        meeting_tasks_open = _safe_count(
+            PortalMeetingTask.query
+            .filter(PortalMeetingTask.assignee_user_id == current_user.id)
+            .filter(PortalMeetingTask.status.in_(('OPEN', 'IN_PROGRESS')))
+        )
+    except Exception:
+        meetings_week_count = 0
+        meeting_tasks_open = 0
+
     return {
         'portal_flags': flags,
         'portal_excel_can_export': portal_excel_can_export,
@@ -864,6 +905,8 @@ def _inject_portal_context():
         'portal_access_requests_pending': access_pending,
         'portal_my_access_requests_pending': my_pending,
         'portal_notif_unread': notif_unread,
+        'portal_meetings_week_count': meetings_week_count,
+        'portal_meeting_tasks_open': meeting_tasks_open,
     }
 
 
@@ -1015,6 +1058,261 @@ def _corr_next_ref(kind: str, date_s: str, category: str) -> str:
 
 
 
+MEETING_STATUS_LABELS = {
+    "SCHEDULED": "مجدول",
+    "DONE": "منتهي",
+    "CANCELLED": "ملغي",
+}
+
+MEETING_TASK_STATUS_LABELS = {
+    "OPEN": "مفتوحة",
+    "IN_PROGRESS": "قيد التنفيذ",
+    "DONE": "منجزة",
+    "CANCELLED": "ملغاة",
+}
+
+MEETING_ATTENDANCE_LABELS = {
+    "INVITED": "مدعو",
+    "ATTENDED": "حضر",
+    "ABSENT": "غائب",
+    "EXCUSED": "معتذر",
+}
+
+
+def _parse_dt_local(value: str | None) -> datetime | None:
+    s = (value or "").strip()
+    if not s:
+        return None
+    s = s.replace("T", " ")
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _parse_date_field(value: str | None) -> date | None:
+    s = (value or "").strip()
+    if not s:
+        return None
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _meeting_week_bounds(day: date | None = None) -> tuple[datetime, datetime]:
+    base = day or date.today()
+    start_day = base - timedelta(days=base.weekday())
+    end_day = start_day + timedelta(days=7)
+    return (
+        datetime.combine(start_day, datetime.min.time()),
+        datetime.combine(end_day, datetime.min.time()),
+    )
+
+
+def _meeting_user_options() -> list[User]:
+    try:
+        return (
+            User.query
+            .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+            .all()
+        )
+    except Exception:
+        return []
+
+
+def _meeting_manage_allowed() -> bool:
+    try:
+        return bool(current_user.has_perm(PORTAL_MEETINGS_MANAGE))
+    except Exception:
+        return False
+
+
+def _meeting_can_access(row: PortalMeeting) -> bool:
+    if _meeting_manage_allowed():
+        return True
+    uid = getattr(current_user, "id", None)
+    if not uid:
+        return False
+    if getattr(row, "created_by_user_id", None) == uid:
+        return True
+    try:
+        if any(getattr(p, "user_id", None) == uid for p in (row.participants or [])):
+            return True
+    except Exception:
+        pass
+    try:
+        if any(getattr(t, "assignee_user_id", None) == uid for t in (row.tasks or [])):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _meeting_participant_user_ids(row: PortalMeeting) -> list[int]:
+    ids: set[int] = set()
+    try:
+        for p in row.participants or []:
+            if getattr(p, "user_id", None):
+                ids.add(int(p.user_id))
+    except Exception:
+        pass
+    return sorted(ids)
+
+
+def _meeting_notify_users(
+    user_ids,
+    message: str,
+    level: str = "INFO",
+    *,
+    subject: str | None = None,
+    body: str | None = None,
+    sender_id: int | None = None,
+) -> int:
+    clean_ids = []
+    seen = set()
+    for uid in user_ids or []:
+        try:
+            uid_int = int(uid)
+        except Exception:
+            continue
+        if uid_int <= 0 or uid_int in seen:
+            continue
+        seen.add(uid_int)
+        clean_ids.append(uid_int)
+
+    if not clean_ids:
+        return 0
+
+    msg = (message or "").strip()
+    if len(msg) > 255:
+        msg = msg[:252] + "..."
+    now = datetime.utcnow()
+    db.session.add_all([
+        Notification(
+            user_id=uid,
+            message=msg,
+            type=level,
+            source="portal",
+            created_at=now,
+            is_read=False,
+            is_mirror=False,
+        )
+        for uid in clean_ids
+    ])
+
+    if subject or body:
+        actor_id = sender_id or getattr(current_user, "id", None)
+        if actor_id:
+            internal_msg = Message(
+                sender_id=int(actor_id),
+                subject=(subject or msg)[:200],
+                body=(body or message or "").strip() or msg,
+                target_kind="USER",
+                target_id=clean_ids[0],
+                created_at=now,
+                reply_to_id=None,
+            )
+            db.session.add(internal_msg)
+            db.session.flush()
+            db.session.add_all([
+                MessageRecipient(
+                    message_id=internal_msg.id,
+                    recipient_user_id=uid,
+                    is_read=False,
+                    read_at=None,
+                    is_deleted=False,
+                    deleted_at=None,
+                )
+                for uid in clean_ids
+            ])
+    return len(clean_ids)
+
+
+def _meeting_when_label(row: PortalMeeting) -> str:
+    start = getattr(row, "start_at", None)
+    if not start:
+        return ""
+    start_txt = start.strftime("%Y-%m-%d %H:%M")
+    end = getattr(row, "end_at", None)
+    if end and end.date() == start.date():
+        return f"{start_txt} - {end.strftime('%H:%M')}"
+    if end:
+        return f"{start_txt} - {end.strftime('%Y-%m-%d %H:%M')}"
+    return start_txt
+
+
+def _meeting_message_body(row: PortalMeeting, intro: str) -> str:
+    lines = [
+        intro,
+        "",
+        f"عنوان الاجتماع: {row.title}",
+        f"الموعد: {_meeting_when_label(row)}",
+    ]
+    if row.location:
+        lines.append(f"المكان: {row.location}")
+    if row.description:
+        lines.extend(["", "الوصف:", row.description])
+    agenda = [i.title for i in (row.agenda_items or []) if getattr(i, "title", None)]
+    if agenda:
+        lines.append("")
+        lines.append("الأجندة:")
+        lines.extend([f"- {title}" for title in agenda])
+    lines.extend([
+        "",
+        "يمكن متابعة تفاصيل الاجتماع من البوابة الإدارية > الاجتماعات.",
+    ])
+    return "\n".join(lines)
+
+
+def _send_due_meeting_reminders() -> int:
+    """Best-effort reminder sender. Safe to call from meeting pages."""
+    try:
+        now = datetime.utcnow()
+        horizon = now + timedelta(days=2)
+        rows = (
+            PortalMeeting.query
+            .filter(PortalMeeting.status == "SCHEDULED")
+            .filter(PortalMeeting.reminder_sent_at.is_(None))
+            .filter(PortalMeeting.start_at >= now)
+            .filter(PortalMeeting.start_at <= horizon)
+            .order_by(PortalMeeting.start_at.asc())
+            .all()
+        )
+        sent = 0
+        touched = 0
+        for row in rows:
+            try:
+                lead = max(int(row.reminder_minutes_before or 0), 0)
+            except Exception:
+                lead = 60
+            if row.start_at - timedelta(minutes=lead) > now:
+                continue
+
+            sent += _meeting_notify_users(
+                _meeting_participant_user_ids(row),
+                f"تذكير اجتماع: {row.title} - {_meeting_when_label(row)}",
+                level="REMINDER",
+                subject=f"تذكير اجتماع: {row.title}",
+                body=_meeting_message_body(row, "هذا تذكير بموعد اجتماعك القادم."),
+                sender_id=getattr(row, "created_by_user_id", None),
+            )
+            row.reminder_sent_at = now
+            touched += 1
+
+        if touched:
+            db.session.commit()
+        return sent
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return 0
+
+
 # -------------------------
 # Portal Home
 # -------------------------
@@ -1050,6 +1348,10 @@ def index():
         'transport_trips_month': 0,
         'transport_permits_pending': 0,
         'transport_vehicles': 0,
+        'meetings_week': 0,
+        'meetings_today': 0,
+        'meeting_tasks_open': 0,
+        'meeting_tasks_overdue': 0,
     }
 
     # --- Correspondence quick stats (last 30 days) ---
@@ -1122,7 +1424,68 @@ def index():
         except Exception:
             pass
 
-    
+    # --- Meetings quick stats (this week + my open follow-up tasks) ---
+    last_meetings = []
+    next_meeting = None
+    meeting_open_tasks = []
+    try:
+        _send_due_meeting_reminders()
+        now_utc = datetime.utcnow()
+        week_start, week_end = _meeting_week_bounds()
+        today_start = datetime.combine(date.today(), datetime.min.time())
+        tomorrow_start = today_start + timedelta(days=1)
+
+        base_meetings = PortalMeeting.query.filter(PortalMeeting.status != 'CANCELLED')
+        if not _meeting_manage_allowed():
+            my_meeting_ids = (
+                db.session.query(PortalMeetingParticipant.meeting_id)
+                .filter(PortalMeetingParticipant.user_id == current_user.id)
+            )
+            base_meetings = base_meetings.filter(PortalMeeting.id.in_(my_meeting_ids))
+
+        q_meetings = base_meetings.filter(
+            PortalMeeting.start_at >= week_start,
+            PortalMeeting.start_at < week_end,
+        )
+
+        stats['meetings_week'] = _safe_count(q_meetings)
+        stats['meetings_today'] = _safe_count(base_meetings.filter(
+            PortalMeeting.start_at >= today_start,
+            PortalMeeting.start_at < tomorrow_start,
+        ))
+        next_meeting = (
+            base_meetings
+            .filter(PortalMeeting.status == 'SCHEDULED')
+            .filter(PortalMeeting.start_at >= now_utc)
+            .order_by(PortalMeeting.start_at.asc(), PortalMeeting.id.asc())
+            .first()
+        )
+        last_meetings = (
+            q_meetings
+            .order_by(PortalMeeting.start_at.asc(), PortalMeeting.id.asc())
+            .limit(5)
+            .all()
+        )
+        tasks_q = (
+            PortalMeetingTask.query
+            .filter(PortalMeetingTask.assignee_user_id == current_user.id)
+            .filter(PortalMeetingTask.status.in_(('OPEN', 'IN_PROGRESS')))
+        )
+        stats['meeting_tasks_open'] = _safe_count(tasks_q)
+        stats['meeting_tasks_overdue'] = _safe_count(tasks_q.filter(
+            PortalMeetingTask.due_date.isnot(None),
+            PortalMeetingTask.due_date < date.today(),
+        ))
+        meeting_open_tasks = (
+            tasks_q
+            .order_by(PortalMeetingTask.due_date.is_(None), PortalMeetingTask.due_date.asc(), PortalMeetingTask.id.desc())
+            .limit(4)
+            .all()
+        )
+    except Exception:
+        last_meetings = []
+        next_meeting = None
+        meeting_open_tasks = []
 
     # --- Circulars (last 5) ---
     last_circulars = []
@@ -1134,7 +1497,18 @@ def index():
     except Exception:
         last_circulars = []
 
-    return render_template("portal/index.html", flags=flags, stats=stats, access_reqs=access_reqs, last_circulars=last_circulars)
+    return render_template(
+        "portal/index.html",
+        flags=flags,
+        stats=stats,
+        access_reqs=access_reqs,
+        last_circulars=last_circulars,
+        last_meetings=last_meetings,
+        next_meeting=next_meeting,
+        meeting_open_tasks=meeting_open_tasks,
+        meeting_status_labels=MEETING_STATUS_LABELS,
+        meeting_task_status_labels=MEETING_TASK_STATUS_LABELS,
+    )
 
 
 
@@ -1675,6 +2049,472 @@ def circular_new():
 
     # GET
     return render_template("portal/circular_new.html", title="", body="", is_urgent=True)
+
+
+# -------------------------
+# Portal: Meetings
+# -------------------------
+
+@portal_bp.route("/meetings")
+@login_required
+@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE)
+def meetings_dashboard():
+    _send_due_meeting_reminders()
+    can_manage = _meeting_manage_allowed()
+
+    q_text = (request.args.get("q") or "").strip()
+    status = (request.args.get("status") or "").strip().upper()
+    raw_from = (request.args.get("date_from") or "").strip()
+    raw_to = (request.args.get("date_to") or "").strip()
+
+    week_start, week_end = _meeting_week_bounds()
+    date_from = _parse_date_field(raw_from)
+    date_to = _parse_date_field(raw_to)
+    use_week_default = not (q_text or status or raw_from or raw_to)
+
+    query = PortalMeeting.query
+    if not can_manage:
+        participant_ids_q = (
+            db.session.query(PortalMeetingParticipant.meeting_id)
+            .filter(PortalMeetingParticipant.user_id == current_user.id)
+        )
+        task_meeting_ids_q = (
+            db.session.query(PortalMeetingTask.meeting_id)
+            .filter(PortalMeetingTask.assignee_user_id == current_user.id)
+        )
+        query = query.filter(or_(
+            PortalMeeting.created_by_user_id == current_user.id,
+            PortalMeeting.id.in_(participant_ids_q),
+            PortalMeeting.id.in_(task_meeting_ids_q),
+        ))
+
+    if status in MEETING_STATUS_LABELS:
+        query = query.filter(PortalMeeting.status == status)
+    if q_text:
+        like = f"%{q_text}%"
+        query = query.filter(or_(
+            PortalMeeting.title.ilike(like),
+            PortalMeeting.description.ilike(like),
+            PortalMeeting.location.ilike(like),
+        ))
+    if use_week_default:
+        query = query.filter(PortalMeeting.start_at >= week_start, PortalMeeting.start_at < week_end)
+    else:
+        if date_from:
+            query = query.filter(PortalMeeting.start_at >= datetime.combine(date_from, datetime.min.time()))
+        if date_to:
+            query = query.filter(PortalMeeting.start_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
+
+    meetings = (
+        query
+        .order_by(PortalMeeting.start_at.asc(), PortalMeeting.id.asc())
+        .limit(160)
+        .all()
+    )
+
+    base = PortalMeeting.query
+    if not can_manage:
+        participant_ids_q = (
+            db.session.query(PortalMeetingParticipant.meeting_id)
+            .filter(PortalMeetingParticipant.user_id == current_user.id)
+        )
+        task_meeting_ids_q = (
+            db.session.query(PortalMeetingTask.meeting_id)
+            .filter(PortalMeetingTask.assignee_user_id == current_user.id)
+        )
+        base = base.filter(or_(
+            PortalMeeting.created_by_user_id == current_user.id,
+            PortalMeeting.id.in_(participant_ids_q),
+            PortalMeeting.id.in_(task_meeting_ids_q),
+        ))
+
+    today = date.today()
+    now = datetime.utcnow()
+    tasks_q = PortalMeetingTask.query.filter(PortalMeetingTask.status.in_(("OPEN", "IN_PROGRESS")))
+    if not can_manage:
+        tasks_q = tasks_q.filter(PortalMeetingTask.assignee_user_id == current_user.id)
+    open_tasks = (
+        tasks_q
+        .order_by(PortalMeetingTask.due_date.is_(None), PortalMeetingTask.due_date.asc(), PortalMeetingTask.id.desc())
+        .limit(30)
+        .all()
+    )
+
+    stats = {
+        "week": _safe_count(base.filter(PortalMeeting.status != "CANCELLED", PortalMeeting.start_at >= week_start, PortalMeeting.start_at < week_end)),
+        "upcoming": _safe_count(base.filter(PortalMeeting.status == "SCHEDULED", PortalMeeting.start_at >= now)),
+        "open_tasks": _safe_count(tasks_q),
+        "overdue_tasks": _safe_count(tasks_q.filter(PortalMeetingTask.due_date.isnot(None), PortalMeetingTask.due_date < today)),
+    }
+
+    filters = {
+        "q": q_text,
+        "status": status,
+        "date_from": raw_from or (week_start.date().isoformat() if use_week_default else ""),
+        "date_to": raw_to or ((week_end.date() - timedelta(days=1)).isoformat() if use_week_default else ""),
+        "week_default": use_week_default,
+    }
+
+    return render_template(
+        "portal/meetings/dashboard.html",
+        meetings=meetings,
+        open_tasks=open_tasks,
+        stats=stats,
+        filters=filters,
+        can_manage=can_manage,
+        status_labels=MEETING_STATUS_LABELS,
+        task_status_labels=MEETING_TASK_STATUS_LABELS,
+    )
+
+
+@portal_bp.route("/meetings/new", methods=["GET", "POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_new():
+    users = _meeting_user_options()
+    default_start = (datetime.now() + timedelta(days=1)).replace(second=0, microsecond=0)
+    form = {
+        "title": "",
+        "description": "",
+        "location": "",
+        "start_at": default_start.strftime("%Y-%m-%dT%H:%M"),
+        "end_at": "",
+        "reminder_minutes_before": "60",
+        "participant_ids": [str(getattr(current_user, "id", ""))],
+        "agenda_lines": "",
+    }
+
+    if request.method == "POST":
+        form.update({
+            "title": (request.form.get("title") or "").strip(),
+            "description": (request.form.get("description") or "").strip(),
+            "location": (request.form.get("location") or "").strip(),
+            "start_at": (request.form.get("start_at") or "").strip(),
+            "end_at": (request.form.get("end_at") or "").strip(),
+            "reminder_minutes_before": (request.form.get("reminder_minutes_before") or "60").strip(),
+            "participant_ids": request.form.getlist("participant_ids"),
+            "agenda_lines": (request.form.get("agenda_lines") or "").strip(),
+        })
+        start_at = _parse_dt_local(form["start_at"])
+        end_at = _parse_dt_local(form["end_at"])
+        try:
+            reminder_minutes = max(0, int(form["reminder_minutes_before"] or 60))
+        except Exception:
+            reminder_minutes = 60
+
+        participant_ids: list[int] = []
+        for value in form["participant_ids"]:
+            try:
+                uid = int(value)
+            except Exception:
+                continue
+            if uid > 0 and uid not in participant_ids:
+                participant_ids.append(uid)
+        if getattr(current_user, "id", None) and current_user.id not in participant_ids:
+            participant_ids.insert(0, int(current_user.id))
+
+        if not form["title"]:
+            flash("عنوان الاجتماع مطلوب.", "danger")
+            return render_template("portal/meetings/form.html", form=form, users=users)
+        if not start_at:
+            flash("موعد بداية الاجتماع مطلوب.", "danger")
+            return render_template("portal/meetings/form.html", form=form, users=users)
+        if end_at and end_at <= start_at:
+            flash("وقت نهاية الاجتماع يجب أن يكون بعد وقت البداية.", "warning")
+            return render_template("portal/meetings/form.html", form=form, users=users)
+
+        try:
+            row = PortalMeeting(
+                title=form["title"][:200],
+                description=form["description"] or None,
+                location=form["location"] or None,
+                start_at=start_at,
+                end_at=end_at,
+                reminder_minutes_before=reminder_minutes,
+                created_by_user_id=getattr(current_user, "id", None),
+                created_at=datetime.utcnow(),
+            )
+            db.session.add(row)
+            db.session.flush()
+
+            for uid in participant_ids:
+                db.session.add(PortalMeetingParticipant(
+                    meeting_id=row.id,
+                    user_id=uid,
+                    role="OWNER" if uid == getattr(current_user, "id", None) else "ATTENDEE",
+                    attendance_status="INVITED",
+                ))
+
+            agenda_lines = [line.strip() for line in (form["agenda_lines"] or "").splitlines() if line.strip()]
+            for idx, line in enumerate(agenda_lines, start=1):
+                db.session.add(PortalMeetingAgendaItem(
+                    meeting_id=row.id,
+                    title=line[:255],
+                    sort_order=idx * 10,
+                ))
+
+            invite_ids = [uid for uid in participant_ids if uid != getattr(current_user, "id", None)]
+            _meeting_notify_users(
+                invite_ids,
+                f"دعوة اجتماع: {row.title} - {_meeting_when_label(row)}",
+                level="INFO",
+                subject=f"دعوة اجتماع: {row.title}",
+                body=_meeting_message_body(row, "تمت دعوتك لحضور الاجتماع التالي."),
+                sender_id=getattr(current_user, "id", None),
+            )
+            db.session.commit()
+            flash("تم إنشاء الاجتماع وإرسال الدعوات.", "success")
+            return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+        except Exception:
+            db.session.rollback()
+            flash("حدث خطأ أثناء إنشاء الاجتماع.", "danger")
+
+    return render_template("portal/meetings/form.html", form=form, users=users)
+
+
+@portal_bp.route("/meetings/<int:meeting_id>")
+@login_required
+@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE)
+def meeting_view(meeting_id: int):
+    _send_due_meeting_reminders()
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    return render_template(
+        "portal/meetings/view.html",
+        row=row,
+        users=_meeting_user_options(),
+        can_manage=_meeting_manage_allowed(),
+        status_labels=MEETING_STATUS_LABELS,
+        task_status_labels=MEETING_TASK_STATUS_LABELS,
+        attendance_labels=MEETING_ATTENDANCE_LABELS,
+    )
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/status", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_update_status(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    status = (request.form.get("status") or "").strip().upper()
+    if status not in MEETING_STATUS_LABELS:
+        flash("حالة الاجتماع غير صحيحة.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    row.status = status
+    if status == "CANCELLED":
+        _meeting_notify_users(
+            _meeting_participant_user_ids(row),
+            f"تم إلغاء اجتماع: {row.title}",
+            level="WARNING",
+            subject=f"إلغاء اجتماع: {row.title}",
+            body=_meeting_message_body(row, "تم إلغاء الاجتماع التالي."),
+            sender_id=getattr(current_user, "id", None),
+        )
+    db.session.commit()
+    flash("تم تحديث حالة الاجتماع.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/minutes", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_update_minutes(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    row.minutes_text = (request.form.get("minutes_text") or "").strip() or None
+    row.decisions_text = (request.form.get("decisions_text") or "").strip() or None
+    if (request.form.get("mark_done") or "").strip() in ("1", "on"):
+        row.status = "DONE"
+    if (request.form.get("notify_minutes") or "").strip() in ("1", "on"):
+        _meeting_notify_users(
+            _meeting_participant_user_ids(row),
+            f"تم تحديث محضر اجتماع: {row.title}",
+            level="INFO",
+            subject=f"محضر اجتماع: {row.title}",
+            body=_meeting_message_body(row, "تم تحديث محضر الاجتماع والقرارات."),
+            sender_id=getattr(current_user, "id", None),
+        )
+    db.session.commit()
+    flash("تم حفظ المحضر والقرارات.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/participants", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_update_participants(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    selected: set[int] = set()
+    for value in request.form.getlist("participant_ids"):
+        try:
+            uid = int(value)
+        except Exception:
+            continue
+        if uid > 0:
+            selected.add(uid)
+    if getattr(current_user, "id", None):
+        selected.add(int(current_user.id))
+
+    existing = {int(p.user_id): p for p in (row.participants or []) if getattr(p, "user_id", None)}
+    new_ids = [uid for uid in selected if uid not in existing]
+    for uid, participant in list(existing.items()):
+        if uid not in selected:
+            db.session.delete(participant)
+    for uid in new_ids:
+        db.session.add(PortalMeetingParticipant(
+            meeting_id=row.id,
+            user_id=uid,
+            role="OWNER" if uid == getattr(current_user, "id", None) else "ATTENDEE",
+            attendance_status="INVITED",
+        ))
+    _meeting_notify_users(
+        new_ids,
+        f"تمت إضافتك لاجتماع: {row.title} - {_meeting_when_label(row)}",
+        level="INFO",
+        subject=f"دعوة اجتماع: {row.title}",
+        body=_meeting_message_body(row, "تمت إضافتك إلى الاجتماع التالي."),
+        sender_id=getattr(current_user, "id", None),
+    )
+    db.session.commit()
+    flash("تم تحديث المشاركين.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/attendance", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_update_attendance(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    for p in row.participants or []:
+        status = (request.form.get(f"attendance_{p.id}") or "").strip().upper()
+        if status in MEETING_ATTENDANCE_LABELS:
+            p.attendance_status = status
+        p.note = (request.form.get(f"note_{p.id}") or "").strip()[:300] or None
+    db.session.commit()
+    flash("تم تحديث الحضور.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/agenda", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_add_agenda_item(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    title = (request.form.get("agenda_title") or "").strip()
+    owner_user_id = _to_int(request.form.get("agenda_owner_user_id"))
+    if not title:
+        flash("عنوان بند الأجندة مطلوب.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    next_order = 10
+    try:
+        current_orders = [int(i.sort_order or 0) for i in row.agenda_items or []]
+        next_order = (max(current_orders) if current_orders else 0) + 10
+    except Exception:
+        pass
+    db.session.add(PortalMeetingAgendaItem(
+        meeting_id=row.id,
+        title=title[:255],
+        owner_user_id=owner_user_id,
+        sort_order=next_order,
+    ))
+    db.session.commit()
+    flash("تمت إضافة بند الأجندة.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/agenda/<int:item_id>", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_update_agenda_item(meeting_id: int, item_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    item = PortalMeetingAgendaItem.query.filter_by(id=item_id, meeting_id=row.id).first_or_404()
+    item.title = (request.form.get("title") or item.title or "").strip()[:255]
+    item.notes = (request.form.get("notes") or "").strip() or None
+    item.is_done = (request.form.get("is_done") or "").strip() in ("1", "on")
+    item.owner_user_id = _to_int(request.form.get("owner_user_id"))
+    db.session.commit()
+    flash("تم تحديث بند الأجندة.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/tasks", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_add_task(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    title = (request.form.get("task_title") or "").strip()
+    assignee_user_id = _to_int(request.form.get("task_assignee_user_id"))
+    due_date = _parse_date_field(request.form.get("task_due_date"))
+    description = (request.form.get("task_description") or "").strip()
+    if not title:
+        flash("عنوان مهمة المتابعة مطلوب.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    task = PortalMeetingTask(
+        meeting_id=row.id,
+        title=title[:255],
+        description=description or None,
+        assignee_user_id=assignee_user_id,
+        due_date=due_date,
+        created_by_user_id=getattr(current_user, "id", None),
+    )
+    db.session.add(task)
+    if assignee_user_id:
+        task_body = "\n".join([
+            f"تم تكليفك بمهمة متابعة من اجتماع: {row.title}",
+            "",
+            f"المهمة: {task.title}",
+            f"تاريخ الاستحقاق: {task.due_date.strftime('%Y-%m-%d') if task.due_date else 'غير محدد'}",
+            "",
+            task.description or "",
+        ]).strip()
+        _meeting_notify_users(
+            [assignee_user_id],
+            f"مهمة متابعة من اجتماع: {task.title}",
+            level="TASK",
+            subject=f"مهمة متابعة: {task.title}",
+            body=task_body,
+            sender_id=getattr(current_user, "id", None),
+        )
+    db.session.commit()
+    flash("تمت إضافة مهمة المتابعة.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/tasks/<int:task_id>/status", methods=["POST"])
+@login_required
+@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE)
+def meeting_task_status(meeting_id: int, task_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    task = PortalMeetingTask.query.filter_by(id=task_id, meeting_id=row.id).first_or_404()
+    if not (_meeting_manage_allowed() or getattr(task, "assignee_user_id", None) == getattr(current_user, "id", None)):
+        abort(403)
+    status = (request.form.get("status") or "").strip().upper()
+    if status not in MEETING_TASK_STATUS_LABELS:
+        flash("حالة المهمة غير صحيحة.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    task.status = status
+    task.completed_at = datetime.utcnow() if status == "DONE" else None
+    db.session.commit()
+    flash("تم تحديث مهمة المتابعة.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/remind", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_send_reminder(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    count = _meeting_notify_users(
+        _meeting_participant_user_ids(row),
+        f"تذكير اجتماع: {row.title} - {_meeting_when_label(row)}",
+        level="REMINDER",
+        subject=f"تذكير اجتماع: {row.title}",
+        body=_meeting_message_body(row, "هذا تذكير بموعد اجتماعك القادم."),
+        sender_id=getattr(current_user, "id", None),
+    )
+    db.session.commit()
+    flash(f"تم إرسال التذكير إلى {count} مشارك.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
 
 # Portal: Notifications (simple inbox)
 # -------------------------
@@ -15485,7 +16325,7 @@ from portal.perm_defs import PERMS as PORTAL_PERMS, ALL_KEYS as PORTAL_ALL_KEYS
 
 @portal_bp.route("/admin")
 @login_required
-@_perm(PORTAL_ADMIN_READ)
+@_perm_any(PORTAL_ADMIN_READ, PORTAL_MEETINGS_MANAGE)
 def portal_admin_dashboard():
     # UX: show only cards user can access
     cards = []
@@ -15513,6 +16353,7 @@ def portal_admin_dashboard():
     # Core admin cards
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "طلبات الصلاحيات", "مراجعة طلبات الموظفين لتفعيل خدمات البوابة.", "bi-inboxes", "portal.admin_access_requests")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "صلاحيات البوابة", "تعديل الصلاحيات للأدوار أو للمستخدمين.", "bi-person-gear", "portal.portal_admin_permissions")
+    add_card(PORTAL_MEETINGS_MANAGE, "الاجتماعات والمتابعة", "ترتيب الاجتماعات، الأجندة، التذكيرات، المحاضر، ومهام ما بعد الاجتماع.", "bi-calendar2-week", "portal.meetings_dashboard")
 
     # HR admin
     add_card(HR_MASTERDATA_MANAGE, "الهيكل التنظيمي", "إدارة المنظمات/الإدارات/الدوائر/الأقسام/الفرق.", "bi-diagram-3", "portal.portal_admin_hr_org_structure")
