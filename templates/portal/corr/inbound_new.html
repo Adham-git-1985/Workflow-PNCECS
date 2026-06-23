@@ -26,7 +26,7 @@
 
       <div class="col-md-3">
         <label class="form-label">تاريخ الاستلام <span class="text-danger">*</span></label>
-        <input class="form-control" type="date" name="received_date" required value="{{ request.form.get('received_date','') }}">
+        <input class="form-control" type="date" name="received_date" id="received_date" required value="{{ request.form.get('received_date','') }}">
       </div>
 
       <div class="col-md-3">
@@ -85,6 +85,14 @@
         <label class="form-label">مرفقات (يمكن اختيار عدة ملفات)</label>
         <input class="form-control" type="file" name="files" multiple required>
         <div class="form-text">الأنواع المدعومة: PDF/صور/Word/Excel/PPT/ZIP…</div>
+      </div>
+
+      <div class="col-12">
+        {% set stamp_prefix = 'inbound_new' %}
+        {% set stamp_label = 'الوارد' %}
+        {% set stamp_date_default = request.form.get('received_date','') %}
+        {% set stamp_sync_id = 'received_date' %}
+        {% include 'portal/corr/_stamp_controls.html' %}
       </div>
 
       <div class="col-12 d-flex gap-2">

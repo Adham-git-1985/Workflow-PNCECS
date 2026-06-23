@@ -93,6 +93,13 @@
       {% if can_upload %}
       <form method="post" action="{{ url_for('portal.outbound_upload', outbound_id=item.id) }}" enctype="multipart/form-data" class="mb-3">
         <input class="form-control mb-2" type="file" name="files" multiple required>
+        <div class="mb-2">
+          {% set stamp_prefix = 'outbound_upload' %}
+          {% set stamp_label = 'الصادر' %}
+          {% set stamp_date_default = item.sent_date %}
+          {% set stamp_sync_id = '' %}
+          {% include 'portal/corr/_stamp_controls.html' %}
+        </div>
         <button class="btn btn-sm btn-primary">رفع</button>
       </form>
       {% endif %}
@@ -101,6 +108,9 @@
         {% for a in attachments %}
           <li class="list-group-item d-flex justify-content-between align-items-center">
             <span class="small">{{ a.original_name }}</span>
+            {% if a.stamp_applied %}
+              <span class="badge text-bg-light border ms-1">مختوم {{ a.stamp_date or '' }}</span>
+            {% endif %}
             <div class="btn-group">
               <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{{ url_for('portal.corr_attachment_view', att_id=a.id) }}"><i class="bi bi-eye"></i></a>
               <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.corr_attachment_download', att_id=a.id) }}"><i class="bi bi-download"></i></a>

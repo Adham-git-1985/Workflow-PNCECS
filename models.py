@@ -3940,6 +3940,11 @@ class CorrAttachment(db.Model):
     published_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
+    stamp_applied = db.Column(db.Boolean, default=False, nullable=False)
+    stamp_kind = db.Column(db.String(10), nullable=True)
+    stamp_ref_no = db.Column(db.String(50), nullable=True)
+    stamp_date = db.Column(db.String(10), nullable=True)
+
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
     published_by = db.relationship("User", foreign_keys=[published_by_id], lazy="joined")
 

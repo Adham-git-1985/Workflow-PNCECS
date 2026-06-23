@@ -1,0 +1,59 @@
+{% set stamp_prefix = stamp_prefix or 'corr_stamp' %}
+{% set stamp_label = stamp_label or 'المراسلة' %}
+{% set stamp_date_default = stamp_date_default or '' %}
+{% set stamp_sync_id = stamp_sync_id or '' %}
+{% set stamp_checked = request.form.get('apply_stamp') in ['1', 'on', 'true', 'yes'] %}
+<div class="border rounded p-3 bg-light" data-corr-stamp-wrap data-stamp-sync-id="{{ stamp_sync_id }}">
+  <div class="form-check">
+    <input class="form-check-input" type="checkbox" name="apply_stamp" value="1" id="{{ stamp_prefix }}_apply_stamp" {% if stamp_checked %}checked{% endif %}>
+    <label class="form-check-label fw-semibold" for="{{ stamp_prefix }}_apply_stamp">
+      إضافة ختم {{ stamp_label }} على ملفات PDF والصور
+    </label>
+  </div>
+
+  <div class="row g-2 mt-2" data-corr-stamp-options>
+    <div class="col-md-4">
+      <label class="form-label mb-1" for="{{ stamp_prefix }}_stamp_date">تاريخ الختم</label>
+      <input class="form-control" type="date" name="stamp_date" id="{{ stamp_prefix }}_stamp_date" value="{{ request.form.get('stamp_date') or stamp_date_default }}">
+    </div>
+    <div class="col-md-8 d-flex align-items-end">
+      <div class="form-text">
+        سيتم استخدام رقم {{ stamp_label }} المسجل في الختم. يطبق الختم فقط على PDF والصور، أما الملفات الأخرى فترفع بدون تعديل.
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  document.querySelectorAll('[data-corr-stamp-wrap]').forEach(function(wrap){
+    var checkbox = wrap.querySelector('input[name="apply_stamp"]');
+    var options = wrap.querySelector('[data-corr-stamp-options]');
+    var dateInput = wrap.querySelector('input[name="stamp_date"]');
+    var syncId = wrap.getAttribute('data-stamp-sync-id');
+    var sourceDate = syncId ? document.getElementById(syncId) : null;
+    if(!checkbox || !options || !dateInput) return;
+
+    function syncDate(){
+      if(sourceDate && !dateInput.value){
+        dateInput.value = sourceDate.value || '';
+      }
+    }
+    function update(){
+      options.style.display = checkbox.checked ? '' : 'none';
+      if(checkbox.checked) syncDate();
+    }
+
+    checkbox.addEventListener('change', update);
+    if(sourceDate){
+      sourceDate.addEventListener('change', function(){
+        if(checkbox.checked && !dateInput.dataset.touched){
+          dateInput.value = sourceDate.value || '';
+        }
+      });
+    }
+    dateInput.addEventListener('input', function(){ dateInput.dataset.touched = '1'; });
+    update();
+  });
+})();
+</script>

@@ -42,6 +42,7 @@ from sqlalchemy import or_, and_, text, func
 from sqlalchemy.sql import exists
 from sqlalchemy.exc import OperationalError
 from utils.perms import perm_required
+from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -939,7 +940,22 @@ def _allowed_file(filename: str) -> bool:
     ext = _clean_suffix(filename)
     return ext in ALLOWED_CORR_EXTS
 
-def _save_corr_files(files, inbound_id: int | None = None, outbound_id: int | None = None) -> int:
+def _corr_stamp_options(kind: str, ref_no: str | None, default_date: str | None) -> CorrStampOptions:
+    enabled = (request.form.get("apply_stamp") or "").strip().lower() in {"1", "on", "true", "yes"}
+    stamp_date = (request.form.get("stamp_date") or default_date or "").strip()
+    return CorrStampOptions(
+        enabled=enabled,
+        kind=(kind or "").upper(),
+        ref_no=(ref_no or "").strip(),
+        stamp_date=stamp_date,
+    )
+
+def _save_corr_files(
+    files,
+    inbound_id: int | None = None,
+    outbound_id: int | None = None,
+    stamp_options: CorrStampOptions | None = None,
+) -> int:
     """Save one or more uploaded files as CorrAttachment(s). Returns how many were saved."""
     saved = 0
     if not files:
@@ -958,6 +974,9 @@ def _save_corr_files(files, inbound_id: int | None = None, outbound_id: int | No
         stored_name = f"{prefix}_{rid}_{uuid.uuid4().hex}{ext}"
         file_path = os.path.join(storage, stored_name)
         f.save(file_path)
+        stamp_applied = False
+        if stamp_options and stamp_options.enabled and is_stampable_file(stored_name):
+            stamp_applied = apply_corr_stamp(file_path, stamp_options)
 
         att = CorrAttachment(
             inbound_id=inbound_id,
@@ -966,6 +985,10 @@ def _save_corr_files(files, inbound_id: int | None = None, outbound_id: int | No
             stored_name=stored_name,
             uploaded_by_id=current_user.id,
             uploaded_at=datetime.utcnow(),
+            stamp_applied=stamp_applied,
+            stamp_kind=stamp_options.kind if stamp_applied and stamp_options else None,
+            stamp_ref_no=stamp_options.ref_no if stamp_applied and stamp_options else None,
+            stamp_date=stamp_options.stamp_date if stamp_applied and stamp_options else None,
         )
         db.session.add(att)
         saved += 1
@@ -15726,8 +15749,33 @@ def corr_index():
     return render_template("portal/corr/index.html")
 
 
+def _ensure_corr_attachment_stamp_schema():
+    """Add attachment stamp columns for existing SQLite databases."""
+    try:
+        bind = db.session.get_bind()
+        if not bind or bind.dialect.name != "sqlite":
+            return
+        rows = db.session.execute(text("PRAGMA table_info(corr_attachment)")).fetchall()
+        existing = {str(r[1]) for r in rows}
+        for col, ddl in (
+            ("stamp_applied", "ALTER TABLE corr_attachment ADD COLUMN stamp_applied BOOLEAN NOT NULL DEFAULT 0"),
+            ("stamp_kind", "ALTER TABLE corr_attachment ADD COLUMN stamp_kind VARCHAR(10)"),
+            ("stamp_ref_no", "ALTER TABLE corr_attachment ADD COLUMN stamp_ref_no VARCHAR(50)"),
+            ("stamp_date", "ALTER TABLE corr_attachment ADD COLUMN stamp_date VARCHAR(10)"),
+        ):
+            if col not in existing:
+                db.session.execute(text(ddl))
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
+
 def _ensure_corr_competence_schema():
     """Add competence columns for existing SQLite databases without a destructive reset."""
+    _ensure_corr_attachment_stamp_schema()
     try:
         bind = db.session.get_bind()
         if not bind or bind.dialect.name != "sqlite":
@@ -16093,7 +16141,8 @@ def inbound_new():
         db.session.add(item)
         db.session.flush()  # assign item.id without committing
 
-        saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None)
+        stamp_options = _corr_stamp_options("IN", item.ref_no or item.id, received_date)
+        saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None, stamp_options=stamp_options)
         if not saved:
             db.session.rollback()
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
@@ -16265,7 +16314,8 @@ def outbound_new():
         db.session.add(item)
         db.session.flush()  # assign item.id without committing
 
-        saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id)
+        stamp_options = _corr_stamp_options("OUT", item.ref_no or item.id, sent_date)
+        saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id, stamp_options=stamp_options)
         if not saved:
             db.session.rollback()
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
@@ -16378,6 +16428,7 @@ def inbound_view(inbound_id: int):
 @login_required
 @_perm(CORR_CREATE)
 def inbound_upload(inbound_id: int):
+    _ensure_corr_attachment_stamp_schema()
     item = InboundMail.query.get_or_404(inbound_id)
 
     files = request.files.getlist("files") or []
@@ -16389,7 +16440,8 @@ def inbound_upload(inbound_id: int):
         flash("اختر ملفاً.", "danger")
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
 
-    saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None)
+    stamp_options = _corr_stamp_options("IN", item.ref_no or item.id, item.received_date)
+    saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None, stamp_options=stamp_options)
     if not saved:
         flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
@@ -16418,6 +16470,7 @@ def inbound_upload(inbound_id: int):
 @login_required
 @_perm(CORR_CREATE)
 def outbound_upload(outbound_id: int):
+    _ensure_corr_attachment_stamp_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
 
     files = request.files.getlist("files") or []
@@ -16429,7 +16482,8 @@ def outbound_upload(outbound_id: int):
         flash("اختر ملفاً.", "danger")
         return redirect(url_for("portal.outbound_view", outbound_id=item.id))
 
-    saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id)
+    stamp_options = _corr_stamp_options("OUT", item.ref_no or item.id, item.sent_date)
+    saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id, stamp_options=stamp_options)
     if not saved:
         flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
         return redirect(url_for("portal.outbound_view", outbound_id=item.id))
@@ -16509,7 +16563,8 @@ def inbound_edit(inbound_id: int):
         saved = 0
         files = request.files.getlist("files") or []
         if any(getattr(f, "filename", "") for f in files):
-            saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None)
+            stamp_options = _corr_stamp_options("IN", item.ref_no or item.id, item.received_date)
+            saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None, stamp_options=stamp_options)
 
         try:
             db.session.add(AuditLog(
@@ -16634,7 +16689,8 @@ def outbound_edit(outbound_id: int):
         saved = 0
         files = request.files.getlist("files") or []
         if any(getattr(f, "filename", "") for f in files):
-            saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id)
+            stamp_options = _corr_stamp_options("OUT", item.ref_no or item.id, item.sent_date)
+            saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id, stamp_options=stamp_options)
 
         try:
             db.session.add(AuditLog(
@@ -16710,6 +16766,7 @@ def outbound_edit(outbound_id: int):
 @portal_bp.route("/corr/inbound/<int:inbound_id>/delete", methods=["POST"])
 @login_required
 def inbound_delete(inbound_id: int):
+    _ensure_corr_attachment_stamp_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     if not (current_user.has_perm(CORR_DELETE) or _can_manage_corr()):
         abort(403)
@@ -16752,6 +16809,7 @@ def inbound_delete(inbound_id: int):
 @portal_bp.route("/corr/outbound/<int:outbound_id>/delete", methods=["POST"])
 @login_required
 def outbound_delete(outbound_id: int):
+    _ensure_corr_attachment_stamp_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     if not (current_user.has_perm(CORR_DELETE) or _can_manage_corr()):
         abort(403)
@@ -16794,6 +16852,7 @@ def outbound_delete(outbound_id: int):
 @login_required
 @_perm(CORR_READ)
 def corr_attachment_download(att_id: int):
+    _ensure_corr_attachment_stamp_schema()
     att = CorrAttachment.query.get_or_404(att_id)
     storage = _corr_storage_dir()
     file_path = os.path.join(storage, att.stored_name)
@@ -16812,6 +16871,7 @@ def corr_attachment_download(att_id: int):
 @login_required
 @_perm(CORR_READ)
 def corr_attachment_view(att_id: int):
+    _ensure_corr_attachment_stamp_schema()
     att = CorrAttachment.query.get_or_404(att_id)
     storage = _corr_storage_dir()
     file_path = os.path.join(storage, att.stored_name)
@@ -16831,6 +16891,7 @@ def corr_attachment_view(att_id: int):
 @login_required
 @_perm(CORR_READ)
 def corr_attachment_delete(att_id: int):
+    _ensure_corr_attachment_stamp_schema()
     att = CorrAttachment.query.get_or_404(att_id)
     storage = _corr_storage_dir()
 
@@ -17004,6 +17065,40 @@ def outbound_export_pdf():
     return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name="outbound.pdf")
 
 
+def _pdf_text(value) -> str:
+    try:
+        from utils.corr_stamps import _shape_arabic
+
+        return _shape_arabic(str(value or ""))
+    except Exception:
+        return str(value or "")
+
+
+def _corr_card_filename(kind: str, ref_no: str, date_s: str) -> str:
+    prefix = "inbound_card" if kind == "IN" else "outbound_card"
+    ref = re.sub(r"[^A-Za-z0-9.-]+", "_", str(ref_no or "").strip(), flags=re.UNICODE).strip("_")
+    date_part = re.sub(r"[^0-9-]+", "", str(date_s or "").strip())
+    parts = [prefix]
+    if ref:
+        parts.append(ref)
+    if date_part:
+        parts.append(date_part)
+    return "_".join(parts) + ".pdf"
+
+
+def _corr_category_for_card(category: str | None) -> str:
+    category = (category or "").strip()
+    if not category or category == "__OTHER__":
+        return "عام"
+    try:
+        row = CorrCategory.query.filter_by(code=category).first()
+        if row:
+            return row.label
+    except Exception:
+        pass
+    return category
+
+
 def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, category: str, subject: str, notes: str | None, url: str, competence: str = ""):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
@@ -17016,23 +17111,25 @@ def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, catego
     except Exception:
         pass
 
-    title = "بطاقة وارد" if kind == "IN" else "بطاقة صادر"
+    is_inbound = kind == "IN"
+    title = "بطاقة وارد" if is_inbound else "بطاقة صادر"
+    party_label = "الجهة المرسلة" if is_inbound else "الجهة المستلمة"
     story = []
-    story.append(Paragraph(title, styles["Title"]))
+    story.append(Paragraph(_pdf_text(title), styles["Title"]))
     story.append(Spacer(1, 12))
 
     data = [
-        ["الرقم", ref_no],
-        ["التاريخ", date_s],
-        ["التصنيف", category or ""],
-        ["الجهة", party or ""],
-        ["جهة الاختصاص", competence or ""],
-        ["الموضوع", subject or ""],
+        [_pdf_text(ref_no), _pdf_text("الرقم")],
+        [_pdf_text(date_s), _pdf_text("التاريخ")],
+        [_pdf_text(_corr_category_for_card(category)), _pdf_text("التصنيف")],
+        [_pdf_text(party or ""), _pdf_text(party_label)],
+        [_pdf_text(competence or ""), _pdf_text("جهة الاختصاص")],
+        [_pdf_text(subject or ""), _pdf_text("الموضوع")],
     ]
-    t = Table(data, colWidths=[120, 360], hAlign="RIGHT")
+    t = Table(data, colWidths=[360, 120], hAlign="RIGHT")
     t.setStyle(TableStyle([
         ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-        ("BACKGROUND", (0,0), (0,-1), colors.whitesmoke),
+        ("BACKGROUND", (1,0), (1,-1), colors.whitesmoke),
         ("VALIGN", (0,0), (-1,-1), "TOP"),
         ("FONTNAME", (0,0), (-1,-1), "DejaVuSans"),
         ("FONTSIZE", (0,0), (-1,-1), 11),
@@ -17041,11 +17138,11 @@ def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, catego
 
     if notes:
         story.append(Spacer(1, 12))
-        story.append(Paragraph("ملاحظات:", styles["Heading3"]))
-        story.append(Paragraph(notes.replace("\n", "<br/>"), styles["Normal"]))
+        story.append(Paragraph(_pdf_text("ملاحظات:"), styles["Heading3"]))
+        story.append(Paragraph(_pdf_text(notes).replace("\n", "<br/>"), styles["Normal"]))
 
     story.append(Spacer(1, 18))
-    story.append(Paragraph("QR للوصول للصفحة:", styles["Heading3"]))
+    story.append(Paragraph(_pdf_text("رمز QR للوصول للصفحة:"), styles["Heading3"]))
     # QR
     qrw = qr.QrCodeWidget(url)
     from reportlab.graphics.shapes import Drawing
@@ -17081,7 +17178,8 @@ def inbound_print_pdf(inbound_id: int):
         item.competence_label or "",
     )
     from flask import send_file
-    return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name="inbound_card.pdf")
+    filename = _corr_card_filename("IN", item.ref_no or item.id, item.received_date)
+    return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 
 @portal_bp.route("/corr/outbound/<int:outbound_id>/print.pdf")
@@ -17103,7 +17201,8 @@ def outbound_print_pdf(outbound_id: int):
         item.competence_label or "",
     )
     from flask import send_file
-    return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name="outbound_card.pdf")
+    filename = _corr_card_filename("OUT", item.ref_no or item.id, item.sent_date)
+    return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name=filename)
 
 # -------------------------
 # Portal Admin
