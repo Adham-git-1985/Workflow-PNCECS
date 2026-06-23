@@ -54,6 +54,21 @@
       <input class="form-control" name="sender_like" value="{{ sender_like or '' }}" placeholder="جزء من الاسم">
     </div>
 
+    <div class="col-lg-3">
+      <label class="form-label">جهة الاختصاص</label>
+      <select class="form-select" name="competence" data-searchable="1">
+        <option value="">الكل</option>
+        {% for opt in competence_options %}
+          <option value="{{ opt.value }}" {% if competences and (opt.value in competences) %}selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-lg-2">
+      <label class="form-label">بحث جزئي بالاختصاص</label>
+      <input class="form-control" name="competence_like" value="{{ competence_like or '' }}" placeholder="جزء من الاسم">
+    </div>
+
     <div class="col-lg-2">
       <label class="form-label">مرفقات</label>
       <select class="form-select" name="has_attach">
@@ -88,6 +103,12 @@
       {% for s in senders %}<span class="badge text-bg-light border">مرسل: {{ s }}</span>{% endfor %}
     {% endif %}
     {% if sender_like %}<span class="badge text-bg-light border">مرسل~ {{ sender_like }}</span>{% endif %}
+    {% if competences %}
+      {% for c in competence_options %}
+        {% if c.value in competences %}<span class="badge text-bg-light border">اختصاص: {{ c.label }}</span>{% endif %}
+      {% endfor %}
+    {% endif %}
+    {% if competence_like %}<span class="badge text-bg-light border">اختصاص~ {{ competence_like }}</span>{% endif %}
     {% if date_from %}<span class="badge text-bg-light border">من: {{ date_from }}</span>{% endif %}
     {% if date_to %}<span class="badge text-bg-light border">إلى: {{ date_to }}</span>{% endif %}
     {% if has_attach == '1' %}<span class="badge text-bg-light border">مع مرفقات</span>{% endif %}
@@ -132,6 +153,7 @@
           <th>{{ portal_sort_link('التاريخ', 'received_date') }}</th>
           <th>{{ portal_sort_link('التصنيف', 'category') }}</th>
           <th>{{ portal_sort_link('المرسل', 'sender') }}</th>
+          <th>{{ portal_sort_link('جهة الاختصاص', 'competence_label') }}</th>
           <th>{{ portal_sort_link('الموضوع', 'subject') }}</th>
           <th class="text-end">إجراءات</th>
         </tr>
@@ -143,6 +165,7 @@
             <td>{{ it.received_date }}</td>
             <td><span class="badge text-bg-light border">{{ it.category }}</span></td>
             <td>{{ it.sender or "-" }}</td>
+            <td>{{ it.competence_label or "-" }}</td>
             <td>{{ it.subject }}</td>
             <td class="text-end">
               <div class="btn-group">
@@ -160,7 +183,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد نتائج.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">لا توجد نتائج.</td></tr>
         {% endfor %}
       </tbody>
     </table>

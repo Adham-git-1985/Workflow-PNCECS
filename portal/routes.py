@@ -1944,6 +1944,417 @@ def my_access_requests():
 # Portal: Circulars (التعميمات)
 # -------------------------
 
+
+WA_CIRCULAR_ENABLED = "WA_CIRCULAR_ENABLED"
+WA_CIRCULAR_MODE = "WA_CIRCULAR_MODE"
+WA_CIRCULAR_WEBHOOK_URL = "WA_CIRCULAR_WEBHOOK_URL"
+WA_CIRCULAR_WEBHOOK_SECRET = "WA_CIRCULAR_WEBHOOK_SECRET"
+WA_CIRCULAR_GROUP_ID = "WA_CIRCULAR_GROUP_ID"
+WA_CIRCULAR_CLOUD_API_VERSION = "WA_CIRCULAR_CLOUD_API_VERSION"
+WA_CIRCULAR_CLOUD_PHONE_ID = "WA_CIRCULAR_CLOUD_PHONE_ID"
+WA_CIRCULAR_CLOUD_TOKEN = "WA_CIRCULAR_CLOUD_TOKEN"
+WA_CIRCULAR_CLOUD_RECIPIENTS = "WA_CIRCULAR_CLOUD_RECIPIENTS"
+WA_CIRCULAR_LAST_STATUS = "WA_CIRCULAR_LAST_STATUS"
+WA_CIRCULAR_LAST_SENT_AT = "WA_CIRCULAR_LAST_SENT_AT"
+WA_CIRCULAR_TOKEN_ENV = "PORTAL_WHATSAPP_TOKEN"
+WA_CIRCULAR_SECRET_ENV = "PORTAL_WHATSAPP_WEBHOOK_SECRET"
+
+EMAIL_CIRCULAR_ENABLED = "EMAIL_CIRCULAR_ENABLED"
+EMAIL_CIRCULAR_SMTP_HOST = "EMAIL_CIRCULAR_SMTP_HOST"
+EMAIL_CIRCULAR_SMTP_PORT = "EMAIL_CIRCULAR_SMTP_PORT"
+EMAIL_CIRCULAR_SECURITY = "EMAIL_CIRCULAR_SECURITY"
+EMAIL_CIRCULAR_USERNAME = "EMAIL_CIRCULAR_USERNAME"
+EMAIL_CIRCULAR_PASSWORD = "EMAIL_CIRCULAR_PASSWORD"
+EMAIL_CIRCULAR_FROM_EMAIL = "EMAIL_CIRCULAR_FROM_EMAIL"
+EMAIL_CIRCULAR_FROM_NAME = "EMAIL_CIRCULAR_FROM_NAME"
+EMAIL_CIRCULAR_REPLY_TO = "EMAIL_CIRCULAR_REPLY_TO"
+EMAIL_CIRCULAR_BATCH_SIZE = "EMAIL_CIRCULAR_BATCH_SIZE"
+EMAIL_CIRCULAR_LAST_STATUS = "EMAIL_CIRCULAR_LAST_STATUS"
+EMAIL_CIRCULAR_LAST_SENT_AT = "EMAIL_CIRCULAR_LAST_SENT_AT"
+EMAIL_CIRCULAR_PASSWORD_ENV = "PORTAL_EMAIL_PASSWORD"
+
+
+def _is_enabled_value(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _split_whatsapp_recipients(raw: str | None) -> list[str]:
+    recipients: list[str] = []
+    seen: set[str] = set()
+    for part in re.split(r"[\s,;]+", raw or ""):
+        digits = re.sub(r"\D+", "", part or "")
+        if not digits or digits in seen:
+            continue
+        seen.add(digits)
+        recipients.append(digits)
+    return recipients
+
+
+def _valid_email_address(value: str | None) -> str:
+    email = (value or "").strip()
+    if not email:
+        return ""
+    if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+        return email
+    return ""
+
+
+def _circular_user_emails() -> list[str]:
+    emails: list[str] = []
+    seen: set[str] = set()
+    try:
+        rows = db.session.query(User.email).filter(User.email.isnot(None)).all()
+    except Exception:
+        rows = []
+    for row in rows:
+        raw = row[0] if isinstance(row, tuple) else getattr(row, "email", None)
+        email = _valid_email_address(raw)
+        key = email.lower()
+        if not email or key in seen:
+            continue
+        seen.add(key)
+        emails.append(email)
+    return emails
+
+
+def _whatsapp_circular_settings(*, include_secrets: bool = False) -> dict:
+    mode = (_setting_get(WA_CIRCULAR_MODE, "webhook") or "webhook").strip().lower()
+    if mode not in {"webhook", "cloud"}:
+        mode = "webhook"
+
+    api_version = (_setting_get(WA_CIRCULAR_CLOUD_API_VERSION, "v20.0") or "v20.0").strip()
+    if not re.match(r"^v\d+\.\d+$", api_version):
+        api_version = "v20.0"
+
+    webhook_secret = (
+        _setting_get(WA_CIRCULAR_WEBHOOK_SECRET, "")
+        or os.environ.get(WA_CIRCULAR_SECRET_ENV, "")
+        or ""
+    ).strip()
+    cloud_token = (
+        _setting_get(WA_CIRCULAR_CLOUD_TOKEN, "")
+        or os.environ.get(WA_CIRCULAR_TOKEN_ENV, "")
+        or ""
+    ).strip()
+    recipients_raw = _setting_get(WA_CIRCULAR_CLOUD_RECIPIENTS, "") or ""
+    recipients = _split_whatsapp_recipients(recipients_raw)
+    webhook_url = (_setting_get(WA_CIRCULAR_WEBHOOK_URL, "") or "").strip()
+    group_id = (_setting_get(WA_CIRCULAR_GROUP_ID, "") or "").strip()
+    phone_id = (_setting_get(WA_CIRCULAR_CLOUD_PHONE_ID, "") or "").strip()
+    enabled = _is_enabled_value(_setting_get(WA_CIRCULAR_ENABLED, "0"))
+
+    webhook_ready = bool(webhook_url and group_id)
+    cloud_ready = bool(phone_id and cloud_token and recipients)
+    ready = enabled and (webhook_ready if mode == "webhook" else cloud_ready)
+
+    cfg = {
+        "enabled": enabled,
+        "mode": mode,
+        "ready": ready,
+        "webhook_ready": webhook_ready,
+        "cloud_ready": cloud_ready,
+        "webhook_url": webhook_url,
+        "webhook_secret_set": bool(webhook_secret),
+        "group_id": group_id,
+        "api_version": api_version,
+        "phone_number_id": phone_id,
+        "cloud_token_set": bool(cloud_token),
+        "recipients_raw": recipients_raw,
+        "recipients": recipients,
+        "last_status": _setting_get(WA_CIRCULAR_LAST_STATUS, "") or "",
+        "last_sent_at": _setting_get(WA_CIRCULAR_LAST_SENT_AT, "") or "",
+    }
+    if include_secrets:
+        cfg["webhook_secret"] = webhook_secret
+        cfg["cloud_token"] = cloud_token
+    return cfg
+
+
+def _email_circular_settings(*, include_secrets: bool = False) -> dict:
+    enabled = _is_enabled_value(_setting_get(EMAIL_CIRCULAR_ENABLED, "0"))
+    host = (_setting_get(EMAIL_CIRCULAR_SMTP_HOST, "") or "").strip()
+    port_raw = (_setting_get(EMAIL_CIRCULAR_SMTP_PORT, "587") or "587").strip()
+    try:
+        port = max(1, min(int(port_raw), 65535))
+    except Exception:
+        port = 587
+    security = (_setting_get(EMAIL_CIRCULAR_SECURITY, "starttls") or "starttls").strip().lower()
+    if security not in {"starttls", "ssl", "none"}:
+        security = "starttls"
+    username = (_setting_get(EMAIL_CIRCULAR_USERNAME, "") or "").strip()
+    password = (
+        _setting_get(EMAIL_CIRCULAR_PASSWORD, "")
+        or os.environ.get(EMAIL_CIRCULAR_PASSWORD_ENV, "")
+        or ""
+    ).strip()
+    from_email = _valid_email_address(_setting_get(EMAIL_CIRCULAR_FROM_EMAIL, "") or username)
+    reply_to = _valid_email_address(_setting_get(EMAIL_CIRCULAR_REPLY_TO, "") or "")
+    from_name = (_setting_get(EMAIL_CIRCULAR_FROM_NAME, "البوابة الإدارية") or "البوابة الإدارية").strip()
+    try:
+        batch_size = max(1, min(int(_setting_get(EMAIL_CIRCULAR_BATCH_SIZE, "50") or "50"), 200))
+    except Exception:
+        batch_size = 50
+
+    ready = enabled and bool(host and port and from_email and (not username or password))
+    cfg = {
+        "enabled": enabled,
+        "ready": ready,
+        "host": host,
+        "port": port,
+        "security": security,
+        "username": username,
+        "password_set": bool(password),
+        "from_email": from_email,
+        "from_name": from_name,
+        "reply_to": reply_to,
+        "batch_size": batch_size,
+        "last_status": _setting_get(EMAIL_CIRCULAR_LAST_STATUS, "") or "",
+        "last_sent_at": _setting_get(EMAIL_CIRCULAR_LAST_SENT_AT, "") or "",
+        "recipient_count": len(_circular_user_emails()) if enabled else 0,
+    }
+    if include_secrets:
+        cfg["password"] = password
+    return cfg
+
+
+def _circular_whatsapp_text(row: PortalCircular) -> str:
+    label = "تعميم إداري مستعجل" if getattr(row, "is_urgent", False) else "تعميم إداري"
+    issued_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    sender = ""
+    try:
+        sender = getattr(current_user, "name", None) or getattr(current_user, "email", None) or ""
+    except Exception:
+        sender = ""
+
+    lines = [
+        label,
+        "",
+        str(getattr(row, "title", "") or "").strip(),
+        "",
+        str(getattr(row, "body", "") or "").strip(),
+        "",
+        f"صادر عبر البوابة الإدارية بتاريخ {issued_at}",
+    ]
+    if sender:
+        lines.append(f"المصدر: {sender}")
+    return "\n".join([line for line in lines if line is not None]).strip()
+
+
+def _circular_email_subject(row: PortalCircular) -> str:
+    prefix = "تعميم إداري مستعجل" if getattr(row, "is_urgent", False) else "تعميم إداري"
+    return f"{prefix}: {row.title}"[:200]
+
+
+def _create_circular_internal_message(row: PortalCircular, user_ids: list[int]) -> int:
+    sender_id = getattr(current_user, "id", None)
+    if not sender_id:
+        return 0
+
+    recipients: list[int] = []
+    seen: set[int] = set()
+    for uid in user_ids or []:
+        try:
+            uid_int = int(uid)
+        except Exception:
+            continue
+        if uid_int <= 0 or uid_int == int(sender_id) or uid_int in seen:
+            continue
+        seen.add(uid_int)
+        recipients.append(uid_int)
+
+    if not recipients:
+        return 0
+
+    subject = f"تعميم إداري: {row.title}"[:200]
+    body = _circular_whatsapp_text(row)
+    msg = Message(
+        sender_id=int(sender_id),
+        subject=subject,
+        body=body,
+        target_kind="USER",
+        target_id=recipients[0],
+        created_at=datetime.utcnow(),
+        reply_to_id=None,
+    )
+    db.session.add(msg)
+    db.session.flush()
+    db.session.add_all([
+        MessageRecipient(
+            message_id=msg.id,
+            recipient_user_id=uid,
+            is_read=False,
+            read_at=None,
+            is_deleted=False,
+            deleted_at=None,
+        )
+        for uid in recipients
+    ])
+    return len(recipients)
+
+
+def _send_circular_to_whatsapp(row: PortalCircular) -> tuple[str, str]:
+    cfg = _whatsapp_circular_settings(include_secrets=True)
+    if not cfg.get("enabled"):
+        return "warning", "تكامل واتساب غير مفعل من صفحة التكاملات."
+    if not cfg.get("ready"):
+        return "warning", "إعدادات واتساب غير مكتملة، لذلك لم يتم إرسال نسخة واتساب."
+
+    try:
+        import requests
+    except Exception:
+        return "danger", "حزمة requests غير متاحة على الخادم."
+
+    text_body = _circular_whatsapp_text(row)
+    mode = cfg.get("mode") or "webhook"
+
+    if mode == "webhook":
+        url = str(cfg.get("webhook_url") or "").strip()
+        if not re.match(r"^https?://", url, flags=re.IGNORECASE):
+            return "warning", "رابط Webhook غير صالح."
+
+        payload = {
+            "type": "portal_circular",
+            "group_id": cfg.get("group_id") or "",
+            "message": text_body,
+            "circular": {
+                "id": row.id,
+                "title": row.title,
+                "body": row.body,
+                "is_urgent": bool(row.is_urgent),
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+            },
+        }
+        headers = {"Content-Type": "application/json"}
+        secret = str(cfg.get("webhook_secret") or "").strip()
+        if secret:
+            headers["Authorization"] = f"Bearer {secret}"
+
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=12)
+        except Exception as exc:
+            return "danger", f"تعذر الاتصال ببوابة واتساب: {exc}"
+        if resp.status_code >= 400:
+            detail = (resp.text or "").strip().replace("\n", " ")
+            return "danger", f"رفضت بوابة واتساب الطلب ({resp.status_code}): {detail[:180]}"
+        return "success", "تم إرسال نسخة التعميم إلى بوابة واتساب."
+
+    api_version = cfg.get("api_version") or "v20.0"
+    phone_id = str(cfg.get("phone_number_id") or "").strip()
+    token = str(cfg.get("cloud_token") or "").strip()
+    recipients = list(cfg.get("recipients") or [])
+    url = f"https://graph.facebook.com/{api_version}/{phone_id}/messages"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+
+    sent = 0
+    failures: list[str] = []
+    for recipient in recipients:
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "text",
+            "text": {
+                "preview_url": False,
+                "body": text_body,
+            },
+        }
+        try:
+            resp = requests.post(url, json=payload, headers=headers, timeout=12)
+        except Exception as exc:
+            failures.append(f"{recipient}: {exc}")
+            continue
+        if resp.status_code >= 400:
+            detail = (resp.text or "").strip().replace("\n", " ")
+            failures.append(f"{recipient}: {resp.status_code} {detail[:120]}")
+            continue
+        sent += 1
+
+    if sent and failures:
+        return "warning", f"تم إرسال واتساب إلى {sent} من {len(recipients)} مستلم، وتعذر إرسال الباقي."
+    if sent:
+        return "success", f"تم إرسال نسخة واتساب إلى {sent} مستلم."
+    failure_text = failures[0] if failures else "لم يتم تحديد مستلمين."
+    return "danger", f"لم يتم إرسال نسخة واتساب: {failure_text[:180]}"
+
+
+def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
+    cfg = _email_circular_settings(include_secrets=True)
+    if not cfg.get("enabled"):
+        return "warning", "تكامل البريد الإلكتروني غير مفعل من صفحة التكاملات."
+    if not cfg.get("ready"):
+        return "warning", "إعدادات البريد الإلكتروني غير مكتملة، لذلك لم يتم إرسال نسخة بريدية."
+
+    recipients = _circular_user_emails()
+    if not recipients:
+        return "warning", "لا توجد عناوين بريد إلكتروني صالحة للمستخدمين."
+
+    try:
+        import smtplib
+        import ssl
+        from email.message import EmailMessage
+        from email.utils import formataddr
+    except Exception:
+        return "danger", "تعذر تحميل مكتبات البريد الإلكتروني على الخادم."
+
+    subject = _circular_email_subject(row)
+    body = _circular_whatsapp_text(row)
+    from_email = str(cfg.get("from_email") or "").strip()
+    from_name = str(cfg.get("from_name") or "").strip()
+    reply_to = str(cfg.get("reply_to") or "").strip()
+    batch_size = int(cfg.get("batch_size") or 50)
+
+    def build_message(batch: list[str]) -> EmailMessage:
+        msg = EmailMessage()
+        msg["Subject"] = subject
+        msg["From"] = formataddr((from_name, from_email)) if from_name else from_email
+        msg["To"] = from_email
+        msg["Bcc"] = ", ".join(batch)
+        if reply_to:
+            msg["Reply-To"] = reply_to
+        msg.set_content(body)
+        return msg
+
+    sent = 0
+    failures: list[str] = []
+    try:
+        if cfg.get("security") == "ssl":
+            smtp = smtplib.SMTP_SSL(str(cfg["host"]), int(cfg["port"]), timeout=20, context=ssl.create_default_context())
+        else:
+            smtp = smtplib.SMTP(str(cfg["host"]), int(cfg["port"]), timeout=20)
+        try:
+            smtp.ehlo()
+            if cfg.get("security") == "starttls":
+                smtp.starttls(context=ssl.create_default_context())
+                smtp.ehlo()
+            username = str(cfg.get("username") or "").strip()
+            password = str(cfg.get("password") or "").strip()
+            if username:
+                smtp.login(username, password)
+            for idx in range(0, len(recipients), batch_size):
+                batch = recipients[idx:idx + batch_size]
+                try:
+                    smtp.send_message(build_message(batch), from_addr=from_email, to_addrs=batch)
+                    sent += len(batch)
+                except Exception as exc:
+                    failures.append(str(exc))
+        finally:
+            try:
+                smtp.quit()
+            except Exception:
+                pass
+    except Exception as exc:
+        return "danger", f"تعذر الاتصال بخادم البريد: {exc}"
+
+    if sent and failures:
+        return "warning", f"تم إرسال البريد إلى {sent} من {len(recipients)} عنوان، وتعذر إرسال بعض الدفعات."
+    if sent:
+        return "success", f"تم إرسال نسخة البريد الإلكتروني إلى {sent} عنوان."
+    failure_text = failures[0] if failures else "لم يتم الإرسال."
+    return "danger", f"لم يتم إرسال البريد الإلكتروني: {failure_text[:180]}"
+
 @portal_bp.route("/circulars")
 @login_required
 @_perm(PORTAL_READ)
@@ -1979,19 +2390,41 @@ def circular_view(circular_id: int):
 @login_required
 @_perm(PORTAL_CIRCULARS_MANAGE)
 def circular_new():
-    """Create a new circular and notify all users (source='portal')."""
+    """Create a new circular and distribute it through portal channels."""
+    whatsapp_config = _whatsapp_circular_settings()
+    email_config = _email_circular_settings()
 
     if request.method == "POST":
         title = (request.form.get("title") or "").strip()
         body = (request.form.get("body") or "").strip()
         is_urgent = (request.form.get("is_urgent") or "").strip() in ("1", "on", "true", "True")
+        send_whatsapp = (request.form.get("send_whatsapp") or "").strip() in ("1", "on", "true", "True")
+        send_email = (request.form.get("send_email") or "").strip() in ("1", "on", "true", "True")
 
         if not title:
             flash("عنوان التعميم مطلوب.", "danger")
-            return render_template("portal/circular_new.html", title=title, body=body, is_urgent=is_urgent)
+            return render_template(
+                "portal/circular_new.html",
+                title=title,
+                body=body,
+                is_urgent=is_urgent,
+                send_whatsapp=send_whatsapp,
+                send_email=send_email,
+                whatsapp_config=whatsapp_config,
+                email_config=email_config,
+            )
         if not body:
             flash("نص التعميم مطلوب.", "danger")
-            return render_template("portal/circular_new.html", title=title, body=body, is_urgent=is_urgent)
+            return render_template(
+                "portal/circular_new.html",
+                title=title,
+                body=body,
+                is_urgent=is_urgent,
+                send_whatsapp=send_whatsapp,
+                send_email=send_email,
+                whatsapp_config=whatsapp_config,
+                email_config=email_config,
+            )
 
         try:
             circ = PortalCircular(
@@ -2036,8 +2469,59 @@ def circular_new():
                     # Fallback to add_all for compatibility
                     db.session.add_all(notifs)
 
+            internal_count = _create_circular_internal_message(circ, user_ids)
+            _portal_audit(
+                "PORTAL_CIRCULAR_CREATE",
+                f"title={title[:120]} notifications={len(user_ids)} internal_messages={internal_count}",
+                target_type="PORTAL_CIRCULAR",
+                target_id=circ.id,
+            )
             db.session.commit()
-            flash("تم إصدار التعميم وإرسال إشعار للجميع.", "success")
+            flash(
+                f"تم إصدار التعميم وإرساله في التعميمات والمراسلات والإشعارات ({len(user_ids)} مستخدم).",
+                "success",
+            )
+
+            if send_whatsapp:
+                wa_category, wa_message = _send_circular_to_whatsapp(circ)
+                try:
+                    stamp = datetime.utcnow().isoformat(timespec="seconds")
+                    _setting_set(WA_CIRCULAR_LAST_STATUS, f"{stamp} {wa_category}: {wa_message}"[:255])
+                    if wa_category == "success" or wa_message.startswith("تم إرسال"):
+                        _setting_set(WA_CIRCULAR_LAST_SENT_AT, stamp)
+                    _portal_audit(
+                        "PORTAL_CIRCULAR_WHATSAPP_SEND",
+                        f"{wa_category}: {wa_message}"[:250],
+                        target_type="PORTAL_CIRCULAR",
+                        target_id=circ.id,
+                    )
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                flash(wa_message, wa_category)
+            if send_email:
+                email_category, email_message = _send_circular_to_email(circ)
+                try:
+                    stamp = datetime.utcnow().isoformat(timespec="seconds")
+                    _setting_set(EMAIL_CIRCULAR_LAST_STATUS, f"{stamp} {email_category}: {email_message}"[:255])
+                    if email_category == "success" or email_message.startswith("تم إرسال"):
+                        _setting_set(EMAIL_CIRCULAR_LAST_SENT_AT, stamp)
+                    _portal_audit(
+                        "PORTAL_CIRCULAR_EMAIL_SEND",
+                        f"{email_category}: {email_message}"[:250],
+                        target_type="PORTAL_CIRCULAR",
+                        target_id=circ.id,
+                    )
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+                flash(email_message, email_category)
             return redirect(url_for("portal.circular_view", circular_id=circ.id))
 
         except Exception:
@@ -2048,7 +2532,16 @@ def circular_new():
             flash("حدث خطأ أثناء إصدار التعميم.", "danger")
 
     # GET
-    return render_template("portal/circular_new.html", title="", body="", is_urgent=True)
+    return render_template(
+        "portal/circular_new.html",
+        title="",
+        body="",
+        is_urgent=True,
+        send_whatsapp=False,
+        send_email=False,
+        whatsapp_config=whatsapp_config,
+        email_config=email_config,
+    )
 
 
 # -------------------------
@@ -14686,6 +15179,99 @@ def _timeclock_sync(file_path: str, imported_by_id: int, append_only: bool = Tru
 @_perm(PORTAL_INTEGRATIONS_MANAGE)
 def portal_admin_integrations():
     if request.method == 'POST':
+        action = (request.form.get('action') or 'timeclock').strip()
+        if action == 'whatsapp_circulars':
+            enabled = (request.form.get('wa_enabled') or '0') == '1'
+            mode = (request.form.get('wa_mode') or 'webhook').strip().lower()
+            if mode not in {'webhook', 'cloud'}:
+                mode = 'webhook'
+
+            webhook_url = (request.form.get('wa_webhook_url') or '').strip()
+            group_id = (request.form.get('wa_group_id') or '').strip()
+            webhook_secret = (request.form.get('wa_webhook_secret') or '').strip()
+            clear_webhook_secret = (request.form.get('wa_clear_webhook_secret') or '0') == '1'
+
+            api_version = (request.form.get('wa_api_version') or 'v20.0').strip()
+            if not re.match(r"^v\d+\.\d+$", api_version):
+                api_version = "v20.0"
+            phone_id = (request.form.get('wa_phone_number_id') or '').strip()
+            cloud_token = (request.form.get('wa_cloud_token') or '').strip()
+            clear_cloud_token = (request.form.get('wa_clear_cloud_token') or '0') == '1'
+            recipients = (request.form.get('wa_recipients') or '').strip()
+            if cloud_token and len(cloud_token) > 250:
+                cloud_token = ''
+                flash(f'التوكن أطول من مساحة الإعدادات؛ ضعه في متغير البيئة {WA_CIRCULAR_TOKEN_ENV}.', 'warning')
+
+            _setting_set(WA_CIRCULAR_ENABLED, '1' if enabled else '0')
+            _setting_set(WA_CIRCULAR_MODE, mode)
+            _setting_set(WA_CIRCULAR_WEBHOOK_URL, webhook_url)
+            _setting_set(WA_CIRCULAR_GROUP_ID, group_id)
+            _setting_set(WA_CIRCULAR_CLOUD_API_VERSION, api_version)
+            _setting_set(WA_CIRCULAR_CLOUD_PHONE_ID, phone_id)
+            _setting_set(WA_CIRCULAR_CLOUD_RECIPIENTS, recipients)
+            if webhook_secret or clear_webhook_secret:
+                _setting_set(WA_CIRCULAR_WEBHOOK_SECRET, webhook_secret)
+            if cloud_token or clear_cloud_token:
+                _setting_set(WA_CIRCULAR_CLOUD_TOKEN, cloud_token)
+
+            _portal_audit(
+                'PORTAL_WHATSAPP_CIRCULAR_SAVE',
+                f"enabled={1 if enabled else 0} mode={mode} webhook_group={group_id or '-'} cloud_recipients={len(_split_whatsapp_recipients(recipients))}",
+                target_type='SETTING',
+                target_id=0,
+            )
+            db.session.commit()
+            flash('تم حفظ إعدادات واتساب للتعميمات.', 'success')
+            return redirect(url_for('portal.portal_admin_integrations'))
+
+        if action == 'email_circulars':
+            enabled = (request.form.get('email_enabled') or '0') == '1'
+            host = (request.form.get('email_smtp_host') or '').strip()
+            port_raw = (request.form.get('email_smtp_port') or '587').strip()
+            try:
+                port = max(1, min(int(port_raw), 65535))
+            except Exception:
+                port = 587
+            security = (request.form.get('email_security') or 'starttls').strip().lower()
+            if security not in {'starttls', 'ssl', 'none'}:
+                security = 'starttls'
+            username = (request.form.get('email_username') or '').strip()
+            password = (request.form.get('email_password') or '').strip()
+            clear_password = (request.form.get('email_clear_password') or '0') == '1'
+            from_email = _valid_email_address(request.form.get('email_from_email')) or username
+            from_name = (request.form.get('email_from_name') or 'البوابة الإدارية').strip()
+            reply_to = _valid_email_address(request.form.get('email_reply_to')) or ''
+            batch_size_raw = (request.form.get('email_batch_size') or '50').strip()
+            try:
+                batch_size = max(1, min(int(batch_size_raw), 200))
+            except Exception:
+                batch_size = 50
+            if password and len(password) > 250:
+                password = ''
+                flash(f'كلمة مرور البريد أطول من مساحة الإعدادات؛ ضعها في متغير البيئة {EMAIL_CIRCULAR_PASSWORD_ENV}.', 'warning')
+
+            _setting_set(EMAIL_CIRCULAR_ENABLED, '1' if enabled else '0')
+            _setting_set(EMAIL_CIRCULAR_SMTP_HOST, host)
+            _setting_set(EMAIL_CIRCULAR_SMTP_PORT, str(port))
+            _setting_set(EMAIL_CIRCULAR_SECURITY, security)
+            _setting_set(EMAIL_CIRCULAR_USERNAME, username)
+            _setting_set(EMAIL_CIRCULAR_FROM_EMAIL, from_email)
+            _setting_set(EMAIL_CIRCULAR_FROM_NAME, from_name[:255])
+            _setting_set(EMAIL_CIRCULAR_REPLY_TO, reply_to)
+            _setting_set(EMAIL_CIRCULAR_BATCH_SIZE, str(batch_size))
+            if password or clear_password:
+                _setting_set(EMAIL_CIRCULAR_PASSWORD, password)
+
+            _portal_audit(
+                'PORTAL_EMAIL_CIRCULAR_SAVE',
+                f"enabled={1 if enabled else 0} host={host or '-'} port={port} security={security}",
+                target_type='SETTING',
+                target_id=0,
+            )
+            db.session.commit()
+            flash('تم حفظ إعدادات البريد الإلكتروني للتعميمات.', 'success')
+            return redirect(url_for('portal.portal_admin_integrations'))
+
         file_path = (request.form.get('timeclock_file_path') or '').strip()
         append_only = (request.form.get('append_only') or '1') == '1'
         auto_enabled = (request.form.get('auto_enabled') or '0') == '1'
@@ -14738,6 +15324,8 @@ def portal_admin_integrations():
     imported_by_id = _setting_get('TIMECLK_IMPORTED_BY_USER_ID') or ''
     match_by = _timeclock_get_match_by()
     last_file = _setting_get('TIMECLK_LAST_FILE') or ''
+    wa_config = _whatsapp_circular_settings()
+    email_config = _email_circular_settings()
 
     return render_template('portal/admin/integrations.html',
                            timeclock_file_path=file_path,
@@ -14750,7 +15338,9 @@ def portal_admin_integrations():
                            auto_interval=auto_interval,
                            imported_by_id=imported_by_id,
                            match_by=match_by,
-                           last_file=last_file)
+                           last_file=last_file,
+                           wa_config=wa_config,
+                           email_config=email_config)
 
 
 @portal_bp.route('/hr/attendance/sync-now', methods=['POST'])
@@ -15136,7 +15726,109 @@ def corr_index():
     return render_template("portal/corr/index.html")
 
 
+def _ensure_corr_competence_schema():
+    """Add competence columns for existing SQLite databases without a destructive reset."""
+    try:
+        bind = db.session.get_bind()
+        if not bind or bind.dialect.name != "sqlite":
+            return
+        for table in ("corr_inbound", "corr_outbound"):
+            rows = db.session.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing = {str(r[1]) for r in rows}
+            for col, ddl in (
+                ("competence_kind", f"ALTER TABLE {table} ADD COLUMN competence_kind VARCHAR(30)"),
+                ("competence_id", f"ALTER TABLE {table} ADD COLUMN competence_id INTEGER"),
+                ("competence_label", f"ALTER TABLE {table} ADD COLUMN competence_label VARCHAR(255)"),
+            ):
+                if col not in existing:
+                    db.session.execute(text(ddl))
+            db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
+
+def _corr_display_name(row) -> str:
+    for attr in ("name", "name_ar", "name_en", "label", "email", "code"):
+        try:
+            val = getattr(row, attr, None)
+            if callable(val):
+                val = val()
+            val = (val or "").strip()
+            if val:
+                return val
+        except Exception:
+            continue
+    return ""
+
+
+def _corr_competence_options() -> list[dict]:
+    """Build searchable competence options from users and organization units."""
+    specs = [
+        ("USER", "موظف", User, lambda q: q.order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())),
+        ("ORG", "منظمة", Organization, lambda q: q.filter(Organization.is_active.is_(True)).order_by(Organization.name_ar.asc(), Organization.id.asc())),
+        ("DIRECTORATE", "إدارة", Directorate, lambda q: q.filter(Directorate.is_active.is_(True)).order_by(Directorate.name_ar.asc(), Directorate.id.asc())),
+        ("UNIT", "وحدة", Unit, lambda q: q.filter(Unit.is_active.is_(True)).order_by(Unit.name_ar.asc(), Unit.id.asc())),
+        ("DEPARTMENT", "دائرة", Department, lambda q: q.filter(Department.is_active.is_(True)).order_by(Department.name_ar.asc(), Department.id.asc())),
+        ("SECTION", "قسم", Section, lambda q: q.filter(Section.is_active.is_(True)).order_by(Section.name_ar.asc(), Section.id.asc())),
+        ("DIVISION", "شعبة", Division, lambda q: q.filter(Division.is_active.is_(True)).order_by(Division.name_ar.asc(), Division.id.asc())),
+        ("TEAM", "فريق", Team, lambda q: q.filter(Team.is_active.is_(True)).order_by(Team.name_ar.asc(), Team.id.asc())),
+        ("ORG_NODE", "هيكلية موحدة", OrgNode, lambda q: q.filter(OrgNode.is_active.is_(True)).order_by(OrgNode.name_ar.asc(), OrgNode.id.asc())),
+    ]
+    options = []
+    seen = set()
+    for kind, type_label, model, apply_q in specs:
+        try:
+            rows = apply_q(model.query).limit(1000).all()
+        except Exception:
+            rows = []
+        for row in rows:
+            rid = getattr(row, "id", None)
+            name = _corr_display_name(row)
+            if not rid or not name:
+                continue
+            key = f"{kind}:{int(rid)}"
+            if key in seen:
+                continue
+            seen.add(key)
+            options.append({
+                "value": key,
+                "kind": kind,
+                "id": int(rid),
+                "label": f"{name} ({type_label})",
+            })
+    return options
+
+
+def _corr_parse_competence_value(value: str | None, options: list[dict] | None = None) -> dict:
+    raw = (value or "").strip()
+    if not raw:
+        return {"kind": None, "id": None, "label": None, "value": ""}
+    options = options if options is not None else _corr_competence_options()
+    for opt in options:
+        if opt.get("value") == raw:
+            return {
+                "kind": opt.get("kind"),
+                "id": opt.get("id"),
+                "label": opt.get("label"),
+                "value": raw,
+            }
+    # Backward-compatible fallback if a label was submitted by an older form.
+    return {"kind": "TEXT", "id": None, "label": raw, "value": raw}
+
+
+def _corr_competence_selected_value(item) -> str:
+    kind = (getattr(item, "competence_kind", None) or "").strip()
+    cid = getattr(item, "competence_id", None)
+    if kind and cid:
+        return f"{kind}:{int(cid)}"
+    return ""
+
+
 def _corr_filters_inbound():
+    _ensure_corr_competence_schema()
 
     q = (request.args.get("q") or "").strip()
     date_from = (request.args.get("date_from") or "").strip()
@@ -15144,6 +15836,8 @@ def _corr_filters_inbound():
     categories = _get_multi_arg("category", upper=True)  # list of codes
     senders = _get_multi_arg("sender")  # exact sender names (from lookups)
     sender_like = (request.args.get("sender_like") or "").strip()
+    competences = _get_multi_arg("competence")
+    competence_like = (request.args.get("competence_like") or "").strip()
     has_attach = (request.args.get("has_attach") or "").strip()  # 1/0
 
     qry = InboundMail.query
@@ -15159,6 +15853,23 @@ def _corr_filters_inbound():
 
     if categories:
         qry = qry.filter(InboundMail.category.in_(categories))
+
+    if competences:
+        opts = _corr_competence_options()
+        conds = []
+        for val in competences:
+            parsed = _corr_parse_competence_value(val, opts)
+            if parsed.get("kind") and parsed.get("id"):
+                conds.append(and_(
+                    InboundMail.competence_kind == parsed["kind"],
+                    InboundMail.competence_id == parsed["id"],
+                ))
+            elif parsed.get("label"):
+                conds.append(InboundMail.competence_label == parsed["label"])
+        if conds:
+            qry = qry.filter(or_(*conds))
+    elif competence_like:
+        qry = qry.filter(InboundMail.competence_label.ilike(f"%{competence_like}%"))
 
     if date_from:
         qry = qry.filter(InboundMail.received_date >= date_from)
@@ -15177,6 +15888,8 @@ def _corr_filters_inbound():
         categories=categories,
         senders=senders,
         sender_like=sender_like,
+        competences=competences,
+        competence_like=competence_like,
         has_attach=has_attach,
     )
 
@@ -15184,6 +15897,7 @@ def _corr_filters_inbound():
 
 
 def _corr_filters_outbound():
+    _ensure_corr_competence_schema()
 
     q = (request.args.get("q") or "").strip()
     date_from = (request.args.get("date_from") or "").strip()
@@ -15191,6 +15905,8 @@ def _corr_filters_outbound():
     categories = _get_multi_arg("category", upper=True)  # list of codes
     recipients = _get_multi_arg("recipient")  # exact recipient names (from lookups)
     recipient_like = (request.args.get("recipient_like") or "").strip()
+    competences = _get_multi_arg("competence")
+    competence_like = (request.args.get("competence_like") or "").strip()
     has_attach = (request.args.get("has_attach") or "").strip()  # 1/0
 
     qry = OutboundMail.query
@@ -15205,6 +15921,23 @@ def _corr_filters_outbound():
 
     if categories:
         qry = qry.filter(OutboundMail.category.in_(categories))
+
+    if competences:
+        opts = _corr_competence_options()
+        conds = []
+        for val in competences:
+            parsed = _corr_parse_competence_value(val, opts)
+            if parsed.get("kind") and parsed.get("id"):
+                conds.append(and_(
+                    OutboundMail.competence_kind == parsed["kind"],
+                    OutboundMail.competence_id == parsed["id"],
+                ))
+            elif parsed.get("label"):
+                conds.append(OutboundMail.competence_label == parsed["label"])
+        if conds:
+            qry = qry.filter(or_(*conds))
+    elif competence_like:
+        qry = qry.filter(OutboundMail.competence_label.ilike(f"%{competence_like}%"))
 
     if date_from:
         qry = qry.filter(OutboundMail.sent_date >= date_from)
@@ -15223,6 +15956,8 @@ def _corr_filters_outbound():
         categories=categories,
         recipients=recipients,
         recipient_like=recipient_like,
+        competences=competences,
+        competence_like=competence_like,
         has_attach=has_attach,
     )
 
@@ -15236,6 +15971,7 @@ def inbound_list():
     from models import CorrCategory, CorrParty, InboundMail
 
     qry, filters = _corr_filters_inbound()
+    competence_options = _corr_competence_options()
 
     # Lookups
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
@@ -15256,7 +15992,7 @@ def inbound_list():
         from utils.excel import make_xlsx_bytes
         items = qry.limit(5000).all()
         headers = [
-            "#", "رقم", "تاريخ الاستلام", "التصنيف", "المرسل", "الموضوع", "عدد المرفقات"
+            "#", "رقم", "تاريخ الاستلام", "التصنيف", "المرسل", "جهة الاختصاص", "الموضوع", "عدد المرفقات"
         ]
         rows = []
         for idx, it in enumerate(items, start=1):
@@ -15266,6 +16002,7 @@ def inbound_list():
                 it.received_date or "",
                 it.category or "",
                 it.sender or "",
+                it.competence_label or "",
                 it.subject or "",
                 int(it.attachments.count()) if hasattr(it, "attachments") else "",
             ])
@@ -15286,6 +16023,7 @@ def inbound_list():
         pagination=pagination,
         cat_rows=cat_rows,
         sender_rows=sender_rows,
+        competence_options=competence_options,
         **filters
     )
 
@@ -15296,7 +16034,9 @@ def inbound_list():
 @login_required
 @_perm(CORR_CREATE)
 def inbound_new():
+    _ensure_corr_competence_schema()
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
+    competence_options = _corr_competence_options()
     sender_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -15315,6 +16055,7 @@ def inbound_new():
         sender_val = (request.form.get("sender_val") or "").strip()
         sender_other = (request.form.get("sender_other") or "").strip()
         sender = sender_other if sender_val == "__OTHER__" else sender_val
+        competence = _corr_parse_competence_value(request.form.get("competence"), competence_options)
 
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
@@ -15340,6 +16081,9 @@ def inbound_new():
             ref_no=ref_no or None,
             category=category or "GENERAL",
             sender=sender or None,
+            competence_kind=competence.get("kind"),
+            competence_id=competence.get("id"),
+            competence_label=competence.get("label"),
             subject=subject,
             body=body or None,
             received_date=received_date,
@@ -15362,7 +16106,7 @@ def inbound_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="CORR_IN_CREATE",
-                note=f"category={item.category} sender={item.sender or ''}",
+                note=f"category={item.category} sender={item.sender or ''} competence={item.competence_label or ''}",
                 target_type="CORR_INBOUND",
                 target_id=item.id,
                 created_at=datetime.utcnow(),
@@ -15383,7 +16127,12 @@ def inbound_new():
         flash("تم تسجيل الوارد.", "success")
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
 
-    return render_template("portal/corr/inbound_new.html", cat_rows=cat_rows, sender_rows=sender_rows)
+    return render_template(
+        "portal/corr/inbound_new.html",
+        cat_rows=cat_rows,
+        sender_rows=sender_rows,
+        competence_options=competence_options,
+    )
 
 
 @portal_bp.route("/corr/outbound")
@@ -15393,6 +16142,7 @@ def outbound_list():
     from models import CorrCategory, CorrParty, OutboundMail
 
     qry, filters = _corr_filters_outbound()
+    competence_options = _corr_competence_options()
 
     # Lookups
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
@@ -15413,7 +16163,7 @@ def outbound_list():
         from utils.excel import make_xlsx_bytes
         items = qry.limit(5000).all()
         headers = [
-            "#", "رقم", "تاريخ الإرسال", "التصنيف", "الجهة", "الموضوع", "عدد المرفقات"
+            "#", "رقم", "تاريخ الإرسال", "التصنيف", "الجهة", "جهة الاختصاص", "الموضوع", "عدد المرفقات"
         ]
         rows = []
         for idx, it in enumerate(items, start=1):
@@ -15423,6 +16173,7 @@ def outbound_list():
                 it.sent_date or "",
                 it.category or "",
                 it.recipient or "",
+                it.competence_label or "",
                 it.subject or "",
                 int(it.attachments.count()) if hasattr(it, "attachments") else "",
             ])
@@ -15445,6 +16196,7 @@ def outbound_list():
         pagination=pagination,
         cat_rows=cat_rows,
         recipient_rows=recipient_rows,
+        competence_options=competence_options,
         **filters
     )
 
@@ -15453,7 +16205,9 @@ def outbound_list():
 @login_required
 @_perm(CORR_CREATE)
 def outbound_new():
+    _ensure_corr_competence_schema()
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
+    competence_options = _corr_competence_options()
     recipient_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -15472,6 +16226,7 @@ def outbound_new():
         recipient_val = (request.form.get("recipient_val") or "").strip()
         recipient_other = (request.form.get("recipient_other") or "").strip()
         recipient = recipient_other if recipient_val == "__OTHER__" else recipient_val
+        competence = _corr_parse_competence_value(request.form.get("competence"), competence_options)
 
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
@@ -15498,6 +16253,9 @@ def outbound_new():
             ref_no=ref_no or None,
             category=category or "GENERAL",
             recipient=recipient or None,
+            competence_kind=competence.get("kind"),
+            competence_id=competence.get("id"),
+            competence_label=competence.get("label"),
             subject=subject,
             body=body or None,
             sent_date=sent_date,
@@ -15520,7 +16278,7 @@ def outbound_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="CORR_OUT_CREATE",
-                note=f"category={item.category} recipient={item.recipient or ''}",
+                note=f"category={item.category} recipient={item.recipient or ''} competence={item.competence_label or ''}",
                 target_type="CORR_OUTBOUND",
                 target_id=item.id,
                 created_at=datetime.utcnow(),
@@ -15541,7 +16299,12 @@ def outbound_new():
         flash("تم تسجيل الصادر.", "success")
         return redirect(url_for("portal.outbound_view", outbound_id=item.id))
 
-    return render_template("portal/corr/outbound_new.html", cat_rows=cat_rows, recipient_rows=recipient_rows)
+    return render_template(
+        "portal/corr/outbound_new.html",
+        cat_rows=cat_rows,
+        recipient_rows=recipient_rows,
+        competence_options=competence_options,
+    )
 
 
 
@@ -15550,6 +16313,7 @@ def outbound_new():
 @login_required
 @_perm(CORR_READ)
 def outbound_view(outbound_id: int):
+    _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
 
@@ -15581,6 +16345,7 @@ def outbound_view(outbound_id: int):
 @login_required
 @_perm(CORR_READ)
 def inbound_view(inbound_id: int):
+    _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
 
@@ -15695,12 +16460,14 @@ def outbound_upload(outbound_id: int):
 @portal_bp.route("/corr/inbound/<int:inbound_id>/edit", methods=["GET", "POST"])
 @login_required
 def inbound_edit(inbound_id: int):
+    _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     if not (current_user.has_perm(CORR_UPDATE) or _can_manage_corr()):
         abort(403)
 
 
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
+    competence_options = _corr_competence_options()
     sender_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -15719,6 +16486,7 @@ def inbound_edit(inbound_id: int):
         sender_val = (request.form.get("sender_val") or "").strip()
         sender_other = (request.form.get("sender_other") or "").strip()
         sender = sender_other if sender_val == "__OTHER__" else sender_val
+        competence = _corr_parse_competence_value(request.form.get("competence"), competence_options)
 
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
@@ -15731,6 +16499,9 @@ def inbound_edit(inbound_id: int):
         item.ref_no = ref_no or item.ref_no
         item.category = category or "GENERAL"
         item.sender = sender or None
+        item.competence_kind = competence.get("kind")
+        item.competence_id = competence.get("id")
+        item.competence_label = competence.get("label")
         item.subject = subject
         item.body = body or None
         item.received_date = received_date
@@ -15744,7 +16515,7 @@ def inbound_edit(inbound_id: int):
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="CORR_IN_UPDATE",
-                note=f"category={item.category} sender={item.sender or ''}",
+                note=f"category={item.category} sender={item.sender or ''} competence={item.competence_label or ''}",
                 target_type="CORR_INBOUND",
                 target_id=item.id,
                 created_at=datetime.utcnow(),
@@ -15779,6 +16550,7 @@ def inbound_edit(inbound_id: int):
 
     cat_codes = [c.code for c in cat_rows]
     sender_labels = [p.label for p in sender_rows]
+    selected_competence = _corr_competence_selected_value(item)
 
     selected_category_code = item.category if (item.category in cat_codes) else "__OTHER__"
     category_other_value = "" if selected_category_code != "__OTHER__" else (item.category or "")
@@ -15798,6 +16570,8 @@ def inbound_edit(inbound_id: int):
         item=item,
         cat_rows=cat_rows,
         sender_rows=sender_rows,
+        competence_options=competence_options,
+        selected_competence=selected_competence,
         selected_category_code=selected_category_code,
         category_other_value=category_other_value,
         selected_sender_val=selected_sender_val,
@@ -15811,12 +16585,14 @@ def inbound_edit(inbound_id: int):
 @portal_bp.route("/corr/outbound/<int:outbound_id>/edit", methods=["GET", "POST"])
 @login_required
 def outbound_edit(outbound_id: int):
+    _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     if not (current_user.has_perm(CORR_UPDATE) or _can_manage_corr()):
         abort(403)
 
 
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
+    competence_options = _corr_competence_options()
     recipient_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -15835,6 +16611,7 @@ def outbound_edit(outbound_id: int):
         recipient_val = (request.form.get("recipient_val") or "").strip()
         recipient_other = (request.form.get("recipient_other") or "").strip()
         recipient = recipient_other if recipient_val == "__OTHER__" else recipient_val
+        competence = _corr_parse_competence_value(request.form.get("competence"), competence_options)
 
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
@@ -15847,6 +16624,9 @@ def outbound_edit(outbound_id: int):
         item.ref_no = ref_no or item.ref_no
         item.category = category or "GENERAL"
         item.recipient = recipient or None
+        item.competence_kind = competence.get("kind")
+        item.competence_id = competence.get("id")
+        item.competence_label = competence.get("label")
         item.subject = subject
         item.body = body or None
         item.sent_date = sent_date
@@ -15860,7 +16640,7 @@ def outbound_edit(outbound_id: int):
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="CORR_OUT_UPDATE",
-                note=f"category={item.category} recipient={item.recipient or ''}",
+                note=f"category={item.category} recipient={item.recipient or ''} competence={item.competence_label or ''}",
                 target_type="CORR_OUTBOUND",
                 target_id=item.id,
                 created_at=datetime.utcnow(),
@@ -15895,6 +16675,7 @@ def outbound_edit(outbound_id: int):
 
     cat_codes = [c.code for c in cat_rows]
     recipient_labels = [p.label for p in recipient_rows]
+    selected_competence = _corr_competence_selected_value(item)
 
     selected_category_code = item.category if (item.category in cat_codes) else "__OTHER__"
     category_other_value = "" if selected_category_code != "__OTHER__" else (item.category or "")
@@ -15914,6 +16695,8 @@ def outbound_edit(outbound_id: int):
         item=item,
         cat_rows=cat_rows,
         recipient_rows=recipient_rows,
+        competence_options=competence_options,
+        selected_competence=selected_competence,
         selected_category_code=selected_category_code,
         category_other_value=category_other_value,
         selected_recipient_val=selected_recipient_val,
@@ -16112,9 +16895,9 @@ def inbound_export_csv():
     qry, filters = _corr_filters_inbound()
     items = qry.order_by(InboundMail.received_date.desc(), InboundMail.id.desc()).limit(1000).all()
 
-    rows = [["ID", "Received Date", "Ref No", "Sender", "Category", "Subject"]]
+    rows = [["ID", "Received Date", "Ref No", "Sender", "Competence", "Category", "Subject"]]
     for x in items:
-        rows.append([str(x.id), str(x.received_date), str(x.ref_no or ""), str(x.sender or ""), str(x.category or ""), str(x.subject or "")])
+        rows.append([str(x.id), str(x.received_date), str(x.ref_no or ""), str(x.sender or ""), str(x.competence_label or ""), str(x.category or ""), str(x.subject or "")])
 
     return _csv_response("inbound.csv", rows)
 
@@ -16126,9 +16909,9 @@ def outbound_export_csv():
     qry, filters = _corr_filters_outbound()
     items = qry.order_by(OutboundMail.sent_date.desc(), OutboundMail.id.desc()).limit(1000).all()
 
-    rows = [["ID", "Sent Date", "Ref No", "Recipient", "Category", "Subject"]]
+    rows = [["ID", "Sent Date", "Ref No", "Recipient", "Competence", "Category", "Subject"]]
     for x in items:
-        rows.append([str(x.id), str(x.sent_date), str(x.ref_no or ""), str(x.recipient or ""), str(x.category or ""), str(x.subject or "")])
+        rows.append([str(x.id), str(x.sent_date), str(x.ref_no or ""), str(x.recipient or ""), str(x.competence_label or ""), str(x.category or ""), str(x.subject or "")])
 
     return _csv_response("outbound.csv", rows)
 
@@ -16196,9 +16979,9 @@ def inbound_export_pdf():
     qry, filters = _corr_filters_inbound()
     items = qry.order_by(InboundMail.received_date.desc(), InboundMail.id.desc()).limit(1000).all()
 
-    rows = [["#", "التاريخ", "الرقم", "التصنيف", "الجهة", "الموضوع"]]
+    rows = [["#", "التاريخ", "الرقم", "التصنيف", "الجهة", "جهة الاختصاص", "الموضوع"]]
     for x in items:
-        rows.append([str(x.id), str(x.received_date), str(x.ref_no or ""), str(x.category or ""), str(x.sender or ""), str(x.subject or "")])
+        rows.append([str(x.id), str(x.received_date), str(x.ref_no or ""), str(x.category or ""), str(x.sender or ""), str(x.competence_label or ""), str(x.subject or "")])
 
     buf = _build_corr_list_pdf("تقرير الوارد - البوابة الإدارية", rows, filters)
     from flask import send_file
@@ -16212,16 +16995,16 @@ def outbound_export_pdf():
     qry, filters = _corr_filters_outbound()
     items = qry.order_by(OutboundMail.sent_date.desc(), OutboundMail.id.desc()).limit(1000).all()
 
-    rows = [["#", "التاريخ", "الرقم", "التصنيف", "الجهة", "الموضوع"]]
+    rows = [["#", "التاريخ", "الرقم", "التصنيف", "الجهة", "جهة الاختصاص", "الموضوع"]]
     for x in items:
-        rows.append([str(x.id), str(x.sent_date), str(x.ref_no or ""), str(x.category or ""), str(x.recipient or ""), str(x.subject or "")])
+        rows.append([str(x.id), str(x.sent_date), str(x.ref_no or ""), str(x.category or ""), str(x.recipient or ""), str(x.competence_label or ""), str(x.subject or "")])
 
     buf = _build_corr_list_pdf("تقرير الصادر - البوابة الإدارية", rows, filters)
     from flask import send_file
     return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name="outbound.pdf")
 
 
-def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, category: str, subject: str, notes: str | None, url: str):
+def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, category: str, subject: str, notes: str | None, url: str, competence: str = ""):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     _ensure_pdf_font()
@@ -16243,6 +17026,7 @@ def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, catego
         ["التاريخ", date_s],
         ["التصنيف", category or ""],
         ["الجهة", party or ""],
+        ["جهة الاختصاص", competence or ""],
         ["الموضوع", subject or ""],
     ]
     t = Table(data, colWidths=[120, 360], hAlign="RIGHT")
@@ -16282,6 +17066,7 @@ def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, catego
 @login_required
 @_perm(CORR_READ)
 def inbound_print_pdf(inbound_id: int):
+    _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     url = request.host_url.rstrip("/") + url_for("portal.inbound_view", inbound_id=item.id)
     buf = _build_corr_card_pdf(
@@ -16292,7 +17077,8 @@ def inbound_print_pdf(inbound_id: int):
         item.category or "",
         item.subject or "",
         item.body,
-        url
+        url,
+        item.competence_label or "",
     )
     from flask import send_file
     return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name="inbound_card.pdf")
@@ -16302,6 +17088,7 @@ def inbound_print_pdf(inbound_id: int):
 @login_required
 @_perm(CORR_READ)
 def outbound_print_pdf(outbound_id: int):
+    _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     url = request.host_url.rstrip("/") + url_for("portal.outbound_view", outbound_id=item.id)
     buf = _build_corr_card_pdf(
@@ -16312,7 +17099,8 @@ def outbound_print_pdf(outbound_id: int):
         item.category or "",
         item.subject or "",
         item.body,
-        url
+        url,
+        item.competence_label or "",
     )
     from flask import send_file
     return send_file(buf, mimetype="application/pdf", as_attachment=True, download_name="outbound_card.pdf")

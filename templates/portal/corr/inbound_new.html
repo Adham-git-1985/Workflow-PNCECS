@@ -60,6 +60,17 @@
         <input class="form-control" name="sender_other" placeholder="اكتب اسم الجهة">
       </div>
 
+      <div class="col-md-6">
+        <label class="form-label">جهة الاختصاص</label>
+        <select class="form-select" name="competence" id="competence" data-searchable="1">
+          <option value="">— اختر جهة الاختصاص —</option>
+          {% for opt in competence_options %}
+            <option value="{{ opt.value }}" {% if request.form.get('competence') == opt.value %}selected{% endif %}>{{ opt.label }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">اكتب في مربع البحث أعلى القائمة للبحث بين الموظفين والوحدات التنظيمية.</div>
+      </div>
+
       <div class="col-12">
         <label class="form-label">الموضوع <span class="text-danger">*</span></label>
         <input class="form-control" name="subject" required value="{{ request.form.get('subject','') }}">

@@ -2,10 +2,12 @@
 {% block title %}إصدار تعميم{% endblock %}
 
 {% block content %}
+{% set wa = whatsapp_config|default({'enabled': false, 'ready': false, 'mode': 'webhook', 'group_id': '', 'recipients': []}, true) %}
+{% set mail_cfg = email_config|default({'enabled': false, 'ready': false, 'recipient_count': 0}, true) %}
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1"><i class="bi bi-plus-circle"></i> إصدار تعميم</h4>
-    <div class="text-muted">سيتم إرسال إشعار داخل البوابة لجميع المستخدمين (source=portal).</div>
+    <div class="text-muted">سيتم نشر التعميم داخل البوابة وإرساله عبر الإشعارات والمراسلات الداخلية.</div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.circulars_list') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
 </div>
@@ -26,6 +28,72 @@
         <label class="form-check-label" for="urgent">مستعجل (URGENT)</label>
         <div class="small text-muted mt-1">إذا ألغيت الخيار، سيكون نوع الإشعار INFO.</div>
       </div>
+
+      <div class="border rounded-3 p-3 mb-3 bg-light-subtle">
+        <div class="fw-semibold mb-2"><i class="bi bi-broadcast"></i> قنوات النشر</div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <span class="badge text-bg-primary"><i class="bi bi-megaphone"></i> التعميمات</span>
+          <span class="badge text-bg-primary"><i class="bi bi-bell"></i> الإشعارات</span>
+          <span class="badge text-bg-primary"><i class="bi bi-envelope"></i> المراسلات</span>
+          <span class="badge text-bg-secondary"><i class="bi bi-at"></i> البريد الإلكتروني</span>
+        </div>
+
+        <div class="row g-2">
+          <div class="col-md-6">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" name="send_whatsapp" value="1" id="sendWhatsapp"
+                     {% if send_whatsapp %}checked{% endif %}
+                     {% if not wa.ready %}disabled{% endif %}>
+              <label class="form-check-label" for="sendWhatsapp">إرسال نسخة إلى واتساب</label>
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" name="send_email" value="1" id="sendEmail"
+                     {% if send_email %}checked{% endif %}
+                     {% if not mail_cfg.ready %}disabled{% endif %}>
+              <label class="form-check-label" for="sendEmail">إرسال نسخة بالبريد الإلكتروني</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="row g-2 mt-1">
+          <div class="col-md-6">
+            <div class="form-text">
+              {% if wa.enabled %}
+                {% if wa.mode == 'webhook' %}
+                  واتساب: Webhook للجروب <b dir="ltr">{{ wa.group_id or 'غير محدد' }}</b>.
+                {% else %}
+                  واتساب: Cloud API إلى {{ wa.recipients|length }} رقم.
+                {% endif %}
+                {% if not wa.ready %}
+                  <span class="text-danger">الإعدادات غير مكتملة.</span>
+                {% endif %}
+              {% else %}
+                واتساب غير مفعل.
+              {% endif %}
+            </div>
+          </div>
+          <div class="col-md-6">
+            <div class="form-text">
+              {% if mail_cfg.enabled %}
+                البريد: {{ mail_cfg.recipient_count or 0 }} عنوان مستخدم.
+                {% if not mail_cfg.ready %}
+                  <span class="text-danger">الإعدادات غير مكتملة.</span>
+                {% endif %}
+              {% else %}
+                البريد الإلكتروني غير مفعل.
+              {% endif %}
+            </div>
+          </div>
+          {% if current_user.has_perm('PORTAL_INTEGRATIONS_MANAGE') %}
+            <div class="col-12">
+              <a class="small" href="{{ url_for('portal.portal_admin_integrations') }}">إعداد التكاملات</a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
       <button type="submit" class="btn btn-primary">
         <i class="bi bi-megaphone"></i> إصدار التعميم
       </button>

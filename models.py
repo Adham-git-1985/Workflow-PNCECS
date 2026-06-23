@@ -3874,6 +3874,10 @@ class InboundMail(db.Model):
 
     sender = db.Column(db.String(200), nullable=True, index=True)
 
+    competence_kind = db.Column(db.String(30), nullable=True, index=True)
+    competence_id = db.Column(db.Integer, nullable=True, index=True)
+    competence_label = db.Column(db.String(255), nullable=True, index=True)
+
     subject = db.Column(db.String(500), nullable=False)
     body = db.Column(db.Text, nullable=True)
 
@@ -3900,6 +3904,10 @@ class OutboundMail(db.Model):
     category = db.Column(db.String(50), nullable=False, default="GENERAL", index=True)
 
     recipient = db.Column(db.String(200), nullable=True, index=True)
+
+    competence_kind = db.Column(db.String(30), nullable=True, index=True)
+    competence_id = db.Column(db.Integer, nullable=True, index=True)
+    competence_label = db.Column(db.String(255), nullable=True, index=True)
 
     subject = db.Column(db.String(500), nullable=False)
     body = db.Column(db.Text, nullable=True)
