@@ -1,0 +1,583 @@
+{
+  "output_zip": "C:\\Users\\Adham\\PycharmProjects\\Workflow\\Workflow-PNCECS\\tmp\\merge_backups\\workflow_backup_20260624_065908_plus_missing_users_hr_from_20260617_094425.zip",
+  "merged_db": "C:\\Users\\Adham\\PycharmProjects\\Workflow\\Workflow-PNCECS\\tmp\\merge_backups\\merged_20260624_plus_20260617_users_hr.db",
+  "counts": {
+    "users": {
+      "new_before": 27,
+      "old_source": 45,
+      "merged_after": 45
+    },
+    "roles": {
+      "new_before": 10,
+      "old_source": 10,
+      "merged_after": 10
+    },
+    "role_permission": {
+      "new_before": 10,
+      "old_source": 14,
+      "merged_after": 14
+    },
+    "user_permission": {
+      "new_before": 14,
+      "old_source": 26,
+      "merged_after": 26
+    },
+    "portal_permission_preset": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "organizations": {
+      "new_before": 3,
+      "old_source": 3,
+      "merged_after": 3
+    },
+    "directorates": {
+      "new_before": 12,
+      "old_source": 12,
+      "merged_after": 12
+    },
+    "departments": {
+      "new_before": 28,
+      "old_source": 38,
+      "merged_after": 38
+    },
+    "sections": {
+      "new_before": 45,
+      "old_source": 46,
+      "merged_after": 46
+    },
+    "units": {
+      "new_before": 0,
+      "old_source": 6,
+      "merged_after": 6
+    },
+    "divisions": {
+      "new_before": 0,
+      "old_source": 5,
+      "merged_after": 5
+    },
+    "org_node_types": {
+      "new_before": 7,
+      "old_source": 7,
+      "merged_after": 7
+    },
+    "org_nodes": {
+      "new_before": 0,
+      "old_source": 46,
+      "merged_after": 46
+    },
+    "org_node_assignments": {
+      "new_before": 0,
+      "old_source": 32,
+      "merged_after": 32
+    },
+    "org_node_managers": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "org_unit_assignment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "org_unit_manager": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "teams": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "committees": {
+      "new_before": 0,
+      "old_source": 5,
+      "merged_after": 5
+    },
+    "committee_assignees": {
+      "new_before": 0,
+      "old_source": 16,
+      "merged_after": 16
+    },
+    "request_types": {
+      "new_before": 4,
+      "old_source": 17,
+      "merged_after": 17
+    },
+    "workflow_templates": {
+      "new_before": 0,
+      "old_source": 10,
+      "merged_after": 10
+    },
+    "workflow_template_steps": {
+      "new_before": 0,
+      "old_source": 30,
+      "merged_after": 30
+    },
+    "workflow_template_parallel_assignees": {
+      "new_before": 0,
+      "old_source": 13,
+      "merged_after": 13
+    },
+    "workflow_routing_rules": {
+      "new_before": 4,
+      "old_source": 13,
+      "merged_after": 13
+    },
+    "hr_lookup_item": {
+      "new_before": 19,
+      "old_source": 105,
+      "merged_after": 105
+    },
+    "hr_leave_type": {
+      "new_before": 0,
+      "old_source": 4,
+      "merged_after": 4
+    },
+    "hr_status_def": {
+      "new_before": 0,
+      "old_source": 2,
+      "merged_after": 2
+    },
+    "hr_official_occasion_type": {
+      "new_before": 0,
+      "old_source": 6,
+      "merged_after": 6
+    },
+    "hr_permission_type": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_monthly_permission_allowance": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_leave_grade_entitlement": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "employee_file": {
+      "new_before": 0,
+      "old_source": 39,
+      "merged_after": 39
+    },
+    "employee_attachment": {
+      "new_before": 0,
+      "old_source": 31,
+      "merged_after": 31
+    },
+    "employee_dependent": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "employee_qualification": {
+      "new_before": 0,
+      "old_source": 47,
+      "merged_after": 47
+    },
+    "employee_secondment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "employee_evaluation_run": {
+      "new_before": 0,
+      "old_source": 45,
+      "merged_after": 45
+    },
+    "employee_schedule_assignment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "work_policy": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "work_schedule": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "work_schedule_day": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "work_assignment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "attendance_import_batch": {
+      "new_before": 0,
+      "old_source": 887,
+      "merged_after": 887
+    },
+    "attendance_event": {
+      "new_before": 0,
+      "old_source": 1455,
+      "merged_after": 1455
+    },
+    "attendance_daily_summary": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_att_special_case": {
+      "new_before": 0,
+      "old_source": 1,
+      "merged_after": 1
+    },
+    "hr_att_closing": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_att_deduction_config": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_att_deduction_run": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_att_deduction_item": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_leave_request": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_leave_attachment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_leave_balance": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_official_mission": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_official_mission_attachment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_official_occasion": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_official_occasion_range": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_room": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_room_booking": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_perf_form": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_perf_section": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_perf_question": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_perf_cycle": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_perf_assignment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_disciplinary_case": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_disciplinary_action": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_disciplinary_attachment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_doc": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_doc_version": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_ss_workflow_definition": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_ss_workflow_step_definition": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_ss_request": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_ss_request_approval": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_ss_request_attachment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_training_course": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_training_program": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_training_condition": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_training_enrollment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "hr_training_attachment": {
+      "new_before": 0,
+      "old_source": 0,
+      "merged_after": 0
+    },
+    "archived_file": {
+      "new_before": 0,
+      "old_source": 2,
+      "merged_after": 2
+    },
+    "file_permission": {
+      "new_before": 0,
+      "old_source": 3,
+      "merged_after": 3
+    },
+    "system_setting": {
+      "new_before": 1,
+      "old_source": 10,
+      "merged_after": 10
+    },
+    "delegations": {
+      "new_before": 0,
+      "old_source": 1,
+      "merged_after": 1
+    },
+    "messages": {
+      "new_before": 3,
+      "old_source": 31,
+      "appended": 28,
+      "merged_after": 31
+    },
+    "message_recipients": {
+      "new_before": 7,
+      "old_source": 31,
+      "appended": 24,
+      "merged_after": 31
+    },
+    "notification": {
+      "new_before": 13,
+      "old_source": 74,
+      "appended": 61,
+      "merged_after": 74
+    },
+    "audit_log": {
+      "new_before": 23,
+      "old_source": 1018,
+      "appended": 995,
+      "merged_after": 1018
+    }
+  },
+  "integrity_check": "ok",
+  "foreign_key_issue_count": 89,
+  "foreign_key_issues_sample": [
+    [
+      "employee_qualification",
+      1,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      2,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      8,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      9,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      15,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      20,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      29,
+      "users",
+      6
+    ],
+    [
+      "employee_qualification",
+      37,
+      "users",
+      6
+    ],
+    [
+      "users",
+      7,
+      "sections",
+      2
+    ],
+    [
+      "users",
+      33,
+      "sections",
+      2
+    ],
+    [
+      "users",
+      46,
+      "sections",
+      2
+    ],
+    [
+      "employee_file",
+      1,
+      "departments",
+      10
+    ],
+    [
+      "employee_file",
+      1,
+      "directorates",
+      11
+    ],
+    [
+      "employee_file",
+      1,
+      "organizations",
+      12
+    ],
+    [
+      "employee_file",
+      2,
+      "departments",
+      10
+    ],
+    [
+      "employee_file",
+      2,
+      "directorates",
+      11
+    ],
+    [
+      "employee_file",
+      2,
+      "organizations",
+      12
+    ],
+    [
+      "employee_file",
+      3,
+      "departments",
+      10
+    ],
+    [
+      "employee_file",
+      3,
+      "directorates",
+      11
+    ],
+    [
+      "employee_file",
+      3,
+      "organizations",
+      12
+    ]
+  ],
+  "permission_counts": {
+    "roles": 10,
+    "role_permissions": 14,
+    "user_permissions": 26,
+    "file_permissions": 3,
+    "store_file_permissions": 0,
+    "inventory_warehouse_permissions": 0,
+    "portal_permission_presets": 0
+  }
+}
