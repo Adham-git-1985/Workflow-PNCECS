@@ -1,4 +1,4 @@
-{% extends "help/_guide_base.html" %}
+﻿{% extends "help/_guide_base.html" %}
 {% set page_title = "دليل المسارات وأنواع الطلبات وقواعد التوجيه" %}
 {% set page_subtitle = "شرح عملي ومفصل لإدارة المسارات (القوالب) وخطواتها (الخطوات) وقواعد التوجيه (التوجيه Rules) وكيفية اختيار المسار تلقائيًا." %}
 
@@ -8,7 +8,7 @@
   <div class="alert alert-secondary py-2 mb-2">
     <div class="fw-bold">ملخص سريع</div>
     <div class="small text-muted">
-      المسار = قالب خطوات اعتماد. نوع الطلب = فئة المعاملة. قواعد التوجيه = منطق اختيار المسار تلقائيًا لنوع طلب محدد حسب (Organization/Directorate/Department).<br>
+      المسار = قالب خطوات اعتماد. نوع الطلب = فئة المعاملة. قواعد التوجيه = منطق اختيار المسار تلقائيًا لنوع طلب محدد حسب (المؤسسة/الإدارة/الدائرة).<br>
       ملاحظة: <span class="fw-bold">اختيار المسار (التوجيه)</span> في هذه النسخة يعتمد على <span class="fw-bold">المنظمة + الإدارة + الدائرة</span>، بينما <span class="fw-bold">أنواع الموافقات داخل الخطوات</span> تدعم كذلك (Unit/Section/Division/Committee) عند الحاجة.
     </div>
   </div>
@@ -31,7 +31,7 @@
       <li><strong>المسار (مسار العمل قالب):</strong> قالب يحتوي خطوات اعتماد مرتبة (الخطوة 1, الخطوة 2…).</li>
       <li><strong>خطوة المسار (قالب الخطوة):</strong> تحديد “من يعتمد” في خطوة معينة (مستخدم/دور/دائرة/إدارة/وحدة/قسم/شعبة/لجنة) + نمط الخطوة + اتفاقية مستوى الخدمة.</li>
       <li><strong>مثيل المسار (مسار العمل Instance):</strong> نسخة تشغيل للمسار تُنشأ عندما يبدأ طلب حقيقي؛ تتحول الخطوات إلى “خطوات تشغيل” (Instance الخطوات).</li>
-      <li><strong>قواعد التوجيه (التوجيه Rules):</strong> تحدد أي قالب يُستخدم لنوع طلب معين حسب سياق الطلب (حاليًا: Organization/Directorate/Department).</li>
+      <li><strong>قواعد التوجيه (التوجيه Rules):</strong> تحدد أي قالب يُستخدم لنوع طلب معين حسب سياق الطلب (حاليًا: المؤسسة/الإدارة/الدائرة).</li>
       <li><strong>اتفاقية مستوى الخدمة:</strong> عدد الأيام المسموح بها للخطوة/المسار قبل اعتبارها متأخرة (تظهر كبادج/تصعيد حسب إعدادات النظام).</li>
     </ul>
 
@@ -73,9 +73,9 @@
       <ul class="mb-2">
         <li><strong>USER:</strong> اعتماد من مستخدم محدد (بريد/حساب).</li>
         <li><strong>ROLE:</strong> اعتماد من أي مستخدم يحمل دورًا محددًا.</li>
-        <li><strong>DEPARTMENT:</strong> اعتماد “رئيس الدائرة” (dept_head) أو مديرها حسب تعيينات الهيكل.</li>
-        <li><strong>DIRECTORATE:</strong> اعتماد “رئيس الإدارة” أو بديله (directorate_head / deputy) أو مديرها حسب تعيينات الهيكل.</li>
-        <li><strong>UNIT / SECTION / DIVISION:</strong> اعتماد مدير الوحدة/القسم/الشعبة (من خلال تعيينات الهيكل OrgUnitManager).</li>
+        <li><strong>الدائرة:</strong> اعتماد “رئيس الدائرة” (رئيس الدائرة) أو مديرها حسب تعيينات الهيكل.</li>
+        <li><strong>الإدارة:</strong> اعتماد “رئيس الإدارة” أو بديله (رئيس الإدارة / النائب) أو مديرها حسب تعيينات الهيكل.</li>
+        <li><strong>UNIT / SECTION / DIVISION:</strong> اعتماد مدير الوحدة/القسم/الشعبة (من خلال تعيينات الهيكل مدير الوحدة التنظيمية).</li>
         <li><strong>COMMITTEE:</strong> اعتماد لجنة (حسب أعضاء اللجنة وطريقة التسليم Committee_ALL / CHAIR / SECRETARY).</li>
       </ul>
       <div class="text-muted small">إذا كانت بيانات “مدير/بديل” مضبوطة في الهيكل التنظيمي، النظام يستطيع توجيه الخطوات بناءً عليها دون الحاجة لتثبيت أسماء أشخاص داخل المسار.</div>
@@ -87,7 +87,7 @@
       <div class="fw-bold">3.2 نمط الخطوة (Mode)</div>
       <ul>
         <li><strong>SEQUENTIAL (متسلسل):</strong> كل خطوة تُحسم ثم ينتقل النظام للخطوة التالية.</li>
-        <li><strong>PARALLEL_SYNC (متزامن):</strong> تُرسل لمجموعة أشخاص في نفس الخطوة (StepTask لكل شخص). ردودهم تُسجل للتوثيق، ويمكن إغلاق الخطوة بعد اكتمال الردود/التجاوزات حسب منطق النظام (مع صلاحيات التجاوز إن وُجدت).</li>
+        <li><strong>PARALLEL_SYNC (متزامن):</strong> تُرسل لمجموعة أشخاص في نفس الخطوة (مهمة خطوة لكل شخص). ردودهم تُسجل للتوثيق، ويمكن إغلاق الخطوة بعد اكتمال الردود/التجاوزات حسب منطق النظام (مع صلاحيات التجاوز إن وُجدت).</li>
       </ul>
       <div class="alert alert-secondary py-2 mb-0">
         <strong>متى أستخدم PARALLEL_SYNC؟</strong>
@@ -104,30 +104,30 @@
   <div class="mt-2">
 
     <div class="alert alert-info py-2">
-      <strong>قاعدة عامة:</strong> النظام يبحث عن قاعدة تطابق <strong>نوع الطلب</strong> ثم يطبّق “الأكثر تخصيصًا أولًا”، ثم <strong>الأولوية (Priority)</strong>.
+      <strong>قاعدة عامة:</strong> النظام يبحث عن قاعدة تطابق <strong>نوع الطلب</strong> ثم يطبّق “الأكثر تخصيصًا أولًا”، ثم <strong>الأولوية</strong>.
     </div>
 
     <div class="fw-bold">4.1 حقول القاعدة</div>
     <ul>
       <li><strong>نوع الطلب</strong> (إجباري)</li>
       <li><strong>قالب</strong> (إجباري)</li>
-      <li><strong>Organization</strong> (اختياري)</li>
-      <li><strong>Directorate</strong> (اختياري)</li>
-      <li><strong>Department</strong> (اختياري)</li>
-      <li><strong>Priority</strong> (رقم): كلما كان <span class="fw-bold">أصغر</span> كانت القاعدة <span class="fw-bold">أعلى</span></li>
+      <li><strong>المؤسسة</strong> (اختياري)</li>
+      <li><strong>الإدارة</strong> (اختياري)</li>
+      <li><strong>الدائرة</strong> (اختياري)</li>
+      <li><strong>الأولوية</strong> (رقم): كلما كان <span class="fw-bold">أصغر</span> كانت القاعدة <span class="fw-bold">أعلى</span></li>
       <li><strong>Is فعّال</strong></li>
     </ul>
 
     <hr>
 
-    <div class="fw-bold">4.2 ترتيب الاختيار (Priority + Specificity)</div>
-    <div class="small text-muted mb-2">التخصيص يعني: كم حقلًا من (Organization/Directorate/Department) تم تحديده في القاعدة.</div>
+    <div class="fw-bold">4.2 ترتيب الاختيار (الأولوية + درجة التخصيص)</div>
+    <div class="small text-muted mb-2">التخصيص يعني: كم حقلًا من (المؤسسة/الإدارة/الدائرة) تم تحديده في القاعدة.</div>
     <ol>
-      <li><strong>أولاً:</strong> قاعدة محددة على مستوى <span class="fw-bold">الدائرة</span> (Organization+Directorate+Department) إن وُجدت.</li>
-      <li><strong>ثم:</strong> قاعدة على مستوى <span class="fw-bold">الإدارة</span> (Organization+Directorate) إن وُجدت.</li>
-      <li><strong>ثم:</strong> قاعدة على مستوى <span class="fw-bold">المنظمة</span> (Organization فقط) إن وُجدت.</li>
-      <li><strong>ثم:</strong> قاعدة عامة لنوع الطلب (بدون تحديد Organization/Directorate/Department).</li>
-      <li><strong>داخل نفس المستوى:</strong> تُفضّل القاعدة ذات <span class="fw-bold">Priority أصغر</span>. وإذا تساوى كل شيء، تُؤخذ “الأحدث” (حسب ترتيب الإدخال).</li>
+      <li><strong>أولاً:</strong> قاعدة محددة على مستوى <span class="fw-bold">الدائرة</span> (المؤسسة + الإدارة + الدائرة) إن وُجدت.</li>
+      <li><strong>ثم:</strong> قاعدة على مستوى <span class="fw-bold">الإدارة</span> (المؤسسة + الإدارة) إن وُجدت.</li>
+      <li><strong>ثم:</strong> قاعدة على مستوى <span class="fw-bold">المنظمة</span> (المؤسسة فقط) إن وُجدت.</li>
+      <li><strong>ثم:</strong> قاعدة عامة لنوع الطلب (بدون تحديد المؤسسة/الإدارة/الدائرة).</li>
+      <li><strong>داخل نفس المستوى:</strong> تُفضّل القاعدة ذات <span class="fw-bold">أولوية أصغر</span>. وإذا تساوى كل شيء، تُؤخذ “الأحدث” (حسب ترتيب الإدخال).</li>
     </ol>
 
     <hr>
@@ -137,25 +137,25 @@
     <div class="border rounded p-2 mb-2">
       <div class="fw-bold">مثال (A): نوع طلب “إجازة” — قواعد متعددة</div>
       <ul class="mb-2">
-        <li>قاعدة 1 (عامة): إجازة → قالب: "إجازة – موظف" (Priority=100)</li>
-        <li>قاعدة 2 (إدارة الموارد): إجازة + Directorate=الموارد البشرية → قالب: "إجازة – الموارد البشرية" (Priority=10)</li>
-        <li>قاعدة 3 (دائرة الرواتب): إجازة + Directorate=الموارد البشرية + Dept=Payroll → قالب: "إجازة – Payroll" (Priority=5)</li>
+        <li>قاعدة 1 (عامة): إجازة → قالب: "إجازة – موظف" (الأولوية=100)</li>
+        <li>قاعدة 2 (إدارة الموارد): إجازة + الإدارة=الموارد البشرية → قالب: "إجازة – الموارد البشرية" (الأولوية=10)</li>
+        <li>قاعدة 3 (دائرة الرواتب): إجازة + الإدارة=الموارد البشرية + الدائرة=الرواتب → قالب: "إجازة – الرواتب" (الأولوية=5)</li>
       </ul>
-      <div class="small text-muted">لو كان مقدم الطلب ضمن Payroll، سيختار النظام القاعدة 3 (الأكثر تخصيصًا). لو كان ضمن الموارد البشرية لكن ليس Payroll → القاعدة 2. غير ذلك → القاعدة 1.</div>
+      <div class="small text-muted">لو كان مقدم الطلب ضمن الرواتب، سيختار النظام القاعدة 3 (الأكثر تخصيصًا). لو كان ضمن الموارد البشرية لكن ليس الرواتب → القاعدة 2. غير ذلك → القاعدة 1.</div>
     </div>
 
     <div class="border rounded p-2 mb-2">
       <div class="fw-bold">مثال (B): تعارض داخل نفس المستوى</div>
-      <div class="small text-muted mb-2">قاعدتان لنفس نوع الطلب وعلى نفس (Org+Dir) بدون Dept:</div>
+      <div class="small text-muted mb-2">قاعدتان لنفس نوع الطلب وعلى نفس (المؤسسة + الإدارة) بدون دائرة:</div>
       <ul class="mb-2">
-        <li>Rule X: Priority=10 → قالب A</li>
-        <li>Rule Y: Priority=10 → قالب B</li>
+        <li>قاعدة X: الأولوية=10 → قالب A</li>
+        <li>قاعدة Y: الأولوية=10 → قالب B</li>
       </ul>
-      <div class="small">هنا يُفضّل أن <strong>تغيّر Priority</strong> لتصبح قاعدة واحدة “أعلى” بوضوح. إن تُركت متساوية، سيختار النظام غالبًا الأحدث.</div>
+      <div class="small">هنا يُفضّل أن <strong>تغيّر الأولوية</strong> لتصبح قاعدة واحدة “أعلى” بوضوح. إن تُركت متساوية، سيختار النظام غالبًا الأحدث.</div>
     </div>
 
     <div class="alert alert-warning py-2 mb-0">
-      <strong>أفضل ممارسة:</strong> اجعل لكل (RequestType + Org/Dir/Dept) قاعدة واحدة فقط، وميّزها بـ Priority واضح لتجنب السلوك غير المتوقع.
+      <strong>أفضل ممارسة:</strong> اجعل لكل (نوع الطلب + المؤسسة/الإدارة/الدائرة) قاعدة واحدة فقط، وميّزها بالأولوية واضح لتجنب السلوك غير المتوقع.
     </div>
 
   </div>
@@ -167,9 +167,9 @@
   <div class="mt-2">
     <ul class="mb-2">
       <li><strong>المسار لا يبدأ:</strong> تأكد أن الطلب مرتبط بنوع طلب، وأن هناك قاعدة توجيه فعّالة أو اختيار يدوي للمسار.</li>
-      <li><strong>الخطوة لا تصل لأحد:</strong> تأكد من ضبط المدير/البديل في الهيكل (OrgUnitManager) إذا كانت الخطوة نوعها Unit/Section/Division/Department/Directorate، أو أن الدور/المستخدم موجود فعلاً.</li>
-      <li><strong>اختيار مسار غير صحيح:</strong> غالبًا بسبب Rule عامة تغطي كل شيء ب Priority أعلى من القواعد المخصصة. اجعل القاعدة العامة Priority أكبر (رقم أعلى).</li>
-      <li><strong>تكرار قواعد لنفس المستوى:</strong> غيّر Priority أو عطّل/احذف القاعدة الزائدة.</li>
+      <li><strong>الخطوة لا تصل لأحد:</strong> تأكد من ضبط المدير/البديل في الهيكل (مدير الوحدة التنظيمية) إذا كانت الخطوة نوعها وحدة/قسم/شعبة/دائرة/إدارة، أو أن الدور/المستخدم موجود فعلاً.</li>
+      <li><strong>اختيار مسار غير صحيح:</strong> غالبًا بسبب قاعدة عامة تغطي كل شيء بأولوية أعلى من القواعد المخصصة. اجعل القاعدة العامة أولوية أكبر (رقم أعلى).</li>
+      <li><strong>تكرار قواعد لنفس المستوى:</strong> غيّر الأولوية أو عطّل/احذف القاعدة الزائدة.</li>
     </ul>
     <div class="text-muted small">عند الشك: راجع قواعد التوجيه الخاصة بنوع الطلب، ثم راجع بيانات الدائرة/الإدارة/المنظمة لمقدم الطلب.</div>
   </div>

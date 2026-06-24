@@ -116,7 +116,7 @@
             <td>{{ r.start_date or '—' }}</td>
             <td>{{ r.end_date or '—' }}</td>
             <td>{{ r.days if r.days is not none else '—' }}</td>
-            <td>{{ r.status or '—' }}</td>
+            <td>{{ r.status|ui_label if r.status else '—' }}</td>
             <td>{{ overtime_sum.get(u.id, 0) if u else 0 }}</td>
           </tr>
         {% endfor %}

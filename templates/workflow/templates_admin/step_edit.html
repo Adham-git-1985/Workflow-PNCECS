@@ -349,7 +349,7 @@
         <h5 class="mb-0">👥 ربط التزامن مع الخطوة (مرتبطون إضافيون)</h5>
         <small class="text-muted">هؤلاء سيتم ضمّهم لنفس خطوة التزامن عند التنفيذ، باستخدام نفس resolver الحالي.</small>
       </div>
-      <span class="badge bg-info text-dark">Step {{ s.step_order }}</span>
+      <span class="badge bg-info text-dark">الخطوة {{ s.step_order }}</span>
     </div>
 
     <div class="table-responsive mb-3">
@@ -364,7 +364,7 @@
         <tbody>
           {% for pa in s.parallel_assignees %}
             <tr>
-              <td><span class="badge bg-secondary">{{ pa.approver_kind }}</span></td>
+              <td><span class="badge bg-secondary">{{ pa.approver_kind|ui_label }}</span></td>
               <td>
                 {% if pa.approver_kind == 'USER' and pa.user %}
                   {{ pa.user.email }} ({{ pa.user.role }})

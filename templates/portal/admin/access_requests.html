@@ -103,7 +103,7 @@
               {% elif r.status=='REJECTED' %}
                 <span class="badge text-bg-danger">مرفوض</span>
               {% else %}
-                <span class="badge text-bg-secondary">{{ r.status }}</span>
+                <span class="badge text-bg-secondary">{{ r.status|ui_label }}</span>
               {% endif %}
             </td>
             <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '—' }}</td>

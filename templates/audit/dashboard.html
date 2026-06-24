@@ -67,7 +67,7 @@
         <tbody>
         {% for action, count in top_actions %}
             <tr>
-                <td>{{ action }}</td>
+                <td>{{ action|ui_label }}</td>
                 <td class="text-center">{{ count }}</td>
             </tr>
         {% endfor %}

@@ -1,4 +1,4 @@
-# workflow/routes.py
+﻿# workflow/routes.py
 
 import os
 import uuid
@@ -35,6 +35,7 @@ from permissions import roles_required
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
 from utils.audit_helpers import delegation_audit_fields
 from utils.events import emit_event
+from utils.ui_labels import ui_label, ui_text
 
 from models import (
     WorkflowRequest,
@@ -756,7 +757,7 @@ def request_pdf(request_id):
     elements.append(Paragraph("Workflow Request Report", styles["Header"]))
     elements.append(Paragraph(f"<b>Request ID:</b> {req.id}", styles["Normal"]))
     elements.append(Paragraph(f"<b>Title:</b> {req.title or '-'}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Status:</b> {req.status or '-'}", styles["Normal"]))
+    elements.append(Paragraph(f"<b>Status:</b> {ui_label(req.status) or '-'}", styles["Normal"]))
     elements.append(
         Paragraph(
             f"<b>Generated at:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
@@ -799,9 +800,9 @@ def request_pdf(request_id):
         for log in logs:
             log_table.append([
                 log.created_at.strftime("%Y-%m-%d %H:%M") if log.created_at else "-",
-                log.action or "-",
-                f"{log.old_status or '-'} → {log.new_status or '-'}",
-                log.note or ""
+                ui_label(log.action) or "-",
+                f"{ui_label(log.old_status) or '-'} → {ui_label(log.new_status) or '-'}",
+                ui_text(log.note) or ""
             ])
 
         elements.append(

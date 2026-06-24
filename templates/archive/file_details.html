@@ -146,7 +146,7 @@
                 {% for req in workflow_requests %}
                   <a class="list-group-item list-group-item-action px-0" href="{{ url_for('workflow.view_request', request_id=req.id) }}">
                     <div class="fw-semibold small">{{ req.title or ("مسار #" ~ req.id) }}</div>
-                    <div class="text-muted small">{{ req.status or "—" }} · {{ req.created_at.strftime("%Y-%m-%d") if req.created_at else "—" }}</div>
+                    <div class="text-muted small">{{ req.status|ui_label if req.status else "—" }} · {{ req.created_at.strftime("%Y-%m-%d") if req.created_at else "—" }}</div>
                   </a>
                 {% endfor %}
               </div>
@@ -213,9 +213,9 @@
           <ul class="timeline">
             {% for log in audit_logs.items %}
               <li>
-                <strong>{{ log.action }}</strong>
+                <strong>{{ log.action|ui_label }}</strong>
                 {% if log.note %}
-                  <div class="text-muted small">{{ log.note }}</div>
+                  <div class="text-muted small">{{ log.note|ui_text }}</div>
                 {% endif %}
                 <div class="text-muted small">
                   {{ log.created_at.strftime("%Y-%m-%d %H:%M") }}

@@ -13,7 +13,7 @@
     <div class="card shadow-sm">
         <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
             <h5 class="mb-0">📝 مراجعة الطلب رقم {{ req.id }}</h5>
-            <span class="badge bg-light text-dark status-badge">{{ req.status }}</span>
+            <span class="badge bg-light text-dark status-badge">{{ req.status|ui_label }}</span>
         </div>
 
         <div class="card-body">

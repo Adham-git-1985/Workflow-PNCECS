@@ -74,7 +74,7 @@
                   {% endif %}
                 </td>
                 <td>{{ st.approver_kind }}</td>
-                <td>{{ st.status }}</td>
+                <td>{{ st.status|ui_label }}</td>
                 <td>{{ st.decided_by_email or "-" }}</td>
                 <td>{{ st.decided_at or "-" }}</td>
               </tr>
@@ -90,7 +90,7 @@
       {% if del_log and del_log.note %}
         <details class="mt-2">
           <summary class="text-muted small">عرض سجل الحذف</summary>
-          <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ del_log.note }}</pre>
+          <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ del_log.note|ui_text }}</pre>
         </details>
       {% endif %}
     {% endif %}
@@ -115,13 +115,13 @@
             {% for l in logs %}
             <tr>
               <td class="text-muted small">{{ l.created_at }}</td>
-              <td><span class="badge text-bg-light">{{ l.action }}</span></td>
+              <td><span class="badge text-bg-light">{{ l.action|ui_label }}</span></td>
               <td>{{ l.user.name if l.user else "-" }}</td>
               <td class="small text-muted">
                 {% if l.note %}
                   <details>
                     <summary>عرض</summary>
-                    <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ l.note }}</pre>
+                    <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ l.note|ui_text }}</pre>
                   </details>
                 {% else %}—{% endif %}
               </td>

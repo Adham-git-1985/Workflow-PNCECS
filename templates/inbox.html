@@ -47,7 +47,7 @@
   <div class="col-md-3">
     <div class="card text-center shadow-sm border-warning">
       <div class="card-body">
-        <small class="text-muted">In Progress</small>
+        <small class="text-muted">قيد التنفيذ</small>
         <h3 class="text-warning">{{ counters.in_progress }}</h3>
       </div>
     </div>
@@ -102,7 +102,7 @@
       <td>{{ req.id }}</td>
       <td>{{ req.title }}</td>
       <td>
-        <span class="badge bg-primary">{{ req.status }}</span>
+        <span class="badge bg-primary">{{ req.status|ui_label }}</span>
       </td>
       <td>
         {% set sla = get_sla_state(req) %}

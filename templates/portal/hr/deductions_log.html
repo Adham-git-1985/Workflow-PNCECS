@@ -35,7 +35,7 @@
           <tr>
             <td>{{ r.id }}</td>
             <td>{{ "%02d"|format(r.month) }}/{{ r.year }}</td>
-            <td><span class="badge text-bg-secondary">{{ r.status }}</span></td>
+            <td><span class="badge text-bg-secondary">{{ r.status|ui_label }}</span></td>
             <td class="text-muted small">{{ r.totals_json or '' }}</td>
             <td>{{ r.created_by.name if r.created_by else '-' }}</td>
             <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>

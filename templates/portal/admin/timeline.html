@@ -69,7 +69,7 @@
             <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
               <div>
                 <div class="fw-semibold">
-                  <code class="me-1">{{ r.action }}</code>
+                  <code class="me-1">{{ r.action|ui_label }}</code>
                   {% if r._target_label %}
                     {% if r._target_url %}
                       <a href="{{ r._target_url }}" class="text-decoration-none">{{ r._target_label }}</a>
@@ -85,7 +85,7 @@
                   {{ r.user.full_name if r.user else (r.user_id or '') }}
                   {% if r.note %}
                     <span class="mx-2">•</span>
-                    <span>{{ r.note }}</span>
+                    <span>{{ r.note|ui_text }}</span>
                   {% endif %}
                 </div>
               </div>

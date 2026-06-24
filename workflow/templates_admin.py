@@ -15,6 +15,7 @@ from . import workflow_bp
 from extensions import db
 from utils.perms import perm_required
 from utils.org_dynamic import build_org_node_picker_tree
+from utils.ui_labels import ui_label
 from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
@@ -280,11 +281,11 @@ def templates_steps_export_excel(template_id: int):
     dirs_map = {d.id: d for d in dirs}
 
     headers = [
-        "Template ID",
-        "Template Name",
+        "رقم القالب",
+        "اسم القالب",
         "ترتيب الخطوة",
-        "Kind",
-        "Target",
+        "نوع المعتمد",
+        "الوجهة",
         "SLA (أيام)",
     ]
 
@@ -308,13 +309,13 @@ def templates_steps_export_excel(template_id: int):
             getattr(t, "id", ""),
             getattr(t, "name", ""),
             getattr(s, "step_order", ""),
-            kind,
+            ui_label(kind),
             target,
             getattr(s, "sla_days", None) if getattr(s, "sla_days", None) is not None else "",
         ])
 
     return _xlsx_response(
-        sheet_name=f"Steps_{t.id}",
+        sheet_name=f"خطوات_{t.id}",
         headers=headers,
         rows=rows,
         filename_prefix=f"template_{t.id}_steps",
@@ -1461,11 +1462,11 @@ def template_step_parallel_assignee_add(step_id: int):
         return redirect(url_for('workflow.templates_steps_edit', step_id=s.id))
 
     if kind == 'DEPARTMENT' and not dept_id:
-        flash('يرجى اختيار Department.', 'danger')
+        flash('يرجى اختيار الدائرة.', 'danger')
         return redirect(url_for('workflow.templates_steps_edit', step_id=s.id))
 
     if kind == 'DIRECTORATE' and not dir_id:
-        flash('يرجى اختيار Directorate.', 'danger')
+        flash('يرجى اختيار الإدارة.', 'danger')
         return redirect(url_for('workflow.templates_steps_edit', step_id=s.id))
 
     if kind == 'UNIT' and not unit_id:

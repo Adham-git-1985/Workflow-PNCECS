@@ -6,6 +6,7 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 
 from extensions import db
+from utils.ui_labels import ui_label
 from models import (
     AuditLog,
     Notification,
@@ -680,7 +681,7 @@ def bypass_parallel_task(
     if not task:
         raise ValueError("المستخدم غير ضمن المتزامنين")
     if task.status != "PENDING":
-        raise ValueError("لا يمكن تجاوز مستخدم حالته ليست PENDING")
+        raise ValueError("لا يمكن تجاوز مستخدم حالته ليست قيد الانتظار")
 
     now = datetime.utcnow()
     task.status = "BYPASSED"
@@ -801,7 +802,7 @@ def bypass_all_parallel_tasks(
         .all()
     )
     if not pending_tasks:
-        raise ValueError("لا يوجد متزامنون بحالة PENDING لتجاوزهم")
+        raise ValueError("لا يوجد متزامنون بحالة قيد الانتظار لتجاوزهم")
 
     now = datetime.utcnow()
     for task in pending_tasks:
@@ -892,7 +893,7 @@ def decide_step(
     """
     decision = (decision or "").strip().upper()
     if decision not in ("APPROVED", "REJECTED"):
-        raise ValueError("Invalid decision (must be APPROVED or REJECTED).")
+        raise ValueError("قرار غير صالح (يجب أن يكون موافقة أو رفض).")
 
     req = WorkflowRequest.query.get_or_404(req_id)
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first_or_404()
@@ -903,7 +904,7 @@ def decide_step(
     ).first_or_404()
 
     if step.status != "PENDING":
-        raise ValueError("Step already decided.")
+        raise ValueError("تم اتخاذ قرار على هذه الخطوة مسبقاً.")
 
     # Delegation-aware context:
     # - actor_user_id: the logged-in user who performed the action (delegatee)
@@ -961,7 +962,7 @@ def decide_step(
             action="PARALLEL_SYNC_RESPONDED",
             old_status=None,
             new_status=None,
-            note=f"Step {step.step_order}: {task.response}. {note}".strip(),
+            note=f"الخطوة {step.step_order}: {ui_label(task.response)}. {note}".strip(),
             target_type="PARALLEL_TASK",
             target_id=task.id,
         ))
@@ -1046,7 +1047,7 @@ def decide_step(
             action=f"STEP_{decision}",
             old_status=None,
             new_status=None,
-            note=f"Step {step_order}: {note}".strip(),
+            note=f"الخطوة {step_order}: {note}".strip(),
             target_type="WORKFLOW_STEP",
             target_id=step.id,
         )

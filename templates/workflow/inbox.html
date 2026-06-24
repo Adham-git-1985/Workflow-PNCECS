@@ -77,8 +77,8 @@
         <tr>
           <td>{{ req.id }}</td>
           <td>{{ req.title }}</td>
-          <td><span class="badge bg-primary">{{ req.status }}</span></td>
-          <td>Step {{ step.step_order }} {% if step.mode == 'PARALLEL_SYNC' %}<span class="badge bg-info ms-2">متزامن</span>{% endif %}</td>
+          <td><span class="badge bg-primary">{{ req.status|ui_label }}</span></td>
+          <td>الخطوة {{ step.step_order }} {% if step.mode == 'PARALLEL_SYNC' %}<span class="badge bg-info ms-2">متزامن</span>{% endif %}</td>
           <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
           <td class="text-end">
             <a class="btn btn-sm btn-outline-primary"

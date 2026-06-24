@@ -32,7 +32,7 @@
                             {% elif log.action == "ARCHIVE_PURGE" %}
                                 <span class="badge bg-dark">PURGE</span>
                             {% else %}
-                                <span class="badge bg-secondary">{{ log.action }}</span>
+                                <span class="badge bg-secondary">{{ log.action|ui_label }}</span>
                             {% endif %}
                         </td>
                         <td>{{ log.description or "—" }}</td>

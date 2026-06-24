@@ -18,7 +18,7 @@
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="row g-2">
-    <div class="col-md-3"><div class="text-muted small">الحالة</div><div class="fw-bold">{{ run.status }}</div></div>
+    <div class="col-md-3"><div class="text-muted small">الحالة</div><div class="fw-bold">{{ run.status|ui_label }}</div></div>
     <div class="col-md-3"><div class="text-muted small">تاريخ الإنشاء</div><div class="fw-bold">{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '-' }}</div></div>
     <div class="col-md-6"><div class="text-muted small">ملاحظة</div><div class="fw-bold">{{ run.note or '-' }}</div></div>
   </div>

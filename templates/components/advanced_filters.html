@@ -23,7 +23,7 @@
           {% for s in ["DRAFT","IN_PROGRESS","APPROVED","REJECTED"] %}
             <option value="{{ s }}"
               {% if s in request.args.getlist("status") %}selected{% endif %}>
-              {{ s.replace("_"," ").title() }}
+              {{ s|ui_label }}
             </option>
           {% endfor %}
         </select>

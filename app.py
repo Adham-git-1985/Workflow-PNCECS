@@ -56,6 +56,7 @@ from store import store_bp
 
 from filters.request_filters import apply_request_filters
 from utils.permissions import get_effective_user
+from utils.ui_labels import ui_label, ui_text
 from filters.request_filters import get_sla_state
 from services.escalation_service import run_escalation_if_needed
 
@@ -154,6 +155,8 @@ app = Flask(__name__)
 app.jinja_env.globals["csrf_token"] = generate_csrf
 app.jinja_env.globals["get_sla_state"] = get_sla_state
 app.jinja_env.filters["esc_category_ar"] = esc_category_ar
+app.jinja_env.filters["ui_label"] = ui_label
+app.jinja_env.filters["ui_text"] = ui_text
 
 # Cache func
 def get_unread_count(user_id, source="workflow"):

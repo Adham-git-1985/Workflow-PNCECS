@@ -61,7 +61,7 @@
               <td>{{ r.id }}</td>
               <td class="small text-muted">{{ r.created_at }}</td>
               <td>{{ r.user.full_name if r.user else r.user_id }}</td>
-              <td><code>{{ r.action }}</code></td>
+              <td><code>{{ r.action|ui_label }}</code></td>
               <td class="small">
                 {% if r._target_label %}
                   {% if r._target_url %}
@@ -73,7 +73,7 @@
                   <span class="text-muted">{{ r.target_type }}{% if r.target_id %}:{{ r.target_id }}{% endif %}</span>
                 {% endif %}
               </td>
-              <td class="small">{{ r.note }}</td>
+              <td class="small">{{ r.note|ui_text }}</td>
             </tr>
           {% endfor %}
         </tbody>

@@ -37,7 +37,7 @@
       <li>اضغط <strong>إرسال</strong>.</li>
     </ol>
 
-    <div class="small text-muted">النظام يمنع تكرار نفس الطلب إذا كان هناك طلب مشابه <strong>PENDING</strong> بالفعل.</div>
+    <div class="small text-muted">النظام يمنع تكرار نفس الطلب إذا كان هناك طلب مشابه <strong>قيد الانتظار</strong> بالفعل.</div>
   </div>
 </details>
 
@@ -47,8 +47,8 @@
   <div class="mt-2">
     <ul class="mb-2">
       <li>ادخل إلى <strong>طلباتي</strong> لرؤية جميع طلبات الصلاحية التي قدمتها.</li>
-      <li>سترى الحالة: <span class="badge bg-warning text-dark">PENDING</span> أو <span class="badge bg-success">APPROVED</span> أو <span class="badge bg-danger">REJECTED</span> أو <span class="badge bg-secondary">CANCELLED</span>.</li>
-      <li>يمكنك <strong>إلغاء الطلب</strong> فقط إذا كان <strong>PENDING</strong>.</li>
+      <li>سترى الحالة: <span class="badge bg-warning text-dark">قيد الانتظار</span> أو <span class="badge bg-success">موافق عليه</span> أو <span class="badge bg-danger">مرفوض</span> أو <span class="badge bg-secondary">ملغي</span>.</li>
+      <li>يمكنك <strong>إلغاء الطلب</strong> فقط إذا كان <strong>قيد الانتظار</strong>.</li>
     </ul>
   </div>
 </details>
@@ -59,8 +59,8 @@
   <div class="mt-2">
     <div class="mb-2">لتخفيف العبء، يحاول النظام تعيين الطلب تلقائيًا لأحد مديري البوابة حسب قربه من مقدم الطلب:</div>
     <ul class="mb-2">
-      <li><strong>أولوية 1:</strong> البوابة Admin في نفس <strong>الدائرة (Department)</strong>.</li>
-      <li><strong>أولوية 2:</strong> البوابة Admin في نفس <strong>الإدارة (Directorate)</strong>.</li>
+      <li><strong>أولوية 1:</strong> البوابة Admin في نفس <strong>الدائرة</strong>.</li>
+      <li><strong>أولوية 2:</strong> البوابة Admin في نفس <strong>الإدارة</strong>.</li>
       <li><strong>أولوية 3:</strong> البوابة Admin في نفس <strong>المنظمة (Organization)</strong>.</li>
       <li><strong>Fallback:</strong> أول البوابة Admin متاح إذا لم تتوفر مطابقات.</li>
     </ul>
@@ -81,7 +81,7 @@
       <li>اختر: <strong>موافقة</strong> أو <strong>رفض</strong>، ويمكنك كتابة <strong>سبب</strong> القرار.</li>
     </ol>
     <div class="alert alert-warning py-2 mb-0">
-      <strong>مهم:</strong> لا يمكن معالجة طلب غير PENDING (منع ازدواج القرارات).
+      <strong>مهم:</strong> لا يمكن معالجة طلب غير قيد الانتظار (منع ازدواج القرارات).
     </div>
   </div>
 </details>
@@ -93,7 +93,7 @@
     <ul class="mb-2">
       <li><strong>عند الموافقة:</strong> تُمنح مفاتيح الصلاحيات المطلوبة لحساب المستخدم تلقائيًا، وتظهر الخدمة/الأزرار له مباشرة.</li>
       <li><strong>عند الرفض:</strong> لا تُمنح الصلاحيات، ويصله إشعار بالرفض (مع السبب إن كُتب).</li>
-      <li><strong>عند الإلغاء:</strong> يتم إغلاق الطلب من قبل الموظف نفسه وهو PENDING.</li>
+      <li><strong>عند الإلغاء:</strong> يتم إغلاق الطلب من قبل الموظف نفسه وهو قيد الانتظار.</li>
     </ul>
     <div class="small text-muted">يتم تسجيل إجراءات الموافقة/الرفض/الإلغاء ضمن سجل التدقيق (Audit).</div>
   </div>

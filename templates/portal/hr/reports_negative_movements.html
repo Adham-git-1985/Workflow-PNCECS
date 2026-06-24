@@ -72,7 +72,7 @@
             <td>{{ a.late_minutes }}</td>
             <td>{{ a.early_leave_minutes }}</td>
             <td>{{ a.overtime_minutes }}</td>
-            <td class="text-muted">{{ a.status }}</td>
+            <td class="text-muted">{{ a.status|ui_label }}</td>
           </tr>
         {% endfor %}
       </tbody>

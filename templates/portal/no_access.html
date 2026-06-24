@@ -34,7 +34,7 @@
             {% elif last_req.status=='CANCELLED' %}
               <span class="badge text-bg-secondary">ملغي</span>
             {% else %}
-              <span class="badge text-bg-secondary">{{ last_req.status }}</span>
+              <span class="badge text-bg-secondary">{{ last_req.status|ui_label }}</span>
             {% endif %}
             {% if last_req.decision_note %}
               <div class="text-muted small mt-2">ملاحظة: {{ last_req.decision_note }}</div>

@@ -20139,7 +20139,7 @@ def _notify_role(role: str, message: str, level: str = "INFO") -> None:
 
 
 def _notify_for_step(approval: HRSSRequestApproval, r: HRSSRequest) -> None:
-    msg = f"طلب HR Self-Service #{r.id} ({r.type_code}) بانتظار اعتمادك (Step {approval.step_no})."
+    msg = f"طلب HR Self-Service #{r.id} ({r.type_code}) بانتظار اعتمادك (الخطوة {approval.step_no})."
     if approval.approver_user_id:
         _notify_users([approval.approver_user_id], msg)
     elif approval.approver_role:

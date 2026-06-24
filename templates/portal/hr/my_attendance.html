@@ -44,7 +44,7 @@
                 {% elif r.status == 'ABSENT' %}
                   <span class="badge bg-danger">ABSENT</span>
                 {% else %}
-                  <span class="badge bg-warning text-dark">{{ r.status }}</span>
+                  <span class="badge bg-warning text-dark">{{ r.status|ui_label }}</span>
                 {% endif %}
               </td>
             </tr>

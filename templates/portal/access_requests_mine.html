@@ -68,7 +68,7 @@
                 {% elif r.status == 'CANCELLED' %}
                   <span class="badge text-bg-secondary">ملغي</span>
                 {% else %}
-                  <span class="badge text-bg-light border">{{ r.status }}</span>
+                  <span class="badge text-bg-light border">{{ r.status|ui_label }}</span>
                 {% endif %}
 
                 {% if r.decision_note %}

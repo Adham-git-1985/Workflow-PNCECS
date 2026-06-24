@@ -6,7 +6,7 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
       <h5 class="mb-0"><i class="bi bi-calendar2-range"></i> دورة: {{ cycle.name }}</h5>
-      <div class="text-muted small">نموذج: {{ cycle.form.name if cycle.form else cycle.form_id }} — الحالة: <b>{{ cycle.status }}</b></div>
+      <div class="text-muted small">نموذج: {{ cycle.form.name if cycle.form else cycle.form_id }} — الحالة: <b>{{ cycle.status|ui_label }}</b></div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_perf_cycles') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
@@ -57,7 +57,7 @@
                 {% if a.status == 'SUBMITTED' %}
                   <span class="badge bg-success">SUBMITTED</span>
                 {% else %}
-                  <span class="badge bg-secondary">PENDING</span>
+                  <span class="badge bg-secondary">قيد الانتظار</span>
                 {% endif %}
               </td>
               <td class="text-end">{% if a.score_total is not none %}{{ "%.2f"|format(a.score_total) }}{% else %}—{% endif %}</td>

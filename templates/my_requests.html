@@ -137,7 +137,7 @@ new Chart(ctx, {
                     'ESCALATED':'warning',
                     'DRAFT':'secondary'
                 }.get(req.status,'primary') }}">
-                    {{ req.status }}
+                    {{ req.status|ui_label }}
                 </span>
             </td>
             <td class="text-center">
@@ -183,7 +183,7 @@ document.addEventListener("DOMContentLoaded", function () {
     new Chart(ctx, {
         type: 'pie',
         data: {
-            labels: ['Approved', 'Rejected', 'In Progress'],
+            labels: ['موافق عليه', 'مرفوض', 'قيد التنفيذ'],
             datasets: [{
                 data: [
                     {{ counters.approved }},

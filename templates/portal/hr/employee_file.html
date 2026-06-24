@@ -277,7 +277,7 @@
             {% for l in logs %}
               <tr>
                 <td class="text-muted small">{{ l.created_at.strftime('%Y-%m-%d %H:%M') if l.created_at else '' }}</td>
-                <td><span class="badge bg-light text-dark border">{{ l.action }}</span></td>
+                <td><span class="badge bg-light text-dark border">{{ l.action|ui_label }}</span></td>
                 <td class="text-muted small">
                   {% if l.on_behalf_of %}
                     {{ l.user.full_name }} ↦ {{ l.on_behalf_of.full_name }}
@@ -285,7 +285,7 @@
                     {{ l.user.full_name if l.user else '' }}
                   {% endif %}
                 </td>
-                <td class="text-muted small">{{ l.note or '' }}</td>
+                <td class="text-muted small">{{ (l.note|ui_text) or '' }}</td>
               </tr>
             {% endfor %}
             {% if logs|length == 0 %}

@@ -50,7 +50,7 @@
                     ] %}
                         <option value="{{ a }}"
                           {% if request.args.get('action') == a %}selected{% endif %}>
-                          {{ a }}
+                          {{ a|ui_label }}
                         </option>
                     {% endfor %}
                 </select>
@@ -108,8 +108,8 @@
                     <tr>
                         <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
                         <td>{{ highlight(log.user.email if log.user else "-", search_terms) }}</td>
-                        <td>{{ highlight(log.action, search_terms) }}</td>
-                        <td>{{ highlight(log.note or "-", search_terms) }}</td>
+                        <td>{{ highlight(log.action|ui_label, search_terms) }}</td>
+                        <td>{{ highlight((log.note|ui_text) or "-", search_terms) }}</td>
                         <td class="text-center">
                             {{ log.request.id if log.request else "-" }}
                         </td>

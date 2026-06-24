@@ -87,7 +87,7 @@
             <td>{{ a.late_minutes or 0 }}</td>
             <td>{{ a.early_leave_minutes or 0 }}</td>
             <td>{{ a.overtime_minutes or 0 }}</td>
-            <td>{{ a.status or '—' }}</td>
+            <td>{{ a.status|ui_label if a.status else '—' }}</td>
           </tr>
         {% endfor %}
       </tbody>

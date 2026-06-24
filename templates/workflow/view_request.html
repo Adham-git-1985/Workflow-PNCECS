@@ -7,7 +7,7 @@
   <div>
     <h3 class="mb-1">📄 الطلب #{{ req.id }}</h3>
     <small class="text-muted">
-      الحالة: <strong>{{ req.status }}</strong>
+      الحالة: <strong>{{ req.status|ui_label }}</strong>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
       {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% endif %}
     </small>
@@ -101,7 +101,7 @@
           <li class="list-group-item">
             <div class="d-flex justify-content-between">
               <strong>{{ e.category|esc_category_ar }}</strong>
-              {% if e.step_order %}<span class="badge bg-danger ms-2">Step {{ e.step_order }}</span>{% endif %}
+              {% if e.step_order %}<span class="badge bg-danger ms-2">الخطوة {{ e.step_order }}</span>{% endif %}
               <span class="small text-muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
             </div>
             <div class="small text-muted mt-1">
@@ -129,7 +129,7 @@
               <li class="list-group-item">
                 <div class="d-flex justify-content-between">
                   <div>
-                    <strong>{{ log.action }}</strong>
+                    <strong>{{ log.action|ui_label }}</strong>
                     <div class="small text-muted mt-1">
                       {% if log.user %}
                         بواسطة: <strong>{{ log.user.full_name }}</strong>
@@ -144,7 +144,7 @@
                   <span class="small text-muted">{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
                 </div>
                 {% if log.note %}
-                  <div class="small text-muted mt-1">{{ log.note }}</div>
+                  <div class="small text-muted mt-1">{{ log.note|ui_text }}</div>
                 {% endif %}
               </li>
             {% endfor %}
@@ -198,7 +198,7 @@
               <li class="mb-2">
                 <div class="d-flex justify-content-between">
                   <div>
-                    <strong>Step {{ s.step_order }}</strong>
+                    <strong>الخطوة {{ s.step_order }}</strong>
                     {% if (s.mode or '')|upper == 'PARALLEL_SYNC' %}
                       <span class="badge bg-info text-dark ms-2">متزامن</span>
                     {% endif %}
@@ -215,7 +215,7 @@
       #{{ s.approver_user_id }}
     {% endif %}
   {% elif k == "DIRECTORATE" %}
-    <span class="badge bg-secondary">DIRECTORATE</span>
+    <span class="badge bg-secondary">إدارة</span>
     {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
       {{ dirs_map.get(s.approver_directorate_id).name_ar }}
     {% else %}
@@ -239,7 +239,7 @@
       → <span class="text-muted">كل الأعضاء</span>
     {% endif %}
   {% elif k == "DEPARTMENT" or ((s.approver_kind or '')|trim) == '' %}
-    <span class="badge bg-secondary">DEPARTMENT</span>
+    <span class="badge bg-secondary">دائرة</span>
     {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}
       {{ depts_map.get(s.approver_department_id).name_ar }}
     {% else %}
@@ -257,7 +257,7 @@
                     {% elif s.status == 'APPROVED' %}bg-success
                     {% elif s.status == 'REJECTED' %}bg-danger
                     {% else %}bg-secondary{% endif %}">
-                    {{ s.status }}
+                    {{ s.status|ui_label }}
                   </span>
                 </div>
                 {% if s.due_at %}
@@ -353,7 +353,7 @@
               <div class="alert alert-warning py-2 mb-3">
                 <div class="d-flex flex-wrap align-items-end justify-content-between gap-2">
                   <div>
-                    <div class="fw-bold">تجاوز المتبقين (كل من حالته PENDING)</div>
+                    <div class="fw-bold">تجاوز المتبقين (كل من حالته قيد الانتظار)</div>
                     <div class="small text-muted">هذا الخيار متاح لمنفّذ الخطوة السابقة أو Admin/Super Admin.</div>
                   </div>
                   <form method="post" class="d-flex gap-2" action="{{ url_for('workflow.bypass_parallel_assignee', request_id=req.id, step_order=current_step.step_order) }}">
@@ -392,7 +392,7 @@
                           {% elif st == 'RESPONDED' %}bg-success
                           {% elif st == 'BYPASSED' %}bg-secondary
                           {% else %}bg-secondary{% endif %}">
-                          {{ st or '-' }}
+                          {{ st|ui_label if st else '-' }}
                         </span>
                       </td>
                       <td>

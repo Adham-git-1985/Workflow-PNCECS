@@ -54,7 +54,7 @@
             <td>{{ r.type_code }}</td>
             <td>
               <span class="badge text-bg-{% if r.status in ['APPROVED'] %}success{% elif r.status in ['REJECTED'] %}danger{% elif r.status in ['RETURNED'] %}warning{% elif r.status in ['IN_REVIEW'] %}primary{% else %}secondary{% endif %}">
-                {{ r.status }}
+                {{ r.status|ui_label }}
               </span>
             </td>
             <td class="text-muted small">{{ r.updated_at.strftime('%Y-%m-%d %H:%M') if r.updated_at else '' }}</td>

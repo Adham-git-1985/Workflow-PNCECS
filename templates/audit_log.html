@@ -40,7 +40,7 @@
                 <div class="timeline-item">
                     <div class="timeline-date mb-1">{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
 
-                    <div class="timeline-action">{{ log.action }}</div>
+                    <div class="timeline-action">{{ log.action|ui_label }}</div>
 
                     <div class="mt-1">
                         <strong>من:</strong>
@@ -53,7 +53,7 @@
                     </div>
 
                     {% if log.note %}
-                    <div class="mt-1 text-muted"><em>ملاحظة:</em> {{ log.note }}</div>
+                    <div class="mt-1 text-muted"><em>ملاحظة:</em> {{ log.note|ui_text }}</div>
                     {% endif %}
                 </div>
                 {% endfor %}

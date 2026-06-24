@@ -23,6 +23,7 @@ from sqlalchemy import func, or_
 from datetime import datetime, timedelta
 from filters.request_filters import apply_request_filters
 from filters.request_filters import get_sla_days, get_escalation_days
+from utils.ui_labels import ui_label
 from sqlalchemy import case
 from io import BytesIO
 
@@ -282,7 +283,7 @@ def dashboard_export_excel():
         rows.append([
             r.id,
             r.title,
-            r.status,
+            ui_label(r.status),
             r.created_at.strftime("%Y-%m-%d %H:%M"),
             (now - r.created_at).days,
             "YES" if r.is_escalated else "NO",
@@ -290,19 +291,19 @@ def dashboard_export_excel():
         ])
 
     # Prepend summary rows (as plain rows)
-    summary_headers = ["Metric", "Value"]
+    summary_headers = ["المؤشر", "القيمة"]
     summary_rows = [
-        ("Total Requests", total),
-        ("Approved", approved),
-        ("Rejected", rejected),
-        ("Drafts", drafts),
-        ("In Progress", in_progress),
-        ("SLA Days", SLA_DAYS),
-        ("Archive Total", archive_total),
-        ("Archive Active", archive_active),
-        ("Archive Deleted", archive_deleted),
-        ("Trash Retention Days", get_trash_retention_days()),
-        ("Exported At", now.strftime("%Y-%m-%d %H:%M")),
+        ("إجمالي الطلبات", total),
+        ("موافق عليه", approved),
+        ("مرفوض", rejected),
+        ("المسودات", drafts),
+        ("قيد التنفيذ", in_progress),
+        ("أيام SLA", SLA_DAYS),
+        ("إجمالي الأرشيف", archive_total),
+        ("الأرشيف الفعال", archive_active),
+        ("الأرشيف المحذوف", archive_deleted),
+        ("أيام الاحتفاظ بسلة المحذوفات", get_trash_retention_days()),
+        ("وقت التصدير", now.strftime("%Y-%m-%d %H:%M")),
     ]
 
     # Build workbook with two sheets
@@ -562,7 +563,7 @@ def escalations_export_excel():
     headers_log = [
         "Escalation ID",
         "Request ID",
-        "Step",
+        "الخطوة",
         "Category",
         "Created At",
         "From",
@@ -743,8 +744,8 @@ def workflow_routing_export_excel():
         "RequestType AR",
         "RequestType EN",
         "Organization",
-        "Directorate",
-        "Department",
+        "الإدارة",
+        "الدائرة",
         "OrgNode",
         "MatchSubtree",
         "Template",

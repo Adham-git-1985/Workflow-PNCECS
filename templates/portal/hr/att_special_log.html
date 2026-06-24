@@ -111,7 +111,7 @@
               {% endif %}
             </td>
             <td class="text-muted">
-              {% if r.kind == 'STATUS' %}{{ r.status }}{% else %}{{ r.field }}{% endif %}
+              {% if r.kind == 'STATUS' %}{{ r.status|ui_label }}{% else %}{{ r.field }}{% endif %}
             </td>
             <td class="text-muted">{{ r.day }}</td>
             <td class="text-muted">{{ r.day_to or r.day }}</td>

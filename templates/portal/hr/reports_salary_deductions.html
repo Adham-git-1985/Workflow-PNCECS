@@ -95,7 +95,7 @@
               {% elif run and (run.status|upper) == 'DRAFT' %}
                 <span class="badge text-bg-secondary">مسودة</span>
               {% else %}
-                <span class="badge text-bg-light">{{ run.status if run else '—' }}</span>
+                <span class="badge text-bg-light">{{ run.status|ui_label if run else '—' }}</span>
               {% endif %}
             </td>
             <td>{{ it.note or '' }}</td>

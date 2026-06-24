@@ -500,8 +500,8 @@ def export_users_excel():
         "Name",
         "Job Title",
         "Role",
-        "Department",
-        "Directorate",
+        "الدائرة",
+        "الإدارة",
     ]
 
     rows = []

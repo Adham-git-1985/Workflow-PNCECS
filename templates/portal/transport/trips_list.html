@@ -186,7 +186,7 @@
                 <span class="badge text-bg-warning">مفتوحة</span>
               {% endif %}
               {% if it.permit and it.permit.status %}
-                <div class="text-muted small mt-1">إذن: {{ it.permit.status }}</div>
+                <div class="text-muted small mt-1">إذن: {{ it.permit.status|ui_label }}</div>
               {% endif %}
             </td>
             <td class="text-muted small">{% if it.started_at %}{{ it.started_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>

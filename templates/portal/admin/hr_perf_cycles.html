@@ -55,7 +55,7 @@
             <td>{{ c.name }}</td>
             <td>{{ c.form.name if c.form else c.form_id }}</td>
             <td>{{ c.start_date }} → {{ c.end_date }}</td>
-            <td><span class="badge bg-secondary">{{ c.status }}</span></td>
+            <td><span class="badge bg-secondary">{{ c.status|ui_label }}</span></td>
             <td class="text-end">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_hr_perf_cycle_detail', cycle_id=c.id) }}">تفاصيل</a>
               {% if c.status != 'ACTIVE' %}

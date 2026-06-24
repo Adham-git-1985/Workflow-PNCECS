@@ -123,7 +123,7 @@
             <td>{{ r.day }}</td>
             <td>{{ r.from_time or '-' }}</td>
             <td>{{ r.to_time or '-' }}</td>
-            <td>{{ r.status }}</td>
+            <td>{{ r.status|ui_label }}</td>
             <td>{{ users[r.created_by_id].full_name if users.get(r.created_by_id) else r.created_by_id }}</td>
             <td class="text-end">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_permission_request_edit', req_id=r.id) }}"><i class="bi bi-pencil"></i> تعديل</a>

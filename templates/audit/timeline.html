@@ -53,7 +53,7 @@
         <select name="action" class="form-select">
           <option value="">الكل</option>
           {% for a in actions %}
-            <option value="{{ a }}" {% if filters.action == a %}selected{% endif %}>{{ a }}</option>
+            <option value="{{ a }}" {% if filters.action == a %}selected{% endif %}>{{ a|ui_label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -130,7 +130,7 @@
           <div class="list-group-item">
             <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
               <div class="d-flex align-items-center gap-2 flex-wrap">
-                <span class="badge bg-primary">{{ log.action }}</span>
+                <span class="badge bg-primary">{{ log.action|ui_label }}</span>
                 {% set st = (log_steps|default({})).get(log.id|int) %}
                 {% if st is not none %}
                   <span class="badge bg-info text-dark">الخطوة {{ st }}</span>
@@ -187,7 +187,7 @@
               {% if log.note %}
                 <details>
                   <summary class="text-muted small">عرض التفاصيل</summary>
-                  <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ log.note }}</pre>
+                  <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ log.note|ui_text }}</pre>
                 </details>
               {% else %}
                 <div class="text-muted">—</div>

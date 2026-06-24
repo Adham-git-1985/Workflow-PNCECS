@@ -190,7 +190,7 @@
                                     {% elif req.status == 'REJECTED' %}bg-danger
                                     {% elif req.status == 'DRAFT' %}bg-secondary
                                     {% else %}bg-warning text-dark{% endif %}">
-                                    {{ req.status }}
+                                    {{ req.status|ui_label }}
                                 </span>
                             </td>
                             <td>{{ req.created_at.strftime("%Y-%m-%d") }}</td>

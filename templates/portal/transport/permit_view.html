@@ -43,7 +43,7 @@
           {% elif item.status == 'COMPLETED' %}
             <span class="badge text-bg-primary">مكتمل</span>
           {% else %}
-            <span class="badge text-bg-secondary">{{ item.status }}</span>
+            <span class="badge text-bg-secondary">{{ item.status|ui_label }}</span>
           {% endif %}
         </div>
       </div>

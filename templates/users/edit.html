@@ -78,7 +78,7 @@
 
             <div class="row g-3">
               <div class="col-md-6">
-                <label class="form-label">الإدارة (Directorate)</label>
+                <label class="form-label">الإدارة</label>
                 <select class="form-select" name="directorate_id">
                   <option value="">— بدون —</option>
                   {% for dr in directorates %}
@@ -88,7 +88,7 @@
                   {% endfor %}
                 </select>
                 <div class="form-text">
-                  تُستخدم هذه القيمة لمهام <b>رئيس إدارة / نائب رئيس إدارة</b> في خطوات المسار من نوع <b>DIRECTORATE</b>.
+                  تُستخدم هذه القيمة لمهام <b>رئيس إدارة / نائب رئيس إدارة</b> في خطوات المسار من نوع <b>إدارة</b>.
                 </div>
               </div>
 
@@ -105,7 +105,7 @@
               </div>
 
               <div class="col-md-6">
-                <label class="form-label">الدائرة (Department)</label>
+                <label class="form-label">الدائرة</label>
                 <select class="form-select" name="department_id">
                   <option value="">— بدون —</option>
                   {% for d in departments %}

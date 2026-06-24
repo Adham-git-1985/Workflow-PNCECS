@@ -81,7 +81,7 @@
           <td>
             {% if r.status == 'OK' %}<span class="badge bg-success">OK</span>
             {% elif r.status == 'INCOMPLETE' %}<span class="badge bg-danger">INCOMPLETE</span>
-            {% else %}<span class="badge bg-secondary">{{ r.status }}</span>
+            {% else %}<span class="badge bg-secondary">{{ r.status|ui_label }}</span>
             {% endif %}
           </td>
           <td class="text-muted">{{ r.schedule.name if r.schedule else '—' }}</td>

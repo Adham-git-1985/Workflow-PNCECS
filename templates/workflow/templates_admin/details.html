@@ -37,7 +37,7 @@
               <th>Kind</th>
               <th>USER</th>
               <th>ROLE</th>
-              <th>DEPT</th>
+              <th>الدائرة</th>
               <th>Mode</th>
               <th>مرتبطون</th>
               <th>اتفاقية مستوى الخدمة</th>
@@ -47,7 +47,7 @@
           {% for s in steps %}
             <tr>
               <td>{{ s.step_order }}</td>
-              <td>{{ s.approver_kind }}</td>
+              <td>{{ s.approver_kind|ui_label }}</td>
               <td>
                 {% if s.approver_user_id %}
                   {{ users_map.get(s.approver_user_id).email if users_map.get(s.approver_user_id) else s.approver_user_id }}
@@ -139,7 +139,7 @@
                         {% elif pa.approver_kind == 'ROLE' %}
                           <span class="badge bg-light text-dark border">ROLE: {{ pa.approver_role }}</span>
                         {% elif pa.approver_kind == 'DIRECTORATE' %}
-                          <span class="badge bg-light text-dark border">DIR: {{ dirs_map.get(pa.approver_directorate_id).name_ar if pa.approver_directorate_id and dirs_map.get(pa.approver_directorate_id) else (pa.approver_directorate_id) }}</span>
+                          <span class="badge bg-light text-dark border">الإدارة: {{ dirs_map.get(pa.approver_directorate_id).name_ar if pa.approver_directorate_id and dirs_map.get(pa.approver_directorate_id) else (pa.approver_directorate_id) }}</span>
                         {% elif pa.approver_kind == 'COMMITTEE' %}
                           <span class="badge bg-light text-dark border">
                             COMMITTEE: {{ committees_map.get(pa.approver_committee_id).name_ar if pa.approver_committee_id and committees_map.get(pa.approver_committee_id) else (pa.approver_committee_id) }}
@@ -150,9 +150,9 @@
                             {% endif %}
                           </span>
                         {% elif pa.approver_kind == 'DEPARTMENT' %}
-                          <span class="badge bg-light text-dark border">DEPT: {{ depts_map.get(pa.approver_department_id).name_ar if pa.approver_department_id and depts_map.get(pa.approver_department_id) else (pa.approver_department_id) }}</span>
+                          <span class="badge bg-light text-dark border">الدائرة: {{ depts_map.get(pa.approver_department_id).name_ar if pa.approver_department_id and depts_map.get(pa.approver_department_id) else (pa.approver_department_id) }}</span>
                         {% else %}
-                          <span class="badge bg-light text-dark border">{{ pa.approver_kind }}</span>
+                          <span class="badge bg-light text-dark border">{{ pa.approver_kind|ui_label }}</span>
                         {% endif %}
                       {% endfor %}
                     </div>

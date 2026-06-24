@@ -341,7 +341,7 @@ def dir_export_excel():
             "نعم" if d.is_active else "لا",
         ])
 
-    data = make_xlsx_bytes("Directorates", headers, rows)
+    data = make_xlsx_bytes("الإدارات", headers, rows)
     filename = f"directorates_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
     from io import BytesIO
     return send_file(
@@ -692,7 +692,7 @@ def dept_export_excel():
             "نعم" if dep.is_active else "لا",
         ])
 
-    data = make_xlsx_bytes("Departments", headers, rows)
+    data = make_xlsx_bytes("الدوائر", headers, rows)
     filename = f"departments_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
     return send_file(
         BytesIO(data),
@@ -1148,7 +1148,7 @@ def divisions_export_excel():
     wb = Workbook()
     ws = wb.active
     ws.title = "Divisions"
-    headers = ["ID", "Directorate", "Department/Office", "Section", "Division (AR)", "Division (EN)", "Code", "Active", "Created"]
+    headers = ["ID", "الإدارة", "الدائرة/المكتب", "القسم", "الشعبة (AR)", "الشعبة (EN)", "الكود", "فعال", "تاريخ الإنشاء"]
     ws.append(headers)
     for r in rows:
         sec = sections.get(r.section_id) if r.section_id else None
