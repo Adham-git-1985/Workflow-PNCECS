@@ -32,6 +32,7 @@ import shutil
 import sqlite3
 import zipfile
 import tempfile
+import uuid
 
 from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
 from utils.importer import read_excel_rows, pick, to_str, to_int, to_bool, replace_all
@@ -1198,6 +1199,38 @@ def _get_backups_dir() -> str:
     return d
 
 
+def _get_runtime_tmp_dir() -> str:
+    d = os.path.join(current_app.instance_path, "tmp")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _make_runtime_tmp_subdir(prefix: str) -> str:
+    base = _get_runtime_tmp_dir()
+    for _ in range(5):
+        path = os.path.join(base, f"{prefix}_{uuid.uuid4().hex}")
+        try:
+            os.makedirs(path, exist_ok=False)
+            return path
+        except FileExistsError:
+            continue
+    path = os.path.join(base, f"{prefix}_{datetime.utcnow().strftime('%H%M%S%f')}")
+    os.makedirs(path, exist_ok=False)
+    return path
+
+
+class _RuntimeTempDir:
+    def __init__(self, path: str):
+        self.name = path
+
+    def cleanup(self) -> None:
+        shutil.rmtree(self.name, ignore_errors=True)
+
+
+def _make_runtime_tempdir(prefix: str) -> _RuntimeTempDir:
+    return _RuntimeTempDir(_make_runtime_tmp_subdir(prefix))
+
+
 def _create_sqlite_snapshot(src_db_path: str, snapshot_path: str) -> None:
     """Create a consistent snapshot of a SQLite DB using the sqlite3 backup API."""
     os.makedirs(os.path.dirname(snapshot_path), exist_ok=True)
@@ -1228,7 +1261,7 @@ def _create_sqlite_snapshot(src_db_path: str, snapshot_path: str) -> None:
 def _build_backup_zip() -> str:
     """Build a ZIP backup containing DB + storage/archive + portal uploads."""
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    backups_dir = _get_backups_dir()
+    backups_dir = _make_runtime_tmp_subdir(f"workflow_backup_{ts}")
 
     zip_path = os.path.join(backups_dir, f"workflow_backup_{ts}.zip")
     tmp_db_path = os.path.join(backups_dir, f"workflow_snapshot_{ts}.db")
@@ -1414,12 +1447,14 @@ def backup_page():
 def backup_download():
     zip_path = _build_backup_zip()
     filename = os.path.basename(zip_path)
-    return send_file(
+    response = send_file(
         zip_path,
         as_attachment=True,
         download_name=filename,
         mimetype="application/zip"
     )
+    response.call_on_close(lambda: shutil.rmtree(os.path.dirname(zip_path), ignore_errors=True))
+    return response
 
 
 @admin_bp.route("/backup/download/<path:fname>", methods=["GET"])
@@ -1464,8 +1499,8 @@ def backup_restore():
     backups_dir = _get_backups_dir()
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
-    uploaded_zip = os.path.join(tempfile.gettempdir(), f"workflow_uploaded_restore_{ts}.zip")
-    extract_tmp = tempfile.TemporaryDirectory(prefix=f"workflow_restore_{ts}_")
+    uploaded_zip = os.path.join(_get_runtime_tmp_dir(), f"workflow_uploaded_restore_{ts}.zip")
+    extract_tmp = _make_runtime_tempdir(f"workflow_restore_{ts}")
     extract_dir = extract_tmp.name
 
     try:
