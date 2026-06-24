@@ -1,9 +1,13 @@
 # archive/routes.py
 
 import os
+import mimetypes
+import re
 import uuid
+import zipfile
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
+from xml.etree import ElementTree as ET
 
 from flask import (
     render_template, request, redirect,
@@ -70,6 +74,23 @@ ALLOWED_EXTENSIONS = {
     "html", "css", "js", "py", "java", "php", "sql", "db", "dll",
 }
 
+IMAGE_PREVIEW_EXTENSIONS = {
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff",
+}
+
+TEXT_PREVIEW_EXTENSIONS = {
+    "txt", "csv", "tsv", "json", "xml", "html", "htm", "css", "js",
+    "py", "java", "php", "sql", "md", "log", "ini", "conf", "yml",
+    "yaml", "rtf",
+}
+
+OFFICE_TEXT_PREVIEW_EXTENSIONS = {
+    "docx", "xlsx", "pptx", "odt", "ods", "odp",
+}
+
+TEXT_PREVIEW_MAX_BYTES = 1024 * 1024
+TEXT_PREVIEW_MAX_CHARS = 200_000
+
 
 # =========================
 # Helpers
@@ -79,6 +100,262 @@ def _is_super_admin(user) -> bool:
         return user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN")
     except Exception:
         return False
+
+
+def _archive_extension(file) -> str:
+    name = file.original_name or file.stored_name or file.file_path or ""
+    return os.path.splitext(name)[1].lower().lstrip(".")
+
+
+def _archive_mimetype(file) -> str:
+    guessed, _ = mimetypes.guess_type(file.original_name or file.file_path or "")
+    return file.mime_type or guessed or "application/octet-stream"
+
+
+def _archive_disk_path(file) -> str | None:
+    candidates = []
+    if file.file_path:
+        candidates.append(file.file_path)
+        candidates.append(os.path.join(BASE_STORAGE, os.path.basename(file.file_path)))
+    if file.stored_name:
+        candidates.append(os.path.join(BASE_STORAGE, file.stored_name))
+
+    seen = set()
+    for path in candidates:
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def _limit_preview_text(text: str) -> tuple[str, bool]:
+    text = (text or "").replace("\x00", "")
+    if len(text) > TEXT_PREVIEW_MAX_CHARS:
+        return text[:TEXT_PREVIEW_MAX_CHARS], True
+    return text, False
+
+
+def _decode_text_bytes(raw: bytes) -> str:
+    for encoding in ("utf-8-sig", "utf-16", "windows-1256", "cp1256", "cp1252"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _strip_basic_rtf(text: str) -> str:
+    text = re.sub(r"\\par[d]?", "\n", text)
+    text = re.sub(r"\\'[0-9a-fA-F]{2}", "", text)
+    text = re.sub(r"\\[a-zA-Z]+-?\d* ?", "", text)
+    text = text.replace("{", "").replace("}", "")
+    return "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+
+def _read_text_preview(path: str, ext: str) -> tuple[str, bool]:
+    with open(path, "rb") as handle:
+        raw = handle.read(TEXT_PREVIEW_MAX_BYTES + 1)
+    truncated = len(raw) > TEXT_PREVIEW_MAX_BYTES
+    text = _decode_text_bytes(raw[:TEXT_PREVIEW_MAX_BYTES])
+    if ext == "rtf":
+        text = _strip_basic_rtf(text)
+    text, char_truncated = _limit_preview_text(text)
+    return text, truncated or char_truncated
+
+
+def _zip_xml_root(zf: zipfile.ZipFile, name: str):
+    return ET.fromstring(zf.read(name))
+
+
+def _docx_text(path: str) -> str:
+    ns = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    with zipfile.ZipFile(path) as zf:
+        root = _zip_xml_root(zf, "word/document.xml")
+    lines = []
+    for paragraph in root.iter(f"{ns}p"):
+        parts = []
+        for node in paragraph.iter():
+            if node.tag == f"{ns}t" and node.text:
+                parts.append(node.text)
+            elif node.tag == f"{ns}tab":
+                parts.append("\t")
+            elif node.tag == f"{ns}br":
+                parts.append("\n")
+        line = "".join(parts).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _xlsx_shared_strings(zf: zipfile.ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in zf.namelist():
+        return []
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    root = _zip_xml_root(zf, "xl/sharedStrings.xml")
+    return [
+        "".join(node.text or "" for node in item.iter(f"{ns}t"))
+        for item in root.iter(f"{ns}si")
+    ]
+
+
+def _natural_archive_name(value: str):
+    return [int(part) if part.isdigit() else part for part in re.split(r"(\d+)", value)]
+
+
+def _xlsx_text(path: str) -> tuple[str, bool]:
+    ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    lines = []
+    truncated = False
+    with zipfile.ZipFile(path) as zf:
+        shared_strings = _xlsx_shared_strings(zf)
+        sheets = sorted(
+            [
+                name for name in zf.namelist()
+                if name.startswith("xl/worksheets/sheet") and name.endswith(".xml")
+            ],
+            key=_natural_archive_name,
+        )
+        for index, sheet in enumerate(sheets, 1):
+            root = _zip_xml_root(zf, sheet)
+            lines.append(f"ورقة {index}")
+            for row_index, row in enumerate(root.iter(f"{ns}row")):
+                if row_index >= 200:
+                    truncated = True
+                    lines.append("...")
+                    break
+                values = []
+                for cell in row.findall(f"{ns}c"):
+                    cell_type = cell.attrib.get("t")
+                    value = ""
+                    if cell_type == "inlineStr":
+                        value = "".join(node.text or "" for node in cell.iter(f"{ns}t"))
+                    else:
+                        raw_value = cell.find(f"{ns}v")
+                        if raw_value is not None and raw_value.text is not None:
+                            value = raw_value.text
+                            if cell_type == "s":
+                                try:
+                                    value = shared_strings[int(value)]
+                                except (ValueError, IndexError):
+                                    pass
+                    values.append(value)
+                if any(values):
+                    lines.append("\t".join(values))
+            lines.append("")
+    return "\n".join(lines).strip(), truncated
+
+
+def _pptx_text(path: str) -> str:
+    ns = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+    lines = []
+    with zipfile.ZipFile(path) as zf:
+        slides = sorted(
+            [
+                name for name in zf.namelist()
+                if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            ],
+            key=_natural_archive_name,
+        )
+        for index, slide in enumerate(slides, 1):
+            root = _zip_xml_root(zf, slide)
+            texts = [node.text for node in root.iter(f"{ns}t") if node.text]
+            if texts:
+                lines.append(f"شريحة {index}")
+                lines.extend(texts)
+                lines.append("")
+    return "\n".join(lines).strip()
+
+
+def _open_document_text(path: str) -> str:
+    with zipfile.ZipFile(path) as zf:
+        root = _zip_xml_root(zf, "content.xml")
+    texts = []
+    for node in root.iter():
+        if node.text and node.text.strip():
+            texts.append(node.text.strip())
+    return "\n".join(texts)
+
+
+def _office_text_preview(path: str, ext: str) -> tuple[str, bool]:
+    if ext == "docx":
+        text = _docx_text(path)
+        return _limit_preview_text(text)
+    if ext == "xlsx":
+        text, rows_truncated = _xlsx_text(path)
+        text, chars_truncated = _limit_preview_text(text)
+        return text, rows_truncated or chars_truncated
+    if ext == "pptx":
+        text = _pptx_text(path)
+        return _limit_preview_text(text)
+    if ext in {"odt", "ods", "odp"}:
+        text = _open_document_text(path)
+        return _limit_preview_text(text)
+    return "", False
+
+
+def _render_archive_preview(file, download_endpoint: str):
+    disk_path = _archive_disk_path(file)
+    if not disk_path:
+        abort(404)
+
+    ext = _archive_extension(file)
+    mime_type = _archive_mimetype(file)
+    mime_compare = mime_type.lower().split(";", 1)[0].strip()
+
+    if ext == "pdf" or mime_compare == "application/pdf":
+        return send_file(
+            disk_path,
+            mimetype="application/pdf",
+            as_attachment=False,
+            download_name=file.original_name,
+            conditional=True,
+        )
+
+    if ext in IMAGE_PREVIEW_EXTENSIONS or mime_compare.startswith("image/"):
+        return send_file(
+            disk_path,
+            mimetype=mime_type,
+            as_attachment=False,
+            download_name=file.original_name,
+            conditional=True,
+        )
+
+    if ext in TEXT_PREVIEW_EXTENSIONS or mime_compare.startswith("text/"):
+        preview_text, truncated = _read_text_preview(disk_path, ext)
+        return render_template(
+            "archive/preview_text.html",
+            file=file,
+            preview_text=preview_text,
+            truncated=truncated,
+            preview_note=None,
+            download_endpoint=download_endpoint,
+        )
+
+    if ext in OFFICE_TEXT_PREVIEW_EXTENSIONS:
+        try:
+            preview_text, truncated = _office_text_preview(disk_path, ext)
+        except (KeyError, OSError, ET.ParseError, zipfile.BadZipFile):
+            preview_text, truncated = "", False
+
+        if preview_text.strip():
+            return render_template(
+                "archive/preview_text.html",
+                file=file,
+                preview_text=preview_text,
+                truncated=truncated,
+                preview_note="تم استخراج النص للقراءة السريعة، وقد لا يحافظ على تنسيق الملف الأصلي.",
+                download_endpoint=download_endpoint,
+            )
+
+    return render_template(
+        "archive/preview_unavailable.html",
+        file=file,
+        file_ext=ext.upper() if ext else "",
+        mime_type=mime_type,
+        download_endpoint=download_endpoint,
+    )
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -910,8 +1187,12 @@ def download_file(file_id):
     if perm and not perm.can_download:
         abort(403)
 
+    disk_path = _archive_disk_path(file)
+    if not disk_path:
+        abort(404)
+
     return send_file(
-        file.file_path,
+        disk_path,
         as_attachment=True,
         download_name=file.original_name
     )
@@ -940,13 +1221,7 @@ def preview_file(file_id):
     if perm and not perm.can_download:
         abort(403)
 
-    return send_file(
-        file.file_path,
-        mimetype=file.mime_type or "application/octet-stream",
-        as_attachment=False,
-        download_name=file.original_name,
-        conditional=True
-    )
+    return _render_archive_preview(file, "archive.download_file")
 
 
 # =========================
@@ -1219,12 +1494,13 @@ def super_trash_download(file_id):
     if not getattr(f, "is_final_deleted", False):
         abort(404)
 
-    if not f.file_path or not os.path.exists(f.file_path):
+    disk_path = _archive_disk_path(f)
+    if not disk_path:
         flash("ملف التخزين غير موجود على القرص.", "danger")
         return redirect(url_for("archive.super_trash"))
 
     return send_file(
-        f.file_path,
+        disk_path,
         as_attachment=True,
         download_name=f.original_name,
         mimetype=f.mime_type or "application/octet-stream",
@@ -1241,17 +1517,11 @@ def super_trash_preview(file_id):
     if not getattr(f, "is_final_deleted", False):
         abort(404)
 
-    if not f.file_path or not os.path.exists(f.file_path):
+    if not _archive_disk_path(f):
         flash("ملف التخزين غير موجود على القرص.", "danger")
         return redirect(url_for("archive.super_trash"))
 
-    # inline preview
-    return send_file(
-        f.file_path,
-        as_attachment=False,
-        download_name=f.original_name,
-        mimetype=f.mime_type or "application/octet-stream",
-    )
+    return _render_archive_preview(f, "archive.super_trash_download")
 
 
 @archive_bp.route("/super-trash/restore-to-bin/<int:file_id>", methods=["POST"])

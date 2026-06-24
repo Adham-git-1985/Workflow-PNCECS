@@ -77,7 +77,7 @@
                       <span class="text-muted">{{ r._target_label }}</span>
                     {% endif %}
                   {% else %}
-                    <span class="text-muted small">{{ r.target_type }}{% if r.target_id %}:{{ r.target_id }}{% endif %}</span>
+                    <span class="text-muted small">{{ r.target_type|ui_label }}{% if r.target_id %}:{{ r.target_id }}{% endif %}</span>
                   {% endif %}
                 </div>
                 <div class="small text-muted">

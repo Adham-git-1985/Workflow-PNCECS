@@ -72,7 +72,7 @@
         <div class="col-md-2">
           <label class="form-label fw-bold">Kind</label>
           <select class="form-select" name="kind" id="member_kind">
-            <option value="USER" selected>USER</option>
+            <option value="USER" selected>مستخدم</option>
             <option value="ROLE">ROLE</option>
           </select>
         </div>
@@ -140,7 +140,7 @@
                 <td>{{ m.id }}</td>
                 <td>
                   {% if (m.kind or '')|upper == 'USER' %}
-                    <span class="badge bg-primary">USER</span>
+                    <span class="badge bg-primary">مستخدم</span>
                   {% else %}
                     <span class="badge bg-secondary">ROLE</span>
                   {% endif %}

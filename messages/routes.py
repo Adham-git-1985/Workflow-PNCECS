@@ -404,6 +404,7 @@ def view_message(message_id):
     # Optional: detect known internal links and show quick action buttons.
     payslip_url = None
     workflow_url = None
+    meeting_url = None
     try:
         if rec and msg and msg.body:
             m = re.search(r"/portal/hr/me/payslips/(\d+)/view", msg.body)
@@ -421,10 +422,19 @@ def view_message(message_id):
     except Exception:
         workflow_url = None
 
+    try:
+        if msg and msg.body:
+            m = re.search(r"/portal/meetings/(\d+)", msg.body)
+            if m:
+                meeting_url = url_for("portal.meeting_view", meeting_id=int(m.group(1)))
+    except Exception:
+        meeting_url = None
+
     return render_template(
         "messages/view.html",
         rec=rec,
         msg=msg,
         payslip_url=payslip_url,
         workflow_url=workflow_url,
+        meeting_url=meeting_url,
     )

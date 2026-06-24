@@ -2763,6 +2763,10 @@ def view_request(request_id):
             return 'رفع من الأرشيف'
         if s == 'MANUAL_UPLOAD':
             return 'رفع يدوي'
+        if s == 'CORRESPONDENCE_CARD':
+            return 'بطاقة PDF للمعاملة'
+        if s == 'CORRESPONDENCE':
+            return 'مرفق معاملة'
         if s == 'NOTE_COMMENT':
             return 'تعليق'
         if s == 'NOTE_REPLY':
@@ -3018,6 +3022,10 @@ def request_attachments(request_id):
             return "رفع من الأرشيف"
         if s == "MANUAL_UPLOAD":
             return "رفع يدوي"
+        if s == "CORRESPONDENCE_CARD":
+            return "بطاقة PDF للمعاملة"
+        if s == "CORRESPONDENCE":
+            return "مرفق معاملة"
         if s == "NOTE_COMMENT":
             return "تعليق"
         if s == "NOTE_REPLY":

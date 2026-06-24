@@ -1154,6 +1154,7 @@ def _corr_workflow_description(kind: str, label: str, item, attachments: list[Co
         f"جهة الاختصاص: {getattr(item, 'competence_label', None) or '-'}",
         f"الموضوع: {getattr(item, 'subject', None) or '-'}",
         f"عدد المرفقات: {len(attachments or [])}",
+        "بطاقة PDF: مرفقة تلقائيًا",
     ]
     body = (getattr(item, "body", None) or "").strip()
     if body:
@@ -1161,6 +1162,117 @@ def _corr_workflow_description(kind: str, label: str, item, attachments: list[Co
         lines.append("نص المعاملة:")
         lines.append(body)
     return "\n".join(lines)
+
+
+def _corr_card_display_name(label: str, ref: str | int | None) -> str:
+    ref_text = re.sub(r"[\\/]+", "-", str(ref or "").strip()).strip()
+    if ref_text:
+        return f"بطاقة PDF - {label} {ref_text}.pdf"
+    return f"بطاقة PDF - {label}.pdf"
+
+
+def _corr_card_description(kind: str, label: str, item) -> str:
+    party_title, party_value = _corr_item_party(kind, item)
+    return "\n".join([
+        f"المصدر: البوابة الإدارية - بطاقة PDF لسجل {label}",
+        f"نوع المعاملة: {label}",
+        f"رقم المعاملة: {_corr_item_ref(item) or '-'}",
+        f"تاريخ المعاملة: {_corr_item_date(kind, item) or '-'}",
+        f"التصنيف: {getattr(item, 'category', None) or '-'}",
+        f"{party_title}: {party_value or '-'}",
+        f"جهة الاختصاص: {getattr(item, 'competence_label', None) or '-'}",
+        f"الموضوع: {getattr(item, 'subject', None) or '-'}",
+    ])
+
+
+def _corr_card_owner_and_department(item) -> tuple[int | None, int | None]:
+    owner_id = (
+        getattr(item, "created_by_id", None)
+        or _corr_current_user_id()
+    )
+    owner = None
+    if owner_id:
+        try:
+            owner = User.query.get(int(owner_id))
+        except Exception:
+            owner = None
+    if not owner:
+        owner = User.query.order_by(User.id.asc()).first()
+        owner_id = getattr(owner, "id", None)
+
+    dept_id = None
+    try:
+        if getattr(current_user, "is_authenticated", False):
+            dept_id = getattr(current_user, "department_id", None)
+    except Exception:
+        dept_id = None
+    if not dept_id and owner:
+        dept_id = getattr(owner, "department_id", None)
+    return owner_id, dept_id
+
+
+def _corr_item_url(kind: str, item) -> str:
+    endpoint = "portal.inbound_view" if kind == "IN" else "portal.outbound_view"
+    arg_name = "inbound_id" if kind == "IN" else "outbound_id"
+    try:
+        if has_request_context():
+            return url_for(endpoint, **{arg_name: item.id}, _external=True)
+    except Exception:
+        pass
+    return ""
+
+
+def _ensure_corr_card_archived(kind: str, label: str, item) -> ArchivedFile | None:
+    """Generate the correspondence card PDF and save it as a workflow attachment."""
+    try:
+        owner_id, dept_id = _corr_card_owner_and_department(item)
+        if not owner_id:
+            return None
+
+        ref = _corr_item_ref(item) or getattr(item, "id", "")
+        _party_title, party_value = _corr_item_party(kind, item)
+        card_buffer = _build_corr_card_pdf(
+            kind,
+            ref or f"#{getattr(item, 'id', '')}",
+            _corr_item_date(kind, item),
+            party_value,
+            getattr(item, "category", None) or "",
+            getattr(item, "subject", None) or "",
+            getattr(item, "body", None),
+            _corr_item_url(kind, item),
+            getattr(item, "competence_label", None) or "",
+        )
+
+        stored_name = f"corr_{kind.lower()}_card_{getattr(item, 'id', 'new')}_{uuid.uuid4().hex}.pdf"
+        archive_path = os.path.join(_corr_archive_storage_dir(), stored_name)
+        with open(archive_path, "wb") as handle:
+            handle.write(card_buffer.getvalue())
+
+        archived = ArchivedFile(
+            original_name=_corr_card_display_name(label, ref),
+            stored_name=stored_name,
+            description=_corr_card_description(kind, label, item),
+            file_path=archive_path,
+            mime_type="application/pdf",
+            file_size=os.path.getsize(archive_path),
+            owner_id=int(owner_id),
+            department_id=dept_id,
+            visibility="workflow",
+        )
+        db.session.add(archived)
+        db.session.flush()
+        db.session.add(AuditLog(
+            user_id=_corr_current_user_id(owner_id),
+            action="CORR_ARCHIVE_LINK",
+            note=f"{label} id={getattr(item, 'id', '')} بطاقة PDF archived_file_id={archived.id}",
+            target_type="ARCHIVE_FILE",
+            target_id=archived.id,
+            created_at=datetime.utcnow(),
+        ))
+        return archived
+    except Exception:
+        current_app.logger.exception("Failed to generate/archive correspondence card PDF")
+        return None
 
 
 def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], template_id: str | None):
@@ -1176,13 +1288,18 @@ def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], tem
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return None
 
-    archived_files = _ensure_corr_attachments_archived(attachments)
-    if not archived_files:
-        flash("لا يوجد مرفقات مؤرشفة لبدء المسار.", "danger")
-        return None
-
     label = "وارد" if kind == "IN" else "صادر"
     ref = _corr_item_ref(item) or getattr(item, "id", "")
+    card_archived = _ensure_corr_card_archived(kind, label, item)
+    archived_files = []
+    if card_archived:
+        archived_files.append(card_archived)
+    archived_files.extend(_ensure_corr_attachments_archived(attachments))
+
+    if not archived_files:
+        flash("تعذر تجهيز مرفقات المسار أو بطاقة PDF.", "danger")
+        return None
+
     subject = (getattr(item, "subject", "") or "").strip()
     title = f"مسار {label} رقم {ref}: {subject}".strip()
     if len(title) > 200:
@@ -1198,12 +1315,13 @@ def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], tem
     db.session.flush()
 
     for archived in archived_files:
+        source = "CORRESPONDENCE_CARD" if card_archived and archived.id == card_archived.id else "CORRESPONDENCE"
         db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
         db.session.add(AuditLog(
             request_id=req.id,
             user_id=current_user.id,
             action="WORKFLOW_ATTACHMENT_UPLOADED",
-            note=f"Attachment: {archived.original_name} | file_id={archived.id} | source=CORRESPONDENCE",
+            note=f"Attachment: {archived.original_name} | file_id={archived.id} | source={source}",
             target_type="ARCHIVE_FILE",
             target_id=archived.id,
             created_at=datetime.utcnow(),
@@ -1383,6 +1501,9 @@ MEETING_TASK_STATUS_LABELS = {
 
 MEETING_ATTENDANCE_LABELS = {
     "INVITED": "مدعو",
+    "ACCEPTED": "قبل الدعوة",
+    "DECLINED": "رفض الدعوة",
+    "PROPOSED": "اقترح موعدًا جديدًا",
     "ATTENDED": "حضر",
     "ABSENT": "غائب",
     "EXCUSED": "معتذر",
@@ -1555,6 +1676,11 @@ def _meeting_when_label(row: PortalMeeting) -> str:
 
 
 def _meeting_message_body(row: PortalMeeting, intro: str) -> str:
+    try:
+        meeting_link = url_for("portal.meeting_view", meeting_id=row.id, _external=True)
+    except Exception:
+        meeting_link = url_for("portal.meeting_view", meeting_id=row.id)
+
     lines = [
         intro,
         "",
@@ -1572,9 +1698,32 @@ def _meeting_message_body(row: PortalMeeting, intro: str) -> str:
         lines.extend([f"- {title}" for title in agenda])
     lines.extend([
         "",
-        "يمكن متابعة تفاصيل الاجتماع من البوابة الإدارية > الاجتماعات.",
+        "رابط فتح الاجتماع:",
+        meeting_link,
     ])
     return "\n".join(lines)
+
+
+def _meeting_current_participant(row: PortalMeeting):
+    uid = getattr(current_user, "id", None)
+    if not uid:
+        return None
+    try:
+        for participant in row.participants or []:
+            if int(getattr(participant, "user_id", 0) or 0) == int(uid):
+                return participant
+    except Exception:
+        return None
+    return None
+
+
+def _meeting_response_note(status: str, reason: str, proposed_at: datetime | None) -> str | None:
+    parts = []
+    if status == "PROPOSED" and proposed_at:
+        parts.append(f"الموعد المقترح: {proposed_at.strftime('%Y-%m-%d %H:%M')}")
+    if reason:
+        parts.append(f"السبب: {reason}")
+    return " | ".join(parts)[:300] if parts else None
 
 
 def _send_due_meeting_reminders() -> int:
@@ -3077,21 +3226,87 @@ def meeting_new():
 
 @portal_bp.route("/meetings/<int:meeting_id>")
 @login_required
-@_perm_any(PORTAL_READ, PORTAL_MEETINGS_MANAGE)
 def meeting_view(meeting_id: int):
     _send_due_meeting_reminders()
     row = PortalMeeting.query.get_or_404(meeting_id)
     if not _meeting_can_access(row):
         abort(403)
+    current_participant = _meeting_current_participant(row)
     return render_template(
         "portal/meetings/view.html",
         row=row,
         users=_meeting_user_options(),
         can_manage=_meeting_manage_allowed(),
+        current_participant=current_participant,
         status_labels=MEETING_STATUS_LABELS,
         task_status_labels=MEETING_TASK_STATUS_LABELS,
         attendance_labels=MEETING_ATTENDANCE_LABELS,
     )
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/invitation-response", methods=["POST"])
+@login_required
+def meeting_invitation_response(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    participant = _meeting_current_participant(row)
+    if not participant:
+        abort(403)
+    if not _meeting_can_access(row):
+        abort(403)
+
+    response = (request.form.get("response") or "").strip().upper()
+    reason = (request.form.get("reason") or "").strip()
+    proposed_at = _parse_dt_local(request.form.get("proposed_at"))
+
+    allowed = {"ACCEPTED", "DECLINED", "PROPOSED"}
+    if response not in allowed:
+        flash("يرجى اختيار رد صحيح على الدعوة.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    if response in {"DECLINED", "PROPOSED"} and not reason:
+        flash("يرجى كتابة السبب عند الرفض أو اقتراح موعد جديد.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    if response == "PROPOSED" and not proposed_at:
+        flash("يرجى تحديد الموعد المقترح.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    participant.attendance_status = response
+    participant.note = _meeting_response_note(response, reason, proposed_at)
+
+    actor_label = current_user.full_name or current_user.email or f"#{current_user.id}"
+    label = MEETING_ATTENDANCE_LABELS.get(response, response)
+    try:
+        meeting_link = url_for("portal.meeting_view", meeting_id=row.id, _external=True)
+    except Exception:
+        meeting_link = url_for("portal.meeting_view", meeting_id=row.id)
+
+    owner_id = getattr(row, "created_by_user_id", None)
+    if owner_id and int(owner_id) != int(current_user.id):
+        body_lines = [
+            f"رد {actor_label} على دعوة الاجتماع.",
+            "",
+            f"الاجتماع: {row.title}",
+            f"الرد: {label}",
+        ]
+        if proposed_at:
+            body_lines.append(f"الموعد المقترح: {proposed_at.strftime('%Y-%m-%d %H:%M')}")
+        if reason:
+            body_lines.extend(["", "السبب:", reason])
+        body_lines.extend(["", "رابط فتح الاجتماع:", meeting_link])
+
+        _meeting_notify_users(
+            [owner_id],
+            f"رد على دعوة اجتماع: {row.title} - {label}",
+            level="INFO",
+            subject=f"رد على دعوة اجتماع: {row.title}",
+            body="\n".join(body_lines),
+            sender_id=getattr(current_user, "id", None),
+        )
+
+    db.session.commit()
+    flash("تم حفظ ردك على دعوة الاجتماع.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
 
 @portal_bp.route("/meetings/<int:meeting_id>/status", methods=["POST"])
@@ -16815,9 +17030,6 @@ def inbound_start_workflow(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
-    if not attachments:
-        flash("لا يوجد مرفقات لبدء مسار لهذه المعاملة.", "warning")
-        return redirect(url_for("portal.inbound_view", inbound_id=item.id))
     try:
         req = _start_corr_workflow("IN", item, attachments, request.form.get("template_id"))
         if req:
@@ -16835,9 +17047,6 @@ def outbound_start_workflow(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
-    if not attachments:
-        flash("لا يوجد مرفقات لبدء مسار لهذه المعاملة.", "warning")
-        return redirect(url_for("portal.outbound_view", outbound_id=item.id))
     try:
         req = _start_corr_workflow("OUT", item, attachments, request.form.get("template_id"))
         if req:

@@ -208,7 +208,7 @@
   {% if k == "ROLE" %}
     <span class="badge bg-secondary">ROLE</span> {{ s.approver_role }}
   {% elif k == "USER" %}
-    <span class="badge bg-secondary">USER</span>
+    <span class="badge bg-secondary">مستخدم</span>
     {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
       {{ users_map.get(s.approver_user_id).email }}
     {% else %}

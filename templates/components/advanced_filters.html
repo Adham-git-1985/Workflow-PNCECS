@@ -2,7 +2,7 @@
 
   <div class="card-header d-flex justify-content-between align-items-center">
     <div>
-      <strong>🔍 Advanced الفلاتر</strong>
+      <strong>🔍 الفلاتر المتقدمة</strong>
       <small class="text-muted d-block">تصفية الطلبات بدقة</small>
     </div>
     <button type="button"
@@ -65,15 +65,15 @@
           <option value="">الكل</option>
           <option value="ON_TRACK"
             {% if request.args.get("sla_state") == "ON_TRACK" %}selected{% endif %}>
-            On Track
+            ضمن المسار
           </option>
           <option value="BREACHED"
             {% if request.args.get("sla_state") == "BREACHED" %}selected{% endif %}>
-            Breached
+            متجاوز
           </option>
           <option value="ESCALATED"
             {% if request.args.get("sla_state") == "ESCALATED" %}selected{% endif %}>
-            Escalated
+            مصعّد
           </option>
         </select>
       </div>

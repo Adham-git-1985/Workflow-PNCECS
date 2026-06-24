@@ -417,6 +417,27 @@ def system_timeline():
             .filter(WorkflowRequest.id.in_(page_request_ids))
             .all()
         )
+        instances = (
+            WorkflowInstance.query
+            .filter(WorkflowInstance.request_id.in_(page_request_ids))
+            .all()
+        )
+        instance_by_request = {
+            int(inst.request_id): inst
+            for inst in instances
+            if getattr(inst, "request_id", None) is not None
+        }
+        template_ids = {
+            int(inst.template_id)
+            for inst in instances
+            if getattr(inst, "template_id", None) is not None
+        }
+        templates_by_id = {}
+        if template_ids:
+            templates_by_id = {
+                int(t.id): t
+                for t in WorkflowTemplate.query.filter(WorkflowTemplate.id.in_(template_ids)).all()
+            }
 
         # start/end timestamps from audit logs (fast enough for current page)
         se_logs = (
@@ -446,18 +467,34 @@ def system_timeline():
             if al.action == "WORKFLOW_COMPLETED":
                 completed[rid] = al.created_at
 
-        for r in reqs:
-            tpl = None
+        template_name_from_logs = {}
+        corr_start_logs = (
+            AuditLog.query
+            .filter(AuditLog.request_id.in_(page_request_ids))
+            .filter(AuditLog.action == "CORR_WORKFLOW_START")
+            .order_by(AuditLog.created_at.asc())
+            .all()
+        )
+        for al in corr_start_logs:
             try:
-                tpl = r.workflow_instance.template if r.workflow_instance else None
+                rid = int(al.request_id)
             except Exception:
-                tpl = None
+                continue
+            note = str(al.note or "")
+            match = re.search(r"(?:^|\s)template=([^|]+)$", note)
+            if match and rid not in template_name_from_logs:
+                template_name_from_logs[rid] = match.group(1).strip()
+
+        for r in reqs:
+            inst = instance_by_request.get(int(r.id))
+            tpl_id = getattr(inst, "template_id", None) if inst else None
+            tpl = templates_by_id.get(int(tpl_id)) if tpl_id is not None else None
 
             rt = getattr(r, 'request_type', None)
             request_meta[int(r.id)] = {
                 "request_type": (f"{rt.code} - {rt.name_ar}" if rt else ""),
-                "template_name": (tpl.name if tpl else ""),
-                "template_id": (tpl.id if tpl else None),
+                "template_name": (tpl.name if tpl else template_name_from_logs.get(int(r.id), "")),
+                "template_id": (tpl.id if tpl else (int(tpl_id) if tpl_id is not None else None)),
                 "started_at": started.get(int(r.id)),
                 "completed_at": completed.get(int(r.id)),
             }

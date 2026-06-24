@@ -149,18 +149,18 @@
                   {% if log.target_type in ['WorkflowRequest','WORKFLOW_REQUEST'] %}
                     📄
                     {% if log.target_id in existing_request_ids %}
-                      <a href="{{ url_for('workflow.view_request', request_id=log.target_id) }}">Request #{{ log.target_id }}</a>
+                      <a href="{{ url_for('workflow.view_request', request_id=log.target_id) }}">طلب #{{ log.target_id }}</a>
                     {% else %}
-                      <a href="{{ url_for('audit.deleted_request_snapshot', request_id=log.target_id) }}">Request #{{ log.target_id }} (محذوف)</a>
+                      <a href="{{ url_for('audit.deleted_request_snapshot', request_id=log.target_id) }}">طلب #{{ log.target_id }} (محذوف)</a>
                     {% endif %}
                   {% elif log.target_type in ['ArchivedFile','ARCHIVE_FILE'] %}
-                    🗂️ <a href="{{ url_for('archive.file_details', file_id=log.target_id) }}">Archived File #{{ log.target_id }}</a>
+                    🗂️ <a href="{{ url_for('archive.file_details', file_id=log.target_id) }}">ملف مؤرشف #{{ log.target_id }}</a>
                   {% elif log.target_type == 'User' %}
-                    👤 User #{{ log.target_id }}
+                    👤 مستخدم #{{ log.target_id }}
                   {% elif log.target_type == 'Message' %}
-                    ✉️ Message #{{ log.target_id }}
+                    ✉️ رسالة #{{ log.target_id }}
                   {% else %}
-                    {{ log.target_type }} #{{ log.target_id }}
+                    {{ log.target_type|ui_label }} #{{ log.target_id }}
                   {% endif %}
                 </div>
               {% endif %}
@@ -171,9 +171,11 @@
               {% set m = request_meta.get(rid|int) %}
               <div class="mt-1 small">
                 <span class="text-muted">الطلب:</span>
-                <span class="badge bg-secondary">{{ m.request_type }}</span>
+                <span class="badge bg-secondary">{{ m.request_type or 'مسار' }}</span>
                 <span class="text-muted ms-2">المسار:</span>
-                <span class="badge bg-dark">{{ m.template_name }} (#{{ m.template_id }})</span>
+                <span class="badge bg-dark">
+                  {{ m.template_name or 'غير محدد' }}{% if m.template_id %} (#{{ m.template_id }}){% endif %}
+                </span>
                 {% set tm = (request_times|default({})).get(rid|int) %}
                 {% if tm and (tm.get('started_at') or tm.get('completed_at')) %}
                   <span class="text-muted ms-2">•</span>
@@ -194,22 +196,6 @@
               {% endif %}
             </div>
 
-            {% set rid = log.request_id or (log.target_id if (log.target_type in ['WorkflowRequest','WORKFLOW_REQUEST'] and log.target_id) else None) %}
-            {% if rid and request_meta.get(rid|int) %}
-              {% set m = request_meta.get(rid|int) %}
-              <div class="mt-1 small">
-                <span class="text-muted">الطلب:</span>
-                <span class="badge bg-secondary">{{ m.request_type }}</span>
-                <span class="text-muted ms-2">المسار:</span>
-                <span class="badge bg-dark">{{ m.template_name }} (#{{ m.template_id }})</span>
-                {% set tm = (request_times|default({})).get(rid|int) %}
-                {% if tm and (tm.get('started_at') or tm.get('completed_at')) %}
-                  <span class="text-muted ms-2">•</span>
-                  {% if tm.get('started_at') %}<span class="text-muted">إرسال:</span> <span>{{ tm.get('started_at').strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
-                  {% if tm.get('completed_at') %}<span class="text-muted ms-2">انتهاء:</span> <span>{{ tm.get('completed_at').strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
-                {% endif %}
-              </div>
-            {% endif %}
           </div>
         {% endfor %}
       </div>

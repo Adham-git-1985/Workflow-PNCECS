@@ -168,6 +168,22 @@
   <div class="col-12 col-xl-4">
     <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
       <h5 class="mb-3"><i class="bi bi-people"></i> المشاركون</h5>
+      {% if current_participant and row.status == 'SCHEDULED' %}
+        <div class="alert alert-info mb-3">
+          <div class="fw-bold mb-2">ردك على دعوة الاجتماع</div>
+          <form method="post" action="{{ url_for('portal.meeting_invitation_response', meeting_id=row.id) }}" class="vstack gap-2">
+            <select class="form-select" name="response" data-meeting-response-select>
+              <option value="ACCEPTED" {% if current_participant.attendance_status == 'ACCEPTED' %}selected{% endif %}>قبول الدعوة</option>
+              <option value="DECLINED" {% if current_participant.attendance_status == 'DECLINED' %}selected{% endif %}>رفض الدعوة</option>
+              <option value="PROPOSED" {% if current_participant.attendance_status == 'PROPOSED' %}selected{% endif %}>اقتراح موعد جديد</option>
+            </select>
+            <input class="form-control" type="datetime-local" name="proposed_at" data-meeting-proposed-at>
+            <textarea class="form-control" name="reason" rows="2" maxlength="260" placeholder="السبب عند الرفض أو اقتراح موعد جديد">{{ current_participant.note or '' }}</textarea>
+            <button class="btn btn-primary" type="submit">إرسال الرد</button>
+          </form>
+          <div class="small text-muted mt-2">سيتم إشعار منظم الاجتماع بردك.</div>
+        </div>
+      {% endif %}
       {% if can_manage %}
         <form method="post" action="{{ url_for('portal.meeting_update_participants', meeting_id=row.id) }}" class="mb-3">
           <select class="form-select" name="participant_ids" multiple size="9">
@@ -202,8 +218,13 @@
         <div class="list-group list-group-flush">
           {% for p in row.participants %}
             <div class="list-group-item px-0 d-flex justify-content-between gap-2">
-              <span>{{ p.user.name if p.user else p.user_id }}</span>
-              <span class="badge text-bg-light border">{{ attendance_labels.get(p.attendance_status, p.attendance_status) }}</span>
+              <div>
+                <div>{{ p.user.name if p.user else p.user_id }}</div>
+                {% if p.note %}
+                  <div class="small text-muted">{{ p.note }}</div>
+                {% endif %}
+              </div>
+              <span class="badge text-bg-light border align-self-start">{{ attendance_labels.get(p.attendance_status, p.attendance_status) }}</span>
             </div>
           {% endfor %}
         </div>
@@ -263,4 +284,21 @@
     </div>
   </div>
 </div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var select = document.querySelector('[data-meeting-response-select]');
+    var proposed = document.querySelector('[data-meeting-proposed-at]');
+    if (!select || !proposed) return;
+
+    function syncProposedField() {
+      var isProposed = select.value === 'PROPOSED';
+      proposed.style.display = isProposed ? '' : 'none';
+      proposed.required = isProposed;
+    }
+
+    select.addEventListener('change', syncProposedField);
+    syncProposedField();
+  });
+</script>
 {% endblock %}

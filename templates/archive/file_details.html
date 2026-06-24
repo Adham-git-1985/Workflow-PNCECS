@@ -26,23 +26,23 @@
 
           <div class="chips mt-3">
             {% if file.is_deleted %}
-              <span class="chip danger"><span class="dot"></span>Deleted</span>
+              <span class="chip danger"><span class="dot"></span>محذوف</span>
             {% else %}
-              <span class="chip success"><span class="dot"></span>Active</span>
+              <span class="chip success"><span class="dot"></span>نشط</span>
             {% endif %}
 
             {% if file.is_signed %}
-              <span class="chip success"><span class="dot"></span>Signed</span>
+              <span class="chip success"><span class="dot"></span>موقّع</span>
             {% else %}
-              <span class="chip"><span class="dot"></span>Unsigned</span>
+              <span class="chip"><span class="dot"></span>غير موقّع</span>
             {% endif %}
 
             {% if file.visibility %}
-              <span class="chip info"><span class="dot"></span>{{ file.visibility }}</span>
+              <span class="chip info"><span class="dot"></span>{{ file.visibility|ui_label }}</span>
             {% endif %}
 
             {% if shared_with %}
-              <span class="chip info"><span class="dot"></span>🤝 Shared: <strong>{{ shared_with|length }}</strong></span>
+              <span class="chip info"><span class="dot"></span>🤝 مشاركات: <strong>{{ shared_with|length }}</strong></span>
             {% endif %}
           </div>
         </div>
@@ -90,18 +90,13 @@
               <iframe src="{{ url_for('archive.preview_file', file_id=file.id) }}"
                       width="100%" height="650" style="border:none;"></iframe>
 
-            {% elif file.file_type in ["JPG", "PNG"] %}
+            {% elif file.file_type in ["JPG", "JPEG", "PNG", "GIF", "WEBP", "BMP", "TIF", "TIFF"] %}
               <img src="{{ url_for('archive.preview_file', file_id=file.id) }}"
                    class="img-fluid rounded">
 
             {% else %}
-              <div class="text-center py-5">
-                <i class="bi bi-file-earmark-text fs-1"></i>
-                <p class="mt-3">لا تتوفر معاينة مباشرة لهذا النوع</p>
-                <a href="{{ url_for('archive.download_file', file_id=file.id) }}" class="btn btn-primary btn-neo">
-                  ⬇️ تحميل الملف
-                </a>
-              </div>
+              <iframe src="{{ url_for('archive.preview_file', file_id=file.id) }}"
+                      width="100%" height="650" style="border:none;"></iframe>
             {% endif %}
           </div>
         </div>
@@ -130,7 +125,7 @@
               </tr>
               <tr>
                 <th>الصلاحية</th>
-                <td>{{ file.visibility or "—" }}</td>
+                <td>{{ file.visibility|ui_label if file.visibility else "—" }}</td>
               </tr>
             </table>
           </div>

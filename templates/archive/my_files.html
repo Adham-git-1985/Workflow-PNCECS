@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}MY_FILES{% endblock %}
+{% block title %}ملفاتي{% endblock %}
 
 {% block extra_css %}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/archive.css') }}?v=20260624-filter">
@@ -13,7 +13,7 @@
     <div class="archive-hero mb-4">
       <div class="hero-inner d-flex flex-column flex-lg-row justify-content-between align-items-start gap-3">
         <div>
-          <h3 class="archive-title mb-1">🗂️ MY_FILES</h3>
+          <h3 class="archive-title mb-1">🗂️ ملفاتي</h3>
           <div class="archive-submeta">
             {{ current_user.email }} · {{ current_user.role }} · الدائرة: {{ current_user.department_id or "غير محددة" }}
           </div>
@@ -27,10 +27,11 @@
 
           <div class="chips">
           {% if counters %}
+            {% set counter_labels = {'total': 'الإجمالي', 'mine': 'ملفاتي', 'shared': 'مشترك معي'} %}
             {% for k, v in counters.items() %}
               <span class="chip info">
                 <span class="dot"></span>
-                <span>{{ k }}: <strong>{{ v }}</strong></span>
+                <span>{{ counter_labels.get(k, k|ui_label) }}: <strong>{{ v }}</strong></span>
               </span>
             {% endfor %}
           {% endif %}
@@ -68,21 +69,21 @@
                   <span class="chip success"><span class="dot"></span>موقّع</span>
                 {% endif %}
                 {% if f.id in delegated_files %}
-                  <span class="chip warn"><span class="dot"></span>Delegated</span>
+                  <span class="chip warn"><span class="dot"></span>مفوّض</span>
                 {% endif %}
                 {% if shared_count.get(f.id, 0) > 0 %}
                   <span class="chip info">
                     <span class="dot"></span>
-                    🤝 Shared: <strong>{{ shared_count[f.id] }}</strong>
+                    🤝 مشاركات: <strong>{{ shared_count[f.id] }}</strong>
                   </span>
                 {% endif %}
                 {% if shared_by_map.get(f.id) and f.owner_id != current_user.id %}
                   <a class="chip info" href="{{ url_for('archive.shared_by', file_id=f.id) }}">
-                    <span class="dot"></span>Shared by: <strong>{{ shared_by_map[f.id] }}</strong>
+                    <span class="dot"></span>تمت المشاركة بواسطة: <strong>{{ shared_by_map[f.id] }}</strong>
                   </a>
                 {% endif %}
                 {% if f.visibility %}
-                  <span class="chip"><span class="dot"></span>{{ f.visibility }}</span>
+                  <span class="chip"><span class="dot"></span>{{ f.visibility|ui_label }}</span>
                 {% endif %}
               </div>
             </div>
@@ -103,19 +104,19 @@
             {% if not f.is_deleted %}
               <a class="btn btn-sm btn-outline-primary btn-neo"
                  href="{{ url_for('archive.download_file', file_id=f.id) }}">
-                ⬇️ Download
+                ⬇️ تنزيل
               </a>
 
               <a class="btn btn-sm btn-outline-warning btn-neo"
                  href="{{ url_for('archive.share_file', file_id=f.id) }}">
-                🤝 Share
+                🤝 مشاركة
               </a>
 
               {% if current_user.has_role("ADMIN") or f.owner_id == current_user.id %}
                 <form method="post"
                       action="{{ url_for('archive.delete_file', file_id=f.id) }}"
                       onsubmit="return confirm('هل أنت متأكد من حذف الملف؟');">
-                  <button class="btn btn-sm btn-outline-danger btn-neo">🗑️ Delete</button>
+                  <button class="btn btn-sm btn-outline-danger btn-neo">🗑️ حذف</button>
                 </form>
               {% endif %}
 
@@ -126,7 +127,7 @@
                 </form>
               {% endif %}
             {% else %}
-              <span class="text-muted">Unavailable</span>
+              <span class="text-muted">غير متاح</span>
             {% endif %}
           </div>
         </div>

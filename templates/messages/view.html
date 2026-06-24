@@ -64,6 +64,18 @@
         </div>
         {% endif %}
 
+        {% if meeting_url %}
+        <div class="col-12">
+          <div class="alert alert-primary d-flex justify-content-between align-items-center flex-wrap mb-0">
+            <div>
+              <span class="fw-semibold">اجتماع مرتبط:</span>
+              <span>يمكنك فتح الاجتماع والرد على الدعوة مباشرة.</span>
+            </div>
+            <a class="btn btn-sm btn-primary" href="{{ meeting_url }}">فتح الاجتماع</a>
+          </div>
+        </div>
+        {% endif %}
+
         <div class="col-12">
           <hr>
           <div style="white-space:pre-wrap; line-height:1.8">{{ msg.body }}</div>
