@@ -941,7 +941,9 @@ def _allowed_file(filename: str) -> bool:
     return ext in ALLOWED_CORR_EXTS
 
 def _corr_stamp_options(kind: str, ref_no: str | None, default_date: str | None) -> CorrStampOptions:
-    enabled = (request.form.get("apply_stamp") or "").strip().lower() in {"1", "on", "true", "yes"}
+    apply_value = (request.form.get("apply_stamp") or "").strip().lower()
+    has_stamp_control = "apply_stamp_present" in request.form
+    enabled = (apply_value in {"1", "on", "true", "yes"}) or (not has_stamp_control and apply_value == "")
     stamp_date = (request.form.get("stamp_date") or default_date or "").strip()
     return CorrStampOptions(
         enabled=enabled,
@@ -16848,6 +16850,69 @@ def outbound_delete(outbound_id: int):
     flash("تم حذف الصادر.", "success")
     return redirect(url_for("portal.outbound_list"))
 
+
+def _ensure_corr_attachment_file_stamped(att: CorrAttachment, file_path: str) -> bool:
+    """Best-effort self-heal for correspondence attachments before serving."""
+    try:
+        if not att or getattr(att, "stamp_applied", False):
+            return bool(getattr(att, "stamp_applied", False))
+        if not is_stampable_file(getattr(att, "stored_name", "") or file_path):
+            return False
+
+        item = None
+        kind = ""
+        if getattr(att, "inbound_id", None):
+            item = InboundMail.query.get(att.inbound_id)
+            kind = "IN"
+        elif getattr(att, "outbound_id", None):
+            item = OutboundMail.query.get(att.outbound_id)
+            kind = "OUT"
+        if not item or not kind:
+            return False
+
+        date_value = getattr(item, "received_date", None) or getattr(item, "sent_date", None) or ""
+        ref_value = getattr(item, "ref_no", None) or getattr(item, "id", None) or ""
+        ok = apply_corr_stamp(
+            file_path,
+            CorrStampOptions(True, kind, str(ref_value or ""), str(date_value or "")),
+        )
+        if ok:
+            att.stamp_applied = True
+            att.stamp_kind = kind
+            att.stamp_ref_no = str(ref_value or "")
+            att.stamp_date = str(date_value or "")
+            db.session.commit()
+            return True
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+    return False
+
+
+def _send_corr_attachment_file(
+    storage: str,
+    stored_name: str,
+    *,
+    as_attachment: bool,
+    download_name: str | None = None,
+    mimetype: str | None = None,
+):
+    resp = send_from_directory(
+        storage,
+        stored_name,
+        as_attachment=as_attachment,
+        download_name=download_name,
+        mimetype=mimetype,
+        max_age=0,
+    )
+    resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @portal_bp.route("/corr/attachment/<int:att_id>/download")
 @login_required
 @_perm(CORR_READ)
@@ -16864,7 +16929,8 @@ def corr_attachment_download(att_id: int):
             return redirect(url_for("portal.outbound_view", outbound_id=att.outbound_id))
         return redirect(url_for("portal.corr_index"))
 
-    return send_from_directory(storage, att.stored_name, as_attachment=True, download_name=att.original_name)
+    _ensure_corr_attachment_file_stamped(att, file_path)
+    return _send_corr_attachment_file(storage, att.stored_name, as_attachment=True, download_name=att.original_name)
 
 
 @portal_bp.route("/corr/attachment/<int:att_id>/view")
@@ -16883,8 +16949,9 @@ def corr_attachment_view(att_id: int):
             return redirect(url_for("portal.outbound_view", outbound_id=att.outbound_id))
         return redirect(url_for("portal.corr_index"))
 
+    _ensure_corr_attachment_file_stamped(att, file_path)
     mime, _ = mimetypes.guess_type(file_path)
-    return send_from_directory(storage, att.stored_name, as_attachment=False, mimetype=mime or "application/octet-stream")
+    return _send_corr_attachment_file(storage, att.stored_name, as_attachment=False, mimetype=mime or "application/octet-stream")
 
 
 @portal_bp.route("/corr/attachment/<int:att_id>/delete", methods=["POST"])

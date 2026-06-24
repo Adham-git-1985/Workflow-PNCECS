@@ -2,9 +2,10 @@
 {% set stamp_label = stamp_label or 'المراسلة' %}
 {% set stamp_date_default = stamp_date_default or '' %}
 {% set stamp_sync_id = stamp_sync_id or '' %}
-{% set stamp_checked = request.form.get('apply_stamp') in ['1', 'on', 'true', 'yes'] %}
+{% set stamp_checked = (request.method != 'POST') or (request.form.get('apply_stamp') in ['1', 'on', 'true', 'yes']) %}
 <div class="border rounded p-3 bg-light" data-corr-stamp-wrap data-stamp-sync-id="{{ stamp_sync_id }}">
   <div class="form-check">
+    <input type="hidden" name="apply_stamp_present" value="1">
     <input class="form-check-input" type="checkbox" name="apply_stamp" value="1" id="{{ stamp_prefix }}_apply_stamp" {% if stamp_checked %}checked{% endif %}>
     <label class="form-check-label fw-semibold" for="{{ stamp_prefix }}_apply_stamp">
       إضافة ختم {{ stamp_label }} على ملفات PDF والصور
