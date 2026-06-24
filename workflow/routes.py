@@ -1,6 +1,7 @@
 ﻿# workflow/routes.py
 
 import os
+import re
 import uuid
 import json
 import time
@@ -56,6 +57,7 @@ from models import (
     Approval,
     RequestType,
     WorkflowRoutingRule,
+    Role,
     Department,
     Directorate,
     Unit,
@@ -128,6 +130,393 @@ def _role_variants(role: str | None) -> list[str]:
 
     cleaned = [v for v in {str(v).strip() for v in variants} if v]
     return cleaned
+
+
+MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
+MENTION_TASK_NOTE = "تمت الإضافة عبر المنشن"
+
+
+def _mention_tokens(text: str | None) -> list[str]:
+    """Extract user/role mentions from workflow comments.
+
+    Supported forms:
+      - @email@example.com
+      - @username or @display-name
+      - @[display name with spaces]
+      - @role:ROLE_CODE or @دور:ROLE_CODE
+    """
+    text = (text or "").strip()
+    if not text:
+        return []
+
+    tokens: list[str] = []
+
+    for m in re.finditer(r"@\[(.{1,160}?)\]", text):
+        token = (m.group(1) or "").strip()
+        if token:
+            tokens.append(token)
+
+    for m in re.finditer(r"(?<![\w@])@([^\s<>\[\]{}()\"']{1,160})", text):
+        token = (m.group(1) or "").strip()
+        token = token.strip(".,،؛;!?؟")
+        if token:
+            tokens.append(token)
+
+    seen = set()
+    out = []
+    for token in tokens:
+        key = token.casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
+
+
+def _role_from_mention_token(token: str) -> str | None:
+    token = (token or "").strip()
+    low = token.casefold()
+    prefixes = ("role:", "role=", "r:", "دور:", "دور=")
+    for prefix in prefixes:
+        if low.startswith(prefix):
+            raw = token[len(prefix):].strip()
+            return raw or None
+    return None
+
+
+def _resolve_role_mention_users(role_token: str) -> list[User]:
+    role_raw = (role_token or "").strip()
+    if not role_raw:
+        return []
+
+    role_code = role_raw
+    try:
+        low = role_raw.casefold()
+        role_row = (
+            Role.query
+            .filter(or_(
+                func.lower(Role.code) == low,
+                func.lower(Role.name_en) == low,
+                Role.name_ar == role_raw,
+            ))
+            .first()
+        )
+        if role_row and getattr(role_row, "code", None):
+            role_code = role_row.code
+    except Exception:
+        role_code = role_raw
+
+    variants = _role_variants(role_code) + _role_variants(role_raw)
+    variants = [v for v in {str(v).strip() for v in variants} if v]
+    if not variants:
+        return []
+
+    return (
+        User.query
+        .filter(or_(*[User.role.ilike(v) for v in variants]))
+        .order_by(User.email.asc())
+        .all()
+    )
+
+
+def _resolve_user_mention_users(token: str) -> list[User]:
+    raw = (token or "").strip()
+    if not raw:
+        return []
+
+    for prefix in ("user:", "user=", "u:", "مستخدم:", "مستخدم="):
+        if raw.casefold().startswith(prefix):
+            raw = raw[len(prefix):].strip()
+            break
+
+    if not raw:
+        return []
+
+    if raw.isdigit():
+        u = User.query.get(int(raw))
+        return [u] if u else []
+
+    low = raw.casefold()
+    exact = (
+        User.query
+        .filter(or_(
+            func.lower(User.email) == low,
+            func.lower(User.name) == low,
+        ))
+        .first()
+    )
+    if exact:
+        return [exact]
+
+    # If the user mentioned the email local part, resolve it conservatively.
+    local_part_matches = []
+    if "@" not in raw and len(raw) >= 3:
+        local_part_matches = (
+            User.query
+            .filter(func.lower(User.email).like(f"{low}@%"))
+            .order_by(User.email.asc())
+            .limit(10)
+            .all()
+        )
+        if len(local_part_matches) == 1:
+            return local_part_matches
+
+    # Bracketed names often contain spaces. Keep this bounded to avoid surprises.
+    if len(raw) >= 3:
+        return (
+            User.query
+            .filter(or_(
+                User.name.ilike(f"%{raw}%"),
+                User.email.ilike(f"%{raw}%"),
+            ))
+            .order_by(User.email.asc())
+            .limit(10)
+            .all()
+        )
+
+    return []
+
+
+def _resolve_workflow_mentions(text: str | None) -> tuple[list[User], list[str]]:
+    users_by_id: dict[int, User] = {}
+    unresolved: list[str] = []
+
+    for token in _mention_tokens(text):
+        role_token = _role_from_mention_token(token)
+        found = _resolve_role_mention_users(role_token) if role_token else _resolve_user_mention_users(token)
+        found = [u for u in (found or []) if u and getattr(u, "id", None)]
+        if not found:
+            unresolved.append(token)
+            continue
+        for u in found:
+            users_by_id[int(u.id)] = u
+
+    return list(users_by_id.values()), unresolved
+
+
+@workflow_bp.route("/mentions/search")
+@login_required
+def mention_search():
+    q = (request.args.get("q") or "").strip()
+    limit = request.args.get("limit", 8, type=int) or 8
+    limit = max(1, min(limit, 12))
+
+    role_query = q
+    q_low = q.casefold()
+    for prefix in ("role:", "role=", "r:", "دور:", "دور="):
+        if q_low.startswith(prefix):
+            role_query = q[len(prefix):].strip()
+            break
+    else:
+        if q_low in {"role", "roles", "r", "دور", "ادوار", "أدوار"}:
+            role_query = ""
+
+    results = []
+
+    try:
+        user_query = User.query
+        if q:
+            like = f"%{q}%"
+            user_query = user_query.filter(or_(
+                User.email.ilike(like),
+                User.name.ilike(like),
+                User.role.ilike(like),
+                User.job_title.ilike(like),
+            ))
+        users = user_query.order_by(User.name.asc(), User.email.asc()).limit(limit).all()
+        for u in users:
+            email = (u.email or "").strip()
+            label = (u.full_name or email or f"User #{u.id}").strip()
+            results.append({
+                "type": "user",
+                "label": label,
+                "detail": " · ".join([v for v in [email, (u.role or "").strip()] if v]),
+                "insert": f"@{email} " if email else f"@user:{u.id} ",
+            })
+    except Exception:
+        pass
+
+    try:
+        role_query_obj = Role.query.filter(Role.is_active.is_(True))
+        if role_query:
+            like = f"%{role_query}%"
+            role_query_obj = role_query_obj.filter(or_(
+                Role.code.ilike(like),
+                Role.name_ar.ilike(like),
+                Role.name_en.ilike(like),
+            ))
+        roles = role_query_obj.order_by(Role.name_ar.asc(), Role.code.asc()).limit(limit).all()
+        for r in roles:
+            code = (r.code or "").strip()
+            if not code:
+                continue
+            label = (r.name_ar or r.name_en or code).strip()
+            results.append({
+                "type": "role",
+                "label": label,
+                "detail": code,
+                "insert": f"@role:{code} ",
+            })
+    except Exception:
+        pass
+
+    return jsonify({"q": q, "results": results[: limit * 2]})
+
+
+def _mentioned_user_ids_for_request(req_id: int) -> set[int]:
+    rows = (
+        db.session.query(AuditLog.target_id)
+        .filter(
+            AuditLog.request_id == int(req_id),
+            AuditLog.action == MENTION_ACCESS_ACTION,
+            AuditLog.target_type == "USER",
+            AuditLog.target_id.isnot(None),
+        )
+        .all()
+    )
+    out: set[int] = set()
+    for (uid,) in rows:
+        try:
+            out.add(int(uid))
+        except Exception:
+            pass
+    return out
+
+
+def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str | None, *, step_order: int | None) -> None:
+    uid = int(getattr(user, "id", 0) or 0)
+    if not uid:
+        return
+
+    link = _build_absolute_url(url_for("workflow.view_request", request_id=req.id))
+    actor_label = current_user.full_name or current_user.email or f"#{current_user.id}"
+    note_text = (note or "").strip()
+    if len(note_text) > 1200:
+        note_text = note_text[:1200].rstrip() + "..."
+
+    body_lines = [
+        f"قام {actor_label} بإضافتك إلى متابعة مسار الطلب #{req.id} عبر المنشن.",
+        "",
+        f"العنوان: {req.title or '-'}",
+        f"الحالة: {ui_label(req.status) or req.status or '-'}",
+    ]
+    if step_order:
+        body_lines.append(f"الخطوة الحالية: {step_order}")
+    if note_text:
+        body_lines.extend(["", "نص التعليق:", note_text])
+    body_lines.extend(["", "رابط فتح المسار:", link])
+
+    msg = Message(
+        sender_id=current_user.id,
+        subject=f"تمت إضافتك إلى مسار الطلب #{req.id}",
+        body="\n".join(body_lines),
+        target_kind="USER",
+        target_id=uid,
+        created_at=datetime.utcnow(),
+        reply_to_id=None,
+    )
+    db.session.add(msg)
+    db.session.flush()
+    db.session.add(MessageRecipient(
+        message_id=msg.id,
+        recipient_user_id=uid,
+        is_read=False,
+        read_at=None,
+        is_deleted=False,
+        deleted_at=None,
+    ))
+
+
+def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, note: str, *, step_order: int | None) -> tuple[list[User], list[str]]:
+    """Grant request visibility to users mentioned in a comment.
+
+    Mentions are intentionally modeled as audit-backed participants instead of
+    changing the template. Mentioned users also get a pending task on the
+    current step so the request appears in "مهامي".
+    """
+    mentioned_users, unresolved = _resolve_workflow_mentions(note)
+    if not mentioned_users:
+        return [], unresolved
+
+    existing_ids = _mentioned_user_ids_for_request(req.id)
+    added: list[User] = []
+
+    current_step = None
+    if inst and step_order:
+        try:
+            current_step = WorkflowInstanceStep.query.filter_by(
+                instance_id=inst.id,
+                step_order=int(step_order),
+            ).first()
+        except Exception:
+            current_step = None
+
+    add_current_step_task = bool(
+        current_step
+        and getattr(current_step, "status", None) == "PENDING"
+        and inst
+        and not getattr(inst, "is_completed", False)
+    )
+
+    now = datetime.utcnow()
+    for user in mentioned_users:
+        uid = int(user.id)
+        if uid == int(current_user.id):
+            continue
+
+        if uid not in existing_ids:
+            db.session.add(AuditLog(
+                request_id=req.id,
+                user_id=current_user.id,
+                action=MENTION_ACCESS_ACTION,
+                old_status=req.status,
+                new_status=req.status,
+                note=f"step={step_order or ''} | mentioned_user_id={uid}",
+                target_type="USER",
+                target_id=uid,
+                created_at=now,
+            ))
+            existing_ids.add(uid)
+            added.append(user)
+
+        task_created = False
+        if add_current_step_task and current_step:
+            task = WorkflowStepTask.query.filter_by(
+                instance_id=inst.id,
+                step_order=current_step.step_order,
+                assignee_user_id=uid,
+            ).first()
+            if not task:
+                db.session.add(WorkflowStepTask(
+                    instance_id=inst.id,
+                    request_id=req.id,
+                    step_order=current_step.step_order,
+                    assignee_user_id=uid,
+                    status="PENDING",
+                    response="NONE",
+                    note=MENTION_TASK_NOTE,
+                    created_at=now,
+                ))
+                task_created = True
+
+        _send_mention_internal_message(req, user, note, step_order=step_order)
+
+        emit_event(
+            actor_id=current_user.id,
+            action=MENTION_ACCESS_ACTION,
+            message=f"تمت إضافتك إلى متابعة المسار #{req.id} بواسطة {current_user.full_name or current_user.email}.",
+            target_type="WorkflowRequest",
+            target_id=req.id,
+            notify_user_id=uid,
+            level="WORKFLOW",
+            track_for_actor=True,
+            auto_commit=False,
+        )
+
+        if task_created and user not in added:
+            added.append(user)
+
+    return added, unresolved
 
 
 def _get_effective_directorate_id(user) -> int | None:
@@ -1481,6 +1870,24 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
     except Exception:
         pass
 
+    # ✅ Mention-added participants: a comment can grant access to a user/role
+    # without changing the original template.
+    try:
+        if (
+            AuditLog.query
+            .filter(
+                AuditLog.request_id == req.id,
+                AuditLog.action == MENTION_ACCESS_ACTION,
+                AuditLog.target_type == "USER",
+                AuditLog.target_id == user.id,
+            )
+            .first()
+            is not None
+        ):
+            return True
+    except Exception:
+        pass
+
     return False
 
 
@@ -1519,6 +1926,12 @@ def _get_request_followers_user_ids(req_id: int) -> set[int]:
                     ids.add(int(uid2))
             except Exception:
                 pass
+    except Exception:
+        pass
+
+    # ✅ Include users brought into the workflow through comment mentions.
+    try:
+        ids.update(_mentioned_user_ids_for_request(req_id))
     except Exception:
         pass
 
@@ -2312,6 +2725,15 @@ def view_request(request_id):
     depts_map = {d.id: d for d in Department.query.all()}
     dirs_map = {d.id: d for d in Directorate.query.all()}
     committees_map = {c.id: c for c in Committee.query.all()}
+    mentioned_users = []
+    try:
+        mentioned_users = [
+            users_map[uid]
+            for uid in sorted(_mentioned_user_ids_for_request(req.id))
+            if uid in users_map
+        ]
+    except Exception:
+        mentioned_users = []
 
     def _human_size(num_bytes):
         try:
@@ -2519,6 +2941,7 @@ def view_request(request_id):
         parallel_tasks=parallel_tasks,
         my_parallel_task=my_parallel_task,
         can_bypass_parallel=can_bypass_parallel,
+        mentioned_users=mentioned_users,
     )
 
 
@@ -3598,9 +4021,17 @@ def add_request_note(request_id):
             )
             attached_count += 1
 
+        # 3) Mentions: grant access + notify mentioned users/roles.
+        mentioned_users, unresolved_mentions = _grant_mention_access(
+            req,
+            inst,
+            note,
+            step_order=step_order,
+        )
+
         actor_label = current_user.email
 
-        # 3) Notifications
+        # 4) Notifications
         # Build message (note + attachments)
         msg_parts = []
         if note:
@@ -3687,6 +4118,12 @@ def add_request_note(request_id):
 
         db.session.commit()
         flash("تم إرسال التحديث بنجاح.", "success")
+        if mentioned_users:
+            labels = ", ".join([(u.full_name or u.email or f"#{u.id}") for u in mentioned_users[:5]])
+            extra = "" if len(mentioned_users) <= 5 else f" +{len(mentioned_users) - 5}"
+            flash(f"تمت إضافة المذكورين إلى المسار: {labels}{extra}", "info")
+        if unresolved_mentions:
+            flash(f"لم يتم العثور على: {', '.join(unresolved_mentions[:5])}", "warning")
 
     except Exception as e:
         db.session.rollback()

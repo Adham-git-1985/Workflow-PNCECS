@@ -3,6 +3,7 @@
 import os
 import uuid
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
 from flask import (
     render_template, request, redirect,
@@ -31,6 +32,9 @@ from models import (
     User,
     AuditLog,
     WorkflowRequest,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowStepTask,
     RequestAttachment,
     WorkflowTemplate,
     SystemSetting,
@@ -156,6 +160,214 @@ def get_trash_retention_days() -> int:
         return 30
 
 
+FILE_TYPE_FILTERS = {
+    "PDF": ["pdf"],
+    "IMAGE": ["jpg", "jpeg", "png", "gif", "webp", "bmp", "tif", "tiff"],
+    "DOCUMENT": ["doc", "docx", "odt", "rtf", "txt"],
+    "SPREADSHEET": ["xls", "xlsx", "ods", "csv"],
+    "PRESENTATION": ["ppt", "pptx", "odp"],
+    "ARCHIVE": ["zip", "rar", "7z"],
+}
+
+FILE_TYPE_OPTIONS = [
+    ("", "كل الأنواع"),
+    ("PDF", "PDF"),
+    ("IMAGE", "صور"),
+    ("DOCUMENT", "مستندات"),
+    ("SPREADSHEET", "جداول"),
+    ("PRESENTATION", "عروض"),
+    ("ARCHIVE", "ملفات مضغوطة"),
+]
+
+VISIBILITY_OPTIONS = [
+    ("", "كل الصلاحيات"),
+    ("owner", "خاص/مالك"),
+    ("workflow", "مرتبط بمسار"),
+    ("shared", "مشارك"),
+    ("PUBLIC", "عام"),
+    ("DEPARTMENT", "دائرة"),
+    ("PRIVATE", "خاص"),
+]
+
+WORKFLOW_STATUS_OPTIONS = [
+    ("", "كل الحالات"),
+    ("DRAFT", "مسودة"),
+    ("IN_PROGRESS", "قيد الإجراء"),
+    ("APPROVED", "معتمد"),
+    ("REJECTED", "مرفوض"),
+]
+
+
+def _parse_date_arg(value: str | None):
+    value = (value or "").strip()
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _archive_filters_from_request() -> dict:
+    owner_id = request.args.get("owner_id", type=int)
+    return {
+        "q": (request.args.get("q") or "").strip(),
+        "file_type": (request.args.get("file_type") or "").strip().upper(),
+        "visibility": (request.args.get("visibility") or "").strip(),
+        "signed": (request.args.get("signed") or "").strip(),
+        "owner_id": owner_id if owner_id else None,
+        "date_from": (request.args.get("date_from") or "").strip(),
+        "date_to": (request.args.get("date_to") or "").strip(),
+        "workflow_q": (request.args.get("workflow_q") or "").strip(),
+        "workflow_status": (request.args.get("workflow_status") or "").strip().upper(),
+    }
+
+
+def _page_query(filters: dict) -> str:
+    pairs = []
+    for key, value in (filters or {}).items():
+        if value is None or value == "":
+            continue
+        pairs.append((key, value))
+    return urlencode(pairs)
+
+
+def _extension_filter(exts: list[str]):
+    clauses = []
+    for ext in exts:
+        ext = (ext or "").lower().lstrip(".")
+        if not ext:
+            continue
+        clauses.append(func.lower(ArchivedFile.original_name).like(f"%.{ext}"))
+    return or_(*clauses) if clauses else None
+
+
+def _apply_archive_filters(query, filters: dict):
+    q = (filters.get("q") or "").strip()
+    if q:
+        clauses = [
+            ArchivedFile.original_name.ilike(f"%{q}%"),
+            ArchivedFile.description.ilike(f"%{q}%"),
+        ]
+        if q.isdigit():
+            clauses.append(ArchivedFile.id == int(q))
+        query = query.filter(or_(*clauses))
+
+    file_type = (filters.get("file_type") or "").strip().upper()
+    if file_type:
+        exts = FILE_TYPE_FILTERS.get(file_type)
+        if not exts and file_type.isalnum() and len(file_type) <= 12:
+            exts = [file_type.lower()]
+        ext_clause = _extension_filter(exts or [])
+        if ext_clause is not None:
+            query = query.filter(ext_clause)
+
+    visibility = (filters.get("visibility") or "").strip()
+    if visibility:
+        query = query.filter(ArchivedFile.visibility == visibility)
+
+    signed = (filters.get("signed") or "").strip()
+    if signed == "1":
+        query = query.filter(ArchivedFile.is_signed.is_(True))
+    elif signed == "0":
+        query = query.filter(or_(ArchivedFile.is_signed.is_(False), ArchivedFile.is_signed.is_(None)))
+
+    owner_id = filters.get("owner_id")
+    if owner_id:
+        query = query.filter(ArchivedFile.owner_id == int(owner_id))
+
+    date_from = _parse_date_arg(filters.get("date_from"))
+    if date_from:
+        query = query.filter(ArchivedFile.upload_date >= date_from)
+
+    date_to = _parse_date_arg(filters.get("date_to"))
+    if date_to:
+        query = query.filter(ArchivedFile.upload_date < (date_to + timedelta(days=1)))
+
+    return query
+
+
+def _archive_user_can_view_workflow(user, req: WorkflowRequest) -> bool:
+    if not user or not req:
+        return False
+    if req.requester_id == user.id:
+        return True
+    if user.has_role("ADMIN") or user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN"):
+        return True
+
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    if not inst:
+        return False
+
+    if (
+        WorkflowStepTask.query
+        .filter_by(instance_id=inst.id, assignee_user_id=user.id)
+        .first()
+        is not None
+    ):
+        return True
+
+    if (
+        AuditLog.query
+        .filter(
+            AuditLog.request_id == req.id,
+            AuditLog.action == "WORKFLOW_MENTION_ACCESS",
+            AuditLog.target_type == "USER",
+            AuditLog.target_id == user.id,
+        )
+        .first()
+        is not None
+    ):
+        return True
+
+    steps = WorkflowInstanceStep.query.filter_by(instance_id=inst.id).all()
+    role = (user.role or "").strip().lower()
+    for step in steps:
+        kind = (step.approver_kind or "").strip().upper()
+        if kind == "USER" and step.approver_user_id == user.id:
+            return True
+        if kind == "ROLE" and step.approver_role and role == (step.approver_role or "").strip().lower():
+            return True
+        if kind == "DEPARTMENT" and step.approver_department_id and user.department_id == step.approver_department_id:
+            if role in ("dept_head", "department_head") or user.has_role("DEPT_HEAD"):
+                return True
+        if kind == "DIRECTORATE" and getattr(step, "approver_directorate_id", None):
+            if getattr(user, "directorate_id", None) == step.approver_directorate_id and role in ("directorate_head", "directorate_deputy"):
+                return True
+
+    return False
+
+
+def _search_workflows_from_archive(filters: dict) -> list[WorkflowRequest]:
+    term = (filters.get("workflow_q") or filters.get("q") or "").strip()
+    status = (filters.get("workflow_status") or "").strip().upper()
+
+    if not term and not status:
+        return []
+
+    query = WorkflowRequest.query.options(joinedload(WorkflowRequest.requester))
+
+    if term:
+        clauses = [
+            WorkflowRequest.title.ilike(f"%{term}%"),
+            WorkflowRequest.description.ilike(f"%{term}%"),
+            WorkflowRequest.status.ilike(f"%{term}%"),
+        ]
+        if term.isdigit():
+            clauses.append(WorkflowRequest.id == int(term))
+        query = query.filter(or_(*clauses))
+
+    if status:
+        query = query.filter(WorkflowRequest.status == status)
+
+    candidates = (
+        query
+        .order_by(WorkflowRequest.created_at.desc())
+        .limit(80)
+        .all()
+    )
+    return [r for r in candidates if _archive_user_can_view_workflow(current_user, r)][:20]
+
 
 # =========================
 # Sign PDF (flag only)
@@ -224,18 +436,12 @@ def sign_pdf(file_id):
 @archive_bp.route("/files")
 @login_required
 def archive_files():
-    q = request.args.get("q", "").strip()
+    filters = _archive_filters_from_request()
+    q = filters["q"]
     page = request.args.get("page", 1, type=int)
 
     query = archive_access_query(current_user)
-
-    if q:
-        query = query.filter(
-            or_(
-                ArchivedFile.original_name.ilike(f"%{q}%"),
-                ArchivedFile.description.ilike(f"%{q}%")
-            )
-        )
+    query = _apply_archive_filters(query, filters)
 
     pagination = (
         query
@@ -250,7 +456,15 @@ def archive_files():
         files=pagination.items,
         pagination=pagination,
         q=q,
-        counters=counters
+        counters=counters,
+        filters=filters,
+        page_query=_page_query(filters),
+        owners=User.query.order_by(User.email.asc()).all(),
+        file_type_options=FILE_TYPE_OPTIONS,
+        visibility_options=VISIBILITY_OPTIONS,
+        workflow_status_options=WORKFLOW_STATUS_OPTIONS,
+        workflow_results=_search_workflows_from_archive(filters),
+        archive_reset_endpoint="archive.archive_files",
     )
 
 
@@ -583,19 +797,13 @@ def upload_file():
 @archive_bp.route("/my-files")
 @login_required
 def my_files():
-    q = request.args.get("q", "").strip()
+    filters = _archive_filters_from_request()
+    q = filters["q"]
     page = request.args.get("page", 1, type=int)
     per_page = 15
 
     query = archive_access_query(current_user)
-
-    if q:
-        query = query.filter(
-            or_(
-                ArchivedFile.original_name.ilike(f"%{q}%"),
-                ArchivedFile.description.ilike(f"%{q}%")
-            )
-        )
+    query = _apply_archive_filters(query, filters)
 
     pagination = (
         query
@@ -623,7 +831,15 @@ def my_files():
         delegated_files=delegated_files,
         counters=counters,
         shared_count=shared_count,
-        shared_by_map=shared_by_map
+        shared_by_map=shared_by_map,
+        filters=filters,
+        page_query=_page_query(filters),
+        owners=User.query.order_by(User.email.asc()).all(),
+        file_type_options=FILE_TYPE_OPTIONS,
+        visibility_options=VISIBILITY_OPTIONS,
+        workflow_status_options=WORKFLOW_STATUS_OPTIONS,
+        workflow_results=_search_workflows_from_archive(filters),
+        archive_reset_endpoint="archive.my_files",
     )
 
 

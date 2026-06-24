@@ -1,0 +1,103 @@
+{% set f = filters if filters is defined else {} %}
+{% set advanced_open = f.get('file_type') or f.get('visibility') or f.get('signed') or f.get('owner_id') or f.get('date_from') or f.get('date_to') or f.get('workflow_status') %}
+
+<div class="archive-card archive-filter-card mb-3">
+  <div class="card-body">
+    <form method="get">
+      <div class="row g-2 align-items-end">
+        <div class="col-lg-4 col-md-6">
+          <label class="form-label">بحث في الملفات</label>
+          <input type="text" name="q" value="{{ f.get('q', q|default('')) }}" class="form-control"
+                 placeholder="اسم الملف، الوصف، أو رقم الملف">
+        </div>
+
+        <div class="col-lg-4 col-md-6">
+          <label class="form-label">بحث في المسارات</label>
+          <input type="text" name="workflow_q" value="{{ f.get('workflow_q', '') }}" class="form-control"
+                 placeholder="عنوان المسار، الوصف، الحالة، أو رقم المسار">
+        </div>
+
+        <div class="col-lg-2 col-6 d-grid">
+          <button class="btn btn-primary btn-neo" type="submit">بحث</button>
+        </div>
+
+        <div class="col-lg-2 col-6 d-grid">
+          <button class="btn btn-outline-secondary btn-neo" type="button"
+                  data-bs-toggle="collapse" data-bs-target="#archiveAdvancedFilters"
+                  aria-expanded="{{ 'true' if advanced_open else 'false' }}"
+                  aria-controls="archiveAdvancedFilters">
+            فلاتر متقدمة
+          </button>
+        </div>
+      </div>
+
+      <div class="collapse {% if advanced_open %}show{% endif %}" id="archiveAdvancedFilters">
+        <div class="archive-filter-advanced mt-3 pt-3">
+          <div class="row g-2 align-items-end">
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">نوع الملف</label>
+              <select name="file_type" class="form-select">
+                {% for value, label in file_type_options %}
+                  <option value="{{ value }}" {% if f.get('file_type') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">الصلاحية</label>
+              <select name="visibility" class="form-select">
+                {% for value, label in visibility_options %}
+                  <option value="{{ value }}" {% if f.get('visibility') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">التوقيع</label>
+              <select name="signed" class="form-select">
+                <option value="" {% if not f.get('signed') %}selected{% endif %}>الكل</option>
+                <option value="1" {% if f.get('signed') == '1' %}selected{% endif %}>موقّع</option>
+                <option value="0" {% if f.get('signed') == '0' %}selected{% endif %}>غير موقّع</option>
+              </select>
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">المالك</label>
+              <select name="owner_id" class="form-select">
+                <option value="">الكل</option>
+                {% for owner in owners %}
+                  <option value="{{ owner.id }}" {% if f.get('owner_id') == owner.id %}selected{% endif %}>
+                    {{ owner.full_name or owner.email }}
+                  </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">من تاريخ</label>
+              <input type="date" name="date_from" value="{{ f.get('date_from', '') }}" class="form-control">
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">إلى تاريخ</label>
+              <input type="date" name="date_to" value="{{ f.get('date_to', '') }}" class="form-control">
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6">
+              <label class="form-label">حالة المسار</label>
+              <select name="workflow_status" class="form-select">
+                {% for value, label in workflow_status_options %}
+                  <option value="{{ value }}" {% if f.get('workflow_status') == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div class="col-xl-2 col-lg-3 col-md-4 col-sm-6 d-grid">
+              <a class="btn btn-outline-secondary btn-neo" href="{{ url_for(archive_reset_endpoint) }}">مسح الفلاتر</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>

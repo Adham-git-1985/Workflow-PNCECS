@@ -1,0 +1,51 @@
+{% set f = filters if filters is defined else {} %}
+{% set has_workflow_search = f.get('workflow_q') or f.get('workflow_status') %}
+{% if workflow_results %}
+  <div class="archive-card mb-4">
+    <div class="card-body">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="mb-0">نتائج المسارات</h5>
+        <span class="text-muted small">{{ workflow_results|length }} نتيجة</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>#</th>
+              <th>العنوان</th>
+              <th>الحالة</th>
+              <th>مقدم الطلب</th>
+              <th>تاريخ الإنشاء</th>
+              <th class="text-center">فتح</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for r in workflow_results %}
+            <tr>
+              <td class="text-muted">#{{ r.id }}</td>
+              <td>
+                <div class="fw-semibold">{{ r.title or 'بدون عنوان' }}</div>
+                {% if r.description %}
+                  <div class="text-muted small">{{ r.description|truncate(120, True, '...') }}</div>
+                {% endif %}
+              </td>
+              <td><span class="badge bg-light text-dark border">{{ r.status|ui_label }}</span></td>
+              <td>{{ r.requester.full_name if r.requester else '-' }}</td>
+              <td>{{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '-' }}</td>
+              <td class="text-center">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=r.id) }}">فتح</a>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+{% elif has_workflow_search %}
+  <div class="archive-card mb-4">
+    <div class="card-body text-center text-muted py-4">
+      لا توجد مسارات مطابقة للبحث أو لا تملك صلاحية عرض النتائج المطابقة.
+    </div>
+  </div>
+{% endif %}

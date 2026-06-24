@@ -6,6 +6,8 @@ UI_LABELS_AR = {
     "DEPARTMENT": "دائرة",
     "DIRECTORATE": "إدارة",
     "WORKFLOW_STARTED": "بدء المسار",
+    "WORKFLOW_REPLY": "رد على المسار",
+    "WORKFLOW_MENTION_ACCESS": "إضافة مستخدم إلى المسار بالمنشن",
     "STEP_APPROVED": "تمت الموافقة على الخطوة",
     "PENDING": "قيد الانتظار",
     "APPROVED": "موافق عليه",

@@ -105,6 +105,31 @@
   border-bottom: 1px solid var(--archive-border);
 }
 
+.archive-filter-card{
+  border-radius: 14px;
+}
+
+.archive-filter-card .card-body{
+  padding: 12px 14px;
+}
+
+.archive-filter-card .form-label{
+  font-size: .82rem;
+  font-weight: 700;
+  margin-bottom: 4px;
+  color: var(--archive-text);
+}
+
+.archive-filter-card .form-control,
+.archive-filter-card .form-select,
+.archive-filter-card .btn{
+  min-height: 36px;
+}
+
+.archive-filter-advanced{
+  border-top: 1px dashed var(--archive-border);
+}
+
 .archive-actions .btn{
   border-radius: 12px !important;
   font-weight: 700;
