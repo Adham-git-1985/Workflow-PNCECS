@@ -3945,8 +3945,13 @@ class CorrAttachment(db.Model):
     stamp_ref_no = db.Column(db.String(50), nullable=True)
     stamp_date = db.Column(db.String(10), nullable=True)
 
+    archive_file_id = db.Column(db.Integer, db.ForeignKey("archived_file.id"), nullable=True, index=True)
+    workflow_request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"), nullable=True, index=True)
+
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
     published_by = db.relationship("User", foreign_keys=[published_by_id], lazy="joined")
+    archive_file = db.relationship("ArchivedFile", foreign_keys=[archive_file_id], lazy="joined")
+    workflow_request = db.relationship("WorkflowRequest", foreign_keys=[workflow_request_id], lazy="joined")
 
     inbound = db.relationship(
         "InboundMail",
@@ -3969,6 +3974,8 @@ class CorrAttachment(db.Model):
         ),
         db.Index("ix_corr_attachment_inbound", "inbound_id"),
         db.Index("ix_corr_attachment_outbound", "outbound_id"),
+        db.Index("ix_corr_attachment_archive_file", "archive_file_id"),
+        db.Index("ix_corr_attachment_workflow_request", "workflow_request_id"),
     )
 
 

@@ -104,21 +104,56 @@
       </form>
       {% endif %}
 
+      {% if attachments %}
+      <div class="border rounded p-3 mb-3 bg-light">
+        <div class="fw-semibold small mb-2"><i class="bi bi-diagram-3"></i> الأرشيف والمسارات</div>
+        <form method="post" action="{{ url_for('portal.outbound_start_workflow', outbound_id=item.id) }}" class="d-grid gap-2">
+          <select class="form-select form-select-sm" name="template_id" required>
+            <option value="">اختر قالب المسار</option>
+            {% for t in workflow_templates|default([]) %}
+              <option value="{{ t.id }}">{{ t.name }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-sm btn-primary" type="submit">
+            <i class="bi bi-play-circle"></i> بدء مسار للمعاملة
+          </button>
+        </form>
+      </div>
+      {% endif %}
+
       <ul class="list-group list-group-flush">
         {% for a in attachments %}
-          <li class="list-group-item d-flex justify-content-between align-items-center">
-            <span class="small">{{ a.original_name }}</span>
-            {% if a.stamp_applied %}
-              <span class="badge text-bg-light border ms-1">مختوم {{ a.stamp_date or '' }}</span>
-            {% endif %}
-            <div class="btn-group">
-              <a class="btn btn-outline-secondary btn-sm" target="_blank" href="{{ url_for('portal.corr_attachment_view', att_id=a.id) }}"><i class="bi bi-eye"></i></a>
-              <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.corr_attachment_download', att_id=a.id) }}"><i class="bi bi-download"></i></a>
+          <li class="list-group-item">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+              <div class="flex-grow-1">
+                <div class="small fw-semibold">{{ a.original_name }}</div>
+                <div class="d-flex flex-wrap gap-1 mt-1">
+                  {% if a.stamp_applied %}
+                    <span class="badge text-bg-light border">مختوم {{ a.stamp_date or '' }}</span>
+                  {% endif %}
+                  {% if a.archive_file_id %}
+                    <span class="badge text-bg-success">في الأرشيف</span>
+                  {% endif %}
+                  {% if a.workflow_request_id %}
+                    <span class="badge text-bg-primary">مرتبط بمسار</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div class="btn-group">
+                <a class="btn btn-outline-secondary btn-sm" target="_blank" title="معاينة" href="{{ url_for('portal.corr_attachment_view', att_id=a.id) }}"><i class="bi bi-eye"></i></a>
+                <a class="btn btn-outline-secondary btn-sm" title="تحميل" href="{{ url_for('portal.corr_attachment_download', att_id=a.id) }}"><i class="bi bi-download"></i></a>
+                {% if a.archive_file_id %}
+                  <a class="btn btn-outline-success btn-sm" title="فتح في الأرشيف" href="{{ url_for('archive.file_details', file_id=a.archive_file_id) }}"><i class="bi bi-archive"></i></a>
+                {% endif %}
+                {% if a.workflow_request_id %}
+                  <a class="btn btn-outline-primary btn-sm" title="فتح المسار" href="{{ url_for('workflow.view_request', request_id=a.workflow_request_id) }}"><i class="bi bi-diagram-3"></i></a>
+                {% endif %}
               {% if can_update %}
-                <form method="post" action="{{ url_for('portal.corr_attachment_delete', att_id=a.id) }}" onsubmit="return confirm('حذف المرفق؟');">
+                <form method="post" class="d-inline" action="{{ url_for('portal.corr_attachment_delete', att_id=a.id) }}" onsubmit="return confirm('حذف المرفق؟');">
                   <button class="btn btn-outline-danger btn-sm" type="submit"><i class="bi bi-trash"></i></button>
                 </form>
               {% endif %}
+              </div>
             </div>
           </li>
         {% else %}

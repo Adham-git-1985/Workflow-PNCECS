@@ -34,6 +34,7 @@ from models import (
     RequestAttachment,
     WorkflowTemplate,
     SystemSetting,
+    CorrAttachment,
 )
 
 from workflow.engine import start_workflow_for_request
@@ -299,6 +300,19 @@ def file_details(file_id):
         .filter(FilePermission.file_id == file.id)
         .all()
     )
+    workflow_requests = (
+        WorkflowRequest.query
+        .join(RequestAttachment, RequestAttachment.request_id == WorkflowRequest.id)
+        .filter(RequestAttachment.archived_file_id == file.id)
+        .order_by(WorkflowRequest.created_at.desc())
+        .all()
+    )
+    workflow_templates = (
+        WorkflowTemplate.query
+        .filter_by(is_active=True)
+        .order_by(WorkflowTemplate.name.asc())
+        .all()
+    )
 
     return render_template(
         "archive/file_details.html",
@@ -306,8 +320,96 @@ def file_details(file_id):
         audit_logs=audit_logs,
         can_edit=can_edit_archive_file(current_user, file),
         can_manage=can_manage_archive_file(current_user, file),
-        shared_with=shared_with
+        shared_with=shared_with,
+        workflow_requests=workflow_requests,
+        workflow_templates=workflow_templates,
     )
+
+
+@archive_bp.route("/files/<int:file_id>/workflow/start", methods=["POST"])
+@login_required
+def start_file_workflow(file_id):
+    file = ArchivedFile.query.get_or_404(file_id)
+    if getattr(file, "is_final_deleted", False) and not _is_super_admin(current_user):
+        abort(404)
+    if not can_view_archive_file(current_user, file):
+        abort(403)
+
+    template_id = (request.form.get("template_id") or "").strip()
+    templates = (
+        WorkflowTemplate.query
+        .filter_by(is_active=True)
+        .order_by(WorkflowTemplate.name.asc())
+        .all()
+    )
+    template = None
+    if template_id.isdigit():
+        template = WorkflowTemplate.query.filter_by(id=int(template_id), is_active=True).first()
+    elif len(templates) == 1:
+        template = templates[0]
+
+    if not template:
+        flash("يرجى اختيار قالب مسار فعال.", "danger")
+        return redirect(url_for("archive.file_details", file_id=file.id))
+
+    try:
+        title = f"مسار من الأرشيف: {file.original_name}"
+        if len(title) > 200:
+            title = title[:197] + "..."
+        description = "\n".join([
+            f"مصدر المسار: الأرشيف",
+            f"اسم الملف: {file.original_name}",
+            f"رقم ملف الأرشيف: {file.id}",
+            "",
+            file.description or "",
+        ]).strip()
+
+        req = WorkflowRequest(
+            requester_id=current_user.id,
+            status="DRAFT",
+            title=title,
+            description=description,
+        )
+        db.session.add(req)
+        db.session.flush()
+        db.session.add(RequestAttachment(request_id=req.id, archived_file_id=file.id))
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="WORKFLOW_ATTACHMENT_UPLOADED",
+            note=f"Attachment: {file.original_name} | file_id={file.id} | source=ARCHIVE_FILE",
+            target_type="ARCHIVE_FILE",
+            target_id=file.id,
+            created_at=datetime.utcnow(),
+        ))
+
+        start_workflow_for_request(
+            req,
+            template,
+            created_by_user_id=current_user.id,
+            auto_commit=False,
+        )
+
+        for att in CorrAttachment.query.filter_by(archive_file_id=file.id).all():
+            att.workflow_request_id = req.id
+            db.session.add(att)
+
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="ARCHIVE_WORKFLOW_START",
+            note=f"template={template.name}",
+            target_type="ARCHIVE_FILE",
+            target_id=file.id,
+            created_at=datetime.utcnow(),
+        ))
+        db.session.commit()
+        flash("تم إنشاء مسار من ملف الأرشيف.", "success")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+    except Exception:
+        db.session.rollback()
+        flash("تعذر إنشاء المسار من ملف الأرشيف.", "danger")
+        return redirect(url_for("archive.file_details", file_id=file.id))
 
 
 # =========================

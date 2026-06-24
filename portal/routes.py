@@ -6,6 +6,7 @@ from datetime import datetime, date, timedelta
 import os
 import re
 import io
+import shutil
 import uuid
 import csv
 import json
@@ -85,6 +86,10 @@ from models import (
     HRLeaveGradeEntitlement,
     AttendanceDailySummary,
     SystemSetting,
+    ArchivedFile,
+    RequestAttachment,
+    WorkflowRequest,
+    WorkflowTemplate,
     AttendanceImportBatch,
     AttendanceEvent,
     InboundMail,
@@ -172,6 +177,7 @@ from models import (
     InvRoomRequester,
     InvWarehousePermission,
 )
+from workflow.engine import start_workflow_for_request
 
 # -------------------------
 # Permissions (Portal)
@@ -952,6 +958,283 @@ def _corr_stamp_options(kind: str, ref_no: str | None, default_date: str | None)
         stamp_date=stamp_date,
     )
 
+
+def _corr_archive_storage_dir() -> str:
+    base = os.path.join(os.getcwd(), "storage", "archive")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _corr_current_user_id(default: int | None = None) -> int | None:
+    try:
+        if getattr(current_user, "is_authenticated", False):
+            return int(current_user.id)
+    except Exception:
+        pass
+    return default
+
+
+def _corr_attachment_context(att: CorrAttachment):
+    if getattr(att, "inbound_id", None):
+        item = getattr(att, "inbound", None) or InboundMail.query.get(att.inbound_id)
+        return "IN", "وارد", item
+    item = getattr(att, "outbound", None) or OutboundMail.query.get(att.outbound_id)
+    return "OUT", "صادر", item
+
+
+def _corr_item_ref(item) -> str:
+    return str((getattr(item, "ref_no", None) or getattr(item, "id", "") or "")).strip()
+
+
+def _corr_item_date(kind: str, item) -> str:
+    if kind == "IN":
+        return str(getattr(item, "received_date", "") or "").strip()
+    return str(getattr(item, "sent_date", "") or "").strip()
+
+
+def _corr_item_party(kind: str, item) -> tuple[str, str]:
+    if kind == "IN":
+        return "الجهة المرسلة", str(getattr(item, "sender", "") or "").strip()
+    return "الجهة المستلمة", str(getattr(item, "recipient", "") or "").strip()
+
+
+def _corr_archive_description(kind: str, label: str, item, att: CorrAttachment) -> str:
+    party_title, party_value = _corr_item_party(kind, item)
+    lines = [
+        f"المصدر: البوابة الإدارية - سجل {label}",
+        f"نوع المعاملة: {label}",
+        f"رقم المعاملة: {_corr_item_ref(item) or '-'}",
+        f"تاريخ المعاملة: {_corr_item_date(kind, item) or '-'}",
+        f"التصنيف: {getattr(item, 'category', None) or '-'}",
+        f"{party_title}: {party_value or '-'}",
+        f"جهة الاختصاص: {getattr(item, 'competence_label', None) or '-'}",
+        f"الموضوع: {getattr(item, 'subject', None) or '-'}",
+        f"اسم المرفق الأصلي: {att.original_name}",
+        f"الختم: {'مختوم' if getattr(att, 'stamp_applied', False) else 'غير مختوم'}",
+    ]
+    body = (getattr(item, "body", None) or "").strip()
+    if body:
+        lines.append("")
+        lines.append("نص المعاملة:")
+        lines.append(body)
+    return "\n".join(lines)
+
+
+def _corr_archive_display_name(kind: str, label: str, item, att: CorrAttachment) -> str:
+    ref = _corr_item_ref(item) or str(getattr(item, "id", "") or "")
+    return f"{label} {ref} - {att.original_name}".strip()
+
+
+def _corr_archive_owner_and_department(att: CorrAttachment, item) -> tuple[int | None, int | None]:
+    owner_id = (
+        getattr(att, "uploaded_by_id", None)
+        or getattr(item, "created_by_id", None)
+        or _corr_current_user_id()
+    )
+    owner = None
+    if owner_id:
+        try:
+            owner = User.query.get(int(owner_id))
+        except Exception:
+            owner = None
+    if not owner:
+        owner = User.query.order_by(User.id.asc()).first()
+        owner_id = getattr(owner, "id", None)
+
+    dept_id = None
+    try:
+        if getattr(current_user, "is_authenticated", False):
+            dept_id = getattr(current_user, "department_id", None)
+    except Exception:
+        dept_id = None
+    if not dept_id and owner:
+        dept_id = getattr(owner, "department_id", None)
+    return owner_id, dept_id
+
+
+def _ensure_corr_attachment_archived(
+    att: CorrAttachment,
+    file_path: str | None = None,
+    *,
+    auto_commit: bool = False,
+) -> ArchivedFile | None:
+    """Create the archive-side file record for a correspondence attachment if missing."""
+    _ensure_corr_attachment_stamp_schema()
+    try:
+        if getattr(att, "archive_file_id", None):
+            archived = ArchivedFile.query.get(att.archive_file_id)
+            if archived and os.path.exists(archived.file_path):
+                return archived
+
+        source_path = file_path or os.path.join(_corr_storage_dir(), att.stored_name)
+        if not os.path.exists(source_path):
+            return None
+
+        if is_stampable_file(att.stored_name) and not getattr(att, "stamp_applied", False):
+            _ensure_corr_attachment_file_stamped(att, source_path, auto_commit=False)
+
+        kind, label, item = _corr_attachment_context(att)
+        if not item:
+            return None
+
+        owner_id, dept_id = _corr_archive_owner_and_department(att, item)
+        if not owner_id:
+            return None
+
+        ext = _clean_suffix(att.original_name or att.stored_name) or _clean_suffix(att.stored_name) or ".bin"
+        stored_name = f"corr_{kind.lower()}_{getattr(att, 'id', 'new')}_{uuid.uuid4().hex}{ext}"
+        archive_path = os.path.join(_corr_archive_storage_dir(), stored_name)
+        shutil.copy2(source_path, archive_path)
+
+        mime, _ = mimetypes.guess_type(att.original_name or source_path)
+        archived = ArchivedFile(
+            original_name=_corr_archive_display_name(kind, label, item, att),
+            stored_name=stored_name,
+            description=_corr_archive_description(kind, label, item, att),
+            file_path=archive_path,
+            mime_type=mime,
+            file_size=os.path.getsize(archive_path),
+            owner_id=int(owner_id),
+            department_id=dept_id,
+            visibility="DEPARTMENT" if dept_id else "PRIVATE",
+        )
+        db.session.add(archived)
+        db.session.flush()
+
+        att.archive_file_id = archived.id
+        db.session.add(att)
+        db.session.add(AuditLog(
+            user_id=_corr_current_user_id(owner_id),
+            action="CORR_ARCHIVE_LINK",
+            note=f"{label} id={getattr(item, 'id', '')} attachment_id={att.id} archived_file_id={archived.id}",
+            target_type="ARCHIVE_FILE",
+            target_id=archived.id,
+            created_at=datetime.utcnow(),
+        ))
+        if auto_commit:
+            db.session.commit()
+        return archived
+    except Exception:
+        if auto_commit:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+        return None
+
+
+def _ensure_corr_attachments_archived(attachments: list[CorrAttachment]) -> list[ArchivedFile]:
+    archived_files: list[ArchivedFile] = []
+    seen: set[int] = set()
+    for att in attachments or []:
+        archived = _ensure_corr_attachment_archived(att, auto_commit=False)
+        if archived and archived.id not in seen:
+            archived_files.append(archived)
+            seen.add(archived.id)
+    return archived_files
+
+
+def _corr_workflow_templates() -> list[WorkflowTemplate]:
+    return (
+        WorkflowTemplate.query
+        .filter_by(is_active=True)
+        .order_by(WorkflowTemplate.name.asc())
+        .all()
+    )
+
+
+def _corr_workflow_description(kind: str, label: str, item, attachments: list[CorrAttachment]) -> str:
+    party_title, party_value = _corr_item_party(kind, item)
+    lines = [
+        f"مصدر المسار: البوابة الإدارية - {label}",
+        f"رقم المعاملة: {_corr_item_ref(item) or '-'}",
+        f"تاريخ المعاملة: {_corr_item_date(kind, item) or '-'}",
+        f"التصنيف: {getattr(item, 'category', None) or '-'}",
+        f"{party_title}: {party_value or '-'}",
+        f"جهة الاختصاص: {getattr(item, 'competence_label', None) or '-'}",
+        f"الموضوع: {getattr(item, 'subject', None) or '-'}",
+        f"عدد المرفقات: {len(attachments or [])}",
+    ]
+    body = (getattr(item, "body", None) or "").strip()
+    if body:
+        lines.append("")
+        lines.append("نص المعاملة:")
+        lines.append(body)
+    return "\n".join(lines)
+
+
+def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], template_id: str | None):
+    template_id = (template_id or "").strip()
+    templates = _corr_workflow_templates()
+    template = None
+    if template_id.isdigit():
+        template = WorkflowTemplate.query.filter_by(id=int(template_id), is_active=True).first()
+    elif len(templates) == 1:
+        template = templates[0]
+
+    if not template:
+        flash("يرجى اختيار قالب مسار فعال.", "danger")
+        return None
+
+    archived_files = _ensure_corr_attachments_archived(attachments)
+    if not archived_files:
+        flash("لا يوجد مرفقات مؤرشفة لبدء المسار.", "danger")
+        return None
+
+    label = "وارد" if kind == "IN" else "صادر"
+    ref = _corr_item_ref(item) or getattr(item, "id", "")
+    subject = (getattr(item, "subject", "") or "").strip()
+    title = f"مسار {label} رقم {ref}: {subject}".strip()
+    if len(title) > 200:
+        title = title[:197] + "..."
+
+    req = WorkflowRequest(
+        requester_id=current_user.id,
+        status="DRAFT",
+        title=title or f"مسار {label} رقم {ref}",
+        description=_corr_workflow_description(kind, label, item, attachments),
+    )
+    db.session.add(req)
+    db.session.flush()
+
+    for archived in archived_files:
+        db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="WORKFLOW_ATTACHMENT_UPLOADED",
+            note=f"Attachment: {archived.original_name} | file_id={archived.id} | source=CORRESPONDENCE",
+            target_type="ARCHIVE_FILE",
+            target_id=archived.id,
+            created_at=datetime.utcnow(),
+        ))
+
+    start_workflow_for_request(
+        req,
+        template,
+        created_by_user_id=current_user.id,
+        auto_commit=False,
+    )
+
+    for att in attachments:
+        att.workflow_request_id = req.id
+        db.session.add(att)
+
+    target_type = "CORR_INBOUND" if kind == "IN" else "CORR_OUTBOUND"
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=current_user.id,
+        action="CORR_WORKFLOW_START",
+        note=f"{label} id={getattr(item, 'id', '')} template={template.name}",
+        target_type=target_type,
+        target_id=getattr(item, "id", None),
+        created_at=datetime.utcnow(),
+    ))
+    db.session.commit()
+    flash("تم إنشاء المسار وربطه بالمعاملة.", "success")
+    return req
+
+
 def _save_corr_files(
     files,
     inbound_id: int | None = None,
@@ -993,6 +1276,8 @@ def _save_corr_files(
             stamp_date=stamp_options.stamp_date if stamp_applied and stamp_options else None,
         )
         db.session.add(att)
+        db.session.flush()
+        _ensure_corr_attachment_archived(att, file_path=file_path, auto_commit=False)
         saved += 1
     return saved
 
@@ -15752,7 +16037,7 @@ def corr_index():
 
 
 def _ensure_corr_attachment_stamp_schema():
-    """Add attachment stamp columns for existing SQLite databases."""
+    """Add correspondence attachment columns for existing SQLite databases."""
     try:
         bind = db.session.get_bind()
         if not bind or bind.dialect.name != "sqlite":
@@ -15764,6 +16049,8 @@ def _ensure_corr_attachment_stamp_schema():
             ("stamp_kind", "ALTER TABLE corr_attachment ADD COLUMN stamp_kind VARCHAR(10)"),
             ("stamp_ref_no", "ALTER TABLE corr_attachment ADD COLUMN stamp_ref_no VARCHAR(50)"),
             ("stamp_date", "ALTER TABLE corr_attachment ADD COLUMN stamp_date VARCHAR(10)"),
+            ("archive_file_id", "ALTER TABLE corr_attachment ADD COLUMN archive_file_id INTEGER"),
+            ("workflow_request_id", "ALTER TABLE corr_attachment ADD COLUMN workflow_request_id INTEGER"),
         ):
             if col not in existing:
                 db.session.execute(text(ddl))
@@ -16368,6 +16655,11 @@ def outbound_view(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
+    try:
+        _ensure_corr_attachments_archived(attachments)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
     logs = (
         AuditLog.query
@@ -16390,6 +16682,7 @@ def outbound_view(outbound_id: int):
         can_update=can_update,
         can_delete=can_delete,
         can_upload=can_upload,
+        workflow_templates=_corr_workflow_templates(),
     )
 
 
@@ -16400,6 +16693,11 @@ def inbound_view(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
+    try:
+        _ensure_corr_attachments_archived(attachments)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
 
     logs = (
         AuditLog.query
@@ -16422,6 +16720,7 @@ def inbound_view(inbound_id: int):
         can_update=can_update,
         can_delete=can_delete,
         can_upload=can_upload,
+        workflow_templates=_corr_workflow_templates(),
     )
 
 
@@ -16506,6 +16805,46 @@ def outbound_upload(outbound_id: int):
         db.session.rollback()
 
     flash(f"تم رفع {saved} ملف/ملفات.", "success")
+    return redirect(url_for("portal.outbound_view", outbound_id=item.id))
+
+
+@portal_bp.route("/corr/inbound/<int:inbound_id>/workflow/start", methods=["POST"])
+@login_required
+@_perm(CORR_READ)
+def inbound_start_workflow(inbound_id: int):
+    _ensure_corr_competence_schema()
+    item = InboundMail.query.get_or_404(inbound_id)
+    attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
+    if not attachments:
+        flash("لا يوجد مرفقات لبدء مسار لهذه المعاملة.", "warning")
+        return redirect(url_for("portal.inbound_view", inbound_id=item.id))
+    try:
+        req = _start_corr_workflow("IN", item, attachments, request.form.get("template_id"))
+        if req:
+            return redirect(url_for("workflow.view_request", request_id=req.id))
+    except Exception:
+        db.session.rollback()
+        flash("تعذر إنشاء المسار للمعاملة.", "danger")
+    return redirect(url_for("portal.inbound_view", inbound_id=item.id))
+
+
+@portal_bp.route("/corr/outbound/<int:outbound_id>/workflow/start", methods=["POST"])
+@login_required
+@_perm(CORR_READ)
+def outbound_start_workflow(outbound_id: int):
+    _ensure_corr_competence_schema()
+    item = OutboundMail.query.get_or_404(outbound_id)
+    attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
+    if not attachments:
+        flash("لا يوجد مرفقات لبدء مسار لهذه المعاملة.", "warning")
+        return redirect(url_for("portal.outbound_view", outbound_id=item.id))
+    try:
+        req = _start_corr_workflow("OUT", item, attachments, request.form.get("template_id"))
+        if req:
+            return redirect(url_for("workflow.view_request", request_id=req.id))
+    except Exception:
+        db.session.rollback()
+        flash("تعذر إنشاء المسار للمعاملة.", "danger")
     return redirect(url_for("portal.outbound_view", outbound_id=item.id))
 
 
@@ -16851,7 +17190,12 @@ def outbound_delete(outbound_id: int):
     return redirect(url_for("portal.outbound_list"))
 
 
-def _ensure_corr_attachment_file_stamped(att: CorrAttachment, file_path: str) -> bool:
+def _ensure_corr_attachment_file_stamped(
+    att: CorrAttachment,
+    file_path: str,
+    *,
+    auto_commit: bool = True,
+) -> bool:
     """Best-effort self-heal for correspondence attachments before serving."""
     try:
         if not att or getattr(att, "stamp_applied", False):
@@ -16881,13 +17225,15 @@ def _ensure_corr_attachment_file_stamped(att: CorrAttachment, file_path: str) ->
             att.stamp_kind = kind
             att.stamp_ref_no = str(ref_value or "")
             att.stamp_date = str(date_value or "")
-            db.session.commit()
+            if auto_commit:
+                db.session.commit()
             return True
     except Exception:
-        try:
-            db.session.rollback()
-        except Exception:
-            pass
+        if auto_commit:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
     return False
 
 

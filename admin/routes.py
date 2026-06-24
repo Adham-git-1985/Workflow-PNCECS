@@ -1464,15 +1464,29 @@ def backup_restore():
     backups_dir = _get_backups_dir()
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
-    uploaded_zip = os.path.join(backups_dir, f"uploaded_restore_{ts}.zip")
-    up.save(uploaded_zip)
-
-    extract_dir = tempfile.mkdtemp(prefix=f"restore_{ts}_", dir=backups_dir)
+    uploaded_zip = os.path.join(tempfile.gettempdir(), f"workflow_uploaded_restore_{ts}.zip")
+    extract_tmp = tempfile.TemporaryDirectory(prefix=f"workflow_restore_{ts}_")
+    extract_dir = extract_tmp.name
 
     try:
+        up.save(uploaded_zip)
+        try:
+            up.close()
+        except Exception:
+            pass
+
         with zipfile.ZipFile(uploaded_zip, "r") as z:
             z.extractall(extract_dir)
     except Exception:
+        try:
+            extract_tmp.cleanup()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(uploaded_zip):
+                os.remove(uploaded_zip)
+        except Exception:
+            pass
         flash("ملف النسخة الاحتياطية غير صالح أو تالف.", "danger")
         return redirect(url_for("admin.backup_page"))
 
@@ -1485,6 +1499,15 @@ def backup_restore():
     snap_db = next((p for p in db_candidates if os.path.exists(p)), None)
 
     if not snap_db:
+        try:
+            extract_tmp.cleanup()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(uploaded_zip):
+                os.remove(uploaded_zip)
+        except Exception:
+            pass
         flash("النسخة الاحتياطية لا تحتوي على قاعدة بيانات (workflow.db).", "danger")
         return redirect(url_for("admin.backup_page"))
 
@@ -1492,6 +1515,15 @@ def backup_restore():
     try:
         _restore_sqlite_from_snapshot(snap_db, _get_db_path())
     except Exception as e:
+        try:
+            extract_tmp.cleanup()
+        except Exception:
+            pass
+        try:
+            if os.path.exists(uploaded_zip):
+                os.remove(uploaded_zip)
+        except Exception:
+            pass
         flash(
             "تعذر استيراد قاعدة البيانات. تأكد أن لا يوجد برنامج آخر فاتح workflow.db ثم حاول مرة أخرى.",
             "danger"
@@ -1577,5 +1609,15 @@ def backup_restore():
 
     flash("✅ تم استيراد النسخة الاحتياطية بنجاح. يرجى تسجيل الدخول من جديد.", "success")
     flash("ملاحظة: يُفضّل إعادة تشغيل التطبيق بعد الاستيراد لضمان تحديث الاتصالات.", "warning")
+
+    try:
+        extract_tmp.cleanup()
+    except Exception:
+        pass
+    try:
+        if os.path.exists(uploaded_zip):
+            os.remove(uploaded_zip)
+    except Exception:
+        pass
 
     return redirect(url_for("login"))

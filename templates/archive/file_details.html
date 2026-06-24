@@ -136,6 +136,38 @@
           </div>
         </div>
 
+        <div class="archive-card mb-3">
+          <div class="card-header">
+            <strong>المسارات</strong>
+          </div>
+          <div class="card-body">
+            {% if workflow_requests %}
+              <div class="list-group list-group-flush mb-3">
+                {% for req in workflow_requests %}
+                  <a class="list-group-item list-group-item-action px-0" href="{{ url_for('workflow.view_request', request_id=req.id) }}">
+                    <div class="fw-semibold small">{{ req.title or ("مسار #" ~ req.id) }}</div>
+                    <div class="text-muted small">{{ req.status or "—" }} · {{ req.created_at.strftime("%Y-%m-%d") if req.created_at else "—" }}</div>
+                  </a>
+                {% endfor %}
+              </div>
+            {% else %}
+              <p class="text-muted small mb-3">لا يوجد مسار مرتبط بهذا الملف.</p>
+            {% endif %}
+
+            <form method="post" action="{{ url_for('archive.start_file_workflow', file_id=file.id) }}" class="d-grid gap-2">
+              <select class="form-select form-select-sm" name="template_id" required>
+                <option value="">اختر قالب المسار</option>
+                {% for t in workflow_templates|default([]) %}
+                  <option value="{{ t.id }}">{{ t.name }}</option>
+                {% endfor %}
+              </select>
+              <button class="btn btn-sm btn-primary btn-neo" type="submit">
+                <i class="bi bi-play-circle"></i> بدء مسار من هذا الملف
+              </button>
+            </form>
+          </div>
+        </div>
+
         {% if shared_with %}
         <div class="archive-card">
           <div class="card-header d-flex justify-content-between align-items-center">
