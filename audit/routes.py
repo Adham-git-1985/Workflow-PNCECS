@@ -8,6 +8,7 @@ from sqlalchemy.orm import aliased, joinedload
 
 from io import BytesIO
 from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
+from utils.ui_labels import ui_label, ui_text
 
 from . import audit_bp
 from models import (
@@ -847,7 +848,7 @@ def system_timeline_export_excel():
         rows.append({
             "ID": l.id,
             "Time": l.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-            "Action": l.action,
+            "Action": ui_label(l.action),
             "User": (l.user.email if l.user else 'System'),
             "On behalf of": (l.on_behalf_of_user.email if l.on_behalf_of_user else ''),
             "Request ID": rid or '',
@@ -856,9 +857,9 @@ def system_timeline_export_excel():
             "Step": (st if st is not None else ''),
             "Workflow Started": (meta.get('started_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('started_at') else ''),
             "Workflow Completed": (meta.get('completed_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('completed_at') else ''),
-            "Target Type": l.target_type or '',
+            "Target Type": ui_label(l.target_type) if l.target_type else '',
             "Target ID": l.target_id or '',
-            "Note": (l.note or ''),
+            "Note": ui_text(l.note) if l.note else '',
         })
 
     content = make_xlsx_bytes("Timeline", rows)

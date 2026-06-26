@@ -56,6 +56,7 @@
         <select class="form-select" name="relation">
           <option value="" {% if not filters.relation %}selected{% endif %}>الكل</option>
           <option value="created" {% if filters.relation == 'created' %}selected{% endif %}>طلبات أنشأتها</option>
+          <option value="current" {% if filters.relation == 'current' %}selected{% endif %}>مسندة لي حاليًا</option>
           <option value="decided" {% if filters.relation == 'decided' %}selected{% endif %}>شاركت بالقرار</option>
           <option value="parallel" {% if filters.relation == 'parallel' %}selected{% endif %}>مكلف موازيًا</option>
         </select>

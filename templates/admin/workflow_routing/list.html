@@ -1,5 +1,20 @@
 {% extends "layout.html" %}
 {% block content %}
+{% set sort = sort if sort is defined else 'default' %}
+{% set direction = direction if direction is defined else 'asc' %}
+{% macro sort_header(key, label) -%}
+  {% set active = (sort == key) %}
+  {% set next_direction = 'desc' if active and direction == 'asc' else 'asc' %}
+  <a class="text-decoration-none text-dark d-inline-flex align-items-center gap-1"
+     href="{{ url_for('admin.workflow_routing_list', q=q, sort=key, direction=next_direction) }}">
+    <span>{{ label }}</span>
+    {% if active %}
+      <span class="small">{{ '▲' if direction == 'asc' else '▼' }}</span>
+    {% else %}
+      <span class="small text-muted">↕</span>
+    {% endif %}
+  </a>
+{%- endmacro %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
@@ -21,6 +36,8 @@
 
 <form method="get" class="mb-3">
   <div class="input-group">
+    <input type="hidden" name="sort" value="{{ sort }}">
+    <input type="hidden" name="direction" value="{{ direction }}">
     <input class="form-control" type="text" name="q" value="{{ q or '' }}" placeholder="ابحث بنوع الطلب/المسار/الهيكلية الموحدة/الدائرة/الإدارة/المنظمة…">
     <button class="btn btn-outline-secondary" type="submit">بحث</button>
     {% if q %}
@@ -35,15 +52,15 @@
         <table class="table table-sm align-middle">
           <thead class="table-light">
             <tr>
-              <th>#</th>
-              <th>نوع الطلب</th>
-              <th>منظمة</th>
-              <th>إدارة</th>
-              <th>دائرة</th>
-              <th>هيكلية موحدة</th>
-              <th>المسار</th>
-              <th>الأولوية</th>
-              <th>نشط</th>
+              <th>{{ sort_header('id', '#') }}</th>
+              <th>{{ sort_header('request_type', 'نوع الطلب') }}</th>
+              <th>{{ sort_header('organization', 'منظمة') }}</th>
+              <th>{{ sort_header('directorate', 'إدارة') }}</th>
+              <th>{{ sort_header('department', 'دائرة') }}</th>
+              <th>{{ sort_header('org_node', 'هيكلية موحدة') }}</th>
+              <th>{{ sort_header('template', 'المسار') }}</th>
+              <th>{{ sort_header('priority', 'الأولوية') }}</th>
+              <th>{{ sort_header('is_active', 'نشط') }}</th>
               <th class="text-end">إجراءات</th>
             </tr>
           </thead>

@@ -464,6 +464,67 @@
   const boxCommittee = document.getElementById("box_committee");
   const boxCommitteeMode = document.getElementById("box_committee_mode");
 
+  function normalizeSelectSearchText(value) {
+    return (value || '')
+      .toString()
+      .trim()
+      .toLowerCase()
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ى/g, 'ي')
+      .replace(/ة/g, 'ه')
+      .replace(/[ًٌٍَُِّْ]/g, '');
+  }
+
+  function applySelectSearch(select, query) {
+    const q = normalizeSelectSearchText(query);
+    Array.from(select.options || []).forEach((opt, idx) => {
+      if (idx === 0 || !q) {
+        opt.hidden = false;
+        return;
+      }
+      const haystack = normalizeSelectSearchText(`${opt.textContent || ''} ${opt.value || ''}`);
+      opt.hidden = !haystack.includes(q);
+    });
+  }
+
+  function enhanceTargetSelect(select) {
+    if (!select || select.dataset.searchEnhanced === '1') return;
+
+    const search = document.createElement('input');
+    search.type = 'search';
+    search.className = 'form-control form-control-sm mb-1 target-select-search';
+    search.placeholder = 'اكتب للبحث داخل القائمة...';
+    search.autocomplete = 'off';
+
+    select.parentNode.insertBefore(search, select);
+    select.dataset.searchEnhanced = '1';
+
+    search.addEventListener('input', () => applySelectSearch(select, search.value));
+    select.addEventListener('change', () => {
+      search.value = '';
+      applySelectSearch(select, '');
+    });
+  }
+
+  function clearTargetSelectSearch(box) {
+    if (!box) return;
+    const search = box.querySelector('.target-select-search');
+    const select = box.querySelector('select');
+    if (search) search.value = '';
+    if (select) applySelectSearch(select, '');
+  }
+
+  [
+    boxRole.querySelector('select[name="approver_role"]'),
+    boxUser.querySelector('select[name="approver_user_id"]'),
+    boxDept.querySelector('select[name="approver_department_id"]'),
+    boxDir.querySelector('select[name="approver_directorate_id"]'),
+    boxUnit.querySelector('select[name="approver_unit_id"]'),
+    boxSection.querySelector('select[name="approver_section_id"]'),
+    boxDivision.querySelector('select[name="approver_division_id"]'),
+    boxCommittee.querySelector('select[name="approver_committee_id"]')
+  ].forEach(enhanceTargetSelect);
+
   function toggle() {
     const v = kind.value;
 
@@ -517,6 +578,10 @@
       comSel.value = "";
       comModeSel.value = "Committee_ALL";
     }
+
+    [boxRole, boxUser, boxDept, boxDir, boxUnit, boxSection, boxDivision, boxCommittee].forEach(box => {
+      if (box && box.style.display === "none") clearTargetSelectSearch(box);
+    });
   }
 
   kind.addEventListener("change", toggle);

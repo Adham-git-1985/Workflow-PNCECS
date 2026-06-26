@@ -630,6 +630,10 @@ def escalations_export_excel():
 @perm_required("WORKFLOW_ROUTING_READ")
 def workflow_routing_list():
     q = (request.args.get("q") or "").strip()
+    sort = (request.args.get("sort") or "default").strip().lower()
+    direction = (request.args.get("direction") or "asc").strip().lower()
+    if direction not in ("asc", "desc"):
+        direction = "asc"
 
     query = (
         WorkflowRoutingRule.query
@@ -662,16 +666,42 @@ def workflow_routing_list():
             OrgNodeType.name_en.ilike(like),
         ))
 
-    rules = (
-        query
-        .order_by(
+    sort_map = {
+        "id": WorkflowRoutingRule.id,
+        "request_type": func.coalesce(RequestType.name_ar, RequestType.name_en, RequestType.code, ""),
+        "organization": func.coalesce(Organization.name_ar, Organization.name_en, ""),
+        "directorate": func.coalesce(Directorate.name_ar, Directorate.name_en, ""),
+        "department": func.coalesce(Department.name_ar, Department.name_en, ""),
+        "org_node": func.coalesce(OrgNode.name_ar, OrgNode.name_en, OrgNode.code, ""),
+        "template": func.coalesce(WorkflowTemplate.name, ""),
+        "priority": WorkflowRoutingRule.priority,
+        "is_active": WorkflowRoutingRule.is_active,
+    }
+
+    if sort in sort_map:
+        sort_expr = sort_map[sort]
+        order_expr = sort_expr.desc() if direction == "desc" else sort_expr.asc()
+        order_by = [order_expr, WorkflowRoutingRule.id.desc()]
+    else:
+        sort = "default"
+        order_by = [
             WorkflowRoutingRule.is_active.desc(),
             WorkflowRoutingRule.priority.asc(),
-            WorkflowRoutingRule.id.desc()
-        )
+            WorkflowRoutingRule.id.desc(),
+        ]
+
+    rules = (
+        query
+        .order_by(*order_by)
         .all()
     )
-    return render_template("admin/workflow_routing/list.html", rules=rules, q=q)
+    return render_template(
+        "admin/workflow_routing/list.html",
+        rules=rules,
+        q=q,
+        sort=sort,
+        direction=direction,
+    )
 
 
 @admin_bp.route("/workflow-routing/org-node-tree")

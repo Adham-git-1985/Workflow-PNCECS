@@ -156,6 +156,78 @@ def _resolve_users_by_kind(kind: str, user_id=None, role=None, dept_id=None, dir
             ids.append(int(row.deputy_user_id))
         return ids
 
+    def _norm_ar_text(value: str | None) -> str:
+        s = (value or '').strip().lower()
+        for a, b in (
+            ('أ', 'ا'), ('إ', 'ا'), ('آ', 'ا'),
+            ('ى', 'ي'), ('ة', 'ه'), ('ؤ', 'و'), ('ئ', 'ي'),
+        ):
+            s = s.replace(a, b)
+        return ''.join(ch for ch in s if not ch.isspace())
+
+    def _is_all_directorates_record(row) -> bool:
+        name = _norm_ar_text(getattr(row, 'name_ar', None) or getattr(row, 'name_en', None))
+        code = (getattr(row, 'code', None) or '').strip().lower()
+        return (
+            ('جميع' in name and 'ادار' in name)
+            or ('كل' in name and 'ادار' in name)
+            or ('all' in code and 'director' in code)
+        )
+
+    def _resolve_directorate_users(directorate_id: int) -> list[int]:
+        did = int(directorate_id)
+
+        ids = _resolve_org_manager_ids('DIRECTORATE', did)
+        if ids:
+            return ids
+
+        role_vars = _role_variants('directorate_head') + _role_variants('directorate_deputy')
+        role_vars = sorted({v for v in role_vars if v})
+
+        dept_ids: list[int] = []
+        try:
+            dept_ids = [
+                int(dept_id_row) for (dept_id_row,) in (
+                    db.session.query(Department.id)
+                    .filter(Department.directorate_id == did)
+                    .all()
+                )
+                if dept_id_row
+            ]
+        except Exception:
+            dept_ids = []
+
+        scope = [User.directorate_id == did]
+        if dept_ids:
+            scope.append(User.department_id.in_(dept_ids))
+
+        q = User.query.filter(or_(*scope))
+        if role_vars:
+            q = q.filter(or_(*[User.role.ilike(v) for v in role_vars]))
+        else:
+            q = q.filter(User.role.ilike('directorate_head'))
+
+        return sorted({int(u.id) for u in q.all() if u and getattr(u, 'id', None)})
+
+    def _resolve_all_directorates_users(aggregate_id: int) -> list[int]:
+        out: list[int] = []
+        try:
+            dirs = (
+                Directorate.query
+                .filter(Directorate.is_active.is_(True))
+                .filter(Directorate.id != int(aggregate_id))
+                .order_by(Directorate.id.asc())
+                .all()
+            )
+        except Exception:
+            dirs = []
+
+        for d in dirs:
+            if _is_all_directorates_record(d):
+                continue
+            out.extend(_resolve_directorate_users(int(d.id)))
+        return sorted({int(uid) for uid in out if uid})
+
 
     if kind == 'USER' and user_id:
         return [int(user_id)]
@@ -172,17 +244,13 @@ def _resolve_users_by_kind(kind: str, user_id=None, role=None, dept_id=None, dir
 
     if kind == 'DIRECTORATE' and dir_id:
         did = int(dir_id)
-        # Prefer OrgUnitManager if configured
-        ids = _resolve_org_manager_ids('DIRECTORATE', did)
-        if ids:
-            return ids
-        # Fallback: role-based (legacy)
-        users = (
-            User.query.join(Department, User.department_id == Department.id)
-            .filter(Department.directorate_id == did, User.role.ilike('directorate_head'))
-            .all()
-        )
-        return [int(u.id) for u in users]
+        try:
+            directorate = Directorate.query.get(did)
+        except Exception:
+            directorate = None
+        if directorate and _is_all_directorates_record(directorate):
+            return _resolve_all_directorates_users(did)
+        return _resolve_directorate_users(did)
 
     if kind == 'UNIT' and unit_id:
         return _resolve_org_manager_ids('UNIT', unit_id)
@@ -240,7 +308,19 @@ def _resolve_parallel_extra_assignees(template_id: int | None, step_order: int) 
         )
         if not ts:
             return []
-        rows = WorkflowTemplateParallelAssignee.query.filter_by(template_step_id=ts.id).all()
+        rows = (
+            WorkflowTemplateParallelAssignee.query
+            .filter(
+                or_(
+                    WorkflowTemplateParallelAssignee.template_step_id == ts.id,
+                    (
+                        (WorkflowTemplateParallelAssignee.template_id == int(template_id))
+                        & (WorkflowTemplateParallelAssignee.step_order == int(step_order))
+                    ),
+                )
+            )
+            .all()
+        )
         out: list[int] = []
         for r in rows:
             out.extend(_resolve_users_by_kind(
@@ -319,26 +399,30 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
     if not _is_parallel_sync(step):
         return
 
-    # 1) Ensure tasks exist (idempotent)
-    existing_count = (
-        WorkflowStepTask.query
-        .filter_by(instance_id=inst.id, step_order=step.step_order)
-        .count()
-    )
-
-    assignees: list[int] = []
     now = datetime.utcnow()
 
-    if existing_count == 0:
-        assignees = _resolve_approver_users(step)
-        # Add extra assignees linked to this PARALLEL_SYNC step number (template definition)
-        assignees += _resolve_parallel_extra_assignees(getattr(inst, "template_id", None), step.step_order)
-        assignees = sorted({int(uid) for uid in assignees if uid})
+    assignees = _resolve_approver_users(step)
+    # Add extra assignees linked to this PARALLEL_SYNC step number (template definition).
+    assignees += _resolve_parallel_extra_assignees(getattr(inst, "template_id", None), step.step_order)
+    desired_ids = {int(uid) for uid in assignees if uid}
 
-        # Use a SAVEPOINT so a unique-constraint race won't rollback the whole outer transaction.
+    existing_ids = {
+        int(uid) for (uid,) in (
+            db.session.query(WorkflowStepTask.assignee_user_id)
+            .filter_by(instance_id=inst.id, step_order=step.step_order)
+            .all()
+        )
+        if uid
+    }
+
+    missing_ids = sorted(desired_ids - existing_ids)
+    created_ids: list[int] = []
+
+    # Use a SAVEPOINT so a unique-constraint race won't rollback the whole outer transaction.
+    if missing_ids:
         try:
             with db.session.begin_nested():
-                for uid in assignees:
+                for uid in missing_ids:
                     db.session.add(
                         WorkflowStepTask(
                             instance_id=inst.id,
@@ -351,30 +435,40 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
                         )
                     )
                 db.session.flush()
+            created_ids = missing_ids
+            existing_ids.update(created_ids)
         except IntegrityError:
-            # Someone else already created the tasks; do not notify again.
             db.session.expire_all()
-            return
-    else:
-        # Tasks already exist; we can derive assignees from tasks if needed.
-        assignees = [
-            int(uid) for (uid,) in (
-                db.session.query(WorkflowStepTask.assignee_user_id)
-                .filter_by(instance_id=inst.id, step_order=step.step_order)
-                .all()
-            )
-            if uid
-        ]
+            existing_ids = {
+                int(uid) for (uid,) in (
+                    db.session.query(WorkflowStepTask.assignee_user_id)
+                    .filter_by(instance_id=inst.id, step_order=step.step_order)
+                    .all()
+                )
+                if uid
+            }
 
-    # 2) Notify all assignees ONCE per step activation
-    if assignees and not getattr(step, "parallel_notified_at", None):
+    notify_ids: list[int] = []
+    if existing_ids and not getattr(step, "parallel_notified_at", None):
+        notify_ids = sorted(existing_ids)
+    elif created_ids:
+        notify_ids = created_ids
+
+    # Notify all initial assignees once, and notify any assignees added after activation.
+    if notify_ids:
         _notify_users(
-            assignees,
+            notify_ids,
             f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط).",
             ntype="WORKFLOW",
         )
-        step.parallel_notified_at = now
-        db.session.add(step)
+        if not getattr(step, "parallel_notified_at", None):
+            step.parallel_notified_at = now
+            db.session.add(step)
+
+
+def ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: WorkflowInstanceStep):
+    """Public wrapper used by views before rendering PARALLEL_SYNC task status."""
+    return _ensure_parallel_tasks(req, inst, step)
 
 
 def _parallel_is_complete(inst_id: int, step_order: int) -> bool:

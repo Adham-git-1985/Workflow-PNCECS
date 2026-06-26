@@ -77,7 +77,13 @@ from models import (
 
 from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
 
-from workflow.engine import start_workflow_for_request, decide_step, bypass_parallel_task, bypass_all_parallel_tasks
+from workflow.engine import (
+    start_workflow_for_request,
+    decide_step,
+    bypass_parallel_task,
+    bypass_all_parallel_tasks,
+    ensure_parallel_tasks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -2371,6 +2377,139 @@ def following():
 
     actor_ids = [int(getattr(u, "id", 0)) for u in (actor_users or []) if getattr(u, "id", None)]
 
+    def _parallel_task_exists(*, pending_only: bool = False):
+        clauses = [
+            WorkflowStepTask.instance_id == WorkflowInstance.id,
+        ]
+        if actor_ids:
+            clauses.append(WorkflowStepTask.assignee_user_id.in_(actor_ids))
+        else:
+            clauses.append(WorkflowStepTask.assignee_user_id == effective_user.id)
+        if pending_only:
+            clauses.extend([
+                WorkflowStepTask.step_order == WorkflowInstance.current_step_order,
+                WorkflowStepTask.status == "PENDING",
+            ])
+        return db.session.query(WorkflowStepTask.id).filter(*clauses).exists()
+
+    def _current_assignment_clause():
+        clauses = []
+        for u in (actor_users or []):
+            uid = int(getattr(u, "id", 0) or 0)
+            if not uid:
+                continue
+
+            role_value = getattr(u, "role", "") or ""
+            role_norm = _norm_role(role_value)
+            role_variants = _role_variants(role_value)
+
+            clauses.append(db.and_(
+                WorkflowInstanceStep.approver_kind == "USER",
+                WorkflowInstanceStep.approver_user_id == uid,
+            ))
+
+            if role_variants:
+                clauses.append(db.and_(
+                    WorkflowInstanceStep.approver_kind == "ROLE",
+                    or_(*[WorkflowInstanceStep.approver_role.ilike(v) for v in role_variants]),
+                ))
+
+            dept_id = getattr(u, "department_id", None)
+            dept_manager_exists = db.session.query(OrgUnitManager.id).filter(
+                OrgUnitManager.unit_type == "DEPARTMENT",
+                OrgUnitManager.unit_id == WorkflowInstanceStep.approver_department_id,
+                or_(OrgUnitManager.manager_user_id == uid, OrgUnitManager.deputy_user_id == uid),
+            ).exists()
+            dept_parts = [dept_manager_exists]
+            if dept_id and role_norm == "dept_head":
+                dept_parts.append(WorkflowInstanceStep.approver_department_id == int(dept_id))
+            clauses.append(db.and_(
+                WorkflowInstanceStep.approver_kind == "DEPARTMENT",
+                or_(*dept_parts),
+            ))
+
+            dir_manager_exists = db.session.query(OrgUnitManager.id).filter(
+                OrgUnitManager.unit_type == "DIRECTORATE",
+                OrgUnitManager.unit_id == WorkflowInstanceStep.approver_directorate_id,
+                or_(OrgUnitManager.manager_user_id == uid, OrgUnitManager.deputy_user_id == uid),
+            ).exists()
+            dir_parts = [dir_manager_exists]
+            if role_norm in ("directorate_head", "directorate_deputy"):
+                dir_id = _get_effective_directorate_id(u)
+                if dir_id:
+                    dir_parts.append(WorkflowInstanceStep.approver_directorate_id == int(dir_id))
+            clauses.append(db.and_(
+                WorkflowInstanceStep.approver_kind == "DIRECTORATE",
+                or_(*dir_parts),
+            ))
+
+            for kind, unit_type, step_col in (
+                ("UNIT", "UNIT", WorkflowInstanceStep.approver_unit_id),
+                ("SECTION", "SECTION", WorkflowInstanceStep.approver_section_id),
+                ("DIVISION", "DIVISION", WorkflowInstanceStep.approver_division_id),
+            ):
+                manager_exists = db.session.query(OrgUnitManager.id).filter(
+                    OrgUnitManager.unit_type == unit_type,
+                    OrgUnitManager.unit_id == step_col,
+                    or_(OrgUnitManager.manager_user_id == uid, OrgUnitManager.deputy_user_id == uid),
+                ).exists()
+                clauses.append(db.and_(
+                    WorkflowInstanceStep.approver_kind == kind,
+                    manager_exists,
+                ))
+
+            org_node_manager_exists = db.session.query(OrgNodeManager.id).filter(
+                OrgNodeManager.node_id == WorkflowInstanceStep.approver_org_node_id,
+                or_(OrgNodeManager.manager_user_id == uid, OrgNodeManager.deputy_user_id == uid),
+            ).exists()
+            clauses.append(db.and_(
+                WorkflowInstanceStep.approver_kind == "ORG_NODE",
+                org_node_manager_exists,
+            ))
+
+            committee_role_clause = (
+                or_(*[CommitteeAssignee.role.ilike(v) for v in role_variants])
+                if role_variants else CommitteeAssignee.role.ilike(role_value)
+            )
+            committee_member_exists = db.session.query(CommitteeAssignee.id).filter(
+                CommitteeAssignee.committee_id == WorkflowInstanceStep.approver_committee_id,
+                CommitteeAssignee.is_active.is_(True),
+                or_(
+                    db.and_(CommitteeAssignee.kind == "USER", CommitteeAssignee.user_id == uid),
+                    db.and_(CommitteeAssignee.kind == "ROLE", committee_role_clause),
+                ),
+                or_(
+                    WorkflowInstanceStep.committee_delivery_mode.is_(None),
+                    WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_ALL", "COMMITTEE_ALL"]),
+                    db.and_(
+                        WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_CHAIR", "COMMITTEE_CHAIR"]),
+                        CommitteeAssignee.member_role.ilike("CHAIR"),
+                    ),
+                    db.and_(
+                        WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_SECRETARY", "COMMITTEE_SECRETARY"]),
+                        CommitteeAssignee.member_role.ilike("SECRETARY"),
+                    ),
+                ),
+            ).exists()
+            clauses.append(db.and_(
+                WorkflowInstanceStep.approver_kind == "COMMITTEE",
+                committee_member_exists,
+            ))
+
+        if not clauses:
+            return db.text("0")
+
+        current_normal_step = db.and_(
+            WorkflowInstanceStep.step_order == WorkflowInstance.current_step_order,
+            WorkflowInstanceStep.status == "PENDING",
+            or_(*clauses),
+        )
+
+        try:
+            return or_(current_normal_step, _parallel_task_exists(pending_only=True))
+        except Exception:
+            return current_normal_step
+
     q = (
         db.session.query(WorkflowRequest, WorkflowInstance, WorkflowTemplate)
         .join(WorkflowInstance, WorkflowInstance.request_id == WorkflowRequest.id)
@@ -2388,24 +2527,16 @@ def following():
         )
 
         try:
-            parallel_involved_exists = (
-                db.session.query(WorkflowStepTask.id)
-                .filter(
-                    WorkflowStepTask.instance_id == WorkflowInstance.id,
-                    WorkflowStepTask.assignee_user_id.in_(actor_ids)
-                    if actor_ids
-                    else (WorkflowStepTask.assignee_user_id == effective_user.id),
-                )
-                .exists()
-            )
+            parallel_involved_exists = _parallel_task_exists()
         except Exception:
             parallel_involved_exists = db.text("0")
 
         q = q.filter(
             or_(
-                WorkflowRequest.requester_id == effective_user.id,
+                WorkflowRequest.requester_id.in_(actor_ids) if actor_ids else WorkflowRequest.requester_id == effective_user.id,
                 decided_clause,
                 parallel_involved_exists,
+                _current_assignment_clause(),
             )
         )
 
@@ -2452,18 +2583,13 @@ def following():
 
     if relation == "created" and actor_ids:
         q = q.filter(WorkflowRequest.requester_id.in_(actor_ids))
+    elif relation == "current":
+        q = q.filter(_current_assignment_clause())
     elif relation == "decided" and actor_ids:
         q = q.filter(WorkflowInstanceStep.decided_by_id.in_(actor_ids))
     elif relation == "parallel" and actor_ids:
         try:
-            q = q.filter(
-                db.session.query(WorkflowStepTask.id)
-                .filter(
-                    WorkflowStepTask.instance_id == WorkflowInstance.id,
-                    WorkflowStepTask.assignee_user_id.in_(actor_ids),
-                )
-                .exists()
-            )
+            q = q.filter(_parallel_task_exists())
         except Exception:
             pass
 
@@ -2862,6 +2988,13 @@ def view_request(request_id):
     can_bypass_parallel = False
     try:
         if current_step and (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+            try:
+                ensure_parallel_tasks(req, inst, current_step)
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                logger.exception("Failed to ensure parallel tasks for request %s step %s", req.id, current_step.step_order)
+
             parallel_tasks = (
                 WorkflowStepTask.query
                 .options(joinedload(WorkflowStepTask.assignee))

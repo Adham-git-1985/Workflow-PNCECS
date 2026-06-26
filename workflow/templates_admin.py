@@ -185,14 +185,35 @@ def _xlsx_response(sheet_name: str, headers: list[str], rows: list[list], filena
 @perm_required("WORKFLOW_TEMPLATES_READ")
 def templates_list():
     q = (request.args.get("q") or "").strip()
+    sort = (request.args.get("sort") or "id").strip().lower()
+    direction = (request.args.get("direction") or "desc").strip().lower()
+    if direction not in ("asc", "desc"):
+        direction = "desc"
 
     query = WorkflowTemplate.query
     if q:
         like = f"%{q}%"
         query = query.filter(WorkflowTemplate.name.ilike(like))
 
-    items = query.order_by(WorkflowTemplate.id.desc()).all()
-    return render_template("workflow/templates_admin/list.html", items=items, q=q)
+    sort_map = {
+        "id": WorkflowTemplate.id,
+        "name": func.coalesce(WorkflowTemplate.name, ""),
+        "is_active": WorkflowTemplate.is_active,
+        "sla": func.coalesce(WorkflowTemplate.sla_days_default, -1),
+    }
+    if sort not in sort_map:
+        sort = "id"
+
+    sort_expr = sort_map[sort]
+    order_expr = sort_expr.desc() if direction == "desc" else sort_expr.asc()
+    items = query.order_by(order_expr, WorkflowTemplate.id.desc()).all()
+    return render_template(
+        "workflow/templates_admin/list.html",
+        items=items,
+        q=q,
+        sort=sort,
+        direction=direction,
+    )
 
 
 @workflow_bp.route("/templates/export-excel")
