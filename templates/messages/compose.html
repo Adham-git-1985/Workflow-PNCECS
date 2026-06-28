@@ -15,7 +15,7 @@
 
   <div class="card shadow-sm">
     <div class="card-body">
-      <form method="POST" novalidate>
+      <form method="POST" id="messageComposeForm" novalidate>
         <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label">الجهة</label>
@@ -59,7 +59,7 @@
           </div>
 
           <div class="col-12">
-            <button class="btn btn-primary w-100">إرسال</button>
+            <button class="btn btn-primary w-100" type="submit" id="messageSubmitBtn" data-loading-text="جاري الإرسال...">إرسال</button>
           </div>
         </div>
       </form>
@@ -73,6 +73,8 @@
   const uSel = document.getElementById('target_user');
   const dSel = document.getElementById('target_dept');
   const rSel = document.getElementById('target_dir');
+  const form = document.getElementById('messageComposeForm');
+  const submitBtn = document.getElementById('messageSubmitBtn');
 
   function toggle() {
     const v = (kind.value || 'USER').toUpperCase();
@@ -87,6 +89,21 @@
   }
 
   kind.addEventListener('change', toggle);
+  form.addEventListener('submit', function (event) {
+    if (form.dataset.submitted === '1') {
+      event.preventDefault();
+      return false;
+    }
+
+    form.dataset.submitted = '1';
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.setAttribute('aria-disabled', 'true');
+      submitBtn.textContent = submitBtn.dataset.loadingText || 'جاري الإرسال...';
+    }
+
+    return true;
+  });
   toggle();
 })();
 </script>

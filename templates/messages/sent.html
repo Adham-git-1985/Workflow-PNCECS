@@ -14,6 +14,23 @@
     </div>
   </div>
 
+  <form method="get" class="row g-2 align-items-center mb-3">
+    <div class="col-sm-7 col-md-6 col-lg-5">
+      <div class="input-group">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input type="text" class="form-control" name="q" value="{{ q or '' }}" placeholder="ابحث بالموضوع/النص/المستلم..." />
+      </div>
+    </div>
+    <div class="col-auto">
+      <button class="btn btn-outline-primary">بحث</button>
+    </div>
+    {% if q %}
+    <div class="col-auto">
+      <a class="btn btn-outline-secondary" href="{{ url_for('messages.sent') }}">إلغاء</a>
+    </div>
+    {% endif %}
+  </form>
+
   <div class="card shadow-sm">
     <div class="card-body">
       {% if messages %}
@@ -84,7 +101,7 @@
         <nav class="mt-3">
           <ul class="pagination justify-content-center mb-0">
             {% if pagination.has_prev %}
-              <li class="page-item"><a class="page-link" href="{{ url_for('messages.sent', page=pagination.prev_num) }}">السابق</a></li>
+              <li class="page-item"><a class="page-link" href="{{ url_for('messages.sent', page=pagination.prev_num, q=q) }}">السابق</a></li>
             {% else %}
               <li class="page-item disabled"><span class="page-link">السابق</span></li>
             {% endif %}
@@ -92,7 +109,7 @@
             <li class="page-item disabled"><span class="page-link">{{ pagination.page }} / {{ pagination.pages }}</span></li>
 
             {% if pagination.has_next %}
-              <li class="page-item"><a class="page-link" href="{{ url_for('messages.sent', page=pagination.next_num) }}">التالي</a></li>
+              <li class="page-item"><a class="page-link" href="{{ url_for('messages.sent', page=pagination.next_num, q=q) }}">التالي</a></li>
             {% else %}
               <li class="page-item disabled"><span class="page-link">التالي</span></li>
             {% endif %}
@@ -100,7 +117,7 @@
         </nav>
         {% endif %}
       {% else %}
-        <div class="alert alert-info mb-0">لا توجد رسائل مرسلة.</div>
+        <div class="alert alert-info mb-0">{% if q %}لا توجد نتائج مطابقة في الرسائل المرسلة.{% else %}لا توجد رسائل مرسلة.{% endif %}</div>
       {% endif %}
     </div>
   </div>

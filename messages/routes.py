@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import re
 
 from sqlalchemy import or_
@@ -42,6 +42,24 @@ def _audit_message(action, msg, note_extra=None, recipients=None):
         pass
 
 
+def _find_recent_duplicate_message(sender_id, target_kind, target_id, subject, body):
+    duplicate_window = datetime.utcnow() - timedelta(seconds=15)
+    return (
+        Message.query
+        .filter(
+            Message.sender_id == sender_id,
+            Message.sender_deleted.is_(False),
+            Message.target_kind == target_kind,
+            Message.target_id == target_id,
+            Message.subject == subject,
+            Message.body == body,
+            Message.created_at >= duplicate_window,
+        )
+        .order_by(Message.created_at.desc())
+        .first()
+    )
+
+
 @messages_bp.route("/inbox")
 @login_required
 def inbox():
@@ -83,6 +101,7 @@ def inbox():
 @login_required
 def sent():
     page = request.args.get("page", 1, type=int)
+    search = (request.args.get("q") or "").strip()
 
     q = (
         Message.query
@@ -90,14 +109,33 @@ def sent():
             Message.sender_id == current_user.id,
             Message.sender_deleted.is_(False)
         )
-        .order_by(Message.created_at.desc())
     )
+
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            or_(
+                Message.subject.ilike(like),
+                Message.body.ilike(like),
+                Message.recipients.any(
+                    MessageRecipient.recipient.has(
+                        or_(
+                            User.email.ilike(like),
+                            User.name.ilike(like)
+                        )
+                    )
+                )
+            )
+        )
+
+    q = q.order_by(Message.created_at.desc())
 
     pagination = q.paginate(page=page, per_page=20, error_out=False)
     return render_template(
         "messages/sent.html",
         messages=pagination.items,
-        pagination=pagination
+        pagination=pagination,
+        q=search
     )
 
 
@@ -179,6 +217,17 @@ def compose():
         if not recipient_ids:
             flash("لا يوجد مستخدمون ضمن الجهة المختارة", "warning")
             return redirect(url_for("messages.compose"))
+
+        duplicate = _find_recent_duplicate_message(
+            sender_id=current_user.id,
+            target_kind=target_kind,
+            target_id=target_id_int,
+            subject=subject,
+            body=body,
+        )
+        if duplicate:
+            flash("تم تجاهل محاولة إرسال مكررة لنفس الرسالة.", "warning")
+            return redirect(url_for("messages.sent"))
 
         msg = Message(
             sender_id=current_user.id,
