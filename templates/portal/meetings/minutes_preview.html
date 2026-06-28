@@ -1,0 +1,163 @@
+{% extends "portal/layout.html" %}
+{% block title %}محضر اجتماع - {{ row.title }}{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-file-earmark-richtext"></i> محضر اجتماع</h4>
+    <div class="text-muted small">{{ row.title }}</div>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    <button class="btn btn-outline-secondary" type="button" onclick="window.print()">
+      <i class="bi bi-printer"></i> طباعة
+    </button>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.meeting_minutes_docx', meeting_id=row.id) }}">
+      <i class="bi bi-file-earmark-word"></i> Word
+    </a>
+    <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('portal.meeting_minutes_pdf', meeting_id=row.id) }}">
+      <i class="bi bi-file-earmark-pdf"></i> PDF
+    </a>
+    <a class="btn btn-outline-primary" href="{{ url_for('portal.meeting_view', meeting_id=row.id) }}" data-meeting-preview-back>
+      <i class="bi bi-arrow-right"></i> رجوع
+    </a>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-4 meeting-minutes-preview">
+  <div class="text-center border-bottom pb-3 mb-4">
+    <div class="small text-muted">محضر اجتماع رسمي</div>
+    <h3 class="mb-1">{{ minutes.title }}</h3>
+    <div class="text-muted">{{ minutes.when }}</div>
+  </div>
+
+  <section class="mb-4">
+    <h5 class="mb-3"><i class="bi bi-info-circle"></i> بيانات الاجتماع</h5>
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead><tr><th>البيان</th><th>القيمة</th></tr></thead>
+        <tbody>
+          <tr><th>رقم الاجتماع</th><td>{{ minutes.id }}</td></tr>
+          <tr><th>الموعد</th><td>{{ minutes.when }}</td></tr>
+          <tr><th>المكان</th><td>{{ minutes.location }}</td></tr>
+          <tr><th>الحالة</th><td>{{ minutes.status }}</td></tr>
+          <tr><th>منظم الاجتماع</th><td>{{ minutes.organizer }}</td></tr>
+          <tr><th>تاريخ الإنشاء</th><td>{{ minutes.created_at }}</td></tr>
+          <tr><th>آخر تحديث</th><td>{{ minutes.updated_at }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="white-space-pre-line">{{ minutes.description or 'لا يوجد وصف.' }}</div>
+  </section>
+
+  <section class="mb-4">
+    <h5 class="mb-3"><i class="bi bi-people"></i> المدعوون والحضور</h5>
+    {% if minutes.participants %}
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead><tr><th>الاسم</th><th>الدور</th><th>حالة الحضور</th><th>ملاحظة</th></tr></thead>
+          <tbody>
+            {% for p in minutes.participants %}
+              <tr><td>{{ p.name }}</td><td>{{ p.role }}</td><td>{{ p.attendance }}</td><td>{{ p.note or '-' }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا يوجد مدعوون مسجلون.</div>
+    {% endif %}
+  </section>
+
+  <section class="mb-4">
+    <h5 class="mb-3"><i class="bi bi-list-check"></i> الأجندة</h5>
+    {% if minutes.agenda_items %}
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead><tr><th>الترتيب</th><th>البند</th><th>المسؤول</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
+          <tbody>
+            {% for a in minutes.agenda_items %}
+              <tr><td>{{ a.order }}</td><td>{{ a.title }}</td><td>{{ a.owner }}</td><td>{{ a.status }}</td><td>{{ a.notes or '-' }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا توجد بنود أجندة.</div>
+    {% endif %}
+  </section>
+
+  <section class="mb-4">
+    <h5 class="mb-3"><i class="bi bi-journal-text"></i> محضر الاجتماع</h5>
+    <div class="border rounded-3 p-3 white-space-pre-line">{{ minutes.minutes_text or 'لم يتم تسجيل محضر بعد.' }}</div>
+  </section>
+
+  <section class="mb-4">
+    <h5 class="mb-3"><i class="bi bi-check2-circle"></i> القرارات</h5>
+    <div class="border rounded-3 p-3 white-space-pre-line">{{ minutes.decisions_text or 'لا توجد قرارات مسجلة.' }}</div>
+  </section>
+
+  <section class="mb-4">
+    <h5 class="mb-3"><i class="bi bi-check2-square"></i> مهام المتابعة</h5>
+    {% if minutes.tasks %}
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead><tr><th>المهمة</th><th>المسؤول</th><th>الاستحقاق</th><th>الحالة</th><th>التفاصيل</th></tr></thead>
+          <tbody>
+            {% for t in minutes.tasks %}
+              <tr><td>{{ t.title }}</td><td>{{ t.assignee }}</td><td>{{ t.due_date }}</td><td>{{ t.status }}</td><td>{{ t.description or '-' }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-muted">لا توجد مهام متابعة.</div>
+    {% endif %}
+  </section>
+
+  <div class="small text-muted border-top pt-3">
+    <h5 class="mb-3 text-dark"><i class="bi bi-info-square"></i> معلومات الإصدار</h5>
+    <div class="table-responsive">
+      <table class="table table-bordered align-middle">
+        <thead><tr><th>البيان</th><th>القيمة</th></tr></thead>
+        <tbody>
+          <tr><th>تاريخ التوليد</th><td>{{ minutes.generated_at }}</td></tr>
+          <tr><th>رابط الاجتماع</th><td class="ltr-value">{{ minutes.meeting_url }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% if meeting_letterhead.configured %} | الترويسة: {{ meeting_letterhead.name }}{% endif %}
+  </div>
+</div>
+
+<style>
+  .meeting-minutes-preview { direction: rtl; }
+  .meeting-minutes-preview table { direction: rtl; }
+  .meeting-minutes-preview th { width: 18%; background: #f8f9fa; }
+  .meeting-minutes-preview td, .meeting-minutes-preview th { text-align: right; unicode-bidi: plaintext; }
+  .meeting-minutes-preview .ltr-value { direction: ltr; text-align: left; }
+  .white-space-pre-line { white-space: pre-line; }
+  @media print {
+    .portal-sidebar, .navbar, .btn, form { display: none !important; }
+    .meeting-minutes-preview { box-shadow: none !important; border-radius: 0 !important; }
+  }
+</style>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var backLink = document.querySelector('[data-meeting-preview-back]');
+    if (!backLink) return;
+    backLink.addEventListener('click', function (event) {
+      var targetPath = new URL(backLink.getAttribute('href'), window.location.origin).pathname;
+      var referrerPath = '';
+      try {
+        var referrerUrl = new URL(document.referrer);
+        if (referrerUrl.origin === window.location.origin) {
+          referrerPath = referrerUrl.pathname;
+        }
+      } catch (_) {}
+      if (window.history.length > 1 && referrerPath === targetPath) {
+        event.preventDefault();
+        window.history.back();
+      }
+    });
+  });
+</script>
+{% endblock %}

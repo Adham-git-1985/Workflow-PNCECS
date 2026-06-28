@@ -7,6 +7,8 @@ import os
 import re
 import io
 import shutil
+import subprocess
+import tempfile
 import uuid
 import csv
 import json
@@ -1506,6 +1508,7 @@ MEETING_TASK_STATUS_LABELS = {
 MEETING_WORKFLOW_SOURCE_LABELS = {
     "MINUTES": "محضر الاجتماع",
     "DECISIONS": "القرارات",
+    "OFFICIAL_MINUTES": "ملف المحضر الرسمي",
     "TASK": "مهمة متابعة",
     "ALL_TASKS": "كل مهام المتابعة",
 }
@@ -1519,6 +1522,773 @@ MEETING_ATTENDANCE_LABELS = {
     "ABSENT": "غائب",
     "EXCUSED": "معتذر",
 }
+
+MEETING_PARTICIPANT_ROLE_LABELS = {
+    "ATTENDEE": "مدعو",
+    "OWNER": "منظم الاجتماع",
+    "CHAIR": "رئيس الاجتماع",
+    "SECRETARY": "مقرر",
+}
+
+MEETING_MINUTES_LETTERHEAD_PATH_KEY = "PORTAL_MEETING_MINUTES_LETTERHEAD_PATH"
+MEETING_MINUTES_LETTERHEAD_NAME_KEY = "PORTAL_MEETING_MINUTES_LETTERHEAD_NAME"
+MEETING_MINUTES_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+MEETING_DOC_FONT_NAME = "Sakkal Majalla"
+MEETING_DOC_BODY_SIZE = 16
+MEETING_DOC_HEADING_SIZE = 20
+MEETING_DOC_TITLE_SIZE = 22
+MEETING_DOC_SUBTITLE_SIZE = 18
+
+
+def _meeting_letterhead_storage_dir() -> str:
+    base = os.path.join(current_app.instance_path, "uploads", "meeting_letterheads")
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def _meeting_letterhead_path() -> str | None:
+    raw = (_setting_get(MEETING_MINUTES_LETTERHEAD_PATH_KEY, "") or "").strip()
+    if raw:
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = Path(current_app.instance_path) / raw
+        if candidate.exists() and candidate.is_file() and candidate.suffix.lower() == ".docx":
+            return str(candidate)
+
+    fallback = Path(current_app.root_path) / "assets" / "templates" / "meetings" / "meeting_minutes_letterhead.docx"
+    if fallback.exists() and fallback.is_file():
+        return str(fallback)
+    return None
+
+
+def _meeting_letterhead_info() -> dict:
+    path = _meeting_letterhead_path()
+    configured_name = (_setting_get(MEETING_MINUTES_LETTERHEAD_NAME_KEY, "") or "").strip()
+    return {
+        "path": path,
+        "name": configured_name or (os.path.basename(path) if path else ""),
+        "configured": bool(path),
+    }
+
+
+def _save_meeting_letterhead(upload) -> str:
+    original = (getattr(upload, "filename", None) or "").strip()
+    if not original or not original.lower().endswith(".docx"):
+        raise ValueError("letterhead_must_be_docx")
+
+    stored_name = f"meeting_letterhead_{uuid.uuid4().hex}.docx"
+    saved_path = os.path.join(_meeting_letterhead_storage_dir(), stored_name)
+    upload.save(saved_path)
+
+    try:
+        import zipfile
+        if not zipfile.is_zipfile(saved_path):
+            try:
+                os.remove(saved_path)
+            except OSError:
+                pass
+            raise ValueError("letterhead_invalid_docx")
+    except ValueError:
+        raise
+    except Exception:
+        current_app.logger.warning("Could not validate meeting letterhead zip structure", exc_info=True)
+
+    rel_path = os.path.relpath(saved_path, current_app.instance_path)
+    _setting_set(MEETING_MINUTES_LETTERHEAD_PATH_KEY, rel_path)
+    _setting_set(MEETING_MINUTES_LETTERHEAD_NAME_KEY, original[:250])
+    return saved_path
+
+
+def _meeting_safe_filename_part(value: str | None, fallback: str = "meeting") -> str:
+    text = (value or "").strip()
+    text = re.sub(r"[\\/:*?\"<>|]+", "_", text)
+    text = re.sub(r"\s+", "_", text).strip("._ ")
+    return (text[:80] or fallback)
+
+
+def _meeting_minutes_filename(row: PortalMeeting, ext: str) -> str:
+    title = _meeting_safe_filename_part(getattr(row, "title", None), f"meeting_{row.id}")
+    return f"minutes_meeting_{row.id}_{title}.{ext.lstrip('.')}"
+
+
+def _meeting_dt_label(value) -> str:
+    if not value:
+        return "-"
+    try:
+        return value.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(value)
+
+
+def _meeting_date_label(value) -> str:
+    if not value:
+        return "-"
+    try:
+        return value.strftime("%Y-%m-%d")
+    except Exception:
+        return str(value)
+
+
+def _meeting_minutes_context(row: PortalMeeting) -> dict:
+    participants = []
+    for p in (row.participants or []):
+        participants.append({
+            "name": _meeting_user_label(getattr(p, "user", None), str(getattr(p, "user_id", ""))),
+            "role": MEETING_PARTICIPANT_ROLE_LABELS.get(getattr(p, "role", None), getattr(p, "role", None) or "-"),
+            "attendance": MEETING_ATTENDANCE_LABELS.get(getattr(p, "attendance_status", None), getattr(p, "attendance_status", None) or "-"),
+            "note": getattr(p, "note", None) or "",
+        })
+
+    agenda_items = []
+    for idx, item in enumerate((row.agenda_items or []), start=1):
+        agenda_items.append({
+            "order": idx,
+            "title": getattr(item, "title", None) or "",
+            "owner": _meeting_user_label(getattr(item, "owner", None), "بدون مسؤول"),
+            "status": "تمت المناقشة" if getattr(item, "is_done", False) else "قيد المتابعة",
+            "notes": getattr(item, "notes", None) or "",
+        })
+
+    tasks = []
+    for task in (row.tasks or []):
+        tasks.append({
+            "title": getattr(task, "title", None) or "",
+            "assignee": _meeting_user_label(getattr(task, "assignee", None), "بدون مسؤول"),
+            "due_date": _meeting_date_label(getattr(task, "due_date", None)),
+            "status": MEETING_TASK_STATUS_LABELS.get(getattr(task, "status", None), getattr(task, "status", None) or "-"),
+            "description": getattr(task, "description", None) or "",
+        })
+
+    return {
+        "id": row.id,
+        "title": row.title,
+        "description": row.description or "",
+        "location": row.location or "-",
+        "status": MEETING_STATUS_LABELS.get(row.status, row.status),
+        "start_at": _meeting_dt_label(row.start_at),
+        "end_at": _meeting_dt_label(row.end_at),
+        "when": _meeting_when_label(row) or "-",
+        "organizer": _meeting_user_label(getattr(row, "created_by", None), "-"),
+        "created_at": _meeting_dt_label(getattr(row, "created_at", None)),
+        "updated_at": _meeting_dt_label(getattr(row, "updated_at", None)),
+        "minutes_text": row.minutes_text or "",
+        "decisions_text": row.decisions_text or "",
+        "participants": participants,
+        "agenda_items": agenda_items,
+        "tasks": tasks,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "meeting_url": _meeting_public_link(row),
+    }
+
+
+def _docx_should_use_ltr(value: str | int | None) -> bool:
+    text = "" if value is None else str(value)
+    return bool(re.search(r"[A-Za-z]", text)) and not bool(re.search(r"[\u0600-\u06FF]", text))
+
+
+def _docx_set_run_font(run, *, size_pt: float | None = None, bold: bool | None = None, color: str | None = None):
+    from docx.shared import Pt, RGBColor
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    run.font.name = MEETING_DOC_FONT_NAME
+    try:
+        r_pr = run._element.get_or_add_rPr()
+        r_fonts = r_pr.get_or_add_rFonts()
+        r_fonts.set(qn("w:ascii"), MEETING_DOC_FONT_NAME)
+        r_fonts.set(qn("w:hAnsi"), MEETING_DOC_FONT_NAME)
+        r_fonts.set(qn("w:cs"), MEETING_DOC_FONT_NAME)
+        lang = r_pr.find(qn("w:lang"))
+        if lang is None:
+            lang = OxmlElement("w:lang")
+            r_pr.append(lang)
+        lang.set(qn("w:val"), "en-US")
+        lang.set(qn("w:bidi"), "ar-SA")
+    except Exception:
+        pass
+    if size_pt:
+        run.font.size = Pt(size_pt)
+    if bold is not None:
+        run.bold = bold
+    if color:
+        run.font.color.rgb = RGBColor.from_string(color)
+
+
+def _docx_set_paragraph_rtl(paragraph, *, bold: bool = False, size_pt: float = MEETING_DOC_BODY_SIZE, color: str | None = None):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    try:
+        p_pr = paragraph._p.get_or_add_pPr()
+        bidi = p_pr.find(qn("w:bidi"))
+        if bidi is None:
+            bidi = OxmlElement("w:bidi")
+            p_pr.append(bidi)
+        bidi.set(qn("w:val"), "1")
+    except Exception:
+        pass
+    for run in paragraph.runs:
+        _docx_set_run_font(run, size_pt=size_pt, bold=bold, color=color)
+
+
+def _docx_set_paragraph_ltr(paragraph, *, bold: bool = False, size_pt: float = MEETING_DOC_BODY_SIZE, color: str | None = None):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    try:
+        p_pr = paragraph._p.get_or_add_pPr()
+        bidi = p_pr.find(qn("w:bidi"))
+        if bidi is not None:
+            p_pr.remove(bidi)
+    except Exception:
+        pass
+    for run in paragraph.runs:
+        _docx_set_run_font(run, size_pt=size_pt, bold=bold, color=color)
+
+
+def _docx_rewrite_paragraph(paragraph, text: str, *, bold: bool = False, size_pt: float = MEETING_DOC_BODY_SIZE, color: str | None = None):
+    if paragraph.runs:
+        paragraph.runs[0].text = text
+        for run in paragraph.runs[1:]:
+            run.text = ""
+    else:
+        paragraph.add_run(text)
+    _docx_set_paragraph_rtl(paragraph, bold=bold, size_pt=size_pt, color=color)
+
+
+def _docx_fill_letterhead_fields(doc, data: dict):
+    meeting_no = f"اجتماع/{data.get('id')}/{datetime.now().year}"
+    today = datetime.now().strftime("%d/%m/%Y")
+
+    def _apply(paragraph):
+        text = paragraph.text or ""
+        if not text.strip():
+            return
+        new_text = text
+        if "الرقم" in new_text:
+            new_text = re.sub(r"(الرقم\s*:\s*).*", lambda m: m.group(1) + meeting_no, new_text)
+        if "التاريخ" in new_text:
+            new_text = re.sub(r"(التاريخ\s*:\s*).*", lambda m: m.group(1) + today, new_text)
+        if new_text != text:
+            _docx_rewrite_paragraph(paragraph, new_text, size_pt=MEETING_DOC_BODY_SIZE)
+
+    for section in doc.sections:
+        containers = [section.header, section.first_page_header, section.even_page_header, section.footer]
+        for container in containers:
+            for paragraph in container.paragraphs:
+                _apply(paragraph)
+            for table in container.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        for paragraph in cell.paragraphs:
+                            _apply(paragraph)
+
+
+def _docx_add_heading(doc, text: str, level: int = 1):
+    size = MEETING_DOC_HEADING_SIZE if level == 1 else MEETING_DOC_SUBTITLE_SIZE
+    p = doc.add_paragraph()
+    p.add_run(text)
+    _docx_set_paragraph_rtl(p, bold=True, size_pt=size, color="1F4E79" if level == 1 else "2F5597")
+    return p
+
+
+def _docx_add_text(doc, text: str | None, fallback: str = "لا توجد بيانات."):
+    body = (text or "").strip() or fallback
+    for idx, line in enumerate(body.splitlines() or [fallback]):
+        p = doc.add_paragraph()
+        p.add_run(line if line.strip() else " ")
+        if _docx_should_use_ltr(line):
+            _docx_set_paragraph_ltr(p, size_pt=MEETING_DOC_BODY_SIZE)
+        else:
+            _docx_set_paragraph_rtl(p, size_pt=MEETING_DOC_BODY_SIZE)
+        if idx == 0:
+            try:
+                p.paragraph_format.space_before = 0
+            except Exception:
+                pass
+
+
+def _docx_set_cell(cell, text: str | int | None, *, header: bool = False):
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    text_value = "" if text is None else str(text)
+    cell.text = text_value
+    try:
+        cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+    except Exception:
+        pass
+    use_ltr = (not header) and _docx_should_use_ltr(text_value)
+    for paragraph in cell.paragraphs:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT if use_ltr else WD_ALIGN_PARAGRAPH.RIGHT
+        try:
+            p_pr = paragraph._p.get_or_add_pPr()
+            bidi = p_pr.find(qn("w:bidi"))
+            if use_ltr:
+                if bidi is not None:
+                    p_pr.remove(bidi)
+            else:
+                if bidi is None:
+                    bidi = OxmlElement("w:bidi")
+                    p_pr.append(bidi)
+                bidi.set(qn("w:val"), "1")
+        except Exception:
+            pass
+        for run in paragraph.runs:
+            _docx_set_run_font(run, size_pt=MEETING_DOC_BODY_SIZE, bold=header, color="FFFFFF" if header else None)
+    if header:
+        try:
+            tc_pr = cell._tc.get_or_add_tcPr()
+            shading = OxmlElement("w:shd")
+            shading.set(qn("w:fill"), "1F4E79")
+            tc_pr.append(shading)
+        except Exception:
+            pass
+
+
+def _docx_set_table_rtl(table):
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    try:
+        tbl_pr = table._tbl.tblPr
+        if tbl_pr is None:
+            tbl_pr = OxmlElement("w:tblPr")
+            table._tbl.insert(0, tbl_pr)
+        bidi = tbl_pr.find(qn("w:bidiVisual"))
+        if bidi is None:
+            tbl_pr.append(OxmlElement("w:bidiVisual"))
+        jc = tbl_pr.find(qn("w:jc"))
+        if jc is None:
+            jc = OxmlElement("w:jc")
+            tbl_pr.append(jc)
+        jc.set(qn("w:val"), "right")
+    except Exception:
+        pass
+
+
+def _docx_add_table(doc, headers: list[str], rows: list[list[str | int | None]], empty_message: str):
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    if not rows:
+        _docx_add_text(doc, empty_message)
+        return None
+    table = doc.add_table(rows=1, cols=len(headers))
+    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    table.style = "Table Grid"
+    _docx_set_table_rtl(table)
+    for idx, header in enumerate(headers):
+        _docx_set_cell(table.rows[0].cells[idx], header, header=True)
+    for row_data in rows:
+        cells = table.add_row().cells
+        for idx, value in enumerate(row_data):
+            _docx_set_cell(cells[idx], value)
+    doc.add_paragraph()
+    return table
+
+
+def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
+    from docx import Document
+    from docx.shared import Pt
+
+    data = _meeting_minutes_context(row)
+    template_path = _meeting_letterhead_path()
+    doc = Document(template_path) if template_path else Document()
+    doc.core_properties.title = f"محضر اجتماع - {row.title}"
+    doc.core_properties.subject = "محضر اجتماع رسمي"
+
+    try:
+        normal = doc.styles["Normal"]
+        normal.font.name = MEETING_DOC_FONT_NAME
+        normal.font.size = Pt(MEETING_DOC_BODY_SIZE)
+    except Exception:
+        pass
+
+    _docx_fill_letterhead_fields(doc, data)
+
+    title = doc.add_paragraph()
+    title.add_run("محضر اجتماع")
+    _docx_set_paragraph_rtl(title, bold=True, size_pt=MEETING_DOC_TITLE_SIZE, color="1F4E79")
+    subtitle = doc.add_paragraph()
+    subtitle.add_run(data["title"])
+    _docx_set_paragraph_rtl(subtitle, bold=True, size_pt=MEETING_DOC_SUBTITLE_SIZE)
+
+    _docx_add_heading(doc, "بيانات الاجتماع", level=2)
+    _docx_add_table(doc, ["البيان", "القيمة"], [
+        ["رقم الاجتماع", data["id"]],
+        ["الموعد", data["when"]],
+        ["المكان", data["location"]],
+        ["الحالة", data["status"]],
+        ["منظم الاجتماع", data["organizer"]],
+        ["تاريخ الإنشاء", data["created_at"]],
+        ["آخر تحديث", data["updated_at"]],
+    ], "لا توجد بيانات اجتماع.")
+
+    _docx_add_heading(doc, "الوصف", level=2)
+    _docx_add_text(doc, data["description"], "لا يوجد وصف.")
+
+    _docx_add_heading(doc, "المدعوون والحضور", level=2)
+    _docx_add_table(
+        doc,
+        ["الاسم", "الدور", "حالة الحضور", "ملاحظة"],
+        [[p["name"], p["role"], p["attendance"], p["note"]] for p in data["participants"]],
+        "لا يوجد مدعوون مسجلون.",
+    )
+
+    _docx_add_heading(doc, "الأجندة", level=2)
+    _docx_add_table(
+        doc,
+        ["الترتيب", "البند", "المسؤول", "الحالة", "ملاحظات"],
+        [[a["order"], a["title"], a["owner"], a["status"], a["notes"]] for a in data["agenda_items"]],
+        "لا توجد بنود أجندة.",
+    )
+
+    _docx_add_heading(doc, "محضر الاجتماع", level=2)
+    _docx_add_text(doc, data["minutes_text"], "لم يتم تسجيل محضر بعد.")
+
+    _docx_add_heading(doc, "القرارات", level=2)
+    _docx_add_text(doc, data["decisions_text"], "لا توجد قرارات مسجلة.")
+
+    _docx_add_heading(doc, "مهام المتابعة", level=2)
+    _docx_add_table(
+        doc,
+        ["المهمة", "المسؤول", "تاريخ الاستحقاق", "الحالة", "التفاصيل"],
+        [[t["title"], t["assignee"], t["due_date"], t["status"], t["description"]] for t in data["tasks"]],
+        "لا توجد مهام متابعة.",
+    )
+
+    _docx_add_heading(doc, "معلومات الإصدار", level=2)
+    _docx_add_table(doc, ["البيان", "القيمة"], [
+        ["تاريخ التوليد", data["generated_at"]],
+        ["رابط الاجتماع", data["meeting_url"]],
+    ], "لا توجد معلومات إصدار.")
+
+    bio = BytesIO()
+    doc.save(bio)
+    bio.seek(0)
+    return bio.getvalue()
+
+
+def _find_soffice_executable() -> str | None:
+    candidates = [
+        shutil.which("soffice"),
+        shutil.which("libreoffice"),
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ]
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _convert_docx_bytes_to_pdf(docx_bytes: bytes) -> bytes:
+    soffice = _find_soffice_executable()
+    if not soffice:
+        raise RuntimeError("LibreOffice is not available for PDF conversion")
+
+    with tempfile.TemporaryDirectory(prefix="meeting_minutes_") as tmp_dir:
+        docx_path = os.path.join(tmp_dir, "meeting_minutes.docx")
+        pdf_path = os.path.join(tmp_dir, "meeting_minutes.pdf")
+        with open(docx_path, "wb") as handle:
+            handle.write(docx_bytes)
+        cmd = [
+            soffice,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            tmp_dir,
+            docx_path,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
+        if proc.returncode != 0 or not os.path.exists(pdf_path):
+            raise RuntimeError((proc.stderr or proc.stdout or "PDF conversion failed").strip())
+        with open(pdf_path, "rb") as handle:
+            return handle.read()
+
+
+def _meeting_pdf_font_paths() -> tuple[str, str]:
+    regular_candidates = [
+        r"C:\Windows\Fonts\majalla.ttf",
+        os.path.join(current_app.root_path, "assets", "fonts", "DejaVuSans.ttf"),
+    ]
+    bold_candidates = [
+        r"C:\Windows\Fonts\majallab.ttf",
+        os.path.join(current_app.root_path, "assets", "fonts", "DejaVuSans-Bold.ttf"),
+    ]
+
+    def _first_existing(items: list[str]) -> str:
+        for item in items:
+            if item and os.path.exists(item):
+                return item
+        return items[-1]
+
+    return _first_existing(regular_candidates), _first_existing(bold_candidates)
+
+
+def _register_meeting_pdf_fonts() -> tuple[str, str]:
+    regular_name = "MeetingMinutesFont"
+    bold_name = "MeetingMinutesFontBold"
+    regular_path, bold_path = _meeting_pdf_font_paths()
+    try:
+        pdfmetrics.registerFont(TTFont(regular_name, regular_path))
+    except Exception:
+        pass
+    try:
+        pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+    except Exception:
+        pass
+    return regular_name, bold_name
+
+
+def _text_has_arabic(value: str | None) -> bool:
+    return bool(re.search(r"[\u0600-\u06FF]", value or ""))
+
+
+def _pdf_shape_text(value: str | int | None) -> str:
+    import html
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+
+    text = "" if value is None else str(value)
+    if not text:
+        return ""
+    shaped_lines = []
+    for line in text.splitlines() or [""]:
+        candidate = line
+        if _text_has_arabic(candidate):
+            try:
+                candidate = get_display(arabic_reshaper.reshape(candidate))
+            except Exception:
+                candidate = line
+        shaped_lines.append(html.escape(candidate))
+    return "<br/>".join(shaped_lines)
+
+
+def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import cm
+
+    font_regular, font_bold = _register_meeting_pdf_fonts()
+    data = _meeting_minutes_context(row)
+
+    body_style = ParagraphStyle(
+        "MeetingBody",
+        fontName=font_regular,
+        fontSize=16,
+        leading=22,
+        alignment=TA_RIGHT,
+        wordWrap="RTL",
+        spaceAfter=8,
+    )
+    heading_style = ParagraphStyle(
+        "MeetingHeading",
+        fontName=font_bold,
+        fontSize=18,
+        leading=24,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor("#1F4E79"),
+        wordWrap="RTL",
+        spaceBefore=10,
+        spaceAfter=8,
+    )
+    title_style = ParagraphStyle(
+        "MeetingTitle",
+        fontName=font_bold,
+        fontSize=22,
+        leading=28,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#1F4E79"),
+        wordWrap="RTL",
+        spaceAfter=8,
+    )
+    subtitle_style = ParagraphStyle(
+        "MeetingSubtitle",
+        fontName=font_bold,
+        fontSize=18,
+        leading=24,
+        alignment=TA_CENTER,
+        wordWrap="RTL",
+        spaceAfter=14,
+    )
+    table_header_style = ParagraphStyle(
+        "MeetingTableHeader",
+        parent=body_style,
+        fontName=font_bold,
+        textColor=colors.white,
+        alignment=TA_RIGHT,
+    )
+
+    def p(text, style=body_style):
+        return Paragraph(_pdf_shape_text(text), style)
+
+    def p_header(text):
+        return Paragraph(f'<font color="white">{_pdf_shape_text(text)}</font>', table_header_style)
+
+    def table(headers: list[str], rows: list[list[str | int | None]], widths: list[float] | None = None):
+        if not rows:
+            return [p("لا توجد بيانات.")]
+        table_data = [[p_header(h) for h in reversed(headers)]]
+        for row_data in rows:
+            table_data.append([p(v, body_style) for v in reversed(row_data)])
+        col_widths = list(reversed(widths)) if widths else None
+        t = Table(table_data, colWidths=col_widths, hAlign="RIGHT", repeatRows=1)
+        t.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), font_regular),
+            ("FONTNAME", (0, 0), (-1, 0), font_bold),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F4E79")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#B8C7D9")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ]))
+        return [t, Spacer(1, 10)]
+
+    story = [
+        p("محضر اجتماع", title_style),
+        p(data["title"], subtitle_style),
+        p("بيانات الاجتماع", heading_style),
+        *table(["البيان", "القيمة"], [
+            ["رقم الاجتماع", data["id"]],
+            ["الموعد", data["when"]],
+            ["المكان", data["location"]],
+            ["الحالة", data["status"]],
+            ["منظم الاجتماع", data["organizer"]],
+            ["تاريخ الإنشاء", data["created_at"]],
+            ["آخر تحديث", data["updated_at"]],
+        ], [5.0 * cm, 11.0 * cm]),
+        p("الوصف", heading_style),
+        p(data["description"] or "لا يوجد وصف."),
+        p("المدعوون والحضور", heading_style),
+        *table(
+            ["الاسم", "الدور", "حالة الحضور", "ملاحظة"],
+            [[x["name"], x["role"], x["attendance"], x["note"] or "-"] for x in data["participants"]],
+            [4.5 * cm, 3.0 * cm, 3.5 * cm, 5.0 * cm],
+        ),
+        p("الأجندة", heading_style),
+        *table(
+            ["الترتيب", "البند", "المسؤول", "الحالة", "ملاحظات"],
+            [[x["order"], x["title"], x["owner"], x["status"], x["notes"] or "-"] for x in data["agenda_items"]],
+            [2.0 * cm, 4.5 * cm, 3.5 * cm, 3.0 * cm, 3.0 * cm],
+        ),
+        p("محضر الاجتماع", heading_style),
+        p(data["minutes_text"] or "لم يتم تسجيل محضر بعد."),
+        p("القرارات", heading_style),
+        p(data["decisions_text"] or "لا توجد قرارات مسجلة."),
+        p("مهام المتابعة", heading_style),
+        *table(
+            ["المهمة", "المسؤول", "تاريخ الاستحقاق", "الحالة", "التفاصيل"],
+            [[x["title"], x["assignee"], x["due_date"], x["status"], x["description"] or "-"] for x in data["tasks"]],
+            [3.5 * cm, 3.0 * cm, 3.0 * cm, 2.5 * cm, 4.0 * cm],
+        ),
+        p("معلومات الإصدار", heading_style),
+        *table(["البيان", "القيمة"], [
+            ["تاريخ التوليد", data["generated_at"]],
+            ["رابط الاجتماع", data["meeting_url"]],
+        ], [5.0 * cm, 11.0 * cm]),
+    ]
+
+    def on_page(canvas, doc):
+        canvas.saveState()
+        width, height = A4
+        canvas.setFont(font_regular, 14)
+        canvas.drawRightString(width - 1.5 * cm, height - 1.1 * cm, _pdf_shape_text(f"الرقم: اجتماع/{row.id}/{datetime.now().year}").replace("<br/>", " "))
+        canvas.drawRightString(width - 1.5 * cm, height - 1.75 * cm, _pdf_shape_text(f"التاريخ: {datetime.now().strftime('%d/%m/%Y')}").replace("<br/>", " "))
+        logo = os.path.join(current_app.root_path, "static", "images", "pncecs_logo.png")
+        if os.path.exists(logo):
+            try:
+                canvas.drawImage(logo, 1.5 * cm, height - 2.4 * cm, width=2.0 * cm, height=2.0 * cm, preserveAspectRatio=True, mask="auto")
+            except Exception:
+                pass
+        canvas.setStrokeColor(colors.HexColor("#B8C7D9"))
+        canvas.line(1.5 * cm, height - 2.65 * cm, width - 1.5 * cm, height - 2.65 * cm)
+        canvas.setFont(font_regular, 10)
+        canvas.drawCentredString(width / 2, 1.0 * cm, str(doc.page))
+        canvas.restoreState()
+
+    bio = BytesIO()
+    doc = SimpleDocTemplate(
+        bio,
+        pagesize=A4,
+        rightMargin=1.5 * cm,
+        leftMargin=1.5 * cm,
+        topMargin=3.0 * cm,
+        bottomMargin=1.8 * cm,
+        title=f"محضر اجتماع - {row.title}",
+    )
+    doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
+    bio.seek(0)
+    return bio.getvalue()
+
+
+def _meeting_minutes_archive_description(row: PortalMeeting) -> str:
+    return "\n".join([
+        "المصدر: البوابة الإدارية - الاجتماعات",
+        "نوع الملف: محضر اجتماع رسمي",
+        f"رقم الاجتماع: {row.id}",
+        f"عنوان الاجتماع: {row.title}",
+        f"الموعد: {_meeting_when_label(row) or '-'}",
+        f"المكان: {row.location or '-'}",
+    ])
+
+
+def _ensure_meeting_minutes_archived(row: PortalMeeting, docx_bytes: bytes | None = None) -> ArchivedFile | None:
+    try:
+        owner_id = _corr_current_user_id(getattr(row, "created_by_user_id", None))
+        if not owner_id:
+            owner = User.query.order_by(User.id.asc()).first()
+            owner_id = getattr(owner, "id", None)
+        if not owner_id:
+            return None
+
+        dept_id = None
+        try:
+            dept_id = getattr(current_user, "department_id", None)
+        except Exception:
+            dept_id = None
+
+        data = docx_bytes or _build_meeting_minutes_docx(row)
+        stored_name = f"meeting_minutes_{row.id}_{uuid.uuid4().hex}.docx"
+        archive_path = os.path.join(_corr_archive_storage_dir(), stored_name)
+        with open(archive_path, "wb") as handle:
+            handle.write(data)
+
+        archived = ArchivedFile(
+            original_name=_meeting_minutes_filename(row, "docx"),
+            stored_name=stored_name,
+            description=_meeting_minutes_archive_description(row),
+            file_path=archive_path,
+            mime_type=MEETING_MINUTES_DOCX_MIME,
+            file_size=os.path.getsize(archive_path),
+            owner_id=int(owner_id),
+            department_id=dept_id,
+            visibility="workflow",
+        )
+        db.session.add(archived)
+        db.session.flush()
+        db.session.add(AuditLog(
+            user_id=_corr_current_user_id(owner_id),
+            action="MEETING_MINUTES_ARCHIVE_LINK",
+            note=f"meeting_id={row.id} archived_file_id={archived.id}",
+            target_type="ARCHIVE_FILE",
+            target_id=archived.id,
+            created_at=datetime.utcnow(),
+        ))
+        return archived
+    except Exception:
+        current_app.logger.exception("Failed to generate/archive meeting minutes document")
+        return None
 
 
 def _parse_dt_local(value: str | None) -> datetime | None:
@@ -1800,6 +2570,14 @@ def _meeting_workflow_payload(row: PortalMeeting, source_type: str, task_id: str
         title_prefix = f"مهمة متابعة: {task.title}"
         lines.extend(["", "تفاصيل المهمة:", *_meeting_task_lines(task)])
 
+    elif source == "OFFICIAL_MINUTES":
+        title_prefix = "محضر الاجتماع الرسمي"
+        lines.extend([
+            "",
+            "ملف المحضر الرسمي:",
+            "سيتم إرفاق ملف Word رسمي يحتوي تفاصيل الاجتماع، المحضر، القرارات، المدعوين، الأجندة، ومهام المتابعة.",
+        ])
+
     elif source == "ALL_TASKS":
         tasks = list(row.tasks or [])
         if not tasks:
@@ -1838,6 +2616,13 @@ def _start_meeting_workflow(row: PortalMeeting, source_type: str, template_id: s
     if not payload:
         return None
 
+    meeting_minutes_archived = None
+    if payload.get("source") == "OFFICIAL_MINUTES":
+        meeting_minutes_archived = _ensure_meeting_minutes_archived(row)
+        if not meeting_minutes_archived:
+            flash("تعذر تجهيز ملف المحضر الرسمي للمسار.", "danger")
+            return None
+
     req = WorkflowRequest(
         requester_id=current_user.id,
         status="DRAFT",
@@ -1846,6 +2631,18 @@ def _start_meeting_workflow(row: PortalMeeting, source_type: str, template_id: s
     )
     db.session.add(req)
     db.session.flush()
+
+    if meeting_minutes_archived:
+        db.session.add(RequestAttachment(request_id=req.id, archived_file_id=meeting_minutes_archived.id))
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="WORKFLOW_ATTACHMENT_UPLOADED",
+            note=f"Attachment: {meeting_minutes_archived.original_name} | file_id={meeting_minutes_archived.id} | source=MEETING_MINUTES",
+            target_type="ARCHIVE_FILE",
+            target_id=meeting_minutes_archived.id,
+            created_at=datetime.utcnow(),
+        ))
 
     start_workflow_for_request(
         req,
@@ -3417,7 +4214,96 @@ def meeting_view(meeting_id: int):
         workflow_source_labels=MEETING_WORKFLOW_SOURCE_LABELS,
         workflow_templates=_active_workflow_templates(),
         meeting_workflow_logs=meeting_workflow_logs,
+        meeting_letterhead=_meeting_letterhead_info(),
         attendance_labels=MEETING_ATTENDANCE_LABELS,
+    )
+
+
+@portal_bp.route("/meetings/letterhead", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_upload_letterhead():
+    meeting_id = request.form.get("meeting_id")
+    upload = request.files.get("letterhead_file")
+    if not upload or not getattr(upload, "filename", ""):
+        flash("يرجى اختيار ملف ترويسة Word.", "warning")
+    else:
+        try:
+            _save_meeting_letterhead(upload)
+            db.session.commit()
+            flash("تم حفظ ترويسة محاضر الاجتماعات.", "success")
+        except ValueError:
+            db.session.rollback()
+            flash("يرجى رفع ملف Word صحيح بصيغة DOCX.", "danger")
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to save meeting letterhead")
+            flash("تعذر حفظ ترويسة محاضر الاجتماعات.", "danger")
+
+    if meeting_id and str(meeting_id).isdigit():
+        return redirect(url_for("portal.meeting_view", meeting_id=int(meeting_id)))
+    return redirect(url_for("portal.meetings_dashboard"))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/minutes/preview")
+@login_required
+def meeting_minutes_preview(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    return render_template(
+        "portal/meetings/minutes_preview.html",
+        row=row,
+        minutes=_meeting_minutes_context(row),
+        status_labels=MEETING_STATUS_LABELS,
+        task_status_labels=MEETING_TASK_STATUS_LABELS,
+        attendance_labels=MEETING_ATTENDANCE_LABELS,
+        meeting_letterhead=_meeting_letterhead_info(),
+    )
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/minutes.docx")
+@login_required
+def meeting_minutes_docx(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    try:
+        docx_bytes = _build_meeting_minutes_docx(row)
+    except Exception:
+        current_app.logger.exception("Failed to build meeting minutes DOCX")
+        flash("تعذر إنشاء ملف Word للمحضر.", "danger")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    return send_file(
+        BytesIO(docx_bytes),
+        mimetype=MEETING_MINUTES_DOCX_MIME,
+        as_attachment=True,
+        download_name=_meeting_minutes_filename(row, "docx"),
+    )
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/minutes.pdf")
+@login_required
+def meeting_minutes_pdf(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    try:
+        docx_bytes = _build_meeting_minutes_docx(row)
+        try:
+            pdf_bytes = _convert_docx_bytes_to_pdf(docx_bytes)
+        except RuntimeError:
+            current_app.logger.info("LibreOffice is unavailable; using direct ReportLab meeting PDF fallback")
+            pdf_bytes = _build_meeting_minutes_pdf(row)
+    except Exception:
+        current_app.logger.exception("Failed to build meeting minutes PDF")
+        flash("تعذر إنشاء PDF للمحضر.", "danger")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype="application/pdf",
+        as_attachment=False,
+        download_name=_meeting_minutes_filename(row, "pdf"),
     )
 
 

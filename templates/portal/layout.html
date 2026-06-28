@@ -521,14 +521,24 @@
 
   {%- set _ep = request.endpoint or '' -%}
   {%- if _ep not in ['portal.index', 'portal.hr_me_home', 'portal.portal_admin_dashboard'] -%}
+  {%- set _portal_back_url = None -%}
+  {%- if _ep == 'portal.meeting_minutes_preview' and request.view_args and request.view_args.get('meeting_id') -%}
+    {%- set _portal_back_url = url_for('portal.meeting_view', meeting_id=request.view_args.get('meeting_id')) -%}
+  {%- endif -%}
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div class="btn-group" role="group">
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.index') }}">
         <i class="bi bi-house"></i> الرئيسية
       </a>
+      {% if _portal_back_url %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ _portal_back_url }}">
+        <i class="bi bi-arrow-right"></i> رجوع
+      </a>
+      {% else %}
       <button class="btn btn-sm btn-outline-secondary" type="button" onclick="window.history.back()">
         <i class="bi bi-arrow-right"></i> رجوع
       </button>
+      {% endif %}
     </div>
     <div class="text-muted small"></div>
   </div>

@@ -14,6 +14,15 @@
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <span class="badge text-bg-secondary align-self-center">{{ status_labels.get(row.status, row.status) }}</span>
+    <a class="btn btn-outline-primary" target="_blank" href="{{ url_for('portal.meeting_minutes_preview', meeting_id=row.id) }}">
+      <i class="bi bi-eye"></i> استعراض المحضر
+    </a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.meeting_minutes_docx', meeting_id=row.id) }}">
+      <i class="bi bi-file-earmark-word"></i> Word
+    </a>
+    <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('portal.meeting_minutes_pdf', meeting_id=row.id) }}">
+      <i class="bi bi-file-earmark-pdf"></i> PDF
+    </a>
     {% if can_manage %}
       <form method="post" action="{{ url_for('portal.meeting_send_reminder', meeting_id=row.id) }}">
         <button class="btn btn-outline-warning" type="submit">
@@ -152,6 +161,66 @@
             </button>
           </div>
         </form>
+
+        <div class="border rounded-3 bg-light p-3 mt-3">
+          <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+            <div>
+              <div class="fw-semibold small"><i class="bi bi-file-earmark-richtext"></i> الملف الرسمي للمحضر</div>
+              <div class="small text-muted">
+                {% if meeting_letterhead.configured %}
+                  الترويسة الحالية: {{ meeting_letterhead.name }}
+                {% else %}
+                  لم يتم رفع ترويسة بعد، وسيتم إنشاء ملف Word بتنسيق افتراضي.
+                {% endif %}
+              </div>
+            </div>
+            <div class="d-flex gap-2 flex-wrap">
+              <a class="btn btn-sm btn-outline-primary" target="_blank" href="{{ url_for('portal.meeting_minutes_preview', meeting_id=row.id) }}">
+                <i class="bi bi-eye"></i> استعراض
+              </a>
+              <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.meeting_minutes_docx', meeting_id=row.id) }}">
+                <i class="bi bi-file-earmark-word"></i> تنزيل Word
+              </a>
+              <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('portal.meeting_minutes_pdf', meeting_id=row.id) }}">
+                <i class="bi bi-file-earmark-pdf"></i> PDF
+              </a>
+            </div>
+          </div>
+
+          <form method="post" action="{{ url_for('portal.meeting_upload_letterhead') }}" enctype="multipart/form-data" class="row g-2 align-items-end mb-3">
+            <input type="hidden" name="meeting_id" value="{{ row.id }}">
+            <div class="col-12 col-lg-8">
+              <label class="form-label small">رفع ترويسة Word</label>
+              <input class="form-control form-control-sm" type="file" name="letterhead_file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+            </div>
+            <div class="col-12 col-lg-4 d-grid">
+              <button class="btn btn-sm btn-outline-primary" type="submit">
+                <i class="bi bi-upload"></i> حفظ الترويسة
+              </button>
+            </div>
+          </form>
+
+          <form method="post" action="{{ url_for('portal.meeting_start_workflow', meeting_id=row.id) }}" class="row g-2 align-items-end">
+            <input type="hidden" name="source_type" value="OFFICIAL_MINUTES">
+            <div class="col-12 col-md-8">
+              <label class="form-label small">قالب المسار</label>
+              <select class="form-select form-select-sm" name="template_id" required>
+                <option value="">اختر قالب المسار</option>
+                {% for t in workflow_templates|default([]) %}
+                  <option value="{{ t.id }}">{{ t.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-12 col-md-4 d-grid">
+              <button class="btn btn-sm btn-primary" type="submit" {% if not workflow_templates %}disabled{% endif %}>
+                <i class="bi bi-send"></i> إرسال المحضر للمسارات
+              </button>
+            </div>
+            {% if not workflow_templates %}
+              <div class="col-12 small text-danger">لا توجد قوالب مسارات فعالة.</div>
+            {% endif %}
+          </form>
+        </div>
 
         <div class="border rounded-3 bg-light p-3 mt-3">
           <div class="fw-semibold small mb-2"><i class="bi bi-diagram-3"></i> تحويل إلى المسارات</div>
