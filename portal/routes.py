@@ -1134,13 +1134,17 @@ def _ensure_corr_attachments_archived(attachments: list[CorrAttachment]) -> list
     return archived_files
 
 
-def _corr_workflow_templates() -> list[WorkflowTemplate]:
+def _active_workflow_templates() -> list[WorkflowTemplate]:
     return (
         WorkflowTemplate.query
         .filter_by(is_active=True)
         .order_by(WorkflowTemplate.name.asc())
         .all()
     )
+
+
+def _corr_workflow_templates() -> list[WorkflowTemplate]:
+    return _active_workflow_templates()
 
 
 def _corr_workflow_description(kind: str, label: str, item, attachments: list[CorrAttachment]) -> str:
@@ -1499,6 +1503,13 @@ MEETING_TASK_STATUS_LABELS = {
     "CANCELLED": "ملغاة",
 }
 
+MEETING_WORKFLOW_SOURCE_LABELS = {
+    "MINUTES": "محضر الاجتماع",
+    "DECISIONS": "القرارات",
+    "TASK": "مهمة متابعة",
+    "ALL_TASKS": "كل مهام المتابعة",
+}
+
 MEETING_ATTENDANCE_LABELS = {
     "INVITED": "مدعو",
     "ACCEPTED": "قبل الدعوة",
@@ -1702,6 +1713,159 @@ def _meeting_message_body(row: PortalMeeting, intro: str) -> str:
         meeting_link,
     ])
     return "\n".join(lines)
+
+
+def _meeting_public_link(row: PortalMeeting) -> str:
+    try:
+        return url_for("portal.meeting_view", meeting_id=row.id, _external=True)
+    except Exception:
+        return url_for("portal.meeting_view", meeting_id=row.id)
+
+
+def _meeting_user_label(user: User | None, fallback: str = "-") -> str:
+    if not user:
+        return fallback
+    return (getattr(user, "name", None) or getattr(user, "email", None) or fallback)
+
+
+def _meeting_task_lines(task: PortalMeetingTask) -> list[str]:
+    status_label = MEETING_TASK_STATUS_LABELS.get(getattr(task, "status", None), getattr(task, "status", None) or "-")
+    return [
+        f"المهمة: {task.title}",
+        f"المسؤول: {_meeting_user_label(getattr(task, 'assignee', None), 'بدون مسؤول')}",
+        f"تاريخ الاستحقاق: {task.due_date.strftime('%Y-%m-%d') if task.due_date else 'غير محدد'}",
+        f"الحالة: {status_label}",
+        "",
+        task.description or "لا توجد تفاصيل.",
+    ]
+
+
+def _meeting_workflow_base_lines(row: PortalMeeting, source_label: str) -> list[str]:
+    lines = [
+        "مصدر المسار: البوابة الإدارية - الاجتماعات",
+        f"نوع التحويل: {source_label}",
+        f"رقم الاجتماع: {row.id}",
+        f"عنوان الاجتماع: {row.title}",
+        f"الموعد: {_meeting_when_label(row) or '-'}",
+        f"المكان: {row.location or '-'}",
+        f"الحالة: {MEETING_STATUS_LABELS.get(row.status, row.status)}",
+    ]
+    owner = _meeting_user_label(getattr(row, "created_by", None), "")
+    if owner:
+        lines.append(f"منظم الاجتماع: {owner}")
+    participants = [
+        _meeting_user_label(getattr(p, "user", None), str(getattr(p, "user_id", "")))
+        for p in (row.participants or [])
+    ]
+    if participants:
+        lines.extend(["", "المشاركون:", *[f"- {name}" for name in participants if name]])
+    agenda = [getattr(item, "title", "") for item in (row.agenda_items or []) if getattr(item, "title", None)]
+    if agenda:
+        lines.extend(["", "الأجندة:", *[f"- {title}" for title in agenda]])
+    lines.extend(["", "رابط الاجتماع:", _meeting_public_link(row)])
+    return lines
+
+
+def _meeting_workflow_payload(row: PortalMeeting, source_type: str, task_id: str | None) -> dict | None:
+    source = (source_type or "").strip().upper()
+    source_label = MEETING_WORKFLOW_SOURCE_LABELS.get(source)
+    if not source_label:
+        flash("يرجى اختيار نوع صحيح للتحويل إلى المسارات.", "warning")
+        return None
+
+    lines = _meeting_workflow_base_lines(row, source_label)
+    title_prefix = source_label
+
+    if source == "MINUTES":
+        content = (row.minutes_text or "").strip()
+        if not content:
+            flash("لا يوجد محضر محفوظ لتحويله إلى مسار.", "warning")
+            return None
+        lines.extend(["", "محضر الاجتماع:", content])
+
+    elif source == "DECISIONS":
+        content = (row.decisions_text or "").strip()
+        if not content:
+            flash("لا توجد قرارات محفوظة لتحويلها إلى مسار.", "warning")
+            return None
+        lines.extend(["", "القرارات:", content])
+
+    elif source == "TASK":
+        task = None
+        if task_id and str(task_id).isdigit():
+            task = PortalMeetingTask.query.filter_by(id=int(task_id), meeting_id=row.id).first()
+        if not task:
+            flash("يرجى اختيار مهمة متابعة صحيحة لتحويلها إلى مسار.", "warning")
+            return None
+        title_prefix = f"مهمة متابعة: {task.title}"
+        lines.extend(["", "تفاصيل المهمة:", *_meeting_task_lines(task)])
+
+    elif source == "ALL_TASKS":
+        tasks = list(row.tasks or [])
+        if not tasks:
+            flash("لا توجد مهام متابعة لتحويلها إلى مسار.", "warning")
+            return None
+        lines.append("")
+        lines.append("مهام ما بعد الاجتماع:")
+        for idx, task in enumerate(tasks, start=1):
+            lines.extend(["", f"مهمة {idx}", *_meeting_task_lines(task)])
+
+    title = f"مسار {title_prefix} - اجتماع: {row.title}".strip()
+    if len(title) > 200:
+        title = title[:197] + "..."
+    return {
+        "source": source,
+        "source_label": source_label,
+        "title": title,
+        "description": "\n".join(lines),
+    }
+
+
+def _start_meeting_workflow(row: PortalMeeting, source_type: str, template_id: str | None, task_id: str | None = None):
+    template_id = (template_id or "").strip()
+    templates = _active_workflow_templates()
+    template = None
+    if template_id.isdigit():
+        template = WorkflowTemplate.query.filter_by(id=int(template_id), is_active=True).first()
+    elif len(templates) == 1:
+        template = templates[0]
+
+    if not template:
+        flash("يرجى اختيار قالب مسار فعال.", "danger")
+        return None
+
+    payload = _meeting_workflow_payload(row, source_type, task_id)
+    if not payload:
+        return None
+
+    req = WorkflowRequest(
+        requester_id=current_user.id,
+        status="DRAFT",
+        title=payload["title"],
+        description=payload["description"],
+    )
+    db.session.add(req)
+    db.session.flush()
+
+    start_workflow_for_request(
+        req,
+        template,
+        created_by_user_id=current_user.id,
+        auto_commit=False,
+    )
+
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=current_user.id,
+        action="MEETING_WORKFLOW_START",
+        note=f"meeting_id={row.id} source={payload['source']} template={template.name}",
+        target_type="PORTAL_MEETING",
+        target_id=row.id,
+        created_at=datetime.utcnow(),
+    ))
+    db.session.commit()
+    flash("تم إنشاء المسار من الاجتماع.", "success")
+    return req
 
 
 def _meeting_current_participant(row: PortalMeeting):
@@ -3232,6 +3396,16 @@ def meeting_view(meeting_id: int):
     if not _meeting_can_access(row):
         abort(403)
     current_participant = _meeting_current_participant(row)
+    meeting_workflow_logs = (
+        AuditLog.query
+        .filter(AuditLog.target_type == "PORTAL_MEETING")
+        .filter(AuditLog.target_id == row.id)
+        .filter(AuditLog.action == "MEETING_WORKFLOW_START")
+        .filter(AuditLog.request_id.isnot(None))
+        .order_by(AuditLog.created_at.desc())
+        .limit(8)
+        .all()
+    )
     return render_template(
         "portal/meetings/view.html",
         row=row,
@@ -3240,6 +3414,9 @@ def meeting_view(meeting_id: int):
         current_participant=current_participant,
         status_labels=MEETING_STATUS_LABELS,
         task_status_labels=MEETING_TASK_STATUS_LABELS,
+        workflow_source_labels=MEETING_WORKFLOW_SOURCE_LABELS,
+        workflow_templates=_active_workflow_templates(),
+        meeting_workflow_logs=meeting_workflow_logs,
         attendance_labels=MEETING_ATTENDANCE_LABELS,
     )
 
@@ -3353,6 +3530,27 @@ def meeting_update_minutes(meeting_id: int):
         )
     db.session.commit()
     flash("تم حفظ المحضر والقرارات.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/workflow/start", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_start_workflow(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    try:
+        req = _start_meeting_workflow(
+            row,
+            request.form.get("source_type"),
+            request.form.get("template_id"),
+            request.form.get("task_id"),
+        )
+        if req:
+            return redirect(url_for("workflow.view_request", request_id=req.id))
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to start meeting workflow")
+        flash("تعذر إنشاء المسار من الاجتماع.", "danger")
     return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
 
