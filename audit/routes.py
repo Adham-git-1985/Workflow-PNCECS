@@ -23,6 +23,7 @@ from models import (
 )
 from extensions import db
 from permissions import roles_required
+from utils.perms import perm_required
 
 
 def _apply_message_visibility_filter(query):
@@ -122,7 +123,7 @@ def list_audit_logs():
 
 @audit_bp.route("/dashboard")
 @login_required
-@roles_required("ADMIN")
+@perm_required("AUDIT_DASHBOARD_READ")
 def audit_dashboard():
     q = _apply_message_visibility_filter(AuditLog.query)
 
@@ -173,7 +174,7 @@ def audit_dashboard():
 
 @audit_bp.route("/dashboard/export-excel")
 @login_required
-@roles_required("ADMIN")
+@perm_required("AUDIT_DASHBOARD_READ")
 def audit_dashboard_export_excel():
     """Export Audit Dashboard aggregates to Excel."""
     q = _apply_message_visibility_filter(AuditLog.query)
@@ -244,7 +245,7 @@ def audit_dashboard_export_excel():
 
 @audit_bp.route("/timeline")
 @login_required
-@roles_required("ADMIN")
+@perm_required("AUDIT_TIMELINE_READ")
 def system_timeline():
     """High-volume timeline with date range + pagination.
 
@@ -590,7 +591,7 @@ def system_timeline():
 
 @audit_bp.route("/request/<int:request_id>/snapshot")
 @login_required
-@roles_required("ADMIN")
+@perm_required("AUDIT_TIMELINE_READ")
 def deleted_request_snapshot(request_id):
     """Show snapshot and audit history for a request that was deleted.
 
@@ -651,7 +652,7 @@ def deleted_request_snapshot(request_id):
 
 @audit_bp.route("/timeline/export.xlsx")
 @login_required
-@roles_required("ADMIN")
+@perm_required("AUDIT_TIMELINE_READ")
 def system_timeline_export_excel():
     """Export timeline to Excel honoring the same filters."""
     action = (request.args.get("action") or "").strip() or None

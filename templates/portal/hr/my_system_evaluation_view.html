@@ -34,72 +34,8 @@
 {% endif %}
 
 <div class="bg-white rounded-3 shadow-sm p-3">
-  <h6 class="mb-2">تفاصيل (Breakdown)</h6>
-  {% set m = breakdown.metrics or {} %}
-
   {% if breakdown %}
-    <div class="row g-2 mb-3">
-      <div class="col-md-3"><div class="border rounded p-2"><strong>الحركات</strong><div>{{ m.total_actions or 0 }}</div></div></div>
-      <div class="col-md-3"><div class="border rounded p-2"><strong>الموافقات</strong><div>{{ m.approvals or 0 }}</div></div></div>
-      <div class="col-md-3"><div class="border rounded p-2"><strong>الرفض</strong><div>{{ m.rejections or 0 }}</div></div></div>
-      <div class="col-md-3"><div class="border rounded p-2"><strong>الملفات</strong><div>{{ (m.archive_uploads or 0) + (m.audit_archive_uploads or 0) }}</div></div></div>
-    </div>
-
-    <div class="row g-2 mb-3">
-      <div class="col-md-4"><div class="border rounded p-2"><strong>التزام الوقت (اتفاقية مستوى الخدمة)</strong><div>{{ (m.sla_ratio*100)|round|int if m.sla_ratio is not none else '—' }}%</div></div></div>
-      <div class="col-md-4"><div class="border rounded p-2"><strong>توثيق الرفض</strong><div>{{ (m.rej_note_ratio*100)|round|int if m.rej_note_ratio is not none else '—' }}%</div></div></div>
-      <div class="col-md-4"><div class="border rounded p-2"><strong>إغلاق طلباته (كمقدّم)</strong><div>{{ (m.requester_closure_ratio*100)|round|int if m.requester_closure_ratio is not none else '—' }}%</div></div></div>
-    </div>
-
-    <hr>
-    <h6 class="mb-2">تفصيل احتساب الدرجة</h6>
-    {% set comps = breakdown.components or {} %}
-    <div class="table-responsive">
-      <table class="table table-sm table-striped align-middle">
-        <thead>
-          <tr>
-            <th>المحور</th>
-            <th>الوزن الفعلي %</th>
-            <th>القيمة</th>
-            <th>الناتج</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for key, c in comps.items() %}
-            <tr>
-              <td>{{ key }}</td>
-              <td>{{ c.effective_weight or '' }}</td>
-              <td>
-                {% if c.value is mapping %}
-                  <ul class="mb-0 small">
-                    {% for k, v in c.value.items() %}
-                      <li><strong>{{ k }}:</strong> {{ v }}</li>
-                    {% endfor %}
-                  </ul>
-                {% elif c.value is sequence and c.value is not string %}
-                  <span class="small">{{ c.value|join('، ') }}</span>
-                {% else %}
-                  {{ c.value }}
-                {% endif %}
-              </td>
-              <td>{{ c.score_part or '' }}</td>
-            </tr>
-          {% else %}
-            <tr><td colspan="4" class="text-muted">لا يوجد تفصيل.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-
-    {% if breakdown.notes %}
-      <hr>
-      <h6 class="mb-2">ملاحظات</h6>
-      <ul class="mb-0">
-        {% for n in breakdown.notes %}
-          <li>{{ n }}</li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+    {% include "partials/evaluation_breakdown.html" %}
 
     <details class="mt-3">
       <summary class="text-muted small">عرض JSON (للتدقيق)</summary>

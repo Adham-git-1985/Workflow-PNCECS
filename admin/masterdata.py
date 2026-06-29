@@ -27,6 +27,10 @@ PERM_MODULES = [
 PERM_EXTRA_KEYS = [
     ("VIEW_DASHBOARD", "رؤية لوحة Dashboard"),
     ("VIEW_ESCALATIONS", "رؤية صفحة 🚨 Escalations"),
+    ("AUDIT_DASHBOARD_READ", "عرض لوحة سجل التدقيق"),
+    ("AUDIT_TIMELINE_READ", "عرض الخط الزمني"),
+    ("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ", "عرض لوحة إشعارات مسار"),
+    ("HR_EVALUATIONS_MANAGE", "إدارة تقييم الموظفين"),
     ("HR_SYSTEM_EVALUATION_VIEW", "عرض التقييم النظامي للموظف (شهري/سنوي)"),
 ]
 

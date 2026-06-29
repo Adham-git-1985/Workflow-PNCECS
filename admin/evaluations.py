@@ -7,16 +7,20 @@ from flask_login import login_required, current_user
 
 from extensions import db
 from models import User, EmployeeEvaluationRun
-from permissions import roles_required
+from utils.perms import perm_required
 from utils.excel import make_xlsx_bytes
-from services.evaluation_service import compute_employee_evaluation, compute_for_all_employees
+from services.evaluation_service import (
+    compute_employee_evaluation,
+    compute_for_all_employees,
+    import_indicator_evaluations,
+)
 
 
 def register_evaluation_routes(admin_bp):
 
     @admin_bp.route("/evaluations")
     @login_required
-    @roles_required("ADMIN")
+    @perm_required("HR_EVALUATIONS_MANAGE")
     def evaluations_index():
         period_type = (request.args.get("period_type") or "").upper().strip()
         year = request.args.get("year", type=int)
@@ -58,7 +62,7 @@ def register_evaluation_routes(admin_bp):
 
     @admin_bp.route("/evaluations/run", methods=["POST"])
     @login_required
-    @roles_required("ADMIN")
+    @perm_required("HR_EVALUATIONS_MANAGE")
     def evaluations_run():
         period_type = (request.form.get("period_type") or "MONTHLY").upper().strip()
         year = int(request.form.get("year") or datetime.utcnow().year)
@@ -95,9 +99,84 @@ def register_evaluation_routes(admin_bp):
         return redirect(url_for("admin.evaluations_index", period_type=period_type, year=year, month=month or ""))
 
 
+    @admin_bp.route("/evaluations/import-template.xlsx")
+    @login_required
+    @perm_required("HR_EVALUATIONS_MANAGE")
+    def evaluations_import_template():
+        headers = [
+            "معرف المستخدم",
+            "البريد",
+            "الرقم الوظيفي",
+            "نوع الفترة",
+            "السنة",
+            "الشهر",
+            "كود المؤشر",
+            "اسم المؤشر",
+            "العلامة من 5",
+            "العلامة من 100",
+            "الوزن",
+            "تفسير العلامة",
+            "الدليل أو المرجع",
+            "تاريخ المرجع",
+            "المصدر",
+        ]
+        data = make_xlsx_bytes("Evaluation Import", headers, [])
+        return send_file(
+            io.BytesIO(data),
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name="evaluation_indicators_import_template.xlsx",
+        )
+
+
+    @admin_bp.route("/evaluations/import", methods=["POST"])
+    @login_required
+    @perm_required("HR_EVALUATIONS_MANAGE")
+    def evaluations_import():
+        file_storage = request.files.get("file")
+        if not file_storage:
+            flash("اختر ملف Excel للاستيراد.", "danger")
+            return redirect(url_for("admin.evaluations_index"))
+
+        defaults = {
+            "period_type": (request.form.get("period_type") or "").upper().strip(),
+            "year": request.form.get("year"),
+            "month": request.form.get("month"),
+        }
+
+        try:
+            stats = import_indicator_evaluations(
+                file_storage,
+                imported_by_id=current_user.id,
+                defaults=defaults,
+            )
+            msg = (
+                f"تم استيراد {stats.get('applied', 0)} مؤشر ضمن "
+                f"{stats.get('runs', 0)} تقييم. الصفوف: {stats.get('rows', 0)}"
+            )
+            if stats.get("errors"):
+                msg += f" | أخطاء: {stats.get('errors')}"
+                samples = stats.get("error_samples") or []
+                if samples:
+                    msg += " | " + " ؛ ".join(samples[:3])
+                flash(msg, "warning")
+            else:
+                flash(msg, "success")
+        except Exception as e:
+            db.session.rollback()
+            flash(f"فشل استيراد ملف التقييم: {e}", "danger")
+
+        return redirect(url_for(
+            "admin.evaluations_index",
+            period_type=defaults.get("period_type") or "",
+            year=defaults.get("year") or "",
+            month=defaults.get("month") or "",
+        ))
+
+
     @admin_bp.route("/evaluations/<int:run_id>")
     @login_required
-    @roles_required("ADMIN")
+    @perm_required("HR_EVALUATIONS_MANAGE")
     def evaluations_view(run_id):
         run = EmployeeEvaluationRun.query.get_or_404(run_id)
         breakdown = {}
@@ -111,7 +190,7 @@ def register_evaluation_routes(admin_bp):
 
     @admin_bp.route("/evaluations/export.xlsx")
     @login_required
-    @roles_required("ADMIN")
+    @perm_required("HR_EVALUATIONS_MANAGE")
     def evaluations_export_excel():
         period_type = (request.args.get("period_type") or "").upper().strip()
         year = request.args.get("year", type=int)

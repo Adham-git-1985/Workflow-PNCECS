@@ -28,6 +28,9 @@ PERMS: Dict[str, List[PermDef]] = {
     "إدارة الصلاحيات": [
         PermDef("PORTAL_ADMIN_PERMISSIONS_MANAGE", "إدارة صلاحيات البوابة", "تعديل صلاحيات الأدوار الخاصة بالبوابة (RolePermission).", module="PORTAL_ADMIN_PERMISSIONS"),
     ],
+    "مسار العمل ولوحات المتابعة": [
+        PermDef("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ", "عرض لوحة إشعارات مسار", "عرض إحصاءات وإجماليات إشعارات نظام مسار.", module="WORKFLOW_NOTIFICATIONS"),
+    ],
     "التعميمات": [
         PermDef("PORTAL_CIRCULARS_MANAGE", "إدارة التعميمات", "إصدار تعميمات وإرسال تنبيهات مستعجلة للمستخدمين.", module="PORTAL_CIRCULARS"),
     ],
@@ -63,6 +66,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_PERFORMANCE_SUBMIT", "تقديم تقييمات 360", "تعبئة تقييمات (ذاتي/زملاء/مدير) حسب التكليف.", module="HR_PERF"),
         PermDef("HR_PERFORMANCE_MANAGE", "إدارة الأداء والتقييم", "إنشاء نماذج التقييم ودورات الأداء وتوليد التكليفات.", module="HR_PERF_ADMIN"),
         PermDef("HR_PERFORMANCE_EXPORT", "تصدير تقييمات الأداء", "تصدير ملخصات ونتائج الأداء PDF/Excel.", module="HR_PERF"),
+        PermDef("HR_EVALUATIONS_MANAGE", "إدارة تقييم الموظفين", "الدخول إلى صفحة تقييم الموظفين وتشغيل/استيراد/تصدير التقييمات النظامية.", module="HR_EVALUATIONS"),
         PermDef(
             "HR_SYSTEM_EVALUATION_VIEW",
             "عرض التقييم النظامي",
@@ -102,6 +106,8 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("PORTAL_REPORTS_READ", "عرض التقارير", "عرض لوحات وتقارير البوابة.", module="PORTAL_REPORTS"),
         PermDef("PORTAL_REPORTS_EXPORT", "تصدير التقارير", "تصدير تقارير البوابة PDF/Excel.", module="PORTAL_REPORTS"),
         PermDef("PORTAL_AUDIT_READ", "عرض التدقيق", "عرض سجلات التدقيق الخاصة بالبوابة.", module="PORTAL_AUDIT"),
+        PermDef("AUDIT_DASHBOARD_READ", "عرض لوحة سجل التدقيق", "عرض لوحة سجل التدقيق في نظام مسار.", module="AUDIT"),
+        PermDef("AUDIT_TIMELINE_READ", "عرض الخط الزمني", "عرض الخط الزمني وسجل النشاط التفصيلي في نظام مسار.", module="AUDIT"),
     ],
     "الإعدادات والتكامل": [
         PermDef("PORTAL_SETTINGS_MANAGE", "إعدادات البوابة", "إدارة إعدادات البوابة.", module="PORTAL_SETTINGS"),

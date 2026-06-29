@@ -108,6 +108,48 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-4">
+  <div class="card-body">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+      <div>
+        <h5 class="mb-1">استيراد تقييم المؤشرات</h5>
+        <div class="text-muted small">يمكن أن يحتوي الملف على مؤشر واحد أو كل المؤشرات لموظف واحد أو لجميع الموظفين.</div>
+      </div>
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('admin.evaluations_import_template') }}">
+        <i class="bi bi-file-earmark-spreadsheet"></i> قالب Excel
+      </a>
+    </div>
+
+    <form method="post" action="{{ url_for('admin.evaluations_import') }}" enctype="multipart/form-data" class="row g-3 align-items-end">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="col-md-2">
+        <label class="form-label">الفترة الافتراضية</label>
+        <select name="period_type" class="form-select">
+          <option value="MONTHLY" {% if selected.period_type != 'ANNUAL' %}selected{% endif %}>شهري</option>
+          <option value="ANNUAL" {% if selected.period_type == 'ANNUAL' %}selected{% endif %}>سنوي</option>
+        </select>
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">السنة</label>
+        <input type="number" name="year" class="form-control" value="{{ selected.year or now.year }}">
+      </div>
+      <div class="col-md-2">
+        <label class="form-label">الشهر</label>
+        <input type="number" name="month" min="1" max="12" class="form-control" value="{{ selected.month or now.month }}">
+      </div>
+      <div class="col-md-4">
+        <label class="form-label">ملف Excel</label>
+        <input class="form-control" type="file" name="file" accept=".xlsx" required>
+      </div>
+      <div class="col-md-2 d-grid">
+        <button class="btn btn-outline-primary" type="submit">
+          <i class="bi bi-upload"></i> استيراد
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="card shadow-sm">
   <div class="card-body">
     <h5 class="mb-3">سجل التقييمات (آخر 200)</h5>

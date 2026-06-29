@@ -1,0 +1,160 @@
+{% set m = breakdown.metrics or {} %}
+{% set comps = breakdown.components or {} %}
+{% set indicator_labels = {
+  'activity': 'النشاط العام داخل النظام',
+  'decisions': 'الإنتاجية في القرارات',
+  'sla': 'الالتزام بالوقت',
+  'documentation': 'التوثيق وجودة السجل',
+  'requester_completion': 'اكتمال الطلبات المقدمة',
+  'meeting_participation': 'المشاركة في الاجتماعات',
+  'meeting_organization': 'تنظيم الاجتماعات وتوثيقها',
+  'meeting_followup_tasks': 'مهام ما بعد الاجتماع',
+  'attendance_discipline': 'الانضباط والحضور'
+} %}
+{% set indicator_explanations = {
+  'activity': 'يعتمد على عدد الحركات المسجلة للموظف داخل النظام خلال فترة التقييم، بما يشمل الوحدات المضافة مثل الاجتماعات والأرشيف والمسارات.',
+  'decisions': 'يعتمد على عدد قرارات الموافقة أو الرفض التي نفذها الموظف ضمن الفترة مقارنة بالهدف المرجعي.',
+  'sla': 'يقيس نسبة القرارات التي أُنجزت ضمن المدة المحددة في اتفاقية مستوى الخدمة.',
+  'documentation': 'يقيس جودة التوثيق مثل رفع الملفات وتسجيل سبب الرفض عند وجود قرارات رفض.',
+  'requester_completion': 'يقيس نسبة الطلبات التي أنشأها الموظف ووصلت إلى حالة نهائية.',
+  'meeting_participation': 'يقيس الاستجابة والحضور للاجتماعات التي دعي إليها الموظف.',
+  'meeting_organization': 'يقيس جاهزية الأجندة وتوثيق المحضر أو القرارات للاجتماعات التي نظمها الموظف.',
+  'meeting_followup_tasks': 'يقيس إنجاز مهام المتابعة الناتجة عن الاجتماعات، مع مراعاة إنجازها ضمن الوقت.',
+  'attendance_discipline': 'يقيس الغياب غير المغطى، الأيام غير المكتملة، التأخير، الخروج المبكر، والإجازات والمغادرات المعتمدة ضمن الفترة.'
+} %}
+
+<h5 class="mb-3">المؤشرات</h5>
+<div class="row g-3 mb-3">
+  <div class="col-md-3"><div class="border rounded p-2"><strong>الحركات</strong><div>{{ m.total_actions or 0 }}</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>القرارات</strong><div>{{ (m.approvals or 0) + (m.rejections or 0) }}</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>الاجتماعات</strong><div>{{ m.meeting_participation_total or 0 }}</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>مهام الاجتماعات</strong><div>{{ m.meeting_tasks_done or 0 }}/{{ m.meeting_tasks_assigned or 0 }}</div></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="border rounded p-2"><strong>الملفات</strong><div>{{ (m.archive_uploads or 0) + (m.audit_archive_uploads or 0) }}</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>التزام الوقت</strong><div>{{ ((m.sla_ratio*100)|round|int ~ '%') if m.sla_ratio is defined and m.sla_ratio is not none else '—' }}</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>توثيق الرفض</strong><div>{{ ((m.rej_note_ratio*100)|round|int ~ '%') if m.rej_note_ratio is defined and m.rej_note_ratio is not none else '—' }}</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>مؤشرات مستوردة</strong><div>{{ m.imported_indicators or 0 }}</div></div></div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3"><div class="border rounded p-2"><strong>غياب غير مغطى</strong><div>{{ m.unauthorized_absence_days or 0 }} يوم</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>التأخير</strong><div>{{ m.late_minutes or 0 }} دقيقة</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>الإجازات المعتمدة</strong><div>{{ m.approved_leave_days or 0 }} يوم</div></div></div>
+  <div class="col-md-3"><div class="border rounded p-2"><strong>المغادرات المعتمدة</strong><div>{{ m.approved_permission_hours or 0 }} ساعة</div></div></div>
+</div>
+
+<h5 class="mb-3">تفصيل احتساب الدرجة</h5>
+<div class="table-responsive">
+  <table class="table table-sm table-striped align-middle">
+    <thead>
+      <tr>
+        <th>المؤشر</th>
+        <th>علامة المؤشر</th>
+        <th>الوزن الفعلي</th>
+        <th>المساهمة</th>
+        <th>التفسير</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for key, c in comps.items() %}
+        {% set indicator_label = c.label or indicator_labels.get(key) or key %}
+        {% set indicator_description = c.description or indicator_explanations.get(key) or '' %}
+        {% set indicator_explanation = c.explanation or indicator_description %}
+        {% if not indicator_explanation and c.value is mapping and c.value.get('تفسير') %}
+          {% set indicator_explanation = c.value.get('تفسير') %}
+        {% endif %}
+        <tr>
+          <td>
+            <div class="fw-bold">{{ indicator_label }}</div>
+            {% if indicator_description %}
+              <div class="small text-muted">{{ indicator_description }}</div>
+            {% endif %}
+            {% if c.source == 'imported' or c.imported_override %}
+              <span class="badge text-bg-info mt-1">مستورد</span>
+            {% endif %}
+          </td>
+          <td>
+            <strong>{{ '%.1f'|format(c.score_5 or 0) }}/5</strong>
+            <div class="small text-muted">{{ '%.1f'|format(c.indicator_score_100 or 0) }}/100</div>
+          </td>
+          <td>{{ c.effective_weight or 0 }}%</td>
+          <td>{{ c.score_part or 0 }}</td>
+          <td class="small">{{ indicator_explanation or 'تم احتساب هذا المؤشر من بيانات النظام المتوفرة ضمن فترة التقييم.' }}</td>
+        </tr>
+        {% set details = c.details or [] %}
+        {% set imported_details = c.imported_details or [] %}
+        {% if c.value or details or imported_details or c.system_score_5 is defined %}
+          <tr>
+            <td colspan="5" class="bg-light">
+              <details>
+                <summary class="small text-primary">تفاصيل المؤشر والسجل</summary>
+                <div class="mt-2 vstack gap-2">
+                  {% if c.system_score_5 is defined %}
+                    <div class="small border rounded bg-white p-2">
+                      <strong>قبل الاستيراد:</strong>
+                      {{ '%.1f'|format(c.system_score_5 or 0) }}/5
+                      {% if c.system_indicator_score_100 is defined %}
+                        ({{ '%.1f'|format(c.system_indicator_score_100 or 0) }}/100)
+                      {% endif %}
+                    </div>
+                  {% endif %}
+
+                  {% if c.value is mapping %}
+                    <div class="small border rounded bg-white p-2">
+                      {% for k, v in c.value.items() %}
+                        <span class="d-inline-block me-3 mb-1"><strong>{{ k }}:</strong> {{ v }}</span>
+                      {% endfor %}
+                    </div>
+                  {% elif c.value is sequence and c.value is not string %}
+                    <div class="small border rounded bg-white p-2">{{ c.value|join('، ') }}</div>
+                  {% elif c.value %}
+                    <div class="small border rounded bg-white p-2">{{ c.value }}</div>
+                  {% endif %}
+
+                  {% if details %}
+                    <div>
+                      <div class="small fw-semibold mb-1">سجلات النظام المرتبطة</div>
+                      {% for item in details %}
+                        <div class="small border rounded bg-white p-2 mb-2">
+                          {% for dk, dv in item.items() %}
+                            <span class="d-inline-block me-3 mb-1"><strong>{{ dk }}:</strong> {{ dv }}</span>
+                          {% endfor %}
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+
+                  {% if imported_details %}
+                    <div>
+                      <div class="small fw-semibold mb-1">تفاصيل مستوردة</div>
+                      {% for item in imported_details %}
+                        <div class="small border rounded bg-white p-2 mb-2">
+                          {% for dk, dv in item.items() %}
+                            <span class="d-inline-block me-3 mb-1"><strong>{{ dk }}:</strong> {{ dv }}</span>
+                          {% endfor %}
+                        </div>
+                      {% endfor %}
+                    </div>
+                  {% endif %}
+                </div>
+              </details>
+            </td>
+          </tr>
+        {% endif %}
+      {% else %}
+        <tr><td colspan="5" class="text-muted">لا يوجد تفصيل.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% if breakdown.notes %}
+  <hr>
+  <ul class="mb-0">
+    {% for n in breakdown.notes %}
+      <li>{{ n }}</li>
+    {% endfor %}
+  </ul>
+{% endif %}

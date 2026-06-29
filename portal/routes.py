@@ -20439,6 +20439,15 @@ def _portal_perm_presets_defaults():
             "label": "التقييم النظامي (عرض)",
             "keys": _normalize_keys([PORTAL_READ, HR_SYSTEM_EVALUATION_VIEW]),
         },
+        "MASAR_OVERSIGHT": {
+            "label": "متابعة مسار",
+            "keys": _normalize_keys([
+                "AUDIT_DASHBOARD_READ",
+                "AUDIT_TIMELINE_READ",
+                "WORKFLOW_NOTIFICATIONS_DASHBOARD_READ",
+                "HR_EVALUATIONS_MANAGE",
+            ]),
+        },
         "CORR": {
             "label": "مراسلات",
             "keys": _with_base([CORR_READ, CORR_CREATE, CORR_UPDATE, CORR_EXPORT]),

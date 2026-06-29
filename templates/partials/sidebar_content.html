@@ -321,7 +321,7 @@
         {% endif %}
         {% endif %}
 
-{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_DASHBOARD') or current_user.has_role_perm('VIEW_ESCALATIONS') or can_delegations %}
+{% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_DASHBOARD') or current_user.has_role_perm('VIEW_ESCALATIONS') or can_delegations or current_user.has_perm('WORKFLOW_NOTIFICATIONS_DASHBOARD_READ') or current_user.has_perm('AUDIT_DASHBOARD_READ') or current_user.has_perm('AUDIT_TIMELINE_READ') or current_user.has_perm('HR_EVALUATIONS_MANAGE') %}
         <h4 class="sidebar-title mt-4">
             <i class="bi bi-gear"></i>
             <span class="menu-text">إدارة النظام</span>
@@ -357,25 +357,25 @@
         </a>
 {% endif %}
 
-{% if current_user.has_role('ADMIN') %}
+{% if current_user.has_perm('WORKFLOW_NOTIFICATIONS_DASHBOARD_READ') %}
         <a href="{{ url_for('workflow.notifications_dashboard') }}">
             📊 لوحة الإشعارات
         </a>
 {% endif %}
 
-{% if current_user.has_role('ADMIN') %}
+{% if current_user.has_perm('AUDIT_DASHBOARD_READ') %}
         <a href="{{ url_for('audit.audit_dashboard') }}">
             📊 سجل التدقيق
         </a>
 {% endif %}
 
-{% if current_user.has_role('ADMIN') %}
+{% if current_user.has_perm('AUDIT_TIMELINE_READ') %}
         <a href="{{ url_for('audit.system_timeline') }}">
             🧭 الخط الزمني
         </a>
 {% endif %}
 
-{% if current_user.has_role('ADMIN') %}
+{% if current_user.has_perm('HR_EVALUATIONS_MANAGE') %}
         <a href="{{ url_for('admin.evaluations_index') }}"
            class="{% if request.path.startswith('/admin/evaluations') %}active{% endif %}">
             ⭐ تقييم الموظفين

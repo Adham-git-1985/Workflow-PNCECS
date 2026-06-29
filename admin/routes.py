@@ -388,6 +388,10 @@ def manage_permissions():
         "VIEW_TIMELINE",
         "DELEGATION_MANAGE",
         "DELEGATION_SELF",
+        "AUDIT_DASHBOARD_READ",
+        "AUDIT_TIMELINE_READ",
+        "WORKFLOW_NOTIFICATIONS_DASHBOARD_READ",
+        "HR_EVALUATIONS_MANAGE",
         # Portal/HR keys (so role-based access works from this UI)
         "PORTAL_READ",
         "HR_SYSTEM_EVALUATION_VIEW",

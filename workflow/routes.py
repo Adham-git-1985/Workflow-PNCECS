@@ -33,6 +33,7 @@ from sqlalchemy.orm import joinedload
 from . import workflow_bp
 from extensions import db
 from permissions import roles_required
+from utils.perms import perm_required
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
 from utils.audit_helpers import delegation_audit_fields
 from utils.events import emit_event
@@ -1657,7 +1658,7 @@ def event_stream():
 
 @workflow_bp.route("/notifications/dashboard")
 @login_required
-@roles_required("ADMIN")
+@perm_required("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ")
 def notifications_dashboard():
     total = Notification.query.filter(or_(Notification.source.is_(None), Notification.source == 'workflow')).count()
     unread = Notification.query.filter_by(is_read=False).filter(or_(Notification.source.is_(None), Notification.source == 'workflow')).count()
