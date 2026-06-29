@@ -43,7 +43,7 @@ from . import portal_bp
 from extensions import db
 from sqlalchemy import or_, and_, text, func
 from sqlalchemy.sql import exists
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
 
@@ -12869,8 +12869,12 @@ def _parse_timeclock_line(line: str):
     # Detect event type (supports multiple exports)
     event_type = None
     type_map = {
-        'I': 'I', 'IN': 'I', 'A': 'I', 'CHECKIN': 'I', 'CHECK-IN': 'I', '0': 'I',
-        'O': 'O', 'OUT': 'O', 'B': 'O', 'CHECKOUT': 'O', 'CHECK-OUT': 'O', '1': 'O',
+        'I': 'I', 'IN': 'I', 'A': 'I', 'ARRIVAL': 'I', 'ARRIVE': 'I',
+        'CHECKIN': 'I', 'CHECK-IN': 'I', '0': 'I', 'دخول': 'I', 'حضور': 'I',
+        'O': 'O', 'OUT': 'O', 'B': 'O', 'C': 'O', 'D': 'O',
+        'DEPARTURE': 'O', 'DEPART': 'O', 'BREAK': 'O', 'BREAKOUT': 'O', 'BREAK-OUT': 'O',
+        'EXIT': 'O', 'LEAVE': 'O', 'CHECKOUT': 'O', 'CHECK-OUT': 'O', '1': 'O',
+        'خروج': 'O', 'انصراف': 'O', 'مغادرة': 'O',
     }
     for p in parts:
         key = (p or '').strip().upper()
@@ -13031,6 +13035,7 @@ def hr_attendance_import():
 
         seen = set()
         errors = []
+        summary_keys = set()
 
         for ln in lines:
             parsed = _parse_timeclock_line(ln)
@@ -13048,11 +13053,23 @@ def hr_attendance_import():
                 errors.append(f"Unknown emp_code={emp_code} line={ln!r}")
                 continue
 
+            summary_keys.add((user_id, parsed["event_dt"].date().isoformat()))
             key = (user_id, parsed["event_dt"], parsed["event_type"], parsed["device_id"])
             if key in seen:
                 batch.skipped += 1
                 continue
             seen.add(key)
+
+            with db.session.no_autoflush:
+                exists_ev = AttendanceEvent.query.filter_by(
+                    user_id=user_id,
+                    event_dt=parsed["event_dt"],
+                    event_type=parsed["event_type"],
+                    device_id=parsed["device_id"],
+                ).first()
+            if exists_ev:
+                batch.skipped += 1
+                continue
 
             ev = AttendanceEvent(
                 batch_id=batch.id,
@@ -13070,7 +13087,15 @@ def hr_attendance_import():
         if errors:
             batch.errors = "\n".join(errors[:200])
 
-        db.session.commit()
+        _attendance_recompute_summaries_for_keys(summary_keys)
+
+        try:
+            db.session.commit()
+        except IntegrityError:
+            db.session.rollback()
+            current_app.logger.exception("Duplicate attendance event while importing timeclock file")
+            flash("تعذر إكمال الاستيراد بسبب سجلات دوام مكررة. تمت حماية النظام من التكرار؛ أعد المحاولة بعد تحديث السجل.", "warning")
+            return redirect(url_for("portal.hr_attendance_batches"))
         flash(f"تم استيراد الملف: {batch.inserted} سجل، {batch.skipped} تم تجاهله.", "success")
         return redirect(url_for("portal.hr_attendance_batches"))
 
@@ -13102,7 +13127,29 @@ def hr_attendance_batches():
             pass
 
     batches = qry.order_by(AttendanceImportBatch.imported_at.desc()).limit(300).all()
-    return render_template("portal/hr/attendance_batches.html", batches=batches, q=q, date_from=date_from, date_to=date_to)
+    timeclock_file_path = (_setting_get('TIMECLK_SOURCE_FILE') or '').strip()
+    last_sync = _setting_get('TIMECLK_LAST_SYNC_AT') or ''
+    last_error = _setting_get('TIMECLK_LAST_ERROR') or ''
+    can_sync_now = (
+        (
+            current_user.has_perm(HR_ATT_CREATE)
+            and current_user.has_perm(PORTAL_INTEGRATIONS_MANAGE)
+        )
+        or current_user.has_role('ADMIN')
+        or current_user.has_role('SUPERADMIN')
+        or current_user.has_role('SUPER_ADMIN')
+    )
+    return render_template(
+        "portal/hr/attendance_batches.html",
+        batches=batches,
+        q=q,
+        date_from=date_from,
+        date_to=date_to,
+        timeclock_file_path=timeclock_file_path,
+        last_sync=last_sync,
+        last_error=last_error,
+        can_sync_now=can_sync_now,
+    )
 
 
 @portal_bp.route("/hr/attendance/events")
@@ -16558,7 +16605,7 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
     """Resolve the configured timeclock source.
 
     - If a file path is provided -> return it (if exists)
-    - If a directory is provided -> pick the latest daily file, preferring names like YYYYMMDD.CSV
+    - If a directory is provided -> pick the latest daily file, preferring names like YYYYMMDD.CSV/TXT
     """
     src = (source_path or '').strip()
     if not src:
@@ -16569,8 +16616,9 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
         return str(p)
 
     if p.exists() and p.is_dir():
-        # Prefer date-stamped files: 20260215.CSV
-        pat = re.compile(r"^(\d{8})\.(csv)$", re.IGNORECASE)
+        # Prefer date-stamped files: 20260215.CSV / 20260215.TXT
+        supported_suffixes = {'.csv', '.txt'}
+        pat = re.compile(r"^(\d{8})\.(csv|txt)$", re.IGNORECASE)
         dated = []
         other = []
         try:
@@ -16580,7 +16628,7 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
                 m = pat.match(child.name)
                 if m:
                     dated.append(child)
-                elif child.suffix.lower() == '.csv':
+                elif child.suffix.lower() in supported_suffixes:
                     other.append(child)
         except Exception:
             return None
@@ -16975,7 +17023,12 @@ def hr_attendance_sync_now():
 
     try:
         # safer insertion: bulk add without flush per-row
-        inserted, skipped, errs = _timeclock_sync_simple(file_path, current_user.id, append_only)
+        inserted, skipped, errs = _timeclock_sync_simple(
+            file_path,
+            current_user.id,
+            append_only,
+            force_full_read=True,
+        )
         flash(f'تمت المزامنة: {inserted} سجل، {skipped} تم تجاهله.', 'success')
     except FileNotFoundError:
         flash('الملف غير موجود على المسار المحدد.', 'danger')
@@ -16985,7 +17038,7 @@ def hr_attendance_sync_now():
     return redirect(url_for('portal.hr_attendance_batches'))
 
 
-def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: bool = True):
+def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: bool = True, force_full_read: bool = False):
     # Same as _timeclock_sync but avoids flush/rollback inside loop.
     # Support directory input (daily files like YYYYMMDD.CSV)
     resolved = _timeclock_resolve_source_file(file_path)
@@ -16995,8 +17048,11 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
     last_file = (_setting_get('TIMECLK_LAST_FILE') or '').strip()
     last_size = _setting_get('TIMECLK_LAST_SIZE')
 
-    # If the device rotates files daily, reset incremental pointer when file changes
-    if last_file and (last_file != resolved):
+    # Manual "sync now" should verify the whole current file, while the
+    # background worker can keep using the saved pointer for cheap polling.
+    if force_full_read:
+        last_size_i = None
+    elif last_file and (last_file != resolved):
         last_size_i = None
     else:
         last_size_i = int(last_size) if (last_size and str(last_size).isdigit()) else None
@@ -17035,6 +17091,7 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
 
     seen = set()
     errors = []
+    summary_keys = set()
 
     for ln in lines:
         parsed = _parse_timeclock_line(ln)
@@ -17051,6 +17108,7 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
             errors.append(f"Unknown emp_code={parsed['emp_code']} line={ln!r}")
             continue
 
+        summary_keys.add((user_id, parsed['event_dt'].date().isoformat()))
         key = (user_id, parsed['event_dt'], parsed['event_type'], parsed['device_id'])
         if key in seen:
             batch.skipped += 1
@@ -17058,12 +17116,13 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
         seen.add(key)
 
         # avoid duplicates via query check (cheaper than rollback)
-        exists_ev = AttendanceEvent.query.filter_by(
-            user_id=user_id,
-            event_dt=parsed['event_dt'],
-            event_type=parsed['event_type'],
-            device_id=parsed['device_id'],
-        ).first()
+        with db.session.no_autoflush:
+            exists_ev = AttendanceEvent.query.filter_by(
+                user_id=user_id,
+                event_dt=parsed['event_dt'],
+                event_type=parsed['event_type'],
+                device_id=parsed['device_id'],
+            ).first()
         if exists_ev:
             batch.skipped += 1
             continue
@@ -17085,10 +17144,11 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
     _setting_set('TIMECLK_LAST_FILE', str(resolved))
     _setting_set('TIMECLK_LAST_SIZE', str(new_size))
     _setting_set('TIMECLK_LAST_SYNC_AT', datetime.utcnow().isoformat(timespec='seconds'))
+    recomputed = _attendance_recompute_summaries_for_keys(summary_keys)
 
     _portal_audit(
         'TIMECLK_SYNC',
-        f"TIMECLK sync inserted={batch.inserted} skipped={batch.skipped} errors={len(errors)}",
+        f"TIMECLK sync inserted={batch.inserted} skipped={batch.skipped} errors={len(errors)} summaries={recomputed}",
         target_type='ATTENDANCE_IMPORT',
         target_id=batch.id,
         user_id=imported_by_id,
@@ -17115,11 +17175,14 @@ def _summary_compute_one(user_id: int, day_str: str):
         .all()
     )
 
-    ins = [e.event_dt for e in evs if e.event_type == 'I']
-    outs = [e.event_dt for e in evs if e.event_type == 'O']
+    all_times = [e.event_dt for e in evs if e.event_dt]
+    ins = [e.event_dt for e in evs if e.event_dt and (e.event_type or '').upper() in {'I', 'IN', 'CHECKIN'}]
+    outs = [e.event_dt for e in evs if e.event_dt and (e.event_type or '').upper() in {'O', 'OUT', 'CHECKOUT'}]
 
-    first_in = ins[0] if ins else None
+    first_in = ins[0] if ins else (all_times[0] if all_times else None)
     last_out = outs[-1] if outs else None
+    if not last_out and len(all_times) > 1:
+        last_out = all_times[-1]
 
     schedule = _effective_schedule_for_user(user_id, day_str)
     schedule_id = schedule.id if schedule else None
@@ -17206,6 +17269,20 @@ def _upsert_summary(row: dict):
     existing.overtime_minutes = row.get('overtime_minutes', 0) or 0
     existing.status = row.get('status') or 'OK'
     existing.computed_at = datetime.utcnow()
+
+
+def _attendance_recompute_summaries_for_keys(summary_keys) -> int:
+    count = 0
+    for user_id, day_str in sorted(summary_keys or set()):
+        try:
+            if not user_id or not day_str:
+                continue
+            row = _summary_compute_one(int(user_id), str(day_str))
+            _upsert_summary(row)
+            count += 1
+        except Exception:
+            current_app.logger.exception("Failed to recompute attendance summary user_id=%s day=%s", user_id, day_str)
+    return count
 
 
 @portal_bp.route('/hr/attendance/daily')

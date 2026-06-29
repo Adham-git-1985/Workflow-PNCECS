@@ -2,10 +2,32 @@
 {% block title %}سجل الاستيراد{% endblock %}
 {% block hr_content %}
 <div class="bg-white rounded-3 shadow-sm p-4">
-  <div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <h5 class="mb-0"><i class="bi bi-list-check"></i> سجل استيراد الدوام</h5>
-    <a class="btn btn-primary btn-sm" href="{{ url_for('portal.hr_attendance_import') }}">استيراد جديد</a>
+    <div class="d-flex gap-2 flex-wrap">
+      {% if can_sync_now %}
+        <form method="post" action="{{ url_for('portal.hr_attendance_sync_now') }}">
+          <button class="btn btn-success btn-sm" type="submit" {% if not timeclock_file_path %}disabled{% endif %}>
+            <i class="bi bi-arrow-repeat"></i> مزامنة الآن
+          </button>
+        </form>
+      {% endif %}
+      <a class="btn btn-primary btn-sm" href="{{ url_for('portal.hr_attendance_import') }}">استيراد جديد</a>
+    </div>
   </div>
+
+  {% if can_sync_now %}
+    <div class="small text-muted mb-3">
+      مصدر المزامنة:
+      <span dir="ltr">{{ timeclock_file_path or 'غير محدد' }}</span>
+      {% if last_sync %}
+        <span class="mx-2">|</span> آخر مزامنة: {{ last_sync }}
+      {% endif %}
+      {% if last_error %}
+        <span class="mx-2">|</span> <span class="text-danger">آخر خطأ: {{ last_error }}</span>
+      {% endif %}
+    </div>
+  {% endif %}
 
   <div class="table-responsive">
     <table class="table table-sm align-middle">
