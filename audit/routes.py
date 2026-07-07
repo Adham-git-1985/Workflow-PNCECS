@@ -47,6 +47,9 @@ def audit_index():
         .paginate(page=page, per_page=20, error_out=False)
     )
 
+    # Used by shared audit templates to avoid broken request links.
+    existing_request_ids = set()
+
     return render_template(
         "audit/index.html",
         logs=pagination.items,
@@ -804,9 +807,11 @@ def system_timeline_export_excel():
             s = str(note)
         except Exception:
             return None
-        m = re.search(r"(?:\\bstep\\s*=\\s*|\\bStep\\s+)(\\d+)", s, flags=re.IGNORECASE)
+
+        # Common patterns: step=3, Step 3, الخطوة 3
+        m = re.search(r"(?:\bstep\s*=\s*|\bStep\s+)(\d+)", s, flags=re.IGNORECASE)
         if not m:
-            m = re.search(r"الخطوة\\s*(\\d+)", s)
+            m = re.search(r"الخطوة\s*(\d+)", s)
         if not m:
             return None
         try:
@@ -822,14 +827,41 @@ def system_timeline_export_excel():
         int(l.target_id) for l in logs
         if l.target_id and ((getattr(l, 'target_type', None) or '').strip() in ['WORKFLOW_STEP', 'WORKFLOW_INSTANCE_STEP'])
     }
+
     task_step_map = {}
     if task_ids:
-        for tid, so in db.session.query(WorkflowStepTask.id, WorkflowStepTask.step_order).filter(WorkflowStepTask.id.in_(task_ids)).all():
+        for tid, so in (
+            db.session.query(WorkflowStepTask.id, WorkflowStepTask.step_order)
+            .filter(WorkflowStepTask.id.in_(task_ids))
+            .all()
+        ):
             task_step_map[int(tid)] = int(so) if so is not None else None
+
     inst_step_map = {}
     if step_ids:
-        for sid, so in db.session.query(WorkflowInstanceStep.id, WorkflowInstanceStep.step_order).filter(WorkflowInstanceStep.id.in_(step_ids)).all():
+        for sid, so in (
+            db.session.query(WorkflowInstanceStep.id, WorkflowInstanceStep.step_order)
+            .filter(WorkflowInstanceStep.id.in_(step_ids))
+            .all()
+        ):
             inst_step_map[int(sid)] = int(so) if so is not None else None
+
+    headers = [
+        "المعرف",
+        "التاريخ والوقت",
+        "الإجراء",
+        "المستخدم",
+        "نيابة عن",
+        "رقم الطلب",
+        "نوع الطلب",
+        "المسار / النموذج",
+        "رقم المرحلة",
+        "بداية سير العمل",
+        "اكتمال سير العمل",
+        "نوع الهدف",
+        "رقم الهدف",
+        "الملاحظات",
+    ]
 
     rows = []
     for l in logs:
@@ -846,24 +878,24 @@ def system_timeline_export_excel():
         if st is None:
             st = _extract_step_from_note(getattr(l, 'note', None))
 
-        rows.append({
-            "ID": l.id,
-            "Time": l.created_at.strftime('%Y-%m-%d %H:%M:%S'),
-            "Action": ui_label(l.action),
-            "User": (l.user.email if l.user else 'System'),
-            "On behalf of": (l.on_behalf_of_user.email if l.on_behalf_of_user else ''),
-            "Request ID": rid or '',
-            "Request Type": meta.get('request_type', ''),
-            "Template": meta.get('template_name', ''),
-            "Step": (st if st is not None else ''),
-            "Workflow Started": (meta.get('started_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('started_at') else ''),
-            "Workflow Completed": (meta.get('completed_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('completed_at') else ''),
-            "Target Type": ui_label(l.target_type) if l.target_type else '',
-            "Target ID": l.target_id or '',
-            "Note": ui_text(l.note) if l.note else '',
-        })
+        rows.append([
+            l.id,
+            l.created_at.strftime('%Y-%m-%d %H:%M:%S') if l.created_at else '',
+            ui_label(l.action),
+            (l.user.email if l.user else 'System'),
+            (l.on_behalf_of_user.email if l.on_behalf_of_user else ''),
+            rid or '',
+            meta.get('request_type', ''),
+            meta.get('template_name', ''),
+            (st if st is not None else ''),
+            (meta.get('started_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('started_at') else ''),
+            (meta.get('completed_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('completed_at') else ''),
+            ui_label(l.target_type) if l.target_type else '',
+            l.target_id or '',
+            ui_text(l.note) if l.note else '',
+        ])
 
-    content = make_xlsx_bytes("Timeline", rows)
+    content = make_xlsx_bytes("Timeline", headers, rows)
     filename = f"system_timeline_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
     return send_file(
