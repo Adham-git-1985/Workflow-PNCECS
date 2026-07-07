@@ -248,6 +248,7 @@ HR_PERF_SUBMIT = "HR_PERFORMANCE_SUBMIT"
 HR_PERF_MANAGE = "HR_PERFORMANCE_MANAGE"
 
 # HR System Evaluation (KPI-based)
+HR_EVALUATIONS_MANAGE = "HR_EVALUATIONS_MANAGE"
 HR_SYSTEM_EVALUATION_VIEW = "HR_SYSTEM_EVALUATION_VIEW"
 HR_PERF_EXPORT = "HR_PERFORMANCE_EXPORT"
 
@@ -255,6 +256,8 @@ HR_PERF_EXPORT = "HR_PERFORMANCE_EXPORT"
 PORTAL_REPORTS_READ = "PORTAL_REPORTS_READ"
 PORTAL_REPORTS_EXPORT = "PORTAL_REPORTS_EXPORT"
 PORTAL_AUDIT_READ = "PORTAL_AUDIT_READ"
+AUDIT_DASHBOARD_READ = "AUDIT_DASHBOARD_READ"
+AUDIT_TIMELINE_READ = "AUDIT_TIMELINE_READ"
 
 PORTAL_INTEGRATIONS_MANAGE = "PORTAL_INTEGRATIONS_MANAGE"
 
@@ -265,6 +268,23 @@ CORR_DELETE = "CORR_DELETE"
 CORR_EXPORT = "CORR_EXPORT"
 CORR_LOOKUPS_MANAGE = "CORR_LOOKUPS_MANAGE"
 CORR_MANAGE = "CORR_MANAGE"  # legacy-ish (kept)
+
+PORTAL_ADMIN_DASHBOARD_PERMS = (
+    PORTAL_ADMIN_READ,
+    PORTAL_ADMIN_PERMISSIONS_MANAGE,
+    PORTAL_MEETINGS_MANAGE,
+    HR_MASTERDATA_MANAGE,
+    HR_PERF_MANAGE,
+    HR_EVALUATIONS_MANAGE,
+    PORTAL_REPORTS_READ,
+    PORTAL_AUDIT_READ,
+    AUDIT_DASHBOARD_READ,
+    AUDIT_TIMELINE_READ,
+    STORE_MANAGE,
+    "TRANSPORT_UPDATE",
+    PORTAL_INTEGRATIONS_MANAGE,
+    CORR_LOOKUPS_MANAGE,
+)
 
 # Legacy keys (still accepted via User.has_perm aliases)
 PORTAL_VIEW = "PORTAL_VIEW"
@@ -528,7 +548,7 @@ def _portal_flags():
     can_transport_track = any([has('TRANSPORT_TRACKING_READ'), has('TRANSPORT_TRACKING_MANAGE')])
 
     can_meetings_manage = has(PORTAL_MEETINGS_MANAGE)
-    can_portal_admin = has(PORTAL_ADMIN_READ) or has(PORTAL_ADMIN_PERMISSIONS_MANAGE) or can_meetings_manage
+    can_portal_admin = any(has(k) for k in PORTAL_ADMIN_DASHBOARD_PERMS)
     can_approve = (has(HR_REQUESTS_APPROVE) or has(HR_REQUESTS_VIEW_ALL) or has(HR_SS_APPROVE) or has(HR_SS_WORKFLOWS_MANAGE))
 
     return {
@@ -2948,6 +2968,8 @@ def portal_entry():
     try:
         if current_user.has_perm(PORTAL_READ) or current_user.has_perm(PORTAL_VIEW):
             return redirect(url_for("portal.index"))
+        if any(current_user.has_perm(k) for k in PORTAL_ADMIN_DASHBOARD_PERMS):
+            return redirect(url_for("portal.portal_admin_dashboard"))
     except Exception:
         pass
 
@@ -18995,7 +19017,7 @@ from portal.perm_defs import PERMS as PORTAL_PERMS, ALL_KEYS as PORTAL_ALL_KEYS
 
 @portal_bp.route("/admin")
 @login_required
-@_perm_any(PORTAL_ADMIN_READ, PORTAL_MEETINGS_MANAGE)
+@_perm_any(*PORTAL_ADMIN_DASHBOARD_PERMS)
 def portal_admin_dashboard():
     # UX: show only cards user can access
     cards = []
@@ -19036,6 +19058,10 @@ def portal_admin_dashboard():
     add_card(PORTAL_AUDIT_READ, "التدقيق والامتثال", "سجلات تدقيق البوابة + تقارير امتثال.", "bi-shield-lock", "portal.portal_admin_compliance")
     add_card(PORTAL_AUDIT_READ, "السجل الزمني", "Timeline موحّد لحركات البوابة.", "bi-clock-history", "portal.portal_admin_timeline")
     add_card(HR_MASTERDATA_MANAGE, "لوحة HR", "لوحة موارد بشرية للإدارة (موظفين/دوام/طلبات/إعدادات).", "bi-clipboard2-data", "portal.portal_admin_hr_dashboard")
+
+    add_card(HR_EVALUATIONS_MANAGE, "تقييم الموظفين", "تشغيل واستيراد التقييمات النظامية.", "bi-star", "admin.evaluations_index")
+    add_card(AUDIT_DASHBOARD_READ, "سجل التدقيق", "لوحة سجل التدقيق في نظام مسار.", "bi-clipboard-data", "audit.audit_dashboard")
+    add_card(AUDIT_TIMELINE_READ, "الخط الزمني", "الخط الزمني التفصيلي لنشاط النظام.", "bi-clock-history", "audit.system_timeline")
 
     # Delegation
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "التفويض", "تفويض صلاحيات/مهام لموظف بديل لفترة محددة.", "bi-arrow-left-right", "portal.portal_admin_delegations")
@@ -20426,6 +20452,49 @@ def _portal_perm_presets_defaults():
                 HR_SS_WORKFLOWS_MANAGE,
                 HR_DOCS_MANAGE,
                 PORTAL_ADMIN_READ, PORTAL_ADMIN_PERMISSIONS_MANAGE,
+            ]),
+        },
+        "GENERAL-SECRETARY": {
+            "label": "الأمين العام",
+            "keys": _normalize_keys([
+                PORTAL_READ,
+                PORTAL_ADMIN_READ,
+                HR_READ,
+                HR_ATT_READ,
+                HR_REQUESTS_READ,
+                HR_SS_READ,
+                HR_SS_CREATE,
+                HR_DOCS_READ,
+                STORE_READ,
+                PORTAL_CIRCULARS_MANAGE,
+                PORTAL_MEETINGS_MANAGE,
+                CORR_READ,
+                HR_REQUESTS_APPROVE,
+                HR_REQUESTS_VIEW_ALL,
+                HR_SS_APPROVE,
+                HR_DISCIPLINE_READ,
+                HR_PAYSLIP_VIEW,
+                HR_PERF_READ,
+                HR_PERF_SUBMIT,
+                HR_PERF_MANAGE,
+                HR_PERF_EXPORT,
+                HR_SYSTEM_EVALUATION_VIEW,
+                HR_EVALUATIONS_MANAGE,
+                HR_ATT_EXPORT,
+                HR_REPORTS_VIEW,
+                HR_EMP_READ,
+                HR_EMP_ATTACH,
+                HR_ORG_MANAGE,
+                "HR_ORG_DYNAMIC_GUIDE_VIEW",
+                "TRANSPORT_READ",
+                "TRANSPORT_CREATE",
+                "TRANSPORT_TRACKING_READ",
+                PORTAL_REPORTS_READ,
+                PORTAL_REPORTS_EXPORT,
+                PORTAL_AUDIT_READ,
+                AUDIT_DASHBOARD_READ,
+                AUDIT_TIMELINE_READ,
+                "WORKFLOW_NOTIFICATIONS_DASHBOARD_READ",
             ]),
         },
     }
