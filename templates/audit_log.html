@@ -44,7 +44,10 @@
 
                     <div class="mt-1">
                         <strong>من:</strong>
-                        {{ log.user.email if log.user else "النظام" }}
+                        {{ log.user.full_name if log.user else "النظام" }}
+                        {% if log.user and log.user.email and log.user.email != log.user.full_name %}
+                            <span class="text-muted">({{ log.user.email }})</span>
+                        {% endif %}
                     </div>
 
                     <div>

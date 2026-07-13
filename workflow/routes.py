@@ -478,7 +478,7 @@ def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, n
                 action=MENTION_ACCESS_ACTION,
                 old_status=req.status,
                 new_status=req.status,
-                note=f"step={step_order or ''} | mentioned_user_id={uid}",
+                note=f"step={step_order or ''} | المستخدم المشار إليه={user.full_name}",
                 target_type="USER",
                 target_id=uid,
                 created_at=now,

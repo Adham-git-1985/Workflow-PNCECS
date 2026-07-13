@@ -115,11 +115,22 @@ def list_audit_logs():
     ).paginate(page=page, per_page=20, error_out=False)
 
     users = User.query.order_by(User.email.asc()).all()
+    actions = [
+        row[0]
+        for row in (
+            _apply_message_visibility_filter(db.session.query(AuditLog.action))
+            .distinct()
+            .order_by(AuditLog.action.asc())
+            .all()
+        )
+        if row[0]
+    ]
 
     return render_template(
         "audit/list.html",
         logs=pagination.items,
         users=users,
+        actions=actions,
         pagination=pagination
     )
 

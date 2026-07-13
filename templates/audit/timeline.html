@@ -43,7 +43,9 @@
         <select name="user_id" class="form-select">
           <option value="">الكل</option>
           {% for u in users %}
-            <option value="{{ u.id }}" {% if filters.user_id == u.id %}selected{% endif %}>{{ u.email }}</option>
+            <option value="{{ u.id }}" {% if filters.user_id == u.id %}selected{% endif %}>
+              {{ u.full_name }}{% if u.email and u.email != u.full_name %} ({{ u.email }}){% endif %}
+            </option>
           {% endfor %}
         </select>
       </div>
@@ -138,7 +140,12 @@
                 <span class="text-muted small">{{ log.created_at.strftime('%H:%M:%S') }}</span>
                 <span class="text-muted small">•</span>
                 {% if log.user %}
-                  <span class="small">👤 <strong>{{ log.user.email }}</strong></span>
+                  <span class="small">
+                    👤 <strong>{{ log.user.full_name }}</strong>
+                    {% if log.user.email and log.user.email != log.user.full_name %}
+                      <span class="text-muted">({{ log.user.email }})</span>
+                    {% endif %}
+                  </span>
                 {% else %}
                   <span class="small">🤖 <strong>System</strong></span>
                 {% endif %}
