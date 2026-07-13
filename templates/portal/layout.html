@@ -433,7 +433,7 @@
             <i class="bi bi-calendar2-week"></i> الاجتماعات
             {% set _meet_badge = (portal_meeting_tasks_open if portal_meeting_tasks_open is defined else 0) %}
             {% if _meet_badge|int > 0 %}
-              <span class="badge text-bg-warning ms-1">{{ _meet_badge }}</span>
+              <span class="badge text-bg-warning ms-1">مهام {{ _meet_badge }}</span>
             {% elif portal_meetings_week_count is defined and portal_meetings_week_count|int > 0 %}
               <span class="badge text-bg-light ms-1">{{ portal_meetings_week_count }}</span>
             {% endif %}

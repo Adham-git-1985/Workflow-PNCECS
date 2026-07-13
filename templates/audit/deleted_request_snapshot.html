@@ -116,7 +116,7 @@
             <tr>
               <td class="text-muted small">{{ l.created_at }}</td>
               <td><span class="badge text-bg-light">{{ l.action|ui_label }}</span></td>
-              <td>{{ l.user.name if l.user else "-" }}</td>
+              <td>{{ l.user.full_name if l.user else "-" }}</td>
               <td class="small text-muted">
                 {% if l.note %}
                   <details>

@@ -56,6 +56,7 @@ from store import store_bp
 
 from filters.request_filters import apply_request_filters
 from utils.permissions import get_effective_user
+from utils.request_audit import register_request_audit
 from utils.ui_labels import ui_label, ui_text
 from filters.request_filters import get_sla_state
 from services.escalation_service import run_escalation_if_needed
@@ -817,6 +818,9 @@ def log_session():
             get_effective_user()  # loads g.delegation / g.effective_user
     except Exception:
         pass
+
+
+register_request_audit(app)
 
 @login_manager.unauthorized_handler
 def unauthorized():

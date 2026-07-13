@@ -30,7 +30,7 @@
                     {% for u in users %}
                         <option value="{{ u.id }}"
                           {% if request.args.get('user_id') == u.id|string %}selected{% endif %}>
-                          {{ u.email }}
+                          {{ u.full_name }}{% if u.email and u.email != u.full_name %} ({{ u.email }}){% endif %}
                         </option>
                     {% endfor %}
                 </select>
@@ -41,13 +41,7 @@
                 <label class="form-label">الإجراء</label>
                 <select name="action" class="form-select">
                     <option value="">الكل</option>
-                    {% for a in [
-                      "CREATE_REQUEST",
-                      "APPROVE_REQUEST",
-                      "REJECT_REQUEST",
-                      "CREATE_DELEGATION",
-                      "CANCEL_DELEGATION"
-                    ] %}
+                    {% for a in actions %}
                         <option value="{{ a }}"
                           {% if request.args.get('action') == a %}selected{% endif %}>
                           {{ a|ui_label }}
@@ -107,7 +101,16 @@
                 {% for log in logs %}
                     <tr>
                         <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-                        <td>{{ highlight(log.user.email if log.user else "-", search_terms) }}</td>
+                        <td>
+                            {% if log.user %}
+                                {{ highlight(log.user.full_name, search_terms) }}
+                                {% if log.user.email and log.user.email != log.user.full_name %}
+                                    <div class="small text-muted">{{ highlight(log.user.email, search_terms) }}</div>
+                                {% endif %}
+                            {% else %}
+                                -
+                            {% endif %}
+                        </td>
                         <td>{{ highlight(log.action|ui_label, search_terms) }}</td>
                         <td>{{ highlight((log.note|ui_text) or "-", search_terms) }}</td>
                         <td class="text-center">

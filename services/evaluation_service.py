@@ -556,8 +556,20 @@ def compute_employee_evaluation(
         or_(AuditLog.user_id == user_id, AuditLog.on_behalf_of_id == user_id),
     )
 
-    # exclude message noise
-    base_audit_q = base_audit_q.filter(~AuditLog.action.like("MESSAGE_%"))
+    # Exclude transport-level request tracking from performance metrics. These
+    # records remain visible in the audit timeline, but counting page views and
+    # the generic safety-net entry would inflate activity and duplicate the
+    # domain-specific actions recorded by each module.
+    base_audit_q = base_audit_q.filter(
+        ~AuditLog.action.like("MESSAGE_%"),
+        ~AuditLog.action.in_((
+            "PAGE_VIEW",
+            "USER_ACTION",
+            "USER_ACTION_FAILED",
+            "USER_LOGIN",
+            "USER_LOGOUT",
+        )),
+    )
 
     total_actions = base_audit_q.count()
     approvals = base_audit_q.filter(AuditLog.action == "APPROVE").count()

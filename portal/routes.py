@@ -899,7 +899,7 @@ def _inject_portal_context():
         if current_user.has_perm(PORTAL_MEETINGS_MANAGE):
             meetings_week_count = _safe_count(
                 PortalMeeting.query
-                .filter(PortalMeeting.status != 'CANCELLED')
+                .filter(PortalMeeting.status == 'SCHEDULED')
                 .filter(PortalMeeting.start_at >= now)
                 .filter(PortalMeeting.start_at < week_to)
             )
@@ -911,7 +911,7 @@ def _inject_portal_context():
             meetings_week_count = _safe_count(
                 PortalMeeting.query
                 .filter(PortalMeeting.id.in_(meeting_ids_q))
-                .filter(PortalMeeting.status != 'CANCELLED')
+                .filter(PortalMeeting.status == 'SCHEDULED')
                 .filter(PortalMeeting.start_at >= now)
                 .filter(PortalMeeting.start_at < week_to)
             )
