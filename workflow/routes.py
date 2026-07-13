@@ -1615,55 +1615,135 @@ def mark_notification_read(notif_id):
     return "", 204
 
 
+def _notification_state_for_user(user_id: int) -> dict:
+    """Return unified unread counts and the latest notification id."""
+    unread_by_source = {
+        (source or "workflow").strip().lower(): int(count or 0)
+        for source, count in (
+            db.session.query(
+                Notification.source,
+                func.count(Notification.id),
+            )
+            .filter(
+                Notification.user_id == int(user_id),
+                Notification.is_mirror.is_(False),
+                Notification.is_read.is_(False),
+            )
+            .group_by(Notification.source)
+            .all()
+        )
+    }
+
+    workflow_unread = unread_by_source.get("workflow", 0)
+    portal_unread = unread_by_source.get("portal", 0)
+    latest_id = (
+        db.session.query(func.max(Notification.id))
+        .filter(
+            Notification.user_id == int(user_id),
+            Notification.is_mirror.is_(False),
+        )
+        .scalar()
+    )
+
+    return {
+        "unread": sum(unread_by_source.values()),
+        "workflow_unread": workflow_unread,
+        "portal_unread": portal_unread,
+        "latest_id": int(latest_id) if latest_id is not None else None,
+    }
+
+
+def _notification_payload(notification: Notification, state: dict) -> dict:
+    return {
+        **state,
+        "has_new": True,
+        "notification_id": int(notification.id),
+        "message": notification.message or "وصل تنبيه جديد",
+        "type": notification.type or "INFO",
+        "source": (notification.source or "workflow").strip().lower(),
+    }
+
+
+@workflow_bp.route("/notifications/poll")
+@login_required
+def poll_notifications():
+    """JSON fallback for browsers or proxies that cannot use EventSource."""
+    after_id = request.args.get("after_id", type=int)
+    state = _notification_state_for_user(current_user.id)
+    notifications = []
+
+    if after_id is not None and int(state.get("latest_id") or 0) > max(after_id, 0):
+        rows = (
+            Notification.query
+            .filter(
+                Notification.user_id == current_user.id,
+                Notification.is_mirror.is_(False),
+                Notification.id > max(after_id, 0),
+            )
+            .order_by(Notification.id.asc())
+            .limit(50)
+            .all()
+        )
+        notifications = [_notification_payload(row, state) for row in rows]
+
+    return jsonify({**state, "notifications": notifications})
+
+
 
 @workflow_bp.route("/notifications/stream")
 @login_required
 def event_stream():
     @stream_with_context
     def gen():
-        last_signature = None
+        # The notification table is the system-wide notification bus.  Watch
+        # every non-mirror notification for the signed-in user, regardless of
+        # whether it originated in Workflow or in the administrative portal.
+        initialized = False
+        last_seen_id = 0
+        last_count_signature = None
         while True:
             try:
-                unread, latest_id = (
-                    db.session.query(
-                        func.count(Notification.id),
-                        func.max(Notification.id),
-                    )
-                    .filter(
-                        Notification.user_id == current_user.id,
-                        Notification.is_mirror.is_(False),
-                        Notification.is_read.is_(False),
-                        or_(Notification.source.is_(None), Notification.source == "workflow")
-                    )
-                    .one()
+                base_payload = _notification_state_for_user(current_user.id)
+                latest_id = base_payload["latest_id"]
+                count_signature = (
+                    base_payload["unread"],
+                    base_payload["workflow_unread"],
+                    base_payload["portal_unread"],
                 )
 
-                unread = int(unread or 0)
-                latest_id = int(latest_id) if latest_id is not None else None
-                signature = (unread, latest_id)
+                if not initialized:
+                    # Establish a baseline without replaying old notifications.
+                    last_seen_id = int(latest_id or 0)
+                    initialized = True
+                    yield f"data: {json.dumps({**base_payload, 'has_new': False}, ensure_ascii=False)}\n\n"
+                else:
+                    new_notifications = []
+                    if latest_id is not None and latest_id > int(last_seen_id or 0):
+                        new_notifications = (
+                            Notification.query
+                            .filter(
+                                Notification.user_id == current_user.id,
+                                Notification.is_mirror.is_(False),
+                                Notification.id > int(last_seen_id or 0),
+                            )
+                            .order_by(Notification.id.asc())
+                            .limit(50)
+                            .all()
+                        )
 
-                if signature != last_signature:
-                    previous_latest_id = last_signature[1] if last_signature else None
-                    has_new = (
-                        last_signature is not None
-                        and latest_id is not None
-                        and (previous_latest_id is None or latest_id > previous_latest_id)
-                    )
+                    if new_notifications:
+                        for notification in new_notifications:
+                            payload = _notification_payload(notification, base_payload)
+                            yield f"id: {notification.id}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                            last_seen_id = int(notification.id)
+                    elif count_signature != last_count_signature:
+                        yield f"data: {json.dumps({**base_payload, 'has_new': False}, ensure_ascii=False)}\n\n"
+                    else:
+                        # Named heartbeat events keep proxies from closing the
+                        # stream without triggering the browser's onmessage.
+                        yield "event: ping\ndata: {}\n\n"
 
-                    payload = {
-                        "unread": unread,
-                        "latest_id": latest_id,
-                        "has_new": has_new,
-                    }
-
-                    if has_new:
-                        latest_notification = db.session.get(Notification, latest_id)
-                        if latest_notification is not None:
-                            payload["message"] = latest_notification.message or "وصل تنبيه جديد"
-                            payload["type"] = latest_notification.type or "INFO"
-
-                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                    last_signature = signature
+                last_count_signature = count_signature
 
             except Exception:
                 yield "event: ping\ndata: {}\n\n"

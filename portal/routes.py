@@ -11209,7 +11209,8 @@ def store_file_share(file_id: int):
             q = q.filter(StoreFilePermission.role == role_val)
 
         perm = q.first()
-        if not perm:
+        is_new_share = perm is None
+        if is_new_share:
             perm = StoreFilePermission(
                 file_id=row.id,
                 user_id=user_obj.id if user_obj else None,
@@ -11230,6 +11231,31 @@ def store_file_share(file_id: int):
             db.session.add(AuditLog(user_id=current_user.id, action='STORE_SHARE', note=f'مشاركة ملف مستودع: {row.original_name} -> {dest}', target_type='STORE_FILE', target_id=row.id, created_at=datetime.utcnow()))
         except Exception:
             pass
+
+        recipient_user_ids: set[int] = set()
+        if user_obj:
+            recipient_user_ids.add(int(user_obj.id))
+        elif role_val:
+            try:
+                recipient_user_ids.update(
+                    int(uid) for (uid,) in (
+                        db.session.query(User.id)
+                        .filter(func.upper(User.role) == role_val)
+                        .all()
+                    ) if uid
+                )
+            except Exception:
+                pass
+
+        recipient_user_ids.discard(int(current_user.id))
+        if recipient_user_ids:
+            action_label = "تمت مشاركة" if is_new_share else "تم تحديث مشاركة"
+            sharer_label = current_user.full_name or current_user.email
+            _notify_users(
+                sorted(recipient_user_ids),
+                f"{action_label} ملف مستودع معك: {row.original_name[:150]} - بواسطة {sharer_label}",
+                level="STORE_SHARE",
+            )
 
         db.session.commit()
         flash("تم حفظ المشاركة.", "success")
@@ -17499,6 +17525,132 @@ def _corr_display_name(row) -> str:
     return ""
 
 
+def _corr_competence_user_ids(competence: dict | None) -> list[int]:
+    """Resolve the users affected by a correspondence competence target."""
+    competence = competence or {}
+    kind = (competence.get("kind") or "").strip().upper()
+    target_id = competence.get("id")
+    try:
+        target_id = int(target_id)
+    except Exception:
+        return []
+
+    user_ids: set[int] = set()
+
+    if kind == "USER":
+        user_ids.add(target_id)
+        return sorted(user_ids)
+
+    if kind == "ORG_NODE":
+        try:
+            user_ids.update(
+                int(uid) for (uid,) in (
+                    db.session.query(OrgNodeAssignment.user_id)
+                    .filter(OrgNodeAssignment.node_id == target_id)
+                    .all()
+                ) if uid
+            )
+        except Exception:
+            pass
+        return sorted(user_ids)
+
+    unit_type = "ORGANIZATION" if kind == "ORG" else kind
+
+    # Portal HR organizational assignments cover all supported unit types,
+    # including teams and organizations.
+    try:
+        user_ids.update(
+            int(uid) for (uid,) in (
+                db.session.query(OrgUnitAssignment.user_id)
+                .filter(
+                    func.upper(OrgUnitAssignment.unit_type) == unit_type,
+                    OrgUnitAssignment.unit_id == target_id,
+                )
+                .all()
+            ) if uid
+        )
+    except Exception:
+        pass
+
+    # Include the unit manager/deputy because correspondence assigned to the
+    # unit affects them even if they do not have a membership row.
+    try:
+        managers = (
+            OrgUnitManager.query
+            .filter(
+                func.upper(OrgUnitManager.unit_type) == unit_type,
+                OrgUnitManager.unit_id == target_id,
+            )
+            .all()
+        )
+        for manager in managers:
+            if manager.manager_user_id:
+                user_ids.add(int(manager.manager_user_id))
+            if manager.deputy_user_id:
+                user_ids.add(int(manager.deputy_user_id))
+    except Exception:
+        pass
+
+    # Backward-compatible direct assignments stored on the User record.
+    direct_column = {
+        "DIRECTORATE": User.directorate_id,
+        "DEPARTMENT": User.department_id,
+        "UNIT": User.unit_id,
+        "SECTION": User.section_id,
+        "DIVISION": User.division_id,
+    }.get(unit_type)
+    if direct_column is not None:
+        try:
+            user_ids.update(
+                int(uid) for (uid,) in (
+                    db.session.query(User.id)
+                    .filter(direct_column == target_id)
+                    .all()
+                ) if uid
+            )
+        except Exception:
+            pass
+
+    # Users may inherit a directorate/unit through their department.
+    try:
+        if unit_type == "DIRECTORATE":
+            department_ids = [
+                int(did) for (did,) in (
+                    db.session.query(Department.id)
+                    .filter(Department.directorate_id == target_id)
+                    .all()
+                ) if did
+            ]
+            if department_ids:
+                user_ids.update(
+                    int(uid) for (uid,) in (
+                        db.session.query(User.id)
+                        .filter(User.department_id.in_(department_ids))
+                        .all()
+                    ) if uid
+                )
+        elif unit_type == "UNIT":
+            department_ids = [
+                int(did) for (did,) in (
+                    db.session.query(Department.id)
+                    .filter(Department.unit_id == target_id)
+                    .all()
+                ) if did
+            ]
+            if department_ids:
+                user_ids.update(
+                    int(uid) for (uid,) in (
+                        db.session.query(User.id)
+                        .filter(User.department_id.in_(department_ids))
+                        .all()
+                    ) if uid
+                )
+    except Exception:
+        pass
+
+    return sorted(user_ids)
+
+
 def _corr_competence_options() -> list[dict]:
     """Build searchable competence options from users and organization units."""
     specs = [
@@ -17835,6 +17987,15 @@ def inbound_new():
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
             return redirect(request.url)
 
+        affected_user_ids = set(_corr_competence_user_ids(competence))
+        affected_user_ids.discard(int(current_user.id))
+        if affected_user_ids:
+            _notify_users(
+                sorted(affected_user_ids),
+                f"وصل وارد جديد إلى جهة اختصاصك: {subject[:180]}",
+                level="CORR_INBOUND",
+            )
+
         db.session.commit()
 
         # Audit
@@ -18007,6 +18168,15 @@ def outbound_new():
             db.session.rollback()
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
             return redirect(request.url)
+
+        affected_user_ids = set(_corr_competence_user_ids(competence))
+        affected_user_ids.discard(int(current_user.id))
+        if affected_user_ids:
+            _notify_users(
+                sorted(affected_user_ids),
+                f"تم تسجيل صادر جديد لجهة اختصاصك: {subject[:180]}",
+                level="CORR_OUTBOUND",
+            )
 
         db.session.commit()
 
@@ -21572,10 +21742,17 @@ def _can_view_ss_request(r: HRSSRequest) -> bool:
 
 
 def _notify_users(user_ids: list[int], message: str, level: str = "INFO") -> None:
-    if not user_ids:
-        return
-    for uid in user_ids:
-        db.session.add(Notification(user_id=uid, message=message, type=level, source='portal'))
+    clean_ids = sorted({int(uid) for uid in (user_ids or []) if uid})
+    safe_message = (message or "وصل تنبيه جديد")[:255]
+    for uid in clean_ids:
+        db.session.add(Notification(
+            user_id=uid,
+            message=safe_message,
+            type=level,
+            source='portal',
+            is_read=False,
+            is_mirror=False,
+        ))
 
 
 def _notify_role(role: str, message: str, level: str = "INFO") -> None:

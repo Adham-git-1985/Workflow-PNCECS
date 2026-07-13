@@ -7,18 +7,37 @@
 
   if (!toggleButton) return;
 
-  const notificationsUrl = toggleButton.dataset.notificationsUrl || "/workflow/notifications";
+  const streamUrl = toggleButton.dataset.streamUrl || "/workflow/notifications/stream";
+  const pollUrl = toggleButton.dataset.pollUrl || "/workflow/notifications/poll";
+  const workflowNotificationsUrl =
+    toggleButton.dataset.workflowNotificationsUrl ||
+    toggleButton.dataset.notificationsUrl ||
+    "/workflow/notifications";
+  const portalNotificationsUrl =
+    toggleButton.dataset.portalNotificationsUrl || "/portal/notifications";
+  const badgeId = toggleButton.dataset.badgeId || "notif-badge";
+  const badgeScope = (toggleButton.dataset.badgeScope || "workflow").toLowerCase();
+  const userId = toggleButton.dataset.userId || "anonymous";
+  const lastEventStorageKey = `masar.notification.last-event.v1.${userId}`;
   const originalTitle = document.title;
+
   let audioContext = null;
   let flashTimer = null;
   let flashState = false;
+  let pendingTone = null;
+  let pollCursor = null;
+  let pollingTimer = null;
+  let pollingInFlight = false;
   let soundEnabled = readPreference();
 
   function readPreference() {
     try {
-      return window.localStorage.getItem(STORAGE_KEY) === "1";
+      const stored = window.localStorage.getItem(STORAGE_KEY);
+      // Sound is on by default. Browsers still require one user gesture before
+      // audio can start; the first click/key press unlocks it automatically.
+      return stored === null ? true : stored === "1";
     } catch (_) {
-      return false;
+      return true;
     }
   }
 
@@ -53,7 +72,7 @@
     return context.state === "running";
   }
 
-  function addTone(context, frequency, startsAfter, duration) {
+  function addTone(context, frequency, startsAfter, duration, volume) {
     const oscillator = context.createOscillator();
     const gain = context.createGain();
     const start = context.currentTime + startsAfter;
@@ -63,7 +82,7 @@
     oscillator.frequency.setValueAtTime(frequency, start);
 
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.exponentialRampToValueAtTime(0.16, start + 0.025);
+    gain.gain.exponentialRampToValueAtTime(volume || 0.16, start + 0.025);
     gain.gain.exponentialRampToValueAtTime(0.0001, end);
 
     oscillator.connect(gain);
@@ -72,12 +91,45 @@
     oscillator.stop(end + 0.02);
   }
 
-  async function playAlertSound() {
-    if (!soundEnabled || !(await prepareAudio())) return;
+  async function playAlertSound(queueWhenBlocked) {
+    if (!soundEnabled) return false;
+    if (!(await prepareAudio())) {
+      if (queueWhenBlocked !== false) pendingTone = "alert";
+      return false;
+    }
 
+    pendingTone = null;
     const context = getAudioContext();
-    addTone(context, 880, 0, 0.16);
-    addTone(context, 1175, 0.20, 0.22);
+    addTone(context, 880, 0, 0.16, 0.16);
+    addTone(context, 1175, 0.20, 0.22, 0.16);
+    return true;
+  }
+
+  async function playConfirmationSound(queueWhenBlocked) {
+    if (!soundEnabled) return false;
+    if (!(await prepareAudio())) {
+      if (queueWhenBlocked !== false && pendingTone !== "alert") {
+        pendingTone = "confirmation";
+      }
+      return false;
+    }
+
+    pendingTone = null;
+    const context = getAudioContext();
+    addTone(context, 660, 0, 0.12, 0.10);
+    addTone(context, 880, 0.13, 0.16, 0.12);
+    return true;
+  }
+
+  async function unlockAndPlayPendingTone() {
+    if (!soundEnabled || !(await prepareAudio())) return;
+    const tone = pendingTone;
+    pendingTone = null;
+    if (tone === "alert") {
+      playAlertSound(false);
+    } else if (tone === "confirmation") {
+      playConfirmationSound(false);
+    }
   }
 
   function updateToggleButton() {
@@ -109,9 +161,14 @@
     return container;
   }
 
-  function showToast(message, isConfirmation) {
-    if (!window.bootstrap || !window.bootstrap.Toast) return;
+  function notificationUrl(detail) {
+    return (detail && detail.source === "portal")
+      ? portalNotificationsUrl
+      : workflowNotificationsUrl;
+  }
 
+  function showToast(detail, isConfirmation) {
+    const data = typeof detail === "string" ? { message: detail } : (detail || {});
     const toastElement = document.createElement("div");
     toastElement.className = "toast border-0 shadow";
     toastElement.setAttribute("role", "alert");
@@ -128,7 +185,7 @@
 
     const title = document.createElement("strong");
     title.className = "me-auto";
-    title.textContent = "مسار";
+    title.textContent = data.source === "portal" ? "البوابة الإدارية" : "مسار";
 
     const closeButton = document.createElement("button");
     closeButton.type = "button";
@@ -144,12 +201,12 @@
     body.className = "toast-body";
 
     const messageElement = document.createElement("div");
-    messageElement.textContent = message || "وصل تنبيه جديد إلى نظام مسار";
+    messageElement.textContent = data.message || "وصل تنبيه جديد إلى نظام مسار";
     body.appendChild(messageElement);
 
     if (!isConfirmation) {
       const link = document.createElement("a");
-      link.href = notificationsUrl;
+      link.href = notificationUrl(data);
       link.className = "btn btn-sm btn-primary mt-2";
       link.textContent = "عرض التنبيهات";
       body.appendChild(link);
@@ -163,11 +220,23 @@
       toastElement.remove();
     });
 
-    const toast = new window.bootstrap.Toast(toastElement, {
-      autohide: isConfirmation || !document.hidden,
-      delay: isConfirmation ? 3000 : 8000,
-    });
-    toast.show();
+    if (window.bootstrap && window.bootstrap.Toast) {
+      const toast = new window.bootstrap.Toast(toastElement, {
+        autohide: isConfirmation || !document.hidden,
+        delay: isConfirmation ? 3000 : 8000,
+      });
+      toast.show();
+      return;
+    }
+
+    // The portal shell intentionally ships without Bootstrap's JavaScript.
+    // Keep the notification visible there with the same DOM and timeout.
+    toastElement.classList.add("show");
+    toastElement.style.display = "block";
+    toastElement.style.backgroundColor = "var(--bs-body-bg, #fff)";
+    window.setTimeout(function () {
+      toastElement.remove();
+    }, isConfirmation ? 3000 : 8000);
   }
 
   function startTitleFlash() {
@@ -188,32 +257,144 @@
     document.title = originalTitle;
   }
 
+  function updateBadge(data) {
+    const badge = document.getElementById(badgeId);
+    if (!badge) return;
+
+    let unread = Number(data.unread || 0);
+    if (badgeScope === "portal") {
+      unread = Number(data.portal_unread || 0);
+    } else if (badgeScope === "workflow") {
+      unread = Number(data.workflow_unread || 0);
+    }
+
+    badge.textContent = unread > 0 ? String(unread) : "";
+    badge.style.display = unread > 0 ? "inline-block" : "none";
+  }
+
+  function claimNotification(notificationId) {
+    const id = Number(notificationId || 0);
+    if (!id) return true;
+
+    try {
+      const previous = Number(window.localStorage.getItem(lastEventStorageKey) || 0);
+      if (id <= previous) return false;
+      window.localStorage.setItem(lastEventStorageKey, String(id));
+    } catch (_) {}
+    return true;
+  }
+
+  function handleNotificationData(data) {
+    updateBadge(data);
+    if (data.has_new && claimNotification(data.notification_id)) {
+      window.dispatchEvent(new CustomEvent("masar:notification", {
+        detail: {
+          notificationId: data.notification_id,
+          unread: Number(data.unread || 0),
+          message: data.message || "وصل تنبيه جديد إلى نظام مسار",
+          type: data.type || "INFO",
+          source: data.source || "workflow",
+        },
+      }));
+    }
+  }
+
+  async function pollNotifications() {
+    if (pollingInFlight || !pollUrl) return;
+    pollingInFlight = true;
+    try {
+      const url = new URL(pollUrl, window.location.origin);
+      if (pollCursor !== null) {
+        url.searchParams.set("after_id", String(pollCursor));
+      }
+
+      const response = await window.fetch(url.toString(), {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) return;
+
+      const data = await response.json();
+      updateBadge(data);
+
+      if (pollCursor === null) {
+        pollCursor = Number(data.latest_id || 0);
+        return;
+      }
+
+      const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+      notifications.forEach(handleNotificationData);
+      pollCursor = Math.max(pollCursor, Number(data.latest_id || 0));
+    } catch (_) {
+      // The next interval retries automatically.
+    } finally {
+      pollingInFlight = false;
+    }
+  }
+
+  function startPolling() {
+    if (pollingTimer || !window.fetch) return;
+    pollNotifications();
+    pollingTimer = window.setInterval(pollNotifications, 5000);
+  }
+
+  function connectEventStream() {
+    if (window.__masarNotificationStream || pollingTimer) return;
+
+    if (!window.EventSource || !streamUrl) {
+      startPolling();
+      return;
+    }
+
+    const eventSource = new EventSource(streamUrl);
+    let streamHasDelivered = false;
+    window.__masarNotificationStream = eventSource;
+
+    eventSource.onmessage = function (event) {
+      try {
+        streamHasDelivered = true;
+        const data = JSON.parse(event.data || "{}");
+        handleNotificationData(data);
+      } catch (_) {}
+    };
+
+    // Some corporate proxies expose EventSource but buffer it indefinitely.
+    // Fall back to polling if no baseline message arrives promptly.
+    window.setTimeout(function () {
+      if (!streamHasDelivered) {
+        try { eventSource.close(); } catch (_) {}
+        window.__masarNotificationStream = null;
+        startPolling();
+      }
+    }, 12000);
+
+    window.addEventListener("beforeunload", function () {
+      try { eventSource.close(); } catch (_) {}
+    });
+  }
+
   toggleButton.addEventListener("click", async function () {
     soundEnabled = !soundEnabled;
     savePreference(soundEnabled);
     updateToggleButton();
 
     if (soundEnabled) {
-      await playAlertSound();
+      await playAlertSound(false);
       showToast("تم تفعيل صوت التنبيهات", true);
     } else {
+      pendingTone = null;
       showToast("تم إيقاف صوت التنبيهات", true);
     }
   });
 
-  window.addEventListener("pointerdown", function () {
-    if (soundEnabled) prepareAudio();
-  }, { passive: true });
-
-  window.addEventListener("keydown", function () {
-    if (soundEnabled) prepareAudio();
-  });
+  window.addEventListener("pointerdown", unlockAndPlayPendingTone, { passive: true });
+  window.addEventListener("keydown", unlockAndPlayPendingTone);
 
   window.addEventListener("masar:notification", function (event) {
     const detail = event.detail || {};
-    playAlertSound();
+    playAlertSound(true);
     startTitleFlash();
-    showToast(detail.message, false);
+    showToast(detail, false);
   });
 
   document.addEventListener("visibilitychange", function () {
@@ -221,5 +402,16 @@
   });
 
   window.addEventListener("focus", stopTitleFlash);
+
   updateToggleButton();
+  connectEventStream();
+
+  // A successful server-side action (sending mail, sharing, approving, etc.)
+  // receives a short confirmation tone as well. The existing success message
+  // remains the visual confirmation.
+  if (document.querySelector(".alert.alert-success")) {
+    window.setTimeout(function () {
+      playConfirmationSound(true);
+    }, 80);
+  }
 })();

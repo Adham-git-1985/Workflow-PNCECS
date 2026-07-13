@@ -444,11 +444,34 @@
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('portal.portal_notifications') }}">
             <i class="bi bi-bell"></i> الإشعارات
-            {% if portal_notif_unread is defined and portal_notif_unread|int > 0 %}
-              <span class="badge text-bg-danger ms-1">{{ portal_notif_unread }}</span>
-            {% endif %}
+            <span id="portal-notif-badge"
+                  class="badge text-bg-danger ms-1"
+                  style="{% if portal_notif_unread is not defined or portal_notif_unread|int == 0 %}display:none{% endif %}">
+              {{ portal_notif_unread if portal_notif_unread is defined and portal_notif_unread|int > 0 else '' }}
+            </span>
           </a>
         </li>
+
+        {% if current_user.is_authenticated %}
+        <li class="nav-item d-flex align-items-center px-1">
+          <button type="button"
+                  id="notification-sound-toggle"
+                  class="btn btn-outline-light btn-sm no-print"
+                  data-notifications-url="{{ url_for('portal.portal_notifications') }}"
+                  data-workflow-notifications-url="{{ url_for('workflow.notifications') }}"
+                  data-portal-notifications-url="{{ url_for('portal.portal_notifications') }}"
+                  data-stream-url="{{ url_for('workflow.event_stream') }}"
+                  data-poll-url="{{ url_for('workflow.poll_notifications') }}"
+                  data-badge-id="portal-notif-badge"
+                  data-badge-scope="portal"
+                  data-user-id="{{ current_user.id }}"
+                  title="تفعيل صوت التنبيهات"
+                  aria-label="تفعيل صوت التنبيهات"
+                  aria-pressed="false">
+            <i class="bi bi-volume-mute" aria-hidden="true"></i>
+          </button>
+        </li>
+        {% endif %}
 
         {% if can_admin %}
         <li class="nav-item dropdown">
@@ -638,6 +661,7 @@
 <script src="{{ url_for('static', filename='js/system_search.js') }}?v=20260214"></script>
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}"></script>
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
+<script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260713r4"></script>
 
 
 <script>
