@@ -1621,25 +1621,49 @@ def mark_notification_read(notif_id):
 def event_stream():
     @stream_with_context
     def gen():
-        last = None
+        last_signature = None
         while True:
             try:
-                unread = (
-                    db.session.query(func.count(Notification.id))
+                unread, latest_id = (
+                    db.session.query(
+                        func.count(Notification.id),
+                        func.max(Notification.id),
+                    )
                     .filter(
                         Notification.user_id == current_user.id,
                         Notification.is_mirror.is_(False),
                         Notification.is_read.is_(False),
                         or_(Notification.source.is_(None), Notification.source == "workflow")
                     )
-                    .scalar()
-                ) or 0
+                    .one()
+                )
 
-                payload = {"unread": int(unread)}
+                unread = int(unread or 0)
+                latest_id = int(latest_id) if latest_id is not None else None
+                signature = (unread, latest_id)
 
-                if payload != last:
-                    yield f"data: {json.dumps(payload)}\n\n"
-                    last = payload
+                if signature != last_signature:
+                    previous_latest_id = last_signature[1] if last_signature else None
+                    has_new = (
+                        last_signature is not None
+                        and latest_id is not None
+                        and (previous_latest_id is None or latest_id > previous_latest_id)
+                    )
+
+                    payload = {
+                        "unread": unread,
+                        "latest_id": latest_id,
+                        "has_new": has_new,
+                    }
+
+                    if has_new:
+                        latest_notification = db.session.get(Notification, latest_id)
+                        if latest_notification is not None:
+                            payload["message"] = latest_notification.message or "وصل تنبيه جديد"
+                            payload["type"] = latest_notification.type or "INFO"
+
+                    yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    last_signature = signature
 
             except Exception:
                 yield "event: ping\ndata: {}\n\n"
