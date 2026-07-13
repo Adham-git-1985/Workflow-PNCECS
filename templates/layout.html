@@ -63,6 +63,16 @@
                 </span>
             </a>
 
+            <button type="button"
+                    id="notification-sound-toggle"
+                    class="btn btn-outline-light btn-sm no-print"
+                    data-notifications-url="{{ url_for('workflow.notifications') }}"
+                    title="تفعيل صوت التنبيهات"
+                    aria-label="تفعيل صوت التنبيهات"
+                    aria-pressed="false">
+                <i class="bi bi-volume-mute" aria-hidden="true"></i>
+            </button>
+
             <button type="button" class="btn btn-outline-light btn-sm no-print" data-bs-toggle="modal" data-bs-target="#systemSearchModal" title="بحث (Ctrl+K)" data-bs-tooltip="1">
                 <i class="bi bi-search"></i>
             </button>
@@ -247,6 +257,7 @@
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}"></script>
 
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
+<script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260713"></script>
 
 {% block extra_js %}{% endblock %}
 
@@ -270,6 +281,16 @@
       const unread = Number(data.unread || 0);
       badge.textContent = unread;
       badge.style.display = unread > 0 ? "inline-block" : "none";
+
+      if (data.has_new) {
+        window.dispatchEvent(new CustomEvent("masar:notification", {
+          detail: {
+            unread: unread,
+            message: data.message || "وصل تنبيه جديد إلى نظام مسار",
+            type: data.type || "INFO"
+          }
+        }));
+      }
     } catch (_) {}
   };
 
