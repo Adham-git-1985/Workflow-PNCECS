@@ -37,6 +37,11 @@ from utils.perms import perm_required
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
 from utils.audit_helpers import delegation_audit_fields
 from utils.events import emit_event
+from utils.file_uploads import (
+    is_allowed_attachment,
+    is_safe_inline_mimetype,
+    random_storage_name,
+)
 from utils.ui_labels import ui_label, ui_text
 
 from models import (
@@ -789,28 +794,10 @@ def _step_actor_user_ids(step) -> list[int]:
 # =========================
 BASE_STORAGE = os.path.join(os.getcwd(), "storage", "archive")
 
-ALLOWED_EXTENSIONS = {
-    # Documents
-    "pdf", "txt", "rtf",
-    "doc", "docx", "odt",
-    "xls", "xlsx", "ods", "csv",
-    "ppt", "pptx", "odp",
-
-    # Images
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff",
-
-    # Archives (common in institutions)
-    "zip", "rar", "7z",
-
-    # Audio/Video (optional but common)
-    "mp3", "wav", "m4a", "mp4", "mov", "avi",
-    # html, web, sql, dll
-    "html", "css", "js", "py", "java", "php", "sql", "db", "dll",
-}
-
 
 def allowed_file(filename: str) -> bool:
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    """Generic workflow attachments accept every file extension."""
+    return is_allowed_attachment(filename)
 
 
 # =========================
@@ -834,17 +821,10 @@ def _save_upload_to_archive(file_storage, *, owner_id: int, visibility: str = "w
     if not original_name:
         raise ValueError("Invalid file name")
 
-    if "." not in original_name:
-        raise ValueError("File has no extension")
-
     if not allowed_file(original_name):
-        raise ValueError("File type not allowed")
+        raise ValueError("Invalid file name")
 
-    ext = original_name.rsplit(".", 1)[1].lower().strip()
-    if not ext:
-        raise ValueError("Invalid extension")
-
-    stored_name = f"{uuid.uuid4().hex}.{ext}"
+    stored_name = random_storage_name(uuid.uuid4().hex, original_name)
     os.makedirs(BASE_STORAGE, exist_ok=True)
     saved_path = os.path.join(BASE_STORAGE, stored_name)
 
@@ -912,16 +892,7 @@ def _guess_mime_for_file(f: ArchivedFile) -> str:
 
 
 def _is_inline_previewable(mime: str) -> bool:
-    mime = (mime or "").lower().strip()
-    if not mime:
-        return False
-    if mime.startswith("image/"):
-        return True
-    if mime.startswith("text/"):
-        return True
-    if mime in {"application/pdf"}:
-        return True
-    return False
+    return is_safe_inline_mimetype(mime)
 
 def _get_user_hierarchy(user):
     """Return (organization_id, directorate_id, department_id) for user, best-effort."""
@@ -1398,6 +1369,7 @@ def preview_workflow_attachment(file_id):
         # Force inline disposition with UTF-8 filename (best-effort)
         fname = file.original_name or f"file_{file.id}"
         resp.headers["Content-Disposition"] = f"inline; filename*=UTF-8''{quote(fname)}"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
         return resp
 
     # Otherwise show a preview page (no auto-download)

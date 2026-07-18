@@ -46,6 +46,11 @@ from sqlalchemy.sql import exists
 from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
+from utils.file_uploads import (
+    clean_original_filename,
+    is_allowed_attachment,
+    is_safe_inline_mimetype,
+)
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -572,16 +577,6 @@ def _portal_flags():
 # -------------------------
 # Helpers (Portal)
 # -------------------------
-ALLOWED_CORR_EXTS = {
-    ".pdf", ".png", ".jpg", ".jpeg",
-    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".txt", ".csv",
-    ".zip", ".rar",
-}
-
-# Store repository allowed extensions (keep same safe list as correspondence for now)
-ALLOWED_STORE_EXTS = set(ALLOWED_CORR_EXTS)
-
 def _clean_suffix(filename: str) -> str:
     # Normalize suffix like '.pdf' and strip bidi/zero-width chars.
     s = filename or ""
@@ -624,8 +619,7 @@ def _store_storage_dir() -> str:
 
 
 def _allowed_store_file(filename: str) -> bool:
-    ext = _clean_suffix(filename)
-    return ext in ALLOWED_STORE_EXTS
+    return is_allowed_attachment(filename)
 
 
 def _ensure_store_seed():
@@ -965,8 +959,7 @@ def _corr_storage_dir() -> str:
     return base
 
 def _allowed_file(filename: str) -> bool:
-    ext = _clean_suffix(filename)
-    return ext in ALLOWED_CORR_EXTS
+    return is_allowed_attachment(filename)
 
 def _corr_stamp_options(kind: str, ref_no: str | None, default_date: str | None) -> CorrStampOptions:
     apply_value = (request.form.get("apply_stamp") or "").strip().lower()
@@ -1395,7 +1388,7 @@ def _save_corr_files(
             continue
         if not _allowed_file(f.filename):
             continue
-        original_name = f.filename
+        original_name = clean_original_filename(f.filename)
         ext = _clean_suffix(original_name)
         prefix = "IN" if inbound_id else "OUT"
         rid = inbound_id or outbound_id
@@ -9706,7 +9699,7 @@ def hr_leave_attachments_upload(req_id: int):
     files = request.files.getlist("attachments") or []
     valid_files = [f for f in files if f and getattr(f, "filename", "") and _allowed_file(f.filename)]
     if not valid_files:
-        flash("لم يتم اختيار ملفات صالحة. الامتدادات المسموحة: " + ", ".join(sorted([e.lstrip('.') for e in ALLOWED_CORR_EXTS])), "danger")
+        flash("لم يتم اختيار ملفات صالحة.", "danger")
         return redirect(url_for("portal.hr_my_leaves"))
 
     try:
@@ -11423,12 +11416,14 @@ def store_file_view(file_id: int):
     if not inline_ok:
         return redirect(url_for("portal.store_file_download", file_id=file_id))
 
-    return send_file(
+    response = send_file(
         row.file_path,
         mimetype=row.mime_type or None,
         as_attachment=False,
         download_name=row.original_name,
     )
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @portal_bp.route("/store/files/<int:file_id>/download")
@@ -12703,9 +12698,6 @@ def hr_employee_attachments_upload(user_id: int):
             continue
         original = Path(f.filename).name
         ext = _clean_suffix(original)
-        if ext and ext not in ALLOWED_CORR_EXTS:
-            flash(f"امتداد غير مسموح: {ext}", "danger")
-            continue
 
         stored = f"{uuid.uuid4().hex}{ext}" if ext else uuid.uuid4().hex
         dirp = _employee_upload_dir(user_id)
@@ -18818,6 +18810,7 @@ def _send_corr_attachment_file(
     resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     resp.headers["Pragma"] = "no-cache"
     resp.headers["Expires"] = "0"
+    resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
 
 
@@ -18859,7 +18852,21 @@ def corr_attachment_view(att_id: int):
 
     _ensure_corr_attachment_file_stamped(att, file_path)
     mime, _ = mimetypes.guess_type(file_path)
-    return _send_corr_attachment_file(storage, att.stored_name, as_attachment=False, mimetype=mime or "application/octet-stream")
+    mime = mime or "application/octet-stream"
+    if not is_safe_inline_mimetype(mime):
+        return _send_corr_attachment_file(
+            storage,
+            att.stored_name,
+            as_attachment=True,
+            download_name=att.original_name,
+            mimetype="application/octet-stream",
+        )
+    return _send_corr_attachment_file(
+        storage,
+        att.stored_name,
+        as_attachment=False,
+        mimetype=mime,
+    )
 
 
 @portal_bp.route("/corr/attachment/<int:att_id>/delete", methods=["POST"])
@@ -21682,8 +21689,7 @@ def _ss_safe_ext(filename: str) -> str:
 
 
 def _ss_allowed_file(filename: str) -> bool:
-    ext = _clean_suffix(filename)
-    return ext in (ALLOWED_CORR_EXTS or set())
+    return is_allowed_attachment(filename)
 
 
 def _ss_payload_from_form(type_code: str, form) -> dict:
@@ -21833,7 +21839,7 @@ def hr_ss_new_request(type_code: str):
                 if not f or not getattr(f, "filename", ""):
                     continue
                 if not _ss_allowed_file(f.filename):
-                    flash(f"امتداد غير مسموح: {f.filename}", "warning")
+                    flash(f"اسم ملف غير صالح: {f.filename}", "warning")
                     continue
                 ext = _ss_safe_ext(f.filename)
                 stored = f"{uuid.uuid4().hex}{('.' + ext) if ext else ''}"
@@ -21910,7 +21916,7 @@ def hr_ss_update_request(req_id: int):
             if not f or not getattr(f, "filename", ""):
                 continue
             if not _ss_allowed_file(f.filename):
-                flash(f"امتداد غير مسموح: {f.filename}", "warning")
+                flash(f"اسم ملف غير صالح: {f.filename}", "warning")
                 continue
             ext = _ss_safe_ext(f.filename)
             stored = f"{uuid.uuid4().hex}{('.' + ext) if ext else ''}"
@@ -22306,7 +22312,7 @@ def hr_docs_upload_version():
         return redirect(url_for("portal.hr_docs_admin", focus=doc.id))
 
     if not _ss_allowed_file(f.filename):
-        flash("امتداد غير مسموح.", "danger")
+        flash("اسم الملف غير صالح.", "danger")
         return redirect(url_for("portal.hr_docs_admin", focus=doc.id))
 
     change_log = (request.form.get("change_log") or "").strip() or None
@@ -22432,7 +22438,7 @@ def hr_discipline_upload_attachment(case_id: int):
         flash("الملف مطلوب.", "danger")
         return redirect(url_for("portal.hr_discipline_view", case_id=c.id))
     if not _ss_allowed_file(f.filename):
-        flash("امتداد غير مسموح.", "danger")
+        flash("اسم الملف غير صالح.", "danger")
         return redirect(url_for("portal.hr_discipline_view", case_id=c.id))
 
     ext = _ss_safe_ext(f.filename)

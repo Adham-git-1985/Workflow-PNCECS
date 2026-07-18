@@ -29,6 +29,12 @@ from archive.permissions import (
 from archive.cache import get_cached_file, set_cached_file
 from archive.queries import archive_access_query
 from utils.events import emit_event
+from utils.file_uploads import (
+    clean_original_filename,
+    is_allowed_attachment,
+    is_safe_inline_mimetype,
+    random_storage_name,
+)
 
 from models import (
     ArchivedFile,
@@ -54,25 +60,6 @@ from archive import archive_bp
 # Storage
 # =========================
 BASE_STORAGE = os.path.join(os.getcwd(), "storage", "archive")
-
-ALLOWED_EXTENSIONS = {
-    # Documents
-    "pdf", "txt", "rtf",
-    "doc", "docx", "odt",
-    "xls", "xlsx", "ods", "csv",
-    "ppt", "pptx", "odp",
-
-    # Images
-    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff",
-
-    # Archives (common in institutions)
-    "zip", "rar", "7z",
-
-    # Audio/Video (optional but common)
-    "mp3", "wav", "m4a", "mp4", "mov", "avi",
-    # html, web, sql, dll
-    "html", "css", "js", "py", "java", "php", "sql", "db", "dll",
-}
 
 IMAGE_PREVIEW_EXTENSIONS = {
     "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff",
@@ -305,22 +292,30 @@ def _render_archive_preview(file, download_endpoint: str):
     mime_compare = mime_type.lower().split(";", 1)[0].strip()
 
     if ext == "pdf" or mime_compare == "application/pdf":
-        return send_file(
+        response = send_file(
             disk_path,
             mimetype="application/pdf",
             as_attachment=False,
             download_name=file.original_name,
             conditional=True,
         )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
-    if ext in IMAGE_PREVIEW_EXTENSIONS or mime_compare.startswith("image/"):
-        return send_file(
+    if ext in IMAGE_PREVIEW_EXTENSIONS or (
+        mime_compare.startswith("image/") and is_safe_inline_mimetype(mime_compare)
+    ):
+        guessed_image_mime = mimetypes.guess_type(f"file.{ext}")[0] if ext else None
+        inline_image_mime = guessed_image_mime or mime_compare
+        response = send_file(
             disk_path,
-            mimetype=mime_type,
+            mimetype=inline_image_mime,
             as_attachment=False,
             download_name=file.original_name,
             conditional=True,
         )
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     if ext in TEXT_PREVIEW_EXTENSIONS or mime_compare.startswith("text/"):
         preview_text, truncated = _read_text_preview(disk_path, ext)
@@ -358,7 +353,8 @@ def _render_archive_preview(file, download_endpoint: str):
     )
 
 def allowed_file(filename):
-    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+    """Generic archive attachments accept every file extension."""
+    return is_allowed_attachment(filename)
 
 
 def get_archive_counters(user):
@@ -930,7 +926,7 @@ def upload_file():
         # Validate all files before saving
         for f in files:
             if not allowed_file(f.filename):
-                flash(f"File type not allowed: {f.filename}", "danger")
+                flash(f"Invalid file name: {f.filename}", "danger")
                 return redirect(request.url)
 
         os.makedirs(BASE_STORAGE, exist_ok=True)
@@ -946,23 +942,14 @@ def upload_file():
         archived_files = []
 
         try:
-            import os as _os
             # 1) Save all files to archive
             for f in files:
-                original_name = (f.filename or "").strip()
-                original_name = _os.path.basename(original_name).replace("\x00", "")
+                original_name = clean_original_filename(f.filename)
 
                 if not original_name:
                     raise ValueError("اسم الملف غير صالح")
 
-                if "." not in original_name:
-                    raise ValueError(f"الملف بدون امتداد: {original_name}")
-
-                ext = original_name.rsplit(".", 1)[1].lower().strip()
-                if not ext:
-                    raise ValueError(f"امتداد الملف غير صالح: {original_name}")
-
-                stored_name = f"{uuid.uuid4().hex}.{ext}"
+                stored_name = random_storage_name(uuid.uuid4().hex, original_name)
                 file_path = os.path.join(BASE_STORAGE, stored_name)
 
                 f.save(file_path)
