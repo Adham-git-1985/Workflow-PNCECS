@@ -5,7 +5,11 @@
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h3>🧾 سجل التدقيق (سجل التدقيق)</h3>
+    <h3>🧾 سجل التدقيق</h3>
+    <a class="btn btn-primary"
+       href="{{ url_for('audit.system_timeline', view='story', user_id=request.args.get('user_id'), action=request.args.get('action'), date_from=request.args.get('date_from'), date_to=request.args.get('date_to')) }}">
+        <i class="bi bi-book"></i> اقرأ النتائج كقصة
+    </a>
 </div>
 
 <form method="GET" class="card shadow-sm mb-4">

@@ -3,10 +3,29 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
-    <h3 class="mb-1">🧭 System Activity الخط الزمني</h3>
-    <small class="text-muted">عرض عالي الأداء مع فلترة بالتاريخ وتصفح分页ات</small>
+    <h3 class="mb-1">🧭 الخط الزمني لسجل التدقيق</h3>
+    <small class="text-muted">
+      {% if view_mode == 'story' %}
+        عرض مبسّط يروي ما حدث بالترتيب وبلغة سهلة.
+      {% else %}
+        عرض تفصيلي لنشاط النظام مع فلترة بالتاريخ.
+      {% endif %}
+    </small>
   </div>
-  <div>
+  <div class="d-flex flex-wrap gap-2">
+    {% if view_mode == 'story' %}
+      <a class="btn btn-primary"
+         href="{{ url_for('audit.system_timeline', view='timeline', page=pagination.page, action=filters.action, user_id=filters.user_id, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, per_page=filters.per_page) }}">
+        <i class="bi bi-list-ul"></i>
+        العودة للعرض التفصيلي
+      </a>
+    {% else %}
+      <a class="btn btn-primary"
+         href="{{ url_for('audit.system_timeline', view='story', page=pagination.page, action=filters.action, user_id=filters.user_id, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, per_page=filters.per_page) }}">
+        <i class="bi bi-book"></i>
+        اقرأ السجل كقصة
+      </a>
+    {% endif %}
     <a class="btn btn-outline-success"
        href="{{ url_for('audit.system_timeline_export_excel', action=filters.action, user_id=filters.user_id, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order) }}">
       <i class="bi bi-file-earmark-excel"></i>
@@ -18,6 +37,7 @@
 <div class="card shadow-sm mb-3">
   <div class="card-body">
     <form method="get" class="row g-2 align-items-end">
+      <input type="hidden" name="view" value="{{ view_mode }}">
       <div class="col-md-2">
         <label class="form-label small text-muted">آخر</label>
         <select name="days" class="form-select">
@@ -104,7 +124,7 @@
       <div class="d-flex flex-wrap gap-2">
         {% for day, cnt in day_counts %}
           <a class="badge bg-light text-dark border text-decoration-none"
-             href="{{ url_for('audit.system_timeline', date_from=day, date_to=day, user_id=filters.user_id, action=filters.action, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, per_page=filters.per_page) }}">
+             href="{{ url_for('audit.system_timeline', view=view_mode, date_from=day, date_to=day, user_id=filters.user_id, action=filters.action, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, per_page=filters.per_page) }}">
             {{ day }} • {{ cnt }}
           </a>
         {% endfor %}
@@ -118,6 +138,80 @@
   <div class="card-body">
 
     {% if logs %}
+      {% if view_mode == 'story' %}
+        <div class="alert alert-primary d-flex gap-3 align-items-start" role="status">
+          <i class="bi bi-book fs-3" aria-hidden="true"></i>
+          <div>
+            <strong class="d-block mb-1">قصة النشاط المسجّل</strong>
+            <span>
+              رُتّبت الأحداث من الأقدم إلى الأحدث، وحُوّلت المصطلحات التقنية إلى جمل سهلة القراءة.
+              {% if pagination.pages > 1 %}هذه القصة تخص الصفحة الحالية من النتائج.{% endif %}
+            </span>
+          </div>
+        </div>
+
+        {% set story_ns = namespace(day=None) %}
+        <div class="vstack gap-3">
+          {% for entry in story_entries %}
+            {% if story_ns.day != entry.day_key %}
+              {% set story_ns.day = entry.day_key %}
+              <div class="d-flex align-items-center gap-2 mt-2">
+                <i class="bi bi-calendar-event text-primary" aria-hidden="true"></i>
+                <h5 class="mb-0">أحداث يوم {{ entry.day_label }}</h5>
+              </div>
+            {% endif %}
+
+            <article class="card border-0 border-end border-4 border-primary bg-light-subtle shadow-sm">
+              <div class="card-body py-3">
+                <div class="d-flex align-items-start gap-3">
+                  <span class="badge rounded-pill bg-primary fs-6" aria-label="الوقت">
+                    {{ entry.time_label }}
+                  </span>
+                  <div class="flex-grow-1">
+                    <p class="mb-2 fs-6" style="line-height: 1.9;">
+                      <strong>{{ entry.connector }}،</strong>
+                      {{ entry.sentence }}
+                      {% if entry.status_sentence %} {{ entry.status_sentence }}{% endif %}
+                    </p>
+
+                    {% if entry.request_summary or entry.target_summary or entry.step is not none %}
+                      <div class="d-flex flex-wrap gap-2 align-items-center mb-2 small">
+                        {% if entry.request_summary %}
+                          <span class="text-muted">يتعلق الحدث بـ:</span>
+                          {% if entry.request_id in existing_request_ids %}
+                            <a class="badge text-bg-secondary text-decoration-none"
+                               href="{{ url_for('workflow.view_request', request_id=entry.request_id) }}">
+                              {{ entry.request_summary }}
+                            </a>
+                          {% else %}
+                            <a class="badge text-bg-secondary text-decoration-none"
+                               href="{{ url_for('audit.deleted_request_snapshot', request_id=entry.request_id) }}">
+                              {{ entry.request_summary }} (محذوفة)
+                            </a>
+                          {% endif %}
+                        {% elif entry.target_summary %}
+                          <span class="text-muted">يتعلق الحدث بـ:</span>
+                          <span class="badge text-bg-secondary">{{ entry.target_summary }}</span>
+                        {% endif %}
+
+                        {% if entry.step is not none %}
+                          <span class="badge text-bg-info">الخطوة {{ entry.step }}</span>
+                        {% endif %}
+                      </div>
+                    {% endif %}
+
+                    {% if entry.detail %}
+                      <div class="bg-white border rounded p-2 small" style="line-height: 1.8;">
+                        <strong>وللتوضيح:</strong> {{ entry.detail }}
+                      </div>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+            </article>
+          {% endfor %}
+        </div>
+      {% else %}
       {% set ns = namespace(day=None) %}
       <div class="list-group">
         {% for log in logs %}
@@ -206,13 +300,14 @@
           </div>
         {% endfor %}
       </div>
+      {% endif %}
 
       {% if pagination.pages > 1 %}
         <nav class="mt-3">
           <ul class="pagination justify-content-center mb-0">
             {% if pagination.has_prev %}
               <li class="page-item">
-                <a class="page-link" href="{{ url_for('audit.system_timeline', page=pagination.prev_num, user_id=filters.user_id, action=filters.action, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, per_page=filters.per_page) }}">السابق</a>
+                <a class="page-link" href="{{ url_for('audit.system_timeline', view=view_mode, page=pagination.prev_num, user_id=filters.user_id, action=filters.action, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, per_page=filters.per_page) }}">السابق</a>
               </li>
             {% else %}
               <li class="page-item disabled"><span class="page-link">السابق</span></li>
@@ -222,7 +317,7 @@
 
             {% if pagination.has_next %}
               <li class="page-item">
-                <a class="page-link" href="{{ url_for('audit.system_timeline', page=pagination.next_num, user_id=filters.user_id, action=filters.action, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, per_page=filters.per_page) }}">التالي</a>
+                <a class="page-link" href="{{ url_for('audit.system_timeline', view=view_mode, page=pagination.next_num, user_id=filters.user_id, action=filters.action, request_type_id=filters.request_type_id, template_id=filters.template_id, step_order=filters.step_order, date_from=filters.date_from, date_to=filters.date_to, days=filters.days, per_page=filters.per_page) }}">التالي</a>
               </li>
             {% else %}
               <li class="page-item disabled"><span class="page-link">التالي</span></li>

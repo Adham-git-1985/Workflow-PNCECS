@@ -8,6 +8,7 @@ from sqlalchemy.orm import aliased, joinedload
 
 from io import BytesIO
 from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
+from utils.audit_story import build_audit_story_entries
 from utils.ui_labels import ui_label, ui_text
 
 from . import audit_bp
@@ -279,6 +280,9 @@ def system_timeline():
     request_type_id = request.args.get("request_type_id", type=int)
     template_id = request.args.get("template_id", type=int)
     step_order = request.args.get("step_order", type=int)
+    view_mode = (request.args.get("view") or "timeline").strip().lower()
+    if view_mode not in {"timeline", "story"}:
+        view_mode = "timeline"
 
     # For audit logs: request could be referenced either by request_id, or by target_type/target_id.
     REQUEST_TARGET_TYPES = ["WorkflowRequest", "WORKFLOW_REQUEST", "WORKFLOWREQUEST"]
@@ -573,9 +577,19 @@ def system_timeline():
     except Exception:
         log_steps = {}
 
+    story_entries = []
+    if view_mode == "story":
+        story_entries = build_audit_story_entries(
+            logs,
+            request_meta=request_meta,
+            log_steps=log_steps,
+        )
+
     return render_template(
         "audit/timeline.html",
         logs=logs,
+        story_entries=story_entries,
+        view_mode=view_mode,
         pagination=pagination,
         users=users,
         actions=actions,
@@ -597,6 +611,7 @@ def system_timeline():
             "request_type_id": request_type_id or "",
             "template_id": template_id or "",
             "step_order": step_order or "",
+            "view": view_mode,
         }
     )
 
