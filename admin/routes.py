@@ -1266,6 +1266,34 @@ def _make_runtime_tempdir(prefix: str) -> _RuntimeTempDir:
     return _RuntimeTempDir(_make_runtime_tmp_subdir(prefix))
 
 
+def _make_restore_tempdir(prefix: str) -> _RuntimeTempDir:
+    """Use the OS temp root so extracted backup paths stay below Windows MAX_PATH."""
+    safe_prefix = "".join(ch for ch in (prefix or "restore") if ch.isalnum() or ch in {"-", "_"})
+    return _RuntimeTempDir(tempfile.mkdtemp(prefix=f"{safe_prefix[:40]}_"))
+
+
+def _safe_extract_backup_zip(archive: zipfile.ZipFile, extract_dir: str) -> None:
+    """Reject traversal paths before extracting an uploaded backup archive."""
+    root = os.path.abspath(extract_dir)
+    for info in archive.infolist():
+        normalized = (info.filename or "").replace("\\", "/")
+        parts = [part for part in normalized.split("/") if part not in {"", "."}]
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or "\x00" in normalized
+            or any(part == ".." for part in parts)
+            or (parts and ":" in parts[0])
+        ):
+            raise zipfile.BadZipFile(f"Unsafe backup member: {info.filename!r}")
+
+        target = os.path.abspath(os.path.join(root, *parts))
+        if os.path.commonpath([root, target]) != root:
+            raise zipfile.BadZipFile(f"Unsafe backup member: {info.filename!r}")
+
+    archive.extractall(root)
+
+
 def _create_sqlite_snapshot(src_db_path: str, snapshot_path: str) -> None:
     """Create a consistent snapshot of a SQLite DB using the sqlite3 backup API."""
     os.makedirs(os.path.dirname(snapshot_path), exist_ok=True)
@@ -1535,7 +1563,9 @@ def backup_restore():
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
 
     uploaded_zip = os.path.join(_get_runtime_tmp_dir(), f"workflow_uploaded_restore_{ts}.zip")
-    extract_tmp = _make_runtime_tempdir(f"workflow_restore_{ts}")
+    # The project can live under a long Windows path. Extracting under instance/tmp
+    # then exceeds the legacy 260-character limit for nested backup members.
+    extract_tmp = _make_restore_tempdir(f"wf_restore_{ts}")
     extract_dir = extract_tmp.name
 
     try:
@@ -1546,8 +1576,9 @@ def backup_restore():
             pass
 
         with zipfile.ZipFile(uploaded_zip, "r") as z:
-            z.extractall(extract_dir)
+            _safe_extract_backup_zip(z, extract_dir)
     except Exception:
+        current_app.logger.exception("Backup archive validation or extraction failed")
         try:
             extract_tmp.cleanup()
         except Exception:
