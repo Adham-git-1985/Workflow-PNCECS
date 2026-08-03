@@ -52,6 +52,7 @@ from users.routes import users_bp
 from messages import messages_bp
 from delegation import delegation_bp
 from store import store_bp
+from assistant import assistant_bp
 
 
 from filters.request_filters import apply_request_filters
@@ -251,7 +252,9 @@ def _set_sqlite_pragmas(dbapi_connection, connection_record):
     except Exception:
         pass
 
-app.config.from_object("config.DevConfig")
+_app_environment = os.getenv("APP_ENV", "production").strip().lower()
+_config_class = "config.DevConfig" if _app_environment == "development" else "config.ProdConfig"
+app.config.from_object(_config_class)
 
 
 
@@ -660,6 +663,7 @@ app.register_blueprint(archive_bp)
 app.register_blueprint(workflow_bp)
 app.register_blueprint(portal_bp)
 app.register_blueprint(store_bp)
+app.register_blueprint(assistant_bp)
 
 
 # ======================
@@ -1211,5 +1215,22 @@ def request_audit(request_id):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, use_reloader=False)
+    server_host = os.getenv("APP_HOST", "127.0.0.1")
+    server_port = int(os.getenv("APP_PORT", "5000"))
 
+    if _app_environment == "development":
+        app.run(
+            host=server_host,
+            port=server_port,
+            debug=True,
+            use_reloader=False,
+        )
+    else:
+        from waitress import serve
+
+        serve(
+            app,
+            host=server_host,
+            port=server_port,
+            threads=int(os.getenv("APP_SERVER_THREADS", "8")),
+        )

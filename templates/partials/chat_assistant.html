@@ -1,0 +1,62 @@
+{% if current_user.is_authenticated and not hide_shell|default(false) %}
+<div id="masarAssistant"
+     class="masar-assistant no-print"
+     data-chat-url="{{ url_for('assistant.chat') }}"
+     data-csrf-token="{{ csrf_token() }}"
+     data-user-id="{{ current_user.id }}"
+     data-context-path="{{ request.path }}">
+  <button type="button"
+          class="masar-assistant__launcher"
+          data-assistant-toggle
+          aria-expanded="false"
+          aria-controls="masarAssistantPanel">
+    <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
+    <span>المساعد</span>
+  </button>
+
+  <section id="masarAssistantPanel"
+           class="masar-assistant__panel"
+           role="dialog"
+           aria-label="مساعد مسار"
+           aria-modal="false"
+           hidden>
+    <header class="masar-assistant__header">
+      <div class="d-flex align-items-center gap-2">
+        <span class="masar-assistant__avatar" aria-hidden="true"><i class="bi bi-stars"></i></span>
+        <div>
+          <strong class="d-block">مساعد مسار</strong>
+          <small data-assistant-mode>مساعد إرشادي محلي</small>
+        </div>
+      </div>
+      <div class="d-flex align-items-center gap-1">
+        <button type="button" class="masar-assistant__icon-btn" data-assistant-clear title="مسح المحادثة" aria-label="مسح المحادثة">
+          <i class="bi bi-trash3"></i>
+        </button>
+        <button type="button" class="masar-assistant__icon-btn" data-assistant-close title="إغلاق" aria-label="إغلاق المساعد">
+          <i class="bi bi-x-lg"></i>
+        </button>
+      </div>
+    </header>
+
+    <div class="masar-assistant__messages" data-assistant-messages aria-live="polite"></div>
+    <div class="masar-assistant__suggestions" data-assistant-suggestions></div>
+
+    <form class="masar-assistant__form" data-assistant-form autocomplete="off">
+      <label class="visually-hidden" for="masarAssistantInput">اكتب سؤالك</label>
+      <textarea id="masarAssistantInput"
+                class="form-control"
+                data-assistant-input
+                rows="1"
+                maxlength="1200"
+                placeholder="اكتب ما تريد إنجازه..."
+                required></textarea>
+      <button type="submit" class="masar-assistant__send" data-assistant-send aria-label="إرسال">
+        <i class="bi bi-send-fill" aria-hidden="true"></i>
+      </button>
+    </form>
+    <p class="masar-assistant__privacy mb-0">
+      لا ترسل كلمات مرور أو بيانات حساسة. المحادثة محفوظة في جلسة هذا المتصفح فقط.
+    </p>
+  </section>
+</div>
+{% endif %}

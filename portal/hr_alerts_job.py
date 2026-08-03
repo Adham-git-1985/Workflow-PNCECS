@@ -79,18 +79,23 @@ def _check_pending_leave_requests():
 
 def _worker(app):
     while True:
+        interval = 3600
         try:
             with app.app_context():
                 enabled = (_setting_get("HR_ALERTS_JOB_ENABLED") or "1").strip()
                 if enabled in ("1", "true", "True", "yes", "YES"):
                     _check_pending_leave_requests()
+                interval = int(
+                    (_setting_get("HR_ALERTS_JOB_INTERVAL_SEC") or "3600").strip()
+                    or 3600
+                )
         except Exception:
-            # Never crash the thread; errors will be visible in app logs
+            app.logger.exception("HR alerts job iteration failed")
             try:
-                db.session.rollback()
+                with app.app_context():
+                    db.session.rollback()
             except Exception:
                 pass
-        interval = int((_setting_get("HR_ALERTS_JOB_INTERVAL_SEC") or "3600").strip() or 3600)
         time.sleep(max(60, interval))
 
 
