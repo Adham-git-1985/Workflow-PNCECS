@@ -20,6 +20,7 @@ from utils.audit_helpers import get_audit_source_summary
 
 AUTOMATED_ENDPOINTS = {
     "static",
+    "assistant.chat",
     "workflow.event_stream",
     "workflow.unread_notifications_count",
 }
