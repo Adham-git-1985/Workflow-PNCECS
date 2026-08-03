@@ -101,6 +101,7 @@ from models import (
     AttendanceEvent,
     InboundMail,
     OutboundMail,
+    CorrMovement,
     CorrAttachment,
     CorrCategory,
     CorrParty,
@@ -185,6 +186,16 @@ from models import (
     InvWarehousePermission,
 )
 from workflow.engine import start_workflow_for_request
+from services.correspondence_procedure import (
+    ACTION_LABELS as CORR_ACTION_LABELS,
+    FINALIZE_ACTIONS as CORR_FINALIZE_ACTIONS,
+    NOTE_REQUIRED_ACTIONS as CORR_NOTE_REQUIRED_ACTIONS,
+    QUEUE_LABELS as CORR_QUEUE_LABELS,
+    STATUS_LABELS as CORR_STATUS_LABELS,
+    due_state as corr_due_state,
+    next_status as corr_next_status,
+    queue_matches as corr_queue_matches,
+)
 
 # -------------------------
 # Permissions (Portal)
@@ -1260,6 +1271,14 @@ def _ensure_corr_card_archived(kind: str, label: str, item) -> ArchivedFile | No
             getattr(item, "body", None),
             _corr_item_url(kind, item),
             getattr(item, "competence_label", None) or "",
+            {
+                "status": getattr(item, "status", None),
+                "route_mode": getattr(item, "route_mode", None),
+                "target_label": getattr(item, "current_target_label", None) or getattr(item, "competence_label", None),
+                "priority": getattr(item, "priority", None),
+                "confidentiality": getattr(item, "confidentiality", None),
+                "due_date": getattr(item, "due_date", None),
+            },
         )
 
         stored_name = f"corr_{kind.lower()}_card_{getattr(item, 'id', 'new')}_{uuid.uuid4().hex}.pdf"
@@ -1377,6 +1396,7 @@ def _save_corr_files(
     inbound_id: int | None = None,
     outbound_id: int | None = None,
     stamp_options: CorrStampOptions | None = None,
+    movement_id: int | None = None,
 ) -> int:
     """Save one or more uploaded files as CorrAttachment(s). Returns how many were saved."""
     saved = 0
@@ -1411,6 +1431,7 @@ def _save_corr_files(
             stamp_kind=stamp_options.kind if stamp_applied and stamp_options else None,
             stamp_ref_no=stamp_options.ref_no if stamp_applied and stamp_options else None,
             stamp_date=stamp_options.stamp_date if stamp_applied and stamp_options else None,
+            movement_id=movement_id,
         )
         db.session.add(att)
         db.session.flush()
@@ -17481,6 +17502,7 @@ def _ensure_corr_attachment_stamp_schema():
 def _ensure_corr_competence_schema():
     """Add competence columns for existing SQLite databases without a destructive reset."""
     _ensure_corr_attachment_stamp_schema()
+    _ensure_corr_procedure_schema()
     try:
         bind = db.session.get_bind()
         if not bind or bind.dialect.name != "sqlite":
@@ -17496,6 +17518,64 @@ def _ensure_corr_competence_schema():
                 if col not in existing:
                     db.session.execute(text(ddl))
             db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
+
+def _ensure_corr_procedure_schema():
+    """Add procedural correspondence fields and movement table in-place for SQLite."""
+    try:
+        bind = db.session.get_bind()
+        if not bind or bind.dialect.name != "sqlite":
+            return
+
+        table_columns = {
+            "corr_inbound": (
+                ("status", "ALTER TABLE corr_inbound ADD COLUMN status VARCHAR(30) NOT NULL DEFAULT 'RECEIVED'"),
+                ("route_mode", "ALTER TABLE corr_inbound ADD COLUMN route_mode VARCHAR(30) NOT NULL DEFAULT 'DIRECT'"),
+                ("mail_scope", "ALTER TABLE corr_inbound ADD COLUMN mail_scope VARCHAR(20) NOT NULL DEFAULT 'EXTERNAL'"),
+                ("priority", "ALTER TABLE corr_inbound ADD COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
+                ("confidentiality", "ALTER TABLE corr_inbound ADD COLUMN confidentiality VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
+                ("due_date", "ALTER TABLE corr_inbound ADD COLUMN due_date VARCHAR(10)"),
+                ("current_target_kind", "ALTER TABLE corr_inbound ADD COLUMN current_target_kind VARCHAR(30)"),
+                ("current_target_id", "ALTER TABLE corr_inbound ADD COLUMN current_target_id INTEGER"),
+                ("current_target_label", "ALTER TABLE corr_inbound ADD COLUMN current_target_label VARCHAR(255)"),
+                ("current_assignee_id", "ALTER TABLE corr_inbound ADD COLUMN current_assignee_id INTEGER"),
+                ("closed_at", "ALTER TABLE corr_inbound ADD COLUMN closed_at DATETIME"),
+                ("closed_by_id", "ALTER TABLE corr_inbound ADD COLUMN closed_by_id INTEGER"),
+                ("deadline_notified_on", "ALTER TABLE corr_inbound ADD COLUMN deadline_notified_on VARCHAR(10)"),
+            ),
+            "corr_outbound": (
+                ("status", "ALTER TABLE corr_outbound ADD COLUMN status VARCHAR(30) NOT NULL DEFAULT 'DRAFT'"),
+                ("route_mode", "ALTER TABLE corr_outbound ADD COLUMN route_mode VARCHAR(30) NOT NULL DEFAULT 'DIRECT'"),
+                ("mail_scope", "ALTER TABLE corr_outbound ADD COLUMN mail_scope VARCHAR(20) NOT NULL DEFAULT 'EXTERNAL'"),
+                ("priority", "ALTER TABLE corr_outbound ADD COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
+                ("confidentiality", "ALTER TABLE corr_outbound ADD COLUMN confidentiality VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
+                ("due_date", "ALTER TABLE corr_outbound ADD COLUMN due_date VARCHAR(10)"),
+                ("current_target_kind", "ALTER TABLE corr_outbound ADD COLUMN current_target_kind VARCHAR(30)"),
+                ("current_target_id", "ALTER TABLE corr_outbound ADD COLUMN current_target_id INTEGER"),
+                ("current_target_label", "ALTER TABLE corr_outbound ADD COLUMN current_target_label VARCHAR(255)"),
+                ("current_assignee_id", "ALTER TABLE corr_outbound ADD COLUMN current_assignee_id INTEGER"),
+                ("closed_at", "ALTER TABLE corr_outbound ADD COLUMN closed_at DATETIME"),
+                ("closed_by_id", "ALTER TABLE corr_outbound ADD COLUMN closed_by_id INTEGER"),
+                ("deadline_notified_on", "ALTER TABLE corr_outbound ADD COLUMN deadline_notified_on VARCHAR(10)"),
+            ),
+            "corr_attachment": (
+                ("movement_id", "ALTER TABLE corr_attachment ADD COLUMN movement_id INTEGER"),
+            ),
+        }
+        for table, columns in table_columns.items():
+            rows = db.session.execute(text(f"PRAGMA table_info({table})")).fetchall()
+            existing = {str(r[1]) for r in rows}
+            for column, ddl in columns:
+                if column not in existing:
+                    db.session.execute(text(ddl))
+
+        CorrMovement.__table__.create(bind=bind, checkfirst=True)
+        db.session.commit()
     except Exception:
         try:
             db.session.rollback()
@@ -17704,6 +17784,386 @@ def _corr_competence_selected_value(item) -> str:
     if kind and cid:
         return f"{kind}:{int(cid)}"
     return ""
+
+
+_CORR_ROUTE_MODES = {"MAIN_ADMIN", "SPECIALIZED", "DIRECT"}
+_CORR_MAIL_SCOPES = {"EXTERNAL", "INTERNAL"}
+_CORR_PRIORITIES = {"NORMAL", "HIGH", "URGENT"}
+_CORR_CONFIDENTIALITIES = {"NORMAL", "SECRET"}
+_CORR_USER_ACTIONS = (
+    "OPEN",
+    "REPLY",
+    "FORWARD",
+    "RETURN",
+    "INTERNAL_NOTE",
+    "REQUEST_INFO",
+    "SAVE_DRAFT",
+    "SUBMIT_APPROVAL",
+    "APPROVE",
+    "FINAL_REPLY",
+    "CLOSE",
+    "ARCHIVE",
+)
+
+
+def _corr_apply_procedure_form(item, competence: dict | None, *, initialize_target: bool = False) -> None:
+    """Apply validated procedure metadata from the create/edit form."""
+    competence = competence or {}
+    route_mode = (request.form.get("route_mode") or getattr(item, "route_mode", None) or "DIRECT").strip().upper()
+    mail_scope = (request.form.get("mail_scope") or getattr(item, "mail_scope", None) or "EXTERNAL").strip().upper()
+    priority = (request.form.get("priority") or getattr(item, "priority", None) or "NORMAL").strip().upper()
+    confidentiality = (
+        request.form.get("confidentiality")
+        or getattr(item, "confidentiality", None)
+        or "NORMAL"
+    ).strip().upper()
+    due_date = (request.form.get("due_date") or "").strip()
+    if due_date:
+        try:
+            datetime.strptime(due_date, "%Y-%m-%d")
+        except ValueError:
+            due_date = ""
+
+    item.route_mode = route_mode if route_mode in _CORR_ROUTE_MODES else "DIRECT"
+    item.mail_scope = mail_scope if mail_scope in _CORR_MAIL_SCOPES else "EXTERNAL"
+    item.priority = priority if priority in _CORR_PRIORITIES else "NORMAL"
+    item.confidentiality = (
+        confidentiality if confidentiality in _CORR_CONFIDENTIALITIES else "NORMAL"
+    )
+    if (getattr(item, "due_date", None) or "") != due_date:
+        item.deadline_notified_on = None
+    item.due_date = due_date or None
+
+    if initialize_target or not getattr(item, "current_target_kind", None):
+        item.current_target_kind = competence.get("kind")
+        item.current_target_id = competence.get("id")
+        item.current_target_label = competence.get("label")
+        item.current_assignee_id = (
+            competence.get("id") if competence.get("kind") == "USER" else None
+        )
+
+
+def _corr_add_movement(
+    kind: str,
+    item,
+    action: str,
+    *,
+    from_status: str | None = None,
+    to_status: str | None = None,
+    target: dict | None = None,
+    note: str | None = None,
+) -> CorrMovement:
+    target = target or {}
+    movement = CorrMovement(
+        inbound_id=item.id if kind == "IN" else None,
+        outbound_id=item.id if kind == "OUT" else None,
+        actor_user_id=current_user.id,
+        action=action,
+        from_status=from_status,
+        to_status=to_status,
+        target_kind=target.get("kind"),
+        target_id=target.get("id"),
+        target_label=target.get("label"),
+        target_user_id=target.get("id") if target.get("kind") == "USER" else None,
+        note=(note or "").strip() or None,
+        is_internal=action == "INTERNAL_NOTE",
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(movement)
+    db.session.flush()
+    return movement
+
+
+def _corr_target_for_item(item) -> dict:
+    return {
+        "kind": getattr(item, "current_target_kind", None) or getattr(item, "competence_kind", None),
+        "id": getattr(item, "current_target_id", None) or getattr(item, "competence_id", None),
+        "label": getattr(item, "current_target_label", None) or getattr(item, "competence_label", None),
+    }
+
+
+def _corr_can_act(item) -> bool:
+    if current_user.has_perm(CORR_UPDATE) or _can_manage_corr():
+        return True
+    if getattr(item, "created_by_id", None) == current_user.id:
+        return True
+    if getattr(item, "current_assignee_id", None) == current_user.id:
+        return True
+    try:
+        return int(current_user.id) in _corr_competence_user_ids(_corr_target_for_item(item))
+    except Exception:
+        return False
+
+
+def _corr_can_finalize() -> bool:
+    role = (getattr(current_user, "role", None) or "").strip().upper().replace("_", "-")
+    return bool(
+        current_user.has_perm(CORR_UPDATE)
+        or _can_manage_corr()
+        or role == "GENERAL-SECRETARY"
+    )
+
+
+def _corr_procedure_context(kind: str, item) -> dict:
+    movements_query = CorrMovement.query.filter_by(
+        inbound_id=item.id if kind == "IN" else None,
+        outbound_id=item.id if kind == "OUT" else None,
+    )
+    movements = movements_query.order_by(CorrMovement.created_at.desc(), CorrMovement.id.desc()).limit(150).all()
+    return {
+        "corr_kind": kind,
+        "corr_movements": movements,
+        "corr_status_labels": CORR_STATUS_LABELS,
+        "corr_action_labels": CORR_ACTION_LABELS,
+        "corr_action_options": [
+            (action, CORR_ACTION_LABELS[action]) for action in _CORR_USER_ACTIONS
+        ],
+        "corr_competence_options": _corr_competence_options(),
+        "corr_can_act": _corr_can_act(item),
+        "corr_can_finalize": _corr_can_finalize(),
+        "corr_due_state": corr_due_state(getattr(item, "due_date", None)),
+    }
+
+
+def _corr_dashboard_rows() -> list[dict]:
+    forwarded_inbound = {
+        int(row[0]) for row in (
+            db.session.query(CorrMovement.inbound_id)
+            .filter(
+                CorrMovement.actor_user_id == current_user.id,
+                CorrMovement.action == "FORWARD",
+                CorrMovement.inbound_id.isnot(None),
+            )
+            .all()
+        ) if row[0]
+    }
+    forwarded_outbound = {
+        int(row[0]) for row in (
+            db.session.query(CorrMovement.outbound_id)
+            .filter(
+                CorrMovement.actor_user_id == current_user.id,
+                CorrMovement.action == "FORWARD",
+                CorrMovement.outbound_id.isnot(None),
+            )
+            .all()
+        ) if row[0]
+    }
+
+    rows: list[dict] = []
+    target_user_cache: dict[tuple[str | None, int | None], set[int]] = {}
+    for kind, model, date_attr, party_attr, forwarded_ids in (
+        ("IN", InboundMail, "received_date", "sender", forwarded_inbound),
+        ("OUT", OutboundMail, "sent_date", "recipient", forwarded_outbound),
+    ):
+        for item in model.query.order_by(model.created_at.desc(), model.id.desc()).limit(1500).all():
+            target = _corr_target_for_item(item)
+            target_key = (target.get("kind"), target.get("id"))
+            if target_key not in target_user_cache:
+                target_user_cache[target_key] = set(_corr_competence_user_ids(target))
+            assigned_to_user_id = getattr(item, "current_assignee_id", None)
+            if int(current_user.id) in target_user_cache[target_key]:
+                assigned_to_user_id = int(current_user.id)
+            rows.append({
+                "kind": kind,
+                "item": item,
+                "ref_no": item.ref_no or item.id,
+                "date": getattr(item, date_attr, "") or "",
+                "party": getattr(item, party_attr, "") or "-",
+                "subject": item.subject or "",
+                "status": (getattr(item, "status", None) or ("RECEIVED" if kind == "IN" else "DRAFT")).upper(),
+                "status_label": CORR_STATUS_LABELS.get(
+                    (getattr(item, "status", None) or ("RECEIVED" if kind == "IN" else "DRAFT")).upper(),
+                    getattr(item, "status", None) or "-",
+                ),
+                "mail_scope": getattr(item, "mail_scope", None) or "EXTERNAL",
+                "priority": getattr(item, "priority", None) or "NORMAL",
+                "confidentiality": getattr(item, "confidentiality", None) or "NORMAL",
+                "due_date": getattr(item, "due_date", None),
+                "due_state": corr_due_state(getattr(item, "due_date", None)),
+                "target_label": getattr(item, "current_target_label", None) or item.competence_label or "-",
+                "assigned_to_user_id": assigned_to_user_id,
+                "forwarded_by_user_ids": {current_user.id} if item.id in forwarded_ids else set(),
+                "url": url_for(
+                    "portal.inbound_view" if kind == "IN" else "portal.outbound_view",
+                    **({"inbound_id": item.id} if kind == "IN" else {"outbound_id": item.id}),
+                ),
+                "created_at": item.created_at,
+            })
+    rows.sort(key=lambda row: row.get("created_at") or datetime.min, reverse=True)
+    return rows
+
+
+@portal_bp.route("/corr/work")
+@login_required
+@_perm(CORR_READ)
+def corr_work_dashboard():
+    _ensure_corr_competence_schema()
+    selected_queue = (request.args.get("queue") or "waiting_action").strip().lower()
+    if selected_queue not in CORR_QUEUE_LABELS:
+        selected_queue = "waiting_action"
+
+    all_rows = _corr_dashboard_rows()
+
+    def matches(row: dict, queue: str) -> bool:
+        return corr_queue_matches(
+            queue=queue,
+            kind=row["kind"],
+            status=row["status"],
+            mail_scope=row["mail_scope"],
+            priority=row["priority"],
+            confidentiality=row["confidentiality"],
+            assigned_to_user_id=row["assigned_to_user_id"],
+            current_user_id=int(current_user.id),
+            forwarded_by_user_ids=row["forwarded_by_user_ids"],
+        )
+
+    counts = {
+        queue: sum(1 for row in all_rows if matches(row, queue))
+        for queue in CORR_QUEUE_LABELS
+    }
+    filtered = [row for row in all_rows if matches(row, selected_queue)]
+    page = max(1, request.args.get("page", type=int, default=1))
+    per_page = 50
+    total = len(filtered)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    start = (page - 1) * per_page
+
+    return render_template(
+        "portal/corr/work_dashboard.html",
+        items=filtered[start:start + per_page],
+        counts=counts,
+        queue_labels=CORR_QUEUE_LABELS,
+        selected_queue=selected_queue,
+        page=page,
+        pages=pages,
+        total=total,
+    )
+
+
+@portal_bp.route("/corr/<string:kind>/<int:item_id>/action", methods=["POST"])
+@login_required
+@_perm(CORR_READ)
+def corr_procedure_action(kind: str, item_id: int):
+    _ensure_corr_competence_schema()
+    normalized_kind = (kind or "").strip().upper()
+    if normalized_kind in {"IN", "INBOUND"}:
+        normalized_kind = "IN"
+        item = InboundMail.query.get_or_404(item_id)
+        redirect_endpoint = "portal.inbound_view"
+        redirect_values = {"inbound_id": item.id}
+    elif normalized_kind in {"OUT", "OUTBOUND"}:
+        normalized_kind = "OUT"
+        item = OutboundMail.query.get_or_404(item_id)
+        redirect_endpoint = "portal.outbound_view"
+        redirect_values = {"outbound_id": item.id}
+    else:
+        abort(404)
+
+    if not _corr_can_act(item):
+        abort(403)
+
+    action = (request.form.get("action") or "").strip().upper()
+    if action not in _CORR_USER_ACTIONS:
+        flash("اختر إجراءً صحيحًا.", "danger")
+        return redirect(url_for(redirect_endpoint, **redirect_values))
+    if action in CORR_FINALIZE_ACTIONS and not _corr_can_finalize():
+        abort(403)
+
+    note = (request.form.get("note") or "").strip()
+    if action in CORR_NOTE_REQUIRED_ACTIONS and not note:
+        flash("اكتب ملاحظة توضح الإجراء.", "danger")
+        return redirect(url_for(redirect_endpoint, **redirect_values))
+
+    old_status = (getattr(item, "status", None) or ("RECEIVED" if normalized_kind == "IN" else "DRAFT")).upper()
+    new_status = corr_next_status(old_status, action)
+    target: dict = {}
+    recipient_ids: set[int] = set()
+
+    if action in {"FORWARD", "SUBMIT_APPROVAL"}:
+        target = _corr_parse_competence_value(
+            request.form.get("target"),
+            _corr_competence_options(),
+        )
+        if not target.get("kind"):
+            flash("اختر الموظف أو الجهة التي سيحوّل إليها البريد.", "danger")
+            return redirect(url_for(redirect_endpoint, **redirect_values))
+        if target.get("kind"):
+            item.current_target_kind = target.get("kind")
+            item.current_target_id = target.get("id")
+            item.current_target_label = target.get("label")
+            item.current_assignee_id = target.get("id") if target.get("kind") == "USER" else None
+            recipient_ids.update(_corr_competence_user_ids(target))
+        route_mode = (request.form.get("route_mode") or item.route_mode or "DIRECT").strip().upper()
+        item.route_mode = route_mode if route_mode in _CORR_ROUTE_MODES else "DIRECT"
+    elif action == "RETURN":
+        if item.created_by_id:
+            target = {
+                "kind": "USER",
+                "id": int(item.created_by_id),
+                "label": _corr_display_name(item.created_by),
+            }
+            item.current_target_kind = "USER"
+            item.current_target_id = int(item.created_by_id)
+            item.current_target_label = target["label"]
+            item.current_assignee_id = int(item.created_by_id)
+            recipient_ids.add(int(item.created_by_id))
+    elif action in {"REPLY", "REQUEST_INFO", "FINAL_REPLY"} and item.created_by_id:
+        recipient_ids.add(int(item.created_by_id))
+
+    item.status = new_status
+    if action in {"CLOSE", "ARCHIVE"}:
+        item.closed_at = datetime.utcnow()
+        item.closed_by_id = current_user.id
+    elif old_status in {"CLOSED", "ARCHIVED"} and new_status not in {"CLOSED", "ARCHIVED"}:
+        item.closed_at = None
+        item.closed_by_id = None
+
+    movement = _corr_add_movement(
+        normalized_kind,
+        item,
+        action,
+        from_status=old_status,
+        to_status=new_status,
+        target=target,
+        note=note,
+    )
+
+    files = request.files.getlist("files") or []
+    saved = 0
+    if any(getattr(upload, "filename", "") for upload in files):
+        stamp_options = _corr_stamp_options(
+            normalized_kind,
+            item.ref_no or item.id,
+            item.received_date if normalized_kind == "IN" else item.sent_date,
+        )
+        saved = _save_corr_files(
+            files,
+            inbound_id=item.id if normalized_kind == "IN" else None,
+            outbound_id=item.id if normalized_kind == "OUT" else None,
+            stamp_options=stamp_options,
+            movement_id=movement.id,
+        )
+
+    recipient_ids.discard(int(current_user.id))
+    if recipient_ids:
+        _notify_users(
+            sorted(recipient_ids),
+            f"{CORR_ACTION_LABELS.get(action, action)}: {item.subject[:170]}",
+            level="CORR_ACTION",
+        )
+
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action=f"CORR_{action}",
+        note=f"{CORR_ACTION_LABELS.get(action, action)}; status={old_status}->{new_status}; files={saved}",
+        target_type="CORR_INBOUND" if normalized_kind == "IN" else "CORR_OUTBOUND",
+        target_id=item.id,
+        created_at=datetime.utcnow(),
+    ))
+    db.session.commit()
+    flash(f"تم تنفيذ الإجراء: {CORR_ACTION_LABELS.get(action, action)}.", "success")
+    return redirect(url_for(redirect_endpoint, **redirect_values))
 
 
 def _corr_filters_inbound():
@@ -17969,11 +18429,28 @@ def inbound_new():
             created_by_id=current_user.id,
             created_at=datetime.utcnow(),
         )
+        _corr_apply_procedure_form(item, competence, initialize_target=True)
         db.session.add(item)
         db.session.flush()  # assign item.id without committing
 
+        movement = _corr_add_movement(
+            "IN",
+            item,
+            "REGISTER",
+            from_status=None,
+            to_status=item.status,
+            target=competence,
+            note="استلام البريد ومراجعة بياناته ومرفقاته.",
+        )
+
         stamp_options = _corr_stamp_options("IN", item.ref_no or item.id, received_date)
-        saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None, stamp_options=stamp_options)
+        saved = _save_corr_files(
+            files,
+            inbound_id=item.id,
+            outbound_id=None,
+            stamp_options=stamp_options,
+            movement_id=movement.id,
+        )
         if not saved:
             db.session.rollback()
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
@@ -18151,11 +18628,28 @@ def outbound_new():
             created_by_id=current_user.id,
             created_at=datetime.utcnow(),
         )
+        _corr_apply_procedure_form(item, competence, initialize_target=True)
         db.session.add(item)
         db.session.flush()  # assign item.id without committing
 
+        movement = _corr_add_movement(
+            "OUT",
+            item,
+            "REGISTER",
+            from_status=None,
+            to_status=item.status,
+            target=competence,
+            note="تسجيل البريد الصادر ومراجعة بياناته ومرفقاته.",
+        )
+
         stamp_options = _corr_stamp_options("OUT", item.ref_no or item.id, sent_date)
-        saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id, stamp_options=stamp_options)
+        saved = _save_corr_files(
+            files,
+            inbound_id=None,
+            outbound_id=item.id,
+            stamp_options=stamp_options,
+            movement_id=movement.id,
+        )
         if not saved:
             db.session.rollback()
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
@@ -18233,6 +18727,7 @@ def outbound_view(outbound_id: int):
     can_delete = bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
+    procedure_context = _corr_procedure_context("OUT", item)
 
     return render_template(
         "portal/corr/outbound_view.html",
@@ -18243,6 +18738,7 @@ def outbound_view(outbound_id: int):
         can_delete=can_delete,
         can_upload=can_upload,
         workflow_templates=_corr_workflow_templates(),
+        **procedure_context,
     )
 
 
@@ -18271,6 +18767,7 @@ def inbound_view(inbound_id: int):
     can_delete = bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
+    procedure_context = _corr_procedure_context("IN", item)
 
     return render_template(
         "portal/corr/inbound_view.html",
@@ -18281,6 +18778,7 @@ def inbound_view(inbound_id: int):
         can_delete=can_delete,
         can_upload=can_upload,
         workflow_templates=_corr_workflow_templates(),
+        **procedure_context,
     )
 
 
@@ -18454,12 +18952,29 @@ def inbound_edit(inbound_id: int):
         item.subject = subject
         item.body = body or None
         item.received_date = received_date
+        _corr_apply_procedure_form(item, competence, initialize_target=False)
+
+        movement = _corr_add_movement(
+            "IN",
+            item,
+            "EDIT",
+            from_status=item.status,
+            to_status=item.status,
+            target=_corr_target_for_item(item),
+            note="تحديث بيانات البريد الوارد.",
+        )
 
         saved = 0
         files = request.files.getlist("files") or []
         if any(getattr(f, "filename", "") for f in files):
             stamp_options = _corr_stamp_options("IN", item.ref_no or item.id, item.received_date)
-            saved = _save_corr_files(files, inbound_id=item.id, outbound_id=None, stamp_options=stamp_options)
+            saved = _save_corr_files(
+                files,
+                inbound_id=item.id,
+                outbound_id=None,
+                stamp_options=stamp_options,
+                movement_id=movement.id,
+            )
 
         try:
             db.session.add(AuditLog(
@@ -18580,12 +19095,29 @@ def outbound_edit(outbound_id: int):
         item.subject = subject
         item.body = body or None
         item.sent_date = sent_date
+        _corr_apply_procedure_form(item, competence, initialize_target=False)
+
+        movement = _corr_add_movement(
+            "OUT",
+            item,
+            "EDIT",
+            from_status=item.status,
+            to_status=item.status,
+            target=_corr_target_for_item(item),
+            note="تحديث بيانات البريد الصادر.",
+        )
 
         saved = 0
         files = request.files.getlist("files") or []
         if any(getattr(f, "filename", "") for f in files):
             stamp_options = _corr_stamp_options("OUT", item.ref_no or item.id, item.sent_date)
-            saved = _save_corr_files(files, inbound_id=None, outbound_id=item.id, stamp_options=stamp_options)
+            saved = _save_corr_files(
+                files,
+                inbound_id=None,
+                outbound_id=item.id,
+                stamp_options=stamp_options,
+                movement_id=movement.id,
+            )
 
         try:
             db.session.add(AuditLog(
@@ -19081,7 +19613,18 @@ def _corr_category_for_card(category: str | None) -> str:
     return category
 
 
-def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, category: str, subject: str, notes: str | None, url: str, competence: str = ""):
+def _build_corr_card_pdf(
+    kind: str,
+    ref_no: str,
+    date_s: str,
+    party: str,
+    category: str,
+    subject: str,
+    notes: str | None,
+    url: str,
+    competence: str = "",
+    procedure: dict | None = None,
+):
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
     _ensure_pdf_font()
@@ -19108,6 +19651,22 @@ def _build_corr_card_pdf(kind: str, ref_no: str, date_s: str, party: str, catego
         [_pdf_text(competence or ""), _pdf_text("جهة الاختصاص")],
         [_pdf_text(subject or ""), _pdf_text("الموضوع")],
     ]
+    procedure = procedure or {}
+    if procedure:
+        route_labels = {
+            "MAIN_ADMIN": "الإدارة العامة للمنظمات",
+            "SPECIALIZED": "الدوائر التخصصية",
+            "DIRECT": "تحويل مباشر حسب الهيكل التنظيمي",
+        }
+        priority_labels = {"NORMAL": "عادية", "HIGH": "عالية", "URGENT": "عاجلة"}
+        data.extend([
+            [_pdf_text(CORR_STATUS_LABELS.get(procedure.get("status"), procedure.get("status") or "")), _pdf_text("حالة المعاملة")],
+            [_pdf_text(route_labels.get(procedure.get("route_mode"), procedure.get("route_mode") or "")), _pdf_text("المسار الإداري")],
+            [_pdf_text(procedure.get("target_label") or ""), _pdf_text("المحول إليه حاليًا")],
+            [_pdf_text(priority_labels.get(procedure.get("priority"), procedure.get("priority") or "")), _pdf_text("الأولوية")],
+            [_pdf_text("سري" if procedure.get("confidentiality") == "SECRET" else "عادي"), _pdf_text("درجة السرية")],
+            [_pdf_text(procedure.get("due_date") or ""), _pdf_text("الموعد النهائي")],
+        ])
     t = Table(data, colWidths=[360, 120], hAlign="RIGHT")
     t.setStyle(TableStyle([
         ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
@@ -19158,6 +19717,14 @@ def inbound_print_pdf(inbound_id: int):
         item.body,
         url,
         item.competence_label or "",
+        {
+            "status": item.status,
+            "route_mode": item.route_mode,
+            "target_label": item.current_target_label or item.competence_label,
+            "priority": item.priority,
+            "confidentiality": item.confidentiality,
+            "due_date": item.due_date,
+        },
     )
     from flask import send_file
     filename = _corr_card_filename("IN", item.ref_no or item.id, item.received_date)
@@ -19181,6 +19748,14 @@ def outbound_print_pdf(outbound_id: int):
         item.body,
         url,
         item.competence_label or "",
+        {
+            "status": item.status,
+            "route_mode": item.route_mode,
+            "target_label": item.current_target_label or item.competence_label,
+            "priority": item.priority,
+            "confidentiality": item.confidentiality,
+            "due_date": item.due_date,
+        },
     )
     from flask import send_file
     filename = _corr_card_filename("OUT", item.ref_no or item.id, item.sent_date)

@@ -1,0 +1,49 @@
+{% set proc_item = item|default(none) %}
+{% set current_route = request.form.get('route_mode') or (proc_item.route_mode if proc_item else 'DIRECT') %}
+{% set current_scope = request.form.get('mail_scope') or (proc_item.mail_scope if proc_item else 'EXTERNAL') %}
+{% set current_priority = request.form.get('priority') or (proc_item.priority if proc_item else 'NORMAL') %}
+{% set current_confidentiality = request.form.get('confidentiality') or (proc_item.confidentiality if proc_item else 'NORMAL') %}
+{% set current_due_date = request.form.get('due_date') or (proc_item.due_date if proc_item and proc_item.due_date else '') %}
+
+<div class="col-12">
+  <div class="border rounded-3 p-3 bg-light">
+    <div class="fw-semibold mb-3"><i class="bi bi-diagram-3"></i> بيانات المسار الإداري</div>
+    <div class="row g-3">
+      <div class="col-lg-6">
+        <label class="form-label">مسار التحويل</label>
+        <select class="form-select" name="route_mode">
+          <option value="MAIN_ADMIN" {% if current_route == 'MAIN_ADMIN' %}selected{% endif %}>المسار الأول — الإدارة العامة للمنظمات</option>
+          <option value="SPECIALIZED" {% if current_route == 'SPECIALIZED' %}selected{% endif %}>المسار الأول — الدوائر التخصصية</option>
+          <option value="DIRECT" {% if current_route == 'DIRECT' %}selected{% endif %}>المسار الثاني — تحويل مباشر حسب الهيكل التنظيمي</option>
+        </select>
+      </div>
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label">نطاق البريد</label>
+        <select class="form-select" name="mail_scope">
+          <option value="EXTERNAL" {% if current_scope == 'EXTERNAL' %}selected{% endif %}>خارجي</option>
+          <option value="INTERNAL" {% if current_scope == 'INTERNAL' %}selected{% endif %}>داخلي</option>
+        </select>
+      </div>
+      <div class="col-lg-3 col-md-6">
+        <label class="form-label">الموعد النهائي</label>
+        <input class="form-control" type="date" name="due_date" value="{{ current_due_date }}">
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">الأولوية</label>
+        <select class="form-select" name="priority">
+          <option value="NORMAL" {% if current_priority == 'NORMAL' %}selected{% endif %}>عادية</option>
+          <option value="HIGH" {% if current_priority == 'HIGH' %}selected{% endif %}>عالية</option>
+          <option value="URGENT" {% if current_priority == 'URGENT' %}selected{% endif %}>عاجلة</option>
+        </select>
+      </div>
+      <div class="col-md-6">
+        <label class="form-label">درجة السرية</label>
+        <select class="form-select" name="confidentiality">
+          <option value="NORMAL" {% if current_confidentiality == 'NORMAL' %}selected{% endif %}>عادي</option>
+          <option value="SECRET" {% if current_confidentiality == 'SECRET' %}selected{% endif %}>سري</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-text mt-2">يُستخدم الموعد النهائي لإظهار تنبيهات المتابعة حتى إغلاق المعاملة أو أرشفتها.</div>
+  </div>
+</div>

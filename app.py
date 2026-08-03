@@ -706,6 +706,7 @@ def _handle_403(err):
 try:
     from portal.timeclock_auto import start_timeclock_auto_sync
     from portal.hr_alerts_job import start_hr_alerts_job
+    from portal.corr_deadlines_job import start_correspondence_deadline_job
 
     _jobs_started = False
 
@@ -726,6 +727,7 @@ try:
         try:
             start_timeclock_auto_sync(app)
             start_hr_alerts_job(app)
+            start_correspondence_deadline_job(app)
         except Exception:
             # Keep serving even if job fails
             app.logger.exception("Failed to start timeclock auto-sync")

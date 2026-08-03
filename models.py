@@ -3878,6 +3878,21 @@ class InboundMail(db.Model):
     competence_id = db.Column(db.Integer, nullable=True, index=True)
     competence_label = db.Column(db.String(255), nullable=True, index=True)
 
+    # Procedural correspondence state (general administration guide).
+    status = db.Column(db.String(30), nullable=False, default="RECEIVED", index=True)
+    route_mode = db.Column(db.String(30), nullable=False, default="DIRECT", index=True)
+    mail_scope = db.Column(db.String(20), nullable=False, default="EXTERNAL", index=True)
+    priority = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    confidentiality = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    due_date = db.Column(db.String(10), nullable=True, index=True)
+    current_target_kind = db.Column(db.String(30), nullable=True, index=True)
+    current_target_id = db.Column(db.Integer, nullable=True, index=True)
+    current_target_label = db.Column(db.String(255), nullable=True, index=True)
+    current_assignee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    closed_at = db.Column(db.DateTime, nullable=True, index=True)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    deadline_notified_on = db.Column(db.String(10), nullable=True, index=True)
+
     subject = db.Column(db.String(500), nullable=False)
     body = db.Column(db.Text, nullable=True)
 
@@ -3888,6 +3903,8 @@ class InboundMail(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    current_assignee = db.relationship("User", foreign_keys=[current_assignee_id], lazy="joined")
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
     def __repr__(self) -> str:
         return f"<InboundMail id={self.id} ref={self.ref_no!r}>"
 
@@ -3909,6 +3926,20 @@ class OutboundMail(db.Model):
     competence_id = db.Column(db.Integer, nullable=True, index=True)
     competence_label = db.Column(db.String(255), nullable=True, index=True)
 
+    status = db.Column(db.String(30), nullable=False, default="DRAFT", index=True)
+    route_mode = db.Column(db.String(30), nullable=False, default="DIRECT", index=True)
+    mail_scope = db.Column(db.String(20), nullable=False, default="EXTERNAL", index=True)
+    priority = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    confidentiality = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    due_date = db.Column(db.String(10), nullable=True, index=True)
+    current_target_kind = db.Column(db.String(30), nullable=True, index=True)
+    current_target_id = db.Column(db.Integer, nullable=True, index=True)
+    current_target_label = db.Column(db.String(255), nullable=True, index=True)
+    current_assignee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    closed_at = db.Column(db.DateTime, nullable=True, index=True)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    deadline_notified_on = db.Column(db.String(10), nullable=True, index=True)
+
     subject = db.Column(db.String(500), nullable=False)
     body = db.Column(db.Text, nullable=True)
 
@@ -3919,8 +3950,55 @@ class OutboundMail(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    current_assignee = db.relationship("User", foreign_keys=[current_assignee_id], lazy="joined")
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
     def __repr__(self) -> str:
         return f"<OutboundMail id={self.id} ref={self.ref_no!r}>"
+
+
+class CorrMovement(db.Model):
+    """Immutable movement/action record for a correspondence item."""
+
+    __tablename__ = "corr_movement"
+
+    id = db.Column(db.Integer, primary_key=True)
+    inbound_id = db.Column(db.Integer, db.ForeignKey("corr_inbound.id"), nullable=True, index=True)
+    outbound_id = db.Column(db.Integer, db.ForeignKey("corr_outbound.id"), nullable=True, index=True)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    action = db.Column(db.String(40), nullable=False, index=True)
+    from_status = db.Column(db.String(30), nullable=True, index=True)
+    to_status = db.Column(db.String(30), nullable=True, index=True)
+    target_kind = db.Column(db.String(30), nullable=True, index=True)
+    target_id = db.Column(db.Integer, nullable=True, index=True)
+    target_label = db.Column(db.String(255), nullable=True)
+    target_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    note = db.Column(db.Text, nullable=True)
+    is_internal = db.Column(db.Boolean, nullable=False, default=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    actor = db.relationship("User", foreign_keys=[actor_user_id], lazy="joined")
+    target_user = db.relationship("User", foreign_keys=[target_user_id], lazy="joined")
+    inbound = db.relationship(
+        "InboundMail",
+        foreign_keys=[inbound_id],
+        backref=db.backref("procedure_movements", lazy="dynamic", cascade="all, delete-orphan"),
+        lazy="joined",
+    )
+    outbound = db.relationship(
+        "OutboundMail",
+        foreign_keys=[outbound_id],
+        backref=db.backref("procedure_movements", lazy="dynamic", cascade="all, delete-orphan"),
+        lazy="joined",
+    )
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "(inbound_id IS NOT NULL) OR (outbound_id IS NOT NULL)",
+            name="ck_corr_movement_parent",
+        ),
+        db.Index("ix_corr_movement_inbound_created", "inbound_id", "created_at"),
+        db.Index("ix_corr_movement_outbound_created", "outbound_id", "created_at"),
+    )
 
 
 class CorrAttachment(db.Model):
@@ -3947,11 +4025,18 @@ class CorrAttachment(db.Model):
 
     archive_file_id = db.Column(db.Integer, db.ForeignKey("archived_file.id"), nullable=True, index=True)
     workflow_request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"), nullable=True, index=True)
+    movement_id = db.Column(db.Integer, db.ForeignKey("corr_movement.id"), nullable=True, index=True)
 
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
     published_by = db.relationship("User", foreign_keys=[published_by_id], lazy="joined")
     archive_file = db.relationship("ArchivedFile", foreign_keys=[archive_file_id], lazy="joined")
     workflow_request = db.relationship("WorkflowRequest", foreign_keys=[workflow_request_id], lazy="joined")
+    movement = db.relationship(
+        "CorrMovement",
+        foreign_keys=[movement_id],
+        backref=db.backref("attachments", lazy="select"),
+        lazy="joined",
+    )
 
     inbound = db.relationship(
         "InboundMail",
@@ -3976,6 +4061,7 @@ class CorrAttachment(db.Model):
         db.Index("ix_corr_attachment_outbound", "outbound_id"),
         db.Index("ix_corr_attachment_archive_file", "archive_file_id"),
         db.Index("ix_corr_attachment_workflow_request", "workflow_request_id"),
+        db.Index("ix_corr_attachment_movement", "movement_id"),
     )
 
 

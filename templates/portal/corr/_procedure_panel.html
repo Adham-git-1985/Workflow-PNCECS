@@ -1,0 +1,117 @@
+{% set route_labels = {
+  'MAIN_ADMIN': 'الإدارة العامة للمنظمات',
+  'SPECIALIZED': 'الدوائر التخصصية',
+  'DIRECT': 'تحويل مباشر حسب الهيكل التنظيمي'
+} %}
+{% set priority_labels = {'NORMAL': 'عادية', 'HIGH': 'عالية', 'URGENT': 'عاجلة'} %}
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+    <h6 class="mb-0"><i class="bi bi-diagram-3"></i> المسار الإداري وإجراءات المعاملة</h6>
+    <a class="btn btn-sm btn-outline-primary no-print" href="{{ url_for('portal.corr_work_dashboard') }}">
+      <i class="bi bi-kanban"></i> لوحة العمل
+    </a>
+  </div>
+
+  <div class="row g-2 mb-3 small">
+    <div class="col-md-3"><span class="text-muted">الحالة:</span> <span class="badge text-bg-primary">{{ corr_status_labels.get(item.status, item.status) }}</span></div>
+    <div class="col-md-3"><span class="text-muted">المسار:</span> {{ route_labels.get(item.route_mode, item.route_mode or '-') }}</div>
+    <div class="col-md-2"><span class="text-muted">النطاق:</span> {{ 'داخلي' if item.mail_scope == 'INTERNAL' else 'خارجي' }}</div>
+    <div class="col-md-2"><span class="text-muted">الأولوية:</span> {{ priority_labels.get(item.priority, item.priority or '-') }}</div>
+    <div class="col-md-2"><span class="text-muted">السرية:</span> {{ 'سري' if item.confidentiality == 'SECRET' else 'عادي' }}</div>
+    <div class="col-md-6"><span class="text-muted">الجهة/الموظف الحالي:</span> {{ item.current_target_label or item.competence_label or '-' }}</div>
+    <div class="col-md-6">
+      <span class="text-muted">الموعد النهائي:</span> {{ item.due_date or '-' }}
+      {% if corr_due_state == 'OVERDUE' %}<span class="badge text-bg-danger">متأخر</span>
+      {% elif corr_due_state == 'DUE_TODAY' %}<span class="badge text-bg-warning">اليوم</span>
+      {% elif corr_due_state == 'DUE_SOON' %}<span class="badge text-bg-info">قريب</span>{% endif %}
+    </div>
+  </div>
+
+  {% if corr_can_act %}
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.corr_procedure_action', kind=corr_kind, item_id=item.id) }}" class="border rounded-3 p-3 mb-3 no-print" id="corrActionForm">
+      <div class="row g-3">
+        <div class="col-lg-4">
+          <label class="form-label">الإجراء</label>
+          <select class="form-select" name="action" id="corrAction" required>
+            <option value="">اختر الإجراء…</option>
+            {% for value, label in corr_action_options %}
+              {% if corr_can_finalize or value not in ['APPROVE', 'FINAL_REPLY', 'CLOSE', 'ARCHIVE'] %}
+                <option value="{{ value }}">{{ label }}</option>
+              {% endif %}
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-4 corr-target-field d-none">
+          <label class="form-label">التحويل إلى</label>
+          <select class="form-select" name="target" data-searchable="1">
+            <option value="">اختر موظفاً أو جهة تنظيمية…</option>
+            {% for opt in corr_competence_options %}<option value="{{ opt.value }}">{{ opt.label }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-4 corr-target-field d-none">
+          <label class="form-label">طريقة التحويل</label>
+          <select class="form-select" name="route_mode">
+            <option value="{{ item.route_mode or 'DIRECT' }}">الإبقاء على المسار الحالي</option>
+            <option value="MAIN_ADMIN">الإدارة العامة للمنظمات</option>
+            <option value="SPECIALIZED">الدوائر التخصصية</option>
+            <option value="DIRECT">تحويل مباشر حسب الهيكل</option>
+          </select>
+        </div>
+        <div class="col-12">
+          <label class="form-label">الرد أو الملاحظة</label>
+          <textarea class="form-control" name="note" rows="3" placeholder="اكتب الرد، الملاحظة الداخلية، سبب الإعادة، أو المعلومات المطلوبة…"></textarea>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">مرفقات جديدة</label>
+          <input class="form-control" type="file" name="files" multiple>
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-check2-circle"></i> تنفيذ الإجراء</button>
+        </div>
+      </div>
+    </form>
+  {% endif %}
+
+  <h6 class="mb-3"><i class="bi bi-clock-history"></i> سجل حركة البريد</h6>
+  {% if corr_movements %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>التاريخ</th><th>المستخدم</th><th>الإجراء</th><th>الحالة</th><th>الجهة</th><th>التفاصيل</th><th>مرفقات</th></tr></thead>
+        <tbody>
+          {% for movement in corr_movements %}
+            <tr>
+              <td class="text-nowrap">{{ movement.created_at.strftime('%Y-%m-%d %H:%M') if movement.created_at else '-' }}</td>
+              <td>{{ movement.actor.full_name if movement.actor and movement.actor.full_name else (movement.actor.email if movement.actor else '-') }}</td>
+              <td>{{ corr_action_labels.get(movement.action, movement.action) }}</td>
+              <td>
+                {% if movement.from_status and movement.from_status != movement.to_status %}
+                  {{ corr_status_labels.get(movement.from_status, movement.from_status) }} ← {{ corr_status_labels.get(movement.to_status, movement.to_status) }}
+                {% else %}{{ corr_status_labels.get(movement.to_status, movement.to_status or '-') }}{% endif %}
+              </td>
+              <td>{{ movement.target_label or '-' }}</td>
+              <td style="min-width: 220px">{{ movement.note or '-' }}</td>
+              <td>{{ movement.attachments|length }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد حركات مسجلة بعد.</div>
+  {% endif %}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const action = document.getElementById('corrAction');
+  if (!action) return;
+  const targetFields = document.querySelectorAll('.corr-target-field');
+  const refresh = function () {
+    const visible = action.value === 'FORWARD' || action.value === 'SUBMIT_APPROVAL';
+    targetFields.forEach(function (field) { field.classList.toggle('d-none', !visible); });
+  };
+  action.addEventListener('change', refresh);
+  refresh();
+});
+</script>

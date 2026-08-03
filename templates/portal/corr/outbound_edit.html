@@ -79,6 +79,8 @@
             <div class="form-text">اكتب في مربع البحث أعلى القائمة للبحث بين الموظفين والوحدات التنظيمية.</div>
           </div>
 
+          {% include 'portal/corr/_procedure_fields.html' %}
+
           <div class="col-12">
             <label class="form-label">الموضوع <span class="text-danger">*</span></label>
             <input class="form-control" name="subject" required value="{{ request.form.get('subject') or item.subject }}">
