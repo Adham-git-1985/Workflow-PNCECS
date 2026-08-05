@@ -1,6 +1,29 @@
 import unittest
 
+from assistant.knowledge import _correspondence_matches, assistant_access_profile
 from assistant.service import build_local_reply, normalize_text
+
+
+class _FakeUser:
+    def __init__(self, role):
+        self.role = role
+
+    def has_role(self, role):
+        mine = (self.role or "").upper().replace("-", "_")
+        wanted = (role or "").upper().replace("-", "_")
+        if mine in {"SUPER_ADMIN", "SUPERADMIN"}:
+            return wanted in {"SUPER_ADMIN", "SUPERADMIN", "ADMIN"}
+        return mine == wanted
+
+
+class _FakeCorrespondence:
+    def __init__(self, item_id, subject):
+        self.id = item_id
+        self.subject = subject
+        self.ref_no = None
+        self.sender = None
+        self.recipient = None
+        self.competence_label = None
 
 
 class AssistantServiceTests(unittest.TestCase):
@@ -32,6 +55,28 @@ class AssistantServiceTests(unittest.TestCase):
             context={"title": "مهامي - مسار"},
         )
         self.assertIn("مهامي - مسار", result["reply"])
+
+    def test_local_reply_prefers_permission_scoped_knowledge(self):
+        result = build_local_reply(
+            "ما هي صلاحياتي؟",
+            knowledge={
+                "reply": "حسابك ونطاق عارف\nالدور: موظف.",
+                "access_level": "employee",
+                "access_label": "نطاق المستخدم وصلاحياته",
+            },
+        )
+        self.assertIn("نطاق عارف", result["reply"])
+        self.assertEqual(result["access_level"], "employee")
+
+    def test_aref_never_elevates_admin_scope(self):
+        self.assertEqual(assistant_access_profile(_FakeUser("ADMIN"))["level"], "admin")
+        self.assertEqual(assistant_access_profile(_FakeUser("SUPER_ADMIN"))["level"], "super_admin")
+        self.assertEqual(assistant_access_profile(_FakeUser("EMPLOYEE"))["level"], "employee")
+
+    def test_exact_correspondence_id_does_not_match_other_records(self):
+        item = _FakeCorrespondence(8, "موضوع ظاهر")
+        self.assertFalse(_correspondence_matches(item, [], 9))
+        self.assertTrue(_correspondence_matches(item, [], 8))
 
 
 if __name__ == "__main__":

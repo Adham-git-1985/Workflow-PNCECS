@@ -68,7 +68,7 @@ def chat():
 
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
-        return jsonify({"error": "invalid_json", "message": "تعذر قراءة رسالة المساعد."}), 400
+        return jsonify({"error": "invalid_json", "message": "تعذر قراءة رسالة عارف."}), 400
 
     message = str(payload.get("message") or "").strip()
     max_chars = int(current_app.config.get("ASSISTANT_MAX_MESSAGE_CHARS", 1200))
@@ -97,12 +97,18 @@ def chat():
             history=_clean_history(payload.get("history")),
             context=_clean_context(payload.get("context")),
         )
+        current_app.logger.info(
+            "Aref answered user_id=%s access=%s intents=%s",
+            current_user.id,
+            result.get("access_level", "employee"),
+            ",".join(result.get("intents") or []) or "guidance",
+        )
     except Exception:
         current_app.logger.exception("Assistant request failed for user_id=%s", current_user.id)
         return jsonify(
             {
                 "error": "assistant_failed",
-                "message": "تعذر تشغيل المساعد الآن. جرّب مرة أخرى بعد قليل.",
+                "message": "تعذر تشغيل عارف الآن. جرّب مرة أخرى بعد قليل.",
             }
         ), 500
 

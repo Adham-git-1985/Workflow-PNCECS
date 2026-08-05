@@ -1,4 +1,4 @@
-"""Permission-aware help assistant for Masar and the administrative portal."""
+"""Permission-aware service for ``اسأل عارف``."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 
 from flask import current_app, url_for
 
+from .knowledge import collect_knowledge
 from utils import system_search
 
 
@@ -16,10 +17,10 @@ _AR_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 _SPACE = re.compile(r"\s+")
 
 _SUGGESTIONS = (
-    "كيف أنشئ طلبًا جديدًا؟",
-    "أين أجد مهامي؟",
-    "كيف أرفع ملفًا إلى الأرشيف؟",
-    "أريد دليل الإجازات",
+    "ما هي صلاحياتي؟",
+    "ما الطلبات التي تخصني؟",
+    "ما الإشعارات غير المقروءة؟",
+    "ابحث عن وارد أو صادر",
 )
 
 _NAVIGATION_INTENTS = (
@@ -121,6 +122,71 @@ _SENSITIVE_ACTION_PHRASES = (
     "ارفع صلاحيتي",
 )
 
+_HOW_TO_GUIDES = (
+    {
+        "phrases": ("كيف انشئ طلب", "كيف اقدم طلب", "خطوات انشاء طلب", "طلب جديد"),
+        "reply": (
+            "لإنشاء طلب جديد:\n"
+            "1) افتح «مسار» ثم «طلب جديد».\n"
+            "2) اختر نوع الطلب والمسار المناسب من المسارات المنشأة في النظام.\n"
+            "3) اكتب العنوان والوصف وأرفق الملفات المطلوبة.\n"
+            "4) راجع البيانات ثم أنشئ الطلب؛ بعدها تابعه من «طلباتي».\n"
+            "إذا لم يظهر لك نوع طلب أو مسار، فهذا يعني أنه غير متاح لصلاحيتك أو لم تتم تهيئته بعد."
+        ),
+    },
+    {
+        "phrases": ("كيف اعالج مهمه", "كيف اعتمد طلب", "كيف اوافق على طلب", "اين اجد مهامي"),
+        "reply": (
+            "لمعالجة مهمة:\n"
+            "1) افتح «مهامي / صندوق الوارد».\n"
+            "2) افتح المعاملة واقرأ التفاصيل والمرفقات وسجل الإجراءات.\n"
+            "3) إذا كانت الخطوة مسندة إليك ستظهر أزرار الإجراء المسموح بها.\n"
+            "4) اكتب الملاحظة ثم نفّذ القرار بنفسك. عارف لا يعتمد أو يرفض نيابةً عنك."
+        ),
+    },
+    {
+        "phrases": ("كيف اطلب صلاحيه", "طلب صلاحيه", "صلاحيات جديده"),
+        "reply": (
+            "لطلب صلاحية:\n"
+            "1) افتح «طلبات الصلاحيات».\n"
+            "2) اختر الصلاحية المطلوبة واكتب سبب الحاجة إليها.\n"
+            "3) أرسل الطلب وتابع حالته من الصفحة نفسها.\n"
+            "تفعيل الصلاحية يتم بعد اعتماد الجهة المخولة وفق التسلسل الإداري."
+        ),
+    },
+    {
+        "phrases": ("كيف اسجل وارد", "كيف اسجل صادر", "كيف ابدا مسار للمراسله", "خطوات المراسلات"),
+        "reply": (
+            "لتسجيل مراسلة وتشغيل مسارها:\n"
+            "1) افتح البوابة الإدارية ثم «الصادر والوارد» إذا كانت صلاحيتك تسمح.\n"
+            "2) اختر واردًا أو صادرًا وأدخل المرجع والجهة والموضوع والتاريخ.\n"
+            "3) حدد الأولوية ودرجة السرية؛ عند اختيار «سري» حدد المستخدمين المخولين.\n"
+            "4) اختر مسارًا من قوالب المسارات المنشأة في نظام مسار ثم ابدأ المعاملة.\n"
+            "تبقى السرية وحجب المستخدمين قائمين بعد انتقال المراسلة إلى المسار والأرشيف."
+        ),
+    },
+    {
+        "phrases": ("كيف ارفع ملف", "رفع ملف للارشيف", "خطوات الارشيف"),
+        "reply": (
+            "لرفع ملف إلى الأرشيف:\n"
+            "1) افتح «الأرشيف» ثم «رفع ملف».\n"
+            "2) اختر الملف وأدخل عنوانه ووصفه وتصنيفه.\n"
+            "3) حدد مستوى الوصول والمشاركة ثم احفظ.\n"
+            "لن يظهر الملف إلا لمن تسمح له ملكية الملف وصلاحيات الأرشيف والسرية المرتبطة به."
+        ),
+    },
+    {
+        "phrases": ("كيف اقدم اجازه", "طلب اجازه", "خطوات الاجازه"),
+        "reply": (
+            "لتقديم طلب إجازة:\n"
+            "1) افتح البوابة الإدارية ثم الخدمة الذاتية للموظف.\n"
+            "2) اختر الإجازات ثم أنشئ طلبًا وحدد النوع والفترة.\n"
+            "3) أرفق المستندات المطلوبة وأرسل الطلب.\n"
+            "4) تابع الموافقات والحالة من طلباتك وإشعاراتك."
+        ),
+    },
+)
+
 
 def normalize_text(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).strip()
@@ -143,6 +209,14 @@ def _is_page_question(message: str) -> bool:
         phrase in normalized
         for phrase in ("هذه الصفحه", "هذي الصفحه", "الصفحه الحاليه", "اشرح الصفحه", "ماذا افعل هنا")
     )
+
+
+def _how_to_reply(message: str) -> str | None:
+    normalized = normalize_text(message)
+    for guide in _HOW_TO_GUIDES:
+        if any(normalize_text(phrase) in normalized for phrase in guide["phrases"]):
+            return str(guide["reply"])
+    return None
 
 
 def _direct_navigation_results(message: str) -> list[dict[str, str]]:
@@ -210,21 +284,31 @@ def build_local_reply(
     message: str,
     results: list[dict[str, str]] | None = None,
     context: dict[str, Any] | None = None,
+    knowledge: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build a useful Arabic answer without sending data to an external service."""
+    """Build an Arabic answer without sending data to an external service."""
     results = results or []
     context = context or {}
+    knowledge = knowledge or {}
     normalized = normalize_text(message)
+    knowledge_reply = str(knowledge.get("reply") or "").strip()
+    how_to_reply = _how_to_reply(message)
+    if len(knowledge_reply) > 4200:
+        knowledge_reply = knowledge_reply[:4199].rstrip() + "…"
 
     if any(normalize_text(phrase) in normalized for phrase in _SENSITIVE_ACTION_PHRASES):
         reply = (
             "حفاظًا على أمان حسابك والصلاحيات، لا أستطيع تنفيذ الموافقات أو الحذف "
             "أو كشف كلمات المرور نيابةً عنك. أستطيع إرشادك إلى الشاشة الصحيحة لتنفّذ الإجراء بنفسك."
         )
+    elif knowledge_reply:
+        reply = knowledge_reply
+    elif how_to_reply:
+        reply = how_to_reply
     elif any(word in normalized for word in ("مرحبا", "اهلا", "السلام عليكم", "صباح الخير", "مساء الخير")):
         reply = (
-            "أهلًا بك! أنا مساعد مسار. أساعدك في الوصول إلى الشاشات والأدلة وفهم خطوات العمل. "
-            "اكتب ما تريد إنجازه، مثل: كيف أنشئ طلبًا جديدًا؟"
+            "أهلًا بك! أنا عارف. أقرأ بيانات النظام المسموح بها لحسابك، وأساعدك في فهمها "
+            "والوصول إلى الشاشة والخطوة الصحيحة دون تجاوز صلاحياتك أو سرية المعاملات."
         )
     elif _is_page_question(message):
         title = _compact(context.get("title"), 100) or "الصفحة الحالية"
@@ -251,7 +335,24 @@ def build_local_reply(
         "mode": "local",
         "links": results,
         "suggestions": list(_SUGGESTIONS),
+        "access_level": knowledge.get("access_level", "employee"),
+        "access_label": knowledge.get("access_label", "نطاق المستخدم وصلاحياته"),
     }
+
+
+def _merge_links(*groups: list[dict[str, str]]) -> list[dict[str, str]]:
+    merged: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for group in groups:
+        for item in group or []:
+            href = str(item.get("href") or "").strip()
+            if not href or href in seen:
+                continue
+            seen.add(href)
+            merged.append(item)
+            if len(merged) >= 6:
+                return merged
+    return merged
 
 
 def _try_external_ai(
@@ -259,6 +360,7 @@ def _try_external_ai(
     history: list[dict[str, str]],
     context: dict[str, Any],
     results: list[dict[str, str]],
+    knowledge: dict[str, Any],
 ) -> str | None:
     enabled = str(
         current_app.config.get("ASSISTANT_AI_ENABLED")
@@ -278,12 +380,21 @@ def _try_external_ai(
         ) or "- لا توجد وجهات مطابقة مؤكدة."
         page_title = _compact(context.get("title"), 120) or "غير محددة"
         page_path = _compact(context.get("path"), 180) or "/"
+        scoped_facts = "\n".join(
+            f"- {_compact(item, 300)}"
+            for item in (knowledge.get("facts") or [])[:30]
+        ) or "- لم تُسترجع بيانات مباشرة لهذا السؤال."
+        access_label = _compact(knowledge.get("access_label"), 100) or "نطاق المستخدم وصلاحياته"
         instructions = (
-            "أنت مساعد إرشادي عربي داخل نظام مسار والبوابة الإدارية. "
-            "أجب باختصار ووضوح اعتمادًا فقط على وجهات النظام المسموح بها أدناه. "
+            "أنت «عارف»، مساعد عربي داخل نظام مسار والبوابة الإدارية. "
+            "أجب باختصار ووضوح اعتمادًا فقط على البيانات والوجهات المسموح بها أدناه. "
+            "البيانات مسترجعة مسبقًا بعد تطبيق صلاحيات المستخدم والتسلسل الإداري وحواجز السرية؛ "
+            "لا تستنتج أو تكشف أي معلومة غير موجودة فيها، ولا تدّعِ أن غياب المعلومة يعني عدم وجودها. "
             "لا تدّعِ تنفيذ أي إجراء، ولا تطلب كلمات مرور أو رموزًا أو بيانات شخصية، "
-            "ولا تخمّن صلاحيات غير ظاهرة. عند الشك وجّه المستخدم إلى مركز الأدلة.\n\n"
+            "ولا تخمّن صلاحيات غير ظاهرة. عند الشك اشرح القيد ووجّه المستخدم إلى الشاشة المناسبة.\n\n"
+            f"نطاق عارف الحالي: {access_label}\n"
             f"الصفحة الحالية: {page_title} ({page_path})\n"
+            f"البيانات المسموح بها لهذا السؤال:\n{scoped_facts}\n"
             f"الوجهات المسموح بها:\n{allowed_destinations}"
         )
         input_messages: list[dict[str, str]] = []
@@ -303,7 +414,7 @@ def _try_external_ai(
             model=str(model),
             instructions=instructions,
             input=input_messages,
-            max_output_tokens=450,
+            max_output_tokens=650,
         )
         reply = _compact(getattr(response, "output_text", ""), 2400)
         return reply or None
@@ -320,10 +431,13 @@ def answer(
 ) -> dict[str, Any]:
     history = history or []
     context = context or {}
-    results = navigation_results(user, message, context)
-    local = build_local_reply(message, results, context)
-    ai_reply = _try_external_ai(message, history, context, results)
+    knowledge = collect_knowledge(user, message, context)
+    navigation = navigation_results(user, message, context)
+    results = _merge_links(knowledge.get("links") or [], navigation)
+    local = build_local_reply(message, results, context, knowledge)
+    ai_reply = _try_external_ai(message, history, context, results, knowledge)
     if ai_reply:
         local["reply"] = ai_reply
         local["mode"] = "ai"
+    local["intents"] = knowledge.get("intents") or []
     return local

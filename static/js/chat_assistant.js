@@ -16,12 +16,12 @@
   const modeLabel = root.querySelector("[data-assistant-mode]");
   const chatUrl = root.dataset.chatUrl;
   const csrfToken = root.dataset.csrfToken;
-  const storageKey = `masar-assistant:v1:${root.dataset.userId || "user"}`;
+  const storageKey = `aref-assistant:v2:${root.dataset.userId || "user"}`;
   const defaultSuggestions = [
-    "كيف أنشئ طلبًا جديدًا؟",
-    "أين أجد مهامي؟",
-    "كيف أرفع ملفًا إلى الأرشيف؟",
-    "أريد دليل الإجازات",
+    "ما هي صلاحياتي؟",
+    "ما الطلبات التي تخصني؟",
+    "ما الإشعارات غير المقروءة؟",
+    "ابحث عن وارد أو صادر",
   ];
   let history = loadHistory();
   let busy = false;
@@ -107,7 +107,7 @@
     if (!history.length) {
       appendMessage(
         "assistant",
-        "أهلًا بك! أنا مساعد مسار. أخبرني بما تريد إنجازه وسأرشدك إلى الشاشة أو الدليل المناسب."
+        "أهلًا بك! أنا عارف. أسألني عن بياناتك أو معاملاتك أو صلاحياتك، أو أخبرني بما تريد إنجازه وسأرشدك ضمن نطاق حسابك."
       );
     } else {
       history.forEach((item) => appendMessage(item.role, item.content));
@@ -145,7 +145,7 @@
     input.value = "";
     input.style.height = "auto";
     setBusy(true);
-    const typing = appendMessage("assistant", "جارٍ البحث في النظام…", [], "masar-assistant__message--typing");
+    const typing = appendMessage("assistant", "يبحث عارف في المعلومات المسموح بها…", [], "masar-assistant__message--typing");
 
     try {
       const response = await fetch(chatUrl, {
@@ -171,20 +171,21 @@
         throw new Error("انتهت الجلسة أو تعذر قراءة رد الخادم. حدّث الصفحة وحاول مجددًا.");
       }
       const data = await response.json();
-      if (!response.ok) throw new Error(data.message || "تعذر تشغيل المساعد الآن.");
+      if (!response.ok) throw new Error(data.message || "تعذر تشغيل عارف الآن.");
 
       typing.remove();
-      const reply = String(data.reply || "لم يصل رد من المساعد.");
+      const reply = String(data.reply || "لم يصل رد من عارف.");
       appendMessage("assistant", reply, data.links || []);
       history.push({ role: "assistant", content: reply });
       saveHistory();
       renderSuggestions(data.suggestions || defaultSuggestions);
-      modeLabel.textContent = data.mode === "ai" ? "مساعد ذكي" : "مساعد إرشادي محلي";
+      const accessLabel = String(data.access_label || "نطاق المستخدم وصلاحياته");
+      modeLabel.textContent = data.mode === "ai" ? `عارف الذكي — ${accessLabel}` : `عارف — ${accessLabel}`;
     } catch (error) {
       typing.remove();
       appendMessage(
         "assistant",
-        error && error.message ? error.message : "تعذر الاتصال بالمساعد. حاول مجددًا.",
+        error && error.message ? error.message : "تعذر الاتصال بعارف. حاول مجددًا.",
         [],
         "masar-assistant__message--error"
       );
@@ -199,7 +200,7 @@
   clearButton.addEventListener("click", () => {
     history = [];
     saveHistory();
-    modeLabel.textContent = "مساعد إرشادي محلي";
+    modeLabel.textContent = "عارف — معلومات حسب صلاحياتك";
     renderConversation();
     input.focus();
   });

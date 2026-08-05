@@ -11,28 +11,28 @@
           aria-expanded="false"
           aria-controls="masarAssistantPanel">
     <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
-    <span>المساعد</span>
+    <span>اسأل عارف</span>
   </button>
 
   <section id="masarAssistantPanel"
            class="masar-assistant__panel"
            role="dialog"
-           aria-label="مساعد مسار"
+           aria-label="اسأل عارف"
            aria-modal="false"
            hidden>
     <header class="masar-assistant__header">
       <div class="d-flex align-items-center gap-2">
         <span class="masar-assistant__avatar" aria-hidden="true"><i class="bi bi-stars"></i></span>
         <div>
-          <strong class="d-block">مساعد مسار</strong>
-          <small data-assistant-mode>مساعد إرشادي محلي</small>
+          <strong class="d-block">اسأل عارف</strong>
+          <small data-assistant-mode>معلومات حسب صلاحياتك</small>
         </div>
       </div>
       <div class="d-flex align-items-center gap-1">
         <button type="button" class="masar-assistant__icon-btn" data-assistant-clear title="مسح المحادثة" aria-label="مسح المحادثة">
           <i class="bi bi-trash3"></i>
         </button>
-        <button type="button" class="masar-assistant__icon-btn" data-assistant-close title="إغلاق" aria-label="إغلاق المساعد">
+        <button type="button" class="masar-assistant__icon-btn" data-assistant-close title="إغلاق" aria-label="إغلاق اسأل عارف">
           <i class="bi bi-x-lg"></i>
         </button>
       </div>
@@ -42,20 +42,20 @@
     <div class="masar-assistant__suggestions" data-assistant-suggestions></div>
 
     <form class="masar-assistant__form" data-assistant-form autocomplete="off">
-      <label class="visually-hidden" for="masarAssistantInput">اكتب سؤالك</label>
+      <label class="visually-hidden" for="masarAssistantInput">اسأل عارف</label>
       <textarea id="masarAssistantInput"
                 class="form-control"
                 data-assistant-input
                 rows="1"
                 maxlength="1200"
-                placeholder="اكتب ما تريد إنجازه..."
+                placeholder="اسأل عارف عن بياناتك أو ما تريد إنجازه..."
                 required></textarea>
       <button type="submit" class="masar-assistant__send" data-assistant-send aria-label="إرسال">
         <i class="bi bi-send-fill" aria-hidden="true"></i>
       </button>
     </form>
     <p class="masar-assistant__privacy mb-0">
-      لا ترسل كلمات مرور أو بيانات حساسة. المحادثة محفوظة في جلسة هذا المتصفح فقط.
+      يعرض عارف فقط المعلومات التي يسمح بها حسابك والتسلسل الإداري والسرية. لا ترسل كلمات مرور.
     </p>
   </section>
 </div>
