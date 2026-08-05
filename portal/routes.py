@@ -101,6 +101,7 @@ from models import (
     AttendanceEvent,
     InboundMail,
     OutboundMail,
+    CorrConfidentialAccess,
     CorrMovement,
     CorrAttachment,
     CorrCategory,
@@ -185,7 +186,10 @@ from models import (
     InvRoomRequester,
     InvWarehousePermission,
 )
-from workflow.engine import start_workflow_for_request
+from workflow.engine import (
+    resolve_template_participant_user_ids,
+    start_workflow_for_request,
+)
 from services.correspondence_procedure import (
     ACTION_LABELS as CORR_ACTION_LABELS,
     FINALIZE_ACTIONS as CORR_FINALIZE_ACTIONS,
@@ -195,6 +199,10 @@ from services.correspondence_procedure import (
     due_state as corr_due_state,
     next_status as corr_next_status,
     queue_matches as corr_queue_matches,
+    can_access_correspondence as corr_can_access_correspondence,
+)
+from services.workflow_confidentiality import (
+    filter_confidential_correspondence_user_ids,
 )
 
 # -------------------------
@@ -282,6 +290,8 @@ CORR_CREATE = "CORR_CREATE"
 CORR_UPDATE = "CORR_UPDATE"
 CORR_DELETE = "CORR_DELETE"
 CORR_EXPORT = "CORR_EXPORT"
+CORR_CONFIDENTIAL_READ = "CORR_CONFIDENTIAL_READ"
+CORR_CONFIDENTIAL_MANAGE = "CORR_CONFIDENTIAL_MANAGE"
 CORR_LOOKUPS_MANAGE = "CORR_LOOKUPS_MANAGE"
 CORR_MANAGE = "CORR_MANAGE"  # legacy-ish (kept)
 
@@ -1032,6 +1042,7 @@ def _corr_archive_description(kind: str, label: str, item, att: CorrAttachment) 
         f"رقم المعاملة: {_corr_item_ref(item) or '-'}",
         f"تاريخ المعاملة: {_corr_item_date(kind, item) or '-'}",
         f"التصنيف: {getattr(item, 'category', None) or '-'}",
+        f"المسار المختار: {getattr(getattr(item, 'workflow_template', None), 'name', None) or '-'}",
         f"{party_title}: {party_value or '-'}",
         f"جهة الاختصاص: {getattr(item, 'competence_label', None) or '-'}",
         f"الموضوع: {getattr(item, 'subject', None) or '-'}",
@@ -1273,7 +1284,10 @@ def _ensure_corr_card_archived(kind: str, label: str, item) -> ArchivedFile | No
             getattr(item, "competence_label", None) or "",
             {
                 "status": getattr(item, "status", None),
-                "route_mode": getattr(item, "route_mode", None),
+                "workflow_template_name": (
+                    getattr(getattr(item, "workflow_template", None), "name", None)
+                    or ""
+                ),
                 "target_label": getattr(item, "current_target_label", None) or getattr(item, "competence_label", None),
                 "priority": getattr(item, "priority", None),
                 "confidentiality": getattr(item, "confidentiality", None),
@@ -1314,7 +1328,8 @@ def _ensure_corr_card_archived(kind: str, label: str, item) -> ArchivedFile | No
 
 
 def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], template_id: str | None):
-    template_id = (template_id or "").strip()
+    template_id = (template_id or getattr(item, "workflow_template_id", None) or "")
+    template_id = str(template_id).strip()
     templates = _corr_workflow_templates()
     template = None
     if template_id.isdigit():
@@ -1325,6 +1340,37 @@ def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], tem
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return None
+
+    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET":
+        participant_ids = resolve_template_participant_user_ids(template)
+        allowed_participant_ids = filter_confidential_correspondence_user_ids(
+            item,
+            participant_ids,
+        )
+        unauthorized_ids = participant_ids.difference(allowed_participant_ids)
+        if unauthorized_ids:
+            unauthorized_users = (
+                User.query
+                .filter(User.id.in_(unauthorized_ids))
+                .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+                .all()
+            )
+            labels = [
+                (user.full_name or user.email or f"مستخدم #{user.id}")
+                for user in unauthorized_users[:8]
+            ]
+            remaining = max(0, len(unauthorized_users) - len(labels))
+            suffix = f"، و{remaining} آخرين" if remaining else ""
+            flash(
+                "لم يبدأ المسار لأن الصادر/الوارد سري ويضم القالب مشاركين "
+                "غير مخولين: " + "، ".join(labels) + suffix + ". "
+                "أضفهم أولًا من قسم إدارة السرية ثم أعد المحاولة.",
+                "danger",
+            )
+            return None
+
+    item.workflow_template_id = template.id
+    item.route_mode = "WORKFLOW"
 
     label = "وارد" if kind == "IN" else "صادر"
     ref = _corr_item_ref(item) or getattr(item, "id", "")
@@ -1348,6 +1394,9 @@ def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], tem
         status="DRAFT",
         title=title or f"مسار {label} رقم {ref}",
         description=_corr_workflow_description(kind, label, item, attachments),
+        confidentiality=(getattr(item, "confidentiality", None) or "NORMAL").upper(),
+        source_corr_kind=kind,
+        source_corr_id=getattr(item, "id", None),
     )
     db.session.add(req)
     db.session.flush()
@@ -2812,8 +2861,14 @@ def index():
     if flags.get('can_corr'):
         try:
             since = datetime.utcnow() - timedelta(days=30)
-            stats['corr_in_30'] = _safe_count(InboundMail.query.filter(InboundMail.created_at >= since))
-            stats['corr_out_30'] = _safe_count(OutboundMail.query.filter(OutboundMail.created_at >= since))
+            stats['corr_in_30'] = _safe_count(
+                _corr_visible_query(InboundMail.query, InboundMail, kind="IN")
+                .filter(InboundMail.created_at >= since)
+            )
+            stats['corr_out_30'] = _safe_count(
+                _corr_visible_query(OutboundMail.query, OutboundMail, kind="OUT")
+                .filter(OutboundMail.created_at >= since)
+            )
         except Exception:
             pass
 
@@ -17539,6 +17594,7 @@ def _ensure_corr_procedure_schema():
                 ("mail_scope", "ALTER TABLE corr_inbound ADD COLUMN mail_scope VARCHAR(20) NOT NULL DEFAULT 'EXTERNAL'"),
                 ("priority", "ALTER TABLE corr_inbound ADD COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
                 ("confidentiality", "ALTER TABLE corr_inbound ADD COLUMN confidentiality VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
+                ("workflow_template_id", "ALTER TABLE corr_inbound ADD COLUMN workflow_template_id INTEGER"),
                 ("due_date", "ALTER TABLE corr_inbound ADD COLUMN due_date VARCHAR(10)"),
                 ("current_target_kind", "ALTER TABLE corr_inbound ADD COLUMN current_target_kind VARCHAR(30)"),
                 ("current_target_id", "ALTER TABLE corr_inbound ADD COLUMN current_target_id INTEGER"),
@@ -17554,6 +17610,7 @@ def _ensure_corr_procedure_schema():
                 ("mail_scope", "ALTER TABLE corr_outbound ADD COLUMN mail_scope VARCHAR(20) NOT NULL DEFAULT 'EXTERNAL'"),
                 ("priority", "ALTER TABLE corr_outbound ADD COLUMN priority VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
                 ("confidentiality", "ALTER TABLE corr_outbound ADD COLUMN confidentiality VARCHAR(20) NOT NULL DEFAULT 'NORMAL'"),
+                ("workflow_template_id", "ALTER TABLE corr_outbound ADD COLUMN workflow_template_id INTEGER"),
                 ("due_date", "ALTER TABLE corr_outbound ADD COLUMN due_date VARCHAR(10)"),
                 ("current_target_kind", "ALTER TABLE corr_outbound ADD COLUMN current_target_kind VARCHAR(30)"),
                 ("current_target_id", "ALTER TABLE corr_outbound ADD COLUMN current_target_id INTEGER"),
@@ -17786,7 +17843,6 @@ def _corr_competence_selected_value(item) -> str:
     return ""
 
 
-_CORR_ROUTE_MODES = {"MAIN_ADMIN", "SPECIALIZED", "DIRECT"}
 _CORR_MAIL_SCOPES = {"EXTERNAL", "INTERNAL"}
 _CORR_PRIORITIES = {"NORMAL", "HIGH", "URGENT"}
 _CORR_CONFIDENTIALITIES = {"NORMAL", "SECRET"}
@@ -17806,17 +17862,215 @@ _CORR_USER_ACTIONS = (
 )
 
 
+def _corr_confidential_user_options() -> list[User]:
+    return (
+        User.query
+        .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+        .all()
+    )
+
+
+def _corr_access_parent_filter(item):
+    if isinstance(item, InboundMail):
+        return CorrConfidentialAccess.inbound_id == item.id
+    return CorrConfidentialAccess.outbound_id == item.id
+
+
+def _corr_authorized_user_ids(item) -> set[int]:
+    if not getattr(item, "id", None):
+        return set()
+    return {
+        int(row[0])
+        for row in (
+            db.session.query(CorrConfidentialAccess.user_id)
+            .filter(_corr_access_parent_filter(item))
+            .all()
+        )
+        if row[0]
+    }
+
+
+def _corr_authorized_users(item) -> list[User]:
+    user_ids = _corr_authorized_user_ids(item)
+    if not user_ids:
+        return []
+    return (
+        User.query
+        .filter(User.id.in_(user_ids))
+        .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+        .all()
+    )
+
+
+def _corr_can_manage_confidential_access(item=None) -> bool:
+    try:
+        if current_user.has_perm(CORR_CONFIDENTIAL_MANAGE):
+            return True
+    except Exception:
+        pass
+    if item is None:
+        return True
+    return bool(
+        getattr(item, "created_by_id", None)
+        and int(item.created_by_id) == int(current_user.id)
+    )
+
+
+def _corr_has_regular_read() -> bool:
+    try:
+        return bool(current_user.has_perm(CORR_READ))
+    except Exception:
+        return False
+
+
+def _corr_has_confidential_read() -> bool:
+    try:
+        return bool(current_user.has_perm(CORR_CONFIDENTIAL_READ))
+    except Exception:
+        return False
+
+
+def _corr_has_confidential_manage() -> bool:
+    try:
+        return bool(current_user.has_perm(CORR_CONFIDENTIAL_MANAGE))
+    except Exception:
+        return False
+
+
+def _corr_can_access(item) -> bool:
+    return corr_can_access_correspondence(
+        confidentiality=getattr(item, "confidentiality", None),
+        user_id=getattr(current_user, "id", None),
+        has_regular_read=_corr_has_regular_read(),
+        has_confidential_read=_corr_has_confidential_read(),
+        has_confidential_manage=_corr_has_confidential_manage(),
+        created_by_user_id=getattr(item, "created_by_id", None),
+        current_assignee_user_id=getattr(item, "current_assignee_id", None),
+        authorized_user_ids=_corr_authorized_user_ids(item),
+    )
+
+
+def _corr_require_access(item) -> None:
+    # Use 404 for denied secret records so their existence and identifiers are
+    # not disclosed to unauthorized users.
+    if not _corr_can_access(item):
+        abort(404 if (getattr(item, "confidentiality", "") or "").upper() == "SECRET" else 403)
+
+
+def _corr_visible_query(qry, model, *, kind: str):
+    if _corr_has_confidential_read() or _corr_has_confidential_manage():
+        return qry
+
+    user_id = int(current_user.id)
+    access_parent = (
+        CorrConfidentialAccess.inbound_id == model.id
+        if kind == "IN"
+        else CorrConfidentialAccess.outbound_id == model.id
+    )
+    return qry.filter(or_(
+        model.confidentiality != "SECRET",
+        model.created_by_id == user_id,
+        model.current_assignee_id == user_id,
+        exists().where(and_(
+            access_parent,
+            CorrConfidentialAccess.user_id == user_id,
+        )),
+    ))
+
+
+def _corr_parse_authorized_user_ids() -> set[int]:
+    selected: set[int] = set()
+    for raw in request.form.getlist("authorized_user_ids"):
+        value = (raw or "").strip()
+        if value.isdigit():
+            selected.add(int(value))
+    if not selected:
+        return set()
+    valid_ids = {
+        int(row[0])
+        for row in db.session.query(User.id).filter(User.id.in_(selected)).all()
+    }
+    valid_ids.discard(int(current_user.id))
+    return valid_ids
+
+
+def _corr_sync_confidential_access(item, user_ids: set[int]) -> set[int]:
+    db.session.query(CorrConfidentialAccess).filter(
+        _corr_access_parent_filter(item)
+    ).delete(synchronize_session=False)
+
+    # Keep already-started workflow requests on the same classification.  The
+    # workflow access guard reads the live correspondence ACL through this
+    # source link, so additions and removals take effect immediately.
+    if getattr(item, "id", None):
+        source_kind = "IN" if isinstance(item, InboundMail) else "OUT"
+        (
+            WorkflowRequest.query
+            .filter_by(source_corr_kind=source_kind, source_corr_id=item.id)
+            .update(
+                {"confidentiality": (
+                    getattr(item, "confidentiality", "NORMAL") or "NORMAL"
+                ).upper()},
+                synchronize_session=False,
+            )
+        )
+
+    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() != "SECRET":
+        return set()
+
+    for user_id in sorted(user_ids):
+        db.session.add(CorrConfidentialAccess(
+            inbound_id=item.id if isinstance(item, InboundMail) else None,
+            outbound_id=item.id if isinstance(item, OutboundMail) else None,
+            user_id=user_id,
+            granted_by_id=current_user.id,
+            created_at=datetime.utcnow(),
+        ))
+    return set(user_ids)
+
+
+def _corr_apply_confidentiality_form(item, *, is_new: bool = False) -> set[int]:
+    if not (is_new or _corr_can_manage_confidential_access(item)):
+        return _corr_authorized_user_ids(item)
+
+    confidentiality = (request.form.get("confidentiality") or "NORMAL").strip().upper()
+    item.confidentiality = (
+        confidentiality if confidentiality in _CORR_CONFIDENTIALITIES else "NORMAL"
+    )
+    selected = _corr_parse_authorized_user_ids() if item.confidentiality == "SECRET" else set()
+    return _corr_sync_confidential_access(item, selected)
+
+
+def _corr_notification_recipient_ids(item, candidate_ids: set[int]) -> set[int]:
+    recipients = {int(user_id) for user_id in candidate_ids if user_id}
+    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() != "SECRET":
+        return recipients
+    allowed = _corr_authorized_user_ids(item)
+    for user_id in (getattr(item, "created_by_id", None), getattr(item, "current_assignee_id", None)):
+        if user_id:
+            allowed.add(int(user_id))
+    return recipients.intersection(allowed)
+
+
+def _corr_notify_new_authorizations(item, before: set[int], after: set[int]) -> None:
+    new_user_ids = {int(user_id) for user_id in after.difference(before) if user_id}
+    new_user_ids.discard(int(current_user.id))
+    if not new_user_ids:
+        return
+    ref = getattr(item, "ref_no", None) or getattr(item, "id", None) or ""
+    _notify_users(
+        sorted(new_user_ids),
+        f"تم منحك صلاحية الاطلاع على مراسلة سرية رقم {ref}: {(item.subject or '')[:150]}",
+        level="CORR_CONFIDENTIAL_ACCESS",
+    )
+
+
 def _corr_apply_procedure_form(item, competence: dict | None, *, initialize_target: bool = False) -> None:
     """Apply validated procedure metadata from the create/edit form."""
     competence = competence or {}
-    route_mode = (request.form.get("route_mode") or getattr(item, "route_mode", None) or "DIRECT").strip().upper()
     mail_scope = (request.form.get("mail_scope") or getattr(item, "mail_scope", None) or "EXTERNAL").strip().upper()
     priority = (request.form.get("priority") or getattr(item, "priority", None) or "NORMAL").strip().upper()
-    confidentiality = (
-        request.form.get("confidentiality")
-        or getattr(item, "confidentiality", None)
-        or "NORMAL"
-    ).strip().upper()
+    template_id = (request.form.get("workflow_template_id") or "").strip()
     due_date = (request.form.get("due_date") or "").strip()
     if due_date:
         try:
@@ -17824,12 +18078,15 @@ def _corr_apply_procedure_form(item, competence: dict | None, *, initialize_targ
         except ValueError:
             due_date = ""
 
-    item.route_mode = route_mode if route_mode in _CORR_ROUTE_MODES else "DIRECT"
+    template = None
+    if template_id.isdigit():
+        template = WorkflowTemplate.query.filter_by(id=int(template_id), is_active=True).first()
+    item.workflow_template_id = template.id if template else None
+    # Keep the legacy field populated for old reports without exposing the
+    # previous hard-coded route choices in the user interface.
+    item.route_mode = "WORKFLOW" if template else "DIRECT"
     item.mail_scope = mail_scope if mail_scope in _CORR_MAIL_SCOPES else "EXTERNAL"
     item.priority = priority if priority in _CORR_PRIORITIES else "NORMAL"
-    item.confidentiality = (
-        confidentiality if confidentiality in _CORR_CONFIDENTIALITIES else "NORMAL"
-    )
     if (getattr(item, "due_date", None) or "") != due_date:
         item.deadline_notified_on = None
     item.due_date = due_date or None
@@ -17919,6 +18176,10 @@ def _corr_procedure_context(kind: str, item) -> dict:
             (action, CORR_ACTION_LABELS[action]) for action in _CORR_USER_ACTIONS
         ],
         "corr_competence_options": _corr_competence_options(),
+        "corr_authorized_users": _corr_authorized_users(item),
+        "corr_authorized_user_ids": _corr_authorized_user_ids(item),
+        "corr_confidential_user_options": _corr_confidential_user_options(),
+        "corr_can_manage_confidential_access": _corr_can_manage_confidential_access(item),
         "corr_can_act": _corr_can_act(item),
         "corr_can_finalize": _corr_can_finalize(),
         "corr_due_state": corr_due_state(getattr(item, "due_date", None)),
@@ -17955,7 +18216,8 @@ def _corr_dashboard_rows() -> list[dict]:
         ("IN", InboundMail, "received_date", "sender", forwarded_inbound),
         ("OUT", OutboundMail, "sent_date", "recipient", forwarded_outbound),
     ):
-        for item in model.query.order_by(model.created_at.desc(), model.id.desc()).limit(1500).all():
+        visible_query = _corr_visible_query(model.query, model, kind=kind)
+        for item in visible_query.order_by(model.created_at.desc(), model.id.desc()).limit(1500).all():
             target = _corr_target_for_item(item)
             target_key = (target.get("kind"), target.get("id"))
             if target_key not in target_user_cache:
@@ -18043,7 +18305,6 @@ def corr_work_dashboard():
 
 @portal_bp.route("/corr/<string:kind>/<int:item_id>/action", methods=["POST"])
 @login_required
-@_perm(CORR_READ)
 def corr_procedure_action(kind: str, item_id: int):
     _ensure_corr_competence_schema()
     normalized_kind = (kind or "").strip().upper()
@@ -18060,6 +18321,7 @@ def corr_procedure_action(kind: str, item_id: int):
     else:
         abort(404)
 
+    _corr_require_access(item)
     if not _corr_can_act(item):
         abort(403)
 
@@ -18094,8 +18356,6 @@ def corr_procedure_action(kind: str, item_id: int):
             item.current_target_label = target.get("label")
             item.current_assignee_id = target.get("id") if target.get("kind") == "USER" else None
             recipient_ids.update(_corr_competence_user_ids(target))
-        route_mode = (request.form.get("route_mode") or item.route_mode or "DIRECT").strip().upper()
-        item.route_mode = route_mode if route_mode in _CORR_ROUTE_MODES else "DIRECT"
     elif action == "RETURN":
         if item.created_by_id:
             target = {
@@ -18145,6 +18405,7 @@ def corr_procedure_action(kind: str, item_id: int):
             movement_id=movement.id,
         )
 
+    recipient_ids = _corr_notification_recipient_ids(item, recipient_ids)
     recipient_ids.discard(int(current_user.id))
     if recipient_ids:
         _notify_users(
@@ -18166,6 +18427,44 @@ def corr_procedure_action(kind: str, item_id: int):
     return redirect(url_for(redirect_endpoint, **redirect_values))
 
 
+@portal_bp.route("/corr/<string:kind>/<int:item_id>/confidential-access", methods=["POST"])
+@login_required
+def corr_update_confidential_access(kind: str, item_id: int):
+    _ensure_corr_competence_schema()
+    normalized_kind = (kind or "").strip().upper()
+    if normalized_kind in {"IN", "INBOUND"}:
+        item = InboundMail.query.get_or_404(item_id)
+        redirect_endpoint = "portal.inbound_view"
+        redirect_values = {"inbound_id": item.id}
+        target_type = "CORR_INBOUND"
+    elif normalized_kind in {"OUT", "OUTBOUND"}:
+        item = OutboundMail.query.get_or_404(item_id)
+        redirect_endpoint = "portal.outbound_view"
+        redirect_values = {"outbound_id": item.id}
+        target_type = "CORR_OUTBOUND"
+    else:
+        abort(404)
+
+    _corr_require_access(item)
+    if not _corr_can_manage_confidential_access(item):
+        abort(403)
+
+    before = _corr_authorized_user_ids(item)
+    after = _corr_apply_confidentiality_form(item)
+    _corr_notify_new_authorizations(item, before, after)
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action="CORR_CONFIDENTIAL_ACCESS_UPDATE",
+        note=f"confidentiality={item.confidentiality}; authorized_users={len(after)}",
+        target_type=target_type,
+        target_id=item.id,
+        created_at=datetime.utcnow(),
+    ))
+    db.session.commit()
+    flash("تم تحديث السرية والأشخاص المخولين.", "success")
+    return redirect(url_for(redirect_endpoint, **redirect_values))
+
+
 def _corr_filters_inbound():
     _ensure_corr_competence_schema()
 
@@ -18179,7 +18478,7 @@ def _corr_filters_inbound():
     competence_like = (request.args.get("competence_like") or "").strip()
     has_attach = (request.args.get("has_attach") or "").strip()  # 1/0
 
-    qry = InboundMail.query
+    qry = _corr_visible_query(InboundMail.query, InboundMail, kind="IN")
 
     if q:
         qry = apply_search_all_columns(qry, InboundMail, q)
@@ -18248,7 +18547,7 @@ def _corr_filters_outbound():
     competence_like = (request.args.get("competence_like") or "").strip()
     has_attach = (request.args.get("has_attach") or "").strip()  # 1/0
 
-    qry = OutboundMail.query
+    qry = _corr_visible_query(OutboundMail.query, OutboundMail, kind="OUT")
 
     if q:
         qry = apply_search_all_columns(qry, OutboundMail, q)
@@ -18376,6 +18675,8 @@ def inbound_new():
     _ensure_corr_competence_schema()
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
+    workflow_templates = _corr_workflow_templates()
+    confidential_user_options = _corr_confidential_user_options()
     sender_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -18432,6 +18733,7 @@ def inbound_new():
         _corr_apply_procedure_form(item, competence, initialize_target=True)
         db.session.add(item)
         db.session.flush()  # assign item.id without committing
+        authorized_user_ids = _corr_apply_confidentiality_form(item, is_new=True)
 
         movement = _corr_add_movement(
             "IN",
@@ -18456,12 +18758,20 @@ def inbound_new():
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
             return redirect(request.url)
 
-        affected_user_ids = set(_corr_competence_user_ids(competence))
+        affected_user_ids = _corr_notification_recipient_ids(
+            item,
+            set(_corr_competence_user_ids(competence)).union(authorized_user_ids),
+        )
         affected_user_ids.discard(int(current_user.id))
         if affected_user_ids:
+            notification_message = (
+                f"تم منحك صلاحية الاطلاع على وارد سري: {subject[:180]}"
+                if item.confidentiality == "SECRET"
+                else f"وصل وارد جديد إلى جهة اختصاصك: {subject[:180]}"
+            )
             _notify_users(
                 sorted(affected_user_ids),
-                f"وصل وارد جديد إلى جهة اختصاصك: {subject[:180]}",
+                notification_message,
                 level="CORR_INBOUND",
             )
 
@@ -18498,6 +18808,12 @@ def inbound_new():
         cat_rows=cat_rows,
         sender_rows=sender_rows,
         competence_options=competence_options,
+        workflow_templates=workflow_templates,
+        confidential_user_options=confidential_user_options,
+        selected_confidential_user_ids={
+            int(value) for value in request.form.getlist("authorized_user_ids") if value.isdigit()
+        },
+        can_manage_confidential_access=True,
     )
 
 
@@ -18574,6 +18890,8 @@ def outbound_new():
     _ensure_corr_competence_schema()
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
+    workflow_templates = _corr_workflow_templates()
+    confidential_user_options = _corr_confidential_user_options()
     recipient_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -18631,6 +18949,7 @@ def outbound_new():
         _corr_apply_procedure_form(item, competence, initialize_target=True)
         db.session.add(item)
         db.session.flush()  # assign item.id without committing
+        authorized_user_ids = _corr_apply_confidentiality_form(item, is_new=True)
 
         movement = _corr_add_movement(
             "OUT",
@@ -18655,12 +18974,20 @@ def outbound_new():
             flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
             return redirect(request.url)
 
-        affected_user_ids = set(_corr_competence_user_ids(competence))
+        affected_user_ids = _corr_notification_recipient_ids(
+            item,
+            set(_corr_competence_user_ids(competence)).union(authorized_user_ids),
+        )
         affected_user_ids.discard(int(current_user.id))
         if affected_user_ids:
+            notification_message = (
+                f"تم منحك صلاحية الاطلاع على صادر سري: {subject[:180]}"
+                if item.confidentiality == "SECRET"
+                else f"تم تسجيل صادر جديد لجهة اختصاصك: {subject[:180]}"
+            )
             _notify_users(
                 sorted(affected_user_ids),
-                f"تم تسجيل صادر جديد لجهة اختصاصك: {subject[:180]}",
+                notification_message,
                 level="CORR_OUTBOUND",
             )
 
@@ -18697,6 +19024,12 @@ def outbound_new():
         cat_rows=cat_rows,
         recipient_rows=recipient_rows,
         competence_options=competence_options,
+        workflow_templates=workflow_templates,
+        confidential_user_options=confidential_user_options,
+        selected_confidential_user_ids={
+            int(value) for value in request.form.getlist("authorized_user_ids") if value.isdigit()
+        },
+        can_manage_confidential_access=True,
     )
 
 
@@ -18704,10 +19037,10 @@ def outbound_new():
 
 @portal_bp.route("/corr/outbound/<int:outbound_id>")
 @login_required
-@_perm(CORR_READ)
 def outbound_view(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
+    _corr_require_access(item)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
     try:
         _ensure_corr_attachments_archived(attachments)
@@ -18744,10 +19077,10 @@ def outbound_view(outbound_id: int):
 
 @portal_bp.route("/corr/inbound/<int:inbound_id>")
 @login_required
-@_perm(CORR_READ)
 def inbound_view(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
+    _corr_require_access(item)
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.desc()).all()
     try:
         _ensure_corr_attachments_archived(attachments)
@@ -18789,6 +19122,7 @@ def inbound_view(inbound_id: int):
 def inbound_upload(inbound_id: int):
     _ensure_corr_attachment_stamp_schema()
     item = InboundMail.query.get_or_404(inbound_id)
+    _corr_require_access(item)
 
     files = request.files.getlist("files") or []
     if not files:
@@ -18831,6 +19165,7 @@ def inbound_upload(inbound_id: int):
 def outbound_upload(outbound_id: int):
     _ensure_corr_attachment_stamp_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
+    _corr_require_access(item)
 
     files = request.files.getlist("files") or []
     if not files:
@@ -18868,10 +19203,12 @@ def outbound_upload(outbound_id: int):
 
 @portal_bp.route("/corr/inbound/<int:inbound_id>/workflow/start", methods=["POST"])
 @login_required
-@_perm(CORR_READ)
 def inbound_start_workflow(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
+    _corr_require_access(item)
+    if not _corr_can_act(item):
+        abort(403)
     attachments = CorrAttachment.query.filter_by(inbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
         req = _start_corr_workflow("IN", item, attachments, request.form.get("template_id"))
@@ -18885,10 +19222,12 @@ def inbound_start_workflow(inbound_id: int):
 
 @portal_bp.route("/corr/outbound/<int:outbound_id>/workflow/start", methods=["POST"])
 @login_required
-@_perm(CORR_READ)
 def outbound_start_workflow(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
+    _corr_require_access(item)
+    if not _corr_can_act(item):
+        abort(403)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
         req = _start_corr_workflow("OUT", item, attachments, request.form.get("template_id"))
@@ -18909,12 +19248,16 @@ def outbound_start_workflow(outbound_id: int):
 def inbound_edit(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
+    _corr_require_access(item)
     if not (current_user.has_perm(CORR_UPDATE) or _can_manage_corr()):
         abort(403)
 
 
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
+    workflow_templates = _corr_workflow_templates()
+    confidential_user_options = _corr_confidential_user_options()
+    can_manage_confidential_access = _corr_can_manage_confidential_access(item)
     sender_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -18953,6 +19296,9 @@ def inbound_edit(inbound_id: int):
         item.body = body or None
         item.received_date = received_date
         _corr_apply_procedure_form(item, competence, initialize_target=False)
+        previous_authorized_user_ids = _corr_authorized_user_ids(item)
+        authorized_user_ids = _corr_apply_confidentiality_form(item)
+        _corr_notify_new_authorizations(item, previous_authorized_user_ids, authorized_user_ids)
 
         movement = _corr_add_movement(
             "IN",
@@ -19036,6 +19382,10 @@ def inbound_edit(inbound_id: int):
         cat_rows=cat_rows,
         sender_rows=sender_rows,
         competence_options=competence_options,
+        workflow_templates=workflow_templates,
+        confidential_user_options=confidential_user_options,
+        selected_confidential_user_ids=_corr_authorized_user_ids(item),
+        can_manage_confidential_access=can_manage_confidential_access,
         selected_competence=selected_competence,
         selected_category_code=selected_category_code,
         category_other_value=category_other_value,
@@ -19052,12 +19402,16 @@ def inbound_edit(inbound_id: int):
 def outbound_edit(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
+    _corr_require_access(item)
     if not (current_user.has_perm(CORR_UPDATE) or _can_manage_corr()):
         abort(403)
 
 
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
+    workflow_templates = _corr_workflow_templates()
+    confidential_user_options = _corr_confidential_user_options()
+    can_manage_confidential_access = _corr_can_manage_confidential_access(item)
     recipient_rows = (
         CorrParty.query
         .filter(CorrParty.is_active == True)  # noqa: E712
@@ -19096,6 +19450,9 @@ def outbound_edit(outbound_id: int):
         item.body = body or None
         item.sent_date = sent_date
         _corr_apply_procedure_form(item, competence, initialize_target=False)
+        previous_authorized_user_ids = _corr_authorized_user_ids(item)
+        authorized_user_ids = _corr_apply_confidentiality_form(item)
+        _corr_notify_new_authorizations(item, previous_authorized_user_ids, authorized_user_ids)
 
         movement = _corr_add_movement(
             "OUT",
@@ -19179,6 +19536,10 @@ def outbound_edit(outbound_id: int):
         cat_rows=cat_rows,
         recipient_rows=recipient_rows,
         competence_options=competence_options,
+        workflow_templates=workflow_templates,
+        confidential_user_options=confidential_user_options,
+        selected_confidential_user_ids=_corr_authorized_user_ids(item),
+        can_manage_confidential_access=can_manage_confidential_access,
         selected_competence=selected_competence,
         selected_category_code=selected_category_code,
         category_other_value=category_other_value,
@@ -19195,6 +19556,7 @@ def outbound_edit(outbound_id: int):
 def inbound_delete(inbound_id: int):
     _ensure_corr_attachment_stamp_schema()
     item = InboundMail.query.get_or_404(inbound_id)
+    _corr_require_access(item)
     if not (current_user.has_perm(CORR_DELETE) or _can_manage_corr()):
         abort(403)
 
@@ -19238,6 +19600,7 @@ def inbound_delete(inbound_id: int):
 def outbound_delete(outbound_id: int):
     _ensure_corr_attachment_stamp_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
+    _corr_require_access(item)
     if not (current_user.has_perm(CORR_DELETE) or _can_manage_corr()):
         abort(403)
 
@@ -19346,12 +19709,20 @@ def _send_corr_attachment_file(
     return resp
 
 
+def _corr_item_for_attachment(att: CorrAttachment):
+    if getattr(att, "inbound_id", None):
+        return InboundMail.query.get_or_404(att.inbound_id)
+    if getattr(att, "outbound_id", None):
+        return OutboundMail.query.get_or_404(att.outbound_id)
+    abort(404)
+
+
 @portal_bp.route("/corr/attachment/<int:att_id>/download")
 @login_required
-@_perm(CORR_READ)
 def corr_attachment_download(att_id: int):
     _ensure_corr_attachment_stamp_schema()
     att = CorrAttachment.query.get_or_404(att_id)
+    _corr_require_access(_corr_item_for_attachment(att))
     storage = _corr_storage_dir()
     file_path = os.path.join(storage, att.stored_name)
     if not os.path.exists(file_path):
@@ -19368,10 +19739,10 @@ def corr_attachment_download(att_id: int):
 
 @portal_bp.route("/corr/attachment/<int:att_id>/view")
 @login_required
-@_perm(CORR_READ)
 def corr_attachment_view(att_id: int):
     _ensure_corr_attachment_stamp_schema()
     att = CorrAttachment.query.get_or_404(att_id)
+    _corr_require_access(_corr_item_for_attachment(att))
     storage = _corr_storage_dir()
     file_path = os.path.join(storage, att.stored_name)
     if not os.path.exists(file_path):
@@ -19403,10 +19774,10 @@ def corr_attachment_view(att_id: int):
 
 @portal_bp.route("/corr/attachment/<int:att_id>/delete", methods=["POST"])
 @login_required
-@_perm(CORR_READ)
 def corr_attachment_delete(att_id: int):
     _ensure_corr_attachment_stamp_schema()
     att = CorrAttachment.query.get_or_404(att_id)
+    _corr_require_access(_corr_item_for_attachment(att))
     storage = _corr_storage_dir()
 
     # allow delete by uploader or CORR_MANAGE/admin
@@ -19653,15 +20024,10 @@ def _build_corr_card_pdf(
     ]
     procedure = procedure or {}
     if procedure:
-        route_labels = {
-            "MAIN_ADMIN": "الإدارة العامة للمنظمات",
-            "SPECIALIZED": "الدوائر التخصصية",
-            "DIRECT": "تحويل مباشر حسب الهيكل التنظيمي",
-        }
         priority_labels = {"NORMAL": "عادية", "HIGH": "عالية", "URGENT": "عاجلة"}
         data.extend([
             [_pdf_text(CORR_STATUS_LABELS.get(procedure.get("status"), procedure.get("status") or "")), _pdf_text("حالة المعاملة")],
-            [_pdf_text(route_labels.get(procedure.get("route_mode"), procedure.get("route_mode") or "")), _pdf_text("المسار الإداري")],
+            [_pdf_text(procedure.get("workflow_template_name") or "لم يُحدد"), _pdf_text("المسار من نظام مسار")],
             [_pdf_text(procedure.get("target_label") or ""), _pdf_text("المحول إليه حاليًا")],
             [_pdf_text(priority_labels.get(procedure.get("priority"), procedure.get("priority") or "")), _pdf_text("الأولوية")],
             [_pdf_text("سري" if procedure.get("confidentiality") == "SECRET" else "عادي"), _pdf_text("درجة السرية")],
@@ -19702,10 +20068,10 @@ def _build_corr_card_pdf(
 
 @portal_bp.route("/corr/inbound/<int:inbound_id>/print.pdf")
 @login_required
-@_perm(CORR_READ)
 def inbound_print_pdf(inbound_id: int):
     _ensure_corr_competence_schema()
     item = InboundMail.query.get_or_404(inbound_id)
+    _corr_require_access(item)
     url = request.host_url.rstrip("/") + url_for("portal.inbound_view", inbound_id=item.id)
     buf = _build_corr_card_pdf(
         "IN",
@@ -19719,7 +20085,7 @@ def inbound_print_pdf(inbound_id: int):
         item.competence_label or "",
         {
             "status": item.status,
-            "route_mode": item.route_mode,
+            "workflow_template_name": item.workflow_template.name if item.workflow_template else "",
             "target_label": item.current_target_label or item.competence_label,
             "priority": item.priority,
             "confidentiality": item.confidentiality,
@@ -19733,10 +20099,10 @@ def inbound_print_pdf(inbound_id: int):
 
 @portal_bp.route("/corr/outbound/<int:outbound_id>/print.pdf")
 @login_required
-@_perm(CORR_READ)
 def outbound_print_pdf(outbound_id: int):
     _ensure_corr_competence_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
+    _corr_require_access(item)
     url = request.host_url.rstrip("/") + url_for("portal.outbound_view", outbound_id=item.id)
     buf = _build_corr_card_pdf(
         "OUT",
@@ -19750,7 +20116,7 @@ def outbound_print_pdf(outbound_id: int):
         item.competence_label or "",
         {
             "status": item.status,
-            "route_mode": item.route_mode,
+            "workflow_template_name": item.workflow_template.name if item.workflow_template else "",
             "target_label": item.current_target_label or item.competence_label,
             "priority": item.priority,
             "confidentiality": item.confidentiality,
@@ -24094,11 +24460,15 @@ def _audit_target_url_label(r):
         # Correspondence
         if t in ("INBOUND_MAIL", "CORR_INBOUND"):
             m = InboundMail.query.get(int(tid))
+            if m and not _corr_can_access(m):
+                return (None, "مراسلة سرية محجوبة")
             ref = (m.ref_no or f"#{m.id}") if m else f"#{tid}"
             label = f"وارد {ref}" if m else f"وارد {ref}"
             return (url_for('portal.inbound_view', inbound_id=int(tid)), label)
         if t in ("OUTBOUND_MAIL", "CORR_OUTBOUND"):
             m = OutboundMail.query.get(int(tid))
+            if m and not _corr_can_access(m):
+                return (None, "مراسلة سرية محجوبة")
             ref = (m.ref_no or f"#{m.id}") if m else f"#{tid}"
             label = f"صادر {ref}" if m else f"صادر {ref}"
             return (url_for('portal.outbound_view', outbound_id=int(tid)), label)

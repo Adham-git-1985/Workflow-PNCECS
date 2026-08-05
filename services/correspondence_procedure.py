@@ -87,6 +87,41 @@ OPEN_STATUSES = {
 }
 
 
+def can_access_correspondence(
+    *,
+    confidentiality: str | None,
+    user_id: int | None,
+    has_regular_read: bool,
+    has_confidential_read: bool = False,
+    has_confidential_manage: bool = False,
+    created_by_user_id: int | None = None,
+    current_assignee_user_id: int | None = None,
+    authorized_user_ids: set[int] | None = None,
+) -> bool:
+    """Return whether a user may view a correspondence item.
+
+    Regular correspondence follows the module's normal read permission. Secret
+    correspondence is intentionally stricter and can only be viewed by its
+    creator, current direct assignee, explicitly authorized users, or holders
+    of the dedicated confidential read/manage permissions.
+    """
+    if not user_id:
+        return False
+
+    if (confidentiality or "NORMAL").strip().upper() != "SECRET":
+        return bool(has_regular_read)
+
+    if has_confidential_read or has_confidential_manage:
+        return True
+
+    uid = int(user_id)
+    if created_by_user_id and uid == int(created_by_user_id):
+        return True
+    if current_assignee_user_id and uid == int(current_assignee_user_id):
+        return True
+    return uid in {int(value) for value in (authorized_user_ids or set()) if value}
+
+
 def next_status(current_status: str | None, action: str) -> str:
     """Return the status produced by an action; notes do not change status."""
     current = (current_status or "RECEIVED").strip().upper()

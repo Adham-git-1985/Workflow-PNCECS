@@ -8,7 +8,7 @@ from datetime import date, datetime
 from sqlalchemy import inspect
 
 from extensions import db
-from models import InboundMail, Notification, OutboundMail, SystemSetting
+from models import CorrConfidentialAccess, InboundMail, Notification, OutboundMail, SystemSetting
 
 
 _STARTED = False
@@ -50,6 +50,26 @@ def _recipient_ids(item) -> set[int]:
         }))
     except Exception:
         pass
+
+    if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET":
+        parent_filter = (
+            CorrConfidentialAccess.inbound_id == item.id
+            if isinstance(item, InboundMail)
+            else CorrConfidentialAccess.outbound_id == item.id
+        )
+        allowed = {
+            int(row[0])
+            for row in (
+                db.session.query(CorrConfidentialAccess.user_id)
+                .filter(parent_filter)
+                .all()
+            )
+            if row[0]
+        }
+        for user_id in (item.current_assignee_id, item.created_by_id):
+            if user_id:
+                allowed.add(int(user_id))
+        recipients.intersection_update(allowed)
     return recipients
 
 

@@ -364,6 +364,54 @@ def _ensure_runtime_schema():
 
 
             # workflow steps: committee columns (best-effort for existing DBs)
+            # Confidential correspondence metadata on workflow requests.  The
+            # source link is required so Workflow and Archive can enforce the
+            # live correspondence ACL after a route is started.
+            for col, ctype in [
+                ("confidentiality", "TEXT NOT NULL DEFAULT 'NORMAL'"),
+                ("source_corr_kind", "TEXT"),
+                ("source_corr_id", "INTEGER"),
+            ]:
+                if not _col_exists("workflow_request", col):
+                    _add_column_retry("workflow_request", col, ctype)
+
+            # Protect workflows that were already linked to correspondence
+            # before the metadata columns existed.
+            if (
+                _col_exists("workflow_request", "source_corr_id")
+                and _col_exists("corr_attachment", "workflow_request_id")
+            ):
+                try:
+                    db.session.execute(text(
+                        "UPDATE workflow_request SET source_corr_kind='IN', "
+                        "source_corr_id=(SELECT ca.inbound_id FROM corr_attachment ca "
+                        "WHERE ca.workflow_request_id=workflow_request.id "
+                        "AND ca.inbound_id IS NOT NULL LIMIT 1) "
+                        "WHERE source_corr_id IS NULL AND EXISTS (SELECT 1 FROM corr_attachment ca "
+                        "WHERE ca.workflow_request_id=workflow_request.id AND ca.inbound_id IS NOT NULL)"
+                    ))
+                    db.session.execute(text(
+                        "UPDATE workflow_request SET source_corr_kind='OUT', "
+                        "source_corr_id=(SELECT ca.outbound_id FROM corr_attachment ca "
+                        "WHERE ca.workflow_request_id=workflow_request.id "
+                        "AND ca.outbound_id IS NOT NULL LIMIT 1) "
+                        "WHERE source_corr_id IS NULL AND EXISTS (SELECT 1 FROM corr_attachment ca "
+                        "WHERE ca.workflow_request_id=workflow_request.id AND ca.outbound_id IS NOT NULL)"
+                    ))
+                    db.session.execute(text(
+                        "UPDATE workflow_request SET confidentiality=COALESCE((SELECT ci.confidentiality "
+                        "FROM corr_inbound ci WHERE source_corr_kind='IN' AND ci.id=source_corr_id), "
+                        "confidentiality, 'NORMAL') WHERE source_corr_kind='IN'"
+                    ))
+                    db.session.execute(text(
+                        "UPDATE workflow_request SET confidentiality=COALESCE((SELECT co.confidentiality "
+                        "FROM corr_outbound co WHERE source_corr_kind='OUT' AND co.id=source_corr_id), "
+                        "confidentiality, 'NORMAL') WHERE source_corr_kind='OUT'"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             for table, col, ctype in [
                 # Committee columns
                 ("workflow_template_steps", "approver_committee_id", "INTEGER"),

@@ -1,7 +1,12 @@
 import unittest
 from datetime import date
 
-from services.correspondence_procedure import due_state, next_status, queue_matches
+from services.correspondence_procedure import (
+    can_access_correspondence,
+    due_state,
+    next_status,
+    queue_matches,
+)
 
 
 class CorrespondenceProcedureTests(unittest.TestCase):
@@ -51,6 +56,54 @@ class CorrespondenceProcedureTests(unittest.TestCase):
         self.assertTrue(self._matches("returned", status="RETURNED"))
         self.assertTrue(self._matches("high_priority", priority="URGENT"))
         self.assertTrue(self._matches("confidential", confidentiality="SECRET"))
+
+    def test_regular_correspondence_uses_normal_read_permission(self):
+        self.assertTrue(can_access_correspondence(
+            confidentiality="NORMAL",
+            user_id=9,
+            has_regular_read=True,
+        ))
+        self.assertFalse(can_access_correspondence(
+            confidentiality="NORMAL",
+            user_id=9,
+            has_regular_read=False,
+        ))
+
+    def test_secret_correspondence_ignores_regular_read_alone(self):
+        self.assertFalse(can_access_correspondence(
+            confidentiality="SECRET",
+            user_id=9,
+            has_regular_read=True,
+            created_by_user_id=1,
+            current_assignee_user_id=2,
+            authorized_user_ids={3, 4},
+        ))
+
+    def test_secret_correspondence_allows_creator_assignee_and_authorized_users(self):
+        base = {
+            "confidentiality": "SECRET",
+            "has_regular_read": False,
+            "created_by_user_id": 1,
+            "current_assignee_user_id": 2,
+            "authorized_user_ids": {3, 4},
+        }
+        for user_id in (1, 2, 3, 4):
+            with self.subTest(user_id=user_id):
+                self.assertTrue(can_access_correspondence(user_id=user_id, **base))
+
+    def test_secret_permissions_allow_global_access(self):
+        self.assertTrue(can_access_correspondence(
+            confidentiality="SECRET",
+            user_id=9,
+            has_regular_read=False,
+            has_confidential_read=True,
+        ))
+        self.assertTrue(can_access_correspondence(
+            confidentiality="SECRET",
+            user_id=9,
+            has_regular_read=False,
+            has_confidential_manage=True,
+        ))
 
 
 if __name__ == "__main__":

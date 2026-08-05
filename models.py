@@ -522,6 +522,16 @@ class WorkflowRequest(db.Model):
     requester_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     requester = db.relationship("User", backref="requests")
 
+    # Confidential correspondence keeps its security classification after it
+    # is handed off to Workflow.  The source reference lets every workflow and
+    # archive access check consult the correspondence ACL as the single source
+    # of truth, including later changes made by the correspondence creator.
+    confidentiality = db.Column(
+        db.String(20), nullable=False, default="NORMAL", index=True
+    )
+    source_corr_kind = db.Column(db.String(10), nullable=True, index=True)
+    source_corr_id = db.Column(db.Integer, nullable=True, index=True)
+
     # Request Type (optional)
     request_type_id = db.Column(db.Integer, db.ForeignKey("request_types.id"), nullable=True)
     request_type = db.relationship("RequestType")
@@ -545,6 +555,14 @@ class WorkflowRequest(db.Model):
         "RequestAttachment",
         backref="request",
         cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        db.Index(
+            "ix_workflow_request_source_corr",
+            "source_corr_kind",
+            "source_corr_id",
+        ),
     )
 
 
@@ -3884,6 +3902,12 @@ class InboundMail(db.Model):
     mail_scope = db.Column(db.String(20), nullable=False, default="EXTERNAL", index=True)
     priority = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
     confidentiality = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    workflow_template_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_templates.id"),
+        nullable=True,
+        index=True,
+    )
     due_date = db.Column(db.String(10), nullable=True, index=True)
     current_target_kind = db.Column(db.String(30), nullable=True, index=True)
     current_target_id = db.Column(db.Integer, nullable=True, index=True)
@@ -3903,6 +3927,11 @@ class InboundMail(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    workflow_template = db.relationship(
+        "WorkflowTemplate",
+        foreign_keys=[workflow_template_id],
+        lazy="joined",
+    )
     current_assignee = db.relationship("User", foreign_keys=[current_assignee_id], lazy="joined")
     closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
     def __repr__(self) -> str:
@@ -3931,6 +3960,12 @@ class OutboundMail(db.Model):
     mail_scope = db.Column(db.String(20), nullable=False, default="EXTERNAL", index=True)
     priority = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
     confidentiality = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    workflow_template_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_templates.id"),
+        nullable=True,
+        index=True,
+    )
     due_date = db.Column(db.String(10), nullable=True, index=True)
     current_target_kind = db.Column(db.String(30), nullable=True, index=True)
     current_target_id = db.Column(db.Integer, nullable=True, index=True)
@@ -3950,10 +3985,61 @@ class OutboundMail(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    workflow_template = db.relationship(
+        "WorkflowTemplate",
+        foreign_keys=[workflow_template_id],
+        lazy="joined",
+    )
     current_assignee = db.relationship("User", foreign_keys=[current_assignee_id], lazy="joined")
     closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
     def __repr__(self) -> str:
         return f"<OutboundMail id={self.id} ref={self.ref_no!r}>"
+
+
+class CorrConfidentialAccess(db.Model):
+    """Explicit user-level access grant for a secret correspondence item."""
+
+    __tablename__ = "corr_confidential_access"
+
+    id = db.Column(db.Integer, primary_key=True)
+    inbound_id = db.Column(db.Integer, db.ForeignKey("corr_inbound.id"), nullable=True, index=True)
+    outbound_id = db.Column(db.Integer, db.ForeignKey("corr_outbound.id"), nullable=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    granted_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    authorized_user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    granted_by = db.relationship("User", foreign_keys=[granted_by_id], lazy="joined")
+    inbound = db.relationship(
+        "InboundMail",
+        foreign_keys=[inbound_id],
+        backref=db.backref(
+            "confidential_access_entries",
+            lazy="selectin",
+            cascade="all, delete-orphan",
+        ),
+        lazy="joined",
+    )
+    outbound = db.relationship(
+        "OutboundMail",
+        foreign_keys=[outbound_id],
+        backref=db.backref(
+            "confidential_access_entries",
+            lazy="selectin",
+            cascade="all, delete-orphan",
+        ),
+        lazy="joined",
+    )
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "(inbound_id IS NOT NULL AND outbound_id IS NULL) OR "
+            "(inbound_id IS NULL AND outbound_id IS NOT NULL)",
+            name="ck_corr_confidential_access_parent",
+        ),
+        db.UniqueConstraint("inbound_id", "user_id", name="uq_corr_confidential_inbound_user"),
+        db.UniqueConstraint("outbound_id", "user_id", name="uq_corr_confidential_outbound_user"),
+    )
 
 
 class CorrMovement(db.Model):

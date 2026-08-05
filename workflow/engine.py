@@ -24,6 +24,7 @@ from models import (
     OrgUnitManager,
     OrgNodeManager,
 )
+from services.workflow_confidentiality import filter_confidential_workflow_user_ids
 
 # =========================
 # SLA helpers
@@ -341,7 +342,43 @@ def _resolve_parallel_extra_assignees(template_id: int | None, step_order: int) 
         return []
 
 
-def _notify_users(user_ids, message, ntype="WORKFLOW", role=None, actor_id=None, track_for_actor=False):
+def resolve_template_participant_user_ids(template: WorkflowTemplate) -> set[int]:
+    """Resolve every user currently targeted by a workflow template."""
+    participant_ids: set[int] = set()
+    if not template:
+        return participant_ids
+
+    for step in list(getattr(template, "steps", None) or []):
+        participant_ids.update(_resolve_users_by_kind(
+            getattr(step, "approver_kind", None),
+            user_id=getattr(step, "approver_user_id", None),
+            role=getattr(step, "approver_role", None),
+            dept_id=getattr(step, "approver_department_id", None),
+            dir_id=getattr(step, "approver_directorate_id", None),
+            unit_id=getattr(step, "approver_unit_id", None),
+            section_id=getattr(step, "approver_section_id", None),
+            division_id=getattr(step, "approver_division_id", None),
+            org_node_id=getattr(step, "approver_org_node_id", None),
+            committee_id=getattr(step, "approver_committee_id", None),
+            committee_delivery_mode=getattr(step, "committee_delivery_mode", None),
+        ))
+        participant_ids.update(_resolve_parallel_extra_assignees(
+            getattr(template, "id", None),
+            getattr(step, "step_order", 0),
+        ))
+
+    return {int(user_id) for user_id in participant_ids if user_id}
+
+
+def _notify_users(
+    user_ids,
+    message,
+    ntype="WORKFLOW",
+    role=None,
+    actor_id=None,
+    track_for_actor=False,
+    req: WorkflowRequest | None = None,
+):
     """
     Your Notification model has: message, type, role, is_read, created_at
     (no title/url) => keep it compatible.
@@ -352,6 +389,8 @@ def _notify_users(user_ids, message, ntype="WORKFLOW", role=None, actor_id=None,
     now = datetime.utcnow()
     event_key = uuid.uuid4().hex
     unique_ids = set(int(uid) for uid in user_ids if uid)
+    if req is not None:
+        unique_ids = filter_confidential_workflow_user_ids(req, unique_ids)
 
     # Recipient notifications
     for uid in unique_ids:
@@ -404,7 +443,10 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
     assignees = _resolve_approver_users(step)
     # Add extra assignees linked to this PARALLEL_SYNC step number (template definition).
     assignees += _resolve_parallel_extra_assignees(getattr(inst, "template_id", None), step.step_order)
-    desired_ids = {int(uid) for uid in assignees if uid}
+    desired_ids = filter_confidential_workflow_user_ids(
+        req,
+        {int(uid) for uid in assignees if uid},
+    )
 
     existing_ids = {
         int(uid) for (uid,) in (
@@ -414,6 +456,30 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
         )
         if uid
     }
+
+    # Legacy secret workflows may already contain pending tasks for users who
+    # are outside the ACL.  Hide-and-leave would deadlock a parallel step, so
+    # preserve the row for audit while removing it from the pending quorum.
+    unauthorized_existing = existing_ids.difference(desired_ids)
+    if unauthorized_existing:
+        (
+            WorkflowStepTask.query
+            .filter(
+                WorkflowStepTask.instance_id == inst.id,
+                WorkflowStepTask.step_order == step.step_order,
+                WorkflowStepTask.assignee_user_id.in_(unauthorized_existing),
+                WorkflowStepTask.status == "PENDING",
+            )
+            .update(
+                {
+                    "status": "BYPASSED",
+                    "bypass_reason": "Removed from confidential workflow by source ACL",
+                    "bypassed_at": now,
+                },
+                synchronize_session=False,
+            )
+        )
+        existing_ids.intersection_update(desired_ids)
 
     missing_ids = sorted(desired_ids - existing_ids)
     created_ids: list[int] = []
@@ -460,6 +526,7 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
             notify_ids,
             f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط).",
             ntype="WORKFLOW",
+            req=req,
         )
         if not getattr(step, "parallel_notified_at", None):
             step.parallel_notified_at = now
@@ -605,7 +672,8 @@ def start_workflow_for_request(
                 ntype="WORKFLOW",
                 role=first.approver_role,
                 actor_id=req.requester_id,
-                track_for_actor=True
+                track_for_actor=True,
+                req=req,
             )
 
     if auto_commit:
@@ -704,6 +772,7 @@ def _bypass_parallel_task_legacy(
                 [req.requester_id],
                 message=f"تم اعتماد الطلب #{req.id} (اكتملت جميع الخطوات)",
                 ntype="WORKFLOW",
+                req=req,
             )
         else:
             inst.current_step_order = next_order
@@ -717,13 +786,15 @@ def _bypass_parallel_task_legacy(
                     ntype="WORKFLOW",
                     role=next_step.approver_role,
                     actor_id=req.requester_id,
-                    track_for_actor=True
+                    track_for_actor=True,
+                    req=req,
                 )
 
             _notify_users(
                 [req.requester_id],
                 message=f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order}.",
                 ntype="WORKFLOW",
+                req=req,
             )
 
     if auto_commit:
@@ -825,11 +896,11 @@ def bypass_parallel_task(
                     on_behalf_of_id=on_behalf_of_id,
                 )
             )
-            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
         else:
             inst.current_step_order = next_order
             msg = f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}"
-            _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+            _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
             if _is_parallel_sync(next_step):
                 _ensure_parallel_tasks(req, inst, next_step)
@@ -842,6 +913,7 @@ def bypass_parallel_task(
                     role=next_step.approver_role,
                     actor_id=req.requester_id,
                     track_for_actor=True,
+                    req=req,
                 )
 
     if auto_commit:
@@ -946,10 +1018,10 @@ def bypass_all_parallel_tasks(
                     on_behalf_of_id=on_behalf_of_id,
                 )
             )
-            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
         else:
             inst.current_step_order = next_order
-            _notify_users([req.requester_id], message=f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+            _notify_users([req.requester_id], message=f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
             if _is_parallel_sync(next_step):
                 _ensure_parallel_tasks(req, inst, next_step)
@@ -962,6 +1034,7 @@ def bypass_all_parallel_tasks(
                     role=next_step.approver_role,
                     actor_id=req.requester_id,
                     track_for_actor=True,
+                    req=req,
                 )
 
     if auto_commit:
@@ -1079,7 +1152,7 @@ def decide_step(
 
             # notify requester about parallel completion
             if req.requester_id:
-                _notify_users([req.requester_id], f"اكتملت الخطوة المتزامنة للطلب #{req.id}.", ntype="WORKFLOW")
+                _notify_users([req.requester_id], f"اكتملت الخطوة المتزامنة للطلب #{req.id}.", ntype="WORKFLOW", req=req)
 
             if not next_step:
                 # complete workflow
@@ -1111,7 +1184,8 @@ def decide_step(
                         ntype="WORKFLOW",
                         role=next_step.approver_role,
                         actor_id=actor_user_id,
-                        track_for_actor=True
+                        track_for_actor=True,
+                        req=req,
                     )
 
         if auto_commit:
@@ -1156,7 +1230,7 @@ def decide_step(
         msg = f"تم رفض طلبك #{req.id} (الخطوة {step_order}) من {actor_display}"
         if note:
             msg += f" | السبب/التعليق: {note}"
-        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
         # ✅ Notify followers (previous approvers) so they can keep tracking the workflow
         follower_ids = set(_resolve_followers_user_ids(inst.id))
@@ -1166,7 +1240,7 @@ def decide_step(
             fmsg = f"تحديث على المسار: تم رفض الطلب #{req.id} (الخطوة {step_order}) من {actor_display}"
             if note:
                 fmsg += f" | السبب/التعليق: {note}"
-            _notify_users(sorted(follower_ids), message=fmsg, ntype="WORKFLOW")
+            _notify_users(sorted(follower_ids), message=fmsg, ntype="WORKFLOW", req=req)
 
         if auto_commit:
             db.session.commit()
@@ -1187,7 +1261,7 @@ def decide_step(
         msg = f"تمت الموافقة النهائية على طلبك #{req.id} من {actor_display}"
         if note:
             msg += f" | ملاحظة: {note}"
-        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
         # ✅ Notify followers (previous approvers)
         follower_ids = set(_resolve_followers_user_ids(inst.id))
@@ -1198,6 +1272,7 @@ def decide_step(
                 sorted(follower_ids),
                 message=f"تحديث على المسار: تمت الموافقة النهائية على الطلب #{req.id} من {actor_display}" + (f" | ملاحظة: {note}" if note else ""),
                 ntype="WORKFLOW",
+                req=req,
             )
 
         if auto_commit:
@@ -1210,7 +1285,7 @@ def decide_step(
     msg = f"تمت الموافقة على طلبك #{req.id} (الخطوة {step_order}) من {actor_display} وتم تحويله للخطوة {next_order}"
     if note:
         msg += f" | ملاحظة: {note}"
-    _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True)
+    _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
     if _is_parallel_sync(next_step):
         _ensure_parallel_tasks(req, inst, next_step)
@@ -1223,6 +1298,7 @@ def decide_step(
             role=next_step.approver_role,
             actor_id=req.requester_id,
             track_for_actor=True,
+            req=req,
         )
 
     # ✅ Notify followers (previous approvers)
@@ -1234,6 +1310,7 @@ def decide_step(
             sorted(follower_ids),
             message=f"تحديث على المسار: تمت الموافقة على الطلب #{req.id} (الخطوة {step_order}) وتحويله للخطوة {next_order} من {actor_display}" + (f" | ملاحظة: {note}" if note else ""),
             ntype="WORKFLOW",
+            req=req,
         )
 
     if auto_commit:

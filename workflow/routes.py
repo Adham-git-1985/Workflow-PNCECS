@@ -43,6 +43,10 @@ from utils.file_uploads import (
     random_storage_name,
 )
 from utils.ui_labels import ui_label, ui_text
+from services.workflow_confidentiality import (
+    can_user_pass_confidential_workflow_gate,
+    is_confidential_workflow,
+)
 
 from models import (
     WorkflowRequest,
@@ -449,6 +453,18 @@ def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, n
     mentioned_users, unresolved = _resolve_workflow_mentions(note)
     if not mentioned_users:
         return [], unresolved
+
+    if is_confidential_workflow(req):
+        authorized_mentions = []
+        for user in mentioned_users:
+            if can_user_pass_confidential_workflow_gate(user, req):
+                authorized_mentions.append(user)
+            else:
+                label = user.full_name or user.email or f"مستخدم #{user.id}"
+                unresolved.append(f"{label} (غير مخول للاطلاع على المعاملة السرية)")
+        mentioned_users = authorized_mentions
+        if not mentioned_users:
+            return [], unresolved
 
     existing_ids = _mentioned_user_ids_for_request(req.id)
     added: list[User] = []
@@ -1913,6 +1929,12 @@ def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
 
     return False
 def _user_can_view_request(user, req: WorkflowRequest) -> bool:
+    # Confidential correspondence is a mandatory outer gate.  Passing it does
+    # not grant workflow visibility by itself; the normal owner/participant
+    # rules below must still pass as well.
+    if not can_user_pass_confidential_workflow_gate(user, req):
+        return False
+
     # Owner can always view
     if req.requester_id == user.id:
         return True
@@ -1972,6 +1994,13 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
         pass
 
     return False
+
+
+def _actor_context_can_view_request(req: WorkflowRequest, users) -> bool:
+    """Delegation must not silently transfer access to a secret request."""
+    if is_confidential_workflow(req):
+        return _user_can_view_request(current_user, req)
+    return any(_user_can_view_request(user, req) for user in (users or []) if user)
 
 
 def _get_request_followers_user_ids(req_id: int) -> set[int]:
@@ -2340,6 +2369,15 @@ def inbox():
 
     rows = q.order_by(WorkflowRequest.id.desc()).all()
 
+    # Query-level role matching is not enough for confidential correspondence:
+    # hide the row (including its title) unless the real logged-in user also
+    # passes the source correspondence ACL.
+    rows = [
+        (req, inst, step)
+        for req, inst, step in rows
+        if _actor_context_can_view_request(req, actor_users)
+    ]
+
     # PARALLEL_SYNC: if the step is still pending but the current user already responded/bypassed,
     # hide it from their inbox (it will remain for other pending assignees).
     if not (current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN")):
@@ -2687,6 +2725,11 @@ def following():
         .order_by(order_expr, WorkflowRequest.id.desc())
         .all()
     )
+    rows = [
+        (req, inst, tpl)
+        for req, inst, tpl in rows
+        if _actor_context_can_view_request(req, actor_users)
+    ]
 
     # SLA filter is applied after loading because it depends on template SLA + current time.
     now = datetime.utcnow()
@@ -2772,7 +2815,7 @@ def view_request(request_id):
         except Exception:
             pass
 
-    if not any(_user_can_view_request(u, req) for u in actor_users):
+    if not _actor_context_can_view_request(req, actor_users):
         flash("غير مصرح لك بمراجعة هذا الطلب", "danger")
         return redirect(url_for("workflow.inbox"))
 
@@ -3176,8 +3219,11 @@ def request_attachments(request_id):
     # Delegation-aware viewer:
     # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
     effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or _user_can_view_request(effective_user, req)
-    if not can_view:
+    can_view = _user_can_view_request(current_user, req) or (
+        not is_confidential_workflow(req)
+        and _user_can_view_request(effective_user, req)
+    )
+    if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
                 if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
@@ -3357,8 +3403,11 @@ def request_escalations(request_id):
     # Delegation-aware viewer:
     # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
     effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or _user_can_view_request(effective_user, req)
-    if not can_view:
+    can_view = _user_can_view_request(current_user, req) or (
+        not is_confidential_workflow(req)
+        and _user_can_view_request(effective_user, req)
+    )
+    if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
                 if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
@@ -3662,8 +3711,11 @@ def escalate_request(request_id):
     # Delegation-aware viewer:
     # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
     effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or _user_can_view_request(effective_user, req)
-    if not can_view:
+    can_view = _user_can_view_request(current_user, req) or (
+        not is_confidential_workflow(req)
+        and _user_can_view_request(effective_user, req)
+    )
+    if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
                 if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
@@ -3950,7 +4002,7 @@ def decide_request_step(request_id, step_order):
         except Exception:
             pass
 
-    if not any(_user_can_view_request(u, req) for u in actor_users):
+    if not _actor_context_can_view_request(req, actor_users):
         abort(403)
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
@@ -4050,8 +4102,11 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
 
     # Delegation-aware viewer
     effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or _user_can_view_request(effective_user, req)
-    if not can_view:
+    can_view = _user_can_view_request(current_user, req) or (
+        not is_confidential_workflow(req)
+        and _user_can_view_request(effective_user, req)
+    )
+    if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
                 if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
@@ -4168,8 +4223,11 @@ def add_request_note(request_id):
     # Delegation-aware viewer:
     # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
     effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or _user_can_view_request(effective_user, req)
-    if not can_view:
+    can_view = _user_can_view_request(current_user, req) or (
+        not is_confidential_workflow(req)
+        and _user_can_view_request(effective_user, req)
+    )
+    if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
                 if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):

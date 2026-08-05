@@ -2,6 +2,9 @@ from sqlalchemy import or_
 from extensions import db
 from models import ArchivedFile, FilePermission
 from datetime import datetime
+from services.workflow_confidentiality import (
+    can_user_access_archived_file_confidentiality,
+)
 
 
 # =========================
@@ -16,6 +19,12 @@ VIS_PRIVATE = "PRIVATE"
 # View permission
 # =========================
 def can_view_archive_file(user, file):
+
+    # A workflow attachment originating from secret correspondence remains
+    # protected even when ordinary archive visibility or ADMIN rules would
+    # otherwise expose it.
+    if not can_user_access_archived_file_confidentiality(user, file.id):
+        return False
 
     # Admin sees everything
     if user.has_role("ADMIN"):

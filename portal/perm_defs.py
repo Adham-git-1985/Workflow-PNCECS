@@ -44,6 +44,8 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("CORR_UPDATE", "تعديل مراسلة", "تعديل بيانات وارد/صادر.", module="CORR"),
         PermDef("CORR_DELETE", "حذف/أرشفة مراسلة", "حذف/أرشفة مراسلات حسب السياسة.", module="CORR"),
         PermDef("CORR_EXPORT", "تصدير المراسلات", "تصدير PDF/Excel لقوائم المراسلات.", module="CORR"),
+        PermDef("CORR_CONFIDENTIAL_READ", "عرض جميع المراسلات السرية", "عرض المراسلات السرية دون الحاجة إلى تفويض فردي من منشئها.", module="CORR_CONFIDENTIAL"),
+        PermDef("CORR_CONFIDENTIAL_MANAGE", "إدارة سرية المراسلات", "تغيير درجة السرية وإدارة الأشخاص المخولين للمعاملات السرية.", module="CORR_CONFIDENTIAL"),
         PermDef("CORR_LOOKUPS_MANAGE", "إعدادات المراسلات", "إدارة التصنيفات والجهات (مرسل/مستلم) من لوحة الإدارة.", module="CORR_LOOKUPS"),
     ],
     "الموارد البشرية": [

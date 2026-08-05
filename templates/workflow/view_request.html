@@ -35,6 +35,21 @@
   </div>
 </div>
 
+{% if req.confidentiality == 'SECRET' %}
+<div class="alert alert-danger d-flex align-items-center gap-2" role="alert">
+  <i class="bi bi-shield-lock-fill"></i>
+  <div>
+    <strong>معاملة سرية:</strong>
+    الاطلاع والمرفقات محجوبة حسب قائمة الأشخاص المخولين في المراسلة الأصلية، ولا تنتقل الصلاحية بالتفويض أو المنشن تلقائيًا.
+    {% if req.source_corr_kind == 'IN' and req.source_corr_id %}
+      <a class="alert-link ms-1" href="{{ url_for('portal.inbound_view', inbound_id=req.source_corr_id) }}">فتح الوارد الأصلي</a>
+    {% elif req.source_corr_kind == 'OUT' and req.source_corr_id %}
+      <a class="alert-link ms-1" href="{{ url_for('portal.outbound_view', outbound_id=req.source_corr_id) }}">فتح الصادر الأصلي</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
 <div class="row g-3">
 
   <div class="col-lg-7">

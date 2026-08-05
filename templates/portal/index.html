@@ -223,7 +223,7 @@
           {% if r and r.status == 'PENDING' %}
             <span class="badge text-bg-warning">طلبك قيد المراجعة (#{{ r.id }})</span>
             <a class="btn btn-sm btn-link" href="{{ url_for('portal.my_access_requests') }}">عرض التفاصيل</a>
-            <form method="post" action="{{ url_for('portal.cancel_access_request', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
+            <form method="post" action="{{ url_for('portal.my_access_request_cancel', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
               <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء الطلب</button>
             </form>
           {% else %}
@@ -258,7 +258,7 @@
           {% if r and r.status == 'PENDING' %}
             <span class="badge text-bg-warning">طلبك قيد المراجعة (#{{ r.id }})</span>
             <a class="btn btn-sm btn-link" href="{{ url_for('portal.my_access_requests') }}">عرض التفاصيل</a>
-            <form method="post" action="{{ url_for('portal.cancel_access_request', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
+            <form method="post" action="{{ url_for('portal.my_access_request_cancel', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
               <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء الطلب</button>
             </form>
           {% else %}
@@ -296,7 +296,7 @@
           {% if r and r.status == 'PENDING' %}
             <span class="badge text-bg-warning">طلبك قيد المراجعة (#{{ r.id }})</span>
             <a class="btn btn-sm btn-link" href="{{ url_for('portal.my_access_requests') }}">عرض التفاصيل</a>
-            <form method="post" action="{{ url_for('portal.cancel_access_request', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
+            <form method="post" action="{{ url_for('portal.my_access_request_cancel', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
               <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء الطلب</button>
             </form>
           {% else %}
@@ -336,7 +336,7 @@
           {% if r and r.status == 'PENDING' %}
             <span class="badge text-bg-warning">طلبك قيد المراجعة (#{{ r.id }})</span>
             <a class="btn btn-sm btn-link" href="{{ url_for('portal.my_access_requests') }}">عرض التفاصيل</a>
-            <form method="post" action="{{ url_for('portal.cancel_access_request', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
+            <form method="post" action="{{ url_for('portal.my_access_request_cancel', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
               <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء الطلب</button>
             </form>
           {% else %}
@@ -369,7 +369,7 @@
           {% if r and r.status == 'PENDING' %}
             <span class="badge text-bg-warning">طلبك قيد المراجعة (#{{ r.id }})</span>
             <a class="btn btn-sm btn-link" href="{{ url_for('portal.my_access_requests') }}">عرض التفاصيل</a>
-            <form method="post" action="{{ url_for('portal.cancel_access_request', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
+            <form method="post" action="{{ url_for('portal.my_access_request_cancel', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('إلغاء طلب الصلاحية؟');">
               <button class="btn btn-sm btn-outline-danger" type="submit">إلغاء الطلب</button>
             </form>
           {% else %}

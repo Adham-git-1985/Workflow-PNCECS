@@ -1,21 +1,24 @@
 {% set proc_item = item|default(none) %}
-{% set current_route = request.form.get('route_mode') or (proc_item.route_mode if proc_item else 'DIRECT') %}
+{% set current_template_id = request.form.get('workflow_template_id') or (proc_item.workflow_template_id if proc_item else '') %}
 {% set current_scope = request.form.get('mail_scope') or (proc_item.mail_scope if proc_item else 'EXTERNAL') %}
 {% set current_priority = request.form.get('priority') or (proc_item.priority if proc_item else 'NORMAL') %}
 {% set current_confidentiality = request.form.get('confidentiality') or (proc_item.confidentiality if proc_item else 'NORMAL') %}
 {% set current_due_date = request.form.get('due_date') or (proc_item.due_date if proc_item and proc_item.due_date else '') %}
+{% set may_manage_confidential = can_manage_confidential_access if can_manage_confidential_access is defined else true %}
 
 <div class="col-12">
   <div class="border rounded-3 p-3 bg-light">
     <div class="fw-semibold mb-3"><i class="bi bi-diagram-3"></i> بيانات المسار الإداري</div>
     <div class="row g-3">
       <div class="col-lg-6">
-        <label class="form-label">مسار التحويل</label>
-        <select class="form-select" name="route_mode">
-          <option value="MAIN_ADMIN" {% if current_route == 'MAIN_ADMIN' %}selected{% endif %}>المسار الأول — الإدارة العامة للمنظمات</option>
-          <option value="SPECIALIZED" {% if current_route == 'SPECIALIZED' %}selected{% endif %}>المسار الأول — الدوائر التخصصية</option>
-          <option value="DIRECT" {% if current_route == 'DIRECT' %}selected{% endif %}>المسار الثاني — تحويل مباشر حسب الهيكل التنظيمي</option>
+        <label class="form-label">المسار من نظام مسار</label>
+        <select class="form-select" name="workflow_template_id" data-searchable="1">
+          <option value="">— يحدد لاحقاً —</option>
+          {% for workflow_template in workflow_templates|default([]) %}
+            <option value="{{ workflow_template.id }}" {% if current_template_id|string == workflow_template.id|string %}selected{% endif %}>{{ workflow_template.name }}</option>
+          {% endfor %}
         </select>
+        <div class="form-text">تظهر هنا المسارات النشطة المنشأة في نظام مسار. يبدأ التنفيذ عند الضغط على «بدء المسار» بعد حفظ المعاملة.</div>
       </div>
       <div class="col-lg-3 col-md-6">
         <label class="form-label">نطاق البريد</label>
@@ -38,12 +41,71 @@
       </div>
       <div class="col-md-6">
         <label class="form-label">درجة السرية</label>
-        <select class="form-select" name="confidentiality">
-          <option value="NORMAL" {% if current_confidentiality == 'NORMAL' %}selected{% endif %}>عادي</option>
-          <option value="SECRET" {% if current_confidentiality == 'SECRET' %}selected{% endif %}>سري</option>
-        </select>
+        {% if may_manage_confidential %}
+          <select class="form-select" name="confidentiality" id="corrConfidentiality">
+            <option value="NORMAL" {% if current_confidentiality == 'NORMAL' %}selected{% endif %}>عادي</option>
+            <option value="SECRET" {% if current_confidentiality == 'SECRET' %}selected{% endif %}>سري — وصول مقيد</option>
+          </select>
+        {% else %}
+          <div class="form-control bg-body-secondary">
+            {{ 'سري — وصول مقيد' if current_confidentiality == 'SECRET' else 'عادي' }}
+          </div>
+          <div class="form-text">يمكن للمنشئ أو صاحب صلاحية إدارة السرية فقط تغيير هذه القيمة.</div>
+        {% endif %}
       </div>
+
+      {% if may_manage_confidential %}
+        <div class="col-12 {% if current_confidentiality != 'SECRET' %}d-none{% endif %}" id="corrAuthorizedUsersWrap">
+          <div class="border border-danger-subtle rounded-3 p-3 bg-white">
+            <label class="form-label fw-semibold"><i class="bi bi-shield-lock"></i> الأشخاص المخولون بالاطلاع</label>
+            <input class="form-control form-control-sm mb-2" type="search" id="corrAuthorizedUsersSearch" placeholder="ابحث بالاسم أو البريد الإلكتروني…">
+            <div class="border rounded p-2" style="max-height: 240px; overflow-y: auto;" id="corrAuthorizedUsersList">
+              {% for authorized_user in confidential_user_options|default([]) %}
+                {% if authorized_user.id != current_user.id %}
+                  {% set user_label = authorized_user.name or authorized_user.email or ('مستخدم #' ~ authorized_user.id) %}
+                  <label class="d-flex align-items-start gap-2 py-1 corr-authorized-user" data-search="{{ (user_label ~ ' ' ~ (authorized_user.email or ''))|lower }}">
+                    <input class="form-check-input mt-1" type="checkbox" name="authorized_user_ids" value="{{ authorized_user.id }}" {% if authorized_user.id in selected_confidential_user_ids|default([]) %}checked{% endif %}>
+                    <span>
+                      <span class="d-block">{{ user_label }}</span>
+                      {% if authorized_user.email and authorized_user.name %}<span class="small text-muted">{{ authorized_user.email }}</span>{% endif %}
+                    </span>
+                  </label>
+                {% endif %}
+              {% else %}
+                <div class="text-muted small">لا يوجد مستخدمون للاختيار.</div>
+              {% endfor %}
+            </div>
+            <div class="form-text">المنشئ والمستلم المباشر مخولان تلقائياً. ويمكن منح صلاحية عامة من إدارة صلاحيات النظام.</div>
+          </div>
+        </div>
+      {% endif %}
     </div>
     <div class="form-text mt-2">يُستخدم الموعد النهائي لإظهار تنبيهات المتابعة حتى إغلاق المعاملة أو أرشفتها.</div>
   </div>
 </div>
+
+{% if may_manage_confidential %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const confidentiality = document.getElementById('corrConfidentiality');
+  const authorizedWrap = document.getElementById('corrAuthorizedUsersWrap');
+  const search = document.getElementById('corrAuthorizedUsersSearch');
+  const rows = document.querySelectorAll('.corr-authorized-user');
+  const refreshConfidentiality = function () {
+    if (authorizedWrap && confidentiality) {
+      authorizedWrap.classList.toggle('d-none', confidentiality.value !== 'SECRET');
+    }
+  };
+  if (confidentiality) confidentiality.addEventListener('change', refreshConfidentiality);
+  if (search) {
+    search.addEventListener('input', function () {
+      const query = (search.value || '').trim().toLowerCase();
+      rows.forEach(function (row) {
+        row.classList.toggle('d-none', query && !(row.dataset.search || '').includes(query));
+      });
+    });
+  }
+  refreshConfidentiality();
+});
+</script>
+{% endif %}

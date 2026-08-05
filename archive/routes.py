@@ -51,7 +51,15 @@ from models import (
     CorrAttachment,
 )
 
-from workflow.engine import start_workflow_for_request
+from workflow.engine import (
+    resolve_template_participant_user_ids,
+    start_workflow_for_request,
+)
+from services.workflow_confidentiality import (
+    can_user_access_archived_file_confidentiality,
+    can_user_pass_confidential_workflow_gate,
+    filter_confidential_workflow_user_ids,
+)
 
 from archive import archive_bp
 
@@ -563,6 +571,8 @@ def _apply_archive_filters(query, filters: dict):
 def _archive_user_can_view_workflow(user, req: WorkflowRequest) -> bool:
     if not user or not req:
         return False
+    if not can_user_pass_confidential_workflow_gate(user, req):
+        return False
     if req.requester_id == user.id:
         return True
     if user.has_role("ADMIN") or user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN"):
@@ -839,6 +849,35 @@ def start_file_workflow(file_id):
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return redirect(url_for("archive.file_details", file_id=file.id))
 
+    source_secret_req = (
+        WorkflowRequest.query
+        .join(RequestAttachment, RequestAttachment.request_id == WorkflowRequest.id)
+        .filter(
+            RequestAttachment.archived_file_id == file.id,
+            WorkflowRequest.confidentiality == "SECRET",
+        )
+        .order_by(WorkflowRequest.id.asc())
+        .first()
+    )
+    if source_secret_req:
+        participant_ids = resolve_template_participant_user_ids(template)
+        allowed_ids = filter_confidential_workflow_user_ids(
+            source_secret_req,
+            participant_ids,
+        )
+        unauthorized_ids = participant_ids.difference(allowed_ids)
+        if unauthorized_ids:
+            names = [
+                user.full_name or user.email or f"مستخدم #{user.id}"
+                for user in User.query.filter(User.id.in_(unauthorized_ids)).limit(8).all()
+            ]
+            flash(
+                "لم يبدأ المسار لأن الملف سري والقالب يضم مشاركين غير مخولين: "
+                + "، ".join(names),
+                "danger",
+            )
+            return redirect(url_for("archive.file_details", file_id=file.id))
+
     try:
         title = f"مسار من الأرشيف: {file.original_name}"
         if len(title) > 200:
@@ -856,6 +895,11 @@ def start_file_workflow(file_id):
             status="DRAFT",
             title=title,
             description=description,
+            confidentiality=(
+                getattr(source_secret_req, "confidentiality", None) or "NORMAL"
+            ),
+            source_corr_kind=getattr(source_secret_req, "source_corr_kind", None),
+            source_corr_id=getattr(source_secret_req, "source_corr_id", None),
         )
         db.session.add(req)
         db.session.flush()
@@ -1244,7 +1288,11 @@ def share_file(file_id):
     if not can_delegate:
         abort(403)
 
-    users = User.query.filter(User.id != file.owner_id).all()
+    users = [
+        user
+        for user in User.query.filter(User.id != file.owner_id).all()
+        if can_user_access_archived_file_confidentiality(user, file.id)
+    ]
 
     shared_user_ids = [
         p.user_id
@@ -1253,6 +1301,17 @@ def share_file(file_id):
 
     if request.method == "POST":
         selected_users = request.form.getlist("users")
+
+        allowed_share_ids = {int(user.id) for user in users}
+        requested_share_ids = {
+            int(user_id) for user_id in selected_users if str(user_id).isdigit()
+        }
+        if not requested_share_ids.issubset(allowed_share_ids):
+            flash(
+                "لا يمكن مشاركة ملف معاملة سرية مع مستخدم غير موجود ضمن الأشخاص المخولين.",
+                "danger",
+            )
+            return redirect(url_for("archive.share_file", file_id=file.id))
 
         if current_user.has_role("ADMIN") or file.owner_id == current_user.id:
             FilePermission.query.filter_by(file_id=file.id).delete()
