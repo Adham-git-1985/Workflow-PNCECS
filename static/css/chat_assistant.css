@@ -154,6 +154,40 @@
 .masar-assistant__link strong { display: block; font-size: .86rem; }
 .masar-assistant__link small { color: var(--assistant-muted); }
 
+.masar-assistant__sources {
+  margin-top: .7rem;
+  padding-top: .55rem;
+  border-top: 1px solid #e6edf2;
+  color: var(--assistant-muted);
+  font-size: .74rem;
+}
+
+.masar-assistant__sources summary {
+  color: var(--assistant-primary);
+  cursor: pointer;
+  font-weight: 700;
+  user-select: none;
+}
+
+.masar-assistant__source-list {
+  display: grid;
+  gap: .3rem;
+  margin-top: .45rem;
+}
+
+.masar-assistant__source {
+  display: block;
+  padding: .32rem .42rem;
+  border: 1px solid #dce7ee;
+  border-radius: 7px;
+  color: #344f60;
+  background: #f6fafc;
+  direction: ltr;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .masar-assistant__suggestions {
   display: flex;
   gap: .4rem;

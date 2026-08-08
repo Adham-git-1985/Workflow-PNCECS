@@ -10,6 +10,7 @@ from flask_wtf.csrf import validate_csrf
 from wtforms.validators import ValidationError
 
 from . import assistant_bp
+from .project_knowledge import index_stats, internal_knowledge_allowed, rebuild_project_index
 from .service import answer
 
 
@@ -42,7 +43,7 @@ def _clean_history(raw_history) -> list[dict[str, str]]:
         content = str(item.get("content") or "").strip()
         if role not in {"user", "assistant"} or not content:
             continue
-        history.append({"role": role, "content": content[:1200]})
+        history.append({"role": role, "content": content[:1600]})
     return history
 
 
@@ -53,6 +54,34 @@ def _clean_context(raw_context) -> dict[str, str]:
         "path": str(raw_context.get("path") or "")[:240],
         "title": str(raw_context.get("title") or "")[:160],
     }
+
+
+@assistant_bp.route("/knowledge/status", methods=["GET"])
+@login_required
+def knowledge_status():
+    """Expose non-sensitive index coverage to administrators."""
+    if not internal_knowledge_allowed(current_user):
+        return jsonify({"error": "forbidden", "message": "معرفة المشروع الداخلية متاحة للإدارة فقط."}), 403
+    response = jsonify({"status": "ready", "index": index_stats()})
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@assistant_bp.route("/knowledge/reindex", methods=["POST"])
+@login_required
+def knowledge_reindex():
+    """Refresh Aref's in-process source and file index."""
+    if not internal_knowledge_allowed(current_user):
+        return jsonify({"error": "forbidden", "message": "إعادة فهرسة المشروع متاحة للإدارة فقط."}), 403
+    try:
+        validate_csrf(request.headers.get("X-CSRFToken", ""))
+    except ValidationError:
+        return jsonify({"error": "csrf", "message": "انتهت صلاحية الجلسة. حدّث الصفحة وحاول مجددًا."}), 400
+    stats = rebuild_project_index()
+    current_app.logger.info("Aref project index rebuilt by user_id=%s stats=%s", current_user.id, stats)
+    response = jsonify({"status": "rebuilt", "index": stats})
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @assistant_bp.route("/chat", methods=["POST"])

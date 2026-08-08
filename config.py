@@ -20,9 +20,18 @@ class BaseConfig:
     ASSISTANT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     ASSISTANT_OPENAI_MODEL = os.getenv("OPENAI_CHAT_MODEL")
     ASSISTANT_AI_TIMEOUT = float(os.getenv("ASSISTANT_AI_TIMEOUT", "20"))
-    ASSISTANT_MAX_MESSAGE_CHARS = int(os.getenv("ASSISTANT_MAX_MESSAGE_CHARS", "1200"))
+    ASSISTANT_AI_CONTEXT_CHARS = int(os.getenv("ASSISTANT_AI_CONTEXT_CHARS", "16000"))
+    ASSISTANT_AI_MAX_OUTPUT_TOKENS = int(os.getenv("ASSISTANT_AI_MAX_OUTPUT_TOKENS", "1100"))
+    ASSISTANT_MAX_MESSAGE_CHARS = int(os.getenv("ASSISTANT_MAX_MESSAGE_CHARS", "2000"))
     ASSISTANT_RATE_LIMIT = int(os.getenv("ASSISTANT_RATE_LIMIT", "20"))
     ASSISTANT_RATE_WINDOW_SECONDS = int(os.getenv("ASSISTANT_RATE_WINDOW_SECONDS", "60"))
+    # Local retrieval over repository source/docs/templates plus admin-only DB
+    # schema knowledge. Runtime data continues to use the normal permission gates.
+    ASSISTANT_PROJECT_KNOWLEDGE_ENABLED = os.getenv("ASSISTANT_PROJECT_KNOWLEDGE_ENABLED", "1")
+    ASSISTANT_INDEX_REFRESH_SECONDS = int(os.getenv("ASSISTANT_INDEX_REFRESH_SECONDS", "300"))
+    ASSISTANT_INDEX_MAX_FILE_BYTES = int(os.getenv("ASSISTANT_INDEX_MAX_FILE_BYTES", "1500000"))
+    ASSISTANT_INDEX_CHUNK_LINES = int(os.getenv("ASSISTANT_INDEX_CHUNK_LINES", "48"))
+    ASSISTANT_INDEX_MAX_RESULTS = int(os.getenv("ASSISTANT_INDEX_MAX_RESULTS", "7"))
 
 
 class DevConfig(BaseConfig):
