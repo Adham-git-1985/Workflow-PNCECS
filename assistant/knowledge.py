@@ -25,6 +25,7 @@ from models import (
     WorkflowTemplate,
 )
 from services.workflow_confidentiality import can_user_access_correspondence_item
+from .project_knowledge import collect_internal_knowledge
 
 
 _AR_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
@@ -529,7 +530,7 @@ def _dedupe_links(links: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def collect_knowledge(user, message: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Collect a concise, permission-filtered answer from live system data."""
+    """Collect permission-filtered live data plus relevant project evidence."""
     context = context or {}
     normalized = _norm(message)
     broad = _contains(
@@ -542,8 +543,10 @@ def collect_knowledge(user, message: str, context: dict[str, Any] | None = None)
     facts: list[str] = []
     links: list[dict[str, str]] = []
     intents: list[str] = []
+    sources: list[dict[str, Any]] = []
+    evidence: list[dict[str, Any]] = []
 
-    sources = (
+    knowledge_loaders = (
         ("account", lambda: _account_section(user, message, profile, broad=broad)),
         ("system", lambda: _system_section(user, message, profile, broad=broad)),
         ("workflow", lambda: _workflow_section(user, message, broad=broad)),
@@ -551,7 +554,7 @@ def collect_knowledge(user, message: str, context: dict[str, Any] | None = None)
         ("correspondence", lambda: _correspondence_section(user, message, broad=broad)),
         ("directory", lambda: _directory_section(user, message, profile, broad=broad)),
     )
-    for intent, loader in sources:
+    for intent, loader in knowledge_loaders:
         try:
             section, section_facts, section_links = loader()
         except Exception:
@@ -564,13 +567,33 @@ def collect_knowledge(user, message: str, context: dict[str, Any] | None = None)
         facts.extend(_compact(item, 300) for item in section_facts)
         links.extend(item for item in section_links if item)
 
+    # Administrators may ask how the application itself works.  This source is
+    # deliberately last: normal user/data questions continue to use the
+    # product's fine-grained live-data gates above, while code/schema questions
+    # receive locally retrieved, line-addressable evidence.
+    try:
+        internal = collect_internal_knowledge(user, message, context)
+    except Exception:
+        current_app.logger.exception("Aref internal project knowledge failed")
+        internal = {}
+    if internal.get("reply"):
+        sections.append(str(internal["reply"]))
+        facts.extend(_compact(item, 520) for item in (internal.get("facts") or []))
+        links.extend(item for item in (internal.get("links") or []) if item)
+        sources.extend(item for item in (internal.get("sources") or []) if item)
+        evidence.extend(item for item in (internal.get("evidence") or []) if item)
+        intents.extend(str(item) for item in (internal.get("intents") or []) if item)
+
     return {
-        "reply": ("\n\n".join(sections)[:4200].rstrip() if sections else ""),
-        "facts": facts[:30],
+        "reply": ("\n\n".join(sections)[:7200].rstrip() if sections else ""),
+        "facts": facts[:60],
         "links": _dedupe_links(links),
+        "sources": sources[:14],
+        "evidence": evidence[:14],
         "intents": intents,
         "access_level": profile["level"],
         "access_label": profile["label"],
         "role": profile["role"],
         "page": _compact(context.get("title"), 120),
+        "index_stats": internal.get("index_stats") if internal else None,
     }

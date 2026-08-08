@@ -68,6 +68,21 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("نطاق عارف", result["reply"])
         self.assertEqual(result["access_level"], "employee")
 
+    def test_local_reply_exposes_retrieval_sources_and_admin_suggestions(self):
+        result = build_local_reply(
+            "اشرح هيكلية المشروع",
+            knowledge={
+                "reply": "معرفة المشروع",
+                "access_level": "super_admin",
+                "access_label": "نطاق سوبر أدمن",
+                "sources": [{"label": "app.py:1", "path": "app.py", "line": 1}],
+                "index_stats": {"indexed_files": 10},
+            },
+        )
+        self.assertEqual(result["sources"][0]["label"], "app.py:1")
+        self.assertIn("ما جداول قاعدة البيانات؟", result["suggestions"])
+        self.assertEqual(result["index_stats"]["indexed_files"], 10)
+
     def test_aref_never_elevates_admin_scope(self):
         self.assertEqual(assistant_access_profile(_FakeUser("ADMIN"))["level"], "admin")
         self.assertEqual(assistant_access_profile(_FakeUser("SUPER_ADMIN"))["level"], "super_admin")
