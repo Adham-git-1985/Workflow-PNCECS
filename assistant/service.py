@@ -6,6 +6,7 @@ import os
 import re
 import unicodedata
 import hashlib
+from functools import lru_cache
 from typing import Any
 
 from flask import current_app, url_for
@@ -411,6 +412,46 @@ def _privacy_safe_user_identifier(user: Any) -> str:
     return f"aref_{digest}"
 
 
+@lru_cache(maxsize=1)
+def _windows_trust_context():
+    """Build a verified TLS context from the Windows certificate stores.
+
+    Some embedded Windows Python distributions cannot let OpenSSL read its
+    default CA file and terminate with ``OPENSSL_Applink``. Loading the same
+    trusted Windows certificates from memory avoids that runtime mismatch
+    without weakening certificate or hostname verification.
+    """
+    if os.name != "nt":
+        return None
+
+    import ssl
+
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    loaded = 0
+    for store_name in ("ROOT", "CA"):
+        for certificate, encoding, _trust in ssl.enum_certificates(store_name):
+            if encoding != "x509_asn":
+                continue
+            try:
+                context.load_verify_locations(cadata=ssl.DER_cert_to_PEM_cert(certificate))
+                loaded += 1
+            except ssl.SSLError:
+                continue
+    if not loaded:
+        raise RuntimeError("تعذر تحميل شهادات Windows الموثوقة لاتصال عارف.")
+    return context
+
+
+def _openai_http_client(timeout: float):
+    if os.name != "nt":
+        return None
+    import httpx
+
+    return httpx.Client(verify=_windows_trust_context(), timeout=timeout)
+
+
 def _direct_navigation_results(message: str) -> list[dict[str, str]]:
     normalized = normalize_text(message)
     results: list[dict[str, str]] = []
@@ -627,19 +668,29 @@ def _try_external_ai(
             "content": _compact(message, int(current_app.config.get("ASSISTANT_MAX_MESSAGE_CHARS", 2000))),
         })
 
+        timeout = float(current_app.config.get("ASSISTANT_AI_TIMEOUT", 20))
+        client_options: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": timeout,
+            "max_retries": 1,
+        }
+        http_client = _openai_http_client(timeout)
+        if http_client is not None:
+            client_options["http_client"] = http_client
         client = OpenAI(
-            api_key=api_key,
-            timeout=float(current_app.config.get("ASSISTANT_AI_TIMEOUT", 20)),
-            max_retries=1,
+            **client_options,
         )
-        response = client.responses.create(
-            model=str(model),
-            instructions=instructions,
-            input=input_messages,
-            max_output_tokens=int(current_app.config.get("ASSISTANT_AI_MAX_OUTPUT_TOKENS", 1100)),
-            safety_identifier=_privacy_safe_user_identifier(user),
-            store=False,
-        )
+        try:
+            response = client.responses.create(
+                model=str(model),
+                instructions=instructions,
+                input=input_messages,
+                max_output_tokens=int(current_app.config.get("ASSISTANT_AI_MAX_OUTPUT_TOKENS", 1100)),
+                safety_identifier=_privacy_safe_user_identifier(user),
+                store=False,
+            )
+        finally:
+            client.close()
         reply = _compact(getattr(response, "output_text", ""), 6000)
         return reply or None
     except Exception:
