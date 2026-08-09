@@ -34,6 +34,42 @@
 
 .masar-assistant__launcher i { font-size: 1.15rem; }
 
+.masar-assistant__launcher-label {
+  display: grid;
+  place-items: center;
+}
+
+.masar-assistant__launcher-label > span {
+  grid-area: 1 / 1;
+  transition: opacity .16s ease, transform .16s ease, visibility .16s ease;
+}
+
+.masar-assistant__launcher-label-default {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.masar-assistant__launcher-label-hover {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+}
+
+.masar-assistant__launcher:hover .masar-assistant__launcher-label-default,
+.masar-assistant__launcher:focus-visible .masar-assistant__launcher-label-default {
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-4px);
+}
+
+.masar-assistant__launcher:hover .masar-assistant__launcher-label-hover,
+.masar-assistant__launcher:focus-visible .masar-assistant__launcher-label-hover {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
 .masar-assistant__panel {
   position: absolute;
   inset-inline-start: 0;
@@ -361,7 +397,7 @@
     height: min(84vh, 680px);
     min-height: 400px;
   }
-  .masar-assistant__launcher span { display: none; }
+  .masar-assistant__launcher-label { display: none; }
   .masar-assistant__launcher {
     width: 52px;
     height: 52px;
