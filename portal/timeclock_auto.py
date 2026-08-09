@@ -13,6 +13,33 @@ _started = False
 _lock = threading.Lock()
 
 
+def _is_invalid_sqlite_database_error(exc: BaseException) -> bool:
+    """Return True when an exception chain reports an invalid SQLite database file."""
+    current = exc
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if "file is not a database" in str(current).lower():
+            return True
+        current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+    return False
+
+
+def _stop_for_invalid_database(app, exc: BaseException) -> None:
+    """Stop this worker on DB corruption instead of retrying and flooding the logs."""
+    try:
+        db.session.remove()
+    except Exception:
+        pass
+    app.logger.critical(
+        "TIMECLK auto-sync stopped: workflow.db is not a valid SQLite database. "
+        "Stop the Workflow server, run `python tools/repair_workflow_db.py` to inspect recovery, "
+        "then run `python tools/repair_workflow_db.py --apply` to restore the newest valid backup. "
+        "Original error: %s",
+        exc,
+    )
+
+
 def _setting_get(key: str, default=None):
     row = SystemSetting.query.filter_by(key=key).first()
     if row and row.value is not None and row.value != "":
@@ -143,6 +170,9 @@ def _worker(app):
                     time.sleep(interval)
                     continue
                 except Exception as e:
+                    if _is_invalid_sqlite_database_error(e):
+                        _stop_for_invalid_database(app, e)
+                        return
                     app.logger.exception("TIMECLK auto-sync: stat failed: %s", e)
                     try:
                         _setting_set("TIMECLK_LAST_ERROR", f"STAT_FAILED:{type(e).__name__}")
@@ -201,6 +231,9 @@ def _worker(app):
                                 except Exception:
                                     db.session.rollback()
                             except Exception as e:
+                                if _is_invalid_sqlite_database_error(e):
+                                    _stop_for_invalid_database(app, e)
+                                    return
                                 app.logger.exception("TIMECLK auto-sync: sync failed: %s", e)
                                 try:
                                     db.session.rollback()
@@ -219,6 +252,9 @@ def _worker(app):
                             except Exception:
                                 db.session.rollback()
                 except Exception as e:
+                    if _is_invalid_sqlite_database_error(e):
+                        _stop_for_invalid_database(app, e)
+                        return
                     app.logger.exception("TIMECLK auto-sync: decision failed: %s", e)
 
                 last_sig = sig
@@ -231,5 +267,8 @@ def _worker(app):
                 time.sleep(interval)
 
             except Exception as e:
+                if _is_invalid_sqlite_database_error(e):
+                    _stop_for_invalid_database(app, e)
+                    return
                 app.logger.exception("TIMECLK auto-sync worker crashed: %s", e)
                 time.sleep(60)
