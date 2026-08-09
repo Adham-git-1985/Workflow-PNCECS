@@ -7,6 +7,7 @@
   const panel = root.querySelector("#masarAssistantPanel");
   const toggle = root.querySelector("[data-assistant-toggle]");
   const closeButton = root.querySelector("[data-assistant-close]");
+  const homeButton = root.querySelector("[data-assistant-home]");
   const clearButton = root.querySelector("[data-assistant-clear]");
   const form = root.querySelector("[data-assistant-form]");
   const input = root.querySelector("[data-assistant-input]");
@@ -18,15 +19,126 @@
   const csrfToken = root.dataset.csrfToken;
   const maxMessageChars = Number.parseInt(root.dataset.maxMessageChars || "2000", 10) || 2000;
   const internalKnowledgeEnabled = root.dataset.internalKnowledge === "1";
-  const storageKey = `aref-assistant:v3:${root.dataset.userId || "user"}`;
+  const aiReady = root.dataset.aiReady === "1";
+  const storageKey = `aref-assistant:v4:${root.dataset.userId || "user"}`;
+  const defaultInputPlaceholder = "اكتب كما تتكلم، مثل: مرحبًا أو أريد مساعدتك...";
   const defaultSuggestions = [
-    "ما هي صلاحياتي؟",
+    "اشرح هذه الصفحة",
     "ما الطلبات التي تخصني؟",
-    "ما الإشعارات غير المقروءة؟",
-    "ابحث عن وارد أو صادر",
+    "ما هي صلاحياتي؟",
+    "لا أعرف من أين أبدأ",
   ];
   if (internalKnowledgeEnabled) {
-    defaultSuggestions.push("اشرح هيكلية المشروع", "ما جداول قاعدة البيانات؟");
+    defaultSuggestions.push("ملخص النظام");
+  }
+
+  const helpMenus = {
+    home: {
+      title: "كيف تريد أن يساعدك عارف؟",
+      hint: "اختر النوع الأقرب لما تحتاجه؛ لا يلزم أن تعرف كيف تصوغ السؤال.",
+      items: [
+        {
+          icon: "bi-window",
+          title: "اشرح هذه الصفحة",
+          desc: "ما فائدتها وماذا أستطيع أن أفعل هنا؟",
+          prompt: "اشرح لي هذه الصفحة وما الذي أستطيع فعله فيها خطوة بخطوة.",
+        },
+        {
+          icon: "bi-list-check",
+          title: "أنجز مهمة",
+          desc: "خطوات جاهزة للطلبات والإجازات وغيرها.",
+          menu: "tasks",
+        },
+        {
+          icon: "bi-compass",
+          title: "خذني إلى شاشة",
+          desc: "الوصول السريع إلى المكان الصحيح.",
+          menu: "navigation",
+        },
+        {
+          icon: "bi-search",
+          title: "ابحث واعرض بياناتي",
+          desc: "طلباتي وإشعاراتي ومراسلاتي وصلاحياتي.",
+          menu: "data",
+        },
+        {
+          icon: "bi-tools",
+          title: "حل مشكلة",
+          desc: "زر مفقود، صفحة لا تفتح، طلب متوقف أو مرفق.",
+          menu: "problems",
+        },
+        {
+          icon: "bi-book",
+          title: "الأدلة الكاملة",
+          desc: "افتح مركز أدلة النظام المتاحة لك.",
+          prompt: "أريد فتح مركز الأدلة والدليل الشامل للنظام.",
+        },
+      ],
+    },
+    tasks: {
+      title: "ما المهمة التي تريد إنجازها؟",
+      items: [
+        { title: "إنشاء طلب جديد", desc: "من البداية حتى المتابعة.", prompt: "كيف أنشئ طلبًا جديدًا خطوة بخطوة؟" },
+        { title: "معالجة مهمة أو اعتماد", desc: "التعامل مع معاملة وصلت إليك.", prompt: "كيف أعالج مهمة وصلتني أو أعتمد طلبًا خطوة بخطوة؟" },
+        { title: "تقديم طلب إجازة", desc: "الطلب والمرفقات والمتابعة.", prompt: "كيف أقدم طلب إجازة خطوة بخطوة؟" },
+        { title: "تسجيل وارد أو صادر", desc: "إنشاء المراسلة وتشغيل مسارها.", prompt: "كيف أسجل واردًا أو صادرًا وأبدأ مساره؟" },
+        { title: "رفع ملف إلى الأرشيف", desc: "الرفع والتصنيف والصلاحيات.", prompt: "كيف أرفع ملفًا إلى الأرشيف خطوة بخطوة؟" },
+        { title: "طلب صلاحية جديدة", desc: "التقديم ومتابعة حالة الطلب.", prompt: "كيف أطلب صلاحية جديدة وأتابعها؟" },
+        { title: "مهمة أخرى", desc: "صف ما تريد بكلماتك.", compose: "اكتب المهمة التي تريد إنجازها، وسأرتبها لك خطوة بخطوة..." },
+      ],
+    },
+    navigation: {
+      title: "إلى أين تريد الذهاب؟",
+      items: [
+        { title: "مهامي", desc: "المعاملات التي تنتظر إجراءك.", prompt: "خذني إلى مهامي وصندوق الوارد." },
+        { title: "طلباتي", desc: "متابعة ما أنشأته من طلبات.", prompt: "خذني إلى طلباتي لمتابعة حالتها." },
+        { title: "الإشعارات", desc: "عرض التنبيهات الجديدة.", prompt: "خذني إلى الإشعارات." },
+        { title: "المراسلات", desc: "الوارد والصادر والرسائل.", prompt: "خذني إلى المراسلات والوارد والصادر." },
+        { title: "البوابة الإدارية", desc: "الموارد البشرية والخدمات الإدارية.", prompt: "افتح لي البوابة الإدارية." },
+        { title: "ملفي الشخصي", desc: "بيانات الحساب والصورة.", prompt: "خذني إلى ملفي الشخصي." },
+        { title: "شاشة أخرى", desc: "اكتب اسم الشاشة أو الخدمة.", compose: "اكتب اسم الشاشة أو الخدمة التي تريد الوصول إليها..." },
+      ],
+    },
+    data: {
+      title: "ما المعلومات التي تريدها؟",
+      items: [
+        { title: "صلاحياتي وحسابي", desc: "الدور ونطاق الوصول والشاشات المتاحة.", prompt: "ما هي صلاحياتي وماذا أستطيع أن أفعل في النظام؟" },
+        { title: "طلباتي ومعاملاتي", desc: "الحالات وآخر المعاملات المتاحة لك.", prompt: "اعرض ملخص الطلبات والمعاملات التي تخصني." },
+        { title: "إشعاراتي", desc: "عدد غير المقروء وآخر التنبيهات.", prompt: "ما الإشعارات غير المقروءة لدي؟" },
+        { title: "بحث في الوارد والصادر", desc: "ابحث بالرقم أو الموضوع أو الجهة.", compose: "اكتب رقم المراسلة أو موضوعها أو الجهة للبحث في الوارد والصادر..." },
+        { title: "دليل الموظفين", desc: "البحث ضمن نطاقك الإداري المسموح.", compose: "اكتب اسم الموظف الذي تبحث عنه..." },
+        { title: "ملخص شامل", desc: "حسابك وطلباتك وإشعاراتك في إجابة واحدة.", prompt: "أعطني ملخصًا شاملًا لحسابي وما لدي اليوم." },
+      ],
+    },
+    problems: {
+      title: "ما المشكلة التي تواجهها؟",
+      items: [
+        { title: "صفحة لا تفتح", desc: "منع وصول أو صفحة لا تستجيب.", prompt: "لا أستطيع فتح الصفحة أو تظهر رسالة غير مصرح. ساعدني." },
+        { title: "زر أو خيار لا يظهر", desc: "زر حفظ أو إجراء أو اعتماد مفقود.", prompt: "لا يظهر لي الزر أو الخيار الذي أحتاجه. ما الأسباب والحل؟" },
+        { title: "طلب متوقف", desc: "المعاملة لا تنتقل للخطوة التالية.", prompt: "الطلب متوقف ولا ينتقل للخطوة التالية. كيف أتحقق من السبب؟" },
+        { title: "مشكلة في المرفق", desc: "فشل رفع ملف أو فتحه.", prompt: "فشل رفع الملف أو المرفق. كيف أحل المشكلة؟" },
+        { title: "البيانات لا تظهر", desc: "قائمة فارغة أو نتيجة مفقودة.", prompt: "القائمة فارغة أو البيانات لا تظهر. كيف أتحقق من السبب؟" },
+        { title: "انتهت الجلسة", desc: "تم تسجيل الخروج أو تعذر الحفظ.", prompt: "انتهت الجلسة أو تم تسجيل خروجي. ماذا أفعل؟" },
+        { title: "مشكلة أخرى", desc: "صف الشاشة والخطوة ورسالة الخطأ.", compose: "صف المشكلة، واذكر اسم الشاشة وما فعلته ورسالة الخطأ كما ظهرت..." },
+      ],
+    },
+    admin: {
+      title: "مساعدة الإدارة والتقنية",
+      items: [
+        { title: "ملخص النظام", desc: "أعداد المستخدمين والمعاملات والسجلات.", prompt: "أعطني ملخص النظام وإحصاءاته الحالية." },
+        { title: "هيكلية المشروع", desc: "المجلدات والمكونات ومسارات Flask.", prompt: "اشرح هيكلية المشروع ومكوناته الرئيسية مع المصادر." },
+        { title: "قاعدة البيانات", desc: "الجداول والعلاقات والنماذج.", prompt: "ما جداول قاعدة البيانات وعلاقاتها؟" },
+        { title: "نظام الصلاحيات", desc: "الأدوار وفحص الوصول داخل الكود.", prompt: "كيف يعمل نظام الصلاحيات في الكود؟" },
+      ],
+    },
+  };
+  if (internalKnowledgeEnabled) {
+    helpMenus.home.items.push({
+      icon: "bi-code-square",
+      title: "مساعدة الإدارة والتقنية",
+      desc: "الكود وقاعدة البيانات وهيكلية النظام.",
+      menu: "admin",
+    });
   }
   let history = loadHistory();
   let busy = false;
@@ -125,6 +237,7 @@
 
   function renderSuggestions(items) {
     suggestions.replaceChildren();
+    suggestions.className = "masar-assistant__suggestions";
     (Array.isArray(items) && items.length ? items : defaultSuggestions).slice(0, 7).forEach((label) => {
       const button = document.createElement("button");
       button.type = "button";
@@ -135,19 +248,97 @@
     });
   }
 
+  function focusComposer(placeholder) {
+    suggestions.replaceChildren();
+    suggestions.className = "masar-assistant__suggestions";
+    renderSuggestions(defaultSuggestions);
+    input.value = "";
+    input.placeholder = placeholder || defaultInputPlaceholder;
+    input.focus();
+  }
+
+  function renderHelpMenu(menuName) {
+    const menu = helpMenus[menuName] || helpMenus.home;
+    suggestions.replaceChildren();
+    suggestions.className = "masar-assistant__suggestions masar-assistant__suggestions--menu";
+    suggestions.dataset.menu = menuName;
+
+    const heading = document.createElement("div");
+    heading.className = "masar-assistant__help-heading";
+    if (menuName !== "home") {
+      const back = document.createElement("button");
+      back.type = "button";
+      back.className = "masar-assistant__help-back";
+      back.setAttribute("aria-label", "العودة إلى أنواع المساعدة");
+      back.innerHTML = '<i class="bi bi-arrow-right" aria-hidden="true"></i>';
+      back.addEventListener("click", () => renderHelpMenu("home"));
+      heading.appendChild(back);
+    }
+    const headingText = document.createElement("div");
+    const title = document.createElement("strong");
+    title.textContent = menu.title;
+    headingText.appendChild(title);
+    if (menu.hint) {
+      const hint = document.createElement("small");
+      hint.textContent = menu.hint;
+      headingText.appendChild(hint);
+    }
+    heading.appendChild(headingText);
+    suggestions.appendChild(heading);
+
+    const grid = document.createElement("div");
+    grid.className = `masar-assistant__help-grid${menuName === "home" ? "" : " masar-assistant__help-grid--list"}`;
+    menu.items.forEach((item) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "masar-assistant__help-card";
+      if (item.icon) {
+        const icon = document.createElement("i");
+        icon.className = `bi ${item.icon}`;
+        icon.setAttribute("aria-hidden", "true");
+        button.appendChild(icon);
+      }
+      const copy = document.createElement("span");
+      const itemTitle = document.createElement("strong");
+      itemTitle.textContent = item.title;
+      copy.appendChild(itemTitle);
+      if (item.desc) {
+        const desc = document.createElement("small");
+        desc.textContent = item.desc;
+        copy.appendChild(desc);
+      }
+      button.appendChild(copy);
+      button.addEventListener("click", () => {
+        if (item.menu) {
+          renderHelpMenu(item.menu);
+        } else if (item.compose) {
+          focusComposer(item.compose);
+        } else if (item.prompt) {
+          input.placeholder = defaultInputPlaceholder;
+          sendMessage(item.prompt);
+        }
+      });
+      grid.appendChild(button);
+    });
+    suggestions.appendChild(grid);
+  }
+
   function renderConversation() {
     messages.replaceChildren();
     if (!history.length) {
       appendMessage(
         "assistant",
-        internalKnowledgeEnabled
-          ? "أهلًا بك! أنا عارف. أعرف بيانات النظام وبنية المشروع والكود والملفات ومخطط قاعدة البيانات، وأجيبك مع المصادر ضمن نطاق حسابك."
-          : "أهلًا بك! أنا عارف. أسألني عن بياناتك أو معاملاتك أو صلاحياتك، أو أخبرني بما تريد إنجازه وسأرشدك ضمن نطاق حسابك."
+        aiReady
+          ? "أهلًا بك! تكلّم معي بطريقتك العادية وسأتابع سياق حديثنا، أو اختر نوع المساعدة من القائمة أدناه."
+          : internalKnowledgeEnabled
+            ? "أهلًا بك! يمكنك التحدث معي بكلام عادي أو اختيار مساعدة جاهزة. أشرح الشاشات والخطوات والبيانات والمشكلات، بينما تحتاج المحادثة العامة المفتوحة إلى تفعيل الوضع الذكي."
+            : "أهلًا بك! تكلّم معي بكلام عادي أو اختر نوع المساعدة من القائمة. أستطيع الحوار اليومي البسيط ومساعدتك داخل النظام، بينما تحتاج المحادثة العامة المفتوحة إلى تفعيل الوضع الذكي من الإدارة."
       );
+      renderHelpMenu("home");
     } else {
       history.forEach((item) => appendMessage(item.role, item.content, item.links, "", item.sources));
+      renderSuggestions(defaultSuggestions);
     }
-    renderSuggestions(defaultSuggestions);
   }
 
   function setOpen(open) {
@@ -222,8 +413,8 @@
       const accessLabel = String(data.access_label || "نطاق المستخدم وصلاحياته");
       const knowledgeLabel = data.index_stats ? " — معرفة المشروع" : "";
       modeLabel.textContent = data.mode === "ai"
-        ? `عارف الذكي — ${accessLabel}${knowledgeLabel}`
-        : `عارف — ${accessLabel}${knowledgeLabel}`;
+        ? `محادثة ذكية — ${accessLabel}${knowledgeLabel}`
+        : `محادثة محلية — ${accessLabel}${knowledgeLabel}`;
     } catch (error) {
       typing.remove();
       appendMessage(
@@ -240,12 +431,17 @@
 
   toggle.addEventListener("click", () => setOpen(panel.hidden));
   closeButton.addEventListener("click", () => setOpen(false));
+  homeButton.addEventListener("click", () => {
+    input.placeholder = defaultInputPlaceholder;
+    renderHelpMenu("home");
+  });
   clearButton.addEventListener("click", () => {
     history = [];
     saveHistory();
-    modeLabel.textContent = internalKnowledgeEnabled
-      ? "عارف — بيانات ومعرفة المشروع"
-      : "عارف — معلومات حسب صلاحياتك";
+    input.placeholder = defaultInputPlaceholder;
+    modeLabel.textContent = aiReady
+      ? "محادثة ذكية تتذكر سياق كلامك"
+      : "محادثة محلية ومساعدة داخل النظام";
     renderConversation();
     input.focus();
   });

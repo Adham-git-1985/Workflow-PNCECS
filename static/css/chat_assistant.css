@@ -38,8 +38,8 @@
   position: absolute;
   inset-inline-start: 0;
   bottom: 64px;
-  width: min(390px, calc(100vw - 28px));
-  height: min(610px, calc(100vh - 110px));
+  width: min(440px, calc(100vw - 28px));
+  height: min(680px, calc(100vh - 100px));
   min-height: 440px;
   overflow: hidden;
   border: 1px solid rgba(13, 59, 102, .14);
@@ -89,6 +89,7 @@
 
 .masar-assistant__messages {
   flex: 1;
+  min-height: 125px;
   overflow-y: auto;
   padding: 1rem;
   background:
@@ -197,6 +198,107 @@
   background: #fff;
 }
 
+.masar-assistant__suggestions--menu {
+  display: block;
+  flex: 0 0 auto;
+  max-height: 340px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: .75rem;
+}
+
+.masar-assistant__help-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  margin-bottom: .65rem;
+  color: #203443;
+}
+
+.masar-assistant__help-heading > div {
+  display: grid;
+  gap: .15rem;
+}
+
+.masar-assistant__help-heading strong { font-size: .9rem; }
+.masar-assistant__help-heading small {
+  color: var(--assistant-muted);
+  font-size: .72rem;
+  line-height: 1.5;
+}
+
+.masar-assistant__help-back {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid #d7e2ea;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--assistant-primary);
+  background: #fff;
+}
+
+.masar-assistant__help-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .5rem;
+}
+
+.masar-assistant__help-grid--list { grid-template-columns: 1fr; }
+
+.masar-assistant__help-card {
+  min-width: 0;
+  min-height: 78px;
+  padding: .65rem;
+  border: 1px solid #dce6ed;
+  border-radius: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: .55rem;
+  color: #203443;
+  background: #fff;
+  text-align: start;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.masar-assistant__help-grid--list .masar-assistant__help-card { min-height: 60px; }
+
+.masar-assistant__help-card:hover,
+.masar-assistant__help-card:focus-visible {
+  border-color: var(--assistant-accent);
+  background: #f4f9fc;
+  transform: translateY(-1px);
+}
+
+.masar-assistant__help-card > i {
+  width: 29px;
+  height: 29px;
+  flex: 0 0 29px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--assistant-primary);
+  background: #eaf3f8;
+}
+
+.masar-assistant__help-card > span {
+  min-width: 0;
+  display: grid;
+  gap: .18rem;
+}
+
+.masar-assistant__help-card strong {
+  font-size: .79rem;
+  line-height: 1.45;
+}
+
+.masar-assistant__help-card small {
+  color: var(--assistant-muted);
+  font-size: .68rem;
+  line-height: 1.5;
+}
+
 .masar-assistant__suggestion {
   flex: 0 0 auto;
   border: 1px solid #d7e2ea;
@@ -256,7 +358,7 @@
   .masar-assistant__panel {
     bottom: 60px;
     width: calc(100vw - 24px);
-    height: min(72vh, 590px);
+    height: min(84vh, 680px);
     min-height: 400px;
   }
   .masar-assistant__launcher span { display: none; }

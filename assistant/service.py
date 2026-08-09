@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import unicodedata
+import hashlib
 from typing import Any
 
 from flask import current_app, url_for
@@ -17,10 +18,10 @@ _AR_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 _SPACE = re.compile(r"\s+")
 
 _SUGGESTIONS = (
+    "اشرح هذه الصفحة",
+    "لا أعرف من أين أبدأ",
     "ما هي صلاحياتي؟",
     "ما الطلبات التي تخصني؟",
-    "ما الإشعارات غير المقروءة؟",
-    "ابحث عن وارد أو صادر",
 )
 
 _ADMIN_SUGGESTIONS = (
@@ -199,6 +200,125 @@ _HOW_TO_GUIDES = (
     },
 )
 
+_HELP_OVERVIEW_PHRASES = (
+    "لا اعرف من اين ابدا",
+    "ماذا يستطيع عارف",
+    "كيف تساعدني",
+    "انواع المساعده",
+    "احتاج مساعده",
+)
+
+_HELP_OVERVIEW_REPLY = (
+    "لا تحتاج إلى معرفة صياغة السؤال. من زر القائمة أعلى نافذة عارف اختر نوع المساعدة:\n"
+    "1) «اشرح هذه الصفحة» لفهم الشاشة الحالية وما يمكنك فعله فيها.\n"
+    "2) «أنجز مهمة» للحصول على خطوات الطلبات والإجازات والمراسلات والأرشيف والصلاحيات.\n"
+    "3) «خذني إلى شاشة» للوصول مباشرةً إلى المكان الصحيح.\n"
+    "4) «ابحث واعرض بياناتي» لطلباتك وإشعاراتك ومراسلاتك ودليل الموظفين ضمن صلاحياتك.\n"
+    "5) «حل مشكلة» للصفحات والأزرار والطلبات المتوقفة والمرفقات والجلسة.\n"
+    "6) «الأدلة الكاملة» لفتح أدلة النظام.\n"
+    "ويمكنك دائمًا كتابة ما تريد بطريقتك، حتى لو كان وصفًا قصيرًا مثل «لا أجد زر الاعتماد»."
+)
+
+_TROUBLESHOOTING_GUIDES = (
+    {
+        "phrases": ("الصفحه لا تفتح", "لا استطيع فتح الصفحه", "غير مصرح", "منع الوصول", "رفض الوصول"),
+        "reply": (
+            "لحل مشكلة فتح الصفحة:\n"
+            "1) حدّث الصفحة مرة واحدة وتأكد أن جلسة الدخول ما زالت فعّالة.\n"
+            "2) افتح الصفحة من قائمة النظام بدل رابط قديم أو محفوظ.\n"
+            "3) إذا ظهرت «غير مصرح»، فالشاشة تحتاج دورًا أو صلاحية غير موجودة في حسابك؛ راجع «صلاحياتي» أو قدّم طلب صلاحية.\n"
+            "4) إذا بقيت المشكلة، اذكر لي اسم الشاشة ونص رسالة الخطأ كما ظهر وسأحدد لك الخطوة التالية.\n"
+            "لا ترسل كلمة المرور أو رمز الدخول."
+        ),
+    },
+    {
+        "phrases": ("الزر لا يظهر", "لا يظهر لي الزر", "لا اجد الزر", "الخيار لا يظهر", "الخيار غير ظاهر", "زر مفقود"),
+        "reply": (
+            "اختفاء زر أو خيار يكون غالبًا بسبب واحد من هذه الأمور:\n"
+            "1) الإجراء غير مسموح لصلاحية حسابك.\n"
+            "2) السجل ليس في الحالة التي تسمح بهذا الإجراء، مثل طلب مكتمل أو مرفوض.\n"
+            "3) المهمة ليست مسندة إليك أو لم تصل إلى خطوتك بعد.\n"
+            "4) بعض الحقول المطلوبة لم تُستكمل بعد.\n"
+            "افتح السجل وتحقق من حالته والخطوة الحالية، ثم أخبرني باسم الشاشة واسم الزر المفقود ورقم الطلب إن وجد."
+        ),
+    },
+    {
+        "phrases": ("الطلب متوقف", "الطلب عالق", "لا يتحرك الطلب", "لا ينتقل الطلب", "لم ينتقل الطلب", "الخطوه التاليه"),
+        "reply": (
+            "للتحقق من طلب متوقف:\n"
+            "1) افتح الطلب من «طلباتي» واقرأ الحالة وسجل الإجراءات.\n"
+            "2) تحقق من الخطوة الحالية ومن الشخص أو الجهة المسندة إليها.\n"
+            "3) تأكد أن الإجراء السابق حُفظ فعلًا وأن الحقول أو المرفقات المطلوبة مكتملة.\n"
+            "4) راجع الإشعارات لمعرفة إن كان الطلب أُعيد إليك أو رُفض.\n"
+            "إذا لم يظهر مسؤول للخطوة أو بقيت دون حركة، أرسل رقم الطلب لمسؤول المسارات ليراجع القالب والتوجيه. يمكنك أيضًا كتابة «حالة الطلب رقم 123» ليعرض عارف ما تسمح لك صلاحيتك برؤيته."
+        ),
+    },
+    {
+        "phrases": ("فشل رفع الملف", "لا استطيع رفع ملف", "المرفق لا يرفع", "مشكله في المرفق", "فشل المرفق", "لا يفتح المرفق"),
+        "reply": (
+            "لحل مشكلة الملف أو المرفق:\n"
+            "1) تأكد أن نوع الملف وحجمه مسموحان في الشاشة.\n"
+            "2) أعد تسمية الملف باسم قصير وواضح دون رموز غريبة، ثم جرّب مجددًا.\n"
+            "3) انتظر اكتمال الرفع قبل الحفظ، وتحقق من ثبات الاتصال.\n"
+            "4) حدّث الصفحة وأعد اختيار الملف إذا انتهت الجلسة.\n"
+            "إذا استمرت المشكلة، أخبرني باسم الشاشة وامتداد الملف وحجمه ونص الخطأ، من دون إرسال محتوى حساس."
+        ),
+    },
+    {
+        "phrases": ("القائمه فارغه", "البيانات لا تظهر", "نتيجه مفقوده", "لا تظهر النتائج", "لا اجد السجل"),
+        "reply": (
+            "إذا كانت القائمة فارغة أو السجل غير ظاهر:\n"
+            "1) امسح مرشحات البحث ووسّع نطاق التاريخ ثم أعد البحث.\n"
+            "2) تأكد أنك في القسم الصحيح وأن حالة السجل ليست مخفية بفلتر.\n"
+            "3) قد يكون السجل خارج نطاق صلاحيتك أو دائرتك، أو مصنفًا سريًا.\n"
+            "4) ابحث بالرقم الدقيق إن كان متاحًا.\n"
+            "اكتب اسم نوع السجل ورقمه أو موضوعه، وسيبحث عارف في البيانات المسموح لك بها."
+        ),
+    },
+    {
+        "phrases": ("انتهت الجلسه", "تم تسجيل خروجي", "انتهت صلاحيه الجلسه", "تعذر الحفظ بعد تسجيل الدخول"),
+        "reply": (
+            "عند انتهاء الجلسة:\n"
+            "1) انسخ أي نص لم تحفظه إن كان ما زال ظاهرًا.\n"
+            "2) حدّث الصفحة وسجّل الدخول من جديد.\n"
+            "3) ارجع إلى السجل وتأكد هل حُفظ الإجراء قبل إعادة إرساله حتى لا يتكرر.\n"
+            "إذا تكرر الخروج مباشرةً، تواصل مع مسؤول النظام واذكر وقت المشكلة واسم الصفحة فقط؛ لا تشارك كلمة المرور."
+        ),
+    },
+    {
+        "phrases": ("حدث خطا", "رساله خطا", "مشكله اخرى", "ساعدني في مشكله"),
+        "reply": (
+            "سأساعدك في تشخيصها. اكتب في رسالة واحدة:\n"
+            "1) اسم الشاشة.\n"
+            "2) ما الذي حاولت فعله.\n"
+            "3) نص رسالة الخطأ كما ظهر.\n"
+            "4) رقم الطلب أو السجل إن كان مسموحًا لك عرضه.\n"
+            "لا ترسل كلمة مرور أو رمز دخول أو بيانات سرية غير لازمة."
+        ),
+    },
+)
+
+_CASUAL_EXACT_RESPONSES = {
+    "شكرا": "على الرحب والسعة. أنا معك؛ أكمل كلامك أو أخبرني بما تريد فعله.",
+    "شكرا لك": "العفو، هذا دوري. هل نكمل في نفس الموضوع أم تريد مساعدة في شيء آخر؟",
+    "مشكور": "العفو. أنا حاضر إذا أردت أن نكمل.",
+    "تمام": "تمام، أنا معك. أكمل أو أخبرني بالخطوة التالية التي تريدها.",
+    "حسنا": "حسنًا. أكمل بطريقتك، وسأتابع معك.",
+    "اوكي": "تمام. ماذا تريد أن نفعل بعد ذلك؟",
+    "نعم": "حسنًا، نكمل. اكتب لي ما تريد أو اختر نوع المساعدة من زر القائمة.",
+    "لا": "لا مشكلة. قل لي بطريقتك ما الذي لم يناسبك أو ماذا تريد بدلًا منه.",
+    "مع السلامه": "مع السلامة. سأكون هنا عندما تحتاج إلى مساعدة.",
+    "الى اللقاء": "إلى اللقاء. يمكنك العودة وإكمال الحديث في أي وقت داخل هذه الجلسة.",
+}
+
+_CASUAL_GREETING_PHRASES = (
+    "مرحبا", "اهلا", "السلام عليكم", "صباح الخير", "مساء الخير", "هلا", "هاي",
+)
+
+_CASUAL_DIFFICULTY_PHRASES = (
+    "الموضوع صعب", "الامر صعب", "مش فاهم", "لا افهم", "ضايع", "محتار", "متضايق",
+)
+
 
 def normalize_text(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).strip()
@@ -229,6 +349,66 @@ def _how_to_reply(message: str) -> str | None:
         if any(normalize_text(phrase) in normalized for phrase in guide["phrases"]):
             return str(guide["reply"])
     return None
+
+
+def _guided_help_reply(message: str) -> str | None:
+    normalized = normalize_text(message)
+    if any(normalize_text(phrase) in normalized for phrase in _HELP_OVERVIEW_PHRASES):
+        return _HELP_OVERVIEW_REPLY
+    for guide in _TROUBLESHOOTING_GUIDES:
+        if any(normalize_text(phrase) in normalized for phrase in guide["phrases"]):
+            return str(guide["reply"])
+    return None
+
+
+def _last_history_message(history: list[dict[str, str]], role: str) -> str:
+    for item in reversed(history or []):
+        if item.get("role") == role and str(item.get("content") or "").strip():
+            return str(item["content"]).strip()
+    return ""
+
+
+def _casual_conversation_reply(message: str, history: list[dict[str, str]] | None = None) -> str | None:
+    """Handle common conversational Arabic when the external model is unavailable."""
+    normalized = normalize_text(message)
+    history = history or []
+    exact = _CASUAL_EXACT_RESPONSES.get(normalized)
+    if exact:
+        return exact
+    if any(normalize_text(phrase) in normalized for phrase in ("كيف حالك", "شو اخبارك", "كيفك")):
+        return "أنا بخير وجاهز أساعدك. كيف حالك أنت، وما الذي تحب أن نتحدث عنه أو ننجزه؟"
+    if any(normalize_text(phrase) in normalized for phrase in ("من انت", "عرفني عن نفسك", "ما اسمك")):
+        return (
+            "أنا عارف، مساعدك داخل مسار والبوابة الإدارية. أستطيع التحدث معك، شرح الشاشات، "
+            "إرشادك خطوة بخطوة، والبحث في المعلومات التي تسمح بها صلاحيات حسابك."
+        )
+    if any(normalize_text(phrase) in normalized for phrase in _CASUAL_DIFFICULTY_PHRASES):
+        return (
+            "أفهمك، وخلّينا نبسّطها معًا. لا تحتاج أن تعرف اسم الشاشة أو المصطلح الصحيح؛ "
+            "قل لي فقط ما النتيجة التي تريد الوصول إليها، وسأمشي معك خطوة خطوة."
+        )
+    if any(normalize_text(phrase) in normalized for phrase in ("وضح اكثر", "اشرح اكثر", "ماذا تقصد", "مش واضح")):
+        previous = _last_history_message(history, "assistant")
+        if previous:
+            return (
+                "بكل تأكيد. أخبرني أي جزء من ردي السابق تريد تبسيطه، أو اذكر الخطوة التي توقفت عندها، "
+                "وسأشرحها بطريقة أقصر وبمثال مباشر."
+            )
+    if any(normalize_text(phrase) in normalized for phrase in _CASUAL_GREETING_PHRASES):
+        return (
+            "أهلًا وسهلًا! أنا عارف، وأنا معك. يمكنك أن تكلمني بطريقتك العادية؛ "
+            "هل تريد إنجاز مهمة، فهم شاشة، البحث عن معلومة، أم فقط تسألني سؤالًا؟"
+        )
+    if any(normalize_text(phrase) in normalized for phrase in ("نتكلم", "نتحدث", "سولف معي", "كلمني")):
+        return "أكيد، نتكلم بشكل عادي. ابدأ بأي موضوع أو أخبرني بما يشغلك، وسأتابع معك ضمن إمكانات وضع المحادثة المتاح."
+    return None
+
+
+def _privacy_safe_user_identifier(user: Any) -> str:
+    secret = str(current_app.config.get("SECRET_KEY") or "aref-assistant")
+    user_id = str(getattr(user, "id", "anonymous"))
+    digest = hashlib.sha256(f"{secret}:{user_id}".encode("utf-8")).hexdigest()[:32]
+    return f"aref_{digest}"
 
 
 def _direct_navigation_results(message: str) -> list[dict[str, str]]:
@@ -297,14 +477,18 @@ def build_local_reply(
     results: list[dict[str, str]] | None = None,
     context: dict[str, Any] | None = None,
     knowledge: dict[str, Any] | None = None,
+    history: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """Build an Arabic answer without sending data to an external service."""
     results = results or []
     context = context or {}
     knowledge = knowledge or {}
+    history = history or []
     normalized = normalize_text(message)
     knowledge_reply = str(knowledge.get("reply") or "").strip()
     how_to_reply = _how_to_reply(message)
+    guided_help_reply = _guided_help_reply(message)
+    casual_reply = _casual_conversation_reply(message, history)
     if len(knowledge_reply) > 7200:
         knowledge_reply = knowledge_reply[:7199].rstrip() + "…"
 
@@ -317,11 +501,8 @@ def build_local_reply(
         reply = knowledge_reply
     elif how_to_reply:
         reply = how_to_reply
-    elif any(word in normalized for word in ("مرحبا", "اهلا", "السلام عليكم", "صباح الخير", "مساء الخير")):
-        reply = (
-            "أهلًا بك! أنا عارف. أقرأ بيانات النظام المسموح بها لحسابك، وأساعدك في فهمها "
-            "والوصول إلى الشاشة والخطوة الصحيحة دون تجاوز صلاحياتك أو سرية المعاملات."
-        )
+    elif guided_help_reply:
+        reply = guided_help_reply
     elif _is_page_question(message):
         title = _compact(context.get("title"), 100) or "الصفحة الحالية"
         if results:
@@ -336,10 +517,13 @@ def build_local_reply(
         reply = f"أنسب نتيجة لسؤالك هي «{first['title']}». {first['desc']}"
         if len(results) > 1:
             reply += " أضفت أيضًا خيارات مرتبطة قد تكون مفيدة."
+    elif casual_reply:
+        reply = casual_reply
     else:
         reply = (
-            "لم أجد شاشة مطابقة بوضوح. جرّب ذكر اسم القسم أو المهمة، مثل: طلب جديد، مهامي، "
-            "الإجازات، الأرشيف، الموارد البشرية، المراسلات أو الصلاحيات."
+            "وصلتني رسالتك، وأنا معك. في وضع المحادثة المحلي أستطيع التفاعل اليومي البسيط "
+            "ومساعدتك داخل النظام، أما الحوار العام المفتوح فيحتاج تفعيل وضع الذكاء الاصطناعي. "
+            "يمكنك الآن توضيح مقصدك بكلمات أخرى، أو اختيار نوع المساعدة من زر القائمة أعلى النافذة."
         )
 
     suggestion_items = list(_SUGGESTIONS)
@@ -374,6 +558,7 @@ def _merge_links(*groups: list[dict[str, str]]) -> list[dict[str, str]]:
 
 
 def _try_external_ai(
+    user,
     message: str,
     history: list[dict[str, str]],
     context: dict[str, Any],
@@ -415,7 +600,10 @@ def _try_external_ai(
         access_label = _compact(knowledge.get("access_label"), 100) or "نطاق المستخدم وصلاحياته"
         instructions = (
             "أنت «عارف»، مساعد عربي داخل نظام مسار والبوابة الإدارية. "
-            "أجب بدقة ووضوح اعتمادًا فقط على البيانات والمصادر والوجهات المسموح بها أدناه. "
+            "تحدث مع المستخدم بصورة طبيعية وودودة، وافهم العربية الفصحى والعامية، وتابع سياق الرسائل السابقة "
+            "والإشارات مثل «هو» و«هذا الطلب» و«وضح أكثر». لا تحوّل كل حديث عادي إلى شرح للنظام. "
+            "إذا كان الكلام تحية أو شكرًا أو حديثًا عامًا فتفاعل معه مباشرةً، وإذا كان الطلب غير واضح فاسأل سؤال توضيح واحدًا قصيرًا. "
+            "عند الإجابة عن النظام أو بياناته، اعتمد فقط على البيانات والمصادر والوجهات المسموح بها أدناه. "
             "البيانات مسترجعة مسبقًا بعد تطبيق صلاحيات المستخدم والتسلسل الإداري وحواجز السرية؛ "
             "لا تستنتج أو تكشف أي معلومة غير موجودة فيها، ولا تدّعِ أن غياب المعلومة يعني عدم وجودها. "
             "لا تدّعِ تنفيذ أي إجراء، ولا تطلب كلمات مرور أو رموزًا أو بيانات شخصية، "
@@ -429,9 +617,9 @@ def _try_external_ai(
             f"مقاطع المعرفة المسترجعة:\n{retrieved_evidence}"
         )
         input_messages: list[dict[str, str]] = []
-        for item in history[-6:]:
+        for item in history[-8:]:
             role = item.get("role")
-            content = _compact(item.get("content"), 800)
+            content = _compact(item.get("content"), 1200)
             if role in {"user", "assistant"} and content:
                 input_messages.append({"role": role, "content": content})
         input_messages.append({
@@ -449,6 +637,8 @@ def _try_external_ai(
             instructions=instructions,
             input=input_messages,
             max_output_tokens=int(current_app.config.get("ASSISTANT_AI_MAX_OUTPUT_TOKENS", 1100)),
+            safety_identifier=_privacy_safe_user_identifier(user),
+            store=False,
         )
         reply = _compact(getattr(response, "output_text", ""), 6000)
         return reply or None
@@ -468,8 +658,8 @@ def answer(
     knowledge = collect_knowledge(user, message, context)
     navigation = navigation_results(user, message, context)
     results = _merge_links(knowledge.get("links") or [], navigation)
-    local = build_local_reply(message, results, context, knowledge)
-    ai_reply = _try_external_ai(message, history, context, results, knowledge)
+    local = build_local_reply(message, results, context, knowledge, history)
+    ai_reply = _try_external_ai(user, message, history, context, results, knowledge)
     if ai_reply:
         local["reply"] = ai_reply
         local["mode"] = "ai"

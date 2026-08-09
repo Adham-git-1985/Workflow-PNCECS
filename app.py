@@ -13,11 +13,17 @@ from flask_wtf.csrf import generate_csrf
 from sqlalchemy import func, event
 from sqlalchemy.engine import Engine
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 import io
 import os
 import time
 from flask import session
 import logging
+
+
+# Load local server settings before reading APP_ENV or applying config classes.
+# The real .env file is ignored by git; production may continue using OS variables.
+load_dotenv()
 
 
 from utils.events import emit_event
