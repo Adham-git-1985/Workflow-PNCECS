@@ -13,10 +13,14 @@
   <button type="button"
           class="masar-assistant__launcher"
           data-assistant-toggle
+          aria-label="فتح اسأل عارف"
           aria-expanded="false"
           aria-controls="masarAssistantPanel">
     <i class="bi bi-chat-dots-fill" aria-hidden="true"></i>
-    <span>تحدّث مع عارف</span>
+    <span class="masar-assistant__launcher-label" aria-hidden="true">
+      <span class="masar-assistant__launcher-label-default">عارف</span>
+      <span class="masar-assistant__launcher-label-hover">اسأل عارف</span>
+    </span>
   </button>
 
   <section id="masarAssistantPanel"
