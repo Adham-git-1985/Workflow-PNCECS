@@ -21,6 +21,15 @@ class RepairWorkflowDbTests(unittest.TestCase):
         finally:
             conn.close()
 
+    def make_legacy_workflow_db(self, path: Path):
+        conn = sqlite3.connect(path)
+        try:
+            conn.execute("CREATE TABLE workflow_request(id INTEGER PRIMARY KEY, title TEXT)")
+            conn.execute("INSERT INTO workflow_request(title) VALUES ('legacy')")
+            conn.commit()
+        finally:
+            conn.close()
+
     def test_validate_rejects_non_sqlite_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             bad = Path(tmp) / "workflow.db"
@@ -64,6 +73,48 @@ class RepairWorkflowDbTests(unittest.TestCase):
             finally:
                 conn.close()
             self.assertEqual(value, "restored")
+
+    def test_detects_missing_workflow_request_columns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "workflow.db"
+            self.make_legacy_workflow_db(db)
+
+            missing = repair.get_missing_required_columns(db)
+
+            self.assertIn("workflow_request.confidentiality", missing)
+            self.assertIn("workflow_request.source_corr_kind", missing)
+            self.assertIn("workflow_request.source_corr_id", missing)
+
+    def test_upgrades_legacy_workflow_request_without_losing_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "workflow.db"
+            self.make_legacy_workflow_db(db)
+
+            applied = repair.upgrade_required_schema(db)
+
+            self.assertEqual(
+                set(applied),
+                {
+                    "workflow_request.confidentiality",
+                    "workflow_request.source_corr_kind",
+                    "workflow_request.source_corr_id",
+                },
+            )
+            self.assertEqual(repair.get_missing_required_columns(db), [])
+
+            conn = sqlite3.connect(db)
+            try:
+                row = conn.execute(
+                    "SELECT title, confidentiality, source_corr_kind, source_corr_id "
+                    "FROM workflow_request WHERE id=1"
+                ).fetchone()
+            finally:
+                conn.close()
+
+            self.assertEqual(row[0], "legacy")
+            self.assertEqual(row[1], "NORMAL")
+            self.assertIsNone(row[2])
+            self.assertIsNone(row[3])
 
 
 if __name__ == "__main__":
