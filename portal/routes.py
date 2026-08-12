@@ -54,9 +54,11 @@ from utils.file_uploads import (
 )
 from services.meeting_service import (
     RECORDED_ATTENDANCE_LABELS,
+    add_embedded_attachments_to_docx,
     normalize_agenda_order,
     recorded_attendance_label,
     validate_docx_package,
+    validate_embedded_attachments,
 )
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
@@ -2089,6 +2091,25 @@ def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
         "لا توجد مهام متابعة.",
     )
 
+    meeting_attachments = []
+    attachment_dir = _meeting_minutes_attachment_dir(row.id)
+    for attachment in (row.attachments or []):
+        meeting_attachments.append((
+            attachment.original_name,
+            attachment_dir / attachment.stored_name,
+        ))
+    if meeting_attachments:
+        _docx_add_heading(doc, "المرفقات المضمنة", level=2)
+        _docx_add_text(
+            doc,
+            "الملفات التالية جزء من هذا المحضر. افتح الملف في Microsoft Word ثم انقر مرتين على الأيقونة لفتح المرفق.",
+        )
+        add_embedded_attachments_to_docx(
+            doc,
+            meeting_attachments,
+            icon_path=Path(current_app.root_path) / "static" / "images" / "pncecs_logo.png",
+        )
+
     _docx_add_heading(doc, "معلومات الإصدار", level=2)
     _docx_add_table(doc, ["البيان", "القيمة"], [
         ["تاريخ التوليد", data["generated_at"]],
@@ -2100,6 +2121,7 @@ def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
     bio.seek(0)
     data = bio.getvalue()
     validate_docx_package(data)
+    validate_embedded_attachments(data, len(meeting_attachments))
     return data
 
 

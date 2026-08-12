@@ -113,6 +113,20 @@
     {% endif %}
   </section>
 
+  {% if row.attachments %}
+    <section class="mb-4">
+      <h5 class="mb-3"><i class="bi bi-paperclip"></i> المرفقات المضمنة</h5>
+      <div class="alert alert-light border mb-2">
+        تُضاف الملفات التالية داخل نسخة Word من المحضر ككائنات مضمّنة قابلة للفتح بالنقر المزدوج.
+      </div>
+      <ul class="mb-0">
+        {% for attachment in row.attachments %}
+          <li>{{ attachment.original_name }}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+
   <div class="small text-muted border-top pt-3">
     <h5 class="mb-3 text-dark"><i class="bi bi-info-square"></i> معلومات الإصدار</h5>
     <div class="table-responsive">
