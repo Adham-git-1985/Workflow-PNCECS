@@ -393,8 +393,8 @@
               <div class="border rounded-3 p-2">
                 <div class="fw-bold small">{{ p.user.name if p.user else p.user_id }}</div>
                 <select class="form-select form-select-sm my-2" name="attendance_{{ p.id }}">
-                  {% for key, label in attendance_labels.items() %}
-                    <option value="{{ key }}" {% if p.attendance_status == key %}selected{% endif %}>{{ label }}</option>
+                  {% for key, label in recorded_attendance_labels.items() %}
+                    <option value="{{ key }}" {% if p.attendance_status == key or (key == 'ABSENT' and p.attendance_status not in recorded_attendance_labels) %}selected{% endif %}>{{ label }}</option>
                   {% endfor %}
                 </select>
                 <input class="form-control form-control-sm" type="text" name="note_{{ p.id }}" maxlength="300" value="{{ p.note or '' }}" placeholder="ملاحظة">
@@ -415,7 +415,7 @@
                   <div class="small text-muted">{{ p.note }}</div>
                 {% endif %}
               </div>
-              <span class="badge text-bg-light border align-self-start">{{ attendance_labels.get(p.attendance_status, p.attendance_status) }}</span>
+              <span class="badge text-bg-light border align-self-start">{{ recorded_attendance_labels.get(p.attendance_status, 'تغيب') }}</span>
             </div>
           {% endfor %}
         </div>

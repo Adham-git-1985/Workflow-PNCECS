@@ -52,7 +52,12 @@ from utils.file_uploads import (
     is_safe_inline_mimetype,
     random_storage_name,
 )
-from services.meeting_service import normalize_agenda_order
+from services.meeting_service import (
+    RECORDED_ATTENDANCE_LABELS,
+    normalize_agenda_order,
+    recorded_attendance_label,
+    validate_docx_package,
+)
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -1610,7 +1615,7 @@ MEETING_ATTENDANCE_LABELS = {
 }
 
 MEETING_PARTICIPANT_ROLE_LABELS = {
-    "ATTENDEE": "مدعو",
+    "ATTENDEE": "عضو",
     "OWNER": "منظم الاجتماع",
     "CHAIR": "رئيس الاجتماع",
     "SECRETARY": "مقرر",
@@ -1729,16 +1734,8 @@ def _save_meeting_letterhead(upload) -> str:
     return saved_path
 
 
-def _meeting_safe_filename_part(value: str | None, fallback: str = "meeting") -> str:
-    text = (value or "").strip()
-    text = re.sub(r"[\\/:*?\"<>|]+", "_", text)
-    text = re.sub(r"\s+", "_", text).strip("._ ")
-    return (text[:80] or fallback)
-
-
 def _meeting_minutes_filename(row: PortalMeeting, ext: str) -> str:
-    title = _meeting_safe_filename_part(getattr(row, "title", None), f"meeting_{row.id}")
-    return f"minutes_meeting_{row.id}_{title}.{ext.lstrip('.')}"
+    return f"meeting_minutes_{row.id}.{ext.lstrip('.')}"
 
 
 def _meeting_dt_label(value) -> str:
@@ -1765,7 +1762,7 @@ def _meeting_minutes_context(row: PortalMeeting) -> dict:
         participants.append({
             "name": _meeting_user_label(getattr(p, "user", None), str(getattr(p, "user_id", ""))),
             "role": MEETING_PARTICIPANT_ROLE_LABELS.get(getattr(p, "role", None), getattr(p, "role", None) or "-"),
-            "attendance": MEETING_ATTENDANCE_LABELS.get(getattr(p, "attendance_status", None), getattr(p, "attendance_status", None) or "-"),
+            "attendance": recorded_attendance_label(getattr(p, "attendance_status", None)),
             "note": getattr(p, "note", None) or "",
         })
 
@@ -2101,7 +2098,9 @@ def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
     bio = BytesIO()
     doc.save(bio)
     bio.seek(0)
-    return bio.getvalue()
+    data = bio.getvalue()
+    validate_docx_package(data)
+    return data
 
 
 def _find_soffice_executable() -> str | None:
@@ -4354,6 +4353,7 @@ def meeting_view(meeting_id: int):
         meeting_workflow_logs=meeting_workflow_logs,
         meeting_letterhead=_meeting_letterhead_info(),
         attendance_labels=MEETING_ATTENDANCE_LABELS,
+        recorded_attendance_labels=RECORDED_ATTENDANCE_LABELS,
     )
 
 
@@ -4412,12 +4412,18 @@ def meeting_minutes_docx(meeting_id: int):
         current_app.logger.exception("Failed to build meeting minutes DOCX")
         flash("تعذر إنشاء ملف Word للمحضر.", "danger")
         return redirect(url_for("portal.meeting_view", meeting_id=row.id))
-    return send_file(
+    response = send_file(
         BytesIO(docx_bytes),
         mimetype=MEETING_MINUTES_DOCX_MIME,
         as_attachment=True,
         download_name=_meeting_minutes_filename(row, "docx"),
+        max_age=0,
     )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
 
 
 @portal_bp.route("/meetings/<int:meeting_id>/minutes.pdf")
@@ -4706,7 +4712,7 @@ def meeting_update_attendance(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     for p in row.participants or []:
         status = (request.form.get(f"attendance_{p.id}") or "").strip().upper()
-        if status in MEETING_ATTENDANCE_LABELS:
+        if status in RECORDED_ATTENDANCE_LABELS:
             p.attendance_status = status
         p.note = (request.form.get(f"note_{p.id}") or "").strip()[:300] or None
     db.session.commit()

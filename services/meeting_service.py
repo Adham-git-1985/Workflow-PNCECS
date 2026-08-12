@@ -3,6 +3,39 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from io import BytesIO
+import zipfile
+
+
+RECORDED_ATTENDANCE_LABELS = {
+    "ATTENDED": "حضر",
+    "ABSENT": "تغيب",
+}
+
+
+def recorded_attendance_label(status: object) -> str:
+    """Return the binary attendance label used in official minutes."""
+
+    normalized = str(status or "").strip().upper()
+    return RECORDED_ATTENDANCE_LABELS.get(normalized, "تغيب")
+
+
+def validate_docx_package(data: bytes) -> None:
+    """Reject incomplete or corrupt DOCX packages before download."""
+
+    if not data:
+        raise ValueError("The DOCX package is empty.")
+
+    try:
+        with zipfile.ZipFile(BytesIO(data)) as archive:
+            names = set(archive.namelist())
+            required = {"[Content_Types].xml", "_rels/.rels", "word/document.xml"}
+            if not required.issubset(names):
+                raise ValueError("The DOCX package is missing required parts.")
+            if archive.testzip() is not None:
+                raise ValueError("The DOCX package contains a corrupt entry.")
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise ValueError("The DOCX package is invalid.") from exc
 
 
 def normalize_agenda_order(
