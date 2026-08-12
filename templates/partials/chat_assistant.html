@@ -1,5 +1,5 @@
-{% set assistant_ai_flag = config.get('ASSISTANT_AI_ENABLED', '0')|string|lower %}
-{% set assistant_privacy_mode = config.get('ASSISTANT_AI_PRIVACY_MODE', 'LOCAL_ONLY')|string|upper %}
+{% set assistant_ai_flag = config.get('ASSISTANT_AI_ENABLED', '1')|string|lower %}
+{% set assistant_privacy_mode = config.get('ASSISTANT_AI_PRIVACY_MODE', 'PUBLIC_ONLY')|string|upper %}
 {% set assistant_ai_ready = assistant_privacy_mode == 'PUBLIC_ONLY' and assistant_ai_flag in ['1', 'true', 'yes', 'on'] and config.get('ASSISTANT_OPENAI_API_KEY') and config.get('ASSISTANT_OPENAI_MODEL') %}
 {% if current_user.is_authenticated and not hide_shell|default(false) %}
 <div id="masarAssistant"
@@ -35,7 +35,7 @@
         <span class="masar-assistant__avatar" aria-hidden="true"><i class="bi bi-stars"></i></span>
         <div>
           <strong class="d-block">عارف معك</strong>
-          <small data-assistant-mode>{{ 'ذكاء خارجي للأسئلة العامة فقط — بيانات النظام محلية' if assistant_ai_ready else 'محادثة محلية ومساعدة داخل النظام' }}</small>
+          <small data-assistant-mode>{{ 'وضع تلقائي آمن — ذكي عند الاتصال ومحلي عند الحماية أو الانقطاع' if assistant_ai_ready else 'محادثة محلية ومساعدة داخل النظام' }}</small>
         </div>
       </div>
       <div class="d-flex align-items-center gap-1">
@@ -68,7 +68,7 @@
       </button>
     </form>
     <p class="masar-assistant__privacy mb-0">
-      يتفاعل ويشرح ويبحث ضمن صلاحيات حسابك، لكنه لا ينفّذ الموافقات بدلًا منك. لا ترسل كلمات مرور.
+      البيانات الحكومية والحساسة تبقى محلية ولا تُرسل للخدمة الخارجية. لا ترسل كلمات مرور.
     </p>
   </section>
 </div>

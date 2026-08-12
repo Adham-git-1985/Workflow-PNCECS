@@ -163,6 +163,19 @@ _EXTERNAL_AI_URL_OR_PATH = re.compile(
 )
 _EXTERNAL_AI_NUMBER_IDENTIFIER = re.compile(r"[0-9٠-٩]{4,}")
 
+_CONTEXTUAL_FOLLOW_UP_EXACT = {
+    "وضح اكثر", "اشرح اكثر", "ماذا تقصد", "مش واضح", "غير واضح",
+    "كمل", "اكمل", "تابع", "ثم ماذا", "وماذا بعد", "ما الحل",
+    "اعطني مثالا", "اعطيني مثالا", "اختصر", "اختصرها", "اختصره",
+    "لخص", "لخصها", "لخصه", "لماذا", "كيف ذلك",
+}
+
+_CONTEXTUAL_FOLLOW_UP_MARKERS = (
+    "هذا الموضوع", "ذلك الموضوع", "الموضوع السابق", "نفس الموضوع",
+    "ردك السابق", "كلامك السابق", "ما ذكرته", "الذي ذكرته",
+    "ما قلته", "الذي قلته", "الرد السابق",
+)
+
 _HOW_TO_GUIDES = (
     {
         "phrases": ("كيف انشئ طلب", "كيف اقدم طلب", "خطوات انشاء طلب", "طلب جديد"),
@@ -472,6 +485,18 @@ def _public_message_allowed(value: Any) -> tuple[bool, str]:
     return True, "public_conversation"
 
 
+def _message_depends_on_history(value: Any) -> bool:
+    """Return true for short follow-ups that have no safe standalone context."""
+
+    normalized = normalize_text(str(value or ""))
+    if normalized in _CONTEXTUAL_FOLLOW_UP_EXACT:
+        return True
+    return len(normalized.split()) <= 12 and any(
+        normalize_text(marker) in normalized
+        for marker in _CONTEXTUAL_FOLLOW_UP_MARKERS
+    )
+
+
 def _external_ai_privacy_decision(
     message: str,
     history: list[dict[str, str]],
@@ -488,10 +513,12 @@ def _external_ai_privacy_decision(
     allowed, reason = _public_message_allowed(message)
     if not allowed:
         return False, reason
-    for item in history[-8:]:
-        allowed, reason = _public_message_allowed(item.get("content"))
-        if not allowed:
-            return False, f"history_{reason}"
+    # No history is ever transmitted. A self-contained public question starts
+    # a fresh external turn, so protected older turns cannot permanently trap
+    # the session in local mode. Ambiguous follow-ups remain local because they
+    # depend on prior context that is intentionally kept on this server.
+    if _message_depends_on_history(message):
+        return False, "contextual_follow_up"
     return True, "public_conversation"
 
 

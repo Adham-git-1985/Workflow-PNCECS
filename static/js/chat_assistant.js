@@ -440,7 +440,7 @@
     saveHistory();
     input.placeholder = defaultInputPlaceholder;
     modeLabel.textContent = aiReady
-      ? "محادثة ذكية تتذكر سياق كلامك"
+      ? "وضع تلقائي آمن — ذكي عند الاتصال ومحلي عند الحماية أو الانقطاع"
       : "محادثة محلية ومساعدة داخل النظام";
     renderConversation();
     input.focus();

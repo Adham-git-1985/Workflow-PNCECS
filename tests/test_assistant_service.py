@@ -5,7 +5,7 @@ from unittest.mock import patch
 from flask import Flask
 
 from assistant.knowledge import _correspondence_matches, assistant_access_profile
-from assistant.service import _try_external_ai, build_local_reply, normalize_text
+from assistant.service import _try_external_ai, answer, build_local_reply, normalize_text
 
 
 class _FakeUser:
@@ -125,6 +125,26 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertNotIn("أحب الكتب", serialized)
         self.assertIn("للمحادثة العامة فقط", payload["instructions"])
 
+    def test_external_failure_falls_back_to_local_answer(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        with (
+            app.app_context(),
+            patch("assistant.service.collect_knowledge", return_value={}),
+            patch("assistant.service.navigation_results", return_value=[]),
+            patch("openai.OpenAI", side_effect=ConnectionError("offline")),
+        ):
+            result = answer(_FakeUser("EMPLOYEE"), "حدثني عن فوائد القراءة")
+
+        self.assertEqual(result["mode"], "local")
+        self.assertTrue(result["reply"])
+
     def test_external_ai_is_not_called_for_common_sensitive_patterns(self):
         app = Flask(__name__)
         app.config.update(
@@ -196,7 +216,7 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIsNone(reply)
         openai_client.assert_not_called()
 
-    def test_external_ai_is_not_called_when_history_is_sensitive(self):
+    def test_sensitive_history_keeps_contextual_follow_up_local(self):
         app = Flask(__name__)
         app.config.update(
             SECRET_KEY="test-secret",
@@ -216,6 +236,67 @@ class AssistantServiceTests(unittest.TestCase):
             )
         self.assertIsNone(reply)
         openai_client.assert_not_called()
+
+    def test_independent_public_question_recovers_after_sensitive_local_turn(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        client = unittest.mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(output_text="رد ذكي جديد")
+        history = [
+            {"role": "user", "content": "لخص المراسلة الحكومية رقم 12345"},
+            {"role": "assistant", "content": "هذه إجابة محلية لا تغادر النظام."},
+        ]
+
+        with app.app_context(), patch("openai.OpenAI", return_value=client):
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "حدثني عن فوائد القراءة",
+                history,
+                {},
+                [],
+                {},
+            )
+
+        self.assertEqual(reply, "رد ذكي جديد")
+        payload = client.responses.create.call_args.kwargs
+        self.assertEqual(
+            payload["input"],
+            [{"role": "user", "content": "حدثني عن فوائد القراءة"}],
+        )
+        self.assertNotIn("المراسلة الحكومية", repr(payload))
+
+    def test_long_local_assistant_reply_does_not_block_next_public_question(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        client = unittest.mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(output_text="رد ذكي")
+        local_reply = "إجابة محلية طويلة\n" + ("تفاصيل محلية " * 100)
+
+        with app.app_context(), patch("openai.OpenAI", return_value=client):
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "حدثني عن فوائد القراءة",
+                [{"role": "assistant", "content": local_reply}],
+                {},
+                [],
+                {},
+            )
+
+        self.assertEqual(reply, "رد ذكي")
+        payload = client.responses.create.call_args.kwargs
+        self.assertNotIn(local_reply, repr(payload))
 
     def test_unknown_privacy_mode_fails_closed(self):
         app = Flask(__name__)
