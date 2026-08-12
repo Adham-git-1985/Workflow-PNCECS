@@ -60,16 +60,36 @@
     </div>
 
     <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
-      <h5 class="mb-3"><i class="bi bi-list-check"></i> الأجندة</h5>
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <h5 class="mb-0"><i class="bi bi-list-check"></i> الأجندة</h5>
+        {% if can_manage and row.agenda_items|length > 1 %}
+          <span class="small text-muted"><i class="bi bi-grip-vertical"></i> اسحب البنود أو استخدم الأسهم ثم احفظ الترتيب</span>
+        {% endif %}
+      </div>
       {% if row.agenda_items %}
-        <div class="accordion" id="agendaAccordion">
+        <div class="accordion" id="agendaAccordion" data-agenda-list>
           {% for item in row.agenda_items %}
-            <div class="accordion-item">
-              <h2 class="accordion-header">
-                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#agenda{{ item.id }}">
-                  <span class="me-2">{{ item.sort_order }}.</span>
+            <div class="accordion-item" data-agenda-item data-agenda-item-id="{{ item.id }}">
+              <h2 class="accordion-header d-flex align-items-center">
+                {% if can_manage %}
+                  <span class="px-2 text-muted user-select-none" role="button" tabindex="0" draggable="true" data-agenda-drag-handle title="اسحب لتغيير الترتيب">
+                    <i class="bi bi-grip-vertical"></i>
+                  </span>
+                {% endif %}
+                <button class="accordion-button collapsed flex-grow-1" type="button" data-bs-toggle="collapse" data-bs-target="#agenda{{ item.id }}">
+                  <span class="me-2" data-agenda-position>{{ loop.index }}.</span>
                   <span class="{% if item.is_done %}text-decoration-line-through text-muted{% endif %}">{{ item.title }}</span>
                 </button>
+                {% if can_manage %}
+                  <div class="d-flex px-2 gap-1">
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-agenda-up title="تحريك لأعلى" aria-label="تحريك البند لأعلى">
+                      <i class="bi bi-arrow-up"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary" type="button" data-agenda-down title="تحريك لأسفل" aria-label="تحريك البند لأسفل">
+                      <i class="bi bi-arrow-down"></i>
+                    </button>
+                  </div>
+                {% endif %}
               </h2>
               <div id="agenda{{ item.id }}" class="accordion-collapse collapse" data-bs-parent="#agendaAccordion">
                 <div class="accordion-body">
@@ -109,6 +129,15 @@
             </div>
           {% endfor %}
         </div>
+        {% if can_manage and row.agenda_items|length > 1 %}
+          <form method="post" action="{{ url_for('portal.meeting_reorder_agenda', meeting_id=row.id) }}" class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3" data-agenda-order-form>
+            <input type="hidden" name="agenda_order" value="{{ row.agenda_items|map(attribute='id')|join(',') }}" data-agenda-order-input>
+            <span class="small text-warning-emphasis d-none" data-agenda-order-changed>لديك ترتيب جديد غير محفوظ.</span>
+            <button class="btn btn-sm btn-outline-primary ms-auto" type="submit" data-agenda-order-save disabled>
+              <i class="bi bi-save"></i> حفظ ترتيب البنود
+            </button>
+          </form>
+        {% endif %}
       {% else %}
         <div class="text-muted">لا توجد بنود أجندة.</div>
       {% endif %}
@@ -136,7 +165,7 @@
     <div class="p-3 bg-white rounded-3 shadow-sm mb-3">
       <h5 class="mb-3"><i class="bi bi-journal-text"></i> المحضر والقرارات</h5>
       {% if can_manage %}
-        <form method="post" action="{{ url_for('portal.meeting_update_minutes', meeting_id=row.id) }}">
+        <form method="post" action="{{ url_for('portal.meeting_update_minutes', meeting_id=row.id) }}" enctype="multipart/form-data">
           <div class="mb-3">
             <label class="form-label">محضر الاجتماع</label>
             <textarea class="form-control" name="minutes_text" rows="7">{{ row.minutes_text or '' }}</textarea>
@@ -144,6 +173,11 @@
           <div class="mb-3">
             <label class="form-label">القرارات</label>
             <textarea class="form-control" name="decisions_text" rows="4">{{ row.decisions_text or '' }}</textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">إرفاق ملفات بالمحضر</label>
+            <input class="form-control" type="file" name="minutes_files" multiple>
+            <div class="form-text">يمكن اختيار أكثر من ملف، وتبقى أسماء الملفات الأصلية ظاهرة للمشاركين.</div>
           </div>
           <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
             <div class="d-flex gap-3 flex-wrap">
@@ -288,6 +322,37 @@
           <div>{{ (row.decisions_text or 'لا توجد قرارات مسجلة.')|replace('\n', '<br>')|safe }}</div>
         </div>
       {% endif %}
+
+      <div class="border-top mt-3 pt-3">
+        <div class="fw-bold mb-2"><i class="bi bi-paperclip"></i> مرفقات المحضر</div>
+        {% if row.attachments %}
+          <div class="list-group list-group-flush">
+            {% for attachment in row.attachments %}
+              <div class="list-group-item px-0 d-flex justify-content-between align-items-center gap-2">
+                <div class="min-w-0">
+                  <a class="text-decoration-none text-break" href="{{ url_for('portal.meeting_minutes_attachment_download', meeting_id=row.id, attachment_id=attachment.id) }}">
+                    <i class="bi bi-file-earmark-arrow-down"></i> {{ attachment.original_name }}
+                  </a>
+                  <div class="small text-muted">
+                    {% if attachment.file_size is not none %}{{ (attachment.file_size / 1024)|round(1) }} ك.ب{% endif %}
+                    {% if attachment.uploaded_by %}<span class="mx-1">|</span>{{ attachment.uploaded_by.name or attachment.uploaded_by.email }}{% endif %}
+                    {% if attachment.uploaded_at %}<span class="mx-1">|</span>{{ attachment.uploaded_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+                  </div>
+                </div>
+                {% if can_manage %}
+                  <form method="post" action="{{ url_for('portal.meeting_minutes_attachment_delete', meeting_id=row.id, attachment_id=attachment.id) }}" onsubmit="return confirm('هل تريد حذف هذا المرفق؟');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف المرفق">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </form>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <div class="small text-muted">لا توجد ملفات مرفقة بالمحضر.</div>
+        {% endif %}
+      </div>
     </div>
   </div>
 
@@ -418,6 +483,11 @@
     var wfSource = document.querySelector('[data-meeting-workflow-source]');
     var wfTaskWrap = document.querySelector('[data-meeting-workflow-task-wrap]');
     var wfTask = document.querySelector('[data-meeting-workflow-task]');
+    var agendaList = document.querySelector('[data-agenda-list]');
+    var agendaOrderInput = document.querySelector('[data-agenda-order-input]');
+    var agendaOrderSave = document.querySelector('[data-agenda-order-save]');
+    var agendaOrderChanged = document.querySelector('[data-agenda-order-changed]');
+    var draggedAgendaItem = null;
 
     function syncProposedField() {
       if (!select || !proposed) return;
@@ -432,6 +502,59 @@
       wfTaskWrap.style.display = isTask ? '' : 'none';
       wfTask.disabled = !isTask;
       wfTask.required = isTask;
+    }
+
+    function syncAgendaOrder(changed) {
+      if (!agendaList || !agendaOrderInput) return;
+      var items = Array.from(agendaList.querySelectorAll('[data-agenda-item]'));
+      agendaOrderInput.value = items.map(function (item) {
+        return item.getAttribute('data-agenda-item-id');
+      }).join(',');
+      items.forEach(function (item, index) {
+        var position = item.querySelector('[data-agenda-position]');
+        var up = item.querySelector('[data-agenda-up]');
+        var down = item.querySelector('[data-agenda-down]');
+        if (position) position.textContent = (index + 1) + '.';
+        if (up) up.disabled = index === 0;
+        if (down) down.disabled = index === items.length - 1;
+      });
+      if (changed) {
+        if (agendaOrderSave) agendaOrderSave.disabled = false;
+        if (agendaOrderChanged) agendaOrderChanged.classList.remove('d-none');
+      }
+    }
+
+    if (agendaList) {
+      agendaList.addEventListener('click', function (event) {
+        var item = event.target.closest('[data-agenda-item]');
+        if (!item) return;
+        if (event.target.closest('[data-agenda-up]') && item.previousElementSibling) {
+          agendaList.insertBefore(item, item.previousElementSibling);
+          syncAgendaOrder(true);
+        } else if (event.target.closest('[data-agenda-down]') && item.nextElementSibling) {
+          agendaList.insertBefore(item.nextElementSibling, item);
+          syncAgendaOrder(true);
+        }
+      });
+      agendaList.addEventListener('dragstart', function (event) {
+        if (!event.target.closest('[data-agenda-drag-handle]')) return;
+        draggedAgendaItem = event.target.closest('[data-agenda-item]');
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+      });
+      agendaList.addEventListener('dragover', function (event) {
+        if (!draggedAgendaItem) return;
+        var target = event.target.closest('[data-agenda-item]');
+        if (!target || target === draggedAgendaItem) return;
+        event.preventDefault();
+        var rect = target.getBoundingClientRect();
+        var insertAfter = event.clientY > rect.top + (rect.height / 2);
+        agendaList.insertBefore(draggedAgendaItem, insertAfter ? target.nextElementSibling : target);
+      });
+      agendaList.addEventListener('dragend', function () {
+        if (draggedAgendaItem) syncAgendaOrder(true);
+        draggedAgendaItem = null;
+      });
+      syncAgendaOrder(false);
     }
 
     if (select) {

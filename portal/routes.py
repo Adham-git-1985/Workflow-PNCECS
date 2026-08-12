@@ -50,7 +50,9 @@ from utils.file_uploads import (
     clean_original_filename,
     is_allowed_attachment,
     is_safe_inline_mimetype,
+    random_storage_name,
 )
+from services.meeting_service import normalize_agenda_order
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -117,6 +119,7 @@ from models import (
     PortalMeeting,
     PortalMeetingParticipant,
     PortalMeetingAgendaItem,
+    PortalMeetingAttachment,
     PortalMeetingTask,
     Delegation,
     UserPermission,
@@ -1627,6 +1630,50 @@ def _meeting_letterhead_storage_dir() -> str:
     base = os.path.join(current_app.instance_path, "uploads", "meeting_letterheads")
     os.makedirs(base, exist_ok=True)
     return base
+
+
+def _meeting_minutes_attachment_dir(meeting_id: int) -> Path:
+    base = Path(current_app.instance_path) / "uploads" / "meeting_minutes" / str(int(meeting_id))
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _save_meeting_minutes_attachments(row: PortalMeeting, uploads) -> tuple[int, list[Path]]:
+    saved_paths: list[Path] = []
+    saved_count = 0
+    try:
+        for upload in uploads or []:
+            original_name = clean_original_filename(getattr(upload, "filename", None))
+            if not original_name or not is_allowed_attachment(original_name):
+                continue
+
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            saved_path = _meeting_minutes_attachment_dir(row.id) / stored_name
+            upload.save(str(saved_path))
+            saved_paths.append(saved_path)
+
+            mime_type = (getattr(upload, "mimetype", None) or "").strip()
+            if not mime_type:
+                mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+            db.session.add(PortalMeetingAttachment(
+                meeting_id=row.id,
+                original_name=original_name[:255],
+                stored_name=stored_name,
+                mime_type=mime_type[:120],
+                file_size=saved_path.stat().st_size,
+                uploaded_by_user_id=getattr(current_user, "id", None),
+                uploaded_at=datetime.utcnow(),
+            ))
+            saved_count += 1
+    except Exception:
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+    return saved_count, saved_paths
 
 
 def _meeting_letterhead_path() -> str | None:
@@ -4494,19 +4541,99 @@ def meeting_update_minutes(meeting_id: int):
     row = PortalMeeting.query.get_or_404(meeting_id)
     row.minutes_text = (request.form.get("minutes_text") or "").strip() or None
     row.decisions_text = (request.form.get("decisions_text") or "").strip() or None
+    saved_paths: list[Path] = []
+    attachment_count = 0
     if (request.form.get("mark_done") or "").strip() in ("1", "on"):
         row.status = "DONE"
-    if (request.form.get("notify_minutes") or "").strip() in ("1", "on"):
-        _meeting_notify_users(
-            _meeting_participant_user_ids(row),
-            f"تم تحديث محضر اجتماع: {row.title}",
-            level="INFO",
-            subject=f"محضر اجتماع: {row.title}",
-            body=_meeting_message_body(row, "تم تحديث محضر الاجتماع والقرارات."),
-            sender_id=getattr(current_user, "id", None),
+    try:
+        attachment_count, saved_paths = _save_meeting_minutes_attachments(
+            row,
+            request.files.getlist("minutes_files"),
         )
-    db.session.commit()
-    flash("تم حفظ المحضر والقرارات.", "success")
+        if (request.form.get("notify_minutes") or "").strip() in ("1", "on"):
+            _meeting_notify_users(
+                _meeting_participant_user_ids(row),
+                f"تم تحديث محضر اجتماع: {row.title}",
+                level="INFO",
+                subject=f"محضر اجتماع: {row.title}",
+                body=_meeting_message_body(row, "تم تحديث محضر الاجتماع والقرارات."),
+                sender_id=getattr(current_user, "id", None),
+            )
+        _portal_audit(
+            "MEETING_MINUTES_UPDATE",
+            note=f"meeting_id={row.id} attachments_added={attachment_count}",
+            target_type="PORTAL_MEETING",
+            target_id=row.id,
+        )
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        current_app.logger.exception("Failed to save meeting minutes")
+        flash("تعذر حفظ المحضر أو مرفقاته.", "danger")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    if attachment_count:
+        flash(f"تم حفظ المحضر والقرارات وإضافة {attachment_count} مرفق.", "success")
+    else:
+        flash("تم حفظ المحضر والقرارات.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/minutes/attachments/<int:attachment_id>/download")
+@login_required
+def meeting_minutes_attachment_download(meeting_id: int, attachment_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    if not _meeting_can_access(row):
+        abort(403)
+    attachment = PortalMeetingAttachment.query.filter_by(
+        id=attachment_id,
+        meeting_id=row.id,
+    ).first_or_404()
+    return send_from_directory(
+        str(_meeting_minutes_attachment_dir(row.id)),
+        attachment.stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=True,
+        download_name=attachment.original_name,
+    )
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/minutes/attachments/<int:attachment_id>/delete", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_minutes_attachment_delete(meeting_id: int, attachment_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    attachment = PortalMeetingAttachment.query.filter_by(
+        id=attachment_id,
+        meeting_id=row.id,
+    ).first_or_404()
+    saved_path = _meeting_minutes_attachment_dir(row.id) / attachment.stored_name
+    original_name = attachment.original_name
+    db.session.delete(attachment)
+    _portal_audit(
+        "MEETING_MINUTES_ATTACHMENT_DELETE",
+        note=f"meeting_id={row.id} file={original_name}",
+        target_type="PORTAL_MEETING",
+        target_id=row.id,
+    )
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete meeting minutes attachment")
+        flash("تعذر حذف المرفق.", "danger")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    try:
+        saved_path.unlink(missing_ok=True)
+    except OSError:
+        current_app.logger.warning("Could not remove deleted meeting attachment file: %s", saved_path)
+    flash("تم حذف مرفق المحضر.", "success")
     return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
 
@@ -4611,6 +4738,33 @@ def meeting_add_agenda_item(meeting_id: int):
     ))
     db.session.commit()
     flash("تمت إضافة بند الأجندة.", "success")
+    return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/agenda/reorder", methods=["POST"])
+@login_required
+@_perm(PORTAL_MEETINGS_MANAGE)
+def meeting_reorder_agenda(meeting_id: int):
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    items = PortalMeetingAgendaItem.query.filter_by(meeting_id=row.id).all()
+    submitted_ids = [value.strip() for value in (request.form.get("agenda_order") or "").split(",") if value.strip()]
+    try:
+        ordered_ids = normalize_agenda_order(submitted_ids, [item.id for item in items])
+    except ValueError:
+        flash("تعذر حفظ الترتيب لأن بنود الأجندة تغيرت. حدّث الصفحة وحاول مجددًا.", "warning")
+        return redirect(url_for("portal.meeting_view", meeting_id=row.id))
+
+    items_by_id = {item.id: item for item in items}
+    for position, item_id in enumerate(ordered_ids, start=1):
+        items_by_id[item_id].sort_order = position * 10
+    _portal_audit(
+        "MEETING_AGENDA_REORDER",
+        note=f"meeting_id={row.id} order={','.join(str(item_id) for item_id in ordered_ids)}",
+        target_type="PORTAL_MEETING",
+        target_id=row.id,
+    )
+    db.session.commit()
+    flash("تم حفظ ترتيب بنود الأجندة.", "success")
     return redirect(url_for("portal.meeting_view", meeting_id=row.id))
 
 

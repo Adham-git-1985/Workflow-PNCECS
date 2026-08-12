@@ -3720,6 +3720,13 @@ class PortalMeeting(db.Model):
         lazy="selectin",
         order_by="PortalMeetingAgendaItem.sort_order",
     )
+    attachments = db.relationship(
+        "PortalMeetingAttachment",
+        back_populates="meeting",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PortalMeetingAttachment.uploaded_at.desc()",
+    )
     tasks = db.relationship(
         "PortalMeetingTask",
         back_populates="meeting",
@@ -3767,6 +3774,26 @@ class PortalMeetingAgendaItem(db.Model):
 
     meeting = db.relationship("PortalMeeting", back_populates="agenda_items", lazy="joined")
     owner = db.relationship("User", foreign_keys=[owner_user_id], lazy="joined")
+
+
+class PortalMeetingAttachment(db.Model):
+    __tablename__ = "portal_meeting_attachments"
+
+    __table_args__ = (
+        db.Index("ix_portal_meeting_attachments_meeting", "meeting_id", "uploaded_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    meeting_id = db.Column(db.Integer, db.ForeignKey("portal_meetings.id"), nullable=False, index=True)
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    uploaded_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    meeting = db.relationship("PortalMeeting", back_populates="attachments", lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id], lazy="joined")
 
 
 class PortalMeetingTask(db.Model):
