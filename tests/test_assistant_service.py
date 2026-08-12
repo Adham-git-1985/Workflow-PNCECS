@@ -91,7 +91,7 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("وصلتني رسالتك", result["reply"])
         self.assertIn("وضع الذكاء الاصطناعي", result["reply"])
 
-    def test_external_chat_receives_history_and_privacy_controls(self):
+    def test_external_chat_sends_only_current_public_message(self):
         app = Flask(__name__)
         app.config.update(
             SECRET_KEY="test-secret",
@@ -99,16 +99,17 @@ class AssistantServiceTests(unittest.TestCase):
             ASSISTANT_OPENAI_API_KEY="test-key",
             ASSISTANT_OPENAI_MODEL="test-model",
             ASSISTANT_AI_MAX_OUTPUT_TOKENS=400,
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
         )
         client = unittest.mock.MagicMock()
         client.responses.create.return_value = SimpleNamespace(output_text="رد تفاعلي")
         with app.app_context(), patch("openai.OpenAI", return_value=client):
             reply = _try_external_ai(
                 _FakeUser("EMPLOYEE"),
-                "وماذا بعد؟",
-                [{"role": "user", "content": "أريد متابعة الطلب"}],
-                {},
-                [],
+                "حدثني عن فوائد القراءة",
+                [{"role": "user", "content": "أحب الكتب"}],
+                {"title": "سجل حكومي حساس", "path": "/internal/record/44"},
+                [{"title": "شاشة داخلية", "desc": "بيانات داخلية", "href": "/internal"}],
                 {},
             )
 
@@ -116,8 +117,126 @@ class AssistantServiceTests(unittest.TestCase):
         payload = client.responses.create.call_args.kwargs
         self.assertFalse(payload["store"])
         self.assertTrue(payload["safety_identifier"].startswith("aref_"))
-        self.assertEqual(payload["input"][0]["content"], "أريد متابعة الطلب")
-        self.assertIn("تابع سياق الرسائل السابقة", payload["instructions"])
+        self.assertEqual(payload["input"], [{"role": "user", "content": "حدثني عن فوائد القراءة"}])
+        serialized = repr(payload)
+        self.assertNotIn("سجل حكومي حساس", serialized)
+        self.assertNotIn("بيانات داخلية", serialized)
+        self.assertNotIn("/internal", serialized)
+        self.assertNotIn("أحب الكتب", serialized)
+        self.assertIn("للمحادثة العامة فقط", payload["instructions"])
+
+    def test_external_ai_is_not_called_for_common_sensitive_patterns(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        sensitive_messages = (
+            "تواصل معي على employee@example.gov",
+            "افتح C:\\government\\records\\case.docx",
+            "هذه بيانات في سطر أول\nوسطر ثان",
+            "الرقم المرجعي 987654",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            for message in sensitive_messages:
+                with self.subTest(message=message):
+                    reply = _try_external_ai(
+                        _FakeUser("EMPLOYEE"),
+                        message,
+                        [],
+                        {},
+                        [],
+                        {},
+                    )
+                    self.assertIsNone(reply)
+        openai_client.assert_not_called()
+
+    def test_external_ai_is_not_called_for_government_content(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "لخص المراسلة الحكومية رقم 12345",
+                [],
+                {},
+                [],
+                {},
+            )
+        self.assertIsNone(reply)
+        openai_client.assert_not_called()
+
+    def test_external_ai_is_not_called_when_local_knowledge_was_retrieved(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "وضح أكثر",
+                [],
+                {},
+                [],
+                {"facts": ["معلومة داخلية"]},
+            )
+        self.assertIsNone(reply)
+        openai_client.assert_not_called()
+
+    def test_external_ai_is_not_called_when_history_is_sensitive(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "وضح أكثر",
+                [{"role": "user", "content": "هذه بيانات الموظف وراتبه"}],
+                {},
+                [],
+                {},
+            )
+        self.assertIsNone(reply)
+        openai_client.assert_not_called()
+
+    def test_unknown_privacy_mode_fails_closed(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="UNSAFE_VALUE",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "حدثني عن القراءة",
+                [],
+                {},
+                [],
+                {},
+            )
+        self.assertIsNone(reply)
+        openai_client.assert_not_called()
 
     def test_current_page_question_uses_context(self):
         result = build_local_reply(

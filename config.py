@@ -20,6 +20,12 @@ class BaseConfig:
     ASSISTANT_OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     ASSISTANT_OPENAI_MODEL = os.getenv("OPENAI_CHAT_MODEL")
     ASSISTANT_AI_TIMEOUT = float(os.getenv("ASSISTANT_AI_TIMEOUT", "20"))
+    # Fail-closed privacy boundary for external AI:
+    # - LOCAL_ONLY: never call an external model.
+    # - PUBLIC_ONLY: external AI receives only short, non-sensitive general chat.
+    # Any unknown value is treated as LOCAL_ONLY by the service.
+    ASSISTANT_AI_PRIVACY_MODE = os.getenv("ASSISTANT_AI_PRIVACY_MODE", "LOCAL_ONLY")
+    ASSISTANT_AI_PUBLIC_MAX_CHARS = int(os.getenv("ASSISTANT_AI_PUBLIC_MAX_CHARS", "600"))
     ASSISTANT_AI_CONTEXT_CHARS = int(os.getenv("ASSISTANT_AI_CONTEXT_CHARS", "16000"))
     ASSISTANT_AI_MAX_OUTPUT_TOKENS = int(os.getenv("ASSISTANT_AI_MAX_OUTPUT_TOKENS", "1100"))
     ASSISTANT_MAX_MESSAGE_CHARS = int(os.getenv("ASSISTANT_MAX_MESSAGE_CHARS", "2000"))
