@@ -1832,7 +1832,8 @@ def _meeting_minutes_context(row: PortalMeeting) -> dict:
 
 def _meeting_text_should_use_ltr(value: str | int | None) -> bool:
     text = "" if value is None else str(value)
-    return bool(re.search(r"[A-Za-z]", text)) and not bool(re.search(r"[\u0600-\u06FF]", text))
+    first_strong_character = re.search(r"[A-Za-z\u0600-\u06FF]", text)
+    return bool(first_strong_character and re.match(r"[A-Za-z]", first_strong_character.group(0)))
 
 
 def _docx_set_run_font(run, *, size_pt: float | None = None, bold: bool | None = None, color: str | None = None):
@@ -2339,6 +2340,10 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         style = ltr_style if _meeting_text_should_use_ltr(text) else rtl_style
         return Paragraph(_pdf_shape_text(text), style)
 
+    def body_paragraphs(text, fallback: str):
+        body = str(text or "").strip() or fallback
+        return [p(line if line.strip() else " ") for line in (body.splitlines() or [fallback])]
+
     def p_header(text):
         return Paragraph(f'<font color="white">{_pdf_shape_text(text)}</font>', table_header_style)
 
@@ -2378,7 +2383,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
             ["آخر تحديث", data["updated_at"]],
         ], [5.0 * cm, 11.0 * cm]),
         p("الوصف", heading_style, heading_ltr_style),
-        p(data["description"] or "لا يوجد وصف."),
+        *body_paragraphs(data["description"], "لا يوجد وصف."),
         p("المدعوون والحضور", heading_style, heading_ltr_style),
         *table(
             ["الاسم", "الدور", "حالة الحضور", "ملاحظة"],
@@ -2392,9 +2397,9 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
             [2.0 * cm, 4.5 * cm, 3.5 * cm, 3.0 * cm, 3.0 * cm],
         ),
         p("محضر الاجتماع", heading_style, heading_ltr_style),
-        p(data["minutes_text"] or "لم يتم تسجيل محضر بعد."),
+        *body_paragraphs(data["minutes_text"], "لم يتم تسجيل محضر بعد."),
         p("القرارات", heading_style, heading_ltr_style),
-        p(data["decisions_text"] or "لا توجد قرارات مسجلة."),
+        *body_paragraphs(data["decisions_text"], "لا توجد قرارات مسجلة."),
         p("مهام المتابعة", heading_style, heading_ltr_style),
         *table(
             ["المهمة", "المسؤول", "تاريخ الاستحقاق", "الحالة", "التفاصيل"],

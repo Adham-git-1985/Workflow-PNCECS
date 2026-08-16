@@ -15,11 +15,18 @@ from portal.routes import (
     _docx_add_heading,
     _docx_add_text,
     _docx_set_cell,
+    _meeting_text_should_use_ltr,
     _meeting_minutes_filename,
 )
 
 
 class MeetingMinutesFormattingTests(unittest.TestCase):
+    def test_direction_uses_first_strong_language_character(self):
+        self.assertTrue(_meeting_text_should_use_ltr("English text ثم نص عربي"))
+        self.assertFalse(_meeting_text_should_use_ltr("نص عربي then English text"))
+        self.assertTrue(_meeting_text_should_use_ltr("2026 - English text"))
+        self.assertFalse(_meeting_text_should_use_ltr("2026 - نص عربي"))
+
     def test_filename_is_readable_and_uses_meeting_datetime(self):
         meeting = SimpleNamespace(
             id=12,
