@@ -1737,7 +1737,27 @@ def _save_meeting_letterhead(upload) -> str:
 
 
 def _meeting_minutes_filename(row: PortalMeeting, ext: str) -> str:
-    return f"meeting_minutes_{row.id}.{ext.lstrip('.')}"
+    raw_title = str(getattr(row, "title", None) or "").strip()
+    safe_title = re.sub(r'[\x00-\x1f<>:"/\\|?*؟]+', " ", raw_title)
+    safe_title = re.sub(r"\s+", " ", safe_title).strip(" .-_")
+    if not safe_title:
+        safe_title = f"اجتماع {getattr(row, 'id', '')}".strip()
+    safe_title = safe_title[:100].rstrip(" .-_")
+
+    meeting_at = getattr(row, "start_at", None) or datetime.now()
+    try:
+        meeting_date = meeting_at.strftime("%d-%m-%Y")
+        meeting_time = meeting_at.strftime("%H-%M")
+    except Exception:
+        generated_at = datetime.now()
+        meeting_date = generated_at.strftime("%d-%m-%Y")
+        meeting_time = generated_at.strftime("%H-%M")
+
+    extension = re.sub(r"[^A-Za-z0-9]", "", ext.lstrip(".")) or "docx"
+    return (
+        f"محضر اجتماع - {safe_title} - بتاريخ {meeting_date} "
+        f"- الساعة {meeting_time}.{extension}"
+    )
 
 
 def _meeting_dt_label(value) -> str:
@@ -2028,7 +2048,7 @@ def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
     data = _meeting_minutes_context(row)
     template_path = _meeting_letterhead_path()
     doc = Document(template_path) if template_path else Document()
-    doc.core_properties.title = f"محضر اجتماع - {row.title}"
+    doc.core_properties.title = str(row.title)
     doc.core_properties.subject = "محضر اجتماع رسمي"
 
     try:
@@ -2041,11 +2061,8 @@ def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
     _docx_fill_letterhead_fields(doc, data)
 
     title = doc.add_paragraph()
-    title.add_run("محضر اجتماع")
+    title.add_run(data["title"])
     _docx_set_paragraph_rtl(title, bold=True, size_pt=MEETING_DOC_TITLE_SIZE, color="1F4E79")
-    subtitle = doc.add_paragraph()
-    subtitle.add_run(data["title"])
-    _docx_set_paragraph_rtl(subtitle, bold=True, size_pt=MEETING_DOC_SUBTITLE_SIZE)
 
     _docx_add_heading(doc, "بيانات الاجتماع", level=2)
     _docx_add_table(doc, ["البيان", "القيمة"], [
@@ -2260,15 +2277,6 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         wordWrap="RTL",
         spaceAfter=8,
     )
-    subtitle_style = ParagraphStyle(
-        "MeetingSubtitle",
-        fontName=font_bold,
-        fontSize=MEETING_DOC_SUBTITLE_SIZE,
-        leading=24,
-        alignment=TA_CENTER,
-        wordWrap="RTL",
-        spaceAfter=14,
-    )
     table_header_style = ParagraphStyle(
         "MeetingTableHeader",
         parent=body_style,
@@ -2307,8 +2315,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         return [t, Spacer(1, 10)]
 
     story = [
-        p("محضر اجتماع", title_style),
-        p(data["title"], subtitle_style),
+        p(data["title"], title_style),
         p("بيانات الاجتماع", heading_style),
         *table(["البيان", "القيمة"], [
             ["رقم الاجتماع", data["id"]],
@@ -2376,7 +2383,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         leftMargin=1.5 * cm,
         topMargin=3.0 * cm,
         bottomMargin=1.8 * cm,
-        title=f"محضر اجتماع - {row.title}",
+        title=str(row.title),
     )
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
     bio.seek(0)
