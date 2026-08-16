@@ -1,53 +1,198 @@
-{% macro render_route_node(node, level=0) %}
-  <li class="corr-route-node border-end border-primary-subtle pe-2 my-2"
-      data-search-text="{{ (node.type_name ~ ' ' ~ node.name_ar ~ ' ' ~ (node.code or '') ~ ' ' ~ ((node.people|map(attribute='name')|list)|join(' ')))|lower }}">
-    <details {% if level < 2 %}open{% endif %}>
-      <summary class="d-flex flex-wrap align-items-center gap-2 py-1" style="cursor:pointer">
-        <span class="badge text-bg-light border">{{ node.type_name or node.type_code }}</span>
-        <strong>{{ node.name_ar }}</strong>
-        {% if node.code %}<small class="text-muted">{{ node.code }}</small>{% endif %}
-        <span class="me-auto"></span>
-        {% if node.eligible %}
-          <button type="button"
-                  class="btn btn-sm btn-outline-primary corr-route-pick"
-                  data-value="ORG_NODE:{{ node.id }}"
-                  data-label="{{ node.name_ar }} ({{ node.type_name or node.type_code }})">
-            تحويل للجهة
-          </button>
-        {% endif %}
-      </summary>
+<style>
+  .corr-route-browser {
+    min-height: 28rem;
+  }
 
-      {% if node.people %}
-        <div class="row g-2 mt-1 mb-2">
-          {% for person in node.people %}
-            <div class="col-xl-4 col-md-6 corr-route-person" data-search-text="{{ (person.name ~ ' ' ~ person.title)|lower }}">
-              <button type="button"
-                      class="btn btn-light border w-100 text-end h-100 corr-route-pick"
-                      data-value="USER:{{ person.id }}"
-                      data-label="{{ person.name }} ({{ person.title }})">
-                <span class="d-block fw-semibold"><i class="bi bi-person"></i> {{ person.name }}</span>
-                <small class="text-muted">{{ person.manager_role or person.title }}</small>
-              </button>
-            </div>
-          {% endfor %}
-        </div>
-      {% endif %}
+  .corr-route-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bs-body-bg);
+    border-bottom: 1px solid var(--bs-border-color);
+  }
 
-      {% if node.children %}
-        <ul class="list-unstyled pe-3 mb-0">
-          {% for child in node.children %}
-            {{ render_route_node(child, level + 1) }}
-          {% endfor %}
-        </ul>
-      {% endif %}
-    </details>
-  </li>
+  .corr-route-breadcrumb {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    white-space: nowrap;
+  }
+
+  .corr-route-breadcrumb .btn {
+    max-width: 18rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+  }
+
+  .corr-route-current {
+    background: linear-gradient(135deg, rgba(var(--bs-primary-rgb), .1), rgba(var(--bs-info-rgb), .08));
+  }
+
+  .corr-route-unit-card,
+  .corr-route-person-card,
+  .corr-route-search-item {
+    min-height: 100%;
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+  }
+
+  .corr-route-unit-card:hover,
+  .corr-route-person-card:hover,
+  .corr-route-search-item:hover {
+    transform: translateY(-2px);
+    border-color: rgba(var(--bs-primary-rgb), .55) !important;
+    box-shadow: 0 .35rem .8rem rgba(0, 0, 0, .08);
+  }
+
+  .corr-route-unit-name,
+  .corr-route-person-name {
+    display: block;
+    font-weight: 700;
+    line-height: 1.45;
+  }
+
+  .corr-route-empty {
+    border: 1px dashed var(--bs-border-color);
+  }
+
+  @media (max-width: 767.98px) {
+    .corr-route-browser { min-height: 22rem; }
+    .corr-route-toolbar { position: static; }
+  }
+</style>
+
+{% macro render_unit_card(node) %}
+  <button type="button" class="btn btn-light border w-100 corr-route-unit-card corr-route-open"
+          data-node-target="{{ node.id }}">
+    <span class="d-flex align-items-start gap-2">
+      <i class="bi bi-folder2-open text-primary fs-5" aria-hidden="true"></i>
+      <span class="flex-grow-1 min-w-0">
+        <span class="badge text-bg-light border mb-1">{{ node.type_name or node.type_code or 'جهة' }}</span>
+        <span class="corr-route-unit-name">{{ node.name_ar }}</span>
+        <small class="text-muted">
+          {{ node.children|length }} جهة تابعة · {{ node.people|length }} مستخدم
+        </small>
+      </span>
+      <i class="bi bi-chevron-left text-muted mt-2" aria-hidden="true"></i>
+    </span>
+  </button>
 {% endmacro %}
 
-<ul class="list-unstyled mb-0">
-  {% for node in tree %}
-    {{ render_route_node(node) }}
-  {% else %}
-    <li class="text-center text-muted py-4">لا توجد عناصر مفعلة للتحويل في الهيكل التنظيمي.</li>
+{% macro render_route_panel(node, parent_id='ROOT', parent_path='') %}
+  {% set current_path = (parent_path ~ ' / ' ~ node.name_ar) if parent_path else node.name_ar %}
+  <section class="corr-route-panel d-none" data-route-panel
+           data-node-id="{{ node.id }}" data-parent-id="{{ parent_id }}"
+           data-node-name="{{ node.name_ar }}" data-node-type="{{ node.type_name or node.type_code or 'جهة' }}"
+           data-node-path="{{ current_path }}"
+           data-search-text="{{ (node.type_name ~ ' ' ~ node.type_code ~ ' ' ~ node.name_ar ~ ' ' ~ (node.code or '') ~ ' ' ~ current_path)|lower }}">
+    <div class="corr-route-current border rounded-3 p-3 mb-3">
+      <div class="d-flex flex-wrap align-items-start justify-content-between gap-3">
+        <div>
+          <span class="badge text-bg-primary mb-2">{{ node.type_name or node.type_code or 'جهة تنظيمية' }}</span>
+          <h5 class="mb-1">{{ node.name_ar }}</h5>
+          {% if node.code %}<div class="small text-muted">الرمز: {{ node.code }}</div>{% endif %}
+        </div>
+        {% if node.eligible %}
+          <button type="button" class="btn btn-primary corr-route-pick"
+                  data-value="ORG_NODE:{{ node.id }}"
+                  data-label="{{ node.name_ar }} ({{ node.type_name or node.type_code or 'جهة تنظيمية' }})">
+            <i class="bi bi-building-check"></i> التحويل إلى هذه الجهة
+          </button>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if node.children %}
+      <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+        <h6 class="mb-0"><i class="bi bi-diagram-3"></i> الجهات التابعة مباشرة</h6>
+        <span class="badge text-bg-light border">{{ node.children|length }}</span>
+      </div>
+      <div class="row g-2 mb-4">
+        {% for child in node.children %}
+          <div class="col-xl-4 col-md-6">{{ render_unit_card(child) }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if node.people %}
+      <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+        <h6 class="mb-0"><i class="bi bi-people"></i> مستخدمو هذه الجهة</h6>
+        <span class="badge text-bg-light border">{{ node.people|length }}</span>
+      </div>
+      <div class="row g-2">
+        {% for person in node.people %}
+          <div class="col-xl-4 col-md-6">
+            <button type="button" class="btn btn-light border w-100 corr-route-person-card corr-route-pick"
+                    data-route-person data-value="USER:{{ person.id }}"
+                    data-label="{{ person.name }} (مستخدم)"
+                    data-person-name="{{ person.name }}" data-person-title="{{ person.manager_role or person.title }}"
+                    data-node-path="{{ current_path }}"
+                    data-search-text="{{ (person.name ~ ' ' ~ person.title ~ ' ' ~ (person.manager_role or '') ~ ' ' ~ current_path)|lower }}">
+              <span class="d-flex align-items-start gap-2">
+                <i class="bi bi-person-circle text-primary fs-5" aria-hidden="true"></i>
+                <span class="flex-grow-1 min-w-0">
+                  <span class="corr-route-person-name">{{ person.name }}</span>
+                  <small class="text-muted d-block">{{ person.manager_role or person.title }}</small>
+                </span>
+                <i class="bi bi-check2-circle text-success mt-1" aria-hidden="true"></i>
+              </span>
+            </button>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    {% if not node.children and not node.people %}
+      <div class="corr-route-empty rounded-3 p-4 text-center text-muted">
+        لا توجد جهات تابعة أو مستخدمون مسجلون تحت هذه الجهة.
+      </div>
+    {% endif %}
+  </section>
+
+  {% for child in node.children %}
+    {{ render_route_panel(child, node.id, current_path) }}
   {% endfor %}
-</ul>
+{% endmacro %}
+
+<div class="corr-route-browser" data-route-browser
+     data-start-node="{{ tree[0].id if tree|length == 1 else 'ROOT' }}">
+  <div class="corr-route-toolbar d-flex flex-wrap align-items-center gap-2 py-2 mb-3">
+    <button type="button" class="btn btn-sm btn-outline-secondary" data-route-back disabled>
+      <i class="bi bi-arrow-right"></i> رجوع
+    </button>
+    <nav class="corr-route-breadcrumb flex-grow-1" data-route-breadcrumb aria-label="مسار الهيكل التنظيمي"></nav>
+  </div>
+
+  <section class="corr-route-panel d-none" data-route-panel data-node-id="ROOT" data-parent-id=""
+           data-node-name="الهيكل التنظيمي" data-node-type="الرئيسية" data-node-path="الهيكل التنظيمي"
+           data-search-text="الهيكل التنظيمي">
+    <div class="corr-route-current border rounded-3 p-3 mb-3">
+      <span class="badge text-bg-primary mb-2">الرئيسية</span>
+      <h5 class="mb-1">الهيكل التنظيمي</h5>
+      <div class="small text-muted">ابدأ باختيار الجهة الرئيسية، ثم انتقل مستوىً بعد مستوى.</div>
+    </div>
+    {% if tree %}
+      <div class="row g-2">
+        {% for node in tree %}<div class="col-xl-4 col-md-6">{{ render_unit_card(node) }}</div>{% endfor %}
+      </div>
+    {% else %}
+      <div class="corr-route-empty rounded-3 p-4 text-center text-muted">لا توجد عناصر مفعلة للتحويل في الهيكل التنظيمي.</div>
+    {% endif %}
+  </section>
+
+  {% for node in tree %}{{ render_route_panel(node) }}{% endfor %}
+
+  <section class="d-none" data-route-search-view>
+    <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+      <h6 class="mb-0"><i class="bi bi-search"></i> نتائج البحث في كامل الهيكل</h6>
+      <span class="badge text-bg-primary" data-route-search-count>0</span>
+    </div>
+    <div class="list-group" data-route-search-results></div>
+    <div class="corr-route-empty rounded-3 p-4 text-center text-muted d-none" data-route-search-empty>
+      لا توجد جهة أو مستخدم يطابق كلمات البحث.
+    </div>
+  </section>
+</div>

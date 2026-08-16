@@ -74,7 +74,8 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIn("الملاحظة", result["reply"])
         self.assertIn("المرفقات", result["reply"])
         self.assertIn("القابلة للبحث", result["reply"])
-        self.assertIn("الهيكل التنظيمي", result["reply"])
+        self.assertIn("مستعرض الهيكل التنظيمي", result["reply"])
+        self.assertIn("مستوىً بعد مستوى", result["reply"])
         self.assertIn("تنفيذ الإجراء", result["reply"])
 
     def test_following_guide_explains_clickable_summary_filters(self):

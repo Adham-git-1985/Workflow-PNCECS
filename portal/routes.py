@@ -17970,7 +17970,7 @@ def _corr_competence_user_ids(competence: dict | None) -> list[int]:
 def _corr_competence_options() -> list[dict]:
     """Build searchable competence options from users and organization units."""
     specs = [
-        ("USER", "موظف", User, lambda q: q.order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())),
+        ("USER", "مستخدم", User, lambda q: q.order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())),
         ("ORG", "منظمة", Organization, lambda q: q.filter(Organization.is_active.is_(True)).order_by(Organization.name_ar.asc(), Organization.id.asc())),
         ("DIRECTORATE", "إدارة", Directorate, lambda q: q.filter(Directorate.is_active.is_(True)).order_by(Directorate.name_ar.asc(), Directorate.id.asc())),
         ("UNIT", "وحدة", Unit, lambda q: q.filter(Unit.is_active.is_(True)).order_by(Unit.name_ar.asc(), Unit.id.asc())),
@@ -18028,6 +18028,94 @@ def _corr_job_rank(title: str | None) -> int:
         if token in normalized:
             return rank
     return 50
+
+
+def _corr_org_name_key(value: str | None) -> str:
+    """Normalize an organization label for safe display-only deduplication."""
+    text_value = unicodedata.normalize("NFKC", str(value or ""))
+    # Some imported rows contain the complete breadcrumb in ``name_ar``.
+    # The last segment is the actual unit represented by that row.
+    segments = [segment.strip() for segment in re.split(r"\s*>\s*", text_value) if segment.strip()]
+    if segments:
+        text_value = segments[-1]
+    text_value = re.sub(r"\([^)]*\)", " ", text_value)
+    text_value = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]", "", text_value)
+    text_value = text_value.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    text_value = text_value.replace("ى", "ي").replace("ؤ", "و").replace("ئ", "ي").replace("ة", "ه")
+    return re.sub(r"\s+", " ", text_value).strip().casefold()
+
+
+def _corr_normalize_route_tree(tree: list[dict] | None) -> list[dict]:
+    """Hide malformed duplicate roots and preserve their assigned users.
+
+    Older imports occasionally stored a complete ``A > B > C`` breadcrumb as
+    the name of a new root.  Showing those rows literally makes the hierarchy
+    look duplicated and incorrect.  This display-only normalization merges
+    their people into the matching canonical node; the database is untouched.
+    """
+    roots = list(tree or [])
+    if not roots:
+        return []
+
+    canonical_roots = [root for root in roots if ">" not in str(root.get("name_ar") or "")]
+    malformed_roots = [root for root in roots if root not in canonical_roots]
+    if not canonical_roots or not malformed_roots:
+        return roots
+
+    def flatten(nodes):
+        output = []
+        for node in nodes or []:
+            output.append(node)
+            output.extend(flatten(node.get("children") or []))
+        return output
+
+    canonical_nodes = flatten(canonical_roots)
+    by_key: dict[str, list[dict]] = {}
+    for node in canonical_nodes:
+        key = _corr_org_name_key(node.get("name_ar"))
+        if key:
+            by_key.setdefault(key, []).append(node)
+
+    def matching_node(source: dict) -> dict | None:
+        key = _corr_org_name_key(source.get("name_ar"))
+        if not key:
+            return None
+        exact = by_key.get(key) or []
+        if exact:
+            return exact[0]
+        # A later import may omit a parenthetical clarification from a name.
+        fuzzy = [
+            node for node in canonical_nodes
+            if min(len(key), len(_corr_org_name_key(node.get("name_ar")))) >= 12
+            and (
+                key.startswith(_corr_org_name_key(node.get("name_ar")))
+                or _corr_org_name_key(node.get("name_ar")).startswith(key)
+            )
+        ]
+        if not fuzzy:
+            return None
+        return min(
+            fuzzy,
+            key=lambda node: abs(len(_corr_org_name_key(node.get("name_ar"))) - len(key)),
+        )
+
+    fallback_root = canonical_roots[0]
+    for source in flatten(malformed_roots):
+        destination = matching_node(source) or fallback_root
+        people_by_id = {
+            int(person["id"]): person
+            for person in (destination.get("people") or [])
+            if person.get("id")
+        }
+        for person in source.get("people") or []:
+            if person.get("id"):
+                people_by_id.setdefault(int(person["id"]), person)
+        destination["people"] = sorted(
+            people_by_id.values(),
+            key=lambda row: (row.get("rank", 50), (row.get("name") or "").casefold()),
+        )
+
+    return canonical_roots
 
 
 def _corr_org_route_tree() -> list[dict]:
@@ -18107,7 +18195,7 @@ def _corr_org_route_tree() -> list[dict]:
             people_by_node.get(node_id, {}).values(),
             key=lambda row: (row.get("rank", 50), (row.get("name") or "").casefold()),
         )
-    return tree
+    return _corr_normalize_route_tree(tree)
 
 
 @portal_bp.route("/corr/org-route-picker")

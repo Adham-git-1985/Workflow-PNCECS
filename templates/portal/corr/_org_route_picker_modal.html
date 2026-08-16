@@ -1,17 +1,24 @@
 <div class="modal fade" id="corrOrgRoutePickerModal" tabindex="-1" aria-hidden="true">
-  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+  <div class="modal-dialog modal-xl modal-fullscreen-lg-down modal-dialog-scrollable">
     <div class="modal-content">
       <div class="modal-header">
         <div>
           <h5 class="modal-title"><i class="bi bi-diagram-3"></i> التحويل المباشر حسب الهيكل التنظيمي</h5>
-          <div class="small text-muted">اختر جهة تنظيمية أو موظفًا؛ الموظفون مرتبون وفق التسلسل الوظيفي.</div>
+          <div class="small text-muted">تنقّل بين المستويات، ثم اختر جهة تنظيمية أو مستخدمًا منها.</div>
         </div>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
+        <div class="alert alert-primary bg-primary bg-opacity-10 border-primary-subtle py-2 small mb-3">
+          <i class="bi bi-info-circle"></i>
+          اختر الجهة لعرض الجهات التابعة ومستخدميها. البحث أدناه يشمل كامل الهيكل مهما كان المستوى الحالي.
+        </div>
         <div class="input-group mb-3">
           <span class="input-group-text"><i class="bi bi-search"></i></span>
-          <input type="search" class="form-control" id="corrOrgRouteSearch" placeholder="ابحث عن إدارة، دائرة، قسم، موظف أو مسمى وظيفي…">
+          <input type="search" class="form-control" id="corrOrgRouteSearch" placeholder="ابحث عن جهة، مستخدم أو مسمى وظيفي…" autocomplete="off">
+          <button class="btn btn-outline-secondary" type="button" id="corrOrgRouteSearchClear" aria-label="مسح البحث">
+            <i class="bi bi-x-lg"></i>
+          </button>
         </div>
         <div id="corrOrgRouteTree"
              data-url="{{ url_for('portal.corr_org_route_picker') }}"
@@ -31,21 +38,197 @@ document.addEventListener('DOMContentLoaded', function () {
   const modalElement = document.getElementById('corrOrgRoutePickerModal');
   const treeElement = document.getElementById('corrOrgRouteTree');
   const searchElement = document.getElementById('corrOrgRouteSearch');
+  const clearSearchButton = document.getElementById('corrOrgRouteSearchClear');
   if (!modalElement || !treeElement || !window.bootstrap) return;
 
   const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
   let targetSelector = '';
   let loaded = false;
+  let routeBrowser = null;
+
+  const normalizeRouteText = function (value) {
+    return (value || '')
+      .toString()
+      .normalize('NFKC')
+      .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, '')
+      .replace(/[\u0623\u0625\u0622]/g, '\u0627')
+      .replace(/\u0649/g, '\u064A')
+      .replace(/\u0624/g, '\u0648')
+      .replace(/\u0626/g, '\u064A')
+      .replace(/\u0629/g, '\u0647')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  };
+
+  const initRouteBrowser = function () {
+    const browserElement = treeElement.querySelector('[data-route-browser]');
+    if (!browserElement) return null;
+
+    const panels = Array.from(browserElement.querySelectorAll('[data-route-panel]'));
+    const panelMap = new Map(panels.map(function (panel) { return [panel.dataset.nodeId, panel]; }));
+    const breadcrumb = browserElement.querySelector('[data-route-breadcrumb]');
+    const backButton = browserElement.querySelector('[data-route-back]');
+    const searchView = browserElement.querySelector('[data-route-search-view]');
+    const searchResults = browserElement.querySelector('[data-route-search-results]');
+    const searchCount = browserElement.querySelector('[data-route-search-count]');
+    const searchEmpty = browserElement.querySelector('[data-route-search-empty]');
+    const startNode = browserElement.dataset.startNode || 'ROOT';
+    let currentNode = startNode;
+
+    const makeBreadcrumb = function (nodeId) {
+      if (!breadcrumb) return;
+      breadcrumb.innerHTML = '';
+      const chain = [];
+      let cursor = panelMap.get(nodeId);
+      while (cursor) {
+        chain.unshift(cursor);
+        const parentId = cursor.dataset.parentId;
+        if (!parentId) break;
+        cursor = panelMap.get(parentId);
+      }
+      chain.forEach(function (panel, index) {
+        if (index) {
+          const separator = document.createElement('span');
+          separator.className = 'text-muted mx-1';
+          separator.textContent = '/';
+          breadcrumb.appendChild(separator);
+        }
+        if (index === chain.length - 1) {
+          const current = document.createElement('span');
+          current.className = 'fw-semibold small';
+          current.textContent = panel.dataset.nodeName || 'الهيكل التنظيمي';
+          breadcrumb.appendChild(current);
+        } else {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn btn-sm btn-link p-0 corr-route-open';
+          button.dataset.nodeTarget = panel.dataset.nodeId;
+          button.textContent = panel.dataset.nodeName || 'الهيكل التنظيمي';
+          breadcrumb.appendChild(button);
+        }
+      });
+    };
+
+    const showPanel = function (nodeId) {
+      const panel = panelMap.get(String(nodeId)) || panelMap.get('ROOT');
+      panels.forEach(function (item) { item.classList.add('d-none'); });
+      if (searchView) searchView.classList.add('d-none');
+      panel.classList.remove('d-none');
+      currentNode = panel.dataset.nodeId;
+      makeBreadcrumb(currentNode);
+      if (backButton) backButton.disabled = !panel.dataset.parentId;
+      const modalBody = modalElement.querySelector('.modal-body');
+      if (modalBody) modalBody.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const appendSearchResult = function (kind, source) {
+      if (!searchResults) return;
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'list-group-item list-group-item-action corr-route-search-item';
+
+      const topLine = document.createElement('span');
+      topLine.className = 'd-flex flex-wrap align-items-center gap-2';
+      const badge = document.createElement('span');
+      badge.className = kind === 'unit' ? 'badge text-bg-primary' : 'badge text-bg-success';
+      badge.textContent = kind === 'unit' ? (source.dataset.nodeType || 'جهة') : 'مستخدم';
+      const name = document.createElement('strong');
+      name.textContent = kind === 'unit' ? source.dataset.nodeName : source.dataset.personName;
+      topLine.appendChild(badge);
+      topLine.appendChild(name);
+      item.appendChild(topLine);
+
+      const details = document.createElement('small');
+      details.className = 'd-block text-muted mt-1';
+      if (kind === 'unit') {
+        details.textContent = source.dataset.nodePath || '';
+        item.classList.add('corr-route-open');
+        item.dataset.nodeTarget = source.dataset.nodeId;
+      } else {
+        const title = source.dataset.personTitle || '';
+        details.textContent = [title, source.dataset.nodePath || ''].filter(Boolean).join(' — ');
+        item.classList.add('corr-route-pick');
+        item.dataset.value = source.dataset.value || '';
+        item.dataset.label = source.dataset.label || source.dataset.personName || '';
+      }
+      item.appendChild(details);
+      searchResults.appendChild(item);
+    };
+
+    const searchAll = function () {
+      const query = normalizeRouteText(searchElement ? searchElement.value : '');
+      if (!query) {
+        showPanel(currentNode);
+        return;
+      }
+
+      panels.forEach(function (panel) { panel.classList.add('d-none'); });
+      if (searchView) searchView.classList.remove('d-none');
+      if (searchResults) searchResults.innerHTML = '';
+
+      const matchingUnits = panels.filter(function (panel) {
+        return panel.dataset.nodeId !== 'ROOT' && normalizeRouteText(panel.dataset.searchText).includes(query);
+      });
+      const people = Array.from(browserElement.querySelectorAll('[data-route-person]'));
+      const matchingPeople = people.filter(function (person) {
+        return normalizeRouteText(person.dataset.searchText).includes(query);
+      });
+
+      matchingUnits.slice(0, 50).forEach(function (panel) { appendSearchResult('unit', panel); });
+      matchingPeople.slice(0, 50).forEach(function (person) { appendSearchResult('person', person); });
+      const total = matchingUnits.length + matchingPeople.length;
+      if (searchCount) searchCount.textContent = String(total);
+      if (searchEmpty) searchEmpty.classList.toggle('d-none', total !== 0);
+      if (backButton) backButton.disabled = true;
+      if (breadcrumb) breadcrumb.innerHTML = '<span class="fw-semibold small">نتائج البحث في كامل الهيكل</span>';
+    };
+
+    browserElement.addEventListener('click', function (event) {
+      const opener = event.target.closest('.corr-route-open');
+      if (!opener || !browserElement.contains(opener)) return;
+      event.preventDefault();
+      if (searchElement) searchElement.value = '';
+      showPanel(opener.dataset.nodeTarget || 'ROOT');
+    });
+    if (backButton) {
+      backButton.addEventListener('click', function () {
+        const panel = panelMap.get(currentNode);
+        if (panel && panel.dataset.parentId) showPanel(panel.dataset.parentId);
+      });
+    }
+    if (searchElement) searchElement.oninput = searchAll;
+    if (clearSearchButton) {
+      clearSearchButton.onclick = function () {
+        if (searchElement) {
+          searchElement.value = '';
+          searchElement.focus();
+        }
+        showPanel(currentNode);
+      };
+    }
+
+    showPanel(startNode);
+    return {
+      reset: function () {
+        if (searchElement) searchElement.value = '';
+        showPanel(startNode);
+      }
+    };
+  };
 
   const loadTree = async function () {
-    if (loaded) return;
+    if (loaded) return routeBrowser;
     try {
       const response = await fetch(treeElement.dataset.url, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
       if (!response.ok) throw new Error('HTTP ' + response.status);
       treeElement.innerHTML = await response.text();
       loaded = true;
+      routeBrowser = initRouteBrowser();
+      return routeBrowser;
     } catch (error) {
       treeElement.innerHTML = '<div class="alert alert-danger mb-0">تعذر تحميل الهيكل التنظيمي. أعد المحاولة.</div>';
+      return null;
     }
   };
 
@@ -54,7 +237,9 @@ document.addEventListener('DOMContentLoaded', function () {
     if (trigger) {
       targetSelector = trigger.dataset.targetSelect || '';
       modal.show();
-      loadTree();
+      loadTree().then(function (browser) {
+        if (browser) browser.reset();
+      });
       return;
     }
 
@@ -79,18 +264,8 @@ document.addEventListener('DOMContentLoaded', function () {
     modal.hide();
   });
 
-  if (searchElement) {
-    searchElement.addEventListener('input', function () {
-      const query = (searchElement.value || '').trim().toLowerCase();
-      treeElement.querySelectorAll('.corr-route-node').forEach(function (node) {
-        const visible = !query || (node.textContent || '').toLowerCase().includes(query);
-        node.classList.toggle('d-none', !visible);
-        if (visible && query) {
-          const details = node.querySelector(':scope > details');
-          if (details) details.open = true;
-        }
-      });
-    });
-  }
+  modalElement.addEventListener('shown.bs.modal', function () {
+    if (searchElement) searchElement.focus();
+  });
 });
 </script>
