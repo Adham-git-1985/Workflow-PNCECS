@@ -22,7 +22,7 @@ table[data-sortable="true"] th.sorted-desc::after {
 
 :root{
   --wf-header-h: 70px;
-  --app-font-family: "Sakkal Majalla", "Traditional Arabic", Tahoma, Arial, sans-serif;
+  --app-font-family: "Tajawal", "Segoe UI", Tahoma, Arial, sans-serif;
   --bs-body-font-family: var(--app-font-family);
 }
 
