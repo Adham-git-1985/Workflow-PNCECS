@@ -215,7 +215,10 @@ from services.correspondence_procedure import (
 from services.workflow_confidentiality import (
     filter_confidential_correspondence_user_ids,
 )
-from services.correspondence_workflow import sync_correspondence_from_workflow
+from services.correspondence_workflow import (
+    correspondence_target_user_ids,
+    sync_correspondence_from_workflow,
+)
 
 # -------------------------
 # Permissions (Portal)
@@ -17961,128 +17964,7 @@ def _corr_display_name(row) -> str:
 
 def _corr_competence_user_ids(competence: dict | None) -> list[int]:
     """Resolve the users affected by a correspondence competence target."""
-    competence = competence or {}
-    kind = (competence.get("kind") or "").strip().upper()
-    target_id = competence.get("id")
-    try:
-        target_id = int(target_id)
-    except Exception:
-        return []
-
-    user_ids: set[int] = set()
-
-    if kind == "USER":
-        user_ids.add(target_id)
-        return sorted(user_ids)
-
-    if kind == "ORG_NODE":
-        try:
-            user_ids.update(
-                int(uid) for (uid,) in (
-                    db.session.query(OrgNodeAssignment.user_id)
-                    .filter(OrgNodeAssignment.node_id == target_id)
-                    .all()
-                ) if uid
-            )
-        except Exception:
-            pass
-        return sorted(user_ids)
-
-    unit_type = "ORGANIZATION" if kind == "ORG" else kind
-
-    # Portal HR organizational assignments cover all supported unit types,
-    # including teams and organizations.
-    try:
-        user_ids.update(
-            int(uid) for (uid,) in (
-                db.session.query(OrgUnitAssignment.user_id)
-                .filter(
-                    func.upper(OrgUnitAssignment.unit_type) == unit_type,
-                    OrgUnitAssignment.unit_id == target_id,
-                )
-                .all()
-            ) if uid
-        )
-    except Exception:
-        pass
-
-    # Include the unit manager/deputy because correspondence assigned to the
-    # unit affects them even if they do not have a membership row.
-    try:
-        managers = (
-            OrgUnitManager.query
-            .filter(
-                func.upper(OrgUnitManager.unit_type) == unit_type,
-                OrgUnitManager.unit_id == target_id,
-            )
-            .all()
-        )
-        for manager in managers:
-            if manager.manager_user_id:
-                user_ids.add(int(manager.manager_user_id))
-            if manager.deputy_user_id:
-                user_ids.add(int(manager.deputy_user_id))
-    except Exception:
-        pass
-
-    # Backward-compatible direct assignments stored on the User record.
-    direct_column = {
-        "DIRECTORATE": User.directorate_id,
-        "DEPARTMENT": User.department_id,
-        "UNIT": User.unit_id,
-        "SECTION": User.section_id,
-        "DIVISION": User.division_id,
-    }.get(unit_type)
-    if direct_column is not None:
-        try:
-            user_ids.update(
-                int(uid) for (uid,) in (
-                    db.session.query(User.id)
-                    .filter(direct_column == target_id)
-                    .all()
-                ) if uid
-            )
-        except Exception:
-            pass
-
-    # Users may inherit a directorate/unit through their department.
-    try:
-        if unit_type == "DIRECTORATE":
-            department_ids = [
-                int(did) for (did,) in (
-                    db.session.query(Department.id)
-                    .filter(Department.directorate_id == target_id)
-                    .all()
-                ) if did
-            ]
-            if department_ids:
-                user_ids.update(
-                    int(uid) for (uid,) in (
-                        db.session.query(User.id)
-                        .filter(User.department_id.in_(department_ids))
-                        .all()
-                    ) if uid
-                )
-        elif unit_type == "UNIT":
-            department_ids = [
-                int(did) for (did,) in (
-                    db.session.query(Department.id)
-                    .filter(Department.unit_id == target_id)
-                    .all()
-                ) if did
-            ]
-            if department_ids:
-                user_ids.update(
-                    int(uid) for (uid,) in (
-                        db.session.query(User.id)
-                        .filter(User.department_id.in_(department_ids))
-                        .all()
-                    ) if uid
-                )
-    except Exception:
-        pass
-
-    return sorted(user_ids)
+    return correspondence_target_user_ids(competence)
 
 
 def _corr_competence_options() -> list[dict]:
@@ -18364,6 +18246,9 @@ def _corr_has_confidential_manage() -> bool:
 
 
 def _corr_can_access(item) -> bool:
+    effective_assignee_id = getattr(item, "current_assignee_id", None)
+    if _corr_is_assigned_to_current(item):
+        effective_assignee_id = int(current_user.id)
     return corr_can_access_correspondence(
         confidentiality=getattr(item, "confidentiality", None),
         user_id=getattr(current_user, "id", None),
@@ -18371,7 +18256,7 @@ def _corr_can_access(item) -> bool:
         has_confidential_read=_corr_has_confidential_read(),
         has_confidential_manage=_corr_has_confidential_manage(),
         created_by_user_id=getattr(item, "created_by_id", None),
-        current_assignee_user_id=getattr(item, "current_assignee_id", None),
+        current_assignee_user_id=effective_assignee_id,
         authorized_user_ids=_corr_authorized_user_ids(item),
     )
 
@@ -18565,17 +18450,26 @@ def _corr_target_for_item(item) -> dict:
     }
 
 
+def _corr_assigned_user_ids(item) -> set[int]:
+    user_ids = set(_corr_competence_user_ids(_corr_target_for_item(item)))
+    if getattr(item, "current_assignee_id", None):
+        user_ids.add(int(item.current_assignee_id))
+    return user_ids
+
+
+def _corr_is_assigned_to_current(item) -> bool:
+    try:
+        return int(current_user.id) in _corr_assigned_user_ids(item)
+    except Exception:
+        return False
+
+
 def _corr_can_act(item) -> bool:
     if current_user.has_perm(CORR_UPDATE) or _can_manage_corr():
         return True
     if getattr(item, "created_by_id", None) == current_user.id:
         return True
-    if getattr(item, "current_assignee_id", None) == current_user.id:
-        return True
-    try:
-        return int(current_user.id) in _corr_competence_user_ids(_corr_target_for_item(item))
-    except Exception:
-        return False
+    return _corr_is_assigned_to_current(item)
 
 
 def _corr_can_finalize() -> bool:
@@ -18585,6 +18479,57 @@ def _corr_can_finalize() -> bool:
         or _can_manage_corr()
         or role == "GENERAL-SECRETARY"
     )
+
+
+def _corr_can_approve(item) -> bool:
+    if _corr_can_finalize():
+        return True
+    return bool(
+        (getattr(item, "status", None) or "").upper() == "WAITING_APPROVAL"
+        and _corr_is_assigned_to_current(item)
+    )
+
+
+def _corr_assignment_task_context(kind: str, item) -> dict | None:
+    status = (getattr(item, "status", None) or "").upper()
+    if not _corr_is_assigned_to_current(item) or status in {
+        "APPROVED", "COMPLETED", "CLOSED", "ARCHIVED"
+    }:
+        return None
+
+    movement = (
+        CorrMovement.query
+        .filter_by(
+            inbound_id=item.id if kind == "IN" else None,
+            outbound_id=item.id if kind == "OUT" else None,
+        )
+        .filter(CorrMovement.action.in_([
+            "FORWARD", "SUBMIT_APPROVAL", "RETURN", "REQUEST_INFO", "REPLY",
+        ]))
+        .order_by(CorrMovement.created_at.desc(), CorrMovement.id.desc())
+        .first()
+    )
+    expected_by_status = {
+        "WAITING_APPROVAL": "مراجعة المعاملة ثم اعتمادها أو إعادتها",
+        "WAITING_INFO": "استكمال المعلومات أو المرفقات المطلوبة ثم الرد",
+        "RETURNED": "معالجة أسباب الإعادة وإعادة توجيه المعاملة",
+        "FORWARDED": "معالجة المعاملة المحولة واتخاذ الإجراء المناسب",
+        "DRAFT": "استكمال مسودة المعاملة واتخاذ الإجراء المناسب",
+    }
+    suggested_by_status = {
+        "WAITING_APPROVAL": "APPROVE",
+        "WAITING_INFO": "REPLY",
+        "RETURNED": "OPEN",
+        "FORWARDED": "OPEN",
+        "DRAFT": "OPEN",
+    }
+    return {
+        "expected": expected_by_status.get(status, "متابعة المعاملة واتخاذ الإجراء المناسب"),
+        "suggested_action": suggested_by_status.get(status, ""),
+        "note": getattr(movement, "note", None),
+        "assigned_by": getattr(movement, "actor", None),
+        "assigned_at": getattr(movement, "created_at", None),
+    }
 
 
 def _corr_linked_workflows(kind: str, item_id: int) -> list[WorkflowRequest]:
@@ -18602,6 +18547,7 @@ def _corr_procedure_context(kind: str, item) -> dict:
         outbound_id=item.id if kind == "OUT" else None,
     )
     movements = movements_query.order_by(CorrMovement.created_at.desc(), CorrMovement.id.desc()).limit(150).all()
+    assignment_task = _corr_assignment_task_context(kind, item)
     return {
         "corr_kind": kind,
         "corr_movements": movements,
@@ -18617,6 +18563,9 @@ def _corr_procedure_context(kind: str, item) -> dict:
         "corr_can_manage_confidential_access": _corr_can_manage_confidential_access(item),
         "corr_can_act": _corr_can_act(item),
         "corr_can_finalize": _corr_can_finalize(),
+        "corr_can_approve": _corr_can_approve(item),
+        "corr_assignment_task": assignment_task,
+        "corr_suggested_action": assignment_task.get("suggested_action") if assignment_task else "",
         "corr_due_state": corr_due_state(getattr(item, "due_date", None)),
         "corr_workflows": _corr_linked_workflows(kind, item.id),
     }
@@ -18765,7 +18714,10 @@ def corr_procedure_action(kind: str, item_id: int):
     if action not in _CORR_USER_ACTIONS:
         flash("اختر إجراءً صحيحًا.", "danger")
         return redirect(url_for(redirect_endpoint, **redirect_values))
-    if action in CORR_FINALIZE_ACTIONS and not _corr_can_finalize():
+    if action == "APPROVE":
+        if not _corr_can_approve(item):
+            abort(403)
+    elif action in CORR_FINALIZE_ACTIONS and not _corr_can_finalize():
         abort(403)
 
     note = (request.form.get("note") or "").strip()
@@ -18795,7 +18747,7 @@ def corr_procedure_action(kind: str, item_id: int):
             item.current_target_label = target.get("label")
             item.current_assignee_id = target.get("id") if target.get("kind") == "USER" else None
             recipient_ids.update(_corr_competence_user_ids(target))
-    elif action == "RETURN":
+    elif action in {"RETURN", "REQUEST_INFO"}:
         if item.created_by_id:
             target = {
                 "kind": "USER",
@@ -18807,7 +18759,34 @@ def corr_procedure_action(kind: str, item_id: int):
             item.current_target_label = target["label"]
             item.current_assignee_id = int(item.created_by_id)
             recipient_ids.add(int(item.created_by_id))
-    elif action in {"REPLY", "REQUEST_INFO", "FINAL_REPLY"} and item.created_by_id:
+    elif action == "REPLY":
+        movement_filter = (
+            CorrMovement.inbound_id == item.id
+            if normalized_kind == "IN"
+            else CorrMovement.outbound_id == item.id
+        )
+        info_request = (
+            CorrMovement.query
+            .filter(movement_filter, CorrMovement.action == "REQUEST_INFO")
+            .order_by(CorrMovement.created_at.desc(), CorrMovement.id.desc())
+            .first()
+        )
+        reply_to_id = getattr(info_request, "actor_user_id", None)
+        if reply_to_id and int(reply_to_id) != int(current_user.id):
+            reply_to = db.session.get(User, int(reply_to_id))
+            target = {
+                "kind": "USER",
+                "id": int(reply_to_id),
+                "label": _corr_display_name(reply_to) if reply_to else f"مستخدم #{reply_to_id}",
+            }
+            item.current_target_kind = "USER"
+            item.current_target_id = int(reply_to_id)
+            item.current_target_label = target["label"]
+            item.current_assignee_id = int(reply_to_id)
+            recipient_ids.add(int(reply_to_id))
+        elif item.created_by_id:
+            recipient_ids.add(int(item.created_by_id))
+    elif action == "FINAL_REPLY" and item.created_by_id:
         recipient_ids.add(int(item.created_by_id))
 
     if action == "FINAL_REPLY" and normalized_kind == "IN":

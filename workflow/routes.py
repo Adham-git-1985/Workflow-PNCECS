@@ -48,12 +48,14 @@ from services.workflow_confidentiality import (
     is_confidential_workflow,
 )
 from services.correspondence_workflow import (
+    correspondence_target_user_ids,
     correspondence_context,
     sync_correspondence_from_workflow,
 )
 from services.correspondence_procedure import (
     ACTION_LABELS as CORR_ACTION_LABELS,
     STATUS_LABELS as CORR_STATUS_LABELS,
+    due_state as corr_due_state,
 )
 
 from models import (
@@ -90,6 +92,10 @@ from models import (
     OrgNode,
     OrgNodeAssignment,
     OrgNodeManager,
+
+    InboundMail,
+    OutboundMail,
+    CorrMovement,
 
 )
 
@@ -2225,6 +2231,119 @@ def new_request():
 # =========================
 # Inbox: pending steps for me
 # =========================
+_CORR_TASK_TERMINAL_STATUSES = {"APPROVED", "COMPLETED", "CLOSED", "ARCHIVED"}
+
+
+def _correspondence_inbox_tasks(actor_users, search: str = "") -> list[dict]:
+    """Return live correspondence assignments for the Workflow task inbox."""
+    actor_ids = {
+        int(user.id) for user in (actor_users or [])
+        if getattr(user, "id", None)
+    }
+    if not actor_ids:
+        return []
+
+    search_normalized = (search or "").strip().casefold()
+    assignment_actions = [
+        "FORWARD", "SUBMIT_APPROVAL", "RETURN", "REQUEST_INFO", "REPLY",
+    ]
+    expected_by_status = {
+        "WAITING_APPROVAL": "مراجعة المعاملة ثم اعتمادها أو إعادتها",
+        "WAITING_INFO": "استكمال المعلومات أو المرفقات المطلوبة ثم الرد",
+        "RETURNED": "معالجة أسباب الإعادة وإعادة توجيه المعاملة",
+        "FORWARDED": "معالجة المعاملة المحولة واتخاذ الإجراء المناسب",
+        "DRAFT": "استكمال مسودة المعاملة واتخاذ الإجراء المناسب",
+    }
+
+    tasks: list[dict] = []
+    for kind, model, date_attr, party_attr in (
+        ("IN", InboundMail, "received_date", "sender"),
+        ("OUT", OutboundMail, "sent_date", "recipient"),
+    ):
+        candidates = (
+            model.query
+            .filter(~func.upper(model.status).in_(_CORR_TASK_TERMINAL_STATUSES))
+            .order_by(model.created_at.desc(), model.id.desc())
+            .limit(1500)
+            .all()
+        )
+        for item in candidates:
+            target = {
+                "kind": getattr(item, "current_target_kind", None) or getattr(item, "competence_kind", None),
+                "id": getattr(item, "current_target_id", None) or getattr(item, "competence_id", None),
+                "label": getattr(item, "current_target_label", None) or getattr(item, "competence_label", None),
+            }
+            assigned_user_ids = set(correspondence_target_user_ids(target))
+            if getattr(item, "current_assignee_id", None):
+                assigned_user_ids.add(int(item.current_assignee_id))
+            if not actor_ids.intersection(assigned_user_ids):
+                continue
+
+            haystack = " ".join(str(value or "") for value in (
+                item.id,
+                item.ref_no,
+                item.subject,
+                item.body,
+                getattr(item, party_attr, None),
+                target.get("label"),
+            )).casefold()
+            if search_normalized and search_normalized not in haystack:
+                continue
+
+            movement_filter = (
+                CorrMovement.inbound_id == item.id
+                if kind == "IN"
+                else CorrMovement.outbound_id == item.id
+            )
+            movement = (
+                CorrMovement.query
+                .filter(movement_filter, CorrMovement.action.in_(assignment_actions))
+                .order_by(CorrMovement.created_at.desc(), CorrMovement.id.desc())
+                .first()
+            )
+            status = (getattr(item, "status", None) or ("RECEIVED" if kind == "IN" else "DRAFT")).upper()
+            tasks.append({
+                "kind": kind,
+                "kind_label": "وارد" if kind == "IN" else "صادر",
+                "item": item,
+                "ref_no": item.ref_no or item.id,
+                "subject": item.subject or "",
+                "party": getattr(item, party_attr, None) or "-",
+                "date": getattr(item, date_attr, None) or "-",
+                "status": status,
+                "status_label": CORR_STATUS_LABELS.get(status, status),
+                "expected": expected_by_status.get(status, "متابعة المعاملة واتخاذ الإجراء المناسب"),
+                "note": getattr(movement, "note", None),
+                "assigned_by": getattr(movement, "actor", None),
+                "assigned_at": getattr(movement, "created_at", None) or item.created_at,
+                "due_date": getattr(item, "due_date", None),
+                "due_state": corr_due_state(getattr(item, "due_date", None)),
+                "confidentiality": (getattr(item, "confidentiality", None) or "NORMAL").upper(),
+                "url": url_for(
+                    "portal.inbound_view" if kind == "IN" else "portal.outbound_view",
+                    **(
+                        {
+                            "inbound_id": item.id,
+                            "focus": "action",
+                            "_anchor": "corrActionForm",
+                        }
+                        if kind == "IN"
+                        else {
+                            "outbound_id": item.id,
+                            "focus": "action",
+                            "_anchor": "corrActionForm",
+                        }
+                    ),
+                ),
+            })
+
+    tasks.sort(
+        key=lambda row: row.get("assigned_at") or datetime.min,
+        reverse=True,
+    )
+    return tasks
+
+
 @workflow_bp.route("/inbox")
 @login_required
 def inbox():
@@ -2413,6 +2532,8 @@ def inbox():
                     pass
                 filtered.append((req, inst, step))
             rows = filtered
+
+    corr_tasks = _correspondence_inbox_tasks(actor_users, search)
     
 
     # --- Circulars (last 5) ---
@@ -2425,7 +2546,13 @@ def inbox():
     except Exception:
         last_circulars = []
 
-    return render_template("workflow/inbox.html", rows=rows, q=search, last_circulars=last_circulars)
+    return render_template(
+        "workflow/inbox.html",
+        rows=rows,
+        corr_tasks=corr_tasks,
+        q=search,
+        last_circulars=last_circulars,
+    )
 
 
 _WORKFLOW_DASHBOARD_QUEUES = {
@@ -2602,6 +2729,9 @@ def following():
     current_step = (request.args.get("current_step") or "").strip()
     sla_state = (request.args.get("sla_state") or "").strip().lower()
     sort = (request.args.get("sort") or "id_desc").strip().lower()
+    summary_filter = (request.args.get("summary_filter") or "all").strip().lower()
+    if summary_filter not in {"all", "open", "closed", "overdue"}:
+        summary_filter = "all"
 
     def _arg_int(value):
         try:
@@ -2920,13 +3050,39 @@ def following():
         if v and not (k == "sort" and v == "id_desc")
     )
 
+    summary_rows = list(rows)
     summary = {
-        "total": len(rows),
-        "open": sum(1 for req, _inst, _tpl in rows if (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED")),
-        "closed": sum(1 for req, _inst, _tpl in rows if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED")),
-        "overdue": sum(1 for req, _inst, tpl in rows if _is_overdue(req, tpl)),
+        "total": len(summary_rows),
+        "open": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED")),
+        "closed": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED")),
+        "overdue": sum(1 for req, _inst, tpl in summary_rows if _is_overdue(req, tpl)),
         "active_filters": active_filters_count,
     }
+
+    if summary_filter == "open":
+        rows = [
+            row for row in summary_rows
+            if (getattr(row[0], "status", "") or "").upper() not in ("APPROVED", "REJECTED")
+        ]
+    elif summary_filter == "closed":
+        rows = [
+            row for row in summary_rows
+            if (getattr(row[0], "status", "") or "").upper() in ("APPROVED", "REJECTED")
+        ]
+    elif summary_filter == "overdue":
+        rows = [row for row in summary_rows if _is_overdue(row[0], row[2])]
+
+    summary_urls = {}
+    summary_url_args = {
+        key: value
+        for key, value in request.args.to_dict(flat=True).items()
+        if key != "summary_filter" and value not in (None, "")
+    }
+    for filter_key in ("all", "open", "closed", "overdue"):
+        url_args = dict(summary_url_args)
+        if filter_key != "all":
+            url_args["summary_filter"] = filter_key
+        summary_urls[filter_key] = url_for("workflow.following", **url_args)
 
     return render_template(
         "workflow/following.html",
@@ -2937,6 +3093,9 @@ def following():
         request_types=request_types,
         status_options=allowed_statuses,
         summary=summary,
+        summary_filter=summary_filter,
+        summary_urls=summary_urls,
+        displayed_total=len(rows),
     )
 
 # =========================

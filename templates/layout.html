@@ -51,7 +51,7 @@
             <div class="user-badge d-none d-md-flex align-items-center gap-2">
                 <img src="{% if current_user.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ current_user.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}" alt="avatar" style="width:32px;height:32px;border-radius:50%;object-fit:cover;border:1px solid rgba(0,0,0,.12);">
                 <span>{{ current_user.full_name }}</span>
-                <span class="user-role">({{ current_user.role }})</span>
+                <span class="user-role">({{ current_user.role|ui_label }})</span>
             </div>
 
             <a href="{{ url_for('workflow.notifications') }}" class="nav-link position-relative text-white p-0">

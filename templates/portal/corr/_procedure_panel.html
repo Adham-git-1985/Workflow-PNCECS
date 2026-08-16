@@ -1,5 +1,94 @@
 {% set priority_labels = {'NORMAL': 'عادية', 'HIGH': 'عالية', 'URGENT': 'عاجلة'} %}
 
+<style>
+  #corrActionForm {
+    scroll-margin-top: 6rem;
+    transition: border-color .25s ease, background-color .25s ease, box-shadow .25s ease;
+  }
+
+  #corrActionForm.corr-action-attention {
+    border: 2px solid var(--bs-warning) !important;
+    background: rgba(var(--bs-warning-rgb), .08);
+    box-shadow: 0 0 0 .3rem rgba(var(--bs-warning-rgb), .2), 0 .75rem 1.75rem rgba(0, 0, 0, .12);
+  }
+
+  #corrActionForm.corr-action-attention:focus {
+    outline: 3px solid rgba(var(--bs-primary-rgb), .38);
+    outline-offset: 3px;
+  }
+
+  #corrActionAttentionHint {
+    border-inline-start: .35rem solid var(--bs-warning);
+  }
+
+  #corrActionAttentionHint .corr-action-pointer {
+    animation: corrActionPointer 1s ease-in-out infinite alternate;
+  }
+
+  .corr-target-picker,
+  .corr-target-picker .dropdown-toggle,
+  .corr-target-picker .dropdown-menu {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .corr-target-picker .dropdown-menu {
+    min-width: 0;
+    padding: .65rem;
+    overflow: hidden;
+  }
+
+  .corr-target-results {
+    max-height: 18rem;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .corr-target-option {
+    display: block;
+    width: 100%;
+    padding: .55rem .7rem;
+    text-align: start;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.45;
+    border-radius: .35rem;
+  }
+
+  .corr-target-option + .corr-target-option {
+    margin-top: .15rem;
+  }
+
+  .corr-target-picker-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #corrActionForm.corr-action-pulse {
+    animation: corrActionPulse 1.25s ease-in-out 3;
+  }
+
+  @keyframes corrActionPulse {
+    0%, 100% { box-shadow: 0 0 0 .25rem rgba(var(--bs-warning-rgb), .16), 0 .75rem 1.75rem rgba(0, 0, 0, .1); }
+    50% { box-shadow: 0 0 0 .7rem rgba(var(--bs-warning-rgb), .32), 0 1rem 2rem rgba(0, 0, 0, .16); }
+  }
+
+  @keyframes corrActionPointer {
+    from { transform: translateY(-2px); }
+    to { transform: translateY(4px); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #corrActionForm.corr-action-pulse,
+    #corrActionAttentionHint .corr-action-pointer {
+      animation: none;
+    }
+  }
+</style>
+
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
     <h6 class="mb-0"><i class="bi bi-diagram-3"></i> المسار الإداري وإجراءات المعاملة</h6>
@@ -90,26 +179,75 @@
     </details>
   {% endif %}
 
+  {% if corr_assignment_task %}
+    <div class="alert alert-warning border-warning-subtle mb-3 no-print">
+      <div class="d-flex flex-wrap align-items-start justify-content-between gap-2">
+        <div>
+          <div class="fw-bold"><i class="bi bi-person-check"></i> هذه المعاملة ضمن مهامك</div>
+          <div class="mt-1">المطلوب: {{ corr_assignment_task.expected }}</div>
+          {% if corr_assignment_task.note %}
+            <div class="small mt-2"><strong>التوجيه:</strong> {{ corr_assignment_task.note }}</div>
+          {% endif %}
+        </div>
+        {% if corr_assignment_task.assigned_by %}
+          <div class="small text-muted">
+            من {{ corr_assignment_task.assigned_by.full_name or corr_assignment_task.assigned_by.email }}
+            {% if corr_assignment_task.assigned_at %}<br>{{ corr_assignment_task.assigned_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
+
   {% if corr_can_act %}
-    <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.corr_procedure_action', kind=corr_kind, item_id=item.id) }}" class="border rounded-3 p-3 mb-3 no-print" id="corrActionForm">
+    <form method="post" enctype="multipart/form-data" action="{{ url_for('portal.corr_procedure_action', kind=corr_kind, item_id=item.id) }}" class="border rounded-3 p-3 mb-3 no-print" id="corrActionForm" tabindex="-1" aria-describedby="corrActionAttentionHint">
+      <div class="alert alert-warning d-none align-items-start gap-3 mb-3" id="corrActionAttentionHint" role="status" aria-live="polite">
+        <i class="bi bi-arrow-down-circle-fill fs-3 corr-action-pointer" aria-hidden="true"></i>
+        <div>
+          <div class="fw-bold">ابدأ من المنطقة المميزة أدناه</div>
+          <div class="small">اختر الإجراء، اكتب الرد أو الملاحظة، أرفق الملفات إن وجدت، ثم اضغط «تنفيذ الإجراء».</div>
+        </div>
+      </div>
       <div class="row g-3">
         <div class="col-lg-4">
           <label class="form-label">الإجراء</label>
           <select class="form-select" name="action" id="corrAction" required>
             <option value="">اختر الإجراء…</option>
             {% for value, label in corr_action_options %}
-              {% if corr_can_finalize or value not in ['APPROVE', 'FINAL_REPLY', 'CLOSE', 'ARCHIVE'] %}
-                <option value="{{ value }}">{{ label }}</option>
+              {% if (value == 'APPROVE' and corr_can_approve) or (value != 'APPROVE' and (corr_can_finalize or value not in ['FINAL_REPLY', 'CLOSE', 'ARCHIVE'])) %}
+                <option value="{{ value }}" {% if corr_suggested_action == value %}selected{% endif %}>{{ label }}</option>
               {% endif %}
             {% endfor %}
           </select>
         </div>
         <div class="col-lg-4 corr-target-field d-none">
           <label class="form-label">التحويل إلى</label>
-          <select class="form-select" name="target" id="corrActionTarget" data-searchable="1">
+          <select class="form-select corr-target-native" name="target" id="corrActionTarget" data-searchable="0">
             <option value="">اختر موظفاً أو جهة تنظيمية…</option>
             {% for opt in corr_competence_options %}<option value="{{ opt.value }}">{{ opt.label }}</option>{% endfor %}
           </select>
+          <div class="dropdown corr-target-picker d-none" id="corrActionTargetPicker">
+            <button class="form-select text-start corr-target-picker-toggle" type="button"
+                    data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                    aria-haspopup="listbox" aria-controls="corrActionTargetResults">
+              <span class="corr-target-picker-label">اختر موظفاً أو جهة تنظيمية…</span>
+            </button>
+            <div class="dropdown-menu shadow" role="presentation">
+              <label class="visually-hidden" for="corrActionTargetSearch">ابحث عن موظف أو جهة تنظيمية</label>
+              <input class="form-control form-control-sm mb-2" type="search" id="corrActionTargetSearch"
+                     placeholder="اكتب اسم الموظف أو الجهة…" autocomplete="off">
+              <div class="corr-target-results" id="corrActionTargetResults" role="listbox"
+                   aria-label="نتائج الموظفين والجهات التنظيمية">
+                {% for opt in corr_competence_options %}
+                  <button class="dropdown-item corr-target-option" type="button" role="option"
+                          data-value="{{ opt.value }}" data-label="{{ opt.label }}">
+                    {{ opt.label }}
+                  </button>
+                {% endfor %}
+                <div class="text-muted text-center small py-3 d-none" id="corrActionTargetEmpty">لا توجد نتائج مطابقة.</div>
+              </div>
+            </div>
+          </div>
           <button class="btn btn-outline-primary btn-sm mt-2" type="button"
                   data-corr-org-picker data-target-select="#corrActionTarget">
             <i class="bi bi-diagram-3"></i> اختيار من الهيكل التنظيمي
@@ -163,6 +301,87 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
+  const actionForm = document.getElementById('corrActionForm');
+  const attentionHint = document.getElementById('corrActionAttentionHint');
+  const focusRequested = actionForm && (
+    window.location.hash === '#corrActionForm' ||
+    new URLSearchParams(window.location.search).get('focus') === 'action'
+  );
+  if (focusRequested) {
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    actionForm.classList.add('corr-action-attention', 'corr-action-pulse');
+    actionForm.setAttribute('aria-current', 'step');
+    if (attentionHint) attentionHint.classList.replace('d-none', 'd-flex');
+    window.requestAnimationFrame(function () {
+      actionForm.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'center' });
+      window.setTimeout(function () {
+        try {
+          actionForm.focus({ preventScroll: true });
+        } catch (error) {
+          actionForm.focus();
+        }
+      }, reduceMotion ? 0 : 450);
+    });
+    window.setTimeout(function () {
+      actionForm.classList.remove('corr-action-pulse');
+    }, 5000);
+  }
+
+  const targetSelect = document.getElementById('corrActionTarget');
+  const targetPicker = document.getElementById('corrActionTargetPicker');
+  const targetToggle = targetPicker ? targetPicker.querySelector('.corr-target-picker-toggle') : null;
+  const targetLabel = targetPicker ? targetPicker.querySelector('.corr-target-picker-label') : null;
+  const targetSearch = document.getElementById('corrActionTargetSearch');
+  const targetOptions = targetPicker ? Array.from(targetPicker.querySelectorAll('.corr-target-option')) : [];
+  const targetEmpty = document.getElementById('corrActionTargetEmpty');
+  if (targetSelect && targetPicker && targetToggle && targetLabel) {
+    const placeholder = targetSelect.options[0] ? targetSelect.options[0].textContent.trim() : 'اختر موظفاً أو جهة تنظيمية…';
+    const refreshTargetLabel = function () {
+      const selected = targetSelect.options[targetSelect.selectedIndex];
+      const label = selected && selected.value ? selected.textContent.trim() : placeholder;
+      targetLabel.textContent = label;
+      targetToggle.title = selected && selected.value ? label : '';
+      targetOptions.forEach(function (option) {
+        const isSelected = option.dataset.value === targetSelect.value;
+        option.classList.toggle('active', isSelected);
+        option.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+      });
+    };
+    const filterTargetOptions = function () {
+      const query = (targetSearch ? targetSearch.value : '').trim().toLocaleLowerCase('ar');
+      let visibleCount = 0;
+      targetOptions.forEach(function (option) {
+        const visible = !query || (option.dataset.label || option.textContent || '').toLocaleLowerCase('ar').includes(query);
+        option.classList.toggle('d-none', !visible);
+        if (visible) visibleCount += 1;
+      });
+      if (targetEmpty) targetEmpty.classList.toggle('d-none', visibleCount !== 0);
+    };
+
+    targetSelect.classList.add('d-none');
+    targetPicker.classList.remove('d-none');
+    targetOptions.forEach(function (option) {
+      option.addEventListener('click', function () {
+        targetSelect.value = option.dataset.value || '';
+        targetSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        if (targetSearch) targetSearch.value = '';
+        filterTargetOptions();
+        if (window.bootstrap && window.bootstrap.Dropdown) {
+          window.bootstrap.Dropdown.getOrCreateInstance(targetToggle).hide();
+        }
+      });
+    });
+    if (targetSearch) {
+      targetSearch.addEventListener('input', filterTargetOptions);
+      targetSearch.addEventListener('click', function (event) { event.stopPropagation(); });
+    }
+    targetSelect.addEventListener('change', refreshTargetLabel);
+    targetToggle.addEventListener('shown.bs.dropdown', function () {
+      if (targetSearch) targetSearch.focus();
+    });
+    refreshTargetLabel();
+  }
+
   const action = document.getElementById('corrAction');
   if (action) {
     const targetFields = document.querySelectorAll('.corr-target-field');

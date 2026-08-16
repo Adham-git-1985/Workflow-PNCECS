@@ -71,7 +71,7 @@
 
           <div class="mb-3">
             <label class="form-label">الدور (غير قابل للتعديل)</label>
-            <input type="text" class="form-control" value="{{ current_user.role }}" readonly>
+            <input type="text" class="form-control" value="{{ current_user.role|ui_label }}" readonly>
           </div>
 
           <div class="mb-3">

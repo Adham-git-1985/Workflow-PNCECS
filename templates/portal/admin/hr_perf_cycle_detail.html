@@ -23,7 +23,7 @@
       <span class="badge bg-secondary">معلّق: {{ stats.pending }}</span>
     </div>
     <form method="post" action="{{ url_for('portal.portal_admin_hr_perf_cycle_generate', cycle_id=cycle.id) }}" class="d-flex gap-2">
-      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-gear"></i> توليد التكليفات (Auto)</button>
+      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-gear"></i> توليد التكليفات تلقائياً</button>
     </form>
   </div>
   <div class="text-muted small mt-2">* توليد تلقائي: (ذاتي) + (مدير) + (زملاء) حسب الوحدة الأساسية، مع احترام عدم التكرار.</div>
@@ -55,7 +55,7 @@
               <td>{{ a.evaluator_type }}</td>
               <td>
                 {% if a.status == 'SUBMITTED' %}
-                  <span class="badge bg-success">SUBMITTED</span>
+                  <span class="badge bg-success">تم الإرسال</span>
                 {% else %}
                   <span class="badge bg-secondary">قيد الانتظار</span>
                 {% endif %}

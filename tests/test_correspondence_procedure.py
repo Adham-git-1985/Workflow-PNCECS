@@ -69,6 +69,15 @@ class CorrespondenceProcedureTests(unittest.TestCase):
             has_regular_read=False,
         ))
 
+    def test_direct_assignee_can_open_regular_correspondence_task(self):
+        self.assertTrue(can_access_correspondence(
+            confidentiality="NORMAL",
+            user_id=9,
+            has_regular_read=False,
+            created_by_user_id=1,
+            current_assignee_user_id=9,
+        ))
+
     def test_secret_correspondence_ignores_regular_read_alone(self):
         self.assertFalse(can_access_correspondence(
             confidentiality="SECRET",

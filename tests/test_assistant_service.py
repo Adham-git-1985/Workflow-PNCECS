@@ -4,7 +4,11 @@ from unittest.mock import patch
 
 from flask import Flask
 
-from assistant.knowledge import _correspondence_matches, assistant_access_profile
+from assistant.knowledge import (
+    _correspondence_assigned_to_user,
+    _correspondence_matches,
+    assistant_access_profile,
+)
 from assistant.service import _try_external_ai, answer, build_local_reply, normalize_text
 
 
@@ -63,6 +67,26 @@ class AssistantServiceTests(unittest.TestCase):
         result = build_local_reply("لا يظهر لي الزر الذي أحتاجه")
         self.assertIn("اختفاء زر أو خيار", result["reply"])
         self.assertIn("الخطوة الحالية", result["reply"])
+
+    def test_correspondence_action_guide_explains_focused_execution_area(self):
+        result = build_local_reply("كيف أنفذ إجراء الوارد؟")
+        self.assertIn("المنطقة المميزة", result["reply"])
+        self.assertIn("الملاحظة", result["reply"])
+        self.assertIn("المرفقات", result["reply"])
+        self.assertIn("القابلة للبحث", result["reply"])
+        self.assertIn("الهيكل التنظيمي", result["reply"])
+        self.assertIn("تنفيذ الإجراء", result["reply"])
+
+    def test_following_guide_explains_clickable_summary_filters(self):
+        result = build_local_reply("كيف أصفي المتابعة إلى مسارات متأخرة؟")
+        self.assertIn("متأخرة SLA", result["reply"])
+        self.assertIn("اضغط بطاقة", result["reply"])
+
+    def test_recent_updates_guide_covers_integrated_work(self):
+        result = build_local_reply("ما الجديد في النظام؟")
+        self.assertIn("الصادر والوارد مع مسار", result["reply"])
+        self.assertIn("محاضر الاجتماعات", result["reply"])
+        self.assertIn("تعريب", result["reply"])
 
     def test_stuck_request_gets_troubleshooting_steps(self):
         result = build_local_reply("الطلب متوقف ولا ينتقل للخطوة التالية")
@@ -362,6 +386,23 @@ class AssistantServiceTests(unittest.TestCase):
         item = _FakeCorrespondence(8, "موضوع ظاهر")
         self.assertFalse(_correspondence_matches(item, [], 9))
         self.assertTrue(_correspondence_matches(item, [], 8))
+
+    def test_aref_recognizes_direct_and_organizational_correspondence_assignments(self):
+        user = _FakeUser("EMPLOYEE")
+        direct = SimpleNamespace(current_assignee_id=42)
+        self.assertTrue(_correspondence_assigned_to_user(user, direct))
+
+        organizational = SimpleNamespace(
+            current_assignee_id=None,
+            current_target_kind="DEPARTMENT",
+            current_target_id=7,
+            current_target_label="الدائرة",
+            competence_kind=None,
+            competence_id=None,
+            competence_label=None,
+        )
+        with patch("assistant.knowledge.correspondence_target_user_ids", return_value=[42]):
+            self.assertTrue(_correspondence_assigned_to_user(user, organizational))
 
 
 if __name__ == "__main__":

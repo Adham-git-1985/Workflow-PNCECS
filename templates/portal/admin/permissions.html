@@ -140,7 +140,7 @@
             إذا كانت الصلاحية ممنوحة من دور المستخدم، فإن إزالة التحديد هنا لن تلغيها.
           </div>
           <div class="small mt-2">
-            الدور الحالي: <span class="badge bg-dark">{{ selected_user.role or '—' }}</span>
+            الدور الحالي: <span class="badge bg-dark">{{ selected_user.role|ui_label if selected_user.role else '—' }}</span>
             <span class="ms-2 badge bg-secondary">من الدور</span>
             <span class="badge bg-success">محدد للمستخدم</span>
           </div>

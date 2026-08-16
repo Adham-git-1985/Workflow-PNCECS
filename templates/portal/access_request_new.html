@@ -55,7 +55,7 @@
     <form method="post" class="mt-4">
       <input type="hidden" name="service" value="{{ service }}" />
 
-      <div class="mb-2 fw-bold">اختر نوع التفعيل (Preset)</div>
+      <div class="mb-2 fw-bold">اختر نوع التفعيل الجاهز</div>
       <div class="row g-2">
         {% for code, label, keys in (svc.options if svc else []) %}
           <div class="col-12 col-lg-6">

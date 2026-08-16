@@ -23,14 +23,14 @@
                 {% for log in logs %}
                     <tr>
                         <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-                        <td><strong>{{ log.user.name if log.user else "System" }}</strong></td>
+                        <td><strong>{{ log.user.name if log.user else "النظام" }}</strong></td>
                         <td class="text-center">
                             {% if log.action == "ARCHIVE_DELETE" %}
-                                <span class="badge bg-danger">DELETE</span>
+                                <span class="badge bg-danger">حذف</span>
                             {% elif log.action == "ARCHIVE_RESTORE" %}
-                                <span class="badge bg-success">RESTORE</span>
+                                <span class="badge bg-success">استعادة</span>
                             {% elif log.action == "ARCHIVE_PURGE" %}
-                                <span class="badge bg-dark">PURGE</span>
+                                <span class="badge bg-dark">حذف نهائي</span>
                             {% else %}
                                 <span class="badge bg-secondary">{{ log.action|ui_label }}</span>
                             {% endif %}

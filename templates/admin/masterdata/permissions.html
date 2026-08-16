@@ -22,7 +22,7 @@
           <option value="">-- اختر --</option>
           {% for u in users %}
             <option value="{{ u.id }}" {% if selected and selected.id == u.id %}selected{% endif %}>
-              {{ u.email }} ({{ u.role }})
+              {{ u.email }} ({{ u.role|ui_label }})
             </option>
           {% endfor %}
         </select>

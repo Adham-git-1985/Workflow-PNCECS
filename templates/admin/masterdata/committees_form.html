@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3 class="mb-1">{% if c %}✏️ تعديل لجنة{% else %}➕ لجنة جديدة{% endif %}</h3>
-    <small class="text-muted">اللجنة مصدر توجيه مستقل يمكن ربطه بخطوات المسارات (Approver Kind = COMMITTEE)</small>
+    <small class="text-muted">اللجنة وجهة اعتماد مستقلة يمكن ربطها بخطوات المسارات.</small>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.committees_list') }}">رجوع</a>
 </div>
@@ -15,17 +15,17 @@
       <div class="row g-3">
 
         <div class="col-md-4">
-          <label class="form-label fw-bold">الاسم (AR) <span class="text-danger">*</span></label>
+          <label class="form-label fw-bold">الاسم بالعربية <span class="text-danger">*</span></label>
           <input class="form-control" name="name_ar" value="{{ c.name_ar if c else '' }}" required>
         </div>
 
         <div class="col-md-4">
-          <label class="form-label fw-bold">الاسم (EN)</label>
+          <label class="form-label fw-bold">الاسم بالإنجليزية</label>
           <input class="form-control" name="name_en" value="{{ c.name_en if c else '' }}">
         </div>
 
         <div class="col-md-4">
-          <label class="form-label fw-bold">Code (اختياري)</label>
+          <label class="form-label fw-bold">الرمز (اختياري)</label>
           <input class="form-control" name="code" value="{{ c.code if c else '' }}" placeholder="مثال: FIN_COMMITTEE">
         </div>
 
@@ -57,7 +57,7 @@
     <div class="d-flex justify-content-between align-items-center mb-2">
       <div>
         <h5 class="mb-0">👤 أعضاء اللجنة</h5>
-        <small class="text-muted">يمكن إضافة المستخدم محدد أو الدور كامل. (Chair/Secretary/Member اختياري)</small>
+        <small class="text-muted">يمكن إضافة مستخدم محدد أو دور وظيفي كامل، مع تحديد صفته داخل اللجنة اختيارياً.</small>
       </div>
       <div class="d-flex gap-2 align-items-center flex-wrap">
         <a class="btn btn-sm btn-outline-success" href="{{ url_for('masterdata.committee_members_export_excel', committee_id=c.id) }}">⬇️ Excel</a>
@@ -70,10 +70,10 @@
       <div class="row g-3 align-items-end">
 
         <div class="col-md-2">
-          <label class="form-label fw-bold">Kind</label>
+          <label class="form-label fw-bold">النوع</label>
           <select class="form-select" name="kind" id="member_kind">
             <option value="USER" selected>مستخدم</option>
-            <option value="ROLE">ROLE</option>
+            <option value="ROLE">دور وظيفي</option>
           </select>
         </div>
 
@@ -82,7 +82,7 @@
           <select class="form-select" name="user_id">
             <option value="">— اختر —</option>
             {% for u in users %}
-              <option value="{{ u.id }}">{{ u.email }}{% if u.role %} ({{ u.role }}){% endif %}</option>
+              <option value="{{ u.id }}">{{ u.email }}{% if u.role %} ({{ u.role|ui_label }}){% endif %}</option>
             {% endfor %}
           </select>
         </div>
@@ -127,7 +127,7 @@
           <thead class="table-light">
             <tr>
               <th>#</th>
-              <th>Kind</th>
+              <th>النوع</th>
               <th>العضو</th>
               <th>الدور داخل اللجنة</th>
               <th>فعّال</th>
@@ -142,14 +142,14 @@
                   {% if (m.kind or '')|upper == 'USER' %}
                     <span class="badge bg-primary">مستخدم</span>
                   {% else %}
-                    <span class="badge bg-secondary">ROLE</span>
+                    <span class="badge bg-secondary">دور وظيفي</span>
                   {% endif %}
                 </td>
                 <td>
                   {% if (m.kind or '')|upper == 'USER' %}
                     {{ m.user.email if m.user else ('User #' ~ m.user_id) }}
                   {% else %}
-                    <code>{{ m.role }}</code>
+                    <span class="badge text-bg-light border">{{ m.role|ui_label }}</span>
                   {% endif %}
                 </td>
                 <td>

@@ -1837,7 +1837,7 @@ def committee_member_add(committee_id):
 
     else:
         if not role_code:
-            flash("اختر Role", "danger")
+            flash("اختر دوراً وظيفياً", "danger")
             return redirect(url_for("masterdata.committees_edit", committee_id=c.id))
 
         dup = CommitteeAssignee.query.filter_by(committee_id=c.id, kind="ROLE", role=role_code).first()

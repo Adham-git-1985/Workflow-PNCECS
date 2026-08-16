@@ -160,7 +160,7 @@
             </td>
             <td>
               {% if (s.mode or '').upper() == 'PARALLEL_SYNC' %}
-                <span class="badge bg-info text-dark">متزامن (Parallel Sync)</span>
+                <span class="badge bg-info text-dark">متزامن</span>
               {% else %}
                 <span class="badge bg-secondary">تسلسلي</span>
               {% endif %}
@@ -179,7 +179,7 @@
                   {{ s.approver_user_id }}
                 {% endif %}
               {% elif s.approver_kind == "ROLE" %}
-                <span class="text-muted">دور:</span> {{ s.approver_role }}
+                <span class="text-muted">دور:</span> {{ s.approver_role|ui_label }}
               {% elif s.approver_kind == "DIRECTORATE" %}
                 <span class="text-muted">إدارة:</span>
                 {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
@@ -195,14 +195,14 @@
                   {{ s.approver_unit_id }}
                 {% endif %}
               {% elif s.approver_kind == "SECTION" %}
-                <span class="text-muted">قسم (Section):</span>
+                <span class="text-muted">القسم:</span>
                 {% if s.approver_section_id and sections_map.get(s.approver_section_id) %}
                   {{ sections_map.get(s.approver_section_id).name_ar }} [#{{ s.approver_section_id }}]
                 {% else %}
                   {{ s.approver_section_id }}
                 {% endif %}
               {% elif s.approver_kind == "DIVISION" %}
-                <span class="text-muted">شعبة (Division):</span>
+                <span class="text-muted">الشعبة:</span>
                 {% if s.approver_division_id and divisions_map.get(s.approver_division_id) %}
                   {{ divisions_map.get(s.approver_division_id).name_ar }} [#{{ s.approver_division_id }}]
                 {% else %}
@@ -242,7 +242,7 @@
                     {% if pa.approver_kind == 'USER' and pa.approver_user_id and users_map.get(pa.approver_user_id) %}
                       <span class="badge bg-light text-dark border">{{ users_map.get(pa.approver_user_id).email }}</span>
                     {% elif pa.approver_kind == 'ROLE' %}
-                      <span class="badge bg-light text-dark border">ROLE: {{ pa.approver_role }}</span>
+                      <span class="badge bg-light text-dark border">دور: {{ pa.approver_role|ui_label }}</span>
                     {% elif pa.approver_kind == 'DIRECTORATE' %}
                       <span class="badge bg-light text-dark border">الإدارة: {{ dirs_map.get(pa.approver_directorate_id).name_ar if pa.approver_directorate_id and dirs_map.get(pa.approver_directorate_id) else (pa.approver_directorate_id) }}</span>
                     {% elif pa.approver_kind == 'UNIT' %}
@@ -300,15 +300,15 @@
         <div class="col-md-3">
           <label class="form-label">نوع المعتمد</label>
           <select class="form-select" name="approver_kind" id="kind">
-            <option value="ROLE">دور وظيفي (ROLE)</option>
+            <option value="ROLE">دور وظيفي</option>
             <option value="USER">مستخدم</option>
             <option value="DEPARTMENT">دائرة/قسم</option>
             <option value="DIRECTORATE">إدارة</option>
-            <option value="UNIT">وحدة (UNIT)</option>
-            <option value="SECTION">قسم (SECTION)</option>
-            <option value="DIVISION">شعبة (DIVISION)</option>
+            <option value="UNIT">وحدة</option>
+            <option value="SECTION">قسم</option>
+            <option value="DIVISION">شعبة</option>
             <option value="ORG_NODE">عنصر هيكلي (موحد)</option>
-            <option value="COMMITTEE">لجنة (COMMITTEE)</option>
+            <option value="COMMITTEE">لجنة</option>
           </select>
         </div>
 
@@ -327,7 +327,7 @@
           <select class="form-select" name="approver_user_id">
             <option value="">-- اختر --</option>
             {% for u in users %}
-              <option value="{{ u.id }}">{{ u.email }} ({{ u.role }})</option>
+              <option value="{{ u.id }}">{{ u.email }} ({{ u.role|ui_label }})</option>
             {% endfor %}
           </select>
         </div>
@@ -364,7 +364,7 @@
         </div>
 
         <div class="col-md-3" id="box_section" style="display:none;">
-          <label class="form-label">القسم (Section)</label>
+          <label class="form-label">القسم</label>
           <select class="form-select" name="approver_section_id">
             <option value="">-- اختر --</option>
             {% for s in sections %}
@@ -374,7 +374,7 @@
         </div>
 
         <div class="col-md-3" id="box_division" style="display:none;">
-          <label class="form-label">الشعبة (Division)</label>
+          <label class="form-label">الشعبة</label>
           <select class="form-select" name="approver_division_id">
             <option value="">-- اختر --</option>
             {% for d in divisions %}
@@ -421,8 +421,8 @@
         <div class="col-md-3">
           <label class="form-label">طريقة التنفيذ</label>
           <select class="form-select" name="mode">
-            <option value="SEQUENTIAL" selected>تسلسلي (Sequential)</option>
-            <option value="PARALLEL_SYNC">متزامن (Parallel Sync)</option>
+            <option value="SEQUENTIAL" selected>تسلسلي</option>
+            <option value="PARALLEL_SYNC">متزامن</option>
           </select>
           <div class="form-text">في الوضع المتزامن، الردود للتوثيق ولا تغيّر قرار المسار.</div>
         </div>
@@ -684,10 +684,10 @@
       </div>
       <div class="modal-body">
         <div class="mb-2">
-          <label class="form-label">Mode</label>
+          <label class="form-label">وضع الاستيراد</label>
           <select class="form-select" name="mode" required>
-            <option value="safe" selected>Safe Replace (Upsert حسب step_order)</option>
-            <option value="replace">Replace (مسح خطوات المسار ثم إعادة إدخال)</option>
+            <option value="safe" selected>تحديث آمن حسب ترتيب الخطوة</option>
+            <option value="replace">استبدال كامل (مسح خطوات المسار ثم إعادة إدخالها)</option>
           </select>
           <div class="form-text">أعمدة مقترحة: step_order, mode, approver_kind, target, sla_days, committee_delivery_mode, parallel_assignees</div>
         </div>

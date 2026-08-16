@@ -964,13 +964,13 @@ def upload_file():
 
         files = [f for f in (files or []) if f and getattr(f, "filename", "")]
         if not files:
-            flash("No file selected", "danger")
+            flash("لم يتم اختيار ملف", "danger")
             return redirect(request.url)
 
         # Validate all files before saving
         for f in files:
             if not allowed_file(f.filename):
-                flash(f"Invalid file name: {f.filename}", "danger")
+                flash(f"اسم الملف غير صالح: {f.filename}", "danger")
                 return redirect(request.url)
 
         os.makedirs(BASE_STORAGE, exist_ok=True)
@@ -1073,7 +1073,7 @@ def upload_file():
                 )
 
             db.session.commit()
-            flash("File(s) uploaded successfully", "success")
+            flash("تم رفع الملفات بنجاح", "success")
             return redirect(url_for("archive.my_files"))
 
         except Exception as e:
@@ -1404,7 +1404,7 @@ def share_file(file_id):
 
         db.session.commit()
 
-        flash("File shared successfully", "success")
+        flash("تمت مشاركة الملف بنجاح", "success")
         return redirect(url_for("archive.my_files"))
 
     return render_template(
@@ -1464,7 +1464,7 @@ def delete_file(file_id):
     )
 
     db.session.commit()
-    flash("File moved to Recycle Bin", "warning")
+    flash("تم نقل الملف إلى سلة المحذوفات", "warning")
     return redirect(url_for("archive.my_files"))
 
 
@@ -1794,7 +1794,7 @@ def restore_file(file_id):
     )
 
     db.session.commit()
-    flash("File restored successfully", "success")
+    flash("تمت استعادة الملف بنجاح", "success")
     return redirect(url_for("archive.recycle_bin"))
 
 

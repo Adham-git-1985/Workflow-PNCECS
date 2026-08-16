@@ -41,8 +41,8 @@
           <div class="col-md-6">
             <label class="form-label">طريقة القراءة</label>
             <select class="form-select" name="append_only">
-              <option value="1" {% if append_only %}selected{% endif %}>Append-only (قراءة الزيادات فقط)</option>
-              <option value="0" {% if not append_only %}selected{% endif %}>Full read (قراءة كاملة)</option>
+              <option value="1" {% if append_only %}selected{% endif %}>قراءة السجلات الجديدة فقط</option>
+              <option value="0" {% if not append_only %}selected{% endif %}>قراءة كاملة</option>
             </select>
           </div>
 
@@ -50,7 +50,7 @@
             <label class="form-label">المزامنة التلقائية داخل التطبيق</label>
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="auto_enabled" name="auto_enabled" value="1" {% if auto_enabled %}checked{% endif %}>
-              <label class="form-check-label" for="auto_enabled">تفعيل المراقبة (Polling) لملف الساعة</label>
+              <label class="form-check-label" for="auto_enabled">تفعيل المراقبة الدورية لملف الساعة</label>
             </div>
             <div class="form-text">عند التفعيل: يقوم التطبيق بفحص الملف كل فترة، وإذا تغيّر (حجم/تاريخ تعديل) يتم إدخال السجلات الجديدة تلقائيًا.</div>
           </div>
@@ -62,9 +62,9 @@
           </div>
 
           <div class="col-md-6">
-            <label class="form-label">المستخدم ID لسجل الاستيراد (اختياري)</label>
+            <label class="form-label">معرّف المستخدم لسجل الاستيراد (اختياري)</label>
             <input class="form-control" type="number" min="1" name="imported_by_id" value="{{ imported_by_id or '' }}" placeholder="مثال: 1">
-            <div class="form-text">يُستخدم لتوثيق من قام بالاستيراد في الـ Audit عند التشغيل التلقائي/السكربت.</div>
+            <div class="form-text">يُستخدم لتوثيق منفّذ الاستيراد في سجل التدقيق عند التشغيل التلقائي.</div>
           </div>
           <div class="col-md-6">
             <label class="form-label">الحالة</label>
@@ -89,7 +89,7 @@
           <button class="btn btn-success w-100" type="submit">
             <i class="bi bi-arrow-repeat"></i> مزامنة الآن
           </button>
-          <div class="form-text mt-2">يمكنك لاحقًا تشغيل مهمة مجدولة على السيرفر (Task Scheduler / Cron) لاستدعاء سكربت المزامنة بشكل دوري.</div>
+          <div class="form-text mt-2">يمكنك لاحقًا تشغيل مهمة مجدولة على الخادم لاستدعاء برنامج المزامنة دورياً.</div>
         </form>
 
       </div>
@@ -111,14 +111,14 @@
           <div class="col-12">
             <label class="form-label">طريقة الإرسال</label>
             <select class="form-select" name="wa_mode">
-              <option value="webhook" {% if wa.mode == 'webhook' %}selected{% endif %}>Webhook لجروب محدد</option>
-              <option value="cloud" {% if wa.mode == 'cloud' %}selected{% endif %}>WhatsApp Cloud API لأرقام محددة</option>
+              <option value="webhook" {% if wa.mode == 'webhook' %}selected{% endif %}>رابط استقبال لمجموعة محددة</option>
+              <option value="cloud" {% if wa.mode == 'cloud' %}selected{% endif %}>واجهة واتساب السحابية لأرقام محددة</option>
             </select>
-            <div class="form-text">إرسال الجروبات يحتاج بوابة Webhook مرتبطة بالجروب. خيار Cloud API يرسل لأرقام مستلمين.</div>
+            <div class="form-text">إرسال المجموعات يحتاج رابط استقبال مرتبطاً بالمجموعة، أما الواجهة السحابية فترسل إلى أرقام مستلمين.</div>
           </div>
 
           <div class="col-12">
-            <label class="form-label">رابط Webhook</label>
+            <label class="form-label">رابط الاستقبال</label>
             <input class="form-control" name="wa_webhook_url" value="{{ wa.webhook_url or '' }}" placeholder="https://..." dir="ltr">
           </div>
           <div class="col-md-7">
@@ -126,7 +126,7 @@
             <input class="form-control" name="wa_group_id" value="{{ wa.group_id or '' }}" placeholder="مثال: announcements" dir="ltr">
           </div>
           <div class="col-md-5">
-            <label class="form-label">سر Webhook</label>
+            <label class="form-label">مفتاح أمان رابط الاستقبال</label>
             <input class="form-control" type="password" name="wa_webhook_secret" placeholder="{% if wa.webhook_secret_set %}محفوظ{% else %}اختياري{% endif %}" dir="ltr">
             {% if wa.webhook_secret_set %}
               <div class="form-check mt-1">
@@ -143,11 +143,11 @@
             <input class="form-control" name="wa_api_version" value="{{ wa.api_version or 'v20.0' }}" dir="ltr">
           </div>
           <div class="col-md-7">
-            <label class="form-label">Phone Number ID</label>
+            <label class="form-label">معرّف رقم الهاتف</label>
             <input class="form-control" name="wa_phone_number_id" value="{{ wa.phone_number_id or '' }}" dir="ltr">
           </div>
           <div class="col-12">
-            <label class="form-label">Cloud API Token</label>
+            <label class="form-label">رمز دخول الواجهة السحابية</label>
             <input class="form-control" type="password" name="wa_cloud_token" placeholder="{% if wa.cloud_token_set %}محفوظ أو مضبوط من PORTAL_WHATSAPP_TOKEN{% else %}اختياري عند استخدام Cloud API{% endif %}" dir="ltr">
             {% if wa.cloud_token_set %}
               <div class="form-check mt-1">
@@ -157,7 +157,7 @@
             {% endif %}
           </div>
           <div class="col-12">
-            <label class="form-label">أرقام المستلمين لخيار Cloud API</label>
+            <label class="form-label">أرقام مستلمي الواجهة السحابية</label>
             <textarea class="form-control" name="wa_recipients" rows="3" dir="ltr" placeholder="97059xxxxxxx, 97056xxxxxxx">{{ wa.recipients_raw or '' }}</textarea>
             <div class="form-text">اكتب الأرقام مع رمز الدولة، وافصل بينها بسطر جديد أو فاصلة.</div>
           </div>
@@ -193,7 +193,7 @@
           </div>
 
           <div class="col-md-8">
-            <label class="form-label">SMTP Host</label>
+            <label class="form-label">خادم البريد الصادر</label>
             <input class="form-control" name="email_smtp_host" value="{{ mail_cfg.host or '' }}" placeholder="smtp.example.com" dir="ltr">
           </div>
           <div class="col-md-4">
@@ -238,7 +238,7 @@
             <input class="form-control" name="email_from_name" value="{{ mail_cfg.from_name or 'البوابة الإدارية' }}">
           </div>
           <div class="col-12">
-            <label class="form-label">Reply-To</label>
+            <label class="form-label">عنوان الرد</label>
             <input class="form-control" name="email_reply_to" value="{{ mail_cfg.reply_to or '' }}" placeholder="اختياري" dir="ltr">
           </div>
 

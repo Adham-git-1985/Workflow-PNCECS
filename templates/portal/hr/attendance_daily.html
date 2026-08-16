@@ -79,8 +79,8 @@
           <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>
-            {% if r.status == 'OK' %}<span class="badge bg-success">OK</span>
-            {% elif r.status == 'INCOMPLETE' %}<span class="badge bg-danger">INCOMPLETE</span>
+            {% if r.status == 'OK' %}<span class="badge bg-success">مكتمل</span>
+            {% elif r.status == 'INCOMPLETE' %}<span class="badge bg-danger">غير مكتمل</span>
             {% else %}<span class="badge bg-secondary">{{ r.status|ui_label }}</span>
             {% endif %}
           </td>

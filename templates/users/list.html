@@ -68,14 +68,14 @@
                       {% if (not is_super_admin) and (r in ['ADMIN','SUPER_ADMIN']) %}
                         {# hidden for normal admin #}
                       {% else %}
-                        <option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r }}</option>
+                        <option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r|ui_label }}</option>
                       {% endif %}
                     {% endfor %}
                   </select>
                   <button class="btn btn-sm btn-outline-primary">تحديث</button>
                 </form>
               {% else %}
-                <span class="badge bg-secondary">{{ user.role }}</span>
+                <span class="badge bg-secondary">{{ user.role|ui_label }}</span>
               {% endif %}
             </td>
             <td>
@@ -133,10 +133,10 @@
       </div>
       <div class="modal-body">
         <div class="mb-2">
-          <label class="form-label">Mode</label>
+          <label class="form-label">وضع الاستيراد</label>
           <select class="form-select" name="mode" required>
-            <option value="safe" selected>Safe Replace (Upsert فقط)</option>
-            <option value="replace">Replace (Upsert + محاولة حذف غير الموجود)</option>
+            <option value="safe" selected>تحديث آمن دون حذف</option>
+            <option value="replace">استبدال كامل مع محاولة حذف غير الموجود</option>
           </select>
           <div class="form-text">أعمدة مقترحة: البريد الإلكتروني، الاسم، المسمى الوظيفي، الدور، كود الدائرة، كود الإدارة، كلمة المرور</div>
         </div>

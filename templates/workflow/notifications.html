@@ -46,7 +46,7 @@
                 <option value="">الكل</option>
                 <option value="INFO" {% if filters.type == "INFO" %}selected{% endif %}>معلومة</option>
                 <option value="WARNING" {% if filters.type == "WARNING" %}selected{% endif %}>تحذير</option>
-                <option value="CRITICAL" {% if filters.type == "CRITICAL" %}selected{% endif %}>Critical</option>
+                <option value="CRITICAL" {% if filters.type == "CRITICAL" %}selected{% endif %}>حرج</option>
             </select>
         </div>
 
@@ -129,7 +129,7 @@
             <strong>{{ n.message }}</strong>
 
             {% if n.type == "CRITICAL" %}
-                <span class="badge bg-danger ms-2">Critical</span>
+                <span class="badge bg-danger ms-2">حرج</span>
             {% elif n.type == "WARNING" %}
                 <span class="badge bg-warning text-dark ms-2">تحذير</span>
             {% else %}
@@ -138,7 +138,7 @@
 
             {% if n.role %}
                 <span class="badge bg-secondary ms-1">
-                    {{ n.role }}
+                    {{ n.role|ui_label }}
                 </span>
             {% endif %}
         </div>

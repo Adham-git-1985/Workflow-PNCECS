@@ -11,6 +11,7 @@ from services.correspondence_workflow import (
 class CorrespondenceWorkflowTests(unittest.TestCase):
     def test_workflow_statuses_map_to_procedural_correspondence_statuses(self):
         self.assertEqual(_mapped_status("IN_PROGRESS", "RECEIVED"), "IN_PROGRESS")
+        self.assertEqual(_mapped_status("IN_PROGRESS", "WAITING_APPROVAL"), "WAITING_APPROVAL")
         self.assertEqual(_mapped_status("APPROVED", "IN_PROGRESS"), "APPROVED")
         self.assertEqual(_mapped_status("REJECTED", "WAITING_APPROVAL"), "RETURNED")
         self.assertEqual(_mapped_status("DRAFT", "REGISTERED"), "REGISTERED")

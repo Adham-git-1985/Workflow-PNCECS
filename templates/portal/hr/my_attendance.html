@@ -40,9 +40,9 @@
               <td>{{ r.overtime_minutes or 0 }} د</td>
               <td>
                 {% if r.status == 'OK' %}
-                  <span class="badge bg-success">OK</span>
+                  <span class="badge bg-success">مكتمل</span>
                 {% elif r.status == 'ABSENT' %}
-                  <span class="badge bg-danger">ABSENT</span>
+                  <span class="badge bg-danger">غائب</span>
                 {% else %}
                   <span class="badge bg-warning text-dark">{{ r.status|ui_label }}</span>
                 {% endif %}

@@ -107,7 +107,7 @@ def update_sla():
     sla_days = request.form.get("sla_days", type=int)
 
     if sla_days is None or sla_days <= 0:
-        flash("Invalid SLA value", "danger")
+        flash("قيمة مدة اتفاقية مستوى الخدمة غير صحيحة", "danger")
         return redirect(url_for("admin.dashboard"))
 
     setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
@@ -123,7 +123,7 @@ def update_sla():
 
     db.session.commit()
 
-    flash(f"SLA updated to {sla_days} days", "success")
+    flash(f"تم تحديث مدة اتفاقية مستوى الخدمة إلى {sla_days} يوم", "success")
     return redirect(url_for("admin.dashboard"))
 
 
@@ -403,7 +403,7 @@ def manage_permissions():
         perms = request.form.getlist("permissions")
 
         if not selected_role:
-            flash("اختر Role.", "danger")
+            flash("اختر دوراً وظيفياً.", "danger")
             return redirect(url_for("admin.manage_permissions"))
 
         known = set(permissions) | set(PORTAL_ALL_KEYS)
@@ -1634,7 +1634,7 @@ def backup_restore():
     try:
         _restore_permissions_export(extract_dir)
     except Exception:
-        flash("Database restored, but permissions export could not be applied.", "warning")
+        flash("تمت استعادة قاعدة البيانات، لكن تعذر تطبيق ملف الصلاحيات المصدّر.", "warning")
 
     # Restore archive storage
     backup_archive = os.path.join(extract_dir, "storage", "archive")

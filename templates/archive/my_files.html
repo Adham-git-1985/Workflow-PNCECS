@@ -15,7 +15,7 @@
         <div>
           <h3 class="archive-title mb-1">🗂️ ملفاتي</h3>
           <div class="archive-submeta">
-            {{ current_user.email }} · {{ current_user.role }} · الدائرة: {{ current_user.department_id or "غير محددة" }}
+            {{ current_user.email }} · {{ current_user.role|ui_label }} · الدائرة: {{ current_user.department_id or "غير محددة" }}
           </div>
         </div>
 

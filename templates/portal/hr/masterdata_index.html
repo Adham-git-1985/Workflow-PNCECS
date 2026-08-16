@@ -25,7 +25,7 @@
 <div class="row g-4">
     <div class="col-lg-6">
       <div class="p-3 border rounded-3">
-        <h6 class="mb-3"><i class="bi bi-calendar-week"></i> الجداول (Work Schedules)</h6>
+        <h6 class="mb-3"><i class="bi bi-calendar-week"></i> جداول الدوام</h6>
 
         <form method="post" action="{{ url_for('portal.hr_masterdata_set_default_schedule') }}" class="row g-2 align-items-end">
           <div class="col-md-8">
@@ -34,7 +34,7 @@
               <option value="">— بدون —</option>
               {% for s in schedules %}
                 <option value="{{ s.id }}" {% if default_schedule_id and default_schedule_id|int == s.id %}selected{% endif %}>
-                  #{{ s.id }} — {{ s.name }} ({{ s.kind }})
+                  #{{ s.id }} — {{ s.name }} ({{ s.kind|ui_label }})
                 </option>
               {% endfor %}
             </select>
@@ -55,11 +55,11 @@
           </div>
           <div class="col-md-6">
             <select class="form-select" name="kind">
-              <option value="FIXED">ثابت FIXED</option>
-              <option value="FLEX">مرن FLEX</option>
-              <option value="SHIFT">مناوبات SHIFT</option>
-              <option value="RAMADAN">رمضان RAMADAN</option>
-              <option value="REMOTE">عمل عن بعد REMOTE</option>
+              <option value="FIXED">دوام ثابت</option>
+              <option value="FLEX">دوام مرن</option>
+              <option value="SHIFT">مناوبات</option>
+              <option value="RAMADAN">دوام رمضان</option>
+              <option value="REMOTE">عمل عن بُعد</option>
             </select>
           </div>
           <div class="col-md-3">
@@ -103,7 +103,7 @@
               <tr>
                 <td>{{ s.id }}</td>
                 <td>{{ s.name }}</td>
-                <td><span class="badge bg-secondary">{{ s.kind }}</span></td>
+                <td><span class="badge bg-secondary">{{ s.kind|ui_label }}</span></td>
                 <td>
                   {% if s.start_time and s.end_time %}
                     {{ s.start_time }} - {{ s.end_time }}

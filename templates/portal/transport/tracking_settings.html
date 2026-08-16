@@ -32,17 +32,17 @@
       </div>
 
       <div class="col-md-4">
-        <label class="form-label">Base URL</label>
+        <label class="form-label">الرابط الأساسي</label>
         <input class="form-control" name="base_url" value="{{ settings.base_url }}" placeholder="https://api.vendor.com" {% if not can_manage %}disabled{% endif %}>
       </div>
 
       <div class="col-md-3">
-        <label class="form-label">Sync Interval (sec)</label>
+        <label class="form-label">فاصل المزامنة (بالثواني)</label>
         <input class="form-control" type="number" min="10" name="sync_sec" value="{{ settings.sync_sec }}" {% if not can_manage %}disabled{% endif %}>
       </div>
 
       <div class="col-12">
-        <label class="form-label">API Token</label>
+        <label class="form-label">رمز دخول الواجهة البرمجية</label>
         <input class="form-control" name="token" value="{{ settings.token }}" placeholder="token..." {% if not can_manage %}disabled{% endif %}>
         <div class="form-text">
           ملاحظة: حالياً يتم تخزين القيمة في SystemSetting (حد 255 حرف). إذا كان التوكن أطول، الأفضل وضعه في Environment Variable.

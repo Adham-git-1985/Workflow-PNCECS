@@ -6,7 +6,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">{% if t %}✏️ تعديل نوع الهيكلية{% else %}➕ إضافة نوع هيكلية{% endif %}</h3>
-    <small class="text-muted">(B) يمكنك اختيار أكثر من نوع أب مسموح لهذا النوع</small>
+    <small class="text-muted">يمكنك اختيار أكثر من نوع أب مسموح لهذا النوع.</small>
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-outline-secondary" target="_blank" href="{{ url_for('users.help_org_structure_dynamic_guide') }}">❓ الدليل</a>
@@ -19,16 +19,16 @@
 
     <div class="row g-3">
       <div class="col-md-4">
-        <label class="form-label fw-bold">Code (ثابت)</label>
+        <label class="form-label fw-bold">الرمز (ثابت)</label>
         <input class="form-control" name="code" value="{{ t.code if t else '' }}" placeholder="مثال: إدارة" required>
         <div class="form-text">يفضل أحرف كبيرة وبدون مسافات (سيتم تحويل المسافات إلى _).</div>
       </div>
       <div class="col-md-4">
-        <label class="form-label fw-bold">الاسم (AR)</label>
+        <label class="form-label fw-bold">الاسم بالعربية</label>
         <input class="form-control" name="name_ar" value="{{ t.name_ar if t else '' }}" required>
       </div>
       <div class="col-md-4">
-        <label class="form-label fw-bold">الاسم (EN)</label>
+        <label class="form-label fw-bold">الاسم بالإنجليزية</label>
         <input class="form-control" name="name_en" value="{{ t.name_en if t else '' }}">
       </div>
 
@@ -59,7 +59,7 @@
       <div class="col-12">
         <div class="border rounded p-3">
           <div class="d-flex justify-content-between align-items-center mb-2">
-            <div class="fw-bold">التبعية (الأب المسموح) — (B)</div>
+            <div class="fw-bold">التبعية (أنواع الأب المسموحة)</div>
             <div class="text-muted small">اختر أكثر من نوع أب، أو اتركها فارغة ليصبح النوع جذريًا فقط</div>
           </div>
 

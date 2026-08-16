@@ -7,7 +7,7 @@
                 <i class="bi bi-person-circle text-white fs-4"></i>
                 <div class="flex-grow-1">
                     <div class="fw-bold text-white" style="line-height:1.2">{{ current_user.full_name }}</div>
-                    <small class="text-white-50">{{ current_user.role }}</small>
+                    <small class="text-white-50">{{ current_user.role|ui_label }}</small>
 
                     {% if g.delegation and g.effective_user and g.effective_user.id != current_user.id %}
                       <div class="mt-2">

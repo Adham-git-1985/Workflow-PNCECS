@@ -7,7 +7,7 @@
 {% block content %}
 <div class="alert alert-info mb-3">
     <strong>المستخدم:</strong> {{ current_user.email }} |
-    <strong>الدور:</strong> {{ current_user.role }}
+    <strong>الدور:</strong> {{ current_user.role|ui_label }}
     {% if current_user.department_id %}
         | <strong>الدائرة:</strong> {{ current_user.department_id }}
     {% else %}

@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3 class="mb-1">{% if r %}✏️ تعديل Role{% else %}➕ Role جديد{% endif %}</h3>
-    <small class="text-muted">سيظهر هذا الدور في القوائم المنسدلة (الدور dropdown)</small>
+    <small class="text-muted">سيظهر هذا الدور في القوائم المنسدلة للأدوار.</small>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('masterdata.roles_list') }}">رجوع</a>
 </div>
@@ -14,9 +14,9 @@
     <form method="post">
       <div class="row g-3">
         <div class="col-md-4">
-          <label class="form-label fw-bold">Code</label>
+          <label class="form-label fw-bold">الرمز</label>
           <input class="form-control" name="code" value="{{ r.code if r else '' }}" required
-                 placeholder="مثال: finance أو dept_head">
+                 placeholder="مثال: المالية أو رئيس الدائرة">
           <div class="form-text">يفضل بدون مسافات. سيتم تحويل المسافات إلى _ تلقائيًا.</div>
         </div>
 
@@ -26,7 +26,7 @@
         </div>
 
         <div class="col-md-4">
-          <label class="form-label fw-bold">الاسم (EN)</label>
+          <label class="form-label fw-bold">الاسم بالإنجليزية</label>
           <input class="form-control" name="name_en" value="{{ r.name_en if r else '' }}" placeholder="Finance">
         </div>
 

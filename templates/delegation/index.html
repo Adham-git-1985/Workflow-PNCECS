@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3 class="mb-1">🧑‍🤝‍🧑 {% if can_manage %}إدارة التفويضات{% else %}تفويضي{% endif %}</h3>
-    <small class="text-muted">تحديد تفويض بتاريخ محدد أو لمدة (عدد أيام) أو بوقت انتهاء (Expiry).</small>
+    <small class="text-muted">تحديد تفويض بتاريخ محدد أو لمدة (عدد أيام) أو بوقت بداية ونهاية.</small>
   </div>
 </div>
 
@@ -16,7 +16,7 @@
     <form method="post" action="{{ url_for('delegation.create') }}" class="row g-3">
       {% if can_manage %}
       <div class="col-md-4">
-        <label class="form-label">المستخدم الأصيل (Delegator)</label>
+        <label class="form-label">المستخدم الأصيل</label>
         <select name="from_user_id" class="form-select" required>
           <option value="">— اختر —</option>
           {% for u in users %}
@@ -28,14 +28,14 @@
       </div>
       {% else %}
       <div class="col-md-4">
-        <label class="form-label">المستخدم الأصيل (Delegator)</label>
+        <label class="form-label">المستخدم الأصيل</label>
         <input type="text" class="form-control" value="{{ current_user.email }}{% if current_user.name %} — {{ current_user.name }}{% endif %}" disabled>
         <input type="hidden" name="from_user_id" value="{{ current_user.id }}">
       </div>
       {% endif %}
 
       <div class="col-md-4">
-        <label class="form-label">المفوّض إليه (Delegatee)</label>
+        <label class="form-label">المفوّض إليه</label>
         <select name="to_user_id" class="form-select" required>
           <option value="">— اختر —</option>
           {% for u in users %}
@@ -51,7 +51,7 @@
         <select name="mode" id="modeSelect" class="form-select">
           <option value="days" selected>عدد أيام</option>
           <option value="day">يوم محدد</option>
-          <option value="expiry">Expiry (وقت بداية/نهاية)</option>
+          <option value="expiry">وقت بداية ونهاية</option>
         </select>
       </div>
 
@@ -73,11 +73,11 @@
 
       <!-- expiry -->
       <div class="col-md-4 mode mode-expiry d-none">
-        <label class="form-label">بداية (datetime)</label>
+        <label class="form-label">وقت البداية</label>
         <input type="datetime-local" name="start_dt" class="form-control">
       </div>
       <div class="col-md-4 mode mode-expiry d-none">
-        <label class="form-label">نهاية (datetime)</label>
+        <label class="form-label">وقت النهاية</label>
         <input type="datetime-local" name="end_dt" class="form-control">
       </div>
 

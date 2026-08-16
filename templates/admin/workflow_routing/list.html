@@ -18,8 +18,8 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h3 class="mb-1">🧭 قواعد التوجيه (التوجيه Rules)</h3>
-    <small class="text-muted">ربط نوع الطلب بمسار العمل حسب الهيكلية التقليدية أو الهيكلية الموحدة (OrgNode)</small>
+    <h3 class="mb-1">🧭 قواعد التوجيه</h3>
+    <small class="text-muted">ربط نوع الطلب بمسار العمل حسب الهيكلية التقليدية أو الهيكلية الموحدة.</small>
   </div>
   <div class="d-flex gap-2">
     <button class="btn btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#wfRoutingPrint')">🖨️ طباعة</button>
@@ -132,10 +132,10 @@
           <div class="col-md-6">
             <label class="form-label">وضع الاستيراد</label>
             <select class="form-select" name="mode" required>
-              <option value="safe" selected>Safe Replace (Upsert حسب المفتاح المركّب)</option>
-              <option value="replace">Replace (محاولة مسح الكل ثم إدخال)</option>
+              <option value="safe" selected>تحديث آمن حسب المفتاح المركّب</option>
+              <option value="replace">استبدال كامل (محاولة مسح الكل ثم الإدخال)</option>
             </select>
-            <div class="form-text">Safe Replace: لا يحذف غير الموجود. Replace: يحاول حذف كل القواعد ثم الاستيراد. إن تعذر الحذف سيستخدم Soft Replace (تعطيل الكل).</div>
+            <div class="form-text">التحديث الآمن لا يحذف القواعد غير الموجودة. الاستبدال الكامل يحاول حذف كل القواعد ثم الاستيراد، وإن تعذر الحذف فسيتم تعطيل القواعد الحالية ثم تحديثها.</div>
           </div>
           <div class="col-md-6">
             <label class="form-label">ملف Excel (.xlsx)</label>

@@ -35,9 +35,9 @@
           <thead class="table-light">
             <tr>
               <th>#</th>
-              <th>CODE</th>
-              <th>الاسم (AR)</th>
-              <th>الاسم (EN)</th>
+              <th>الرمز</th>
+              <th>الاسم بالعربية</th>
+              <th>الاسم بالإنجليزية</th>
               <th>نشط</th>
               <th class="text-end" data-nosort>إجراءات</th>
             </tr>
@@ -88,10 +88,10 @@
           <div class="col-md-6">
             <label class="form-label">وضع الاستيراد</label>
             <select class="form-select" name="mode" required>
-              <option value="safe" selected>Safe Replace (Upsert حسب code، بدون حذف)</option>
-              <option value="replace">Replace (محاولة مسح الكل ثم إدخال)</option>
+              <option value="safe" selected>تحديث آمن حسب الرمز، دون حذف</option>
+              <option value="replace">استبدال كامل (محاولة مسح الكل ثم الإدخال)</option>
             </select>
-            <div class="form-text">إذا كان Replace غير ممكن بسبب قيود قاعدة البيانات، سيتم استخدام Soft Replace (تعطيل الكل ثم upsert).</div>
+            <div class="form-text">إذا تعذر الاستبدال الكامل بسبب قيود قاعدة البيانات، فسيتم تعطيل السجلات الحالية ثم تحديثها.</div>
           </div>
           <div class="col-md-6">
             <label class="form-label">ملف Excel (.xlsx)</label>

@@ -923,12 +923,12 @@ def login():
 
         if not user:
             logger.warning("Login failed: user not found")
-            flash("Invalid credentials")
+            flash("بيانات الدخول غير صحيحة", "danger")
             return redirect(url_for("login"))
 
         if not user.check_password(password):
             logger.warning("Login failed: wrong password")
-            flash("Invalid credentials")
+            flash("بيانات الدخول غير صحيحة", "danger")
             return redirect(url_for("login"))
 
         # Track last successful login (for HR report)

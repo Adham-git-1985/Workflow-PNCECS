@@ -48,7 +48,7 @@
                             {{ f.deleted_at.strftime("%Y-%m-%d %H:%M") if f.deleted_at else "—" }}
                         </td>
                         <td class="text-center">
-                            {{ f.deleted_by_user.email if f.deleted_by_user else "System" }}
+                            {{ f.deleted_by_user.email if f.deleted_by_user else "النظام" }}
                         </td>
                         <td class="text-center">
                             <div class="d-flex justify-content-center gap-2 flex-wrap">

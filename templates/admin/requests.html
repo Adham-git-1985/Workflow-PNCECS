@@ -64,11 +64,11 @@
                         <td class="text-center">
                             {% set sla = get_sla_state(req) %}
                             {% if sla == "ON_TRACK" %}
-                                <span class="badge bg-success">On Track</span>
+                                <span class="badge bg-success">ضمن المدة</span>
                             {% elif sla == "BREACHED" %}
-                                <span class="badge bg-warning text-dark">Breached</span>
+                                <span class="badge bg-warning text-dark">متجاوز المدة</span>
                             {% elif sla == "ESCALATED" %}
-                                <span class="badge bg-danger">Escalated</span>
+                                <span class="badge bg-danger">مصعّد</span>
                             {% else %}
                                 <span class="text-muted">—</span>
                             {% endif %}

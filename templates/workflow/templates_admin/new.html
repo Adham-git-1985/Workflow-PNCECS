@@ -27,7 +27,7 @@
       </div>
 
       <div class="col-md-3">
-        <label class="form-label fw-bold">اتفاقية مستوى الخدمة Default (days)</label>
+        <label class="form-label fw-bold">مدة الإنجاز الافتراضية (بالأيام)</label>
         <input class="form-control" name="sla_days_default" type="number" min="1" placeholder="اختياري">
       </div>
 
@@ -66,13 +66,13 @@
             <td>
               <select class="form-select form-select-sm" name="approver_kind" onchange="toggleFields(this)">
                 <option value="USER" selected>مستخدم</option>
-                <option value="ROLE">دور (ROLE)</option>
+                <option value="ROLE">دور وظيفي</option>
                 <option value="DEPARTMENT">دائرة/قسم</option>
                 <option value="DIRECTORATE">إدارة</option>
-                <option value="UNIT">وحدة (UNIT)</option>
-                <option value="SECTION">قسم (SECTION)</option>
-                <option value="DIVISION">شعبة (DIVISION)</option>
-                <option value="COMMITTEE">لجنة (COMMITTEE)</option>
+                <option value="UNIT">وحدة</option>
+                <option value="SECTION">قسم</option>
+                <option value="DIVISION">شعبة</option>
+                <option value="COMMITTEE">لجنة</option>
               </select>
             </td>
 
@@ -124,7 +124,7 @@
 
               <div class="target-box" data-kind="SECTION" style="display:none;">
                 <select class="form-select form-select-sm" name="approver_section_id">
-                  <option value="">-- اختر قسم (Section) --</option>
+                  <option value="">-- اختر قسماً --</option>
                   {% for s in sections %}
                     <option value="{{ s.id }}">{{ s.name_ar }}{% if s.code %} ({{ s.code }}){% endif %} [#{{ s.id }}]</option>
                   {% endfor %}
@@ -133,7 +133,7 @@
 
               <div class="target-box" data-kind="DIVISION" style="display:none;">
                 <select class="form-select form-select-sm" name="approver_division_id">
-                  <option value="">-- اختر شعبة (Division) --</option>
+                  <option value="">-- اختر شعبة --</option>
                   {% for dv in divisions %}
                     <option value="{{ dv.id }}">{{ dv.name_ar }}{% if dv.code %} ({{ dv.code }}){% endif %} [#{{ dv.id }}]</option>
                   {% endfor %}
@@ -153,7 +153,7 @@
             <td>
               <select class="form-select form-select-sm" name="step_mode">
                 <option value="SEQUENTIAL" selected>تسلسلي</option>
-                <option value="PARALLEL_SYNC">متزامن (Parallel Sync)</option>
+                <option value="PARALLEL_SYNC">متزامن</option>
               </select>
               <div class="form-text">في المتزامن: الردود للتوثيق ولا تغيّر قرار المسار.</div>
             </td>

@@ -36,7 +36,7 @@
                   <div class="fw-bold">{{ r.title }}</div>
                   {% if r.desc %}<div class="text-muted small">{{ r.desc }}</div>{% endif %}
                 </div>
-                <span class="badge bg-light text-dark border">{{ r.category }}</span>
+                <span class="badge bg-light text-dark border">{{ r.category|ui_label }}</span>
               </div>
             </a>
           {% endfor %}

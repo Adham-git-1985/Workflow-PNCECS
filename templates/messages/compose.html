@@ -31,7 +31,7 @@
 
             <select class="form-select" name="target_id" id="target_user">
               {% for u in users %}
-                <option value="{{ u.id }}">{{ u.email }} ({{ u.role }})</option>
+                <option value="{{ u.id }}">{{ u.email }} ({{ u.role|ui_label }})</option>
               {% endfor %}
             </select>
 

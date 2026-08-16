@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">📥 صندوق الوارد (المهام)</h3>
-    <small class="text-muted">الطلبات التي تحتاج إجراء منك</small>
+    <small class="text-muted">المسارات ومعاملات الصادر والوارد التي تحتاج إجراءً منك</small>
   </div>
 </div>
 
@@ -58,8 +58,74 @@
   </div>
 </div>
 
+{% if corr_tasks %}
+<div class="card shadow-sm mb-3 border-warning-subtle">
+  <div class="card-header bg-warning bg-opacity-10 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <h5 class="mb-0"><i class="bi bi-envelope-check"></i> مهام الصادر والوارد</h5>
+    <span class="badge text-bg-warning">{{ corr_tasks|length }}</span>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover mb-0 align-middle">
+      <thead class="table-light">
+        <tr>
+          <th>النوع</th>
+          <th>الرقم</th>
+          <th>الموضوع</th>
+          <th>المطلوب منك</th>
+          <th>المُحيل</th>
+          <th>الحالة</th>
+          <th>الموعد</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for task in corr_tasks %}
+        <tr>
+          <td>
+            <span class="badge {{ 'text-bg-success' if task.kind == 'IN' else 'text-bg-info' }}">{{ task.kind_label }}</span>
+            {% if task.confidentiality == 'SECRET' %}<span class="badge text-bg-danger">سري</span>{% endif %}
+          </td>
+          <td class="fw-semibold">{{ task.ref_no }}</td>
+          <td style="min-width:240px">
+            <div class="fw-semibold">{{ task.subject }}</div>
+            <div class="small text-muted">{{ task.party }}</div>
+          </td>
+          <td style="min-width:260px">
+            <div>{{ task.expected }}</div>
+            {% if task.note %}<div class="small text-muted mt-1">{{ task.note }}</div>{% endif %}
+          </td>
+          <td>
+            {% if task.assigned_by %}
+              {{ task.assigned_by.full_name or task.assigned_by.email }}
+              {% if task.assigned_at %}<div class="small text-muted">{{ task.assigned_at.strftime('%Y-%m-%d %H:%M') }}</div>{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td><span class="badge text-bg-primary">{{ task.status_label }}</span></td>
+          <td class="text-nowrap">
+            {{ task.due_date or '-' }}
+            {% if task.due_state == 'OVERDUE' %}<span class="badge text-bg-danger">متأخر</span>
+            {% elif task.due_state == 'DUE_TODAY' %}<span class="badge text-bg-warning">اليوم</span>{% endif %}
+          </td>
+          <td class="text-end">
+            <a class="btn btn-sm btn-primary" href="{{ task.url }}"
+               aria-label="تنفيذ الإجراء المطلوب على {{ task.kind_label }} {{ task.ref_no }}">
+              <i class="bi bi-box-arrow-up-left"></i> تنفيذ الإجراء
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 {% if rows %}
 <div class="card shadow-sm">
+  <div class="card-header bg-primary bg-opacity-10 d-flex flex-wrap justify-content-between align-items-center gap-2">
+    <h5 class="mb-0"><i class="bi bi-signpost-split"></i> مهام المسارات</h5>
+    <span class="badge text-bg-primary">{{ rows|length }}</span>
+  </div>
   <div class="table-responsive">
     <table class="table table-hover mb-0">
       <thead class="table-light">
@@ -92,7 +158,7 @@
     </table>
   </div>
 </div>
-{% else %}
+{% elif not corr_tasks %}
 <div class="alert alert-light text-center text-muted py-4">
   لا توجد مهام حالياً ✅
 </div>

@@ -32,7 +32,7 @@
             <div class="h5 mb-1">{{ u.name or "—" }}</div>
             <div class="text-muted">{{ u.email }}</div>
             <div class="mt-2">
-              <span class="badge bg-dark">{{ u.role }}</span>
+              <span class="badge bg-dark">{{ u.role|ui_label }}</span>
               {% if u.job_title %}<span class="badge bg-light text-dark">{{ u.job_title }}</span>{% endif %}
             </div>
           </div>

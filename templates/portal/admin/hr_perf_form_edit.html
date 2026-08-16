@@ -6,7 +6,7 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
     <div>
       <h5 class="mb-0"><i class="bi bi-ui-checks"></i> تعديل نموذج: {{ form.name }}</h5>
-      <div class="text-muted small">أضف أقسام وأسئلة. نصيحة: استخدم RATING_1_5 للتقييم.</div>
+      <div class="text-muted small">أضف أقساماً وأسئلة. يُنصح باستخدام مقياس من 1 إلى 5 للتقييم.</div>
     </div>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_perf_forms') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
   </div>
@@ -71,10 +71,10 @@
         </div>
         <div class="col-md-2">
           <select class="form-select" name="q_type">
-            <option value="RATING_1_5">RATING_1_5</option>
-            <option value="TEXT">TEXT</option>
-            <option value="YESNO">YESNO</option>
-            <option value="NUMBER">NUMBER</option>
+            <option value="RATING_1_5">تقييم من 1 إلى 5</option>
+            <option value="TEXT">نص</option>
+            <option value="YESNO">نعم أو لا</option>
+            <option value="NUMBER">رقم</option>
           </select>
         </div>
         <div class="col-md-1">

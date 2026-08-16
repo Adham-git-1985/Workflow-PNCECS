@@ -6,7 +6,7 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div>
       <h5 class="mb-0"><i class="bi bi-shield-check"></i> سياسات الدوام</h5>
-      <div class="text-muted small">سياسة الدوام = سياسة الأيام (ثابت/Hybrid quota) + سياسة المكان (On-site/Hybrid/Remote).</div>
+      <div class="text-muted small">سياسة الدوام = سياسة الأيام (ثابت أو حصة أسبوعية هجينة) + سياسة مكان العمل (من المكتب أو هجين أو عن بُعد).</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
@@ -32,7 +32,7 @@
         <label class="form-label">سياسة الأيام</label>
         <select class="form-select" name="days_policy" id="days_policy_new">
           <option value="FIXED" selected>ثابت</option>
-          <option value="HYBRID_WEEKLY_QUOTA">Hybrid weekly quota</option>
+          <option value="HYBRID_WEEKLY_QUOTA">حصة أسبوعية هجينة</option>
         </select>
       </div>
 
@@ -49,7 +49,7 @@
       </div>
 
       <div class="col-lg-2 d-none" id="hybrid_wrap_new">
-        <label class="form-label">Hybrid quota (أسبوعي)</label>
+        <label class="form-label">الحصة الهجينة الأسبوعية</label>
         <div class="d-flex gap-2">
           <input class="form-control" type="number" min="0" name="hybrid_office_days" placeholder="مكتب">
           <input class="form-control" type="number" min="0" name="hybrid_remote_days" placeholder="عن بعد">
@@ -60,9 +60,9 @@
       <div class="col-lg-2">
         <label class="form-label">سياسة المكان</label>
         <select class="form-select" name="location_policy">
-          <option value="ONSITE" selected>On-site فقط</option>
-          <option value="HYBRID">Hybrid</option>
-          <option value="REMOTE">Remote فقط</option>
+          <option value="ONSITE" selected>من مقر العمل فقط</option>
+          <option value="HYBRID">عمل هجين</option>
+          <option value="REMOTE">عن بُعد فقط</option>
         </select>
       </div>
 
@@ -137,7 +137,7 @@
                     <label class="form-label">سياسة الأيام</label>
                     <select class="form-select days-policy" name="days_policy">
                       <option value="FIXED" {% if (p.days_policy or '').upper() != 'HYBRID_WEEKLY_QUOTA' %}selected{% endif %}>ثابت</option>
-                      <option value="HYBRID_WEEKLY_QUOTA" {% if (p.days_policy or '').upper() == 'HYBRID_WEEKLY_QUOTA' %}selected{% endif %}>Hybrid weekly quota</option>
+                      <option value="HYBRID_WEEKLY_QUOTA" {% if (p.days_policy or '').upper() == 'HYBRID_WEEKLY_QUOTA' %}selected{% endif %}>حصة أسبوعية هجينة</option>
                     </select>
                   </div>
 
@@ -160,7 +160,7 @@
                   </div>
 
                   <div class="col-lg-2 hybrid-wrap">
-                    <label class="form-label">Hybrid quota (أسبوعي)</label>
+                    <label class="form-label">الحصة الهجينة الأسبوعية</label>
                     <div class="d-flex gap-2">
                       <input class="form-control" type="number" min="0" name="hybrid_office_days" placeholder="مكتب" value="{{ p.hybrid_office_days or '' }}">
                       <input class="form-control" type="number" min="0" name="hybrid_remote_days" placeholder="عن بعد" value="{{ p.hybrid_remote_days or '' }}">
@@ -171,9 +171,9 @@
                     <label class="form-label">سياسة المكان</label>
                     <select class="form-select" name="location_policy">
                       {% set lp = (p.location_policy or 'ONSITE').upper() %}
-                      <option value="ONSITE" {% if lp == 'ONSITE' %}selected{% endif %}>On-site فقط</option>
-                      <option value="HYBRID" {% if lp == 'HYBRID' %}selected{% endif %}>Hybrid</option>
-                      <option value="REMOTE" {% if lp == 'REMOTE' %}selected{% endif %}>Remote فقط</option>
+                      <option value="ONSITE" {% if lp == 'ONSITE' %}selected{% endif %}>من مقر العمل فقط</option>
+                      <option value="HYBRID" {% if lp == 'HYBRID' %}selected{% endif %}>عمل هجين</option>
+                      <option value="REMOTE" {% if lp == 'REMOTE' %}selected{% endif %}>عن بُعد فقط</option>
                     </select>
                   </div>
 

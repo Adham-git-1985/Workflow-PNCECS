@@ -5,7 +5,7 @@
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">⚙️ إدارة المستخدم</h3>
-    <small class="text-muted">صلاحيات SUPER_ADMIN فقط</small>
+    <small class="text-muted">هذه الصفحة متاحة لمدير النظام العام فقط</small>
   </div>
   <div class="d-flex gap-2">
     <a href="{{ url_for('users.list_users') }}" class="btn btn-outline-secondary">← رجوع</a>
@@ -17,16 +17,16 @@
     <div class="card shadow-sm">
       <div class="card-body">
         <h5 class="mb-3">👤 البيانات</h5>
-        <div class="mb-2"><strong>ID:</strong> {{ user.id }}</div>
-        <div class="mb-2"><strong>Email:</strong> {{ user.email }}</div>
-        <div class="mb-3"><strong>الدور:</strong> {{ user.role }}</div>
+        <div class="mb-2"><strong>المعرّف:</strong> {{ user.id }}</div>
+        <div class="mb-2"><strong>البريد الإلكتروني:</strong> {{ user.email }}</div>
+        <div class="mb-3"><strong>الدور:</strong> {{ user.role|ui_label }}</div>
 
         <form method="post" action="{{ url_for('users.manage_user_role', user_id=user.id) }}" class="row g-2">
           <div class="col-md-8">
             <label class="form-label">تغيير الدور</label>
             <select name="role" class="form-select" required>
               {% for r in role_choices %}
-                <option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r }}</option>
+                <option value="{{ r }}" {% if r == user.role %}selected{% endif %}>{{ r|ui_label }}</option>
               {% endfor %}
             </select>
           </div>

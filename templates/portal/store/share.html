@@ -99,7 +99,7 @@
                   <div class="fw-semibold">{{ p.user.full_name if p.user.full_name else p.user.email }}</div>
                   <div class="text-muted small">{{ p.user.email }}</div>
                 {% else %}
-                  <div class="fw-semibold">الدور: {{ p.role }}</div>
+                  <div class="fw-semibold">الدور: {{ p.role|ui_label }}</div>
                 {% endif %}
               </td>
               <td class="text-nowrap">

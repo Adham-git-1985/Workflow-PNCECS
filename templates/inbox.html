@@ -20,7 +20,7 @@
   <div class="col-md-3">
     <div class="card text-center shadow-sm border-primary">
       <div class="card-body">
-        <small class="text-muted">Total</small>
+        <small class="text-muted">الإجمالي</small>
         <h3 class="text-primary">{{ counters.total }}</h3>
       </div>
     </div>
@@ -59,7 +59,7 @@
   <div class="col-md-4">
     <div class="card text-center shadow-sm border-success">
       <div class="card-body">
-        <small class="text-muted">On Track</small>
+        <small class="text-muted">ضمن المدة</small>
         <h3 class="text-success">{{ sla_counters.on_track }}</h3>
       </div>
     </div>
@@ -68,7 +68,7 @@
   <div class="col-md-4">
     <div class="card text-center shadow-sm border-warning">
       <div class="card-body">
-        <small class="text-muted">اتفاقية مستوى الخدمة Breached</small>
+        <small class="text-muted">متجاوز مدة الإنجاز</small>
         <h3 class="text-warning">{{ sla_counters.breached }}</h3>
       </div>
     </div>
@@ -77,7 +77,7 @@
   <div class="col-md-4">
     <div class="card text-center shadow-sm border-danger">
       <div class="card-body">
-        <small class="text-muted">Escalated</small>
+        <small class="text-muted">مصعّد</small>
         <h3 class="text-danger">{{ sla_counters.escalated }}</h3>
       </div>
     </div>
@@ -107,11 +107,11 @@
       <td>
         {% set sla = get_sla_state(req) %}
         {% if sla == "ON_TRACK" %}
-          <span class="badge bg-success">On Track</span>
+          <span class="badge bg-success">ضمن المدة</span>
         {% elif sla == "BREACHED" %}
-          <span class="badge bg-warning text-dark">Breached</span>
+          <span class="badge bg-warning text-dark">متجاوز المدة</span>
         {% elif sla == "ESCALATED" %}
-          <span class="badge bg-danger">Escalated</span>
+          <span class="badge bg-danger">مصعّد</span>
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}

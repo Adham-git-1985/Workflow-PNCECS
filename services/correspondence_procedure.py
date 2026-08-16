@@ -111,13 +111,18 @@ def can_access_correspondence(
     if not user_id:
         return False
 
+    uid = int(user_id)
     if (confidentiality or "NORMAL").strip().upper() != "SECRET":
-        return bool(has_regular_read)
+        return bool(
+            has_regular_read
+            or (created_by_user_id and uid == int(created_by_user_id))
+            or (current_assignee_user_id and uid == int(current_assignee_user_id))
+            or uid in {int(value) for value in (authorized_user_ids or set()) if value}
+        )
 
     if has_confidential_read or has_confidential_manage:
         return True
 
-    uid = int(user_id)
     if created_by_user_id and uid == int(created_by_user_id):
         return True
     if current_assignee_user_id and uid == int(current_assignee_user_id):

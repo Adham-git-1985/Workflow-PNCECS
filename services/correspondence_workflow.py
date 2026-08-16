@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy import func
+
 from extensions import db
 from models import (
     CorrMovement,
@@ -17,6 +19,10 @@ from models import (
     Division,
     InboundMail,
     OrgNode,
+    OrgNodeAssignment,
+    OrgNodeManager,
+    OrgUnitAssignment,
+    OrgUnitManager,
     Organization,
     OutboundMail,
     Section,
@@ -26,6 +32,131 @@ from models import (
     WorkflowInstanceStep,
     WorkflowRequest,
 )
+
+
+def correspondence_target_user_ids(target: dict | None) -> list[int]:
+    """Resolve every user represented by a correspondence routing target."""
+    target = target or {}
+    kind = (target.get("kind") or "").strip().upper()
+    target_id = target.get("id")
+    try:
+        target_id = int(target_id)
+    except (TypeError, ValueError):
+        return []
+
+    user_ids: set[int] = set()
+    if kind == "USER":
+        return [target_id]
+
+    if kind == "ORG_NODE":
+        try:
+            user_ids.update(
+                int(uid) for (uid,) in (
+                    db.session.query(OrgNodeAssignment.user_id)
+                    .filter(OrgNodeAssignment.node_id == target_id)
+                    .all()
+                ) if uid
+            )
+            managers = OrgNodeManager.query.filter_by(node_id=target_id).all()
+            for manager in managers:
+                if manager.manager_user_id:
+                    user_ids.add(int(manager.manager_user_id))
+                if manager.deputy_user_id:
+                    user_ids.add(int(manager.deputy_user_id))
+            user_ids.update(
+                int(uid) for (uid,) in (
+                    db.session.query(User.id)
+                    .filter(User.org_node_id == target_id)
+                    .all()
+                ) if uid
+            )
+        except Exception:
+            pass
+        return sorted(user_ids)
+
+    unit_type = "ORGANIZATION" if kind == "ORG" else kind
+    try:
+        user_ids.update(
+            int(uid) for (uid,) in (
+                db.session.query(OrgUnitAssignment.user_id)
+                .filter(
+                    func.upper(OrgUnitAssignment.unit_type) == unit_type,
+                    OrgUnitAssignment.unit_id == target_id,
+                )
+                .all()
+            ) if uid
+        )
+    except Exception:
+        pass
+
+    try:
+        for manager in OrgUnitManager.query.filter(
+            func.upper(OrgUnitManager.unit_type) == unit_type,
+            OrgUnitManager.unit_id == target_id,
+        ).all():
+            if manager.manager_user_id:
+                user_ids.add(int(manager.manager_user_id))
+            if manager.deputy_user_id:
+                user_ids.add(int(manager.deputy_user_id))
+    except Exception:
+        pass
+
+    direct_column = {
+        "DIRECTORATE": User.directorate_id,
+        "DEPARTMENT": User.department_id,
+        "UNIT": User.unit_id,
+        "SECTION": User.section_id,
+        "DIVISION": User.division_id,
+    }.get(unit_type)
+    if direct_column is not None:
+        try:
+            user_ids.update(
+                int(uid) for (uid,) in (
+                    db.session.query(User.id)
+                    .filter(direct_column == target_id)
+                    .all()
+                ) if uid
+            )
+        except Exception:
+            pass
+
+    try:
+        if unit_type == "DIRECTORATE":
+            department_ids = [
+                int(did) for (did,) in (
+                    db.session.query(Department.id)
+                    .filter(Department.directorate_id == target_id)
+                    .all()
+                ) if did
+            ]
+            if department_ids:
+                user_ids.update(
+                    int(uid) for (uid,) in (
+                        db.session.query(User.id)
+                        .filter(User.department_id.in_(department_ids))
+                        .all()
+                    ) if uid
+                )
+        elif unit_type == "UNIT":
+            department_ids = [
+                int(did) for (did,) in (
+                    db.session.query(Department.id)
+                    .filter(Department.unit_id == target_id)
+                    .all()
+                ) if did
+            ]
+            if department_ids:
+                user_ids.update(
+                    int(uid) for (uid,) in (
+                        db.session.query(User.id)
+                        .filter(User.department_id.in_(department_ids))
+                        .all()
+                    ) if uid
+                )
+    except Exception:
+        pass
+
+    return sorted(user_ids)
 
 
 def source_correspondence(req: WorkflowRequest):
@@ -136,6 +267,15 @@ def _workflow_target(req: WorkflowRequest) -> dict:
 def _mapped_status(req_status: str | None, current_status: str | None) -> str:
     status = (req_status or "").strip().upper()
     if status == "IN_PROGRESS":
+        current = (current_status or "RECEIVED").strip().upper()
+        # A direct procedural task may be waiting for a named user while the
+        # linked template workflow is still active.  Advancing that workflow
+        # must not silently erase the more specific correspondence state.
+        if current in {
+            "WAITING_APPROVAL", "WAITING_INFO", "APPROVED",
+            "COMPLETED", "CLOSED", "ARCHIVED",
+        }:
+            return current
         return "IN_PROGRESS"
     if status == "APPROVED":
         return "APPROVED"

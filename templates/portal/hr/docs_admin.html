@@ -16,7 +16,7 @@
       <div class="fw-bold mb-2">إنشاء وثيقة</div>
       <form method="post" action="{{ url_for('portal.hr_docs_create') }}">
         <div class="mb-2">
-          <label class="form-label">العنوان (AR)</label>
+          <label class="form-label">العنوان بالعربية</label>
           <input class="form-control" name="title_ar" required/>
         </div>
         <div class="mb-2">
@@ -30,9 +30,9 @@
       <option value="{{ c.code }}">{{ c.name_ar }} ({{ c.code }})</option>
     {% endfor %}
   {% else %}
-    <option value="POLICY">سياسة (POLICY)</option>
-    <option value="FORM">نموذج (FORM)</option>
-    <option value="PROCEDURE">إجراء (PROCEDURE)</option>
+    <option value="POLICY">سياسة</option>
+    <option value="FORM">نموذج</option>
+    <option value="PROCEDURE">إجراء</option>
   {% endif %}
 </select>
         </div>

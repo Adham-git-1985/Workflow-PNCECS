@@ -25,7 +25,7 @@
           <tr>
             <td>{{ c.id }}</td>
             <td>{{ c.employee.full_name }}</td>
-            <td><span class="badge text-bg-light">{{ c.category }}</span></td>
+            <td><span class="badge text-bg-light">{{ c.category|ui_label }}</span></td>
             <td><span class="badge text-bg-{% if c.status=='CLOSED' %}success{% else %}primary{% endif %}">{{ c.status|ui_label }}</span></td>
             <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_discipline_view', case_id=c.id) }}">فتح</a></td>
           </tr>

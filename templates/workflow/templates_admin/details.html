@@ -19,7 +19,7 @@
     <div class="row g-3">
       <div class="col-md-6"><b>الاسم:</b> {{ t.name }}</div>
       <div class="col-md-3"><b>فعّال:</b> {{ "Yes" if t.is_active else "No" }}</div>
-      <div class="col-md-3"><b>اتفاقية مستوى الخدمة Default:</b> {{ t.sla_days_default or "-" }}</div>
+      <div class="col-md-3"><b>مدة الإنجاز الافتراضية:</b> {{ t.sla_days_default or "-" }}</div>
     </div>
   </div>
 </div>
@@ -34,11 +34,11 @@
           <thead>
             <tr>
               <th>#</th>
-              <th>Kind</th>
+              <th>نوع جهة الاعتماد</th>
               <th>مستخدم</th>
-              <th>ROLE</th>
+              <th>الدور</th>
               <th>الدائرة</th>
-              <th>Mode</th>
+              <th>نمط التنفيذ</th>
               <th>مرتبطون</th>
               <th>اتفاقية مستوى الخدمة</th>
             </tr>
@@ -120,7 +120,7 @@
               </td>
               <td>
                 {% if (s.mode or 'SEQUENTIAL')|upper == 'PARALLEL_SYNC' %}
-                  <span class="badge bg-info text-dark">متزامن (Parallel Sync)</span>
+                  <span class="badge bg-info text-dark">متزامن</span>
                 {% else %}
                   <span class="badge bg-secondary">تسلسلي</span>
                 {% endif %}
@@ -137,7 +137,7 @@
                         {% if pa.approver_kind == 'USER' and pa.approver_user_id and users_map.get(pa.approver_user_id) %}
                           <span class="badge bg-light text-dark border">{{ users_map.get(pa.approver_user_id).email }}</span>
                         {% elif pa.approver_kind == 'ROLE' %}
-                          <span class="badge bg-light text-dark border">ROLE: {{ pa.approver_role }}</span>
+                          <span class="badge bg-light text-dark border">دور: {{ pa.approver_role|ui_label }}</span>
                         {% elif pa.approver_kind == 'DIRECTORATE' %}
                           <span class="badge bg-light text-dark border">الإدارة: {{ dirs_map.get(pa.approver_directorate_id).name_ar if pa.approver_directorate_id and dirs_map.get(pa.approver_directorate_id) else (pa.approver_directorate_id) }}</span>
                         {% elif pa.approver_kind == 'COMMITTEE' %}

@@ -20,7 +20,7 @@
 
   <div class="alert alert-info small mb-3">
     <strong>ملخص سريع:</strong> يمكنك إنشاء تعيينات مثل: <span class="badge text-bg-dark">اعتيادي</span> (ثابت + On-site)،
-    <span class="badge text-bg-dark">طوارئ رواتب</span> (Hybrid quota)، أو <span class="badge text-bg-dark">عن بعد</span>.
+    <span class="badge text-bg-dark">طوارئ رواتب</span> (حصة هجينة)، أو <span class="badge text-bg-dark">عن بعد</span>.
   </div>
 
   <div class="border rounded-3 p-3 mb-4">
@@ -136,7 +136,7 @@
                 <span class="badge text-bg-secondary">قسم</span>
                 {{ a.department.name_ar if a.department else (a.target_department_id or '') }}
               {% else %}
-                {{ a.target_type }}
+                {{ a.target_type|ui_label }}
               {% endif %}
             </td>
             <td>

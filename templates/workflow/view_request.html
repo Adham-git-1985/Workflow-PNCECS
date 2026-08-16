@@ -75,7 +75,7 @@
       </div>
       <div class="col-md-6"><span class="text-muted d-block">{{ corr_source.party_label }}</span><strong>{{ corr_source.party or '-' }}</strong></div>
       <div class="col-md-6"><span class="text-muted d-block">جهة الاختصاص</span><strong>{{ corr_source.competence or '-' }}</strong></div>
-      <div class="col-md-4"><span class="text-muted d-block">التصنيف</span>{{ corr_source.category or '-' }}</div>
+      <div class="col-md-4"><span class="text-muted d-block">التصنيف</span>{{ corr_source.category|ui_label if corr_source.category else '-' }}</div>
       <div class="col-md-4"><span class="text-muted d-block">الأولوية</span>{{ {'NORMAL':'عادية','HIGH':'عالية','URGENT':'عاجلة'}.get(corr_source.priority, corr_source.priority) }}</div>
       <div class="col-md-4"><span class="text-muted d-block">الموعد النهائي</span>{{ corr_source.due_date or '-' }}</div>
       <div class="col-12"><span class="text-muted d-block">الموضوع</span><strong>{{ corr_source.subject }}</strong></div>
@@ -197,7 +197,7 @@
 
     <div class="card shadow-sm">
       <div class="card-header bg-white">
-        <strong>🧾 سجل الإجراءات (Audit)</strong>
+        <strong>🧾 سجل الإجراءات</strong>
       </div>
       <div class="card-body">
         {% if audit %}
@@ -283,7 +283,7 @@
   {% set k = (s.approver_kind or '')|upper %}
   الوجهة:
   {% if k == "ROLE" %}
-    <span class="badge bg-secondary">ROLE</span> {{ s.approver_role }}
+    <span class="badge bg-secondary">دور وظيفي</span> {{ s.approver_role|ui_label }}
   {% elif k == "USER" %}
     <span class="badge bg-secondary">مستخدم</span>
     {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
@@ -298,9 +298,9 @@
     {% else %}
       #{{ s.approver_directorate_id }}
     {% endif %}
-    → <span class="text-muted">المدير العام (directorate_head)</span>
+    → <span class="text-muted">مدير عام الإدارة</span>
   {% elif k == "COMMITTEE" %}
-    <span class="badge bg-secondary">COMMITTEE</span>
+    <span class="badge bg-secondary">لجنة</span>
     {% if s.approver_committee_id and committees_map and committees_map.get(s.approver_committee_id) %}
       {{ committees_map.get(s.approver_committee_id).name_ar }}
     {% else %}
@@ -322,10 +322,10 @@
     {% else %}
       #{{ s.approver_department_id }}
     {% endif %}
-    → <span class="text-muted">رئيس الدائرة (dept_head)</span>
+    → <span class="text-muted">رئيس الدائرة</span>
   {% else %}
-    <span class="badge bg-danger">UNKNOWN</span>
-    <span class="ms-1">{{ s.approver_kind }}</span>
+    <span class="badge bg-danger">غير معروف</span>
+    <span class="ms-1">{{ s.approver_kind|ui_label }}</span>
   {% endif %}
 </div>
                   </div>
@@ -431,7 +431,7 @@
                 <div class="d-flex flex-wrap align-items-end justify-content-between gap-2">
                   <div>
                     <div class="fw-bold">تجاوز المتبقين (كل من حالته قيد الانتظار)</div>
-                    <div class="small text-muted">هذا الخيار متاح لمنفّذ الخطوة السابقة أو Admin/Super Admin.</div>
+                    <div class="small text-muted">هذا الخيار متاح لمنفّذ الخطوة السابقة أو مدير النظام.</div>
                   </div>
                   <form method="post" class="d-flex gap-2" action="{{ url_for('workflow.bypass_parallel_assignee', request_id=req.id, step_order=current_step.step_order) }}">
                     <input type="hidden" name="bypass_all" value="1">
@@ -513,7 +513,7 @@
             </div>
 
             {% if can_bypass_parallel %}
-              <div class="form-text mt-2">صلاحية التجاوز: منفّذ الخطوة السابقة أو Admin/Super Admin.</div>
+              <div class="form-text mt-2">صلاحية التجاوز: منفّذ الخطوة السابقة أو مدير النظام.</div>
             {% endif %}
           {% else %}
             <div class="text-muted">لا توجد مهام متزامنة لهذه الخطوة (سيتم إنشاؤها عند دخول الخطوة).</div>
@@ -624,7 +624,7 @@
       </div>
       <div class="modal-body">
         <p class="mb-2">
-          <b>اتفاقية مستوى الخدمة</b> اختصار لـ <b>Service Level Agreement</b>، ويعني <b>اتفاقية مستوى الخدمة</b>.
+          <b>اتفاقية مستوى الخدمة</b> تحدد المدة المتوقعة لإنجاز المسار.
           في النظام: هي <b>مدة زمنية (بالأيام)</b> تحدد الحد الأقصى لإنجاز الخطوة/المسار قبل اعتباره متأخرًا.
         </p>
         <div class="alert alert-light mb-0">

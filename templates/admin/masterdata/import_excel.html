@@ -18,7 +18,7 @@
       <div class="col-md-6">
         <label class="form-label fw-bold">ملف Excel (.xlsx)</label>
         <input class="form-control" type="file" name="file" accept=".xlsx" required>
-        <div class="form-text">يفضل أن يكون Sheet واحد، والصف الأول عناوين أعمدة.</div>
+        <div class="form-text">يفضل أن يحتوي الملف على ورقة واحدة، وأن يتضمن الصف الأول عناوين الأعمدة.</div>
       </div>
 
       <div class="col-12">
@@ -30,8 +30,8 @@
     <div class="alert alert-light mb-0">
       <div class="fw-bold mb-1">ملاحظات</div>
       <ul class="mb-0">
-        <li>الاستيراد يقوم بعمل <strong>Upsert</strong> (تحديث إن وجد / إنشاء إن لم يوجد).</li>
-        <li>حقل <code>فعّال</code> يقبل: نعم/لا أو 1/0 أو True/False.</li>
+        <li>يحدّث الاستيراد السجل إن كان موجوداً، وينشئه إن لم يكن موجوداً.</li>
+        <li>حقل <code>فعّال</code> يقبل: نعم/لا أو 1/0.</li>
         <li>إن كان لديك ملف صادر من زر <strong>Excel</strong> داخل نفس الصفحة، يمكنك استيراده مباشرة.</li>
       </ul>
     </div>

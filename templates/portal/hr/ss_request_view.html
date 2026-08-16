@@ -79,7 +79,7 @@
               <tr>
                 <td>{{ a.step_no }}</td>
                 <td class="small">
-                  {% if a.approver_user %}{{ a.approver_user.full_name }}{% elif a.approver_role %}ROLE: {{ a.approver_role }}{% else %}-{% endif %}
+                  {% if a.approver_user %}{{ a.approver_user.full_name }}{% elif a.approver_role %}دور: {{ a.approver_role|ui_label }}{% else %}-{% endif %}
                 </td>
                 <td><span class="badge text-bg-light">{{ a.status|ui_label }}</span></td>
               </tr>

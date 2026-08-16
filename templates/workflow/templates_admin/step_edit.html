@@ -49,7 +49,7 @@
             <option value="">-- اختر --</option>
             {% for u in users %}
               <option value="{{ u.id }}" {% if s.approver_user_id == u.id %}selected{% endif %}>
-                {{ u.email }} ({{ u.role }})
+                {{ u.email }} ({{ u.role|ui_label }})
               </option>
             {% endfor %}
           </select>
@@ -157,8 +157,8 @@
         <div class="col-md-4">
           <label class="form-label">طريقة التنفيذ</label>
           <select class="form-select" name="mode">
-            <option value="SEQUENTIAL" {% if (s.mode or 'SEQUENTIAL') == 'SEQUENTIAL' %}selected{% endif %}>تسلسلي (Sequential)</option>
-            <option value="PARALLEL_SYNC" {% if (s.mode or '') == 'PARALLEL_SYNC' %}selected{% endif %}>متزامن (Parallel Sync)</option>
+            <option value="SEQUENTIAL" {% if (s.mode or 'SEQUENTIAL') == 'SEQUENTIAL' %}selected{% endif %}>تسلسلي</option>
+            <option value="PARALLEL_SYNC" {% if (s.mode or '') == 'PARALLEL_SYNC' %}selected{% endif %}>متزامن</option>
           </select>
           <div class="form-text">في الوضع المتزامن، الردود للتوثيق ولا تغيّر قرار المسار.</div>
         </div>
@@ -347,7 +347,7 @@
     <div class="d-flex justify-content-between align-items-center mb-2">
       <div>
         <h5 class="mb-0">👥 ربط التزامن مع الخطوة (مرتبطون إضافيون)</h5>
-        <small class="text-muted">هؤلاء سيتم ضمّهم لنفس خطوة التزامن عند التنفيذ، باستخدام نفس resolver الحالي.</small>
+        <small class="text-muted">سيتم ضم هؤلاء إلى خطوة التزامن نفسها عند التنفيذ باستخدام آلية التوجيه الحالية.</small>
       </div>
       <span class="badge bg-info text-dark">الخطوة {{ s.step_order }}</span>
     </div>
@@ -367,9 +367,9 @@
               <td><span class="badge bg-secondary">{{ pa.approver_kind|ui_label }}</span></td>
               <td>
                 {% if pa.approver_kind == 'USER' and pa.user %}
-                  {{ pa.user.email }} ({{ pa.user.role }})
+                  {{ pa.user.email }} ({{ pa.user.role|ui_label }})
                 {% elif pa.approver_kind == 'ROLE' %}
-                  {{ pa.approver_role }}
+                  {{ pa.approver_role|ui_label }}
                 {% elif pa.approver_kind == 'DEPARTMENT' %}
                   {% set _d = (departments | selectattr('id','equalto', pa.approver_department_id) | list | first) %}
                   {{ _d.name_ar if _d else ('دائرة #' ~ pa.approver_department_id) }}
@@ -444,7 +444,7 @@
           <select class="form-select" name="pa_user_id">
             <option value="">-- اختر --</option>
             {% for u in users %}
-              <option value="{{ u.id }}">{{ u.email }} ({{ u.role }})</option>
+              <option value="{{ u.id }}">{{ u.email }} ({{ u.role|ui_label }})</option>
             {% endfor %}
           </select>
         </div>

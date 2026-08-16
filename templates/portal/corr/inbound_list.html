@@ -163,7 +163,7 @@
           <tr>
             <td>{{ it.ref_no or it.id }}</td>
             <td>{{ it.received_date }}</td>
-            <td><span class="badge text-bg-light border">{{ it.category }}</span></td>
+            <td><span class="badge text-bg-light border">{{ it.category|ui_label }}</span></td>
             <td>{{ it.sender or "-" }}</td>
             <td>{{ it.competence_label or "-" }}</td>
             <td>{{ it.subject }}</td>

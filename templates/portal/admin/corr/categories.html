@@ -29,15 +29,15 @@
   <h6 class="mb-3">إضافة تصنيف</h6>
   <form method="post" class="row g-2 align-items-end">
     <div class="col-md-3">
-      <label class="form-label">الرمز (Code)</label>
+      <label class="form-label">الرمز</label>
       <input class="form-control" name="code" placeholder="مثال: الموارد البشرية" required>
     </div>
     <div class="col-md-4">
-      <label class="form-label">الاسم (AR)</label>
+      <label class="form-label">الاسم بالعربية</label>
       <input class="form-control" name="name_ar" placeholder="مثال: موارد بشرية" required>
     </div>
     <div class="col-md-4">
-      <label class="form-label">الاسم (EN)</label>
+      <label class="form-label">الاسم بالإنجليزية</label>
       <input class="form-control" name="name_en" placeholder="الموارد البشرية">
     </div>
     <div class="col-md-1">
@@ -83,15 +83,15 @@
             <td colspan="5">
               <form method="post" action="{{ url_for('portal.portal_admin_corr_category_edit', cat_id=r.id) }}" class="row g-2 align-items-end">
                 <div class="col-md-2">
-                  <label class="form-label">Code</label>
+                  <label class="form-label">الرمز</label>
                   <input class="form-control" name="code" value="{{ r.code }}" required>
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">AR</label>
+                  <label class="form-label">العربية</label>
                   <input class="form-control" name="name_ar" value="{{ r.name_ar }}" required>
                 </div>
                 <div class="col-md-4">
-                  <label class="form-label">EN</label>
+                  <label class="form-label">الإنجليزية</label>
                   <input class="form-control" name="name_en" value="{{ r.name_en or '' }}">
                 </div>
                 <div class="col-md-1">

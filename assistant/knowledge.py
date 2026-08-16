@@ -24,6 +24,7 @@ from models import (
     WorkflowRequest,
     WorkflowTemplate,
 )
+from services.correspondence_workflow import correspondence_target_user_ids
 from services.workflow_confidentiality import can_user_access_correspondence_item
 from .project_knowledge import collect_internal_knowledge
 
@@ -43,8 +44,13 @@ _STATUS_LABELS = {
     "RECEIVED": "مستلم",
     "REGISTERED": "مسجل",
     "ROUTED": "محوّل",
+    "FORWARDED": "محوّل",
+    "WAITING_APPROVAL": "بانتظار الاعتماد",
+    "WAITING_INFO": "بانتظار معلومات",
+    "RETURNED": "معاد للمعالجة",
     "SENT": "مرسل",
     "CLOSED": "مغلق",
+    "ARCHIVED": "مؤرشف",
 }
 
 _STOP_WORDS = {
@@ -336,9 +342,41 @@ def _correspondence_matches(item, tokens: list[str], record_id: int | None) -> b
     return all(token in haystack for token in tokens)
 
 
+def _correspondence_assigned_to_user(user, item) -> bool:
+    """Mirror the portal's direct and organizational assignment check."""
+    try:
+        user_id = int(user.id)
+    except (AttributeError, TypeError, ValueError):
+        return False
+    try:
+        if getattr(item, "current_assignee_id", None) and int(item.current_assignee_id) == user_id:
+            return True
+    except (TypeError, ValueError):
+        pass
+    target = {
+        "kind": getattr(item, "current_target_kind", None) or getattr(item, "competence_kind", None),
+        "id": getattr(item, "current_target_id", None) or getattr(item, "competence_id", None),
+        "label": getattr(item, "current_target_label", None) or getattr(item, "competence_label", None),
+    }
+    try:
+        return user_id in set(correspondence_target_user_ids(target))
+    except Exception:
+        current_app.logger.exception("Aref correspondence assignment check failed")
+        return False
+
+
+def _correspondence_visible_to_user(user, item) -> bool:
+    # The correspondence page treats an organizational target as an effective
+    # assignee too; use the same rule so Aref never hides a task the user can open.
+    return can_user_access_correspondence_item(user, item) or _correspondence_assigned_to_user(user, item)
+
+
 def _correspondence_section(user, message: str, *, broad: bool) -> tuple[str, list[str], list[dict[str, str]]]:
     normalized = _norm(message)
-    explicit = _contains(normalized, "وارد", "صادر", "مراسلات", "مراسله", "كتاب", "كتب", "خطاب")
+    explicit = _contains(
+        normalized,
+        "وارد", "صادر", "مراسلات", "مراسله", "كتاب", "كتب", "خطاب", "اجراء", "إجراء", "اعتماد", "تحويل",
+    )
     if not explicit and not broad:
         return "", [], []
     record_id = _extract_record_id(message)
@@ -346,20 +384,11 @@ def _correspondence_section(user, message: str, *, broad: bool) -> tuple[str, li
         normalized, "ابحث", "اعرض", "اظهر", "كم", "اخر", "حاله",
     ):
         return "", [], []
-    if not _has_perm(user, "CORR_READ"):
-        if not explicit:
-            return "", [], []
-        return (
-            "المراسلات\nهذا القسم غير متاح ضمن صلاحيات حسابك. يمكنك طلب صلاحية قراءة المراسلات من الإدارة.",
-            ["صلاحية CORR_READ غير متاحة."],
-            [],
-        )
-
     tokens = _meaningful_tokens(message) if explicit else []
     inbound = InboundMail.query.order_by(InboundMail.id.desc()).limit(250).all()
     outbound = OutboundMail.query.order_by(OutboundMail.id.desc()).limit(250).all()
-    inbound = [item for item in inbound if can_user_access_correspondence_item(user, item)]
-    outbound = [item for item in outbound if can_user_access_correspondence_item(user, item)]
+    inbound = [item for item in inbound if _correspondence_visible_to_user(user, item)]
+    outbound = [item for item in outbound if _correspondence_visible_to_user(user, item)]
     matches: list[tuple[str, Any]] = []
     if not _contains(normalized, "صادر") or _contains(normalized, "وارد"):
         matches.extend(("وارد", item) for item in inbound if _correspondence_matches(item, tokens, record_id))
@@ -370,25 +399,37 @@ def _correspondence_section(user, message: str, *, broad: bool) -> tuple[str, li
     lines = [f"الوارد المتاح: {len(inbound)}، الصادر المتاح: {len(outbound)}."]
     links: list[dict[str, str]] = []
     for kind, item in matches[:6]:
+        assigned = _correspondence_assigned_to_user(user, item)
         secrecy = " — سري" if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET" else ""
+        assignment = " — ضمن مهامك" if assigned else ""
         reference = _compact(item.ref_no or f"#{item.id}", 60)
         subject = _compact(item.subject, 170)
-        lines.append(f"{kind} {reference}: {subject} — {_status_label(item.status)}{secrecy}")
+        lines.append(f"{kind} {reference}: {subject} — {_status_label(item.status)}{secrecy}{assignment}")
         if record_id is not None:
             party = getattr(item, "sender", None) if kind == "وارد" else getattr(item, "recipient", None)
             date_value = getattr(item, "received_date", None) if kind == "وارد" else getattr(item, "sent_date", None)
             if party:
                 lines.append(f"الجهة: {_compact(party, 180)}.")
             lines.append(f"التاريخ: {_compact(date_value or 'غير محدد', 40)} — الاستحقاق: {_compact(getattr(item, 'due_date', None) or 'غير محدد', 40)}.")
+            target_label = getattr(item, "current_target_label", None) or getattr(item, "competence_label", None)
+            if target_label:
+                lines.append(f"المكلّف الحالي: {_compact(target_label, 160)}.")
             if getattr(item, "body", None):
                 lines.append(f"المحتوى: {_compact(item.body, 500)}")
         endpoint = "portal.inbound_view" if kind == "وارد" else "portal.outbound_view"
         values = {"inbound_id": item.id} if kind == "وارد" else {"outbound_id": item.id}
-        link = _safe_link(endpoint, f"فتح {kind} {reference}", subject, **values)
+        if assigned:
+            values.update({"focus": "action", "_anchor": "corrActionForm"})
+        link_title = f"تنفيذ إجراء {kind} {reference}" if assigned else f"فتح {kind} {reference}"
+        link_desc = f"{subject} — انتقل إلى المنطقة المميزة لتنفيذ الإجراء" if assigned else subject
+        link = _safe_link(endpoint, link_title, link_desc, **values)
         if link:
             links.append(link)
     if explicit and not matches:
-        lines.append("لم أجد مراسلة مطابقة ضمن البيانات التي تسمح لك صلاحياتك برؤيتها.")
+        if not _has_perm(user, "CORR_READ") and not inbound and not outbound:
+            lines.append("لا توجد مراسلات مسندة إليك حاليًا، كما أن صلاحية القراءة العامة للمراسلات غير متاحة لحسابك.")
+        else:
+            lines.append("لم أجد مراسلة مطابقة ضمن البيانات التي تسمح لك صلاحياتك برؤيتها.")
     return "المراسلات\n" + "\n".join(lines), lines, links
 
 

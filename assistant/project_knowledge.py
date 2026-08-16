@@ -99,8 +99,14 @@ _SYNONYMS = {
     "الإجازات": ("leave", "hr_leave"),
     "الحضور": ("attendance", "timeclock"),
     "المراسلات": ("correspondence", "corr", "inbound", "outbound"),
+    "المهام": ("workflow", "inbox", "correspondence", "assignment"),
+    "الاجراء": ("procedure", "action", "workflow", "corr"),
+    "الإجراء": ("procedure", "action", "workflow", "corr"),
     "الوارد": ("inbound", "corr_inbound"),
     "الصادر": ("outbound", "corr_outbound"),
+    "الاجتماعات": ("meeting", "meetings", "minutes"),
+    "المحاضر": ("meeting", "minutes", "docx", "pdf"),
+    "لوحة العمل": ("dashboard", "work_dashboard", "following"),
     "المستودع": ("inventory", "store", "warehouse", "inv"),
     "النقل": ("transport", "vehicle", "trip"),
     "الارشيف": ("archive", "archived_file"),
@@ -116,6 +122,7 @@ _DOMAIN_PATH_HINTS = {
     "leave": ("portal", "models.py", "templates/portal/hr"),
     "attendance": ("portal", "models.py", "timeclock"),
     "correspondence": ("portal", "models.py", "corr"),
+    "meetings": ("portal", "meeting", "templates/portal/meetings", "services/meeting_service.py"),
     "archive": ("archive", "models.py"),
     "inventory": ("store", "portal", "models.py"),
     "transport": ("portal/transport", "models.py"),
@@ -390,7 +397,8 @@ def build_project_index(
         f"الوحدات والمجلدات الرئيسية: {top_dirs}.\n"
         f"أنواع الملفات: {top_extensions}.\n"
         "التطبيق Flask/SQLAlchemy ويضم مسار سير عمل، بوابة إدارية وموارد بشرية، "
-        "مراسلات، أرشيف، مستودع، نقل، صلاحيات، رسائل، تدقيق، وخدمات مساندة."
+        "مراسلات ولوحات عمل إجرائية، اجتماعات ومحاضرها، أرشيف، مستودع، نقل، "
+        "صلاحيات، رسائل، تدقيق، وخدمات مساندة."
     )
     chunks.insert(0, _make_chunk("overview", "PROJECT_OVERVIEW", 0, 0, "نظرة عامة على المشروع", overview))
 
@@ -425,7 +433,7 @@ _PROJECT_INDEX_BUILT_AT = 0.0
 
 def get_project_index(*, force: bool = False) -> ProjectIndex:
     global _PROJECT_INDEX, _PROJECT_INDEX_BUILT_AT
-    refresh_seconds = max(30, _config_int("ASSISTANT_INDEX_REFRESH_SECONDS", 300))
+    refresh_seconds = max(30, _config_int("ASSISTANT_INDEX_REFRESH_SECONDS", 60))
     now = monotonic()
     with _INDEX_LOCK:
         if force or _PROJECT_INDEX is None or now - _PROJECT_INDEX_BUILT_AT >= refresh_seconds:

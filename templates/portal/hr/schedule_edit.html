@@ -19,11 +19,11 @@
         <label class="form-label">النوع</label>
         <select class="form-select" name="kind">
           {% set k = row.kind or 'FIXED' %}
-          <option value="FIXED" {% if k=='FIXED' %}selected{% endif %}>ثابت FIXED</option>
-          <option value="FLEX" {% if k=='FLEX' %}selected{% endif %}>مرن FLEX</option>
-          <option value="SHIFT" {% if k=='SHIFT' %}selected{% endif %}>مناوبات SHIFT</option>
-          <option value="RAMADAN" {% if k=='RAMADAN' %}selected{% endif %}>رمضان RAMADAN</option>
-          <option value="REMOTE" {% if k=='REMOTE' %}selected{% endif %}>عمل عن بعد REMOTE</option>
+          <option value="FIXED" {% if k=='FIXED' %}selected{% endif %}>دوام ثابت</option>
+          <option value="FLEX" {% if k=='FLEX' %}selected{% endif %}>دوام مرن</option>
+          <option value="SHIFT" {% if k=='SHIFT' %}selected{% endif %}>مناوبات</option>
+          <option value="RAMADAN" {% if k=='RAMADAN' %}selected{% endif %}>دوام رمضان</option>
+          <option value="REMOTE" {% if k=='REMOTE' %}selected{% endif %}>عمل عن بُعد</option>
         </select>
       </div>
 

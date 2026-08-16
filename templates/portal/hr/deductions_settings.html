@@ -85,17 +85,17 @@
                    value="{{ cfg.hours_per_day if cfg else 7.0 }}" {% if not can_manage %}disabled{% endif %}>
           </div>
           <div class="col-md-4">
-            <label class="form-label">قيمة دقيقة التأخير (Legacy)</label>
+            <label class="form-label">قيمة دقيقة التأخير (الإعداد السابق)</label>
             <input type="number" step="0.01" class="form-control" name="late_minute_value"
                    value="{{ cfg.late_minute_value if cfg and cfg.late_minute_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
           </div>
           <div class="col-md-4">
-            <label class="form-label">قيمة دقيقة الخروج المبكر (Legacy)</label>
+            <label class="form-label">قيمة دقيقة الخروج المبكر (الإعداد السابق)</label>
             <input type="number" step="0.01" class="form-control" name="early_minute_value"
                    value="{{ cfg.early_minute_value if cfg and cfg.early_minute_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
           </div>
           <div class="col-md-4">
-            <label class="form-label">قيمة يوم الغياب (Legacy)</label>
+            <label class="form-label">قيمة يوم الغياب (الإعداد السابق)</label>
             <input type="number" step="0.01" class="form-control" name="absent_day_value"
                    value="{{ cfg.absent_day_value if cfg and cfg.absent_day_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
           </div>

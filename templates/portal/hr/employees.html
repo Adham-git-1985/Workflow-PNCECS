@@ -51,7 +51,7 @@
                 </a>
               </div>
             </td>
-            <td><span class="badge bg-secondary">{{ u.role }}</span></td>
+            <td><span class="badge bg-secondary">{{ u.role|ui_label }}</span></td>
             <td>
               {% if f and f.employee_no %}
                 <span class="badge bg-light text-dark border">{{ f.employee_no }}</span>

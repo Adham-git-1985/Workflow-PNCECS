@@ -17,15 +17,15 @@
       <form method="post">
         <input type="hidden" name="action" value="add_def"/>
         <div class="mb-2">
-          <label class="form-label">Code</label>
+          <label class="form-label">الرمز</label>
           <input class="form-control" name="code" placeholder="CERTIFICATE" required/>
         </div>
         <div class="mb-2">
-          <label class="form-label">الاسم (AR)</label>
+          <label class="form-label">الاسم بالعربية</label>
           <input class="form-control" name="name_ar" required/>
         </div>
         <div class="mb-2">
-          <label class="form-label">الاسم (EN) (اختياري)</label>
+          <label class="form-label">الاسم بالإنجليزية (اختياري)</label>
           <input class="form-control" name="name_en"/>
         </div>
         <button class="btn btn-success w-100" type="submit">إضافة</button>
@@ -55,15 +55,15 @@
           </div>
         </div>
         <div class="mt-2">
-          <label class="form-label">Approver الدور (اختياري)</label>
+          <label class="form-label">دور المعتمد (اختياري)</label>
           <input class="form-control" name="approver_role" placeholder="الموارد البشرية"/>
         </div>
         <div class="mt-2">
-          <label class="form-label">أو Approver المستخدم (اختياري)</label>
+          <label class="form-label">أو المستخدم المعتمد (اختياري)</label>
           <select class="form-select" name="approver_user_id">
             <option value="">--</option>
             {% for u in users %}
-              <option value="{{ u.id }}">{{ u.full_name }} ({{ u.role }})</option>
+              <option value="{{ u.id }}">{{ u.full_name }} ({{ u.role|ui_label }})</option>
             {% endfor %}
           </select>
         </div>
@@ -94,7 +94,7 @@
                   <tr>
                     <td>{{ s.step_no }}</td>
                     <td class="small">
-                      {% if s.approver_user %}{{ s.approver_user.full_name }}{% elif s.approver_role %}ROLE: {{ s.approver_role }}{% else %}-{% endif %}
+                      {% if s.approver_user %}{{ s.approver_user.full_name }}{% elif s.approver_role %}دور: {{ s.approver_role|ui_label }}{% else %}-{% endif %}
                     </td>
                     <td class="text-muted small">{{ s.sla_hours or '-' }}</td>
                     <td><span class="badge text-bg-light">{{ 'نشط' if s.is_active else 'متوقف' }}</span></td>

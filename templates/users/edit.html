@@ -9,7 +9,7 @@
       <span>{{ u.email }}</span>
       <span class="mx-2">•</span>
       <span>الدور:</span>
-      <span class="badge text-bg-dark ms-1">{{ u.role }}</span>
+      <span class="badge text-bg-dark ms-1">{{ u.role|ui_label }}</span>
     </div>
   </div>
 
@@ -93,7 +93,7 @@
               </div>
 
               <div class="col-md-6">
-                <label class="form-label">الوحدة (Unit)</label>
+                <label class="form-label">الوحدة</label>
                 <select class="form-select" name="unit_id">
                   <option value="">— بدون —</option>
                   {% for un in units %}
@@ -117,7 +117,7 @@
               </div>
 
               <div class="col-md-6">
-                <label class="form-label">القسم (Section)</label>
+                <label class="form-label">القسم</label>
                 <select class="form-select" name="section_id">
                   <option value="">— بدون —</option>
                   {% for s in sections %}
@@ -129,7 +129,7 @@
               </div>
 
               <div class="col-12">
-                <label class="form-label">الشعبة (Division)</label>
+                <label class="form-label">الشعبة</label>
                 <select class="form-select" name="division_id">
                   <option value="">— بدون —</option>
                   {% for dv in divisions %}

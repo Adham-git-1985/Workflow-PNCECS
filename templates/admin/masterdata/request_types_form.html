@@ -13,18 +13,18 @@
   <div class="card-body">
     <div class="row g-3">
       <div class="col-md-4">
-        <label class="form-label fw-bold">CODE</label>
+        <label class="form-label fw-bold">الرمز</label>
         <input class="form-control" name="code" value="{{ rt.code if rt else '' }}" required>
         <div class="form-text">مثال: LEAVE, PURCHASE, TRAVEL...</div>
       </div>
 
       <div class="col-md-4">
-        <label class="form-label fw-bold">الاسم (AR)</label>
+        <label class="form-label fw-bold">الاسم بالعربية</label>
         <input class="form-control" name="name_ar" value="{{ rt.name_ar if rt else '' }}" required>
       </div>
 
       <div class="col-md-4">
-        <label class="form-label fw-bold">الاسم (EN)</label>
+        <label class="form-label fw-bold">الاسم بالإنجليزية</label>
         <input class="form-control" name="name_en" value="{{ rt.name_en if rt else '' }}">
       </div>
 
