@@ -1628,8 +1628,8 @@ MEETING_MINUTES_LETTERHEAD_NAME_KEY = "PORTAL_MEETING_MINUTES_LETTERHEAD_NAME"
 MEETING_MINUTES_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 MEETING_DOC_FONT_NAME = "Sakkal Majalla"
 MEETING_DOC_BODY_SIZE = 16
-MEETING_DOC_HEADING_SIZE = 20
-MEETING_DOC_TITLE_SIZE = 22
+MEETING_DOC_HEADING_SIZE = 18
+MEETING_DOC_TITLE_SIZE = 18
 MEETING_DOC_SUBTITLE_SIZE = 18
 
 
@@ -2233,7 +2233,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
     body_style = ParagraphStyle(
         "MeetingBody",
         fontName=font_regular,
-        fontSize=16,
+        fontSize=MEETING_DOC_BODY_SIZE,
         leading=22,
         alignment=TA_RIGHT,
         wordWrap="RTL",
@@ -2242,7 +2242,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
     heading_style = ParagraphStyle(
         "MeetingHeading",
         fontName=font_bold,
-        fontSize=18,
+        fontSize=MEETING_DOC_HEADING_SIZE,
         leading=24,
         alignment=TA_RIGHT,
         textColor=colors.HexColor("#1F4E79"),
@@ -2253,8 +2253,8 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
     title_style = ParagraphStyle(
         "MeetingTitle",
         fontName=font_bold,
-        fontSize=22,
-        leading=28,
+        fontSize=MEETING_DOC_TITLE_SIZE,
+        leading=24,
         alignment=TA_CENTER,
         textColor=colors.HexColor("#1F4E79"),
         wordWrap="RTL",
@@ -2263,7 +2263,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
     subtitle_style = ParagraphStyle(
         "MeetingSubtitle",
         fontName=font_bold,
-        fontSize=18,
+        fontSize=MEETING_DOC_SUBTITLE_SIZE,
         leading=24,
         alignment=TA_CENTER,
         wordWrap="RTL",
@@ -2353,7 +2353,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
     def on_page(canvas, doc):
         canvas.saveState()
         width, height = A4
-        canvas.setFont(font_regular, 14)
+        canvas.setFont(font_regular, MEETING_DOC_BODY_SIZE)
         canvas.drawRightString(width - 1.5 * cm, height - 1.1 * cm, _pdf_shape_text(f"الرقم: اجتماع/{row.id}/{datetime.now().year}").replace("<br/>", " "))
         canvas.drawRightString(width - 1.5 * cm, height - 1.75 * cm, _pdf_shape_text(f"التاريخ: {datetime.now().strftime('%d/%m/%Y')}").replace("<br/>", " "))
         logo = os.path.join(current_app.root_path, "static", "images", "pncecs_logo.png")
