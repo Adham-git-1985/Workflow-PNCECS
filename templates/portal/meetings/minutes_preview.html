@@ -5,7 +5,7 @@
 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1"><i class="bi bi-file-earmark-richtext"></i> محضر اجتماع</h4>
-    <div class="text-muted small">{{ row.title }}</div>
+    <div class="text-muted small" dir="auto">{{ row.title }}</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <button class="btn btn-outline-secondary" type="button" onclick="window.print()">
@@ -26,7 +26,7 @@
 <div class="bg-white rounded-3 shadow-sm p-4 meeting-minutes-preview">
   <div class="text-center border-bottom pb-3 mb-4">
     <div class="small text-muted">محضر اجتماع رسمي</div>
-    <h3 class="mb-1">{{ minutes.title }}</h3>
+    <h3 class="mb-1" dir="auto">{{ minutes.title }}</h3>
     <div class="text-muted">{{ minutes.when }}</div>
   </div>
 
@@ -36,17 +36,17 @@
       <table class="table table-bordered align-middle">
         <thead><tr><th>البيان</th><th>القيمة</th></tr></thead>
         <tbody>
-          <tr><th>رقم الاجتماع</th><td>{{ minutes.id }}</td></tr>
-          <tr><th>الموعد</th><td>{{ minutes.when }}</td></tr>
-          <tr><th>المكان</th><td>{{ minutes.location }}</td></tr>
-          <tr><th>الحالة</th><td>{{ minutes.status }}</td></tr>
-          <tr><th>منظم الاجتماع</th><td>{{ minutes.organizer }}</td></tr>
-          <tr><th>تاريخ الإنشاء</th><td>{{ minutes.created_at }}</td></tr>
-          <tr><th>آخر تحديث</th><td>{{ minutes.updated_at }}</td></tr>
+          <tr><th>رقم الاجتماع</th><td dir="auto">{{ minutes.id }}</td></tr>
+          <tr><th>الموعد</th><td dir="auto">{{ minutes.when }}</td></tr>
+          <tr><th>المكان</th><td dir="auto">{{ minutes.location }}</td></tr>
+          <tr><th>الحالة</th><td dir="auto">{{ minutes.status }}</td></tr>
+          <tr><th>منظم الاجتماع</th><td dir="auto">{{ minutes.organizer }}</td></tr>
+          <tr><th>تاريخ الإنشاء</th><td dir="auto">{{ minutes.created_at }}</td></tr>
+          <tr><th>آخر تحديث</th><td dir="auto">{{ minutes.updated_at }}</td></tr>
         </tbody>
       </table>
     </div>
-    <div class="white-space-pre-line">{{ minutes.description or 'لا يوجد وصف.' }}</div>
+    <div class="white-space-pre-line" dir="auto">{{ minutes.description or 'لا يوجد وصف.' }}</div>
   </section>
 
   <section class="mb-4">
@@ -57,7 +57,7 @@
           <thead><tr><th>الاسم</th><th>الدور</th><th>حالة الحضور</th><th>ملاحظة</th></tr></thead>
           <tbody>
             {% for p in minutes.participants %}
-              <tr><td>{{ p.name }}</td><td>{{ p.role }}</td><td>{{ p.attendance }}</td><td>{{ p.note or '-' }}</td></tr>
+              <tr><td dir="auto">{{ p.name }}</td><td dir="auto">{{ p.role }}</td><td dir="auto">{{ p.attendance }}</td><td dir="auto">{{ p.note or '-' }}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -75,7 +75,7 @@
           <thead><tr><th>الترتيب</th><th>البند</th><th>المسؤول</th><th>الحالة</th><th>ملاحظات</th></tr></thead>
           <tbody>
             {% for a in minutes.agenda_items %}
-              <tr><td>{{ a.order }}</td><td>{{ a.title }}</td><td>{{ a.owner }}</td><td>{{ a.status }}</td><td>{{ a.notes or '-' }}</td></tr>
+              <tr><td dir="auto">{{ a.order }}</td><td dir="auto">{{ a.title }}</td><td dir="auto">{{ a.owner }}</td><td dir="auto">{{ a.status }}</td><td dir="auto">{{ a.notes or '-' }}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -87,12 +87,12 @@
 
   <section class="mb-4">
     <h5 class="mb-3"><i class="bi bi-journal-text"></i> محضر الاجتماع</h5>
-    <div class="border rounded-3 p-3 white-space-pre-line">{{ minutes.minutes_text or 'لم يتم تسجيل محضر بعد.' }}</div>
+    <div class="border rounded-3 p-3 white-space-pre-line" dir="auto">{{ minutes.minutes_text or 'لم يتم تسجيل محضر بعد.' }}</div>
   </section>
 
   <section class="mb-4">
     <h5 class="mb-3"><i class="bi bi-check2-circle"></i> القرارات</h5>
-    <div class="border rounded-3 p-3 white-space-pre-line">{{ minutes.decisions_text or 'لا توجد قرارات مسجلة.' }}</div>
+    <div class="border rounded-3 p-3 white-space-pre-line" dir="auto">{{ minutes.decisions_text or 'لا توجد قرارات مسجلة.' }}</div>
   </section>
 
   <section class="mb-4">
@@ -103,7 +103,7 @@
           <thead><tr><th>المهمة</th><th>المسؤول</th><th>الاستحقاق</th><th>الحالة</th><th>التفاصيل</th></tr></thead>
           <tbody>
             {% for t in minutes.tasks %}
-              <tr><td>{{ t.title }}</td><td>{{ t.assignee }}</td><td>{{ t.due_date }}</td><td>{{ t.status }}</td><td>{{ t.description or '-' }}</td></tr>
+              <tr><td dir="auto">{{ t.title }}</td><td dir="auto">{{ t.assignee }}</td><td dir="auto">{{ t.due_date }}</td><td dir="auto">{{ t.status }}</td><td dir="auto">{{ t.description or '-' }}</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -121,7 +121,7 @@
       </div>
       <ul class="mb-0">
         {% for attachment in row.attachments %}
-          <li>{{ attachment.original_name }}</li>
+          <li dir="auto">{{ attachment.original_name }}</li>
         {% endfor %}
       </ul>
     </section>
@@ -133,7 +133,7 @@
       <table class="table table-bordered align-middle">
         <thead><tr><th>البيان</th><th>القيمة</th></tr></thead>
         <tbody>
-          <tr><th>تاريخ التوليد</th><td>{{ minutes.generated_at }}</td></tr>
+          <tr><th>تاريخ التوليد</th><td dir="auto">{{ minutes.generated_at }}</td></tr>
           <tr><th>رابط الاجتماع</th><td class="ltr-value">{{ minutes.meeting_url }}</td></tr>
         </tbody>
       </table>
@@ -146,7 +146,9 @@
   .meeting-minutes-preview { direction: rtl; }
   .meeting-minutes-preview table { direction: rtl; }
   .meeting-minutes-preview th { width: 18%; background: #f8f9fa; }
-  .meeting-minutes-preview td, .meeting-minutes-preview th { text-align: right; unicode-bidi: plaintext; }
+  .meeting-minutes-preview th { text-align: right; unicode-bidi: plaintext; }
+  .meeting-minutes-preview td[dir="auto"],
+  .meeting-minutes-preview .white-space-pre-line[dir="auto"] { text-align: start; unicode-bidi: plaintext; }
   .meeting-minutes-preview .ltr-value { direction: ltr; text-align: left; }
   .white-space-pre-line { white-space: pre-line; }
   @media print {

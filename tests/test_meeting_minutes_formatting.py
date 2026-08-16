@@ -7,8 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 
-from portal.routes import _build_meeting_minutes_docx, _meeting_minutes_filename
+from portal.routes import (
+    _build_meeting_minutes_docx,
+    _docx_add_heading,
+    _docx_add_text,
+    _docx_set_cell,
+    _meeting_minutes_filename,
+)
 
 
 class MeetingMinutesFormattingTests(unittest.TestCase):
@@ -73,11 +81,44 @@ class MeetingMinutesFormattingTests(unittest.TestCase):
                 docx_bytes = _build_meeting_minutes_docx(meeting)
 
         document = Document(BytesIO(docx_bytes))
-        visible_paragraphs = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
+        visible_paragraphs = [paragraph for paragraph in document.paragraphs if paragraph.text.strip()]
 
         self.assertEqual(document.core_properties.title, meeting.title)
-        self.assertEqual(visible_paragraphs[0], meeting.title)
-        self.assertEqual(visible_paragraphs[1], "بيانات الاجتماع")
+        self.assertEqual(visible_paragraphs[0].text, meeting.title)
+        self.assertEqual(visible_paragraphs[0].alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertIsNotNone(visible_paragraphs[0]._p.get_or_add_pPr().find(qn("w:bidi")))
+        self.assertEqual(visible_paragraphs[1].text, "بيانات الاجتماع")
+
+    def test_docx_heading_hierarchy_and_content_follow_language_direction(self):
+        document = Document()
+
+        main_heading = _docx_add_heading(document, "العنوان الرئيسي", level=1)
+        subheading = _docx_add_heading(document, "العنوان الفرعي", level=2)
+        _docx_add_text(document, "محتوى عربي\nEnglish content")
+        arabic_content = document.paragraphs[2]
+        english_content = document.paragraphs[3]
+
+        self.assertEqual(main_heading.alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertEqual(subheading.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+        self.assertEqual(arabic_content.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+        self.assertEqual(english_content.alignment, WD_ALIGN_PARAGRAPH.LEFT)
+        self.assertIsNotNone(subheading._p.get_or_add_pPr().find(qn("w:bidi")))
+        self.assertIsNotNone(arabic_content._p.get_or_add_pPr().find(qn("w:bidi")))
+        self.assertIsNone(english_content._p.get_or_add_pPr().find(qn("w:bidi")))
+
+    def test_docx_table_content_follows_language_direction(self):
+        document = Document()
+        table = document.add_table(rows=1, cols=2)
+
+        _docx_set_cell(table.cell(0, 0), "محتوى عربي")
+        _docx_set_cell(table.cell(0, 1), "English content")
+        arabic_paragraph = table.cell(0, 0).paragraphs[0]
+        english_paragraph = table.cell(0, 1).paragraphs[0]
+
+        self.assertEqual(arabic_paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+        self.assertEqual(english_paragraph.alignment, WD_ALIGN_PARAGRAPH.LEFT)
+        self.assertIsNotNone(arabic_paragraph._p.get_or_add_pPr().find(qn("w:bidi")))
+        self.assertIsNone(english_paragraph._p.get_or_add_pPr().find(qn("w:bidi")))
 
 
 if __name__ == "__main__":

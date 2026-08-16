@@ -1830,7 +1830,7 @@ def _meeting_minutes_context(row: PortalMeeting) -> dict:
     }
 
 
-def _docx_should_use_ltr(value: str | int | None) -> bool:
+def _meeting_text_should_use_ltr(value: str | int | None) -> bool:
     text = "" if value is None else str(value)
     return bool(re.search(r"[A-Za-z]", text)) and not bool(re.search(r"[\u0600-\u06FF]", text))
 
@@ -1863,12 +1863,19 @@ def _docx_set_run_font(run, *, size_pt: float | None = None, bold: bool | None =
         run.font.color.rgb = RGBColor.from_string(color)
 
 
-def _docx_set_paragraph_rtl(paragraph, *, bold: bool = False, size_pt: float = MEETING_DOC_BODY_SIZE, color: str | None = None):
+def _docx_set_paragraph_rtl(
+    paragraph,
+    *,
+    bold: bool = False,
+    size_pt: float = MEETING_DOC_BODY_SIZE,
+    color: str | None = None,
+    centered: bool = False,
+):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
 
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if centered else WD_ALIGN_PARAGRAPH.RIGHT
     try:
         p_pr = paragraph._p.get_or_add_pPr()
         bidi = p_pr.find(qn("w:bidi"))
@@ -1882,11 +1889,18 @@ def _docx_set_paragraph_rtl(paragraph, *, bold: bool = False, size_pt: float = M
         _docx_set_run_font(run, size_pt=size_pt, bold=bold, color=color)
 
 
-def _docx_set_paragraph_ltr(paragraph, *, bold: bool = False, size_pt: float = MEETING_DOC_BODY_SIZE, color: str | None = None):
+def _docx_set_paragraph_ltr(
+    paragraph,
+    *,
+    bold: bool = False,
+    size_pt: float = MEETING_DOC_BODY_SIZE,
+    color: str | None = None,
+    centered: bool = False,
+):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml.ns import qn
 
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if centered else WD_ALIGN_PARAGRAPH.LEFT
     try:
         p_pr = paragraph._p.get_or_add_pPr()
         bidi = p_pr.find(qn("w:bidi"))
@@ -1905,7 +1919,8 @@ def _docx_rewrite_paragraph(paragraph, text: str, *, bold: bool = False, size_pt
             run.text = ""
     else:
         paragraph.add_run(text)
-    _docx_set_paragraph_rtl(paragraph, bold=bold, size_pt=size_pt, color=color)
+    formatter = _docx_set_paragraph_ltr if _meeting_text_should_use_ltr(text) else _docx_set_paragraph_rtl
+    formatter(paragraph, bold=bold, size_pt=size_pt, color=color)
 
 
 def _docx_fill_letterhead_fields(doc, data: dict):
@@ -1940,7 +1955,14 @@ def _docx_add_heading(doc, text: str, level: int = 1):
     size = MEETING_DOC_HEADING_SIZE if level == 1 else MEETING_DOC_SUBTITLE_SIZE
     p = doc.add_paragraph()
     p.add_run(text)
-    _docx_set_paragraph_rtl(p, bold=True, size_pt=size, color="1F4E79" if level == 1 else "2F5597")
+    formatter = _docx_set_paragraph_ltr if _meeting_text_should_use_ltr(text) else _docx_set_paragraph_rtl
+    formatter(
+        p,
+        bold=True,
+        size_pt=size,
+        color="1F4E79" if level == 1 else "2F5597",
+        centered=level == 1,
+    )
     return p
 
 
@@ -1949,7 +1971,7 @@ def _docx_add_text(doc, text: str | None, fallback: str = "لا توجد بيا�
     for idx, line in enumerate(body.splitlines() or [fallback]):
         p = doc.add_paragraph()
         p.add_run(line if line.strip() else " ")
-        if _docx_should_use_ltr(line):
+        if _meeting_text_should_use_ltr(line):
             _docx_set_paragraph_ltr(p, size_pt=MEETING_DOC_BODY_SIZE)
         else:
             _docx_set_paragraph_rtl(p, size_pt=MEETING_DOC_BODY_SIZE)
@@ -1972,7 +1994,7 @@ def _docx_set_cell(cell, text: str | int | None, *, header: bool = False):
         cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     except Exception:
         pass
-    use_ltr = (not header) and _docx_should_use_ltr(text_value)
+    use_ltr = _meeting_text_should_use_ltr(text_value)
     for paragraph in cell.paragraphs:
         paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT if use_ltr else WD_ALIGN_PARAGRAPH.RIGHT
         try:
@@ -2062,7 +2084,18 @@ def _build_meeting_minutes_docx(row: PortalMeeting) -> bytes:
 
     title = doc.add_paragraph()
     title.add_run(data["title"])
-    _docx_set_paragraph_rtl(title, bold=True, size_pt=MEETING_DOC_TITLE_SIZE, color="1F4E79")
+    title_formatter = (
+        _docx_set_paragraph_ltr
+        if _meeting_text_should_use_ltr(data["title"])
+        else _docx_set_paragraph_rtl
+    )
+    title_formatter(
+        title,
+        bold=True,
+        size_pt=MEETING_DOC_TITLE_SIZE,
+        color="1F4E79",
+        centered=True,
+    )
 
     _docx_add_heading(doc, "بيانات الاجتماع", level=2)
     _docx_add_table(doc, ["البيان", "القيمة"], [
@@ -2240,7 +2273,7 @@ def _pdf_shape_text(value: str | int | None) -> str:
 
 
 def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
-    from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.lib.styles import ParagraphStyle
     from reportlab.lib.units import cm
 
@@ -2256,6 +2289,12 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         wordWrap="RTL",
         spaceAfter=8,
     )
+    body_ltr_style = ParagraphStyle(
+        "MeetingBodyLTR",
+        parent=body_style,
+        alignment=TA_LEFT,
+        wordWrap="LTR",
+    )
     heading_style = ParagraphStyle(
         "MeetingHeading",
         fontName=font_bold,
@@ -2267,6 +2306,12 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         spaceBefore=10,
         spaceAfter=8,
     )
+    heading_ltr_style = ParagraphStyle(
+        "MeetingHeadingLTR",
+        parent=heading_style,
+        alignment=TA_LEFT,
+        wordWrap="LTR",
+    )
     title_style = ParagraphStyle(
         "MeetingTitle",
         fontName=font_bold,
@@ -2277,6 +2322,11 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         wordWrap="RTL",
         spaceAfter=8,
     )
+    title_ltr_style = ParagraphStyle(
+        "MeetingTitleLTR",
+        parent=title_style,
+        wordWrap="LTR",
+    )
     table_header_style = ParagraphStyle(
         "MeetingTableHeader",
         parent=body_style,
@@ -2285,7 +2335,8 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         alignment=TA_RIGHT,
     )
 
-    def p(text, style=body_style):
+    def p(text, rtl_style=body_style, ltr_style=body_ltr_style):
+        style = ltr_style if _meeting_text_should_use_ltr(text) else rtl_style
         return Paragraph(_pdf_shape_text(text), style)
 
     def p_header(text):
@@ -2296,7 +2347,7 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
             return [p("لا توجد بيانات.")]
         table_data = [[p_header(h) for h in reversed(headers)]]
         for row_data in rows:
-            table_data.append([p(v, body_style) for v in reversed(row_data)])
+            table_data.append([p(v) for v in reversed(row_data)])
         col_widths = list(reversed(widths)) if widths else None
         t = Table(table_data, colWidths=col_widths, hAlign="RIGHT", repeatRows=1)
         t.setStyle(TableStyle([
@@ -2315,8 +2366,8 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
         return [t, Spacer(1, 10)]
 
     story = [
-        p(data["title"], title_style),
-        p("بيانات الاجتماع", heading_style),
+        p(data["title"], title_style, title_ltr_style),
+        p("بيانات الاجتماع", heading_style, heading_ltr_style),
         *table(["البيان", "القيمة"], [
             ["رقم الاجتماع", data["id"]],
             ["الموعد", data["when"]],
@@ -2326,31 +2377,31 @@ def _build_meeting_minutes_pdf(row: PortalMeeting) -> bytes:
             ["تاريخ الإنشاء", data["created_at"]],
             ["آخر تحديث", data["updated_at"]],
         ], [5.0 * cm, 11.0 * cm]),
-        p("الوصف", heading_style),
+        p("الوصف", heading_style, heading_ltr_style),
         p(data["description"] or "لا يوجد وصف."),
-        p("المدعوون والحضور", heading_style),
+        p("المدعوون والحضور", heading_style, heading_ltr_style),
         *table(
             ["الاسم", "الدور", "حالة الحضور", "ملاحظة"],
             [[x["name"], x["role"], x["attendance"], x["note"] or "-"] for x in data["participants"]],
             [4.5 * cm, 3.0 * cm, 3.5 * cm, 5.0 * cm],
         ),
-        p("الأجندة", heading_style),
+        p("الأجندة", heading_style, heading_ltr_style),
         *table(
             ["الترتيب", "البند", "المسؤول", "الحالة", "ملاحظات"],
             [[x["order"], x["title"], x["owner"], x["status"], x["notes"] or "-"] for x in data["agenda_items"]],
             [2.0 * cm, 4.5 * cm, 3.5 * cm, 3.0 * cm, 3.0 * cm],
         ),
-        p("محضر الاجتماع", heading_style),
+        p("محضر الاجتماع", heading_style, heading_ltr_style),
         p(data["minutes_text"] or "لم يتم تسجيل محضر بعد."),
-        p("القرارات", heading_style),
+        p("القرارات", heading_style, heading_ltr_style),
         p(data["decisions_text"] or "لا توجد قرارات مسجلة."),
-        p("مهام المتابعة", heading_style),
+        p("مهام المتابعة", heading_style, heading_ltr_style),
         *table(
             ["المهمة", "المسؤول", "تاريخ الاستحقاق", "الحالة", "التفاصيل"],
             [[x["title"], x["assignee"], x["due_date"], x["status"], x["description"] or "-"] for x in data["tasks"]],
             [3.5 * cm, 3.0 * cm, 3.0 * cm, 2.5 * cm, 4.0 * cm],
         ),
-        p("معلومات الإصدار", heading_style),
+        p("معلومات الإصدار", heading_style, heading_ltr_style),
         *table(["البيان", "القيمة"], [
             ["تاريخ التوليد", data["generated_at"]],
             ["رابط الاجتماع", data["meeting_url"]],
