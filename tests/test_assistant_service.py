@@ -86,8 +86,16 @@ class AssistantServiceTests(unittest.TestCase):
     def test_recent_updates_guide_covers_integrated_work(self):
         result = build_local_reply("ما الجديد في النظام؟")
         self.assertIn("الصادر والوارد مع مسار", result["reply"])
+        self.assertIn("ترقيم مركزي تلقائي", result["reply"])
         self.assertIn("محاضر الاجتماعات", result["reply"])
         self.assertIn("تعريب", result["reply"])
+
+    def test_correspondence_guide_explains_automatic_system_numbering(self):
+        result = build_local_reply("كيف أسجل وارد؟")
+        self.assertIn("ينشئ النظام الرقم الرسمي تلقائيًا", result["reply"])
+        self.assertIn("تسلسل مركزي لجميع المستخدمين", result["reply"])
+        self.assertIn("وارد-2026-000001", result["reply"])
+        self.assertIn("صادر-2026-000001", result["reply"])
 
     def test_stuck_request_gets_troubleshooting_steps(self):
         result = build_local_reply("الطلب متوقف ولا ينتقل للخطوة التالية")

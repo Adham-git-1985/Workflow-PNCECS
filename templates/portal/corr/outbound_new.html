@@ -20,8 +20,8 @@
     <div class="row g-3">
       <div class="col-md-3">
         <label class="form-label">رقم الصادر</label>
-        <input class="form-control" name="ref_no" value="{{ request.form.get('ref_no','') }}">
-        <div class="form-text">اختياري (يمكن تركه فارغًا).</div>
+        <div class="form-control bg-body-secondary text-muted" aria-label="رقم الصادر التلقائي">يُنشأ تلقائيًا عند الحفظ</div>
+        <div class="form-text">تسلسل مركزي لجميع المستخدمين، مثال: <bdi dir="ltr" class="font-monospace">صادر-2026-000001</bdi>.</div>
       </div>
 
       <div class="col-md-3">

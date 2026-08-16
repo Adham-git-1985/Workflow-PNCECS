@@ -32,7 +32,7 @@
       <div class="row g-3">
         <div class="col-md-4">
           <div class="text-muted small">رقم</div>
-          <div class="fw-semibold">{{ item.ref_no or item.id }}</div>
+          <div class="fw-semibold"><bdi dir="ltr" class="font-monospace">{{ item.ref_no or item.id }}</bdi></div>
         </div>
         <div class="col-md-4">
           <div class="text-muted small">تاريخ الاستلام</div>
@@ -73,7 +73,7 @@
         <div class="d-flex flex-wrap gap-2">
           {% for reply in official_replies %}
             <a class="btn btn-sm btn-light border" href="{{ url_for('portal.outbound_view', outbound_id=reply.id) }}">
-              صادر {{ reply.ref_no or reply.id }}
+              صادر <bdi dir="ltr" class="font-monospace">{{ reply.ref_no or reply.id }}</bdi>
               <span class="badge text-bg-success">{{ reply.status|ui_label }}</span>
             </a>
           {% endfor %}

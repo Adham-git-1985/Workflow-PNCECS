@@ -1604,40 +1604,95 @@ def _corr_year_from_date(date_s: str) -> int:
         return datetime.utcnow().year
 
 
-def _corr_next_ref(kind: str, date_s: str, category: str) -> str:
-    """Generate next reference number using CorrCounter.
+_CORR_COUNTER_SCOPE = "SYSTEM"
+_CORR_REF_PREFIXES = {"IN": "وارد", "OUT": "صادر"}
 
-    Pattern: IN-YYYY-0001 / OUT-YYYY-0001
-    (Category is used for partitioning the counter only.)
-    """
+
+def _corr_normalize_kind(kind: str | None) -> str:
     k = (kind or "IN").strip().upper()
-    if k not in ("IN", "OUT"):
-        k = "IN"
+    return k if k in _CORR_REF_PREFIXES else "IN"
+
+
+def _corr_format_ref(kind: str, year: int, serial: int) -> str:
+    """Return a human-readable official correspondence reference."""
+    k = _corr_normalize_kind(kind)
+    return f"{_CORR_REF_PREFIXES[k]}-{int(year):04d}-{int(serial):06d}"
+
+
+def _corr_ref_serial(ref_no: str | None, kind: str, year: int) -> int:
+    """Read the serial from current and legacy generated references."""
+    value = (ref_no or "").strip()
+    if not value:
+        return 0
+
+    k = _corr_normalize_kind(kind)
+    prefixes = (re.escape(_CORR_REF_PREFIXES[k]), k, "INBOUND" if k == "IN" else "OUTBOUND")
+    match = re.fullmatch(
+        rf"(?:{'|'.join(prefixes)})[-/]{int(year):04d}[-/](\d+)",
+        value,
+        flags=re.IGNORECASE,
+    )
+    return int(match.group(1)) if match else 0
+
+
+def _corr_counter_baseline(kind: str, year: int) -> int:
+    """Find a safe starting point when switching from category counters."""
+    k = _corr_normalize_kind(kind)
+    model = InboundMail if k == "IN" else OutboundMail
+    date_column = model.received_date if k == "IN" else model.sent_date
+
+    dated_query = db.session.query(model.ref_no).filter(
+        date_column.like(f"{int(year):04d}-%")
+    )
+    refs = [row[0] for row in dated_query.all()]
+    record_count = len(refs)
+    highest_reference = max(
+        (_corr_ref_serial(ref_no, k, year) for ref_no in refs),
+        default=0,
+    )
+    highest_legacy_counter = (
+        db.session.query(func.max(CorrCounter.last_no))
+        .filter(CorrCounter.kind == k, CorrCounter.year == int(year))
+        .scalar()
+        or 0
+    )
+    return max(record_count, int(highest_reference), int(highest_legacy_counter))
+
+
+def _corr_next_ref(kind: str, date_s: str, category: str | None = None) -> str:
+    """Reserve the next system-wide reference for inbound or outbound mail.
+
+    The legacy ``category`` argument is intentionally ignored.  One atomic
+    counter is shared by all users and categories for each kind and year.
+    """
+    k = _corr_normalize_kind(kind)
     year = _corr_year_from_date(date_s)
-    cat = (category or "GENERAL").strip().upper() or "GENERAL"
+    baseline = _corr_counter_baseline(k, year)
 
-    try:
-        row = CorrCounter.query.filter_by(kind=k, year=year, category=cat).first()
-    except Exception:
-        # In case the counter table doesn't exist yet (old DB), attempt to create tables.
-        try:
-            db.create_all()
-            row = CorrCounter.query.filter_by(kind=k, year=year, category=cat).first()
-        except Exception:
-            return f"{k}-{year}-{uuid.uuid4().hex[:6].upper()}"
-
-    if not row:
-        row = CorrCounter(kind=k, year=year, category=cat, last_no=0)
-        db.session.add(row)
-        db.session.flush()
-
-    try:
-        row.last_no = int(row.last_no or 0) + 1
-    except Exception:
-        row.last_no = 1
-
-    n = int(row.last_no or 1)
-    return f"{k}-{year}-{n:04d}"
+    # SQLite executes this UPSERT as one write statement, so two users saving
+    # at the same moment cannot receive the same sequence number.
+    serial = db.session.execute(
+        text(
+            """
+            INSERT INTO corr_counter (kind, year, category, last_no)
+            VALUES (:kind, :year, :scope, :next_no)
+            ON CONFLICT(kind, year, category) DO UPDATE SET
+                last_no = CASE
+                    WHEN corr_counter.last_no < :baseline THEN :next_no
+                    ELSE corr_counter.last_no + 1
+                END
+            RETURNING last_no
+            """
+        ),
+        {
+            "kind": k,
+            "year": year,
+            "scope": _CORR_COUNTER_SCOPE,
+            "baseline": baseline,
+            "next_no": baseline + 1,
+        },
+    ).scalar_one()
+    return _corr_format_ref(k, year, int(serial))
 
 
 
@@ -18894,10 +18949,7 @@ def corr_procedure_action(kind: str, item_id: int):
 
         official_reply_template = _corr_final_reply_template()
         sent_date = date.today().isoformat()
-        try:
-            reply_ref = _corr_next_ref("OUT", sent_date, item.category or "GENERAL")
-        except Exception:
-            reply_ref = None
+        reply_ref = _corr_next_ref("OUT", sent_date)
         official_reply = OutboundMail(
             ref_no=reply_ref,
             category=item.category or "GENERAL",
@@ -19306,8 +19358,6 @@ def inbound_new():
     )
 
     if request.method == "POST":
-        ref_no = (request.form.get("ref_no") or "").strip()
-
         category_code = (request.form.get("category_code") or "GENERAL").strip().upper()
         category_other = (request.form.get("category_other") or "").strip().upper()
         category = category_other if category_code == "__OTHER__" and category_other else category_code
@@ -19330,15 +19380,16 @@ def inbound_new():
             flash("رفع ملف/ملفات مطلوب لتسجيل الوارد.", "danger")
             return redirect(request.url)
 
-        # Auto reference number (optional)
-        if not ref_no:
-            try:
-                ref_no = _corr_next_ref("IN", received_date, category)
-            except Exception:
-                ref_no = None
+        try:
+            ref_no = _corr_next_ref("IN", received_date)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to reserve a system-wide inbound reference")
+            flash("تعذر إنشاء رقم الوارد التلقائي. حاول مرة أخرى.", "danger")
+            return redirect(request.url)
 
         item = InboundMail(
-            ref_no=ref_no or None,
+            ref_no=ref_no,
             category=category or "GENERAL",
             sender=sender or None,
             competence_kind=competence.get("kind"),
@@ -19521,8 +19572,6 @@ def outbound_new():
     )
 
     if request.method == "POST":
-        ref_no = (request.form.get("ref_no") or "").strip()
-
         category_code = (request.form.get("category_code") or "GENERAL").strip().upper()
         category_other = (request.form.get("category_other") or "").strip().upper()
         category = category_other if category_code == "__OTHER__" and category_other else category_code
@@ -19546,15 +19595,16 @@ def outbound_new():
             flash("رفع ملف/ملفات مطلوب لتسجيل الصادر.", "danger")
             return redirect(request.url)
 
-        # Auto reference number (optional)
-        if not ref_no:
-            try:
-                ref_no = _corr_next_ref("OUT", sent_date, category)
-            except Exception:
-                ref_no = None
+        try:
+            ref_no = _corr_next_ref("OUT", sent_date)
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to reserve a system-wide outbound reference")
+            flash("تعذر إنشاء رقم الصادر التلقائي. حاول مرة أخرى.", "danger")
+            return redirect(request.url)
 
         item = OutboundMail(
-            ref_no=ref_no or None,
+            ref_no=ref_no,
             category=category or "GENERAL",
             recipient=recipient or None,
             competence_kind=competence.get("kind"),
@@ -19895,8 +19945,6 @@ def inbound_edit(inbound_id: int):
     )
 
     if request.method == "POST":
-        ref_no = (request.form.get("ref_no") or "").strip()
-
         category_code = (request.form.get("category_code") or (item.category or "GENERAL")).strip().upper()
         category_other = (request.form.get("category_other") or "").strip().upper()
         category = category_other if category_code == "__OTHER__" and category_other else category_code
@@ -19914,7 +19962,6 @@ def inbound_edit(inbound_id: int):
             flash("التاريخ والموضوع مطلوبان.", "danger")
             return redirect(request.url)
 
-        item.ref_no = ref_no or item.ref_no
         item.category = category or "GENERAL"
         item.sender = sender or None
         item.competence_kind = competence.get("kind")
@@ -20049,8 +20096,6 @@ def outbound_edit(outbound_id: int):
     )
 
     if request.method == "POST":
-        ref_no = (request.form.get("ref_no") or "").strip()
-
         category_code = (request.form.get("category_code") or (item.category or "GENERAL")).strip().upper()
         category_other = (request.form.get("category_other") or "").strip().upper()
         category = category_other if category_code == "__OTHER__" and category_other else category_code
@@ -20068,7 +20113,6 @@ def outbound_edit(outbound_id: int):
             flash("التاريخ والموضوع مطلوبان.", "danger")
             return redirect(request.url)
 
-        item.ref_no = ref_no or item.ref_no
         item.category = category or "GENERAL"
         item.recipient = recipient or None
         item.competence_kind = competence.get("kind")

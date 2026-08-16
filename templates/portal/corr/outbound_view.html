@@ -30,7 +30,7 @@
   <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
     <div>
       <strong><i class="bi bi-link-45deg"></i> رد رسمي مرتبط بوارد:</strong>
-      رقم {{ source_inbound.ref_no or source_inbound.id }} — {{ source_inbound.subject }}
+      رقم <bdi dir="ltr" class="font-monospace">{{ source_inbound.ref_no or source_inbound.id }}</bdi> — {{ source_inbound.subject }}
     </div>
     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inbound_view', inbound_id=source_inbound.id) }}">فتح الوارد الأصلي</a>
   </div>
@@ -42,7 +42,7 @@
       <div class="row g-3">
         <div class="col-md-4">
           <div class="text-muted small">رقم</div>
-          <div class="fw-semibold">{{ item.ref_no or item.id }}</div>
+          <div class="fw-semibold"><bdi dir="ltr" class="font-monospace">{{ item.ref_no or item.id }}</bdi></div>
         </div>
         <div class="col-md-4">
           <div class="text-muted small">تاريخ الإرسال</div>

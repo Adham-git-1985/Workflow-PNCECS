@@ -38,7 +38,7 @@
           {% for row in items %}
             <tr>
               <td><span class="badge {{ 'text-bg-success' if row.kind == 'IN' else 'text-bg-info' }}">{{ 'وارد' if row.kind == 'IN' else 'صادر' }}</span></td>
-              <td>{{ row.ref_no }}</td>
+              <td><bdi dir="ltr" class="font-monospace">{{ row.ref_no }}</bdi></td>
               <td class="text-nowrap">{{ row.date }}</td>
               <td>{{ row.party }}</td>
               <td style="min-width: 240px">{{ row.subject }}</td>

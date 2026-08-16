@@ -4194,7 +4194,9 @@ class CorrAttachment(db.Model):
 class CorrCounter(db.Model):
     """Reference number counter for correspondence.
 
-    Partitioned by kind (IN/OUT), year, and category.
+    New references use the reserved SYSTEM category, producing one sequence
+    per kind (IN/OUT) and year across every user and correspondence category.
+    Historical category rows are retained for backward compatibility.
     """
 
     __tablename__ = "corr_counter"
@@ -4203,7 +4205,7 @@ class CorrCounter(db.Model):
 
     kind = db.Column(db.String(5), nullable=False, index=True)  # IN / OUT
     year = db.Column(db.Integer, nullable=False, index=True)
-    category = db.Column(db.String(50), nullable=False, index=True)
+    category = db.Column(db.String(50), nullable=False, index=True)  # SYSTEM for global numbering
 
     last_no = db.Column(db.Integer, default=0, nullable=False)
 

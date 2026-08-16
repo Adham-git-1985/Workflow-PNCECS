@@ -161,7 +161,7 @@
       <tbody>
         {% for it in items %}
           <tr>
-            <td>{{ it.ref_no or it.id }}</td>
+            <td><bdi dir="ltr" class="font-monospace">{{ it.ref_no or it.id }}</bdi></td>
             <td>{{ it.received_date }}</td>
             <td><span class="badge text-bg-light border">{{ it.category|ui_label }}</span></td>
             <td>{{ it.sender or "-" }}</td>
