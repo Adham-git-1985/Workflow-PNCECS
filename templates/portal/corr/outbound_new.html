@@ -68,7 +68,11 @@
             <option value="{{ opt.value }}" {% if request.form.get('competence') == opt.value %}selected{% endif %}>{{ opt.label }}</option>
           {% endfor %}
         </select>
-        <div class="form-text">اكتب في مربع البحث أعلى القائمة للبحث بين الموظفين والوحدات التنظيمية.</div>
+        <button class="btn btn-outline-primary btn-sm mt-2" type="button"
+                data-corr-org-picker data-target-select="#competence">
+          <i class="bi bi-diagram-3"></i> اختيار مباشر من الهيكل التنظيمي
+        </button>
+        <div class="form-text">اختر الجهة أو الموظف من الشجرة، أو استخدم البحث في القائمة.</div>
       </div>
 
       {% include 'portal/corr/_procedure_fields.html' %}
@@ -119,4 +123,5 @@
   toggleOther("recipient_val","recipient_other_wrap");
 })();
 </script>
+{% include 'portal/corr/_org_route_picker_modal.html' %}
 {% endblock %}

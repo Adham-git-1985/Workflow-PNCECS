@@ -47,6 +47,14 @@ from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
     is_confidential_workflow,
 )
+from services.correspondence_workflow import (
+    correspondence_context,
+    sync_correspondence_from_workflow,
+)
+from services.correspondence_procedure import (
+    ACTION_LABELS as CORR_ACTION_LABELS,
+    STATUS_LABELS as CORR_STATUS_LABELS,
+)
 
 from models import (
     WorkflowRequest,
@@ -2420,6 +2428,140 @@ def inbox():
     return render_template("workflow/inbox.html", rows=rows, q=search, last_circulars=last_circulars)
 
 
+_WORKFLOW_DASHBOARD_QUEUES = {
+    "my_action": "بانتظار إجرائي",
+    "created": "طلباتي",
+    "following": "أتابعها",
+    "in_progress": "قيد الإجراء",
+    "completed": "المكتملة",
+    "returned": "المعادة / المرفوضة",
+    "correspondence": "قادمة من الصادر والوارد",
+    "overdue": "متأخرة",
+}
+
+
+@workflow_bp.route("/work")
+@login_required
+def work_dashboard():
+    """Procedural Workflow dashboard for tasks, tracking, and correspondence."""
+    selected_queue = (request.args.get("queue") or "my_action").strip().lower()
+    if selected_queue not in _WORKFLOW_DASHBOARD_QUEUES:
+        selected_queue = "my_action"
+    search = (request.args.get("q") or "").strip()
+
+    actor_users = [current_user]
+    for delegation in get_active_delegations() or []:
+        delegated_user = getattr(delegation, "from_user", None)
+        if delegated_user and delegated_user.id not in {user.id for user in actor_users}:
+            actor_users.append(delegated_user)
+    actor_ids = {int(user.id) for user in actor_users if getattr(user, "id", None)}
+
+    qry = WorkflowRequest.query.order_by(WorkflowRequest.id.desc())
+    if search:
+        like = f"%{search}%"
+        conditions = [
+            WorkflowRequest.title.ilike(like),
+            WorkflowRequest.description.ilike(like),
+        ]
+        if search.isdigit():
+            conditions.append(WorkflowRequest.id == int(search))
+        qry = qry.filter(or_(*conditions))
+
+    requests = qry.limit(1500).all()
+    rows = []
+    now = datetime.utcnow()
+    for req in requests:
+        if not _actor_context_can_view_request(req, actor_users):
+            continue
+        inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+        current_step = None
+        template = None
+        if inst:
+            current_step = WorkflowInstanceStep.query.filter_by(
+                instance_id=inst.id,
+                step_order=inst.current_step_order,
+            ).first()
+            template = db.session.get(WorkflowTemplate, inst.template_id)
+
+        needs_action = bool(
+            current_step
+            and current_step.status == "PENDING"
+            and any(_user_can_act_on_step(user, current_step) for user in actor_users)
+        )
+        if current_step and (current_step.mode or "").upper() == "PARALLEL_SYNC" and inst:
+            needs_action = (
+                WorkflowStepTask.query
+                .filter(
+                    WorkflowStepTask.instance_id == inst.id,
+                    WorkflowStepTask.step_order == current_step.step_order,
+                    WorkflowStepTask.assignee_user_id.in_(actor_ids or {-1}),
+                    WorkflowStepTask.status == "PENDING",
+                )
+                .first()
+                is not None
+            )
+
+        follower_ids = _get_request_followers_user_ids(req.id)
+        overdue = bool(
+            current_step
+            and current_step.status == "PENDING"
+            and current_step.due_at
+            and current_step.due_at < now
+        )
+        corr_source = correspondence_context(req) if req.source_corr_id else None
+        rows.append({
+            "req": req,
+            "inst": inst,
+            "step": current_step,
+            "template": template,
+            "requester": db.session.get(User, req.requester_id),
+            "needs_action": needs_action,
+            "created": int(req.requester_id or 0) == int(current_user.id),
+            "following": bool(actor_ids.intersection(follower_ids)),
+            "in_progress": (req.status or "").upper() == "IN_PROGRESS",
+            "completed": (req.status or "").upper() == "APPROVED",
+            "returned": (req.status or "").upper() == "REJECTED",
+            "correspondence": bool(corr_source),
+            "corr_source": corr_source,
+            "overdue": overdue,
+        })
+
+    def matches(row: dict, queue: str) -> bool:
+        return {
+            "my_action": row["needs_action"],
+            "created": row["created"],
+            "following": row["following"],
+            "in_progress": row["in_progress"],
+            "completed": row["completed"],
+            "returned": row["returned"],
+            "correspondence": row["correspondence"],
+            "overdue": row["overdue"],
+        }.get(queue, False)
+
+    counts = {
+        queue: sum(1 for row in rows if matches(row, queue))
+        for queue in _WORKFLOW_DASHBOARD_QUEUES
+    }
+    filtered = [row for row in rows if matches(row, selected_queue)]
+    page = max(1, request.args.get("page", type=int, default=1))
+    per_page = 50
+    total = len(filtered)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    start = (page - 1) * per_page
+    return render_template(
+        "workflow/work_dashboard.html",
+        rows=filtered[start:start + per_page],
+        counts=counts,
+        queue_labels=_WORKFLOW_DASHBOARD_QUEUES,
+        selected_queue=selected_queue,
+        q=search,
+        total=total,
+        page=page,
+        pages=pages,
+    )
+
+
 # =========================
 # Circulars (for all users)
 # =========================
@@ -2843,6 +2985,21 @@ def view_request(request_id):
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
     template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+    corr_source = correspondence_context(req)
+    if corr_source:
+        corr_source["url"] = url_for(
+            "portal.inbound_view" if corr_source["kind"] == "IN" else "portal.outbound_view",
+            **(
+                {"inbound_id": corr_source["item"].id}
+                if corr_source["kind"] == "IN"
+                else {"outbound_id": corr_source["item"].id}
+            ),
+        )
+        if corr_source.get("source_inbound_id"):
+            corr_source["parent_inbound_url"] = url_for(
+                "portal.inbound_view",
+                inbound_id=corr_source["source_inbound_id"],
+            )
 
 
     steps = []
@@ -3199,6 +3356,9 @@ def view_request(request_id):
         my_parallel_task=my_parallel_task,
         can_bypass_parallel=can_bypass_parallel,
         mentioned_users=mentioned_users,
+        corr_source=corr_source,
+        corr_status_labels=CORR_STATUS_LABELS,
+        corr_action_labels=CORR_ACTION_LABELS,
     )
 
 
@@ -4052,6 +4212,15 @@ def decide_request_step(request_id, step_order):
                   effective_user_id=acting_user.id,
                   on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
                   delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None))
+        sync_correspondence_from_workflow(
+            req,
+            actor_user_id=current_user.id,
+            note=(
+                f"قرار الخطوة {step_order} في مسار #{req.id}: "
+                f"{'موافقة' if decision == 'APPROVED' else 'إعادة/رفض'}"
+                + (f" — {note}" if note else "")
+            ),
+        )
 
         # Attach files uploaded with the decision (multiple)
         uploaded_files = request.files.getlist("files") if request.files else []
@@ -4178,6 +4347,11 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
                 on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
                 auto_commit=False,
             )
+            sync_correspondence_from_workflow(
+                req,
+                actor_user_id=current_user.id,
+                note=f"تجاوز المتبقين في الخطوة {step_order} من مسار #{req.id}: {reason}",
+            )
             db.session.commit()
             flash("تم تجاوز جميع المتبقين في الخطوة المتزامنة.", "success")
         except Exception as e:
@@ -4199,6 +4373,11 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
             reason=reason,
             on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
             auto_commit=False,
+        )
+        sync_correspondence_from_workflow(
+            req,
+            actor_user_id=current_user.id,
+            note=f"تجاوز مستخدم في الخطوة {step_order} من مسار #{req.id}: {reason}",
         )
         db.session.commit()
         flash("تم تنفيذ التجاوز بنجاح.", "success")

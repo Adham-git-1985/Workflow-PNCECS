@@ -33,6 +33,25 @@
     {% endif %}
   </div>
 
+  {% if corr_workflows %}
+    <div class="border rounded-3 p-3 mb-3 bg-primary bg-opacity-10">
+      <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+        <strong><i class="bi bi-signpost-split"></i> المسارات المرتبطة بالمعاملة</strong>
+        <span class="badge text-bg-primary">{{ corr_workflows|length }}</span>
+      </div>
+      <div class="d-flex flex-wrap gap-2">
+        {% for workflow_request in corr_workflows %}
+          <a class="btn btn-sm btn-light border" href="{{ url_for('workflow.view_request', request_id=workflow_request.id) }}">
+            مسار #{{ workflow_request.id }}
+            <span class="badge {{ 'text-bg-success' if workflow_request.status == 'APPROVED' else ('text-bg-danger' if workflow_request.status == 'REJECTED' else 'text-bg-primary') }}">
+              {{ workflow_request.status|ui_label }}
+            </span>
+          </a>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
   {% if corr_can_manage_confidential_access %}
     <details class="border border-danger-subtle rounded-3 p-3 mb-3 no-print" {% if item.confidentiality == 'SECRET' %}open{% endif %}>
       <summary class="fw-semibold text-danger-emphasis" style="cursor: pointer;">
@@ -87,10 +106,14 @@
         </div>
         <div class="col-lg-4 corr-target-field d-none">
           <label class="form-label">التحويل إلى</label>
-          <select class="form-select" name="target" data-searchable="1">
+          <select class="form-select" name="target" id="corrActionTarget" data-searchable="1">
             <option value="">اختر موظفاً أو جهة تنظيمية…</option>
             {% for opt in corr_competence_options %}<option value="{{ opt.value }}">{{ opt.label }}</option>{% endfor %}
           </select>
+          <button class="btn btn-outline-primary btn-sm mt-2" type="button"
+                  data-corr-org-picker data-target-select="#corrActionTarget">
+            <i class="bi bi-diagram-3"></i> اختيار من الهيكل التنظيمي
+          </button>
         </div>
         <div class="col-12">
           <label class="form-label">الرد أو الملاحظة</label>
@@ -135,6 +158,8 @@
     <div class="text-muted">لا توجد حركات مسجلة بعد.</div>
   {% endif %}
 </div>
+
+{% include 'portal/corr/_org_route_picker_modal.html' %}
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {

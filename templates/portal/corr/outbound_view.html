@@ -26,6 +26,16 @@
   </div>
 </div>
 
+{% if source_inbound %}
+  <div class="alert alert-info d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div>
+      <strong><i class="bi bi-link-45deg"></i> رد رسمي مرتبط بوارد:</strong>
+      رقم {{ source_inbound.ref_no or source_inbound.id }} — {{ source_inbound.subject }}
+    </div>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inbound_view', inbound_id=source_inbound.id) }}">فتح الوارد الأصلي</a>
+  </div>
+{% endif %}
+
 <div class="row g-3">
   <div class="col-lg-8">
     <div class="bg-white rounded-3 shadow-sm p-4 mb-3" id="outboundViewPrint">

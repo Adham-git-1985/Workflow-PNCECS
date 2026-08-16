@@ -1,0 +1,94 @@
+{% extends "layout.html" %}
+{% block title %}لوحة عمل مسار{% endblock %}
+{% block content %}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-kanban"></i> لوحة عمل مسار</h3>
+    <div class="text-muted">متابعة المهام والطلبات والمسارات المرتبطة بالصادر والوارد من مكان واحد.</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('workflow.inbox') }}"><i class="bi bi-inbox"></i> مهامي</a>
+    <a class="btn btn-primary" href="{{ url_for('workflow.new_request') }}"><i class="bi bi-plus-circle"></i> طلب جديد</a>
+  </div>
+</div>
+
+<div class="row g-2 mb-3">
+  {% for queue, label in queue_labels.items() %}
+    <div class="col-xl-3 col-lg-4 col-md-6">
+      <a class="text-decoration-none" href="{{ url_for('workflow.work_dashboard', queue=queue) }}">
+        <div class="card h-100 {{ 'border-primary bg-primary bg-opacity-10' if selected_queue == queue else '' }}">
+          <div class="card-body py-3 d-flex align-items-center justify-content-between">
+            <div class="text-body-secondary">{{ label }}</div>
+            <div class="fs-3 fw-bold">{{ counts.get(queue, 0) }}</div>
+          </div>
+        </div>
+      </a>
+    </div>
+  {% endfor %}
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <div>
+      <strong>{{ queue_labels.get(selected_queue) }}</strong>
+      <span class="badge text-bg-secondary me-2">{{ total }}</span>
+    </div>
+    <form method="get" class="d-flex gap-2">
+      <input type="hidden" name="queue" value="{{ selected_queue }}">
+      <input class="form-control form-control-sm" type="search" name="q" value="{{ q or '' }}" placeholder="رقم الطلب أو العنوان…">
+      <button class="btn btn-sm btn-outline-primary">بحث</button>
+    </form>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr><th>#</th><th>العنوان</th><th>المصدر</th><th>القالب</th><th>الحالة</th><th>الخطوة الحالية</th><th>الموعد</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.req.id }}</td>
+            <td style="min-width:260px">
+              <div class="fw-semibold">{{ row.req.title }}</div>
+              <small class="text-muted">{{ row.requester.full_name if row.requester else '-' }}</small>
+            </td>
+            <td>
+              {% if row.corr_source %}
+                <span class="badge text-bg-info">{{ row.corr_source.kind_label }} {{ row.corr_source.ref_no }}</span>
+              {% else %}
+                <span class="text-muted">طلب داخلي</span>
+              {% endif %}
+            </td>
+            <td>{{ row.template.name if row.template else '-' }}</td>
+            <td><span class="badge {{ 'text-bg-success' if row.completed else ('text-bg-danger' if row.returned else 'text-bg-primary') }}">{{ row.req.status|ui_label }}</span></td>
+            <td>
+              {% if row.step %}
+                الخطوة {{ row.step.step_order }}
+                {% if row.needs_action %}<span class="badge text-bg-warning">إجراءك مطلوب</span>{% endif %}
+              {% else %}-{% endif %}
+            </td>
+            <td class="text-nowrap">
+              {{ row.step.due_at.strftime('%Y-%m-%d') if row.step and row.step.due_at else '-' }}
+              {% if row.overdue %}<span class="badge text-bg-danger">متأخر</span>{% endif %}
+            </td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=row.req.id) }}">فتح</a></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block"></i>لا توجد مسارات في هذه القائمة.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if pages > 1 %}
+    <div class="card-footer bg-white">
+      <nav><ul class="pagination pagination-sm mb-0">
+        {% for p in range(1, pages + 1) %}
+          <li class="page-item {{ 'active' if p == page else '' }}"><a class="page-link" href="{{ url_for('workflow.work_dashboard', queue=selected_queue, q=q, page=p) }}">{{ p }}</a></li>
+        {% endfor %}
+      </ul></nav>
+    </div>
+  {% endif %}
+</div>
+
+{% endblock %}

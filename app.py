@@ -381,6 +381,21 @@ def _ensure_runtime_schema():
                 if not _col_exists("workflow_request", col):
                     _add_column_retry("workflow_request", col, ctype)
 
+            # Official outbound replies keep a durable link to their source
+            # inbound record.  Keep the lightweight SQLite deployment path in
+            # sync even when Alembic is not run manually on the server.
+            if not _col_exists("corr_outbound", "source_inbound_id"):
+                _add_column_retry("corr_outbound", "source_inbound_id", "INTEGER")
+            if _col_exists("corr_outbound", "source_inbound_id"):
+                try:
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_corr_outbound_source_inbound_id "
+                        "ON corr_outbound (source_inbound_id)"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             # Protect workflows that were already linked to correspondence
             # before the metadata columns existed.
             if (

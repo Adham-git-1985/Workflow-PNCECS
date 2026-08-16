@@ -151,6 +151,11 @@
         </a>
         {% endif %}
 
+        <a href="{{ url_for('workflow.work_dashboard') }}"
+           class="{% if request.path.startswith('/workflow/work') %}active{% endif %}">
+            <i class="bi bi-kanban"></i> لوحة عمل مسار
+        </a>
+
         <a href="{{ url_for('workflow.inbox') }}"
            class="{% if request.path.startswith('/workflow/inbox') %}active{% endif %}">
             📥 مهامي

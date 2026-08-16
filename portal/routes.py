@@ -81,6 +81,7 @@ from models import (
     OrgUnitAssignment,
     OrgNode,
     OrgNodeAssignment,
+    OrgNodeManager,
     Organization,
     Directorate,
     Department,
@@ -214,6 +215,7 @@ from services.correspondence_procedure import (
 from services.workflow_confidentiality import (
     filter_confidential_correspondence_user_ids,
 )
+from services.correspondence_workflow import sync_correspondence_from_workflow
 
 # -------------------------
 # Permissions (Portal)
@@ -1194,6 +1196,34 @@ def _corr_workflow_templates() -> list[WorkflowTemplate]:
     return _active_workflow_templates()
 
 
+def _corr_final_reply_template() -> WorkflowTemplate | None:
+    """Resolve the template used to route an official reply via the Secretariat."""
+    configured = None
+    try:
+        row = SystemSetting.query.filter_by(key="CORR_FINAL_REPLY_WORKFLOW_TEMPLATE_ID").first()
+        configured = (row.value or "").strip() if row else ""
+    except Exception:
+        configured = ""
+    if configured and configured.isdigit():
+        template = WorkflowTemplate.query.filter_by(id=int(configured), is_active=True).first()
+        if template:
+            return template
+
+    candidates = _corr_workflow_templates()
+    for expected in ("مسار_امانة_إدارات", "مسار أمانة إدارات", "مسار الامانة إدارات"):
+        for template in candidates:
+            if (template.name or "").strip() == expected:
+                return template
+    return next(
+        (
+            template for template in candidates
+            if "امان" in (template.name or "").replace("أ", "ا")
+            and "ادار" in (template.name or "").replace("إ", "ا")
+        ),
+        None,
+    )
+
+
 def _corr_workflow_description(kind: str, label: str, item, attachments: list[CorrAttachment]) -> str:
     party_title, party_value = _corr_item_party(kind, item)
     lines = [
@@ -1337,7 +1367,25 @@ def _ensure_corr_card_archived(kind: str, label: str, item) -> ArchivedFile | No
         return None
 
 
-def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], template_id: str | None):
+def _start_corr_workflow(
+    kind: str,
+    item,
+    attachments: list[CorrAttachment],
+    template_id: str | None,
+    *,
+    auto_commit: bool = True,
+):
+    existing = (
+        WorkflowRequest.query
+        .filter_by(source_corr_kind=kind, source_corr_id=getattr(item, "id", None))
+        .filter(WorkflowRequest.status.in_(["DRAFT", "IN_PROGRESS"]))
+        .order_by(WorkflowRequest.id.desc())
+        .first()
+    )
+    if existing:
+        flash(f"المعاملة مرتبطة بالفعل بمسار نشط رقم #{existing.id}.", "info")
+        return existing
+
     template_id = (template_id or getattr(item, "workflow_template_id", None) or "")
     template_id = str(template_id).strip()
     templates = _corr_workflow_templates()
@@ -1430,6 +1478,11 @@ def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], tem
         created_by_user_id=current_user.id,
         auto_commit=False,
     )
+    sync_correspondence_from_workflow(
+        req,
+        actor_user_id=current_user.id,
+        note=f"بدأ مسار #{req.id} باستخدام القالب: {template.name}.",
+    )
 
     for att in attachments:
         att.workflow_request_id = req.id
@@ -1445,7 +1498,8 @@ def _start_corr_workflow(kind: str, item, attachments: list[CorrAttachment], tem
         target_id=getattr(item, "id", None),
         created_at=datetime.utcnow(),
     ))
-    db.session.commit()
+    if auto_commit:
+        db.session.commit()
     flash("تم إنشاء المسار وربطه بالمعاملة.", "success")
     return req
 
@@ -17861,6 +17915,7 @@ def _ensure_corr_procedure_schema():
                 ("current_target_id", "ALTER TABLE corr_outbound ADD COLUMN current_target_id INTEGER"),
                 ("current_target_label", "ALTER TABLE corr_outbound ADD COLUMN current_target_label VARCHAR(255)"),
                 ("current_assignee_id", "ALTER TABLE corr_outbound ADD COLUMN current_assignee_id INTEGER"),
+                ("source_inbound_id", "ALTER TABLE corr_outbound ADD COLUMN source_inbound_id INTEGER"),
                 ("closed_at", "ALTER TABLE corr_outbound ADD COLUMN closed_at DATETIME"),
                 ("closed_by_id", "ALTER TABLE corr_outbound ADD COLUMN closed_by_id INTEGER"),
                 ("deadline_notified_on", "ALTER TABLE corr_outbound ADD COLUMN deadline_notified_on VARCHAR(10)"),
@@ -17875,6 +17930,11 @@ def _ensure_corr_procedure_schema():
             for column, ddl in columns:
                 if column not in existing:
                     db.session.execute(text(ddl))
+
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_corr_outbound_source_inbound_id "
+            "ON corr_outbound (source_inbound_id)"
+        ))
 
         CorrMovement.__table__.create(bind=bind, checkfirst=True)
         db.session.commit()
@@ -18061,6 +18121,127 @@ def _corr_competence_options() -> list[dict]:
                 "label": f"{name} ({type_label})",
             })
     return options
+
+
+def _corr_job_rank(title: str | None) -> int:
+    """Sort people in the administrative order used by the procedure guide."""
+    normalized = re.sub(r"\s+", " ", (title or "").strip().lower())
+    ranks = (
+        ("أمين عام", 0),
+        ("امين عام", 0),
+        ("مساعد الأمين", 1),
+        ("مساعد الامين", 1),
+        ("مدير عام", 2),
+        ("مدير دائرة", 3),
+        ("مدير إدارة", 3),
+        ("مدير ادارة", 3),
+        ("رئيس قسم", 4),
+        ("رئيس شعبة", 5),
+        ("موظف أول", 6),
+        ("موظف اول", 6),
+        ("موظف", 7),
+        ("سكرتير", 8),
+    )
+    for token, rank in ranks:
+        if token in normalized:
+            return rank
+    return 50
+
+
+def _corr_org_route_tree() -> list[dict]:
+    """Return the unified hierarchy enriched with selectable employees."""
+    tree = build_org_node_picker_tree(mode="routes")
+    node_map: dict[int, dict] = {}
+
+    def index(nodes):
+        for node in nodes or []:
+            node["people"] = []
+            node_map[int(node["id"])] = node
+            index(node.get("children") or [])
+
+    index(tree)
+    people_by_node: dict[int, dict[int, dict]] = {node_id: {} for node_id in node_map}
+
+    try:
+        for assignment in OrgNodeAssignment.query.order_by(
+            OrgNodeAssignment.is_primary.desc(),
+            OrgNodeAssignment.id.asc(),
+        ).all():
+            if assignment.node_id not in people_by_node or not assignment.user:
+                continue
+            user = assignment.user
+            title = (assignment.title or user.job_title or "موظف").strip()
+            people_by_node[int(assignment.node_id)][int(user.id)] = {
+                "id": int(user.id),
+                "name": user.full_name or user.email,
+                "title": title,
+                "rank": _corr_job_rank(title),
+                "manager_role": None,
+            }
+    except Exception:
+        pass
+
+    # Include a direct node assignment stored on users even if the membership
+    # table has not been populated yet.
+    try:
+        for user in User.query.filter(User.org_node_id.isnot(None)).all():
+            node_id = int(user.org_node_id)
+            if node_id not in people_by_node:
+                continue
+            people_by_node[node_id].setdefault(int(user.id), {
+                "id": int(user.id),
+                "name": user.full_name or user.email,
+                "title": (user.job_title or "موظف").strip(),
+                "rank": _corr_job_rank(user.job_title),
+                "manager_role": None,
+            })
+    except Exception:
+        pass
+
+    try:
+        for manager in OrgNodeManager.query.all():
+            if manager.node_id not in people_by_node:
+                continue
+            for user, role_label, rank in (
+                (manager.manager_user, "المسؤول المباشر", -2),
+                (manager.deputy_user, "نائب المسؤول", -1),
+            ):
+                if not user:
+                    continue
+                row = people_by_node[int(manager.node_id)].setdefault(int(user.id), {
+                    "id": int(user.id),
+                    "name": user.full_name or user.email,
+                    "title": (user.job_title or role_label).strip(),
+                    "rank": rank,
+                    "manager_role": role_label,
+                })
+                row["manager_role"] = role_label
+                row["rank"] = min(int(row.get("rank", 50)), rank)
+    except Exception:
+        pass
+
+    for node_id, node in node_map.items():
+        node["people"] = sorted(
+            people_by_node.get(node_id, {}).values(),
+            key=lambda row: (row.get("rank", 50), (row.get("name") or "").casefold()),
+        )
+    return tree
+
+
+@portal_bp.route("/corr/org-route-picker")
+@login_required
+def corr_org_route_picker():
+    if not (
+        current_user.has_perm(CORR_READ)
+        or current_user.has_perm(CORR_CREATE)
+        or current_user.has_perm(CORR_UPDATE)
+        or _can_manage_corr()
+    ):
+        abort(403)
+    return render_template(
+        "portal/corr/_org_route_tree.html",
+        tree=_corr_org_route_tree(),
+    )
 
 
 def _corr_parse_competence_value(value: str | None, options: list[dict] | None = None) -> dict:
@@ -18406,6 +18587,15 @@ def _corr_can_finalize() -> bool:
     )
 
 
+def _corr_linked_workflows(kind: str, item_id: int) -> list[WorkflowRequest]:
+    return (
+        WorkflowRequest.query
+        .filter_by(source_corr_kind=kind, source_corr_id=item_id)
+        .order_by(WorkflowRequest.id.desc())
+        .all()
+    )
+
+
 def _corr_procedure_context(kind: str, item) -> dict:
     movements_query = CorrMovement.query.filter_by(
         inbound_id=item.id if kind == "IN" else None,
@@ -18428,6 +18618,7 @@ def _corr_procedure_context(kind: str, item) -> dict:
         "corr_can_act": _corr_can_act(item),
         "corr_can_finalize": _corr_can_finalize(),
         "corr_due_state": corr_due_state(getattr(item, "due_date", None)),
+        "corr_workflows": _corr_linked_workflows(kind, item.id),
     }
 
 
@@ -18586,6 +18777,9 @@ def corr_procedure_action(kind: str, item_id: int):
     new_status = corr_next_status(old_status, action)
     target: dict = {}
     recipient_ids: set[int] = set()
+    official_reply = None
+    official_reply_movement = None
+    official_reply_template = None
 
     if action in {"FORWARD", "SUBMIT_APPROVAL"}:
         target = _corr_parse_competence_value(
@@ -18616,6 +18810,86 @@ def corr_procedure_action(kind: str, item_id: int):
     elif action in {"REPLY", "REQUEST_INFO", "FINAL_REPLY"} and item.created_by_id:
         recipient_ids.add(int(item.created_by_id))
 
+    if action == "FINAL_REPLY" and normalized_kind == "IN":
+        existing_reply = (
+            OutboundMail.query
+            .filter_by(source_inbound_id=item.id)
+            .order_by(OutboundMail.id.desc())
+            .first()
+        )
+        if existing_reply:
+            flash(
+                f"يوجد رد رسمي صادر مرتبط بهذا الوارد بالفعل رقم "
+                f"{existing_reply.ref_no or existing_reply.id}.",
+                "info",
+            )
+            return redirect(url_for("portal.outbound_view", outbound_id=existing_reply.id))
+
+        official_reply_template = _corr_final_reply_template()
+        sent_date = date.today().isoformat()
+        try:
+            reply_ref = _corr_next_ref("OUT", sent_date, item.category or "GENERAL")
+        except Exception:
+            reply_ref = None
+        official_reply = OutboundMail(
+            ref_no=reply_ref,
+            category=item.category or "GENERAL",
+            recipient=item.sender,
+            competence_kind=item.competence_kind,
+            competence_id=item.competence_id,
+            competence_label=item.competence_label,
+            status="DRAFT",
+            route_mode="WORKFLOW" if official_reply_template else "DIRECT",
+            mail_scope="EXTERNAL",
+            priority=item.priority or "NORMAL",
+            confidentiality=item.confidentiality or "NORMAL",
+            workflow_template_id=official_reply_template.id if official_reply_template else None,
+            due_date=item.due_date,
+            current_target_kind=item.competence_kind,
+            current_target_id=item.competence_id,
+            current_target_label=item.competence_label,
+            current_assignee_id=None,
+            source_inbound_id=item.id,
+            subject=f"رد على وارد رقم {item.ref_no or item.id}: {item.subject}"[:500],
+            body=note,
+            sent_date=sent_date,
+            created_by_id=current_user.id,
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(official_reply)
+        db.session.flush()
+
+        if (official_reply.confidentiality or "NORMAL").upper() == "SECRET":
+            for user_id in sorted(_corr_authorized_user_ids(item)):
+                db.session.add(CorrConfidentialAccess(
+                    outbound_id=official_reply.id,
+                    user_id=user_id,
+                    granted_by_id=current_user.id,
+                    created_at=datetime.utcnow(),
+                ))
+
+        official_reply_movement = _corr_add_movement(
+            "OUT",
+            official_reply,
+            "REGISTER",
+            from_status=None,
+            to_status="DRAFT",
+            target={
+                "kind": "INBOUND",
+                "id": item.id,
+                "label": f"رد على وارد رقم {item.ref_no or item.id}",
+            },
+            note=f"إنشاء مسودة الرد الرسمي من الوارد رقم {item.ref_no or item.id}.",
+        )
+        target = {
+            "kind": "OUTBOUND",
+            "id": official_reply.id,
+            "label": f"صادر الرد رقم {official_reply.ref_no or official_reply.id}",
+        }
+        # The inbound record is only completed after the outbound reply's
+        # workflow is finally approved.
+        new_status = "WAITING_APPROVAL"
+
     item.status = new_status
     if action in {"CLOSE", "ARCHIVE"}:
         item.closed_at = datetime.utcnow()
@@ -18637,17 +18911,40 @@ def corr_procedure_action(kind: str, item_id: int):
     files = request.files.getlist("files") or []
     saved = 0
     if any(getattr(upload, "filename", "") for upload in files):
+        file_kind = "OUT" if official_reply else normalized_kind
+        file_item = official_reply or item
         stamp_options = _corr_stamp_options(
-            normalized_kind,
-            item.ref_no or item.id,
-            item.received_date if normalized_kind == "IN" else item.sent_date,
+            file_kind,
+            file_item.ref_no or file_item.id,
+            file_item.sent_date if file_kind == "OUT" else file_item.received_date,
         )
         saved = _save_corr_files(
             files,
-            inbound_id=item.id if normalized_kind == "IN" else None,
-            outbound_id=item.id if normalized_kind == "OUT" else None,
+            inbound_id=file_item.id if file_kind == "IN" else None,
+            outbound_id=file_item.id if file_kind == "OUT" else None,
             stamp_options=stamp_options,
-            movement_id=movement.id,
+            movement_id=(official_reply_movement.id if official_reply_movement else movement.id),
+        )
+
+    linked_workflow = None
+    if official_reply and official_reply_template:
+        reply_attachments = (
+            CorrAttachment.query
+            .filter_by(outbound_id=official_reply.id)
+            .order_by(CorrAttachment.id.asc())
+            .all()
+        )
+        linked_workflow = _start_corr_workflow(
+            "OUT",
+            official_reply,
+            reply_attachments,
+            str(official_reply_template.id),
+            auto_commit=False,
+        )
+    elif official_reply:
+        flash(
+            "تم إنشاء صادر الرد، لكن لم يُعثر على قالب أمانة فعال. يمكن بدء مساره من صفحة الصادر.",
+            "warning",
         )
 
     recipient_ids = _corr_notification_recipient_ids(item, recipient_ids)
@@ -18662,13 +18959,24 @@ def corr_procedure_action(kind: str, item_id: int):
     db.session.add(AuditLog(
         user_id=current_user.id,
         action=f"CORR_{action}",
-        note=f"{CORR_ACTION_LABELS.get(action, action)}; status={old_status}->{new_status}; files={saved}",
+        note=(
+            f"{CORR_ACTION_LABELS.get(action, action)}; status={old_status}->{new_status}; files={saved}"
+            + (f"; outbound_id={official_reply.id}" if official_reply else "")
+            + (f"; workflow_id={linked_workflow.id}" if linked_workflow else "")
+        ),
         target_type="CORR_INBOUND" if normalized_kind == "IN" else "CORR_OUTBOUND",
         target_id=item.id,
         created_at=datetime.utcnow(),
     ))
     db.session.commit()
-    flash(f"تم تنفيذ الإجراء: {CORR_ACTION_LABELS.get(action, action)}.", "success")
+    if official_reply:
+        flash(
+            f"تم إنشاء صادر الرد الرسمي رقم {official_reply.ref_no or official_reply.id}"
+            + (f" وبدء مسار #{linked_workflow.id}." if linked_workflow else "."),
+            "success",
+        )
+    else:
+        flash(f"تم تنفيذ الإجراء: {CORR_ACTION_LABELS.get(action, action)}.", "success")
     return redirect(url_for(redirect_endpoint, **redirect_values))
 
 
@@ -19316,6 +19624,7 @@ def outbound_view(outbound_id: int):
         can_delete=can_delete,
         can_upload=can_upload,
         workflow_templates=_corr_workflow_templates(),
+        source_inbound=getattr(item, "source_inbound", None),
         **procedure_context,
     )
 
@@ -19346,6 +19655,12 @@ def inbound_view(inbound_id: int):
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
     procedure_context = _corr_procedure_context("IN", item)
+    official_replies = (
+        OutboundMail.query
+        .filter_by(source_inbound_id=item.id)
+        .order_by(OutboundMail.id.desc())
+        .all()
+    )
 
     return render_template(
         "portal/corr/inbound_view.html",
@@ -19356,6 +19671,7 @@ def inbound_view(inbound_id: int):
         can_delete=can_delete,
         can_upload=can_upload,
         workflow_templates=_corr_workflow_templates(),
+        official_replies=official_replies,
         **procedure_context,
     )
 

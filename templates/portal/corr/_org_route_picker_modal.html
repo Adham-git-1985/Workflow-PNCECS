@@ -1,0 +1,96 @@
+<div class="modal fade" id="corrOrgRoutePickerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title"><i class="bi bi-diagram-3"></i> التحويل المباشر حسب الهيكل التنظيمي</h5>
+          <div class="small text-muted">اختر جهة تنظيمية أو موظفًا؛ الموظفون مرتبون وفق التسلسل الوظيفي.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group mb-3">
+          <span class="input-group-text"><i class="bi bi-search"></i></span>
+          <input type="search" class="form-control" id="corrOrgRouteSearch" placeholder="ابحث عن إدارة، دائرة، قسم، موظف أو مسمى وظيفي…">
+        </div>
+        <div id="corrOrgRouteTree"
+             data-url="{{ url_for('portal.corr_org_route_picker') }}"
+             class="border rounded-3 p-3 bg-body-tertiary">
+          <div class="text-center text-muted py-5">
+            <span class="spinner-border spinner-border-sm" aria-hidden="true"></span>
+            جارٍ تحميل الهيكل التنظيمي…
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const modalElement = document.getElementById('corrOrgRoutePickerModal');
+  const treeElement = document.getElementById('corrOrgRouteTree');
+  const searchElement = document.getElementById('corrOrgRouteSearch');
+  if (!modalElement || !treeElement || !window.bootstrap) return;
+
+  const modal = bootstrap.Modal.getOrCreateInstance(modalElement);
+  let targetSelector = '';
+  let loaded = false;
+
+  const loadTree = async function () {
+    if (loaded) return;
+    try {
+      const response = await fetch(treeElement.dataset.url, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      treeElement.innerHTML = await response.text();
+      loaded = true;
+    } catch (error) {
+      treeElement.innerHTML = '<div class="alert alert-danger mb-0">تعذر تحميل الهيكل التنظيمي. أعد المحاولة.</div>';
+    }
+  };
+
+  document.addEventListener('click', function (event) {
+    const trigger = event.target.closest('[data-corr-org-picker]');
+    if (trigger) {
+      targetSelector = trigger.dataset.targetSelect || '';
+      modal.show();
+      loadTree();
+      return;
+    }
+
+    const picked = event.target.closest('.corr-route-pick');
+    if (!picked || !modalElement.contains(picked) || !targetSelector) return;
+    const select = document.querySelector(targetSelector);
+    if (!select) return;
+    const value = picked.dataset.value || '';
+    const label = picked.dataset.label || value;
+    let option = Array.from(select.options).find(function (item) { return item.value === value; });
+    if (!option) {
+      option = new Option(label, value, true, true);
+      select.add(option);
+    }
+    select.value = value;
+    select.dispatchEvent(new Event('change', {bubbles: true}));
+    const outputSelector = select.dataset.selectedOutput;
+    if (outputSelector) {
+      const output = document.querySelector(outputSelector);
+      if (output) output.textContent = label;
+    }
+    modal.hide();
+  });
+
+  if (searchElement) {
+    searchElement.addEventListener('input', function () {
+      const query = (searchElement.value || '').trim().toLowerCase();
+      treeElement.querySelectorAll('.corr-route-node').forEach(function (node) {
+        const visible = !query || (node.textContent || '').toLowerCase().includes(query);
+        node.classList.toggle('d-none', !visible);
+        if (visible && query) {
+          const details = node.querySelector(':scope > details');
+          if (details) details.open = true;
+        }
+      });
+    });
+  }
+});
+</script>

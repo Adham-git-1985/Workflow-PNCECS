@@ -67,6 +67,20 @@
       </div>
     </div>
 
+    {% if official_replies %}
+      <div class="alert alert-success border-success-subtle">
+        <div class="fw-semibold mb-2"><i class="bi bi-reply-all"></i> الردود الرسمية الصادرة</div>
+        <div class="d-flex flex-wrap gap-2">
+          {% for reply in official_replies %}
+            <a class="btn btn-sm btn-light border" href="{{ url_for('portal.outbound_view', outbound_id=reply.id) }}">
+              صادر {{ reply.ref_no or reply.id }}
+              <span class="badge text-bg-success">{{ reply.status|ui_label }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      </div>
+    {% endif %}
+
     {% include 'portal/corr/_procedure_panel.html' %}
 
     <div class="bg-white rounded-3 shadow-sm p-4">

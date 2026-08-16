@@ -3998,6 +3998,13 @@ class OutboundMail(db.Model):
     current_target_id = db.Column(db.Integer, nullable=True, index=True)
     current_target_label = db.Column(db.String(255), nullable=True, index=True)
     current_assignee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    # Official reply generated from an inbound correspondence record.
+    source_inbound_id = db.Column(
+        db.Integer,
+        db.ForeignKey("corr_inbound.id"),
+        nullable=True,
+        index=True,
+    )
     closed_at = db.Column(db.DateTime, nullable=True, index=True)
     closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     deadline_notified_on = db.Column(db.String(10), nullable=True, index=True)
@@ -4018,6 +4025,12 @@ class OutboundMail(db.Model):
         lazy="joined",
     )
     current_assignee = db.relationship("User", foreign_keys=[current_assignee_id], lazy="joined")
+    source_inbound = db.relationship(
+        "InboundMail",
+        foreign_keys=[source_inbound_id],
+        backref=db.backref("official_replies", lazy="dynamic"),
+        lazy="joined",
+    )
     closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
     def __repr__(self) -> str:
         return f"<OutboundMail id={self.id} ref={self.ref_no!r}>"

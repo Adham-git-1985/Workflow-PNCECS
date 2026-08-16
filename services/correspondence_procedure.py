@@ -35,6 +35,9 @@ ACTION_LABELS = {
     "CLOSE": "إغلاق المعاملة",
     "ARCHIVE": "أرشفة المعاملة",
     "DEADLINE_REMINDER": "تنبيه موعد نهائي",
+    "WORKFLOW_SYNC": "تحديث تلقائي من مسار",
+    "WORKFLOW_APPROVED": "اعتماد المعاملة في مسار",
+    "WORKFLOW_REJECTED": "إعادة المعاملة من مسار",
 }
 
 QUEUE_LABELS = {

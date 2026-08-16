@@ -1,0 +1,53 @@
+{% macro render_route_node(node, level=0) %}
+  <li class="corr-route-node border-end border-primary-subtle pe-2 my-2"
+      data-search-text="{{ (node.type_name ~ ' ' ~ node.name_ar ~ ' ' ~ (node.code or '') ~ ' ' ~ ((node.people|map(attribute='name')|list)|join(' ')))|lower }}">
+    <details {% if level < 2 %}open{% endif %}>
+      <summary class="d-flex flex-wrap align-items-center gap-2 py-1" style="cursor:pointer">
+        <span class="badge text-bg-light border">{{ node.type_name or node.type_code }}</span>
+        <strong>{{ node.name_ar }}</strong>
+        {% if node.code %}<small class="text-muted">{{ node.code }}</small>{% endif %}
+        <span class="me-auto"></span>
+        {% if node.eligible %}
+          <button type="button"
+                  class="btn btn-sm btn-outline-primary corr-route-pick"
+                  data-value="ORG_NODE:{{ node.id }}"
+                  data-label="{{ node.name_ar }} ({{ node.type_name or node.type_code }})">
+            تحويل للجهة
+          </button>
+        {% endif %}
+      </summary>
+
+      {% if node.people %}
+        <div class="row g-2 mt-1 mb-2">
+          {% for person in node.people %}
+            <div class="col-xl-4 col-md-6 corr-route-person" data-search-text="{{ (person.name ~ ' ' ~ person.title)|lower }}">
+              <button type="button"
+                      class="btn btn-light border w-100 text-end h-100 corr-route-pick"
+                      data-value="USER:{{ person.id }}"
+                      data-label="{{ person.name }} ({{ person.title }})">
+                <span class="d-block fw-semibold"><i class="bi bi-person"></i> {{ person.name }}</span>
+                <small class="text-muted">{{ person.manager_role or person.title }}</small>
+              </button>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      {% if node.children %}
+        <ul class="list-unstyled pe-3 mb-0">
+          {% for child in node.children %}
+            {{ render_route_node(child, level + 1) }}
+          {% endfor %}
+        </ul>
+      {% endif %}
+    </details>
+  </li>
+{% endmacro %}
+
+<ul class="list-unstyled mb-0">
+  {% for node in tree %}
+    {{ render_route_node(node) }}
+  {% else %}
+    <li class="text-center text-muted py-4">لا توجد عناصر مفعلة للتحويل في الهيكل التنظيمي.</li>
+  {% endfor %}
+</ul>
