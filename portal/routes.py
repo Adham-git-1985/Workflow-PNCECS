@@ -46,6 +46,7 @@ from sqlalchemy.sql import exists
 from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
+from utils.corr_refs import correspondence_reference_label
 from utils.file_uploads import (
     clean_original_filename,
     is_allowed_attachment,
@@ -1619,7 +1620,7 @@ def _corr_date_token(date_s: str) -> str:
         parsed = datetime.strptime((date_s or "").strip()[:10], "%Y-%m-%d")
     except (TypeError, ValueError):
         parsed = datetime.utcnow()
-    return parsed.strftime("%d%m%Y")
+    return parsed.strftime("%d%m-%Y")
 
 
 def _corr_format_ref(kind: str, date_s: str, serial: int) -> str:
@@ -1638,7 +1639,7 @@ def _corr_ref_serial(ref_no: str | None, kind: str, year: int) -> int:
     prefixes = (re.escape(_CORR_REF_PREFIXES[k]), k, "INBOUND" if k == "IN" else "OUTBOUND")
     # Accept the new DDMMYYYY token and the former YYYY token so deployment
     # continues safely from historical counters and references.
-    date_token = rf"(?:\d{{4}}{int(year):04d}|{int(year):04d})"
+    date_token = rf"(?:\d{{4}}[-/]?{int(year):04d}|{int(year):04d})"
     match = re.fullmatch(
         rf"(?:{'|'.join(prefixes)})[-/]{date_token}[-/](\d+)",
         value,
@@ -18962,6 +18963,9 @@ def corr_procedure_action(kind: str, item_id: int):
         official_reply_template = _corr_final_reply_template()
         sent_date = date.today().isoformat()
         reply_ref = _corr_next_ref("OUT", sent_date)
+        source_ref_label = correspondence_reference_label(
+            "IN", item.ref_no or item.id, include_number_word=True
+        )
         official_reply = OutboundMail(
             ref_no=reply_ref,
             category=item.category or "GENERAL",
@@ -18981,7 +18985,7 @@ def corr_procedure_action(kind: str, item_id: int):
             current_target_label=item.competence_label,
             current_assignee_id=None,
             source_inbound_id=item.id,
-            subject=f"رد على وارد رقم {item.ref_no or item.id}: {item.subject}"[:500],
+            subject=f"رد على {source_ref_label}: {item.subject}"[:500],
             body=note,
             sent_date=sent_date,
             created_by_id=current_user.id,
@@ -19008,14 +19012,17 @@ def corr_procedure_action(kind: str, item_id: int):
             target={
                 "kind": "INBOUND",
                 "id": item.id,
-                "label": f"رد على وارد رقم {item.ref_no or item.id}",
+                "label": f"رد على {source_ref_label}",
             },
-            note=f"إنشاء مسودة الرد الرسمي من الوارد رقم {item.ref_no or item.id}.",
+            note=f"إنشاء مسودة الرد الرسمي من {source_ref_label}.",
+        )
+        official_reply_ref_label = correspondence_reference_label(
+            "OUT", official_reply.ref_no or official_reply.id, include_number_word=True
         )
         target = {
             "kind": "OUTBOUND",
             "id": official_reply.id,
-            "label": f"صادر الرد رقم {official_reply.ref_no or official_reply.id}",
+            "label": f"رد رسمي عبر {official_reply_ref_label}",
         }
         # The inbound record is only completed after the outbound reply's
         # workflow is finally approved.
@@ -25147,14 +25154,14 @@ def _audit_target_url_label(r):
             if m and not _corr_can_access(m):
                 return (None, "مراسلة سرية محجوبة")
             ref = (m.ref_no or f"#{m.id}") if m else f"#{tid}"
-            label = f"وارد {ref}" if m else f"وارد {ref}"
+            label = correspondence_reference_label("IN", ref)
             return (url_for('portal.inbound_view', inbound_id=int(tid)), label)
         if t in ("OUTBOUND_MAIL", "CORR_OUTBOUND"):
             m = OutboundMail.query.get(int(tid))
             if m and not _corr_can_access(m):
                 return (None, "مراسلة سرية محجوبة")
             ref = (m.ref_no or f"#{m.id}") if m else f"#{tid}"
-            label = f"صادر {ref}" if m else f"صادر {ref}"
+            label = correspondence_reference_label("OUT", ref)
             return (url_for('portal.outbound_view', outbound_id=int(tid)), label)
 
         # Transport

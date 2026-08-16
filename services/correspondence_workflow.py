@@ -12,6 +12,7 @@ from datetime import datetime
 from sqlalchemy import func
 
 from extensions import db
+from utils.corr_refs import correspondence_reference_label
 from models import (
     CorrMovement,
     Department,
@@ -378,6 +379,9 @@ def sync_correspondence_from_workflow(
             inbound_new = "COMPLETED" if new_status == "APPROVED" else "RETURNED"
             inbound.status = inbound_new
             if inbound_old != inbound_new:
+                outbound_ref_label = correspondence_reference_label(
+                    "OUT", item.ref_no or item.id, include_number_word=True
+                )
                 _append_movement(
                     kind="IN",
                     item=inbound,
@@ -385,11 +389,11 @@ def sync_correspondence_from_workflow(
                     action="FINAL_REPLY" if inbound_new == "COMPLETED" else "WORKFLOW_REJECTED",
                     old_status=inbound_old,
                     new_status=inbound_new,
-                    target={"kind": "OUTBOUND", "id": item.id, "label": f"صادر رقم {item.ref_no or item.id}", "user_id": None},
+                    target={"kind": "OUTBOUND", "id": item.id, "label": outbound_ref_label, "user_id": None},
                     note=(
-                        f"اكتمل الرد الرسمي عبر الصادر رقم {item.ref_no or item.id} ومسار #{req.id}."
+                        f"اكتمل الرد الرسمي عبر {outbound_ref_label} ومسار #{req.id}."
                         if inbound_new == "COMPLETED"
-                        else f"أُعيد الرد الرسمي المرتبط بالصادر رقم {item.ref_no or item.id} من مسار #{req.id}."
+                        else f"أُعيد الرد الرسمي المرتبط بـ {outbound_ref_label} من مسار #{req.id}."
                     ),
                 )
 

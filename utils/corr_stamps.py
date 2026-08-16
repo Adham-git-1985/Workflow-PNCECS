@@ -9,6 +9,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+from utils.corr_refs import correspondence_reference_label
+
 
 STAMPABLE_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 STAMPABLE_EXTS = STAMPABLE_IMAGE_EXTS | {".pdf"}
@@ -143,11 +145,11 @@ def build_stamp_image(options: CorrStampOptions) -> Image.Image:
     _draw_centered(draw, "للتربية والثقافة والعلوم", regular, blue, 38, text_right, 88, stroke_width=1)
     _draw_centered(draw, _format_stamp_date(options.stamp_date), date_font, blue, 38, text_right, 155, stroke_width=1)
 
-    ref_no = (options.ref_no or "").strip()
-    if (options.kind or "").upper() == "OUT":
-        label = f"صادر رقم {ref_no}"
-    else:
-        label = f"وارد {ref_no}"
+    label = correspondence_reference_label(
+        options.kind,
+        options.ref_no,
+        include_number_word=(options.kind or "").upper() == "OUT",
+    )
     _draw_centered(draw, label, bold, blue, 38, text_right, 212, stroke_width=1)
 
     return canvas

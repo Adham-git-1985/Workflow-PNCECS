@@ -89,6 +89,10 @@ class CorrespondenceWorkflowTests(unittest.TestCase):
         self.assertEqual(append_movement.call_count, 2)
         self.assertEqual(append_movement.call_args_list[0].kwargs["action"], "WORKFLOW_APPROVED")
         self.assertEqual(append_movement.call_args_list[1].kwargs["action"], "FINAL_REPLY")
+        self.assertEqual(
+            append_movement.call_args_list[1].kwargs["target"]["label"],
+            "صادر رقم OUT-31",
+        )
 
 
 if __name__ == "__main__":
