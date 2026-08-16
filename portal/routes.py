@@ -1613,10 +1613,19 @@ def _corr_normalize_kind(kind: str | None) -> str:
     return k if k in _CORR_REF_PREFIXES else "IN"
 
 
-def _corr_format_ref(kind: str, year: int, serial: int) -> str:
+def _corr_date_token(date_s: str) -> str:
+    """Format an ISO correspondence date as DDMMYYYY for its reference."""
+    try:
+        parsed = datetime.strptime((date_s or "").strip()[:10], "%Y-%m-%d")
+    except (TypeError, ValueError):
+        parsed = datetime.utcnow()
+    return parsed.strftime("%d%m%Y")
+
+
+def _corr_format_ref(kind: str, date_s: str, serial: int) -> str:
     """Return a human-readable official correspondence reference."""
     k = _corr_normalize_kind(kind)
-    return f"{_CORR_REF_PREFIXES[k]}-{int(year):04d}-{int(serial):06d}"
+    return f"{_CORR_REF_PREFIXES[k]}-{_corr_date_token(date_s)}-{int(serial):06d}"
 
 
 def _corr_ref_serial(ref_no: str | None, kind: str, year: int) -> int:
@@ -1627,8 +1636,11 @@ def _corr_ref_serial(ref_no: str | None, kind: str, year: int) -> int:
 
     k = _corr_normalize_kind(kind)
     prefixes = (re.escape(_CORR_REF_PREFIXES[k]), k, "INBOUND" if k == "IN" else "OUTBOUND")
+    # Accept the new DDMMYYYY token and the former YYYY token so deployment
+    # continues safely from historical counters and references.
+    date_token = rf"(?:\d{{4}}{int(year):04d}|{int(year):04d})"
     match = re.fullmatch(
-        rf"(?:{'|'.join(prefixes)})[-/]{int(year):04d}[-/](\d+)",
+        rf"(?:{'|'.join(prefixes)})[-/]{date_token}[-/](\d+)",
         value,
         flags=re.IGNORECASE,
     )
@@ -1692,7 +1704,7 @@ def _corr_next_ref(kind: str, date_s: str, category: str | None = None) -> str:
             "next_no": baseline + 1,
         },
     ).scalar_one()
-    return _corr_format_ref(k, year, int(serial))
+    return _corr_format_ref(k, date_s, int(serial))
 
 
 

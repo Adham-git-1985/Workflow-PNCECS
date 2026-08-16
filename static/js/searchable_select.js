@@ -66,8 +66,143 @@
     return firstVisible;
   }
 
+  function enhanceBoundedSelect(selectEl) {
+    const wrapper = document.createElement("div");
+    wrapper.className = "ss-wrapper dropdown";
+    wrapper.style.width = "100%";
+    wrapper.style.maxWidth = "100%";
+    wrapper.style.minWidth = "0";
+
+    const parent = selectEl.parentNode;
+    parent.insertBefore(wrapper, selectEl);
+    wrapper.appendChild(selectEl);
+    selectEl.classList.add("ss-enhanced", "d-none");
+
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "form-select text-start ss-picker-toggle";
+    toggle.dataset.bsToggle = "dropdown";
+    toggle.dataset.bsAutoClose = "outside";
+    toggle.dataset.bsDisplay = "static";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.setAttribute("aria-haspopup", "listbox");
+
+    const label = document.createElement("span");
+    label.className = "ss-picker-label";
+    label.style.display = "block";
+    label.style.minWidth = "0";
+    label.style.overflow = "hidden";
+    label.style.textOverflow = "ellipsis";
+    label.style.whiteSpace = "nowrap";
+    toggle.appendChild(label);
+
+    const menu = document.createElement("div");
+    menu.className = "dropdown-menu shadow p-2 ss-picker-menu";
+    menu.style.width = "100%";
+    menu.style.minWidth = "0";
+    menu.style.maxWidth = "100%";
+    menu.style.overflow = "hidden";
+
+    const input = document.createElement("input");
+    input.type = "search";
+    input.autocomplete = "off";
+    input.className = "form-control form-control-sm mb-2 ss-input";
+    input.placeholder = isRtl() ? "اكتب اسم الجهة أو المستخدم..." : "Search...";
+    input.setAttribute("aria-label", isRtl() ? "بحث داخل قائمة جهة الاختصاص" : "Search options");
+    if (isRtl()) input.dir = "rtl";
+
+    const results = document.createElement("div");
+    results.className = "ss-picker-results";
+    results.setAttribute("role", "listbox");
+    results.style.maxHeight = "18rem";
+    results.style.overflowX = "hidden";
+    results.style.overflowY = "auto";
+
+    const empty = document.createElement("div");
+    empty.className = "text-muted text-center small py-3 d-none";
+    empty.textContent = isRtl() ? "لا توجد نتائج مطابقة." : "No matching results.";
+
+    menu.appendChild(input);
+    menu.appendChild(results);
+    menu.appendChild(empty);
+    wrapper.appendChild(toggle);
+    wrapper.appendChild(menu);
+
+    let optionButtons = [];
+    const rebuildOptions = function () {
+      results.innerHTML = "";
+      optionButtons = Array.from(selectEl.options).map(function (option) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "dropdown-item ss-picker-option";
+        button.dataset.value = option.value || "";
+        button.dataset.label = (option.textContent || option.label || "").trim();
+        button.textContent = button.dataset.label;
+        button.setAttribute("role", "option");
+        button.style.display = "block";
+        button.style.width = "100%";
+        button.style.padding = ".55rem .7rem";
+        button.style.textAlign = "start";
+        button.style.whiteSpace = "normal";
+        button.style.overflowWrap = "anywhere";
+        button.style.lineHeight = "1.45";
+        button.style.borderRadius = ".35rem";
+        if (!option.value) button.classList.add("text-muted");
+        button.addEventListener("click", function () {
+          selectEl.value = button.dataset.value;
+          selectEl.dispatchEvent(new Event("change", { bubbles: true }));
+          input.value = "";
+          filterButtons();
+          if (window.bootstrap && window.bootstrap.Dropdown) {
+            window.bootstrap.Dropdown.getOrCreateInstance(toggle).hide();
+          }
+        });
+        results.appendChild(button);
+        return button;
+      });
+    };
+
+    const refreshSelection = function () {
+      const selected = selectEl.options[selectEl.selectedIndex];
+      const selectedLabel = selected ? (selected.textContent || selected.label || "").trim() : "";
+      label.textContent = selectedLabel || (isRtl() ? "— اختر —" : "— Select —");
+      toggle.title = selected && selected.value ? selectedLabel : "";
+      if (selected && !optionButtons.some(function (button) { return button.dataset.value === selected.value; })) {
+        rebuildOptions();
+      }
+      optionButtons.forEach(function (button) {
+        const active = button.dataset.value === selectEl.value;
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-selected", active ? "true" : "false");
+      });
+    };
+
+    const filterButtons = function () {
+      const query = normalizeText(input.value);
+      let visibleCount = 0;
+      optionButtons.forEach(function (button) {
+        const visible = !query || normalizeText(button.dataset.label).includes(query);
+        button.classList.toggle("d-none", !visible);
+        if (visible) visibleCount += 1;
+      });
+      empty.classList.toggle("d-none", visibleCount !== 0);
+    };
+
+    rebuildOptions();
+    refreshSelection();
+    input.addEventListener("input", filterButtons);
+    input.addEventListener("click", function (event) { event.stopPropagation(); });
+    selectEl.addEventListener("change", refreshSelection);
+    toggle.addEventListener("shown.bs.dropdown", function () { input.focus(); });
+  }
+
   function enhanceSelect(selectEl) {
     if (!shouldEnhance(selectEl)) return;
+
+    if (selectEl.dataset && selectEl.dataset.searchableMode === "bounded") {
+      enhanceBoundedSelect(selectEl);
+      return;
+    }
 
     // wrapper
     const wrapper = document.createElement("div");

@@ -56,7 +56,7 @@
 
     <div class="col-lg-3">
       <label class="form-label">جهة الاختصاص</label>
-      <select class="form-select" name="competence" data-searchable="1">
+      <select class="form-select" name="competence" data-searchable="1" data-searchable-mode="bounded">
         <option value="">الكل</option>
         {% for opt in competence_options %}
           <option value="{{ opt.value }}" {% if competences and (opt.value in competences) %}selected{% endif %}>{{ opt.label }}</option>

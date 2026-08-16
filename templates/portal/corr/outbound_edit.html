@@ -70,7 +70,7 @@
           <div class="col-md-6">
             <label class="form-label">جهة الاختصاص</label>
             {% set cur_competence = request.form.get('competence') or selected_competence %}
-            <select class="form-select" name="competence" id="competence" data-searchable="1">
+            <select class="form-select" name="competence" id="competence" data-searchable="1" data-searchable-mode="bounded">
               <option value="" {% if not cur_competence %}selected{% endif %}>— اختر جهة الاختصاص —</option>
               {% for opt in competence_options %}
                 <option value="{{ opt.value }}" {% if cur_competence == opt.value %}selected{% endif %}>{{ opt.label }}</option>
@@ -80,7 +80,7 @@
                     data-corr-org-picker data-target-select="#competence">
               <i class="bi bi-diagram-3"></i> اختيار مباشر من الهيكل التنظيمي
             </button>
-            <div class="form-text">اختر الجهة أو الموظف من الشجرة، أو استخدم البحث في القائمة.</div>
+            <div class="form-text">اختر الجهة أو المستخدم من الهيكل، أو استخدم البحث في القائمة.</div>
           </div>
 
           {% include 'portal/corr/_procedure_fields.html' %}

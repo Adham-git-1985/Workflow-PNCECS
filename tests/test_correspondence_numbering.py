@@ -32,13 +32,14 @@ class CorrespondenceNumberingTests(unittest.TestCase):
         db.session.commit()
 
     def test_reference_format_is_explicit_and_readable(self):
-        self.assertEqual(_corr_format_ref("IN", 2026, 1), "وارد-2026-000001")
-        self.assertEqual(_corr_format_ref("OUT", 2026, 42), "صادر-2026-000042")
+        self.assertEqual(_corr_format_ref("IN", "2026-08-16", 1), "وارد-16082026-000001")
+        self.assertEqual(_corr_format_ref("OUT", "2026-12-03", 42), "صادر-03122026-000042")
 
     def test_serial_reader_supports_new_and_legacy_references(self):
         self.assertEqual(_corr_ref_serial("وارد-2026-000117", "IN", 2026), 117)
+        self.assertEqual(_corr_ref_serial("وارد-16082026-000118", "IN", 2026), 118)
         self.assertEqual(_corr_ref_serial("IN-2026-0018", "IN", 2026), 18)
-        self.assertEqual(_corr_ref_serial("صادر/2026/000019", "OUT", 2026), 19)
+        self.assertEqual(_corr_ref_serial("صادر/16082026/000019", "OUT", 2026), 19)
         self.assertEqual(_corr_ref_serial("manual-reference", "OUT", 2026), 0)
 
     def test_all_users_and_categories_share_one_inbound_sequence(self):
@@ -65,8 +66,8 @@ class CorrespondenceNumberingTests(unittest.TestCase):
         first = _corr_next_ref("IN", "2026-03-01", "GENERAL")
         second = _corr_next_ref("IN", "2026-03-02", "FINANCE")
 
-        self.assertEqual(first, "وارد-2026-000003")
-        self.assertEqual(second, "وارد-2026-000004")
+        self.assertEqual(first, "وارد-01032026-000003")
+        self.assertEqual(second, "وارد-02032026-000004")
         system_counter = CorrCounter.query.filter_by(
             kind="IN", year=2026, category="SYSTEM"
         ).one()
@@ -76,8 +77,8 @@ class CorrespondenceNumberingTests(unittest.TestCase):
         inbound_ref = _corr_next_ref("IN", "2027-01-01")
         outbound_ref = _corr_next_ref("OUT", "2027-01-01")
 
-        self.assertEqual(inbound_ref, "وارد-2027-000001")
-        self.assertEqual(outbound_ref, "صادر-2027-000001")
+        self.assertEqual(inbound_ref, "وارد-01012027-000001")
+        self.assertEqual(outbound_ref, "صادر-01012027-000001")
 
 
 if __name__ == "__main__":
