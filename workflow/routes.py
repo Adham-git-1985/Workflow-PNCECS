@@ -15,7 +15,7 @@ from urllib.parse import quote
 from flask import (
     send_file, abort, render_template,
     request, redirect, url_for,
-    flash, jsonify, Response, stream_with_context
+    flash, jsonify, Response, stream_with_context, current_app
 )
 from flask_login import login_required, current_user
 
@@ -60,6 +60,12 @@ from services.correspondence_procedure import (
 from services.circulars import (
     can_user_view_circular,
     visible_circulars_query,
+)
+from services.correspondence_intake import (
+    CorrespondenceIntakeError,
+    OcrConfig,
+    analyze_workflow_attachment,
+    read_limited_upload,
 )
 
 from models import (
@@ -2086,9 +2092,117 @@ def _get_request_followers_user_ids(req_id: int) -> set[int]:
 # =========================
 # View request
 # =========================
+@workflow_bp.route("/new/analyze-attachment", methods=["POST"])
+@login_required
+def analyze_new_request_attachment():
+    """Extract local, reviewable workflow fields from one selected file."""
+    upload = request.files.get("file")
+    try:
+        max_bytes = int(
+            current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)
+        )
+        max_text_chars = int(
+            current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000)
+        )
+        max_pdf_pages = int(
+            current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40)
+        )
+        ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
+        ocr_config = OcrConfig(
+            enabled=str(ocr_enabled_value).strip().lower() in {"1", "true", "yes", "on"},
+            command=str(current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract")),
+            languages=str(current_app.config.get("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")),
+            max_pages=int(current_app.config.get("CORR_INTAKE_OCR_MAX_PAGES", 10)),
+            dpi=int(current_app.config.get("CORR_INTAKE_OCR_DPI", 200)),
+            timeout_seconds=float(
+                current_app.config.get("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+            ),
+            max_image_pixels=int(
+                current_app.config.get("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+            ),
+        )
+        payload = read_limited_upload(upload, max_bytes)
+        request_types = (
+            RequestType.query
+            .filter_by(is_active=True)
+            .order_by(RequestType.name_ar.asc())
+            .all()
+        )
+        templates = (
+            WorkflowTemplate.query
+            .filter_by(is_active=True)
+            .order_by(WorkflowTemplate.name.asc())
+            .all()
+        )
+        analysis = analyze_workflow_attachment(
+            payload,
+            getattr(upload, "filename", "") or "attachment",
+            request_type_choices=[
+                {
+                    "value": str(row.id),
+                    "label": row.label,
+                    "match_text": " ".join(
+                        value
+                        for value in (row.label, row.name_en, row.code)
+                        if value
+                    ),
+                }
+                for row in request_types
+            ],
+            workflow_choices=[
+                {"value": str(template.id), "label": template.name}
+                for template in templates
+            ],
+            max_text_chars=max_text_chars,
+            max_pdf_pages=max_pdf_pages,
+            ocr_config=ocr_config,
+        )
+
+        request_type_suggestion = analysis.get("suggestions", {}).get("request_type")
+        request_type_value = str(
+            (request_type_suggestion or {}).get("select_value") or ""
+        )
+        if request_type_value.isdigit():
+            routed_template, matched_rule = _select_template_for(
+                current_user,
+                int(request_type_value),
+            )
+            if routed_template:
+                analysis["suggestions"]["workflow_template"] = {
+                    "value": routed_template.name,
+                    "select_value": str(routed_template.id),
+                    "confidence": 0.98,
+                    "reason": (
+                        f"قالب محدد بقاعدة التوجيه #{matched_rule.id} لنوع الطلب"
+                        if matched_rule
+                        else "قالب محدد من توجيه نوع الطلب"
+                    ),
+                }
+
+        return jsonify({"ok": True, "analysis": analysis})
+    except CorrespondenceIntakeError as exc:
+        return jsonify({
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }), exc.status_code
+    except Exception:
+        current_app.logger.exception("Failed to analyze a new workflow attachment")
+        return jsonify({
+            "ok": False,
+            "error": {
+                "code": "ANALYSIS_FAILED",
+                "message": "تعذر تحليل المرفق حالياً. يمكنك متابعة إنشاء المسار يدوياً.",
+            },
+        }), 500
+
+
 @workflow_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new_request():
+    intake_max_bytes = max(
+        1,
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
+    )
     # load request types (may be empty)
     request_types = (
         RequestType.query
@@ -2226,7 +2340,9 @@ def new_request():
         templates=templates,
         selected_rt_id=int(selected_rt_id) if (selected_rt_id and str(selected_rt_id).isdigit()) else None,
         suggested_template=suggested_template,
-        matched_rule=matched_rule
+        matched_rule=matched_rule,
+        intake_max_bytes=intake_max_bytes,
+        intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
     )
 
 

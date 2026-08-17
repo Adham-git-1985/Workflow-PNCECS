@@ -15,7 +15,8 @@
   <div class="alert alert-warning">لا توجد مسارات مفعّلة. يرجى إنشاء مسار عمل من صفحة المسارات.</div>
 {% endif %}
 
-<form method="post" class="card shadow-sm" enctype="multipart/form-data">
+<form method="post" class="card shadow-sm" enctype="multipart/form-data" id="workflowNewRequestForm">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
   <div class="card-body">
     <div class="row g-3">
 
@@ -69,9 +70,41 @@
       </div>
 
       <div class="col-12">
-        <label class="form-label fw-bold">📎 مرفقات الطلب (اختياري)</label>
-        <input type="file" name="files" class="form-control" multiple>
-        <div class="form-text">يمكنك اختيار أكثر من ملف، وسيتم ربطها بالطلب تلقائياً.</div>
+        <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+            <div>
+              <div class="fw-bold">📎 مرفق المسار والتفريغ الذكي</div>
+              <div class="small text-muted">حلّل المرفق ثم فرّغ عنوانه ومحتواه ونوعه والمسار المقترح على النموذج.</div>
+            </div>
+            <button class="btn btn-primary" type="button" id="analyzeWorkflowAttachment"
+                    data-url="{{ url_for('workflow.analyze_new_request_attachment') }}"
+                    data-max-bytes="{{ intake_max_bytes }}">
+              <i class="bi bi-file-earmark-text"></i> تحليل المرفق
+            </button>
+          </div>
+
+          <label class="form-label fw-bold" for="workflowRequestFiles">مرفقات الطلب (اختياري)</label>
+          <input type="file" name="files" class="form-control" id="workflowRequestFiles" multiple>
+          <div class="form-text">
+            يُحلّل المرفق الأول محليًا بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>،
+            وتُحفظ جميع الملفات المختارة وتُربط بالطلب تلقائيًا.
+          </div>
+
+          <div class="small mt-2 d-none" id="workflowAnalysisStatus" role="status" aria-live="polite"></div>
+          <div class="mt-3 d-none" id="workflowAnalysisResults">
+            <div class="alert alert-info py-2 mb-2" id="workflowAnalysisPrivacy">
+              التحليل وOCR محليان داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.
+            </div>
+            <div id="workflowAnalysisWarnings"></div>
+            <div class="list-group mb-3" id="workflowAnalysisSuggestions"></div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <button class="btn btn-success" type="button" id="applyWorkflowSuggestions">
+                <i class="bi bi-box-arrow-in-down"></i> تفريغ البيانات على نموذج المسار
+              </button>
+              <span class="small text-muted">راجع البيانات والقالب المقترح قبل إنشاء الطلب.</span>
+            </div>
+          </div>
+        </div>
       </div>
 
 
@@ -144,5 +177,189 @@
   })();
 </script>
 {% endif %}
+
+<script>
+  (function(){
+    "use strict";
+
+    var form = document.getElementById("workflowNewRequestForm");
+    var fileInput = document.getElementById("workflowRequestFiles");
+    var analyzeButton = document.getElementById("analyzeWorkflowAttachment");
+    var applyButton = document.getElementById("applyWorkflowSuggestions");
+    var statusBox = document.getElementById("workflowAnalysisStatus");
+    var resultsBox = document.getElementById("workflowAnalysisResults");
+    var warningsBox = document.getElementById("workflowAnalysisWarnings");
+    var suggestionsBox = document.getElementById("workflowAnalysisSuggestions");
+    var privacyBox = document.getElementById("workflowAnalysisPrivacy");
+    var latestAnalysis = null;
+
+    var fieldLabels = {
+      title: "عنوان الطلب",
+      description: "الوصف / الملاحظات",
+      request_type: "نوع الطلب",
+      workflow_template: "المسار"
+    };
+
+    function setStatus(message, level) {
+      statusBox.className = "alert alert-" + level + " py-2 mt-2 mb-0";
+      statusBox.textContent = message;
+    }
+
+    function formatFileSize(bytes) {
+      if (bytes >= 1024 * 1024) {
+        return String(Math.round((bytes / (1024 * 1024)) * 10) / 10) + " ميجابايت";
+      }
+      if (bytes >= 1024) return String(Math.round(bytes / 1024)) + " كيلوبايت";
+      return String(bytes) + " بايت";
+    }
+
+    function suggestionSummary(key, suggestion) {
+      if (key === "description") {
+        return "نص مستخرج بطول " + String((suggestion.value || "").length) + " حرفًا";
+      }
+      return String(suggestion.value || "");
+    }
+
+    function renderAnalysis(analysis) {
+      latestAnalysis = analysis;
+      suggestionsBox.innerHTML = "";
+      warningsBox.innerHTML = "";
+      resultsBox.classList.remove("d-none");
+
+      if (analysis.ocr && analysis.ocr.used) {
+        privacyBox.textContent = "تم استخدام OCR المحلي على " + String(analysis.ocr.pages || 1) + " صفحة/صورة دون إرسال الملف إلى خدمة خارجية.";
+      } else {
+        privacyBox.textContent = "التحليل محلي داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.";
+      }
+
+      (analysis.warnings || []).forEach(function(warning) {
+        var alert = document.createElement("div");
+        alert.className = "alert alert-warning py-2 mb-2";
+        alert.textContent = warning;
+        warningsBox.appendChild(alert);
+      });
+
+      Object.keys(analysis.suggestions || {}).forEach(function(key) {
+        var suggestion = analysis.suggestions[key];
+        var item = document.createElement("div");
+        item.className = "list-group-item";
+
+        var header = document.createElement("div");
+        header.className = "d-flex justify-content-between align-items-start gap-2";
+        var label = document.createElement("strong");
+        label.textContent = fieldLabels[key] || key;
+        var confidence = document.createElement("span");
+        confidence.className = "badge text-bg-light border";
+        confidence.textContent = "ثقة " + String(Math.round(Number(suggestion.confidence || 0) * 100)) + "%";
+        header.appendChild(label);
+        header.appendChild(confidence);
+
+        var value = document.createElement("div");
+        value.className = "mt-1 text-break";
+        value.textContent = suggestionSummary(key, suggestion);
+        var reason = document.createElement("div");
+        reason.className = "small text-muted mt-1";
+        reason.textContent = suggestion.reason || "اقتراح مستخرج من المرفق";
+        item.appendChild(header);
+        item.appendChild(value);
+        item.appendChild(reason);
+        suggestionsBox.appendChild(item);
+      });
+
+      setStatus(
+        "اكتمل تحليل " + analysis.filename + " واستخراج " +
+        String(analysis.extracted_characters || 0) + " حرفًا. راجع المقترحات ثم فرّغها على النموذج.",
+        "success"
+      );
+    }
+
+    function setSelectValue(select, value) {
+      if (!select || !value) return;
+      var exists = Array.prototype.some.call(select.options, function(option) {
+        return option.value === String(value);
+      });
+      if (exists) select.value = String(value);
+    }
+
+    function applySuggestions() {
+      if (!latestAnalysis) return;
+      var suggestions = latestAnalysis.suggestions || {};
+      var title = form.querySelector('[name="title"]');
+      var description = form.querySelector('[name="description"]');
+      if (suggestions.title && title) {
+        title.value = suggestions.title.value || "";
+        title.dispatchEvent(new Event("input", {bubbles: true}));
+      }
+      if (suggestions.description && description) {
+        description.value = suggestions.description.value || "";
+        description.dispatchEvent(new Event("input", {bubbles: true}));
+      }
+      if (suggestions.request_type) {
+        setSelectValue(
+          form.querySelector('[name="request_type_id"]'),
+          suggestions.request_type.select_value
+        );
+      }
+      if (suggestions.workflow_template) {
+        setSelectValue(
+          form.querySelector('[name="template_id"]'),
+          suggestions.workflow_template.select_value
+        );
+      }
+      setStatus("تم تفريغ المقترحات على نموذج المسار. راجعها ثم اضغط «إنشاء الطلب».", "info");
+      if (title) title.focus();
+    }
+
+    async function analyzeAttachment() {
+      if (!fileInput.files || !fileInput.files.length) {
+        setStatus("اختر مرفقًا أولًا.", "warning");
+        return;
+      }
+      var selectedFile = fileInput.files[0];
+      var maxBytes = Number(analyzeButton.dataset.maxBytes || 0);
+      if (maxBytes > 0 && selectedFile.size > maxBytes) {
+        setStatus(
+          "حجم المرفق الأول " + formatFileSize(selectedFile.size) +
+          "، بينما حد التحليل " + formatFileSize(maxBytes) +
+          ". يمكنك حفظه مع الطلب دون تحليل.",
+          "warning"
+        );
+        return;
+      }
+
+      var originalHtml = analyzeButton.innerHTML;
+      analyzeButton.disabled = true;
+      analyzeButton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> جارٍ التحليل…';
+      resultsBox.classList.add("d-none");
+      setStatus("يجري استخراج النص وترتيب بيانات المسار محليًا…", "secondary");
+
+      try {
+        var data = new FormData();
+        data.append("file", selectedFile);
+        var csrfField = form.querySelector('[name="csrf_token"]');
+        if (csrfField) data.append("csrf_token", csrfField.value);
+        var response = await fetch(analyzeButton.dataset.url, {
+          method: "POST",
+          body: data,
+          headers: {"Accept": "application/json"}
+        });
+        var payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error((payload.error && payload.error.message) || "تعذر تحليل المرفق.");
+        }
+        renderAnalysis(payload.analysis);
+      } catch (error) {
+        latestAnalysis = null;
+        setStatus(error.message || "تعذر تحليل المرفق. يمكنك إنشاء المسار يدويًا.", "danger");
+      } finally {
+        analyzeButton.disabled = false;
+        analyzeButton.innerHTML = originalHtml;
+      }
+    }
+
+    analyzeButton.addEventListener("click", analyzeAttachment);
+    applyButton.addEventListener("click", applySuggestions);
+  })();
+</script>
 
 {% endblock %}

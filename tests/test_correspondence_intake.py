@@ -10,12 +10,44 @@ from services.correspondence_intake import (
     CorrespondenceIntakeError,
     OcrConfig,
     analyze_correspondence_attachment,
+    analyze_workflow_attachment,
     extract_attachment_text,
     read_limited_upload,
 )
 
 
 class CorrespondenceIntakeTests(unittest.TestCase):
+    def test_workflow_attachment_produces_request_and_template_suggestions(self):
+        source = """
+        الموضوع: طلب شراء أجهزة حاسوب
+        يرجى تفريغ الطلب على مسار المشتريات ومتابعة إجراءات Procurement.
+        """.encode("utf-8")
+
+        result = analyze_workflow_attachment(
+            source,
+            "طلب_شراء.txt",
+            request_type_choices=[
+                {
+                    "value": "7",
+                    "label": "طلب شراء",
+                    "match_text": "طلب شراء Procurement PRC",
+                },
+                {"value": "8", "label": "طلب إداري"},
+            ],
+            workflow_choices=[
+                {"value": "12", "label": "مسار المشتريات"},
+                {"value": "13", "label": "مسار إداري"},
+            ],
+        )
+
+        suggestions = result["suggestions"]
+        self.assertEqual(suggestions["title"]["value"], "طلب شراء أجهزة حاسوب")
+        self.assertIn("إجراءات Procurement", suggestions["description"]["value"])
+        self.assertEqual(suggestions["request_type"]["select_value"], "7")
+        self.assertEqual(suggestions["request_type"]["value"], "طلب شراء")
+        self.assertEqual(suggestions["workflow_template"]["select_value"], "12")
+        self.assertEqual(result["privacy"], "LOCAL_ONLY")
+
     def test_arabic_text_produces_reviewable_correspondence_suggestions(self):
         source = """
         الجهة المرسلة: وزارة التربية والتعليم
@@ -267,6 +299,21 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('value="save_and_start"', template)
         self.assertIn('request.form.get("submit_action") == "save_and_start"', routes)
         self.assertIn('workflow_request = _start_corr_workflow(', routes)
+
+    def test_workflow_form_exposes_attachment_analysis_and_field_dump(self):
+        project_root = Path(__file__).resolve().parents[1]
+        template = (
+            project_root / "templates" / "workflow" / "new_request.html"
+        ).read_text(encoding="utf-8")
+        routes = (project_root / "workflow" / "routes.py").read_text(encoding="utf-8")
+
+        self.assertIn('id="analyzeWorkflowAttachment"', template)
+        self.assertIn('id="applyWorkflowSuggestions"', template)
+        self.assertIn("تفريغ البيانات على نموذج المسار", template)
+        self.assertIn('name="files"', template)
+        self.assertIn('data-max-bytes="{{ intake_max_bytes }}"', template)
+        self.assertIn('route("/new/analyze-attachment"', routes)
+        self.assertIn("analyze_workflow_attachment(", routes)
 
 
 if __name__ == "__main__":

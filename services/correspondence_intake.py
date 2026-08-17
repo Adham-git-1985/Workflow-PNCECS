@@ -763,6 +763,10 @@ def _choice_label(choice: dict) -> str:
     return str(choice.get("match_label") or choice.get("label") or choice.get("value") or "").strip()
 
 
+def _choice_match_text(choice: dict) -> str:
+    return str(choice.get("match_text") or _choice_label(choice)).strip()
+
+
 def _match_choice(text: str, choices: list[dict]) -> tuple[dict | None, float]:
     normalized_text = _normalize(text)
     normalized_head = _normalize(text[:2500])
@@ -770,7 +774,7 @@ def _match_choice(text: str, choices: list[dict]) -> tuple[dict | None, float]:
     best_score = 0.0
     best_length = 0
     for choice in choices:
-        label = _choice_label(choice)
+        label = _choice_match_text(choice)
         normalized_label = _normalize(re.sub(r"\s*\([^)]*\)\s*$", "", label))
         if len(normalized_label) < 3:
             continue
@@ -1055,6 +1059,75 @@ def analyze_correspondence_attachment(
         "document_reference": _suggest_reference(text),
         "mail_scope": _suggestion("EXTERNAL", 0.75, "المرفق مسجل كبريد وارد خارجي"),
         "body": _suggestion(text[:8000], 0.88, "النص المستخرج محلياً من المرفق") if text else None,
+    }
+
+    return {
+        "filename": extracted["filename"],
+        "format": extracted["format"],
+        "extracted_characters": len(text),
+        "preview": text[:1200],
+        "warnings": extracted["warnings"],
+        "ocr": extracted["ocr"],
+        "suggestions": {key: value for key, value in suggestions.items() if value},
+        "privacy": "LOCAL_ONLY",
+    }
+
+
+def analyze_workflow_attachment(
+    payload: bytes,
+    filename: str,
+    *,
+    request_type_choices: list[dict] | None = None,
+    workflow_choices: list[dict] | None = None,
+    max_text_chars: int = 20_000,
+    max_pdf_pages: int = 40,
+    ocr_config: OcrConfig | None = None,
+) -> dict:
+    """Extract one attachment into reviewable fields for a workflow request."""
+    extracted = extract_attachment_text(
+        payload,
+        filename,
+        max_chars=max_text_chars,
+        max_pdf_pages=max_pdf_pages,
+        ocr_config=ocr_config,
+    )
+    text = extracted["text"]
+    metadata = extracted["metadata"]
+    request_type_choices = list(request_type_choices or [])
+    workflow_choices = list(workflow_choices or [])
+
+    title = _suggest_subject(text, extracted["filename"], metadata)
+    if title:
+        title["value"] = str(title.get("value") or "")[:200]
+
+    combined = f"{str((title or {}).get('value') or '')}\n{text}"
+    request_type_choice, request_type_score = _match_choice(
+        combined,
+        request_type_choices,
+    )
+    request_type = None
+    if request_type_choice:
+        request_type = _suggestion(
+            _choice_label(request_type_choice),
+            request_type_score,
+            "مطابقة نوع طلب مسجل مع محتوى المرفق",
+            select_value=str(request_type_choice.get("value") or ""),
+        )
+
+    workflow = _suggest_workflow(
+        text,
+        str((title or {}).get("value") or ""),
+        workflow_choices,
+    )
+    suggestions = {
+        "title": title,
+        "description": (
+            _suggestion(text[:8000], 0.88, "النص المستخرج محلياً من المرفق")
+            if text
+            else None
+        ),
+        "request_type": request_type,
+        "workflow_template": workflow,
     }
 
     return {
