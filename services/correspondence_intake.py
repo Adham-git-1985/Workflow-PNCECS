@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from email import policy
 from email.parser import BytesParser
-from email.utils import parseaddr
+from email.utils import getaddresses, parseaddr
 from io import BytesIO
 from pathlib import Path
 import html
@@ -664,9 +664,15 @@ def _extract_eml(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]:
             break
 
     sender_name, sender_address = parseaddr(str(message.get("From") or ""))
+    recipients = getaddresses(message.get_all("To", []))
+    recipient_name = ""
+    if recipients:
+        recipient_name, recipient_address = recipients[0]
+        recipient_name = (recipient_name or recipient_address or "").strip()
     metadata = {
         "subject": str(message.get("Subject") or "").strip(),
         "sender": (sender_name or sender_address or "").strip(),
+        "recipient": recipient_name,
         "message_date": str(message.get("Date") or "").strip(),
     }
     return _clean_text("\n".join(parts), max_chars), [], metadata
@@ -838,7 +844,13 @@ def _explicit_line_value(text: str, labels: tuple[str, ...], max_length: int = 2
     return value[:max_length]
 
 
-def _suggest_subject(text: str, filename: str, metadata: dict) -> dict:
+def _suggest_subject(
+    text: str,
+    filename: str,
+    metadata: dict,
+    *,
+    default_value: str = "وارد جديد",
+) -> dict:
     metadata_subject = str(metadata.get("subject") or "").strip()
     if metadata_subject:
         return _suggestion(metadata_subject[:500], 0.99, "عنوان البريد أو بيانات المستند")
@@ -851,7 +863,7 @@ def _suggest_subject(text: str, filename: str, metadata: dict) -> dict:
     stem = re.sub(r"[_\-]+", " ", stem).strip()
     if stem:
         return _suggestion(stem[:500], 0.45, "اسم المرفق؛ يحتاج إلى مراجعة")
-    return _suggestion("وارد جديد", 0.2, "قيمة افتراضية؛ تحتاج إلى مراجعة")
+    return _suggestion(default_value, 0.2, "قيمة افتراضية؛ تحتاج إلى مراجعة")
 
 
 def _suggest_sender(text: str, metadata: dict, sender_choices: list[dict]) -> dict | None:
@@ -884,6 +896,42 @@ def _suggest_sender(text: str, metadata: dict, sender_choices: list[dict]) -> di
             _choice_label(known),
             score,
             "مطابقة اسم جهة من دليل المرسلين",
+            select_value=str(known.get("value") or _choice_label(known)),
+            is_known=True,
+        )
+    return None
+
+
+def _suggest_recipient(text: str, metadata: dict, recipient_choices: list[dict]) -> dict | None:
+    explicit = str(metadata.get("recipient") or "").strip() or _explicit_line_value(
+        text,
+        ("الجهة المستلمة", "المرسل إليه", "موجه إلى", "إلى", "To"),
+        200,
+    )
+    if explicit:
+        known = _match_known_value(explicit, recipient_choices)
+        if known:
+            return _suggestion(
+                _choice_label(known),
+                0.98,
+                "جهة مستلمة مطابقة لدليل الجهات",
+                select_value=str(known.get("value") or _choice_label(known)),
+                is_known=True,
+            )
+        return _suggestion(
+            explicit,
+            0.82,
+            "جهة مستلمة مذكورة في المستند وتحتاج إلى مراجعة",
+            select_value="__OTHER__",
+            is_known=False,
+        )
+
+    known, score = _match_choice(text[:6000], recipient_choices)
+    if known:
+        return _suggestion(
+            _choice_label(known),
+            score,
+            "مطابقة اسم جهة من دليل المستلمين",
             select_value=str(known.get("value") or _choice_label(known)),
             is_known=True,
         )
@@ -1004,15 +1052,18 @@ def analyze_correspondence_attachment(
     filename: str,
     *,
     sender_choices: list[dict] | None = None,
+    recipient_choices: list[dict] | None = None,
     category_choices: list[dict] | None = None,
     competence_choices: list[dict] | None = None,
     workflow_choices: list[dict] | None = None,
     received_date: str | None = None,
+    sent_date: str | None = None,
+    direction: str = "IN",
     max_text_chars: int = 20_000,
     max_pdf_pages: int = 40,
     ocr_config: OcrConfig | None = None,
 ) -> dict:
-    """Extract an attachment and return reviewable inbound-field suggestions."""
+    """Extract an attachment into reviewable inbound or outbound suggestions."""
     extracted = extract_attachment_text(
         payload,
         filename,
@@ -1023,12 +1074,24 @@ def analyze_correspondence_attachment(
     text = extracted["text"]
     metadata = extracted["metadata"]
     sender_choices = list(sender_choices or [])
+    recipient_choices = list(recipient_choices or [])
     category_choices = list(category_choices or [])
     competence_choices = list(competence_choices or [])
     workflow_choices = list(workflow_choices or [])
 
-    subject = _suggest_subject(text, extracted["filename"], metadata)
-    sender = _suggest_sender(text, metadata, sender_choices)
+    direction = str(direction or "IN").strip().upper()
+    is_outbound = direction == "OUT"
+    subject = _suggest_subject(
+        text,
+        extracted["filename"],
+        metadata,
+        default_value="صادر جديد" if is_outbound else "وارد جديد",
+    )
+    party = (
+        _suggest_recipient(text, metadata, recipient_choices)
+        if is_outbound
+        else _suggest_sender(text, metadata, sender_choices)
+    )
     category = _suggest_category(text, category_choices)
 
     competence_choice, competence_score = _match_choice(text, competence_choices)
@@ -1042,14 +1105,20 @@ def analyze_correspondence_attachment(
         )
 
     workflow = _suggest_workflow(text, str(subject.get("value") or ""), workflow_choices)
+    date_key = "sent_date" if is_outbound else "received_date"
+    party_key = "recipient" if is_outbound else "sender"
     suggestions = {
-        "received_date": _suggestion(
-            received_date or date.today().isoformat(),
+        date_key: _suggestion(
+            (sent_date if is_outbound else received_date) or date.today().isoformat(),
             1.0,
-            "تاريخ الاستلام الحالي؛ عدّله عند الحاجة",
+            (
+                "تاريخ الإرسال الحالي؛ عدّله عند الحاجة"
+                if is_outbound
+                else "تاريخ الاستلام الحالي؛ عدّله عند الحاجة"
+            ),
         ),
         "subject": subject,
-        "sender": sender,
+        party_key: party,
         "category": category,
         "competence": competence,
         "workflow_template": workflow,
@@ -1057,7 +1126,11 @@ def analyze_correspondence_attachment(
         "confidentiality": _suggest_confidentiality(text),
         "due_date": _suggest_due_date(text),
         "document_reference": _suggest_reference(text),
-        "mail_scope": _suggestion("EXTERNAL", 0.75, "المرفق مسجل كبريد وارد خارجي"),
+        "mail_scope": _suggestion(
+            "EXTERNAL",
+            0.75,
+            "المرفق مسجل كبريد صادر خارجي" if is_outbound else "المرفق مسجل كبريد وارد خارجي",
+        ),
         "body": _suggestion(text[:8000], 0.88, "النص المستخرج محلياً من المرفق") if text else None,
     }
 

@@ -95,6 +95,34 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertEqual(suggestions["document_reference"]["value"], "FIN/2026/44")
         self.assertEqual(result["privacy"], "LOCAL_ONLY")
 
+    def test_outbound_analysis_uses_recipient_and_sent_date_fields(self):
+        source = """
+        الجهة المستلمة: وزارة الصحة
+        الموضوع: إرسال التقرير المالي
+        يرجى متابعة الصادر عبر مسار المالية.
+        """.encode("utf-8")
+
+        result = analyze_correspondence_attachment(
+            source,
+            "تقرير_صادر.txt",
+            recipient_choices=[
+                {"value": "وزارة الصحة", "label": "وزارة الصحة"},
+            ],
+            workflow_choices=[
+                {"value": "12", "label": "مسار المالية"},
+            ],
+            sent_date="2026-08-17",
+            direction="OUT",
+        )
+
+        suggestions = result["suggestions"]
+        self.assertEqual(suggestions["sent_date"]["value"], "2026-08-17")
+        self.assertEqual(suggestions["recipient"]["select_value"], "وزارة الصحة")
+        self.assertTrue(suggestions["recipient"]["is_known"])
+        self.assertEqual(suggestions["workflow_template"]["select_value"], "12")
+        self.assertNotIn("received_date", suggestions)
+        self.assertNotIn("sender", suggestions)
+
     def test_eml_uses_email_headers_and_ignores_attachment_payload(self):
         payload = (
             "From: Ministry Example <office@example.test>\r\n"
@@ -299,6 +327,24 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('value="save_and_start"', template)
         self.assertIn('request.form.get("submit_action") == "save_and_start"', routes)
         self.assertIn('workflow_request = _start_corr_workflow(', routes)
+        self.assertIn("الخطوة الاختيارية: ارفع المرفق وحلله", template)
+        self.assertNotIn('id="inboundFiles" multiple required', template)
+
+    def test_outbound_form_exposes_optional_attachment_analysis(self):
+        project_root = Path(__file__).resolve().parents[1]
+        template = (
+            project_root / "templates" / "portal" / "corr" / "outbound_new.html"
+        ).read_text(encoding="utf-8")
+        routes = (project_root / "portal" / "routes.py").read_text(encoding="utf-8")
+
+        self.assertIn('id="analyzeOutboundAttachment"', template)
+        self.assertIn('id="applyOutboundSuggestions"', template)
+        self.assertIn("الخطوة الاختيارية: ارفع المرفق وحلله", template)
+        self.assertLess(template.index('id="outboundFiles"'), template.index('id="sent_date"'))
+        self.assertIn('data-max-bytes="{{ intake_max_bytes }}"', template)
+        self.assertNotIn('id="outboundFiles" multiple required', template)
+        self.assertIn('route("/corr/outbound/analyze-attachment"', routes)
+        self.assertIn('direction="OUT"', routes)
 
     def test_workflow_form_exposes_attachment_analysis_and_field_dump(self):
         project_root = Path(__file__).resolve().parents[1]
@@ -314,6 +360,7 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('data-max-bytes="{{ intake_max_bytes }}"', template)
         self.assertIn('route("/new/analyze-attachment"', routes)
         self.assertIn("analyze_workflow_attachment(", routes)
+        self.assertIn("هذه الخطوة اختيارية", template)
 
 
 if __name__ == "__main__":

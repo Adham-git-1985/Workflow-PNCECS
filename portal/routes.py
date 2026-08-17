@@ -19731,10 +19731,11 @@ def inbound_new():
             flash("التاريخ والموضوع مطلوبان.", "danger")
             return redirect(request.url)
 
-        files = request.files.getlist("files") or []
-        if not any(getattr(f, "filename", "") for f in files):
-            flash("رفع ملف/ملفات مطلوب لتسجيل الوارد.", "danger")
-            return redirect(request.url)
+        files = [
+            uploaded_file
+            for uploaded_file in (request.files.getlist("files") or [])
+            if getattr(uploaded_file, "filename", "")
+        ]
 
         try:
             ref_no = _corr_next_ref("IN", received_date)
@@ -19780,9 +19781,9 @@ def inbound_new():
             stamp_options=stamp_options,
             movement_id=movement.id,
         )
-        if not saved:
+        if files and not saved:
             db.session.rollback()
-            flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
+            flash("لم يتم قبول الملف المختار (تحقق من نوعه).", "danger")
             return redirect(request.url)
 
         affected_user_ids = _corr_notification_recipient_ids(
@@ -19936,11 +19937,99 @@ def outbound_list():
     )
 
 
+@portal_bp.route("/corr/outbound/analyze-attachment", methods=["POST"])
+@login_required
+@_perm(CORR_CREATE)
+def outbound_analyze_attachment():
+    """Extract local, reviewable outbound suggestions from one selected file."""
+    upload = request.files.get("file")
+    try:
+        max_bytes = int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))
+        max_text_chars = int(current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
+        max_pdf_pages = int(current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40))
+        ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
+        ocr_enabled = str(ocr_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+        ocr_config = OcrConfig(
+            enabled=ocr_enabled,
+            command=str(current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract")),
+            languages=str(current_app.config.get("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")),
+            max_pages=int(current_app.config.get("CORR_INTAKE_OCR_MAX_PAGES", 10)),
+            dpi=int(current_app.config.get("CORR_INTAKE_OCR_DPI", 200)),
+            timeout_seconds=float(
+                current_app.config.get("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+            ),
+            max_image_pixels=int(
+                current_app.config.get("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+            ),
+        )
+        payload = read_limited_upload(upload, max_bytes)
+
+        category_rows = (
+            CorrCategory.query
+            .filter_by(is_active=True)
+            .order_by(CorrCategory.code.asc())
+            .all()
+        )
+        recipient_rows = (
+            CorrParty.query
+            .filter(CorrParty.is_active == True)  # noqa: E712
+            .filter(CorrParty.kind.in_(["RECIPIENT", "BOTH"]))
+            .order_by(CorrParty.name_ar.asc())
+            .all()
+        )
+        competence_options = _corr_competence_options()
+        workflow_templates = _corr_workflow_templates()
+
+        analysis = analyze_correspondence_attachment(
+            payload,
+            getattr(upload, "filename", "") or "attachment",
+            recipient_choices=[
+                {"value": row.label, "label": row.label}
+                for row in recipient_rows
+                if row.label
+            ],
+            category_choices=[
+                {"value": row.code, "label": row.label}
+                for row in category_rows
+                if row.code
+            ],
+            competence_choices=competence_options,
+            workflow_choices=[
+                {"value": str(template.id), "label": template.name}
+                for template in workflow_templates
+            ],
+            sent_date=date.today().isoformat(),
+            direction="OUT",
+            max_text_chars=max_text_chars,
+            max_pdf_pages=max_pdf_pages,
+            ocr_config=ocr_config,
+        )
+        return jsonify({"ok": True, "analysis": analysis})
+    except CorrespondenceIntakeError as exc:
+        return jsonify({
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }), exc.status_code
+    except Exception:
+        current_app.logger.exception("Failed to analyze outbound correspondence attachment")
+        return jsonify({
+            "ok": False,
+            "error": {
+                "code": "ANALYSIS_FAILED",
+                "message": "تعذر تحليل المرفق حالياً. يمكنك متابعة تسجيل الصادر يدوياً.",
+            },
+        }), 500
+
+
 @portal_bp.route("/corr/outbound/new", methods=["GET", "POST"])
 @login_required
 @_perm(CORR_CREATE)
 def outbound_new():
     _ensure_corr_competence_schema()
+    intake_max_bytes = max(
+        1,
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
+    )
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
     workflow_templates = _corr_workflow_templates()
@@ -19972,10 +20061,11 @@ def outbound_new():
             return redirect(request.url)
 
 
-        files = request.files.getlist("files") or []
-        if not any(getattr(f, "filename", "") for f in files):
-            flash("رفع ملف/ملفات مطلوب لتسجيل الصادر.", "danger")
-            return redirect(request.url)
+        files = [
+            uploaded_file
+            for uploaded_file in (request.files.getlist("files") or [])
+            if getattr(uploaded_file, "filename", "")
+        ]
 
         try:
             ref_no = _corr_next_ref("OUT", sent_date)
@@ -20021,9 +20111,9 @@ def outbound_new():
             stamp_options=stamp_options,
             movement_id=movement.id,
         )
-        if not saved:
+        if files and not saved:
             db.session.rollback()
-            flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
+            flash("لم يتم قبول الملف المختار (تحقق من نوعه).", "danger")
             return redirect(request.url)
 
         affected_user_ids = _corr_notification_recipient_ids(
@@ -20078,6 +20168,8 @@ def outbound_new():
         competence_options=competence_options,
         workflow_templates=workflow_templates,
         confidential_user_options=confidential_user_options,
+        intake_max_bytes=intake_max_bytes,
+        intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
         selected_confidential_user_ids={
             int(value) for value in request.form.getlist("authorized_user_ids") if value.isdigit()
         },

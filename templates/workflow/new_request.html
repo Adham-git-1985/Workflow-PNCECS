@@ -73,8 +73,11 @@
         <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
           <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
             <div>
-              <div class="fw-bold">📎 مرفق المسار والتفريغ الذكي</div>
-              <div class="small text-muted">حلّل المرفق ثم فرّغ عنوانه ومحتواه ونوعه والمسار المقترح على النموذج.</div>
+              <div class="fw-bold">
+                📎 مرفق المسار والتفريغ الذكي
+                <span class="badge text-bg-light border text-primary ms-1">غير إجباري</span>
+              </div>
+              <div class="small text-muted">هذه الخطوة اختيارية؛ يمكنك إنشاء المسار يدويًا دون مرفق أو تحليل، أو تحليل المرفق وتفريغ مقترحاته على النموذج.</div>
             </div>
             <button class="btn btn-primary" type="button" id="analyzeWorkflowAttachment"
                     data-url="{{ url_for('workflow.analyze_new_request_attachment') }}"

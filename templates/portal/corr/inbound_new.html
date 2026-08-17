@@ -24,13 +24,16 @@
           <div class="d-flex align-items-center gap-2 mb-3">
             <span class="badge text-bg-primary rounded-pill">1</span>
             <div>
-              <div class="fw-semibold">الخطوة الأولى: ارفع المرفق وحلله</div>
-              <div class="small text-muted">ابدأ بالمرفق ليقترح النظام بيانات الوارد قبل تعبئة بقية النموذج.</div>
+              <div class="fw-semibold">
+                الخطوة الاختيارية: ارفع المرفق وحلله
+                <span class="badge text-bg-light border text-primary ms-1">غير إجبارية</span>
+              </div>
+              <div class="small text-muted">يمكنك تجاوز هذه الخطوة وتعبئة بيانات الوارد يدويًا وحفظه دون مرفق أو تحليل.</div>
             </div>
           </div>
 
-          <label class="form-label">مرفقات (يمكن اختيار عدة ملفات)</label>
-          <input class="form-control" type="file" name="files" id="inboundFiles" multiple required>
+          <label class="form-label">مرفقات (اختياري، ويمكن اختيار عدة ملفات)</label>
+          <input class="form-control" type="file" name="files" id="inboundFiles" multiple>
           <div class="form-text">
             يُحلّل المرفق الأول بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>، وتُحفظ جميع المرفقات عند تسجيل الوارد.
             يمكن حفظ الملف الأكبر دون تحليل ذكي.
