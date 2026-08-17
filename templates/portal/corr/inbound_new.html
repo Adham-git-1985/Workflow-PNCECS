@@ -16,7 +16,8 @@
     </div>
   </div>
 
-  <form method="post" enctype="multipart/form-data">
+  <form method="post" enctype="multipart/form-data" id="inboundNewForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3">
       <div class="col-md-3">
         <label class="form-label">رقم الوارد</label>
@@ -89,8 +90,35 @@
 
       <div class="col-12">
         <label class="form-label">مرفقات (يمكن اختيار عدة ملفات)</label>
-        <input class="form-control" type="file" name="files" multiple required>
-        <div class="form-text">الأنواع المدعومة: PDF/صور/Word/Excel/PPT/ZIP…</div>
+        <input class="form-control" type="file" name="files" id="inboundFiles" multiple required>
+        <div class="form-text">يمكن حفظ جميع أنواع المرفقات. التحليل المحلي يدعم PDF النصي وWord وExcel وPowerPoint والنصوص وملف البريد EML.</div>
+
+        <div class="border rounded-3 bg-light p-3 mt-3 no-print" id="inboundAnalysisBox">
+          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <div>
+              <div class="fw-semibold"><i class="bi bi-stars"></i> ترتيب بيانات المرفق</div>
+              <div class="small text-muted">يحلل النظام أول مرفق محلياً ويعرض مقترحات قابلة للمراجعة قبل تطبيقها.</div>
+            </div>
+            <button class="btn btn-outline-primary" type="button" id="analyzeInboundAttachment"
+                    data-url="{{ url_for('portal.inbound_analyze_attachment') }}">
+              <i class="bi bi-file-earmark-text"></i> تحليل المرفق
+            </button>
+          </div>
+          <div class="small mt-2 d-none" id="inboundAnalysisStatus" role="status" aria-live="polite"></div>
+          <div class="mt-3 d-none" id="inboundAnalysisResults">
+            <div class="alert alert-info py-2 mb-2" id="inboundAnalysisPrivacy">
+              التحليل واستخراج OCR محليان داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.
+            </div>
+            <div id="inboundAnalysisWarnings"></div>
+            <div class="list-group mb-3" id="inboundAnalysisSuggestions"></div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+              <button class="btn btn-primary" type="button" id="applyInboundSuggestions">
+                <i class="bi bi-check2-circle"></i> تطبيق المقترحات على النموذج
+              </button>
+              <span class="small text-muted">تبقى جميع الحقول قابلة للتعديل قبل الحفظ.</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="col-12">
@@ -102,7 +130,10 @@
       </div>
 
       <div class="col-12 d-flex gap-2">
-        <button class="btn btn-primary" type="submit">حفظ</button>
+        <button class="btn btn-primary" type="submit" name="submit_action" value="save_and_start">
+          <i class="bi bi-play-circle"></i> حفظ وبدء المسار
+        </button>
+        <button class="btn btn-outline-primary" type="submit" name="submit_action" value="save_only">حفظ فقط</button>
         <a class="btn btn-outline-secondary" href="{{ url_for('portal.inbound_list') }}">إلغاء</a>
       </div>
     </div>
@@ -111,6 +142,8 @@
 
 <script>
 (function(){
+  "use strict";
+
   function toggleOther(selectId, wrapId){
     var sel = document.getElementById(selectId);
     var wrap = document.getElementById(wrapId);
@@ -121,6 +154,211 @@
   }
   toggleOther("category_code","category_other_wrap");
   toggleOther("sender_val","sender_other_wrap");
+
+  var analyzeButton = document.getElementById("analyzeInboundAttachment");
+  var applyButton = document.getElementById("applyInboundSuggestions");
+  var fileInput = document.getElementById("inboundFiles");
+  var statusBox = document.getElementById("inboundAnalysisStatus");
+  var resultsBox = document.getElementById("inboundAnalysisResults");
+  var warningsBox = document.getElementById("inboundAnalysisWarnings");
+  var suggestionsBox = document.getElementById("inboundAnalysisSuggestions");
+  var privacyBox = document.getElementById("inboundAnalysisPrivacy");
+  var form = document.getElementById("inboundNewForm");
+  var latestAnalysis = null;
+
+  var fieldLabels = {
+    received_date: "تاريخ الاستلام",
+    sender: "الجهة المرسلة",
+    category: "التصنيف",
+    competence: "جهة الاختصاص",
+    workflow_template: "قالب المسار",
+    priority: "الأولوية",
+    confidentiality: "درجة السرية",
+    due_date: "الموعد النهائي",
+    document_reference: "رقم مرجع المستند",
+    mail_scope: "نطاق البريد",
+    subject: "الموضوع",
+    body: "المحتوى"
+  };
+
+  var codedLabels = {
+    NORMAL: "عادي",
+    HIGH: "عالية",
+    URGENT: "عاجلة",
+    SECRET: "سري — وصول مقيد",
+    EXTERNAL: "خارجي",
+    INTERNAL: "داخلي"
+  };
+
+  function setStatus(message, kind) {
+    if (!statusBox) return;
+    statusBox.className = "small mt-2 alert py-2 mb-0 alert-" + (kind || "secondary");
+    statusBox.textContent = message;
+  }
+
+  function displayValue(key, suggestion) {
+    if (key === "body") {
+      return "تم استخراج " + String((suggestion.value || "").length) + " حرفاً من محتوى المرفق";
+    }
+    return codedLabels[suggestion.value] || suggestion.value || "—";
+  }
+
+  function renderAnalysis(analysis) {
+    latestAnalysis = analysis;
+    suggestionsBox.textContent = "";
+    warningsBox.textContent = "";
+    if (privacyBox) {
+      if (analysis.ocr && analysis.ocr.used) {
+        privacyBox.textContent = "تم استخراج النص عبر OCR المحلي من " + String(analysis.ocr.pages || 1) + " صفحة/صورة، دون إرسال المرفق إلى خدمة خارجية.";
+      } else {
+        privacyBox.textContent = "التحليل محلي داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.";
+      }
+    }
+
+    (analysis.warnings || []).forEach(function (warning) {
+      var alert = document.createElement("div");
+      alert.className = "alert alert-warning py-2 mb-2";
+      alert.textContent = warning;
+      warningsBox.appendChild(alert);
+    });
+
+    Object.keys(analysis.suggestions || {}).forEach(function (key) {
+      var suggestion = analysis.suggestions[key];
+      var row = document.createElement("div");
+      row.className = "list-group-item";
+
+      var header = document.createElement("div");
+      header.className = "d-flex justify-content-between align-items-start gap-3";
+      var valueWrap = document.createElement("div");
+      var label = document.createElement("div");
+      label.className = "small text-muted";
+      label.textContent = fieldLabels[key] || key;
+      var value = document.createElement("div");
+      value.className = "fw-semibold text-break";
+      value.textContent = displayValue(key, suggestion);
+      valueWrap.appendChild(label);
+      valueWrap.appendChild(value);
+
+      var confidence = document.createElement("span");
+      var percent = Math.round(Number(suggestion.confidence || 0) * 100);
+      confidence.className = "badge " + (percent >= 85 ? "text-bg-success" : (percent >= 65 ? "text-bg-warning" : "text-bg-secondary"));
+      confidence.textContent = percent + "%";
+      header.appendChild(valueWrap);
+      header.appendChild(confidence);
+      row.appendChild(header);
+
+      if (suggestion.reason) {
+        var reason = document.createElement("div");
+        reason.className = "small text-muted mt-1";
+        reason.textContent = suggestion.reason;
+        row.appendChild(reason);
+      }
+      suggestionsBox.appendChild(row);
+    });
+
+    resultsBox.classList.remove("d-none");
+    setStatus(
+      "اكتمل تحليل " + analysis.filename + " (" + analysis.format + ") واستخراج " +
+      String(analysis.extracted_characters || 0) + " حرفاً. راجع المقترحات قبل تطبيقها.",
+      "success"
+    );
+  }
+
+  function setField(name, value) {
+    var field = form.querySelector('[name="' + name + '"]');
+    if (!field || value === undefined || value === null || value === "") return;
+    field.value = String(value);
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  function applySuggestions() {
+    if (!latestAnalysis) return;
+    var suggestions = latestAnalysis.suggestions || {};
+    if (suggestions.received_date) setField("received_date", suggestions.received_date.value);
+    if (suggestions.subject) setField("subject", suggestions.subject.value);
+    if (suggestions.body) setField("body", suggestions.body.value);
+    if (suggestions.priority) setField("priority", suggestions.priority.value);
+    if (suggestions.confidentiality) setField("confidentiality", suggestions.confidentiality.value);
+    if (suggestions.mail_scope) setField("mail_scope", suggestions.mail_scope.value);
+    if (suggestions.due_date) setField("due_date", suggestions.due_date.value);
+    if (suggestions.competence) setField("competence", suggestions.competence.select_value);
+    if (suggestions.workflow_template) setField("workflow_template_id", suggestions.workflow_template.select_value);
+
+    if (suggestions.category) {
+      var categoryValue = suggestions.category.select_value || suggestions.category.value;
+      var categorySelect = form.querySelector('[name="category_code"]');
+      var hasCategory = categorySelect && Array.from(categorySelect.options).some(function (option) {
+        return option.value === String(categoryValue);
+      });
+      setField("category_code", hasCategory ? categoryValue : "__OTHER__");
+      if (!hasCategory) setField("category_other", suggestions.category.value);
+    }
+
+    if (suggestions.sender) {
+      setField("sender_val", suggestions.sender.select_value || "__OTHER__");
+      if (!suggestions.sender.is_known) setField("sender_other", suggestions.sender.value);
+    }
+
+    setStatus("تم تطبيق المقترحات. راجع البيانات، وخصوصاً جهة الاختصاص والسرية وقالب المسار، ثم احفظ المعاملة.", "info");
+    document.querySelector('[name="subject"]').focus();
+  }
+
+  async function analyzeAttachment() {
+    if (!fileInput || !fileInput.files || !fileInput.files.length) {
+      setStatus("اختر مرفقاً أولاً.", "warning");
+      return;
+    }
+
+    var originalHtml = analyzeButton.innerHTML;
+    analyzeButton.disabled = true;
+    analyzeButton.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> جارٍ التحليل…';
+    resultsBox.classList.add("d-none");
+    setStatus("يجري استخراج النص وترتيب البيانات محلياً…", "secondary");
+
+    try {
+      var data = new FormData();
+      data.append("file", fileInput.files[0]);
+      var csrfField = form.querySelector('[name="csrf_token"]');
+      if (csrfField) data.append("csrf_token", csrfField.value);
+
+      var response = await fetch(analyzeButton.dataset.url, {
+        method: "POST",
+        body: data,
+        headers: { "Accept": "application/json" }
+      });
+      var payload = null;
+      try {
+        payload = await response.json();
+      } catch (parseError) {
+        throw new Error("تعذر قراءة استجابة التحليل. يمكنك متابعة التسجيل اليدوي.");
+      }
+      if (!response.ok || !payload.ok) {
+        throw new Error((payload.error && payload.error.message) || "تعذر تحليل المرفق.");
+      }
+      renderAnalysis(payload.analysis);
+    } catch (error) {
+      latestAnalysis = null;
+      setStatus(error.message || "تعذر تحليل المرفق. يمكنك متابعة التسجيل اليدوي.", "danger");
+    } finally {
+      analyzeButton.disabled = false;
+      analyzeButton.innerHTML = originalHtml;
+    }
+  }
+
+  if (analyzeButton) analyzeButton.addEventListener("click", analyzeAttachment);
+  if (applyButton) applyButton.addEventListener("click", applySuggestions);
+  if (form) {
+    form.addEventListener("submit", function (event) {
+      var submitter = event.submitter;
+      if (!submitter || submitter.value !== "save_and_start") return;
+      var workflowTemplate = form.querySelector('[name="workflow_template_id"]');
+      if (workflowTemplate && !workflowTemplate.value) {
+        event.preventDefault();
+        setStatus("اختر قالب المسار وراجعه قبل استخدام «حفظ وبدء المسار»، أو استخدم «حفظ فقط».", "warning");
+        workflowTemplate.focus();
+      }
+    });
+  }
 })();
 </script>
 {% include 'portal/corr/_org_route_picker_modal.html' %}

@@ -14,6 +14,25 @@ class BaseConfig:
         os.getenv("ARCHIVE_PURGE_DAYS", 30)
     )
 
+    # Local smart intake for manually uploaded inbound correspondence.
+    # The attachment is analyzed in memory and is never sent to an external AI.
+    CORR_INTAKE_MAX_BYTES = int(os.getenv("CORR_INTAKE_MAX_BYTES", 12 * 1024 * 1024))
+    CORR_INTAKE_MAX_TEXT_CHARS = int(os.getenv("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
+    CORR_INTAKE_MAX_PDF_PAGES = int(os.getenv("CORR_INTAKE_MAX_PDF_PAGES", 40))
+    CORR_INTAKE_OCR_ENABLED = os.getenv("CORR_INTAKE_OCR_ENABLED", "1").strip().lower() in {
+        "1", "true", "yes", "on"
+    }
+    CORR_INTAKE_TESSERACT_CMD = os.getenv("CORR_INTAKE_TESSERACT_CMD", "tesseract")
+    CORR_INTAKE_OCR_LANGUAGES = os.getenv("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")
+    CORR_INTAKE_OCR_MAX_PAGES = int(os.getenv("CORR_INTAKE_OCR_MAX_PAGES", 10))
+    CORR_INTAKE_OCR_DPI = int(os.getenv("CORR_INTAKE_OCR_DPI", 200))
+    CORR_INTAKE_OCR_TIMEOUT_SECONDS = float(
+        os.getenv("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+    )
+    CORR_INTAKE_OCR_MAX_IMAGE_PIXELS = int(
+        os.getenv("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+    )
+
     # The assistant is always available.  Safe public questions may use the
     # external model when configured and reachable; every other case falls
     # back to the local, permission-aware assistant.

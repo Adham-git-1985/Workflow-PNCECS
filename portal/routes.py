@@ -19,7 +19,7 @@ from io import BytesIO
 
 from flask import (
     render_template, request, redirect, url_for, flash, abort, current_app,
-    send_file, send_from_directory, has_request_context
+    send_file, send_from_directory, has_request_context, jsonify
 )
 
 from utils.portal_search import apply_search_all_columns
@@ -60,6 +60,12 @@ from services.meeting_service import (
     recorded_attendance_label,
     validate_docx_package,
     validate_embedded_attachments,
+)
+from services.correspondence_intake import (
+    CorrespondenceIntakeError,
+    OcrConfig,
+    analyze_correspondence_attachment,
+    read_limited_upload,
 )
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
@@ -19603,7 +19609,87 @@ def inbound_list():
         **filters
     )
 
+@portal_bp.route("/corr/inbound/analyze-attachment", methods=["POST"])
+@login_required
+@_perm(CORR_CREATE)
+def inbound_analyze_attachment():
+    """Extract local, reviewable suggestions from one manually selected file."""
+    upload = request.files.get("file")
+    try:
+        max_bytes = int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 12 * 1024 * 1024))
+        max_text_chars = int(current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
+        max_pdf_pages = int(current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40))
+        ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
+        ocr_enabled = str(ocr_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+        ocr_config = OcrConfig(
+            enabled=ocr_enabled,
+            command=str(current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract")),
+            languages=str(current_app.config.get("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")),
+            max_pages=int(current_app.config.get("CORR_INTAKE_OCR_MAX_PAGES", 10)),
+            dpi=int(current_app.config.get("CORR_INTAKE_OCR_DPI", 200)),
+            timeout_seconds=float(
+                current_app.config.get("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+            ),
+            max_image_pixels=int(
+                current_app.config.get("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+            ),
+        )
+        payload = read_limited_upload(upload, max_bytes)
 
+        category_rows = (
+            CorrCategory.query
+            .filter_by(is_active=True)
+            .order_by(CorrCategory.code.asc())
+            .all()
+        )
+        sender_rows = (
+            CorrParty.query
+            .filter(CorrParty.is_active == True)  # noqa: E712
+            .filter(CorrParty.kind.in_(["SENDER", "BOTH"]))
+            .order_by(CorrParty.name_ar.asc())
+            .all()
+        )
+        competence_options = _corr_competence_options()
+        workflow_templates = _corr_workflow_templates()
+
+        analysis = analyze_correspondence_attachment(
+            payload,
+            getattr(upload, "filename", "") or "attachment",
+            sender_choices=[
+                {"value": row.label, "label": row.label}
+                for row in sender_rows
+                if row.label
+            ],
+            category_choices=[
+                {"value": row.code, "label": row.label}
+                for row in category_rows
+                if row.code
+            ],
+            competence_choices=competence_options,
+            workflow_choices=[
+                {"value": str(template.id), "label": template.name}
+                for template in workflow_templates
+            ],
+            received_date=date.today().isoformat(),
+            max_text_chars=max_text_chars,
+            max_pdf_pages=max_pdf_pages,
+            ocr_config=ocr_config,
+        )
+        return jsonify({"ok": True, "analysis": analysis})
+    except CorrespondenceIntakeError as exc:
+        return jsonify({
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }), exc.status_code
+    except Exception:
+        current_app.logger.exception("Failed to analyze inbound correspondence attachment")
+        return jsonify({
+            "ok": False,
+            "error": {
+                "code": "ANALYSIS_FAILED",
+                "message": "تعذر تحليل المرفق حالياً. يمكنك متابعة التسجيل اليدوي.",
+            },
+        }), 500
 
 
 @portal_bp.route("/corr/inbound/new", methods=["GET", "POST"])
@@ -19736,6 +19822,30 @@ def inbound_new():
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+        if request.form.get("submit_action") == "save_and_start":
+            try:
+                attachments = (
+                    CorrAttachment.query
+                    .filter_by(inbound_id=item.id)
+                    .order_by(CorrAttachment.id.asc())
+                    .all()
+                )
+                workflow_request = _start_corr_workflow(
+                    "IN",
+                    item,
+                    attachments,
+                    request.form.get("workflow_template_id"),
+                )
+                if workflow_request:
+                    return redirect(url_for("workflow.view_request", request_id=workflow_request.id))
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "Inbound correspondence was saved but its workflow could not be started"
+                )
+                flash("تم تسجيل الوارد، لكن تعذر بدء المسار. يمكن بدء المسار من صفحة الوارد.", "warning")
+                return redirect(url_for("portal.inbound_view", inbound_id=item.id))
 
         flash("تم تسجيل الوارد.", "success")
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
