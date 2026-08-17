@@ -3,7 +3,14 @@ import unittest
 from flask import Flask
 
 from extensions import db
-from models import Department, Directorate, Organization, PortalCircular, User
+from models import (
+    Department,
+    Directorate,
+    Organization,
+    PortalCircular,
+    PortalCircularAttachment,
+    User,
+)
 from services.circulars import (
     can_user_view_circular,
     circular_recipient_user_ids,
@@ -30,6 +37,7 @@ class CircularTargetingTests(unittest.TestCase):
         cls.context.pop()
 
     def setUp(self):
+        db.session.query(PortalCircularAttachment).delete()
         db.session.query(PortalCircular).delete()
         db.session.query(User).delete()
         db.session.query(Department).delete()

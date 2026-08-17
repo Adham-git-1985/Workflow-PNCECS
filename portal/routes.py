@@ -125,6 +125,7 @@ from models import (
     StoreFilePermission,
     PortalAccessRequest,
     PortalCircular,
+    PortalCircularAttachment,
     PortalMeeting,
     PortalMeetingParticipant,
     PortalMeetingAgendaItem,
@@ -3750,6 +3751,67 @@ EMAIL_CIRCULAR_LAST_STATUS = "EMAIL_CIRCULAR_LAST_STATUS"
 EMAIL_CIRCULAR_LAST_SENT_AT = "EMAIL_CIRCULAR_LAST_SENT_AT"
 EMAIL_CIRCULAR_PASSWORD_ENV = "PORTAL_EMAIL_PASSWORD"
 
+CIRCULAR_ATTACHMENT_MAX_FILES = 10
+CIRCULAR_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024
+CIRCULAR_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+CIRCULAR_ATTACHMENT_MAX_REQUEST_BYTES = CIRCULAR_ATTACHMENT_MAX_TOTAL_BYTES + (2 * 1024 * 1024)
+CIRCULAR_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES = 20 * 1024 * 1024
+
+
+def _circular_attachment_dir(circular_id: int) -> Path:
+    base = Path(current_app.instance_path) / "uploads" / "circulars" / str(int(circular_id))
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def _save_circular_attachments(row: PortalCircular, uploads) -> tuple[int, list[Path]]:
+    candidates = []
+    for upload in uploads or []:
+        original_name = clean_original_filename(getattr(upload, "filename", None))
+        if original_name and is_allowed_attachment(original_name):
+            candidates.append((upload, original_name))
+
+    if len(candidates) > CIRCULAR_ATTACHMENT_MAX_FILES:
+        raise ValueError(f"يمكن إرفاق {CIRCULAR_ATTACHMENT_MAX_FILES} ملفات كحد أقصى.")
+
+    saved_paths: list[Path] = []
+    total_size = 0
+    try:
+        for upload, original_name in candidates:
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            saved_path = _circular_attachment_dir(row.id) / stored_name
+            upload.save(str(saved_path))
+            saved_paths.append(saved_path)
+
+            file_size = saved_path.stat().st_size
+            if file_size > CIRCULAR_ATTACHMENT_MAX_FILE_BYTES:
+                raise ValueError(f"حجم الملف «{original_name}» يتجاوز الحد المسموح (25 م.ب).")
+            total_size += file_size
+            if total_size > CIRCULAR_ATTACHMENT_MAX_TOTAL_BYTES:
+                raise ValueError("إجمالي حجم مرفقات التعميم يتجاوز الحد المسموح (50 م.ب).")
+
+            mime_type = (getattr(upload, "mimetype", None) or "").strip()
+            if not mime_type:
+                mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+            db.session.add(PortalCircularAttachment(
+                circular=row,
+                original_name=original_name[:255],
+                stored_name=stored_name,
+                mime_type=mime_type[:120],
+                file_size=file_size,
+                uploaded_by_user_id=getattr(current_user, "id", None),
+                uploaded_at=datetime.utcnow(),
+            ))
+    except Exception:
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+    return len(candidates), saved_paths
+
 
 def _is_enabled_value(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -3918,6 +3980,9 @@ def _circular_whatsapp_text(row: PortalCircular) -> str:
         f"الجهة المستهدفة: {row.audience_label}",
         f"صادر عبر البوابة الإدارية بتاريخ {issued_at}",
     ]
+    attachment_count = len(getattr(row, "attachments", None) or [])
+    if attachment_count:
+        lines.append(f"المرفقات: {attachment_count} (متاحة مع التعميم داخل النظام)")
     if sender:
         lines.append(f"المصدر: {sender}")
     return "\n".join([line for line in lines if line is not None]).strip()
@@ -4094,6 +4159,28 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
     from_name = str(cfg.get("from_name") or "").strip()
     reply_to = str(cfg.get("reply_to") or "").strip()
     batch_size = int(cfg.get("batch_size") or 50)
+    email_attachments: list[tuple[bytes, str, str, str]] = []
+    skipped_attachments = 0
+    total_attachment_bytes = 0
+    for attachment in getattr(row, "attachments", None) or []:
+        saved_path = _circular_attachment_dir(row.id) / attachment.stored_name
+        try:
+            file_size = saved_path.stat().st_size
+            if total_attachment_bytes + file_size > CIRCULAR_EMAIL_ATTACHMENT_MAX_TOTAL_BYTES:
+                skipped_attachments += 1
+                continue
+            payload = saved_path.read_bytes()
+        except OSError:
+            skipped_attachments += 1
+            continue
+
+        mime_type = (attachment.mime_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+        if "/" in mime_type:
+            maintype, subtype = mime_type.split("/", 1)
+        else:
+            maintype, subtype = "application", "octet-stream"
+        email_attachments.append((payload, maintype, subtype, attachment.original_name))
+        total_attachment_bytes += file_size
 
     def build_message(batch: list[str]) -> EmailMessage:
         msg = EmailMessage()
@@ -4104,6 +4191,13 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
         if reply_to:
             msg["Reply-To"] = reply_to
         msg.set_content(body)
+        for payload, maintype, subtype, filename in email_attachments:
+            msg.add_attachment(
+                payload,
+                maintype=maintype,
+                subtype=subtype,
+                filename=filename,
+            )
         return msg
 
     sent = 0
@@ -4139,8 +4233,15 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
 
     if sent and failures:
         return "warning", f"تم إرسال البريد إلى {sent} من {len(recipients)} عنوان، وتعذر إرسال بعض الدفعات."
+    if sent and skipped_attachments:
+        return (
+            "warning",
+            f"تم إرسال البريد إلى {sent} عنوان، ولم يُرفق {skipped_attachments} ملف بسبب الحجم أو تعذر قراءته؛ "
+            "ويبقى متاحاً داخل النظام.",
+        )
     if sent:
-        return "success", f"تم إرسال نسخة البريد الإلكتروني إلى {sent} عنوان."
+        attachment_note = f" مع {len(email_attachments)} مرفق" if email_attachments else ""
+        return "success", f"تم إرسال نسخة البريد الإلكتروني إلى {sent} عنوان{attachment_note}."
     failure_text = failures[0] if failures else "لم يتم الإرسال."
     return "danger", f"لم يتم إرسال البريد الإلكتروني: {failure_text[:180]}"
 
@@ -4177,6 +4278,31 @@ def circular_view(circular_id: int):
     return render_template("portal/circular_view.html", row=row)
 
 
+@portal_bp.route("/circulars/<int:circular_id>/attachments/<int:attachment_id>/download")
+@login_required
+def circular_attachment_download(circular_id: int, attachment_id: int):
+    row = PortalCircular.query.get_or_404(circular_id)
+    if not can_user_view_circular(row, current_user):
+        abort(404)
+    attachment = PortalCircularAttachment.query.filter_by(
+        id=attachment_id,
+        circular_id=row.id,
+    ).first_or_404()
+    response = send_from_directory(
+        str(_circular_attachment_dir(row.id)),
+        attachment.stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=True,
+        download_name=attachment.original_name,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
 @portal_bp.route("/circulars/new", methods=["GET", "POST"])
 @login_required
 @_perm(PORTAL_CIRCULARS_MANAGE)
@@ -4208,6 +4334,21 @@ def circular_new():
         )
 
     if request.method == "POST":
+        if (
+            request.content_length is not None
+            and request.content_length > CIRCULAR_ATTACHMENT_MAX_REQUEST_BYTES
+        ):
+            flash("حجم طلب إصدار التعميم يتجاوز الحد المسموح للمرفقات (50 م.ب إجمالاً).", "danger")
+            return render_form(
+                title="",
+                body="",
+                is_urgent=True,
+                send_whatsapp=False,
+                send_email=False,
+                target_scope=CIRCULAR_SCOPE_ALL,
+                selected_directorate_id=None,
+                selected_department_id=None,
+            )
         title = (request.form.get("title") or "").strip()
         body = (request.form.get("body") or "").strip()
         is_urgent = (request.form.get("is_urgent") or "").strip() in ("1", "on", "true", "True")
@@ -4267,6 +4408,8 @@ def circular_new():
                 return render_form(**form_values)
             target_department_id = target_department.id
 
+        saved_paths: list[Path] = []
+        attachment_count = 0
         try:
             circ = PortalCircular(
                 title=title[:200],
@@ -4280,6 +4423,12 @@ def circular_new():
             )
             db.session.add(circ)
             db.session.flush()  # get circ.id
+
+            attachment_count, saved_paths = _save_circular_attachments(
+                circ,
+                request.files.getlist("attachments")
+                + request.files.getlist("captured_attachments"),
+            )
 
             notif_type = "URGENT" if is_urgent else "INFO"
             msg = f"تعميم جديد: {title}".strip()
@@ -4315,13 +4464,16 @@ def circular_new():
                 f"title={title[:120]} scope={target_scope} "
                 f"target_directorate_id={target_directorate_id} "
                 f"target_department_id={target_department_id} "
+                f"attachments={attachment_count} "
                 f"notifications={len(user_ids)} internal_messages={internal_count}",
                 target_type="PORTAL_CIRCULAR",
                 target_id=circ.id,
             )
             db.session.commit()
+            attachment_note = f" وإرفاق {attachment_count} ملف" if attachment_count else ""
             flash(
-                f"تم إصدار التعميم وإرساله في التعميمات والمراسلات والإشعارات ({len(user_ids)} مستخدم).",
+                f"تم إصدار التعميم{attachment_note} وإرساله في التعميمات والمراسلات والإشعارات "
+                f"({len(user_ids)} مستخدم).",
                 "success",
             )
 
@@ -4367,12 +4519,31 @@ def circular_new():
                 flash(email_message, email_category)
             return redirect(url_for("portal.circular_view", circular_id=circ.id))
 
+        except ValueError as exc:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            for saved_path in saved_paths:
+                try:
+                    saved_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            flash(str(exc), "danger")
+            return render_form(**form_values)
         except Exception:
             try:
                 db.session.rollback()
             except Exception:
                 pass
-            flash("حدث خطأ أثناء إصدار التعميم.", "danger")
+            for saved_path in saved_paths:
+                try:
+                    saved_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            current_app.logger.exception("Failed to create circular with attachments")
+            flash("حدث خطأ أثناء إصدار التعميم أو حفظ مرفقاته.", "danger")
+            return render_form(**form_values)
 
     # GET
     return render_form(

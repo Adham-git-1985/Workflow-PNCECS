@@ -71,6 +71,7 @@
                 <div class="small text-muted">
                   {{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}
                   · {{ c.audience_label }}
+                  {% if c.attachments %} · <i class="bi bi-paperclip"></i> {{ c.attachments|length }}{% endif %}
                 </div>
               </div>
               {% if c.is_urgent %}

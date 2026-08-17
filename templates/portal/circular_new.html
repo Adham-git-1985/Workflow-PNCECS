@@ -14,7 +14,7 @@
 
 <div class="card shadow-sm">
   <div class="card-body">
-    <form method="post">
+    <form method="post" enctype="multipart/form-data">
       <div class="mb-3">
         <label class="form-label">عنوان التعميم</label>
         <input type="text" name="title" class="form-control" maxlength="200" value="{{ title|default('') }}" required>
@@ -22,6 +22,30 @@
       <div class="mb-3">
         <label class="form-label">نص التعميم</label>
         <textarea name="body" class="form-control" rows="8" required>{{ body|default('') }}</textarea>
+      </div>
+
+      <div class="border rounded-3 p-3 mb-3 bg-light-subtle">
+        <div class="fw-semibold mb-3"><i class="bi bi-paperclip"></i> مرفقات التعميم</div>
+        <div class="row g-3">
+          <div class="col-md-7">
+            <label class="form-label" for="circularAttachments">إضافة مرفق</label>
+            <input class="form-control" type="file" name="attachments" id="circularAttachments"
+                   multiple data-circular-attachment-input>
+            <div class="form-text">يمكن اختيار ملف واحد أو عدة ملفات وإرفاقها بالتعميم.</div>
+          </div>
+          <div class="col-md-5">
+            <label class="form-label" for="capturedAttachments">القراءة من السكانر أو الكاميرا</label>
+            <input class="form-control" type="file" name="captured_attachments" id="capturedAttachments"
+                   accept="image/*" capture="environment" data-circular-attachment-input>
+            <div class="form-text">
+              يفتح الالتقاط المباشر على الأجهزة الداعمة. للسكانر المكتبي، احفظ المسح من برنامج الجهاز ثم اختره من «إضافة مرفق».
+            </div>
+          </div>
+        </div>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3">
+          <div class="small text-muted">حتى 10 ملفات، 25 م.ب للملف، و50 م.ب إجمالاً.</div>
+          <div class="small fw-semibold text-primary" id="circularAttachmentSummary">لم يتم اختيار ملفات.</div>
+        </div>
       </div>
 
       <div class="border rounded-3 p-3 mb-3">
@@ -159,6 +183,8 @@
     var department = document.getElementById('targetDepartment');
     var whatsapp = document.getElementById('sendWhatsapp');
     var whatsappNotice = document.getElementById('targetedWhatsappNotice');
+    var attachmentInputs = Array.prototype.slice.call(document.querySelectorAll('[data-circular-attachment-input]'));
+    var attachmentSummary = document.getElementById('circularAttachmentSummary');
 
     function syncAudienceFields() {
       var value = scope.value;
@@ -179,6 +205,16 @@
 
     scope.addEventListener('change', syncAudienceFields);
     syncAudienceFields();
+
+    function syncAttachmentSummary() {
+      var count = attachmentInputs.reduce(function (total, input) {
+        return total + (input.files ? input.files.length : 0);
+      }, 0);
+      attachmentSummary.textContent = count ? ('تم اختيار ' + count + ' ملف.') : 'لم يتم اختيار ملفات.';
+    }
+    attachmentInputs.forEach(function (input) {
+      input.addEventListener('change', syncAttachmentSummary);
+    });
   });
 </script>
 {% endblock %}
