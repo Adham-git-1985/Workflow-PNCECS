@@ -23,6 +23,49 @@
         <label class="form-label">نص التعميم</label>
         <textarea name="body" class="form-control" rows="8" required>{{ body|default('') }}</textarea>
       </div>
+
+      <div class="border rounded-3 p-3 mb-3">
+        <div class="fw-semibold mb-3"><i class="bi bi-people"></i> الجهة المستهدفة</div>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label" for="targetScope">نطاق التعميم</label>
+            <select class="form-select" name="target_scope" id="targetScope" required>
+              <option value="ALL" {% if target_scope|default('ALL') == 'ALL' %}selected{% endif %}>جميع اللجنة الوطنية</option>
+              <option value="DIRECTORATE" {% if target_scope == 'DIRECTORATE' %}selected{% endif %}>إدارة معنية</option>
+              <option value="DEPARTMENT" {% if target_scope == 'DEPARTMENT' %}selected{% endif %}>دائرة معينة</option>
+            </select>
+          </div>
+
+          <div class="col-md-6" id="directorateTargetWrap" hidden>
+            <label class="form-label" for="targetDirectorate">الإدارة المعنية</label>
+            <select class="form-select" name="target_directorate_id" id="targetDirectorate">
+              <option value="">— اختر الإدارة —</option>
+              {% for directorate in directorates %}
+                <option value="{{ directorate.id }}" {% if selected_directorate_id == directorate.id %}selected{% endif %}>
+                  {{ directorate.name_ar }}{% if directorate.code %} ({{ directorate.code }}){% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="col-md-6" id="departmentTargetWrap" hidden>
+            <label class="form-label" for="targetDepartment">الدائرة المستهدفة</label>
+            <select class="form-select" name="target_department_id" id="targetDepartment">
+              <option value="">— اختر الدائرة —</option>
+              {% for department in departments %}
+                <option value="{{ department.id }}" {% if selected_department_id == department.id %}selected{% endif %}>
+                  {{ department.name_ar }}
+                  {% if department.directorate %} — {{ department.directorate.name_ar }}{% elif department.unit %} — {{ department.unit.name_ar }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-text mt-2">
+          لن يظهر التعميم ولن تُرسل إشعاراته أو مراسلاته أو بريده إلا لموظفي الجهة المختارة.
+        </div>
+      </div>
+
       <div class="form-check mb-3">
         <input class="form-check-input" type="checkbox" name="is_urgent" value="1" id="urgent" {% if is_urgent %}checked{% endif %}>
         <label class="form-check-label" for="urgent">مستعجل</label>
@@ -42,6 +85,7 @@
           <div class="col-md-6">
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" role="switch" name="send_whatsapp" value="1" id="sendWhatsapp"
+                     data-ready="{{ '1' if wa.ready else '0' }}"
                      {% if send_whatsapp %}checked{% endif %}
                      {% if not wa.ready %}disabled{% endif %}>
               <label class="form-check-label" for="sendWhatsapp">إرسال نسخة إلى واتساب</label>
@@ -69,6 +113,9 @@
                 {% if not wa.ready %}
                   <span class="text-danger">الإعدادات غير مكتملة.</span>
                 {% endif %}
+                <span class="text-warning d-none" id="targetedWhatsappNotice">
+                  واتساب متاح فقط عند اختيار جميع اللجنة لأن إعداداته الحالية عامة.
+                </span>
               {% else %}
                 واتساب غير مفعل.
               {% endif %}
@@ -77,7 +124,7 @@
           <div class="col-md-6">
             <div class="form-text">
               {% if mail_cfg.enabled %}
-                البريد: {{ mail_cfg.recipient_count or 0 }} عنوان مستخدم.
+                البريد: {{ mail_cfg.recipient_count or 0 }} عنوان مستخدم مسجل، وسيُرسل فقط إلى الجهة المختارة.
                 {% if not mail_cfg.ready %}
                   <span class="text-danger">الإعدادات غير مكتملة.</span>
                 {% endif %}
@@ -100,4 +147,38 @@
     </form>
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var scope = document.getElementById('targetScope');
+    var directorateWrap = document.getElementById('directorateTargetWrap');
+    var departmentWrap = document.getElementById('departmentTargetWrap');
+    var directorate = document.getElementById('targetDirectorate');
+    var department = document.getElementById('targetDepartment');
+    var whatsapp = document.getElementById('sendWhatsapp');
+    var whatsappNotice = document.getElementById('targetedWhatsappNotice');
+
+    function syncAudienceFields() {
+      var value = scope.value;
+      var isDirectorate = value === 'DIRECTORATE';
+      var isDepartment = value === 'DEPARTMENT';
+      directorateWrap.hidden = !isDirectorate;
+      departmentWrap.hidden = !isDepartment;
+      directorate.required = isDirectorate;
+      department.required = isDepartment;
+
+      if (whatsapp) {
+        var targeted = value !== 'ALL';
+        whatsapp.disabled = targeted || whatsapp.dataset.ready !== '1';
+        if (targeted) whatsapp.checked = false;
+        if (whatsappNotice) whatsappNotice.classList.toggle('d-none', !targeted);
+      }
+    }
+
+    scope.addEventListener('change', syncAudienceFields);
+    syncAudienceFields();
+  });
+</script>
 {% endblock %}

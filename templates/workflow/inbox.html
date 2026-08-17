@@ -44,7 +44,10 @@
              href="{{ url_for('workflow.circulars_view', circular_id=c.id) }}">
             <div class="flex-grow-1">
               <div class="fw-bold">{{ c.title }}</div>
-              <div class="small text-muted">{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</div>
+              <div class="small text-muted">
+                {{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}
+                · {{ c.audience_label }}
+              </div>
             </div>
             {% if c.is_urgent %}
               <span class="badge bg-danger">مستعجل</span>

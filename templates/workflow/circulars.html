@@ -16,6 +16,7 @@
         <tr>
           <th>العنوان</th>
           <th>التاريخ</th>
+          <th>الجهة المستهدفة</th>
           <th>الوسم</th>
           <th class="text-end"></th>
         </tr>
@@ -25,6 +26,7 @@
         <tr>
           <td class="fw-semibold">{{ c.title }}</td>
           <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
+          <td><span class="badge bg-light text-dark border">{{ c.audience_label }}</span></td>
           <td>
             {% if c.is_urgent %}
               <span class="badge bg-danger">مستعجل</span>
@@ -38,7 +40,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="4" class="text-center text-muted py-4">لا توجد تعميمات.</td>
+          <td colspan="5" class="text-center text-muted py-4">لا توجد تعميمات.</td>
         </tr>
         {% endfor %}
       </tbody>

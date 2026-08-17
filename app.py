@@ -396,6 +396,37 @@ def _ensure_runtime_schema():
                 except Exception:
                     db.session.rollback()
 
+            # Circular audience targeting. Existing circulars remain visible to
+            # everyone, while new rows may target a directorate or department.
+            for _col, _ctype in [
+                ("target_scope", "TEXT NOT NULL DEFAULT 'ALL'"),
+                ("target_directorate_id", "INTEGER"),
+                ("target_department_id", "INTEGER"),
+            ]:
+                if not _col_exists("portal_circulars", _col):
+                    _add_column_retry("portal_circulars", _col, _ctype)
+            if _col_exists("portal_circulars", "target_scope"):
+                try:
+                    db.session.execute(text(
+                        "UPDATE portal_circulars SET target_scope='ALL' "
+                        "WHERE target_scope IS NULL OR TRIM(target_scope)=''"
+                    ))
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_portal_circulars_target_scope "
+                        "ON portal_circulars (target_scope)"
+                    ))
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_portal_circulars_target_directorate_id "
+                        "ON portal_circulars (target_directorate_id)"
+                    ))
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_portal_circulars_target_department_id "
+                        "ON portal_circulars (target_department_id)"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             # Protect workflows that were already linked to correspondence
             # before the metadata columns existed.
             if (

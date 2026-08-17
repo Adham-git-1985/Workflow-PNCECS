@@ -3665,6 +3665,17 @@ class PortalCircular(db.Model):
 
     __table_args__ = (
         db.Index("ix_portal_circulars_created", "created_at"),
+        db.Index("ix_portal_circulars_target_scope", "target_scope"),
+        db.CheckConstraint(
+            "target_scope IN ('ALL','DIRECTORATE','DEPARTMENT')",
+            name="ck_portal_circulars_target_scope",
+        ),
+        db.CheckConstraint(
+            "(target_scope='ALL' AND target_directorate_id IS NULL AND target_department_id IS NULL) OR "
+            "(target_scope='DIRECTORATE' AND target_directorate_id IS NOT NULL AND target_department_id IS NULL) OR "
+            "(target_scope='DEPARTMENT' AND target_department_id IS NOT NULL AND target_directorate_id IS NULL)",
+            name="ck_portal_circulars_target_fields",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -3672,10 +3683,39 @@ class PortalCircular(db.Model):
     body = db.Column(db.Text, nullable=False)
     is_urgent = db.Column(db.Boolean, default=True, nullable=False)
 
+    # Audience: the whole national committee, one directorate (إدارة), or one
+    # department (دائرة). Legacy circulars are backfilled to ALL by migration.
+    target_scope = db.Column(db.String(20), nullable=False, default="ALL", server_default="ALL")
+    target_directorate_id = db.Column(
+        db.Integer,
+        db.ForeignKey("directorates.id"),
+        nullable=True,
+        index=True,
+    )
+    target_department_id = db.Column(
+        db.Integer,
+        db.ForeignKey("departments.id"),
+        nullable=True,
+        index=True,
+    )
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], lazy="joined")
+    target_directorate = db.relationship("Directorate", foreign_keys=[target_directorate_id], lazy="joined")
+    target_department = db.relationship("Department", foreign_keys=[target_department_id], lazy="joined")
+
+    @property
+    def audience_label(self) -> str:
+        scope = (self.target_scope or "ALL").strip().upper()
+        if scope == "DIRECTORATE":
+            name = getattr(self.target_directorate, "name_ar", None)
+            return f"الإدارة: {name}" if name else "إدارة معنية"
+        if scope == "DEPARTMENT":
+            name = getattr(self.target_department, "name_ar", None)
+            return f"الدائرة: {name}" if name else "دائرة معينة"
+        return "جميع اللجنة الوطنية"
 
 
 class PortalMeeting(db.Model):

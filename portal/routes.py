@@ -220,6 +220,16 @@ from services.correspondence_workflow import (
     correspondence_target_user_ids,
     sync_correspondence_from_workflow,
 )
+from services.circulars import (
+    CIRCULAR_SCOPE_ALL,
+    CIRCULAR_SCOPE_DEPARTMENT,
+    CIRCULAR_SCOPE_DIRECTORATE,
+    CIRCULAR_SCOPES,
+    can_user_view_circular,
+    circular_recipient_user_ids,
+    normalize_circular_scope,
+    visible_circulars_query,
+)
 
 # -------------------------
 # Permissions (Portal)
@@ -3255,7 +3265,7 @@ def index():
     # --- Circulars (last 5) ---
     last_circulars = []
     try:
-        last_circulars = (PortalCircular.query
+        last_circulars = (visible_circulars_query(PortalCircular.query, current_user)
                           .order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc())
                           .limit(5)
                           .all())
@@ -3766,11 +3776,16 @@ def _valid_email_address(value: str | None) -> str:
     return ""
 
 
-def _circular_user_emails() -> list[str]:
+def _circular_user_emails(user_ids: list[int] | None = None) -> list[str]:
     emails: list[str] = []
     seen: set[str] = set()
     try:
-        rows = db.session.query(User.email).filter(User.email.isnot(None)).all()
+        query = db.session.query(User.email).filter(User.email.isnot(None))
+        if user_ids is not None:
+            if not user_ids:
+                return []
+            query = query.filter(User.id.in_(user_ids))
+        rows = query.all()
     except Exception:
         rows = []
     for row in rows:
@@ -3900,6 +3915,7 @@ def _circular_whatsapp_text(row: PortalCircular) -> str:
         "",
         str(getattr(row, "body", "") or "").strip(),
         "",
+        f"الجهة المستهدفة: {row.audience_label}",
         f"صادر عبر البوابة الإدارية بتاريخ {issued_at}",
     ]
     if sender:
@@ -3965,6 +3981,12 @@ def _send_circular_to_whatsapp(row: PortalCircular) -> tuple[str, str]:
         return "warning", "تكامل واتساب غير مفعل من صفحة التكاملات."
     if not cfg.get("ready"):
         return "warning", "إعدادات واتساب غير مكتملة، لذلك لم يتم إرسال نسخة واتساب."
+    if normalize_circular_scope(getattr(row, "target_scope", None)) != CIRCULAR_SCOPE_ALL:
+        return (
+            "warning",
+            "لم يتم إرسال نسخة واتساب لأن إعداد واتساب الحالي موجّه إلى مجموعة/قائمة عامة، "
+            "بينما هذا التعميم مخصص لجهة محددة.",
+        )
 
     try:
         import requests
@@ -4054,7 +4076,7 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
     if not cfg.get("ready"):
         return "warning", "إعدادات البريد الإلكتروني غير مكتملة، لذلك لم يتم إرسال نسخة بريدية."
 
-    recipients = _circular_user_emails()
+    recipients = _circular_user_emails(circular_recipient_user_ids(row))
     if not recipients:
         return "warning", "لا توجد عناوين بريد إلكتروني صالحة للمستخدمين."
 
@@ -4129,7 +4151,7 @@ def circulars_list():
     """List circulars for portal users."""
     rows = []
     try:
-        rows = (PortalCircular.query
+        rows = (visible_circulars_query(PortalCircular.query, current_user)
                 .order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc())
                 .limit(200)
                 .all())
@@ -4150,6 +4172,8 @@ def circulars_list():
 @_perm(PORTAL_READ)
 def circular_view(circular_id: int):
     row = PortalCircular.query.get_or_404(circular_id)
+    if not can_user_view_circular(row, current_user):
+        abort(404)
     return render_template("portal/circular_view.html", row=row)
 
 
@@ -4160,6 +4184,28 @@ def circular_new():
     """Create a new circular and distribute it through portal channels."""
     whatsapp_config = _whatsapp_circular_settings()
     email_config = _email_circular_settings()
+    directorates = (
+        Directorate.query
+        .filter(Directorate.is_active.is_(True))
+        .order_by(Directorate.name_ar.asc(), Directorate.id.asc())
+        .all()
+    )
+    departments = (
+        Department.query
+        .filter(Department.is_active.is_(True))
+        .order_by(Department.name_ar.asc(), Department.id.asc())
+        .all()
+    )
+
+    def render_form(**values):
+        return render_template(
+            "portal/circular_new.html",
+            whatsapp_config=whatsapp_config,
+            email_config=email_config,
+            directorates=directorates,
+            departments=departments,
+            **values,
+        )
 
     if request.method == "POST":
         title = (request.form.get("title") or "").strip()
@@ -4167,37 +4213,68 @@ def circular_new():
         is_urgent = (request.form.get("is_urgent") or "").strip() in ("1", "on", "true", "True")
         send_whatsapp = (request.form.get("send_whatsapp") or "").strip() in ("1", "on", "true", "True")
         send_email = (request.form.get("send_email") or "").strip() in ("1", "on", "true", "True")
+        target_scope = (request.form.get("target_scope") or "").strip().upper()
+
+        def parse_target_id(field: str) -> int | None:
+            try:
+                value = int(request.form.get(field) or 0)
+                return value if value > 0 else None
+            except (TypeError, ValueError):
+                return None
+
+        selected_directorate_id = parse_target_id("target_directorate_id")
+        selected_department_id = parse_target_id("target_department_id")
+        form_values = {
+            "title": title,
+            "body": body,
+            "is_urgent": is_urgent,
+            "send_whatsapp": send_whatsapp,
+            "send_email": send_email,
+            "target_scope": target_scope or CIRCULAR_SCOPE_ALL,
+            "selected_directorate_id": selected_directorate_id,
+            "selected_department_id": selected_department_id,
+        }
 
         if not title:
             flash("عنوان التعميم مطلوب.", "danger")
-            return render_template(
-                "portal/circular_new.html",
-                title=title,
-                body=body,
-                is_urgent=is_urgent,
-                send_whatsapp=send_whatsapp,
-                send_email=send_email,
-                whatsapp_config=whatsapp_config,
-                email_config=email_config,
-            )
+            return render_form(**form_values)
         if not body:
             flash("نص التعميم مطلوب.", "danger")
-            return render_template(
-                "portal/circular_new.html",
-                title=title,
-                body=body,
-                is_urgent=is_urgent,
-                send_whatsapp=send_whatsapp,
-                send_email=send_email,
-                whatsapp_config=whatsapp_config,
-                email_config=email_config,
+            return render_form(**form_values)
+
+        if target_scope not in CIRCULAR_SCOPES:
+            flash("يرجى اختيار جهة مستهدفة صحيحة للتعميم.", "danger")
+            return render_form(**form_values)
+
+        target_directorate_id = None
+        target_department_id = None
+        if target_scope == CIRCULAR_SCOPE_DIRECTORATE:
+            target_directorate = (
+                db.session.get(Directorate, selected_directorate_id)
+                if selected_directorate_id else None
             )
+            if not target_directorate or not target_directorate.is_active:
+                flash("يرجى اختيار الإدارة المعنية.", "danger")
+                return render_form(**form_values)
+            target_directorate_id = target_directorate.id
+        elif target_scope == CIRCULAR_SCOPE_DEPARTMENT:
+            target_department = (
+                db.session.get(Department, selected_department_id)
+                if selected_department_id else None
+            )
+            if not target_department or not target_department.is_active:
+                flash("يرجى اختيار الدائرة المستهدفة.", "danger")
+                return render_form(**form_values)
+            target_department_id = target_department.id
 
         try:
             circ = PortalCircular(
                 title=title[:200],
                 body=body,
                 is_urgent=bool(is_urgent),
+                target_scope=target_scope,
+                target_directorate_id=target_directorate_id,
+                target_department_id=target_department_id,
                 created_by_user_id=getattr(current_user, "id", None),
                 created_at=datetime.utcnow(),
             )
@@ -4209,11 +4286,7 @@ def circular_new():
             if len(msg) > 250:
                 msg = msg[:250]
 
-            user_ids = []
-            try:
-                user_ids = [r[0] for r in db.session.query(User.id).all()]
-            except Exception:
-                user_ids = []
+            user_ids = circular_recipient_user_ids(circ)
 
             now = datetime.utcnow()
             notifs = [
@@ -4239,7 +4312,10 @@ def circular_new():
             internal_count = _create_circular_internal_message(circ, user_ids)
             _portal_audit(
                 "PORTAL_CIRCULAR_CREATE",
-                f"title={title[:120]} notifications={len(user_ids)} internal_messages={internal_count}",
+                f"title={title[:120]} scope={target_scope} "
+                f"target_directorate_id={target_directorate_id} "
+                f"target_department_id={target_department_id} "
+                f"notifications={len(user_ids)} internal_messages={internal_count}",
                 target_type="PORTAL_CIRCULAR",
                 target_id=circ.id,
             )
@@ -4299,15 +4375,15 @@ def circular_new():
             flash("حدث خطأ أثناء إصدار التعميم.", "danger")
 
     # GET
-    return render_template(
-        "portal/circular_new.html",
+    return render_form(
         title="",
         body="",
         is_urgent=True,
         send_whatsapp=False,
         send_email=False,
-        whatsapp_config=whatsapp_config,
-        email_config=email_config,
+        target_scope=CIRCULAR_SCOPE_ALL,
+        selected_directorate_id=None,
+        selected_department_id=None,
     )
 
 

@@ -57,6 +57,10 @@ from services.correspondence_procedure import (
     STATUS_LABELS as CORR_STATUS_LABELS,
     due_state as corr_due_state,
 )
+from services.circulars import (
+    can_user_view_circular,
+    visible_circulars_query,
+)
 
 from models import (
     WorkflowRequest,
@@ -2539,7 +2543,7 @@ def inbox():
     # --- Circulars (last 5) ---
     last_circulars = []
     try:
-        last_circulars = (PortalCircular.query
+        last_circulars = (visible_circulars_query(PortalCircular.query, current_user)
                           .order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc())
                           .limit(5)
                           .all())
@@ -2697,7 +2701,7 @@ def work_dashboard():
 def circulars_list():
     rows = []
     try:
-        rows = (PortalCircular.query
+        rows = (visible_circulars_query(PortalCircular.query, current_user)
                 .order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc())
                 .limit(200)
                 .all())
@@ -2710,6 +2714,8 @@ def circulars_list():
 @login_required
 def circulars_view(circular_id: int):
     row = PortalCircular.query.get_or_404(circular_id)
+    if not can_user_view_circular(row, current_user):
+        abort(404)
     return render_template("workflow/circular_view.html", row=row)
 
 

@@ -7,6 +7,7 @@
     <div class="text-muted">
       {{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '' }}
       {% if row.is_urgent %}<span class="badge bg-danger ms-2">مستعجل</span>{% endif %}
+      <span class="badge bg-light text-dark border ms-2">{{ row.audience_label }}</span>
     </div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('workflow.circulars_list') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
