@@ -14,6 +14,13 @@ class BaseConfig:
         os.getenv("ARCHIVE_PURGE_DAYS", 30)
     )
 
+    # Full-system automatic backup. The default destination is the Desktop
+    # detected for the operating-system account running this application.
+    AUTO_BACKUP_ENABLED = os.getenv("AUTO_BACKUP_ENABLED", "1")
+    AUTO_BACKUP_HOUR = os.getenv("AUTO_BACKUP_HOUR", "15")
+    AUTO_BACKUP_MINUTE = os.getenv("AUTO_BACKUP_MINUTE", "0")
+    AUTO_BACKUP_DIR = os.getenv("AUTO_BACKUP_DIR", "")
+
     # Local smart intake for manually uploaded inbound correspondence.
     # The attachment is analyzed in memory and is never sent to an external AI.
     CORR_INTAKE_MAX_BYTES = int(os.getenv("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))

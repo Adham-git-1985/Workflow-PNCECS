@@ -807,6 +807,7 @@ try:
     from portal.timeclock_auto import start_timeclock_auto_sync
     from portal.hr_alerts_job import start_hr_alerts_job
     from portal.corr_deadlines_job import start_correspondence_deadline_job
+    from jobs.backup_job import start_automatic_backup_job
 
     _jobs_started = False
 
@@ -825,15 +826,16 @@ try:
 
         _jobs_started = True
         try:
+            start_automatic_backup_job(app)
             start_timeclock_auto_sync(app)
             start_hr_alerts_job(app)
             start_correspondence_deadline_job(app)
         except Exception:
             # Keep serving even if job fails
-            app.logger.exception("Failed to start timeclock auto-sync")
+            app.logger.exception("Failed to start a background job")
 except Exception as _e:
     # Don't fail the whole app if background job wiring fails
-    app.logger.exception("Failed to wire timeclock auto-sync: %s", _e)
+    app.logger.exception("Failed to wire background jobs: %s", _e)
 app.register_blueprint(masterdata_bp)
 app.register_blueprint(messages_bp)
 app.register_blueprint(delegation_bp)
@@ -1319,6 +1321,11 @@ def request_audit(request_id):
 if __name__ == "__main__":
     server_host = os.getenv("APP_HOST", "127.0.0.1")
     server_port = int(os.getenv("APP_PORT", "5000"))
+
+    # Start before the web server begins accepting requests so a missed 15:00
+    # backup is recovered immediately after the application process starts.
+    from jobs.backup_job import start_automatic_backup_job
+    start_automatic_backup_job(app)
 
     if _app_environment == "development":
         app.run(
