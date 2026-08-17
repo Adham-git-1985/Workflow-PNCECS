@@ -3705,6 +3705,13 @@ class PortalCircular(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], lazy="joined")
     target_directorate = db.relationship("Directorate", foreign_keys=[target_directorate_id], lazy="joined")
     target_department = db.relationship("Department", foreign_keys=[target_department_id], lazy="joined")
+    attachments = db.relationship(
+        "PortalCircularAttachment",
+        back_populates="circular",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="PortalCircularAttachment.id",
+    )
 
     @property
     def audience_label(self) -> str:
@@ -3716,6 +3723,40 @@ class PortalCircular(db.Model):
             name = getattr(self.target_department, "name_ar", None)
             return f"الدائرة: {name}" if name else "دائرة معينة"
         return "جميع اللجنة الوطنية"
+
+
+class PortalCircularAttachment(db.Model):
+    __tablename__ = "portal_circular_attachments"
+
+    __table_args__ = (
+        db.Index(
+            "ix_portal_circular_attachments_circular_uploaded",
+            "circular_id",
+            "uploaded_at",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    circular_id = db.Column(
+        db.Integer,
+        db.ForeignKey("portal_circulars.id"),
+        nullable=False,
+        index=True,
+    )
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    uploaded_by_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    circular = db.relationship("PortalCircular", back_populates="attachments", lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id], lazy="joined")
 
 
 class PortalMeeting(db.Model):

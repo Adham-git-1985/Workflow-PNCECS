@@ -30,7 +30,10 @@
       <tbody>
         {% for c in rows %}
         <tr>
-          <td class="fw-semibold">{{ c.title }}</td>
+          <td class="fw-semibold">
+            {{ c.title }}
+            {% if c.attachments %}<span class="badge text-bg-light border ms-1"><i class="bi bi-paperclip"></i> {{ c.attachments|length }}</span>{% endif %}
+          </td>
           <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
           <td><span class="badge text-bg-light border">{{ c.audience_label }}</span></td>
           <td>
