@@ -66,6 +66,7 @@ _ACTION_TEMPLATES = {
     "WORKFLOW_REPLY": "أضاف {actor} ردًا إلى المعاملة.",
     "WORKFLOW_ATTACHMENT_UPLOADED": "رفع {actor} مرفقًا للمعاملة.",
     "WORKFLOW_MENTION_ACCESS": "أضاف {actor} مستخدمًا إلى المعاملة عن طريق الإشارة إليه.",
+    "PARALLEL_SYNC_AUTHORIZED": "وجّه {actor} الخطوة المتزامنة إلى المعنيين المحددين.",
     "STEP_APPROVED": "وافق {actor} على الخطوة.",
     "STEP_REJECTED": "رفض {actor} الخطوة.",
     "REQUEST_DELETED": "حذف {actor} المعاملة.",

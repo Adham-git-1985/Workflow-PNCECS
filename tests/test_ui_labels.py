@@ -20,6 +20,10 @@ class UiLabelsArabicTests(unittest.TestCase):
         self.assertEqual(ui_label("WorkflowRequest"), "طلب مسار")
         self.assertEqual(ui_label("Message"), "رسالة")
         self.assertEqual(ui_label("PARALLEL_SYNC"), "متزامن")
+        self.assertEqual(
+            ui_label("PARALLEL_SYNC_AUTHORIZED"),
+            "توجيه خطوة متزامنة إلى المعنيين",
+        )
 
     def test_codes_embedded_in_user_facing_text_are_translated(self):
         translated = ui_text(

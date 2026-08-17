@@ -117,6 +117,8 @@ from workflow.engine import (
     bypass_parallel_task,
     bypass_all_parallel_tasks,
     ensure_parallel_tasks,
+    authorize_parallel_step,
+    resolve_parallel_candidate_user_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -3287,6 +3289,11 @@ def view_request(request_id):
     current_step = None
     can_decide = False
     can_escalate = False
+    next_parallel_step = None
+    next_parallel_candidates = []
+    parallel_candidates = []
+    parallel_awaiting_authorization = False
+    can_authorize_parallel = False
 
     if inst:
         steps = (
@@ -3298,6 +3305,32 @@ def view_request(request_id):
         current_step = next((s for s in steps if s.step_order == inst.current_step_order), None)
         if current_step and current_step.status == "PENDING":
             can_decide = any(_user_can_act_on_step(u, current_step) for u in actor_users)
+
+        # A sequential approver must select the recipients of an immediately
+        # following parallel step as part of the approval transaction.
+        if current_step and can_decide and (getattr(current_step, "mode", "") or "").upper() != "PARALLEL_SYNC":
+            next_parallel_step = next(
+                (
+                    s for s in steps
+                    if int(getattr(s, "step_order", 0) or 0) == int(current_step.step_order) + 1
+                    and (getattr(s, "mode", "") or "").strip().upper() == "PARALLEL_SYNC"
+                ),
+                None,
+            )
+            if next_parallel_step:
+                candidate_ids = resolve_parallel_candidate_user_ids(
+                    req,
+                    inst,
+                    next_parallel_step,
+                )
+                candidate_map = {
+                    int(u.id): u
+                    for u in User.query.filter(User.id.in_(candidate_ids)).all()
+                } if candidate_ids else {}
+                next_parallel_candidates = sorted(
+                    (candidate_map[uid] for uid in candidate_ids if uid in candidate_map),
+                    key=lambda u: ((u.full_name or u.email or "").casefold(), int(u.id)),
+                )
 
         # ✅ Allow escalation for viewers while workflow is still in progress
         try:
@@ -3594,6 +3627,19 @@ def view_request(request_id):
                             break
                 except Exception:
                     pass
+
+            if not parallel_tasks:
+                parallel_awaiting_authorization = True
+                candidate_ids = resolve_parallel_candidate_user_ids(req, inst, current_step)
+                candidate_map = {
+                    int(u.id): u
+                    for u in User.query.filter(User.id.in_(candidate_ids)).all()
+                } if candidate_ids else {}
+                parallel_candidates = sorted(
+                    (candidate_map[uid] for uid in candidate_ids if uid in candidate_map),
+                    key=lambda u: ((u.full_name or u.email or "").casefold(), int(u.id)),
+                )
+                can_authorize_parallel = can_bypass_parallel
     except Exception:
         parallel_tasks = []
         my_parallel_task = None
@@ -3636,6 +3682,11 @@ def view_request(request_id):
         parallel_tasks=parallel_tasks,
         my_parallel_task=my_parallel_task,
         can_bypass_parallel=can_bypass_parallel,
+        can_authorize_parallel=can_authorize_parallel,
+        parallel_awaiting_authorization=parallel_awaiting_authorization,
+        parallel_candidates=parallel_candidates,
+        next_parallel_step=next_parallel_step,
+        next_parallel_candidates=next_parallel_candidates,
         mentioned_users=mentioned_users,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
@@ -4478,6 +4529,7 @@ def decide_request_step(request_id, step_order):
 
     decision = (request.form.get("decision") or "").strip().upper()
     note = (request.form.get("note") or "").strip()
+    authorized_parallel_user_ids = request.form.getlist("parallel_assignee_ids")
 
     if decision not in ("APPROVED", "REJECTED"):
         flash("قرار غير صالح.", "danger")
@@ -4492,7 +4544,8 @@ def decide_request_step(request_id, step_order):
                   note=note, auto_commit=False,
                   effective_user_id=acting_user.id,
                   on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
-                  delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None))
+                  delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None),
+                  authorized_parallel_user_ids=authorized_parallel_user_ids)
         sync_correspondence_from_workflow(
             req,
             actor_user_id=current_user.id,
@@ -4538,6 +4591,86 @@ def decide_request_step(request_id, step_order):
             except Exception:
                 pass
         flash(f"خطأ أثناء حفظ الإجراء: {e}", "danger")
+
+    return redirect(url_for("workflow.view_request", request_id=req.id))
+
+
+# =========================
+# PARALLEL_SYNC - Authorize selected assignees
+# =========================
+@workflow_bp.route("/request/<int:request_id>/step/<int:step_order>/parallel/authorize", methods=["POST"])
+@login_required
+def authorize_parallel_assignees(request_id: int, step_order: int):
+    req = WorkflowRequest.query.get_or_404(request_id)
+    delegations = get_active_delegations()
+    actor_users = [current_user]
+    for delegation in (delegations or []):
+        user = getattr(delegation, "from_user", None)
+        if user and user.id not in [actor.id for actor in actor_users]:
+            actor_users.append(user)
+
+    if not _actor_context_can_view_request(req, actor_users):
+        abort(403)
+
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first_or_404()
+    step = WorkflowInstanceStep.query.filter_by(
+        instance_id=inst.id,
+        step_order=step_order,
+    ).first_or_404()
+    if (
+        int(getattr(inst, "current_step_order", 0) or 0) != int(step_order)
+        or (getattr(step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC"
+    ):
+        flash("الخطوة المتزامنة ليست نشطة حاليًا.", "warning")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    acting_user = None
+    used_delegation = None
+    if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
+        acting_user = current_user
+    elif int(getattr(inst, "last_step_actor_id", 0) or 0) == int(current_user.id):
+        acting_user = current_user
+    else:
+        for delegation in (delegations or []):
+            user = getattr(delegation, "from_user", None)
+            if user and int(getattr(inst, "last_step_actor_id", 0) or 0) == int(user.id):
+                acting_user = user
+                used_delegation = delegation
+                break
+
+    if not acting_user:
+        abort(403)
+
+    selected_ids = request.form.getlist("parallel_assignee_ids")
+    try:
+        selected = authorize_parallel_step(
+            req,
+            inst,
+            step,
+            authorized_user_ids=selected_ids,
+            actor_user_id=current_user.id,
+            effective_user_id=acting_user.id,
+            on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
+            delegation_id=(
+                used_delegation.id
+                if used_delegation and acting_user.id != current_user.id
+                else None
+            ),
+            auto_commit=False,
+        )
+        sync_correspondence_from_workflow(
+            req,
+            actor_user_id=current_user.id,
+            note=(
+                f"توجيه الخطوة المتزامنة {step_order} في مسار #{req.id} "
+                f"إلى {len(selected)} مشارك/مشاركين"
+            ),
+        )
+        db.session.commit()
+        flash("تم توجيه الخطوة المتزامنة إلى المختارين فقط.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"تعذّر توجيه الخطوة المتزامنة: {exc}", "danger")
 
     return redirect(url_for("workflow.view_request", request_id=req.id))
 
