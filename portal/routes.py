@@ -19697,6 +19697,10 @@ def inbound_analyze_attachment():
 @_perm(CORR_CREATE)
 def inbound_new():
     _ensure_corr_competence_schema()
+    intake_max_bytes = max(
+        1,
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 12 * 1024 * 1024)),
+    )
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
     workflow_templates = _corr_workflow_templates()
@@ -19857,6 +19861,8 @@ def inbound_new():
         competence_options=competence_options,
         workflow_templates=workflow_templates,
         confidential_user_options=confidential_user_options,
+        intake_max_bytes=intake_max_bytes,
+        intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
         selected_confidential_user_ids={
             int(value) for value in request.form.getlist("authorized_user_ids") if value.isdigit()
         },

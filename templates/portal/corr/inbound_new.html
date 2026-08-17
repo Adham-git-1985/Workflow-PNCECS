@@ -19,6 +19,53 @@
   <form method="post" enctype="multipart/form-data" id="inboundNewForm">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3">
+      <div class="col-12">
+        <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
+          <div class="d-flex align-items-center gap-2 mb-3">
+            <span class="badge text-bg-primary rounded-pill">1</span>
+            <div>
+              <div class="fw-semibold">الخطوة الأولى: ارفع المرفق وحلله</div>
+              <div class="small text-muted">ابدأ بالمرفق ليقترح النظام بيانات الوارد قبل تعبئة بقية النموذج.</div>
+            </div>
+          </div>
+
+          <label class="form-label">مرفقات (يمكن اختيار عدة ملفات)</label>
+          <input class="form-control" type="file" name="files" id="inboundFiles" multiple required>
+          <div class="form-text">
+            يُحلّل المرفق الأول بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>، وتُحفظ جميع المرفقات عند تسجيل الوارد.
+            يمكن حفظ الملف الأكبر دون تحليل ذكي.
+          </div>
+
+          <div class="border rounded-3 bg-white p-3 mt-3 no-print" id="inboundAnalysisBox">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+              <div>
+                <div class="fw-semibold"><i class="bi bi-stars"></i> ترتيب بيانات المرفق</div>
+                <div class="small text-muted">التحليل محلي ويدعم PDF وWord وExcel وPowerPoint والنصوص وملف البريد EML.</div>
+              </div>
+              <button class="btn btn-primary" type="button" id="analyzeInboundAttachment"
+                      data-url="{{ url_for('portal.inbound_analyze_attachment') }}"
+                      data-max-bytes="{{ intake_max_bytes }}">
+                <i class="bi bi-file-earmark-text"></i> تحليل المرفق
+              </button>
+            </div>
+            <div class="small mt-2 d-none" id="inboundAnalysisStatus" role="status" aria-live="polite"></div>
+            <div class="mt-3 d-none" id="inboundAnalysisResults">
+              <div class="alert alert-info py-2 mb-2" id="inboundAnalysisPrivacy">
+                التحليل واستخراج OCR محليان داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.
+              </div>
+              <div id="inboundAnalysisWarnings"></div>
+              <div class="list-group mb-3" id="inboundAnalysisSuggestions"></div>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button class="btn btn-primary" type="button" id="applyInboundSuggestions">
+                  <i class="bi bi-check2-circle"></i> تطبيق المقترحات على النموذج
+                </button>
+                <span class="small text-muted">تبقى جميع الحقول قابلة للتعديل قبل الحفظ.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="col-md-3">
         <label class="form-label">رقم الوارد</label>
         <div class="form-control bg-body-secondary text-muted" aria-label="رقم الوارد التلقائي">يُنشأ تلقائيًا عند الحفظ</div>
@@ -89,39 +136,6 @@
       </div>
 
       <div class="col-12">
-        <label class="form-label">مرفقات (يمكن اختيار عدة ملفات)</label>
-        <input class="form-control" type="file" name="files" id="inboundFiles" multiple required>
-        <div class="form-text">يمكن حفظ جميع أنواع المرفقات. التحليل المحلي يدعم PDF النصي وWord وExcel وPowerPoint والنصوص وملف البريد EML.</div>
-
-        <div class="border rounded-3 bg-light p-3 mt-3 no-print" id="inboundAnalysisBox">
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-            <div>
-              <div class="fw-semibold"><i class="bi bi-stars"></i> ترتيب بيانات المرفق</div>
-              <div class="small text-muted">يحلل النظام أول مرفق محلياً ويعرض مقترحات قابلة للمراجعة قبل تطبيقها.</div>
-            </div>
-            <button class="btn btn-outline-primary" type="button" id="analyzeInboundAttachment"
-                    data-url="{{ url_for('portal.inbound_analyze_attachment') }}">
-              <i class="bi bi-file-earmark-text"></i> تحليل المرفق
-            </button>
-          </div>
-          <div class="small mt-2 d-none" id="inboundAnalysisStatus" role="status" aria-live="polite"></div>
-          <div class="mt-3 d-none" id="inboundAnalysisResults">
-            <div class="alert alert-info py-2 mb-2" id="inboundAnalysisPrivacy">
-              التحليل واستخراج OCR محليان داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.
-            </div>
-            <div id="inboundAnalysisWarnings"></div>
-            <div class="list-group mb-3" id="inboundAnalysisSuggestions"></div>
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <button class="btn btn-primary" type="button" id="applyInboundSuggestions">
-                <i class="bi bi-check2-circle"></i> تطبيق المقترحات على النموذج
-              </button>
-              <span class="small text-muted">تبقى جميع الحقول قابلة للتعديل قبل الحفظ.</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="col-12">
         {% set stamp_prefix = 'inbound_new' %}
         {% set stamp_label = 'الوارد' %}
         {% set stamp_date_default = request.form.get('received_date','') %}
@@ -165,6 +179,16 @@
   var privacyBox = document.getElementById("inboundAnalysisPrivacy");
   var form = document.getElementById("inboundNewForm");
   var latestAnalysis = null;
+
+  function formatFileSize(bytes) {
+    if (bytes >= 1024 * 1024) {
+      return String(Math.round((bytes / (1024 * 1024)) * 10) / 10) + " ميجابايت";
+    }
+    if (bytes >= 1024) {
+      return String(Math.round(bytes / 1024)) + " كيلوبايت";
+    }
+    return String(bytes) + " بايت";
+  }
 
   var fieldLabels = {
     received_date: "تاريخ الاستلام",
@@ -306,6 +330,18 @@
   async function analyzeAttachment() {
     if (!fileInput || !fileInput.files || !fileInput.files.length) {
       setStatus("اختر مرفقاً أولاً.", "warning");
+      return;
+    }
+
+    var selectedFile = fileInput.files[0];
+    var maxBytes = Number(analyzeButton.dataset.maxBytes || 0);
+    if (maxBytes > 0 && selectedFile.size > maxBytes) {
+      setStatus(
+        "حجم المرفق الأول " + formatFileSize(selectedFile.size) +
+        "، بينما الحد الأقصى للتحليل الذكي " + formatFileSize(maxBytes) +
+        ". يمكنك حفظه كمرفق دون تحليله، أو اختيار ملف أصغر للتحليل.",
+        "warning"
+      );
       return;
     }
 

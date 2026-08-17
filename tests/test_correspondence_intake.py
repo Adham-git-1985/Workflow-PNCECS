@@ -211,6 +211,8 @@ class CorrespondenceIntakeTests(unittest.TestCase):
 
         self.assertEqual(context.exception.code, "FILE_TOO_LARGE")
         self.assertEqual(context.exception.status_code, 413)
+        self.assertIn("5 بايت", context.exception.message)
+        self.assertIn("حفظه كمرفق دون تحليله", context.exception.message)
 
     def test_word_excel_pdf_and_powerpoint_text_are_extracted_locally(self):
         from docx import Document
@@ -260,6 +262,8 @@ class CorrespondenceIntakeTests(unittest.TestCase):
 
         self.assertIn('id="analyzeInboundAttachment"', template)
         self.assertIn('id="applyInboundSuggestions"', template)
+        self.assertLess(template.index('id="inboundFiles"'), template.index('id="received_date"'))
+        self.assertIn('data-max-bytes="{{ intake_max_bytes }}"', template)
         self.assertIn('value="save_and_start"', template)
         self.assertIn('request.form.get("submit_action") == "save_and_start"', routes)
         self.assertIn('workflow_request = _start_corr_workflow(', routes)

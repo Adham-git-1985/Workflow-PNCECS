@@ -235,6 +235,15 @@ def _ocr_png_frames(
     return "\n".join(parts), warnings
 
 
+def _human_size_limit(max_bytes: int) -> str:
+    """Return a concise Arabic label for a configured byte limit."""
+    if max_bytes >= 1024 * 1024:
+        return f"{max_bytes / (1024 * 1024):g} ميجابايت"
+    if max_bytes >= 1024:
+        return f"{max_bytes / 1024:g} كيلوبايت"
+    return f"{max_bytes} بايت"
+
+
 def read_limited_upload(file_storage, max_bytes: int) -> bytes:
     """Read an upload without allowing its compressed size to exceed the limit."""
     if not file_storage:
@@ -248,7 +257,8 @@ def read_limited_upload(file_storage, max_bytes: int) -> bytes:
         declared_size = 0
     if declared_size > max_bytes:
         raise CorrespondenceIntakeError(
-            "حجم المرفق أكبر من الحد المسموح للتحليل الذكي.",
+            f"حجم المرفق أكبر من الحد المسموح للتحليل الذكي "
+            f"({_human_size_limit(max_bytes)}). يمكنك حفظه كمرفق دون تحليله.",
             code="FILE_TOO_LARGE",
             status_code=413,
         )
@@ -269,7 +279,8 @@ def read_limited_upload(file_storage, max_bytes: int) -> bytes:
         total += len(chunk)
         if total > max_bytes:
             raise CorrespondenceIntakeError(
-                "حجم المرفق أكبر من الحد المسموح للتحليل الذكي.",
+                f"حجم المرفق أكبر من الحد المسموح للتحليل الذكي "
+                f"({_human_size_limit(max_bytes)}). يمكنك حفظه كمرفق دون تحليله.",
                 code="FILE_TOO_LARGE",
                 status_code=413,
             )
