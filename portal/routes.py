@@ -19616,7 +19616,7 @@ def inbound_analyze_attachment():
     """Extract local, reviewable suggestions from one manually selected file."""
     upload = request.files.get("file")
     try:
-        max_bytes = int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 12 * 1024 * 1024))
+        max_bytes = int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))
         max_text_chars = int(current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
         max_pdf_pages = int(current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40))
         ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
@@ -19699,7 +19699,7 @@ def inbound_new():
     _ensure_corr_competence_schema()
     intake_max_bytes = max(
         1,
-        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 12 * 1024 * 1024)),
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
     )
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()

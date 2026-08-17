@@ -16,7 +16,7 @@ class BaseConfig:
 
     # Local smart intake for manually uploaded inbound correspondence.
     # The attachment is analyzed in memory and is never sent to an external AI.
-    CORR_INTAKE_MAX_BYTES = int(os.getenv("CORR_INTAKE_MAX_BYTES", 12 * 1024 * 1024))
+    CORR_INTAKE_MAX_BYTES = int(os.getenv("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))
     CORR_INTAKE_MAX_TEXT_CHARS = int(os.getenv("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
     CORR_INTAKE_MAX_PDF_PAGES = int(os.getenv("CORR_INTAKE_MAX_PDF_PAGES", 40))
     CORR_INTAKE_OCR_ENABLED = os.getenv("CORR_INTAKE_OCR_ENABLED", "1").strip().lower() in {
