@@ -189,6 +189,50 @@ _EXTERNAL_AI_BLOCKED_PHRASES = (
     "اشرح هذه الصفحه", "اشرح هذه الصفحة", "الشاشه الحاليه", "الشاشة الحالية",
 )
 
+# Organizational, administrative, and technical structure is always protected.
+# Keep both phrase and token checks deliberately broad: a false positive only
+# routes a public question to the local assistant, while a false negative could
+# disclose internal hierarchy or architecture to the external provider.
+_EXTERNAL_AI_STRUCTURE_PHRASES = (
+    "الهيكل التنظيمي", "الهيكل الاداري", "الهيكل الوظيفي", "الهيكل المؤسسي",
+    "هيكل المنظمه", "هيكل المؤسسه", "المخطط التنظيمي", "الخريطه التنظيميه",
+    "البنيه التنظيميه", "البنيه الاداريه", "البنيه المؤسسيه",
+    "التسلسل الاداري", "التسلسل الوظيفي", "المستوي الاداري",
+    "التبعيه الاداريه", "خط الاشراف", "خطوط الاشراف", "سلسله القياده",
+    "الرئيس المباشر", "المدير المباشر", "المدير العام", "المسمي الوظيفي",
+    "المسميات الوظيفيه", "من يتبع لمن", "تابع لمن", "يتبع اداريا",
+    "الجهه التابعه", "الجهه المشرفه", "المسوول عن", "تشكيل اللجنه",
+    "هيكل المشروع", "هيكل النظام", "بنيه المشروع", "بنيه النظام",
+    "البنيه التقنيه", "معماريه المشروع", "معماريه النظام", "معماريه التطبيق",
+    "مخطط قاعده البيانات", "مخطط البيانات", "مجلدات المشروع", "مكونات النظام",
+    "organizational structure", "organisational structure", "administrative structure",
+    "management structure", "organizational chart", "organisation chart", "org chart",
+    "organizational hierarchy", "organisation hierarchy", "reporting structure",
+    "reporting line", "chain of command", "project structure", "system architecture",
+    "application architecture", "database schema", "data model", "codebase structure",
+)
+
+_EXTERNAL_AI_STRUCTURE_TOKENS = frozenset({
+    "هيكل", "الهيكل", "هيكليه", "الهيكليه", "تنظيمي", "تنظيميه",
+    "اداري", "اداريه", "مؤسسي", "مؤسسيه", "تبعيه", "التبعيه",
+    "اداره", "الاداره", "ادارات", "الادارات",
+    "مديريه", "المديريه", "مديريات", "المديريات",
+    "دائره", "الدائره", "دوائر", "الدوائر",
+    "قسم", "القسم", "اقسام", "الاقسام",
+    "شعبه", "الشعبه", "شعب", "الشعب",
+    "وحده", "الوحده", "وحدات", "الوحدات",
+    "لجنه", "اللجنه", "لجان", "اللجان",
+    "مكتب", "المكتب", "مكاتب", "المكاتب",
+    "فرع", "الفرع", "فروع", "الفروع",
+    "مدير", "المدير", "مدراء", "مديرين", "رئيس", "الرئيس",
+    "مسوول", "المسوول", "اعضاء", "الاعضاء", "عضو", "تشكيل", "التشكيل",
+    "يتبع", "تابع", "اشراف", "الاشراف", "مسمي", "المسمي", "منصب", "المنصب",
+    "hierarchy", "directorate", "directorates", "department", "departments",
+    "division", "divisions", "section", "sections", "unit", "units",
+    "committee", "committees", "manager", "managers", "supervisor", "supervisors",
+    "architecture", "schema", "codebase", "repository", "blueprint", "module", "modules",
+})
+
 _EXTERNAL_AI_STRUCTURED_SECRET = re.compile(
     r"(?i)(?:bearer\s+[a-z0-9._-]+|(?:api[_-]?key|secret|password|token)\s*[:=])"
 )
@@ -549,6 +593,16 @@ def _knowledge_contains_internal_data(knowledge: dict[str, Any]) -> bool:
     )
 
 
+def _contains_protected_structure_topic(normalized: str) -> bool:
+    if any(
+        normalize_text(phrase) in normalized
+        for phrase in _EXTERNAL_AI_STRUCTURE_PHRASES
+    ):
+        return True
+    tokens = set(re.findall(r"\w+", normalized, flags=re.UNICODE))
+    return bool(tokens & _EXTERNAL_AI_STRUCTURE_TOKENS)
+
+
 def _public_message_allowed(value: Any) -> tuple[bool, str]:
     text = str(value or "").strip()
     if not text:
@@ -557,6 +611,8 @@ def _public_message_allowed(value: Any) -> tuple[bool, str]:
     if len(text) > max_chars or "\n" in text or "\r" in text:
         return False, "long_or_pasted"
     normalized = normalize_text(text)
+    if _contains_protected_structure_topic(normalized):
+        return False, "organizational_or_system_structure"
     if any(normalize_text(phrase) in normalized for phrase in _EXTERNAL_AI_BLOCKED_PHRASES):
         return False, "government_or_system_topic"
     if _EXTERNAL_AI_STRUCTURED_SECRET.search(text):
@@ -824,7 +880,8 @@ def _try_external_ai(
         instructions = (
             "أنت «عارف»، مساعد عربي ودود للمحادثة العامة فقط. "
             "لم تُرسل إليك أي بيانات من النظام الحكومي أو الصفحة الحالية أو ملفات المشروع. "
-            "لا تطلب من المستخدم أسماء أشخاص أو أرقام هويات أو مراسلات أو رواتب أو ملفات أو كلمات مرور. "
+            "لا تطلب من المستخدم أسماء أشخاص أو أرقام هويات أو مراسلات أو رواتب أو ملفات أو كلمات مرور "
+            "أو معلومات عن الهيكل التنظيمي أو الإداري أو التقني. "
             "إذا تحول الحوار إلى عمل حكومي أو بيانات شخصية أو داخلية، اطلب منه استخدام المساعدة المحلية داخل النظام "
             "من دون كتابة المحتوى الحساس في المحادثة الخارجية. لا تدّعِ الوصول إلى النظام أو تنفيذ أي إجراء."
         )
