@@ -19,6 +19,7 @@ from workflow.engine import (
     authorize_parallel_step,
     decide_step,
     ensure_parallel_tasks,
+    start_workflow_for_request,
 )
 from workflow.routes import _user_can_view_request
 
@@ -237,6 +238,55 @@ class ParallelStepAuthorizationTests(unittest.TestCase):
             )
         db.session.rollback()
         self.assertEqual(WorkflowStepTask.query.count(), 0)
+
+    def test_workflow_can_start_with_only_selected_first_parallel_participants(self):
+        template = WorkflowTemplate(
+            name="مسار صادر يبدأ بالتزامن",
+            created_by_id=self.actor.id,
+        )
+        db.session.add(template)
+        db.session.flush()
+        first_step = WorkflowTemplateStep(
+            template_id=template.id,
+            step_order=1,
+            mode="PARALLEL_SYNC",
+            approver_kind="USER",
+            approver_user_id=self.selected.id,
+        )
+        db.session.add(first_step)
+        db.session.flush()
+        db.session.add(WorkflowTemplateParallelAssignee(
+            template_step_id=first_step.id,
+            template_id=template.id,
+            step_order=1,
+            approver_kind="USER",
+            approver_user_id=self.excluded.id,
+        ))
+        request = WorkflowRequest(
+            title="صادر تجريبي",
+            status="DRAFT",
+            requester_id=self.actor.id,
+            confidentiality="NORMAL",
+        )
+        db.session.add(request)
+        db.session.flush()
+
+        start_workflow_for_request(
+            request,
+            template,
+            created_by_user_id=self.actor.id,
+            auto_commit=False,
+            initial_parallel_user_ids=[self.selected.id],
+        )
+        db.session.commit()
+
+        instance = WorkflowInstance.query.filter_by(request_id=request.id).one()
+        task_user_ids = {
+            task.assignee_user_id
+            for task in WorkflowStepTask.query.filter_by(instance_id=instance.id).all()
+        }
+        self.assertEqual(task_user_ids, {self.selected.id})
+        self.assertFalse(_user_can_view_request(self.excluded, request))
 
 
 if __name__ == "__main__":

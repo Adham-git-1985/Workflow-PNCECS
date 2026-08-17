@@ -206,6 +206,7 @@ from models import (
     InvWarehousePermission,
 )
 from workflow.engine import (
+    resolve_template_parallel_candidate_user_ids,
     resolve_template_participant_user_ids,
     start_workflow_for_request,
 )
@@ -1217,6 +1218,33 @@ def _corr_workflow_templates() -> list[WorkflowTemplate]:
     return _active_workflow_templates()
 
 
+def _corr_first_parallel_candidate_map(item, templates) -> dict[int, list[User]]:
+    """Return selectable users for templates whose first step is parallel."""
+    result: dict[int, list[User]] = {}
+    for template in (templates or []):
+        first_step = next(
+            (
+                step for step in (getattr(template, "steps", None) or [])
+                if int(getattr(step, "step_order", 0) or 0) == 1
+            ),
+            None,
+        )
+        if not first_step or (getattr(first_step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC":
+            continue
+
+        candidate_ids = set(resolve_template_parallel_candidate_user_ids(template, 1))
+        candidate_ids = filter_confidential_correspondence_user_ids(item, candidate_ids)
+        users = (
+            User.query
+            .filter(User.id.in_(candidate_ids))
+            .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+            .all()
+            if candidate_ids else []
+        )
+        result[int(template.id)] = users
+    return result
+
+
 def _corr_final_reply_template() -> WorkflowTemplate | None:
     """Resolve the template used to route an official reply via the Secretariat."""
     configured = None
@@ -1395,6 +1423,7 @@ def _start_corr_workflow(
     template_id: str | None,
     *,
     auto_commit: bool = True,
+    initial_parallel_user_ids=None,
 ):
     existing = (
         WorkflowRequest.query
@@ -1419,6 +1448,36 @@ def _start_corr_workflow(
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return None
+
+    first_step = next(
+        (
+            step for step in (getattr(template, "steps", None) or [])
+            if int(getattr(step, "step_order", 0) or 0) == 1
+        ),
+        None,
+    )
+    if (
+        initial_parallel_user_ids is not None
+        and first_step
+        and (getattr(first_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC"
+    ):
+        try:
+            selected_ids = {
+                int(user_id)
+                for user_id in initial_parallel_user_ids
+                if int(user_id) > 0
+            }
+        except (TypeError, ValueError):
+            flash("قائمة المعنيين في الخطوة المتزامنة غير صالحة.", "danger")
+            return None
+        candidate_ids = set(resolve_template_parallel_candidate_user_ids(template, 1))
+        candidate_ids = filter_confidential_correspondence_user_ids(item, candidate_ids)
+        if not selected_ids:
+            flash("اختر شخصًا واحدًا على الأقل لبدء الخطوة المتزامنة.", "warning")
+            return None
+        if not selected_ids.issubset(candidate_ids):
+            flash("يمكن توجيه الخطوة المتزامنة فقط إلى مرشحي القالب المخولين.", "danger")
+            return None
 
     if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET":
         participant_ids = resolve_template_participant_user_ids(template)
@@ -1498,6 +1557,7 @@ def _start_corr_workflow(
         template,
         created_by_user_id=current_user.id,
         auto_commit=False,
+        initial_parallel_user_ids=initial_parallel_user_ids,
     )
     sync_correspondence_from_workflow(
         req,
@@ -20205,6 +20265,7 @@ def outbound_view(outbound_id: int):
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
     procedure_context = _corr_procedure_context("OUT", item)
+    workflow_templates = _corr_workflow_templates()
 
     return render_template(
         "portal/corr/outbound_view.html",
@@ -20214,7 +20275,11 @@ def outbound_view(outbound_id: int):
         can_update=can_update,
         can_delete=can_delete,
         can_upload=can_upload,
-        workflow_templates=_corr_workflow_templates(),
+        workflow_templates=workflow_templates,
+        workflow_parallel_candidates=_corr_first_parallel_candidate_map(
+            item,
+            workflow_templates,
+        ),
         source_inbound=getattr(item, "source_inbound", None),
         **procedure_context,
     )
@@ -20382,7 +20447,13 @@ def outbound_start_workflow(outbound_id: int):
         abort(403)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
-        req = _start_corr_workflow("OUT", item, attachments, request.form.get("template_id"))
+        req = _start_corr_workflow(
+            "OUT",
+            item,
+            attachments,
+            request.form.get("template_id"),
+            initial_parallel_user_ids=request.form.getlist("parallel_assignee_ids"),
+        )
         if req:
             return redirect(url_for("workflow.view_request", request_id=req.id))
     except Exception:

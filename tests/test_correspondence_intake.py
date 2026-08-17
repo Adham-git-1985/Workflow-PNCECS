@@ -336,6 +336,9 @@ class CorrespondenceIntakeTests(unittest.TestCase):
             project_root / "templates" / "portal" / "corr" / "outbound_new.html"
         ).read_text(encoding="utf-8")
         routes = (project_root / "portal" / "routes.py").read_text(encoding="utf-8")
+        view_template = (
+            project_root / "templates" / "portal" / "corr" / "outbound_view.html"
+        ).read_text(encoding="utf-8")
 
         self.assertIn('id="analyzeOutboundAttachment"', template)
         self.assertIn('id="applyOutboundSuggestions"', template)
@@ -345,6 +348,13 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertNotIn('id="outboundFiles" multiple required', template)
         self.assertIn('route("/corr/outbound/analyze-attachment"', routes)
         self.assertIn('direction="OUT"', routes)
+        self.assertIn('id="outboundParallelSelection"', view_template)
+        self.assertIn('name="parallel_assignee_ids"', view_template)
+        self.assertIn("workflow_parallel_candidates", view_template)
+        self.assertIn(
+            'initial_parallel_user_ids=request.form.getlist("parallel_assignee_ids")',
+            routes,
+        )
 
     def test_workflow_form_exposes_attachment_analysis_and_field_dump(self):
         project_root = Path(__file__).resolve().parents[1]

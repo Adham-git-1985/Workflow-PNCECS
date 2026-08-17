@@ -370,6 +370,43 @@ def resolve_template_participant_user_ids(template: WorkflowTemplate) -> set[int
     return {int(user_id) for user_id in participant_ids if user_id}
 
 
+def resolve_template_parallel_candidate_user_ids(
+    template: WorkflowTemplate,
+    step_order: int,
+) -> list[int]:
+    """Resolve the eligible candidate pool for one parallel template step."""
+    if not template:
+        return []
+    step = next(
+        (
+            row for row in (getattr(template, "steps", None) or [])
+            if int(getattr(row, "step_order", 0) or 0) == int(step_order)
+        ),
+        None,
+    )
+    if not step or (getattr(step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC":
+        return []
+
+    candidate_ids = set(_resolve_users_by_kind(
+        getattr(step, "approver_kind", None),
+        user_id=getattr(step, "approver_user_id", None),
+        role=getattr(step, "approver_role", None),
+        dept_id=getattr(step, "approver_department_id", None),
+        dir_id=getattr(step, "approver_directorate_id", None),
+        unit_id=getattr(step, "approver_unit_id", None),
+        section_id=getattr(step, "approver_section_id", None),
+        division_id=getattr(step, "approver_division_id", None),
+        org_node_id=getattr(step, "approver_org_node_id", None),
+        committee_id=getattr(step, "approver_committee_id", None),
+        committee_delivery_mode=getattr(step, "committee_delivery_mode", None),
+    ))
+    candidate_ids.update(_resolve_parallel_extra_assignees(
+        getattr(template, "id", None),
+        int(step_order),
+    ))
+    return sorted(int(user_id) for user_id in candidate_ids if user_id)
+
+
 def _notify_users(
     user_ids,
     message,
@@ -707,7 +744,8 @@ def start_workflow_for_request(
     req: WorkflowRequest,
     template: WorkflowTemplate,
     created_by_user_id: int,
-    auto_commit: bool = False
+    auto_commit: bool = False,
+    initial_parallel_user_ids=None,
 ):
     """
     Creates workflow instance + instance steps from template.
@@ -790,7 +828,18 @@ def start_workflow_for_request(
 
     if first:
         if _is_parallel_sync(first):
-            _ensure_parallel_tasks(req, inst, first)
+            if initial_parallel_user_ids is not None:
+                authorize_parallel_step(
+                    req,
+                    inst,
+                    first,
+                    authorized_user_ids=initial_parallel_user_ids,
+                    actor_user_id=created_by_user_id,
+                    effective_user_id=created_by_user_id,
+                    auto_commit=False,
+                )
+            else:
+                _ensure_parallel_tasks(req, inst, first)
         else:
             approvers = _resolve_approver_users(first)
             _notify_users(
