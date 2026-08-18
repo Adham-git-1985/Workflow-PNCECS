@@ -12507,6 +12507,17 @@ def hr_employees():
     return render_template("portal/hr/employees.html", users=users, q=q, files=files)
 
 
+@portal_bp.route("/hr/employees/data-collection-form")
+@login_required
+@_perm(HR_EMP_READ)
+def hr_employee_data_collection_form():
+    """Blank, print-ready questionnaire matching the complete employee file."""
+    return render_template(
+        "portal/hr/employee_data_collection_form.html",
+        generated_on=datetime.now(),
+    )
+
+
 
 
 def _employee_upload_dir(user_id: int) -> Path:
@@ -12980,6 +12991,7 @@ def hr_employee_qualification_new(user_id: int):
             qualification_date=_to_str(request.form.get('qualification_date')),
             university_lookup_id=_to_int(request.form.get('university_lookup_id')),
             country_lookup_id=_to_int(request.form.get('country_lookup_id')),
+            notes=_to_str(request.form.get('notes')),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
             updated_by_id=current_user.id,
@@ -13038,6 +13050,7 @@ def hr_employee_qualification_edit(user_id: int, qual_id: int):
         qual.qualification_date = _to_str(request.form.get('qualification_date'))
         qual.university_lookup_id = _to_int(request.form.get('university_lookup_id'))
         qual.country_lookup_id = _to_int(request.form.get('country_lookup_id'))
+        qual.notes = _to_str(request.form.get('notes'))
         qual.updated_at = datetime.utcnow()
         qual.updated_by_id = current_user.id
 
