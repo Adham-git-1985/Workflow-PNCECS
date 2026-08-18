@@ -188,7 +188,8 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
 
     def test_timeclock_code_explains_which_identifier_to_enter(self):
         self.assertIn('data-field="timeclock_code"', self.template)
-        self.assertIn("اكتب رقم الهوية أو الرقم الوظيفي المستخدم في ساعة الدوام", self.template)
+        self.assertIn("كود ساعة الدوام (رقم الهوية أو الرقم الوظيفي)", self.template)
+        self.assertIn("اكتب الرقم المستخدم فعليًا في ساعة الدوام.", self.template)
 
 
 if __name__ == "__main__":
