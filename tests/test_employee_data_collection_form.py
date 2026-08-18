@@ -186,6 +186,10 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
         self.assertIn("مرجع للرقم في الساعة", self.template)
         self.assertIn('["national_id", /^page_\\d+_national_id$/]', self.template)
 
+    def test_timeclock_code_explains_which_identifier_to_enter(self):
+        self.assertIn('data-field="timeclock_code"', self.template)
+        self.assertIn("اكتب رقم الهوية أو الرقم الوظيفي المستخدم في ساعة الدوام", self.template)
+
 
 if __name__ == "__main__":
     unittest.main()
