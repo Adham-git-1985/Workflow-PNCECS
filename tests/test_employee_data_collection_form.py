@@ -179,6 +179,13 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
             2,
         )
 
+    def test_hourly_number_has_an_adjacent_identity_reference(self):
+        hourly_index = self.template.index('data-field="hourly_number"')
+        identity_index = self.template.index('data-field="page_2_national_id"')
+        self.assertLess(hourly_index, identity_index)
+        self.assertIn("مرجع للرقم في الساعة", self.template)
+        self.assertIn('["national_id", /^page_\\d+_national_id$/]', self.template)
+
 
 if __name__ == "__main__":
     unittest.main()

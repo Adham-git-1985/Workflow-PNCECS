@@ -391,6 +391,7 @@
           <div class="choices"><span><i class="box"></i>صباحية</span><span><i class="box"></i>مسائية</span><span><i class="box"></i>ليلية</span><span><i class="box"></i>أخرى</span></div>
         </div>
         <div class="field third hr-only" data-field="hourly_number"><div class="field-label">الرقم في الساعة <span class="field-code">W-07</span><span class="field-hint">إن وجد</span></div><div class="write-line"></div></div>
+        <div class="field third" data-field="page_2_national_id"><div class="field-label">رقم الهوية/الجواز <span class="field-code">REF-02C</span><span class="field-hint">مرجع للرقم في الساعة</span></div><div class="write-line"></div></div>
       </div>
     </div>
 
@@ -783,6 +784,7 @@
         const mappings = [
           ["full_name_quad", /^page_\d+_employee_name$/],
           ["employee_no", /^page_\d+_employee_no$/],
+          ["national_id", /^page_\d+_national_id$/],
         ];
         mappings.forEach(([sourceField, targetPattern]) => {
           const source = firstEntry(sourceField);
@@ -980,7 +982,7 @@
 
       entries.forEach((node) => {
         node.addEventListener("input", () => {
-          if (["full_name_quad", "employee_no"].includes(node.dataset.fieldBase)) syncReferenceFields();
+          if (["full_name_quad", "employee_no", "national_id"].includes(node.dataset.fieldBase)) syncReferenceFields();
           scheduleSave();
         });
         node.addEventListener("paste", (event) => {
