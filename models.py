@@ -3742,6 +3742,75 @@ class PortalAccessRequest(db.Model):
         return [k.strip().upper() for k in raw.split(",") if k.strip()]
 
 
+class TroubleTicket(db.Model):
+    """Support ticket submitted by an employee through the portal."""
+
+    __tablename__ = "trouble_tickets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    assigned_to_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    subject = db.Column(db.String(250), nullable=False)
+    category = db.Column(db.String(40), nullable=False, default="OTHER", index=True)
+    priority = db.Column(db.String(20), nullable=False, default="NORMAL", index=True)
+    status = db.Column(db.String(20), nullable=False, default="OPEN", index=True)
+    description = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False, index=True)
+    resolved_at = db.Column(db.DateTime, nullable=True)
+
+    requester = db.relationship("User", foreign_keys=[requester_id], lazy="joined")
+    assigned_to = db.relationship("User", foreign_keys=[assigned_to_id], lazy="joined")
+    comments = db.relationship(
+        "TroubleTicketComment",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="TroubleTicketComment.created_at",
+    )
+    attachments = db.relationship(
+        "TroubleTicketAttachment",
+        back_populates="ticket",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="TroubleTicketAttachment.uploaded_at",
+    )
+
+    __table_args__ = (
+        db.Index("ix_trouble_ticket_requester_status", "requester_id", "status"),
+        db.Index("ix_trouble_ticket_assignee_status", "assigned_to_id", "status"),
+    )
+
+
+class TroubleTicketComment(db.Model):
+    __tablename__ = "trouble_ticket_comments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey("trouble_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    author_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    ticket = db.relationship("TroubleTicket", back_populates="comments")
+    author = db.relationship("User", foreign_keys=[author_id], lazy="joined")
+
+
+class TroubleTicketAttachment(db.Model):
+    __tablename__ = "trouble_ticket_attachments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ticket_id = db.Column(db.Integer, db.ForeignKey("trouble_tickets.id", ondelete="CASCADE"), nullable=False, index=True)
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    ticket = db.relationship("TroubleTicket", back_populates="attachments")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
+
+
 
 
 

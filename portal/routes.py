@@ -141,6 +141,9 @@ from models import (
     StoreFile,
     StoreFilePermission,
     PortalAccessRequest,
+    TroubleTicket,
+    TroubleTicketComment,
+    TroubleTicketAttachment,
     PortalCircular,
     PortalCircularAttachment,
     PortalMeeting,
@@ -3522,7 +3525,7 @@ def _portal_admin_user_ids() -> list[int]:
     try:
         urows = (
             db.session.query(User.id)
-            .filter(func.upper(User.role).in_(["SUPER_ADMIN", "SUPERADMIN"]))
+            .filter(func.upper(User.role).in_(["ADMIN", "SUPER_ADMIN", "SUPERADMIN"]))
             .all()
         )
         for (uid,) in urows:
@@ -3790,6 +3793,281 @@ def my_access_requests():
         rows = []
 
     return render_template("portal/access_requests_mine.html", rows=rows, defs=defs, can_enter_portal=can_enter_portal)
+
+
+# -------------------------
+# Portal: Trouble tickets
+# -------------------------
+
+TROUBLE_TICKET_CATEGORIES = {
+    "SYSTEM": "النظام والصلاحيات",
+    "HARDWARE": "الأجهزة والطابعات",
+    "NETWORK": "الشبكة والاتصال",
+    "DATA": "البيانات والتقارير",
+    "OTHER": "أخرى",
+}
+TROUBLE_TICKET_PRIORITIES = {
+    "LOW": "منخفضة",
+    "NORMAL": "عادية",
+    "HIGH": "عالية",
+    "URGENT": "عاجلة",
+}
+TROUBLE_TICKET_STATUSES = {
+    "OPEN": "مفتوحة",
+    "IN_PROGRESS": "قيد المعالجة",
+    "WAITING": "بانتظار معلومات",
+    "RESOLVED": "تم الحل",
+    "CLOSED": "مغلقة",
+}
+TROUBLE_TICKET_MAX_FILES = 10
+TROUBLE_TICKET_MAX_FILE_BYTES = 25 * 1024 * 1024
+TROUBLE_TICKET_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+
+def _trouble_ticket_attachment_dir(ticket_id: int) -> Path:
+    directory = Path(current_app.instance_path) / "uploads" / "trouble_tickets" / str(int(ticket_id))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _save_trouble_ticket_attachments(ticket: TroubleTicket, uploads) -> int:
+    candidates = [
+        (upload, clean_original_filename(getattr(upload, "filename", None)))
+        for upload in (uploads or [])
+        if is_allowed_attachment(getattr(upload, "filename", None))
+    ]
+    if len(candidates) > TROUBLE_TICKET_MAX_FILES:
+        raise ValueError(f"يمكن رفع {TROUBLE_TICKET_MAX_FILES} ملفات كحد أقصى.")
+
+    saved_paths: list[Path] = []
+    total_size = 0
+    try:
+        for upload, original_name in candidates:
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            saved_path = _trouble_ticket_attachment_dir(ticket.id) / stored_name
+            upload.save(str(saved_path))
+            saved_paths.append(saved_path)
+            file_size = saved_path.stat().st_size
+            if file_size > TROUBLE_TICKET_MAX_FILE_BYTES:
+                raise ValueError(f"حجم الملف «{original_name}» يتجاوز 25 م.ب.")
+            total_size += file_size
+            if total_size > TROUBLE_TICKET_MAX_TOTAL_BYTES:
+                raise ValueError("إجمالي حجم المرفقات يتجاوز 50 م.ب.")
+            mime_type = (getattr(upload, "mimetype", None) or mimetypes.guess_type(original_name)[0] or "application/octet-stream")
+            db.session.add(TroubleTicketAttachment(
+                ticket_id=ticket.id,
+                original_name=original_name[:255],
+                stored_name=stored_name,
+                mime_type=mime_type[:120],
+                file_size=file_size,
+                uploaded_by_id=current_user.id,
+            ))
+    except Exception:
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    return len(candidates)
+
+
+def _can_manage_trouble_tickets() -> bool:
+    return bool(
+        current_user.has_perm("PORTAL_ADMIN_READ")
+        or current_user.has_perm("PORTAL_ADMIN_PERMISSIONS_MANAGE")
+        or current_user.has_perm("TROUBLE_TICKETS_MANAGE")
+    )
+
+
+def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
+    return mapping.get((value or "").upper(), value or "-")
+
+
+@portal_bp.route("/trouble-tickets")
+@login_required
+def trouble_tickets():
+    status = (request.args.get("status") or "").strip().upper()
+    query = TroubleTicket.query.filter(TroubleTicket.requester_id == current_user.id)
+    if status in TROUBLE_TICKET_STATUSES:
+        query = query.filter(TroubleTicket.status == status)
+    rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
+    return render_template(
+        "portal/trouble_tickets/list.html",
+        rows=rows,
+        statuses=TROUBLE_TICKET_STATUSES,
+        active_status=status,
+        is_manager=_can_manage_trouble_tickets(),
+    )
+
+
+@portal_bp.route("/trouble-tickets/new", methods=["GET", "POST"])
+@login_required
+def trouble_ticket_new():
+    if request.method == "POST":
+        subject = (request.form.get("subject") or "").strip()
+        description = (request.form.get("description") or "").strip()
+        category = (request.form.get("category") or "OTHER").strip().upper()
+        priority = (request.form.get("priority") or "NORMAL").strip().upper()
+        if not subject or not description:
+            flash("يرجى إدخال عنوان ووصف المشكلة.", "danger")
+        elif category not in TROUBLE_TICKET_CATEGORIES or priority not in TROUBLE_TICKET_PRIORITIES:
+            flash("بيانات التذكرة غير صالحة.", "danger")
+        else:
+            ticket = TroubleTicket(
+                requester_id=current_user.id,
+                subject=subject[:250],
+                description=description,
+                category=category,
+                priority=priority,
+                status="OPEN",
+            )
+            db.session.add(ticket)
+            db.session.flush()
+            try:
+                _save_trouble_ticket_attachments(ticket, request.files.getlist("attachments"))
+                db.session.add(AuditLog(
+                    user_id=current_user.id,
+                    action="TROUBLE_TICKET_CREATE",
+                    note=f"تذكرة دعم #{ticket.id}: {ticket.subject}",
+                    target_type="TROUBLE_TICKET",
+                    target_id=ticket.id,
+                ))
+                for admin_id in _portal_admin_user_ids():
+                    if int(admin_id) != int(current_user.id):
+                        db.session.add(Notification(
+                            user_id=int(admin_id),
+                            message=f"تذكرة دعم جديدة #{ticket.id}: {ticket.subject}",
+                            type="PORTAL",
+                            source="portal",
+                            is_read=False,
+                            created_at=datetime.utcnow(),
+                        ))
+            except ValueError as exc:
+                db.session.rollback()
+                flash(str(exc), "danger")
+                return render_template(
+                    "portal/trouble_tickets/new.html",
+                    categories=TROUBLE_TICKET_CATEGORIES,
+                    priorities=TROUBLE_TICKET_PRIORITIES,
+                )
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Unable to save trouble ticket attachments")
+                flash("تعذر حفظ المرفقات. يرجى المحاولة مرة أخرى.", "danger")
+                return render_template(
+                    "portal/trouble_tickets/new.html",
+                    categories=TROUBLE_TICKET_CATEGORIES,
+                    priorities=TROUBLE_TICKET_PRIORITIES,
+                )
+            db.session.commit()
+            flash("تم إرسال تذكرة الدعم بنجاح.", "success")
+            return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+    return render_template(
+        "portal/trouble_tickets/new.html",
+        categories=TROUBLE_TICKET_CATEGORIES,
+        priorities=TROUBLE_TICKET_PRIORITIES,
+    )
+
+
+@portal_bp.route("/trouble-tickets/<int:ticket_id>/attachments/<int:attachment_id>/download")
+@login_required
+def trouble_ticket_attachment_download(ticket_id: int, attachment_id: int):
+    ticket = TroubleTicket.query.get_or_404(ticket_id)
+    if ticket.requester_id != current_user.id and not _can_manage_trouble_tickets():
+        abort(403)
+    attachment = TroubleTicketAttachment.query.filter_by(id=attachment_id, ticket_id=ticket.id).first_or_404()
+    response = send_from_directory(
+        str(_trouble_ticket_attachment_dir(ticket.id)),
+        attachment.stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=True,
+        download_name=attachment.original_name,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@portal_bp.route("/trouble-tickets/<int:ticket_id>", methods=["GET", "POST"])
+@login_required
+def trouble_ticket_view(ticket_id: int):
+    ticket = TroubleTicket.query.get_or_404(ticket_id)
+    is_manager = _can_manage_trouble_tickets()
+    if ticket.requester_id != current_user.id and not is_manager:
+        abort(403)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "comment").strip().lower()
+        if action == "comment":
+            body = (request.form.get("body") or "").strip()
+            if not body:
+                flash("يرجى كتابة تعليق قبل الإرسال.", "warning")
+            else:
+                db.session.add(TroubleTicketComment(ticket_id=ticket.id, author_id=current_user.id, body=body))
+                ticket.updated_at = datetime.utcnow()
+                if ticket.status == "WAITING" and ticket.requester_id == current_user.id:
+                    ticket.status = "IN_PROGRESS"
+                db.session.commit()
+                flash("تمت إضافة التعليق.", "success")
+            return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+        if action == "update" and is_manager:
+            status = (request.form.get("status") or "").strip().upper()
+            assignee_id = (request.form.get("assigned_to_id") or "").strip()
+            if status not in TROUBLE_TICKET_STATUSES:
+                flash("الحالة المختارة غير صالحة.", "danger")
+            else:
+                ticket.status = status
+                ticket.assigned_to_id = int(assignee_id) if assignee_id.isdigit() else None
+                ticket.resolved_at = datetime.utcnow() if status in {"RESOLVED", "CLOSED"} else None
+                ticket.updated_at = datetime.utcnow()
+                db.session.add(AuditLog(
+                    user_id=current_user.id,
+                    action="TROUBLE_TICKET_UPDATE",
+                    note=f"تحديث تذكرة الدعم #{ticket.id} إلى {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
+                    target_type="TROUBLE_TICKET",
+                    target_id=ticket.id,
+                ))
+                db.session.add(Notification(
+                    user_id=ticket.requester_id,
+                    message=f"تم تحديث تذكرة الدعم #{ticket.id} إلى: {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
+                    type="PORTAL",
+                    source="portal",
+                    is_read=False,
+                    created_at=datetime.utcnow(),
+                ))
+                db.session.commit()
+                flash("تم تحديث التذكرة.", "success")
+            return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+    assignees = []
+    if is_manager:
+        assignees = User.query.order_by(User.name, User.email).all()
+    return render_template(
+        "portal/trouble_tickets/view.html",
+        ticket=ticket,
+        is_manager=is_manager,
+        assignees=assignees,
+        categories=TROUBLE_TICKET_CATEGORIES,
+        priorities=TROUBLE_TICKET_PRIORITIES,
+        statuses=TROUBLE_TICKET_STATUSES,
+    )
+
+
+@portal_bp.route("/trouble-tickets/manage")
+@login_required
+def trouble_tickets_manage():
+    if not _can_manage_trouble_tickets():
+        abort(403)
+    status = (request.args.get("status") or "").strip().upper()
+    query = TroubleTicket.query
+    if status in TROUBLE_TICKET_STATUSES:
+        query = query.filter(TroubleTicket.status == status)
+    rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
+    return render_template("portal/trouble_tickets/manage.html", rows=rows, statuses=TROUBLE_TICKET_STATUSES, active_status=status)
 
 
 # -------------------------
