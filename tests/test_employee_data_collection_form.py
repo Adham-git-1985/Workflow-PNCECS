@@ -191,6 +191,14 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
         self.assertIn("كود ساعة الدوام (رقم الهوية أو الرقم الوظيفي)", self.template)
         self.assertIn("اكتب الرقم المستخدم فعليًا في ساعة الدوام.", self.template)
 
+    def test_word_download_and_word_upload_are_available(self):
+        routes = (PROJECT_ROOT / "portal" / "routes.py").read_text(encoding="utf-8")
+        inbox = (PROJECT_ROOT / "templates" / "portal" / "hr" / "employee_data_submissions.html").read_text(encoding="utf-8")
+        self.assertIn("def hr_employee_data_collection_form_word():", routes)
+        self.assertIn("parse_employee_word_form", routes)
+        self.assertIn("تنزيل نموذج Word", self.template)
+        self.assertIn("نموذج Word DOCX", inbox)
+
 
 if __name__ == "__main__":
     unittest.main()

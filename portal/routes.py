@@ -77,6 +77,7 @@ from services.employee_data_import import (
     canonical_payload_hash,
     validate_employee_payload,
 )
+from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -13274,6 +13275,18 @@ def hr_employee_data_collection_form_offline():
     )
 
 
+@portal_bp.route("/hr/employees/data-collection-form/word")
+@login_required
+def hr_employee_data_collection_form_word():
+    """Download the controlled, importable Word version of the questionnaire."""
+    return send_file(
+        io.BytesIO(build_employee_word_form()),
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name="employee-data-form.docx",
+    )
+
+
 @portal_bp.route("/hr/employee-data-submissions/online", methods=["POST"])
 @login_required
 def hr_employee_data_submission_online():
@@ -13341,18 +13354,19 @@ def hr_employee_data_submission_upload():
     employee = User.query.get(target_user_id) if target_user_id else None
     upload = request.files.get("answers_file")
     if not employee or not upload or not upload.filename:
-        flash("اختر الموظف وملف الإجابات JSON.", "warning")
+        flash("اختر الموظف وملف الإجابات JSON أو Word.", "warning")
         return redirect(url_for("portal.hr_employee_data_submissions"))
     original_name = clean_original_filename(upload.filename)
-    if Path(original_name).suffix.lower() != ".json":
-        flash("يجب رفع ملف JSON صادر عن نموذج بيانات الموظف.", "danger")
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in {".json", ".docx"}:
+        flash("يجب رفع ملف JSON أو نموذج Word DOCX صادر عن نموذج بيانات الموظف.", "danger")
         return redirect(url_for("portal.hr_employee_data_submissions"))
-    raw = upload.stream.read((2 * 1024 * 1024) + 1)
-    if len(raw) > 2 * 1024 * 1024:
-        flash("حجم ملف الإجابات يتجاوز 2 ميجابايت.", "danger")
+    raw = upload.stream.read((5 * 1024 * 1024) + 1)
+    if len(raw) > 5 * 1024 * 1024:
+        flash("حجم ملف الإجابات يتجاوز 5 ميجابايت.", "danger")
         return redirect(url_for("portal.hr_employee_data_submissions"))
     try:
-        payload = json.loads(raw.decode("utf-8-sig"))
+        payload = parse_employee_word_form(raw) if suffix == ".docx" else json.loads(raw.decode("utf-8-sig"))
         payload = validate_employee_payload(payload)
         payload.setdefault("employee", {})["user_id"] = employee.id
         row, created = _create_employee_data_submission(

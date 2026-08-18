@@ -231,6 +231,7 @@
     {% if not offline_mode %}
     <button class="primary" type="button" id="submitOnlineButton">إرسال إلى الموارد البشرية</button>
     <a href="{{ url_for('portal.hr_employee_data_collection_form_offline') }}">تنزيل النموذج للعمل دون إنترنت</a>
+    <a href="{{ url_for('portal.hr_employee_data_collection_form_word') }}">تنزيل نموذج Word</a>
     {% else %}
     <span class="hint">نسخة تفاعلية تعمل دون إنترنت — احفظ ملف الإجابات ثم سلّمه للموارد البشرية</span>
     {% endif %}
