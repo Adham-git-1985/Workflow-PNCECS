@@ -6,7 +6,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-cash-coin"></i> تقرير الخصم من الراتب</h4>
-      <div class="text-muted">يعتمد على نتائج تنفيذ الخصم (تشغيل الخصم الشهري) ويُظهر ملخص الخصم لكل موظف.</div>
+      <div class="text-muted">يعرض عمليات الخصم المعتمدة فقط؛ لا تظهر المسودات في التقرير المالي.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
@@ -69,7 +69,8 @@
           <th>دقائق التأخير</th>
           <th>دقائق الخروج المبكر</th>
           <th>أيام الغياب</th>
-          <th>أيام الخصم</th>
+          <th>من الإجازة</th>
+          <th>من الراتب</th>
           <th>الحالة</th>
           <th>ملاحظات</th>
         </tr>
@@ -88,12 +89,11 @@
             <td>{{ it.late_minutes or 0 }}</td>
             <td>{{ it.early_leave_minutes or 0 }}</td>
             <td>{{ it.absent_days or 0 }}</td>
-            <td>{{ it.amount or 0 }}</td>
+            <td>{{ it.leave_deduction_days or 0 }}</td>
+            <td>{{ it.salary_deduction_days or 0 }}</td>
             <td>
-              {% if run and (run.status|upper) == 'DONE' %}
-                <span class="badge text-bg-success">مُكتمل</span>
-              {% elif run and (run.status|upper) == 'DRAFT' %}
-                <span class="badge text-bg-secondary">مسودة</span>
+              {% if run and (run.status|upper) == 'FINAL' %}
+                <span class="badge text-bg-success">معتمد</span>
               {% else %}
                 <span class="badge text-bg-light">{{ run.status|ui_label if run else '—' }}</span>
               {% endif %}

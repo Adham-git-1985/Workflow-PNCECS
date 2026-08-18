@@ -48,13 +48,24 @@
         </div>
       </div>
 
-      <div class="col-lg-2 d-none" id="hybrid_wrap_new">
+      <div class="col-lg-4 d-none" id="hybrid_wrap_new">
         <label class="form-label">الحصة الهجينة الأسبوعية</label>
         <div class="d-flex gap-2">
           <input class="form-control" type="number" min="0" name="hybrid_office_days" placeholder="مكتب">
           <input class="form-control" type="number" min="0" name="hybrid_remote_days" placeholder="عن بعد">
         </div>
-        <div class="text-muted small mt-1">مثال: 3 مكتب + 2 عن بعد</div>
+        <select class="form-select form-select-sm mt-2 hybrid-selection-mode" name="hybrid_selection_mode">
+          <option value="FLEXIBLE">أية أيام تحقق الحصة</option>
+          <option value="FIXED">أيام مكتب ثابتة لا تتغير</option>
+        </select>
+        <div class="d-flex flex-wrap gap-2 mt-2 hybrid-fixed-days">
+          {% for idx, label in weekdays %}
+            <label class="form-check form-check-inline m-0 small">
+              <input class="form-check-input" type="checkbox" name="hybrid_fixed_days" value="{{ idx }}">
+              <span class="form-check-label">{{ label }}</span>
+            </label>
+          {% endfor %}
+        </div>
       </div>
 
       <div class="col-lg-2">
@@ -165,6 +176,19 @@
                       <input class="form-control" type="number" min="0" name="hybrid_office_days" placeholder="مكتب" value="{{ p.hybrid_office_days or '' }}">
                       <input class="form-control" type="number" min="0" name="hybrid_remote_days" placeholder="عن بعد" value="{{ p.hybrid_remote_days or '' }}">
                     </div>
+                    <select class="form-select form-select-sm mt-2 hybrid-selection-mode" name="hybrid_selection_mode">
+                      <option value="FLEXIBLE" {% if (p.hybrid_selection_mode or 'FLEXIBLE') == 'FLEXIBLE' %}selected{% endif %}>أية أيام تحقق الحصة</option>
+                      <option value="FIXED" {% if p.hybrid_selection_mode == 'FIXED' %}selected{% endif %}>أيام مكتب ثابتة لا تتغير</option>
+                    </select>
+                    {% set hybrid_mask = p.hybrid_fixed_days_mask or 0 %}
+                    <div class="d-flex flex-wrap gap-2 mt-2 hybrid-fixed-days">
+                      {% for idx, label in weekdays %}
+                        <label class="form-check form-check-inline m-0 small">
+                          <input class="form-check-input" type="checkbox" name="hybrid_fixed_days" value="{{ idx }}" {% if ((hybrid_mask // (2 ** idx)) % 2) == 1 %}checked{% endif %}>
+                          <span class="form-check-label">{{ label }}</span>
+                        </label>
+                      {% endfor %}
+                    </div>
                   </div>
 
                   <div class="col-lg-2">
@@ -237,6 +261,18 @@
       sel.addEventListener('change', () => toggleRowFields(inner));
       toggleRowFields(inner);
     }
+  });
+
+  function refreshHybridFixedDays(scope) {
+    const mode = scope.querySelector('.hybrid-selection-mode');
+    const days = scope.querySelector('.hybrid-fixed-days');
+    if (!mode || !days) return;
+    days.classList.toggle('d-none', mode.value !== 'FIXED');
+  }
+  document.querySelectorAll('#hybrid_wrap_new, .hybrid-wrap').forEach(scope => {
+    const mode = scope.querySelector('.hybrid-selection-mode');
+    if (mode) mode.addEventListener('change', () => refreshHybridFixedDays(scope));
+    refreshHybridFixedDays(scope);
   });
 </script>
 {% endblock %}

@@ -2,114 +2,109 @@
 {% block title %}إعدادات الخصم{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="dedSettingsPrint">
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <h4 class="mb-1"><i class="bi bi-gear"></i> إعدادات الخصم</h4>
-      <div class="text-muted">إعدادات الخصم الخاصة بالتأخير والخروج المبكر والمغادرات حسب الشاشات المعتمدة.</div>
+      <h4 class="mb-1"><i class="bi bi-sliders"></i> سياسة السماح والخصم</h4>
+      <div class="text-muted">كل تشغيل يبدأ كمعاينة؛ لا يتغير رصيد الإجازة ولا الراتب قبل الاعتماد النهائي.</div>
     </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-play-circle"></i> تنفيذ خصم</a>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-eye"></i> إنشاء معاينة</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-list-check"></i> سجل الخصومات</a>
-      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_system_screens') }}"><i class="bi bi-diagram-3"></i> مركز المنظومة</a>
     </div>
+  </div>
+</div>
+
+<div class="alert alert-info d-flex gap-3 align-items-start">
+  <i class="bi bi-info-circle fs-4"></i>
+  <div>
+    <div class="fw-bold">ترتيب الاحتساب المعتمد</div>
+    <div>استبعاد العطل والإجازات المعتمدة ← تطبيق ساعات سماح المغادرة ← الخصم من رصيد الإجازة ← الخصم من الراتب عند نفاد الرصيد.</div>
   </div>
 </div>
 
 <form method="post" class="p-4 bg-white rounded-3 shadow-sm">
   <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+  <input type="hidden" name="late_source" value="LEAVE">
+  <input type="hidden" name="early_source" value="LEAVE">
+  <input type="hidden" name="special_permission_source" value="LEAVE">
+  <input type="hidden" name="unauthorized_permission_source" value="SALARY">
 
   <div class="row g-3">
-
-    <div class="col-12">
-      <label class="form-label fw-bold">أسلوب الخصم</label>
-      <select class="form-select" name="deduction_style" {% if not can_manage %}disabled{% endif %}>
-        {% for v, label in style_opts %}
-          <option value="{{ v }}" {% if cfg and cfg.deduction_style == v %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="col-md-6">
-      <label class="form-label fw-bold">خصم التأخير الصباحي</label>
-      <select class="form-select" name="late_source" {% if not can_manage %}disabled{% endif %}>
-        {% for v, label in source_opts %}
-          <option value="{{ v }}" {% if cfg and cfg.late_source == v %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="col-md-6">
-      <label class="form-label fw-bold">خصم الخروج المبكر</label>
-      <select class="form-select" name="early_source" {% if not can_manage %}disabled{% endif %}>
-        {% for v, label in source_opts %}
-          <option value="{{ v }}" {% if cfg and cfg.early_source == v %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="col-md-6">
-      <label class="form-label fw-bold">خصم المغادرات الخاصة</label>
-      <select class="form-select" name="special_permission_source" {% if not can_manage %}disabled{% endif %}>
-        {% for v, label in source_opts %}
-          <option value="{{ v }}" {% if cfg and cfg.special_permission_source == v %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="col-md-6">
-      <label class="form-label fw-bold">خصم المغادرات بدون إذن</label>
-      <select class="form-select" name="unauthorized_permission_source" {% if not can_manage %}disabled{% endif %}>
-        {% for v, label in source_opts %}
-          <option value="{{ v }}" {% if cfg and cfg.unauthorized_permission_source == v %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="col-12">
-      <label class="form-label fw-bold">آلية الترصيد</label>
-      <select class="form-select" name="carry_method" {% if not can_manage %}disabled{% endif %}>
-        {% for v, label in carry_opts %}
-          <option value="{{ v }}" {% if cfg and cfg.carry_method == v %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-
-    <div class="col-12 mt-2">
-      <div class="alert alert-light border mb-0">
-        <div class="fw-bold mb-2"><i class="bi bi-sliders"></i> إعدادات إضافية (اختياري)</div>
-        <div class="row g-3">
-          <div class="col-md-4">
-            <label class="form-label">عدد الساعات لليوم (افتراضي 7)</label>
-            <input type="number" step="0.1" class="form-control" name="hours_per_day"
-                   value="{{ cfg.hours_per_day if cfg else 7.0 }}" {% if not can_manage %}disabled{% endif %}>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">قيمة دقيقة التأخير (الإعداد السابق)</label>
-            <input type="number" step="0.01" class="form-control" name="late_minute_value"
-                   value="{{ cfg.late_minute_value if cfg and cfg.late_minute_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">قيمة دقيقة الخروج المبكر (الإعداد السابق)</label>
-            <input type="number" step="0.01" class="form-control" name="early_minute_value"
-                   value="{{ cfg.early_minute_value if cfg and cfg.early_minute_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
-          </div>
-          <div class="col-md-4">
-            <label class="form-label">قيمة يوم الغياب (الإعداد السابق)</label>
-            <input type="number" step="0.01" class="form-control" name="absent_day_value"
-                   value="{{ cfg.absent_day_value if cfg and cfg.absent_day_value is not none else '' }}" {% if not can_manage %}disabled{% endif %}>
-          </div>
-        </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold">ساعات سماح المغادرات شهرياً</label>
+      <div class="input-group">
+        <input type="number" step="0.25" min="0" class="form-control" name="permission_allowance_hours"
+               value="{{ cfg.permission_allowance_hours if cfg else 6 }}" {% if not can_manage %}disabled{% endif %}>
+        <span class="input-group-text">ساعة</span>
       </div>
+      <div class="form-text">القيمة العامة لكل موظف؛ يمكن تخصيص شهر معين من التقرير الشهري.</div>
     </div>
 
-    <div class="col-12 d-flex justify-content-end gap-2 mt-2">
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold">ساعات يوم الخصم</label>
+      <div class="input-group">
+        <input type="number" step="0.25" min="0.25" class="form-control" name="hours_per_day"
+               value="{{ cfg.hours_per_day if cfg else 7 }}" {% if not can_manage %}disabled{% endif %}>
+        <span class="input-group-text">ساعة = يوم</span>
+      </div>
+      <div class="form-text">مثال: كل 7 ساعات محتسبة تساوي يوم خصم واحداً.</div>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold">نوع الإجازة الذي يُخصم أولاً</label>
+      <select class="form-select" name="annual_leave_type_id" {% if not can_manage %}disabled{% endif %}>
+        <option value="">— لا يوجد رصيد محدد —</option>
+        {% for leave_type in leave_types %}
+          <option value="{{ leave_type.id }}" {% if cfg and cfg.annual_leave_type_id == leave_type.id %}selected{% endif %}>{{ leave_type.name_ar }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12 col-md-6">
+      <label class="form-label fw-bold">ترتيب الخصم</label>
+      <select class="form-select" name="deduction_sequence" {% if not can_manage %}disabled{% endif %}>
+        <option value="LEAVE_THEN_SALARY" {% if not cfg or cfg.deduction_sequence == 'LEAVE_THEN_SALARY' %}selected{% endif %}>من الإجازة أولاً، ثم الراتب عند نفاد الرصيد</option>
+        <option value="SALARY_ONLY" {% if cfg and cfg.deduction_sequence == 'SALARY_ONLY' %}selected{% endif %}>من الراتب مباشرة</option>
+      </select>
+    </div>
+
+    <div class="col-12 col-md-3">
+      <label class="form-label fw-bold">أسلوب التجميع</label>
+      <select class="form-select" name="deduction_style" {% if not can_manage %}disabled{% endif %}>
+        {% for value, label in style_opts %}
+          <option value="{{ value }}" {% if cfg and cfg.deduction_style == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12 col-md-3">
+      <label class="form-label fw-bold">ترحيل الكسر</label>
+      <select class="form-select" name="carry_method" {% if not can_manage %}disabled{% endif %}>
+        {% for value, label in carry_opts %}
+          <option value="{{ value }}" {% if cfg and cfg.carry_method == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="col-12">
+      <label class="form-label fw-bold">ملاحظات السياسة</label>
+      <textarea class="form-control" name="note" rows="3" placeholder="سبب اختيار الساعات، الاستثناءات التنظيمية، أو قرار الإدارة..." {% if not can_manage %}disabled{% endif %}>{{ cfg.note if cfg and cfg.note else '' }}</textarea>
+      <div class="form-text">عند تعديل ساعات خصم موظف داخل المسودة تكون ملاحظة التعديل إلزامية وتُحفظ في سجل التدقيق.</div>
+    </div>
+
+    <input type="hidden" name="late_minute_value" value="{{ cfg.late_minute_value if cfg and cfg.late_minute_value is not none else '' }}">
+    <input type="hidden" name="early_minute_value" value="{{ cfg.early_minute_value if cfg and cfg.early_minute_value is not none else '' }}">
+    <input type="hidden" name="absent_day_value" value="{{ cfg.absent_day_value if cfg and cfg.absent_day_value is not none else '' }}">
+
+    <div class="col-12 d-flex justify-content-end gap-2">
       {% if can_manage %}
-        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+        <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ السياسة</button>
+      {% else %}
+        <span class="text-muted">عرض فقط — لا تملك صلاحية تعديل السياسة.</span>
       {% endif %}
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-arrow-repeat"></i> تحديث</a>
     </div>
   </div>
 </form>
-
 {% endblock %}

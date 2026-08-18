@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {% if not offline_mode %}<meta name="csrf-token" content="{{ csrf_token() }}">{% endif %}
   <title>استبيان استكمال ملف الموظف</title>
   <style>
     :root {
@@ -37,6 +38,7 @@
       color: #fff;
       background: rgba(23, 50, 77, .96);
       box-shadow: 0 2px 12px rgba(0, 0, 0, .18);
+      flex-wrap: wrap;
     }
 
     .screen-toolbar button,
@@ -54,7 +56,9 @@
     }
 
     .screen-toolbar .primary { border-color: var(--accent); background: var(--accent); }
+    .screen-toolbar .danger { border-color: #b64040; background: #8e3030; }
     .screen-toolbar .hint { align-self: center; opacity: .86; }
+    .save-status { align-self: center; min-width: 170px; color: #dff8f4; font-size: 10px; text-align: center; }
 
     .paper-page {
       position: relative;
@@ -136,6 +140,32 @@
     .write-line.tall { height: 15mm; }
     .choices { display: flex; flex-wrap: wrap; gap: 2mm 5mm; min-height: 7mm; padding-top: 2mm; }
     .box { display: inline-block; width: 4mm; height: 4mm; margin-left: 1.2mm; border: 1.3px solid #334b5b; vertical-align: -1mm; }
+    .box[role="checkbox"] { position: relative; cursor: pointer; }
+    .box.checked { border-color: var(--accent); background: var(--accent); }
+    .box.checked::after {
+      position: absolute;
+      inset: -1.4mm 0 0;
+      color: #fff;
+      content: "✓";
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 900;
+      line-height: 4mm;
+      text-align: center;
+    }
+    .interactive-entry {
+      min-width: 15mm;
+      outline: none;
+      cursor: text;
+      transition: background .15s, box-shadow .15s;
+    }
+    .interactive-entry:hover,
+    .interactive-entry:focus {
+      background: #f4fbfa;
+      box-shadow: inset 0 0 0 1px #79aaa5;
+    }
+    .interactive-entry:empty::before { color: #9aa7af; content: attr(data-placeholder); font-size: 9px; }
+    td.interactive-entry { background: #fff; }
     .date-pattern { direction: ltr; color: var(--muted); font-family: Consolas, monospace; letter-spacing: 1px; }
 
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
@@ -180,6 +210,8 @@
         margin: 0;
         box-shadow: none;
       }
+      .interactive-entry { background: transparent !important; box-shadow: none !important; }
+      .interactive-entry:empty::before { content: ""; }
     }
 
     @media screen and (max-width: 850px) {
@@ -188,22 +220,42 @@
     }
   </style>
 </head>
-<body>
+{% set pncecs_logo_src = offline_pncecs_logo if offline_mode else url_for('static', filename='images/pncecs_logo.png') %}
+{% set masar_logo_src = offline_masar_logo if offline_mode else url_for('static', filename='images/logo.png') %}
+<body
+  data-user-key="{{ 'offline' if offline_mode else current_user.id }}"
+  data-offline="{{ '1' if offline_mode else '0' }}"
+  data-submit-url="{{ '' if offline_mode else url_for('portal.hr_employee_data_submission_online') }}"
+>
   <div class="screen-toolbar" aria-label="أوامر الشاشة">
+    {% if not offline_mode %}
+    <button class="primary" type="button" id="submitOnlineButton">إرسال إلى الموارد البشرية</button>
+    <a href="{{ url_for('portal.hr_employee_data_collection_form_offline') }}">تنزيل النموذج للعمل دون إنترنت</a>
+    {% else %}
+    <span class="hint">نسخة تفاعلية تعمل دون إنترنت — احفظ ملف الإجابات ثم سلّمه للموارد البشرية</span>
+    {% endif %}
     <button class="primary" type="button" onclick="window.print()">طباعة النموذج / حفظ PDF</button>
-    <a href="{{ url_for('portal.hr_employees') }}">العودة إلى ملفات الموظفين</a>
-    <span class="hint">إعدادات الطباعة المقترحة: A4، الحجم الفعلي 100%، طباعة الخلفيات</span>
+    <button type="button" id="saveDraftButton">حفظ مسودة على الجهاز</button>
+    <button type="button" id="downloadJsonButton">تنزيل ملف الإجابات JSON</button>
+    <button type="button" id="importJsonButton">استعادة ملف إجابات</button>
+    <input type="file" id="importJsonInput" accept="application/json,.json" hidden>
+    <button class="danger" type="button" id="clearFormButton">مسح البيانات</button>
+    {% if not offline_mode %}
+    <a href="{{ url_for('portal.hr_me_home') }}">العودة إلى خدمات الموظف</a>
+    {% if current_user.is_authenticated and current_user.has_perm('HR_EMPLOYEE_READ') %}<a href="{{ url_for('portal.hr_employees') }}">ملفات الموظفين</a>{% endif %}
+    {% endif %}
+    <span class="save-status" id="saveStatus" aria-live="polite">المسودة لم تُحفظ بعد</span>
   </div>
 
   <!-- الصفحة 1: التعليمات والبيانات الشخصية -->
   <section class="paper-page">
     <header class="document-header">
-      <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" alt="شعار اللجنة الوطنية الفلسطينية">
+      <img src="{{ pncecs_logo_src }}" alt="شعار اللجنة الوطنية الفلسطينية">
       <div>
         <div class="org-name">اللجنة الوطنية الفلسطينية للتربية والثقافة والعلوم</div>
         <div class="system-name">نظام مسار — البوابة الإدارية / الموارد البشرية</div>
       </div>
-      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="شعار نظام مسار">
+      <img src="{{ masar_logo_src }}" alt="شعار نظام مسار">
     </header>
 
     <h1 class="page-title">استبيان استكمال ملف الموظف</h1>
@@ -212,13 +264,15 @@
     <div class="notice">
       <strong>قبل البدء:</strong>
       <ul class="instruction-list">
-        <li>استخدم قلمًا أزرق أو أسود واكتب بخط واضح.</li>
+        <li>اضغط على السطر أو خلية الجدول ثم اكتب مباشرةً.</li>
         <li>اكتب جميع التواريخ بصيغة <span class="ltr">YYYY-MM-DD</span>.</li>
-        <li>ضع علامة ✓ داخل مربع واحد عند وجود خيارات.</li>
+        <li>اضغط على المربع لاختيار الإجابة أو إلغاء اختيارها.</li>
         <li>اكتب «لا ينطبق» بدل ترك الحقل فارغًا.</li>
-        <li>أرفق صورًا واضحة، ولا تسلّم أصول الوثائق.</li>
+        {% if offline_mode %}<li>نزّل ملف JSON بعد الإكمال وسلّمه لموظف الموارد البشرية لرفعه ومراجعته.</li>
+        {% else %}<li>بعد الإكمال اضغط «إرسال إلى الموارد البشرية»؛ لن تتغير بيانات ملفك قبل اعتمادها.</li>{% endif %}
         <li><strong>لا تكتب كلمة المرور</strong> في هذا النموذج مطلقًا.</li>
       </ul>
+      <div class="small" style="margin-top:2mm"><strong>تنبيه خصوصية:</strong> تُحفظ المسودة داخل متصفح هذا الجهاز فقط. لا تُرسل إلى النظام إلا عند الضغط صراحةً على زر الإرسال، وتبقى حينها قيد مراجعة الموارد البشرية. استخدم جهازًا موثوقًا ثم اضغط «مسح البيانات» إذا كان الجهاز مشتركًا.</div>
     </div>
 
     <div class="section">
@@ -300,15 +354,15 @@
       </div>
     </div>
 
-    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.0 / 2026-08</span><span>صفحة 1 من 6</span></footer>
+    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.1 / 2026-08</span><span>صفحة 1 من 6</span></footer>
   </section>
 
   <!-- الصفحة 2: بيانات العمل والتسكين -->
   <section class="paper-page">
     <header class="document-header">
-      <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" alt="شعار اللجنة الوطنية الفلسطينية">
+      <img src="{{ pncecs_logo_src }}" alt="شعار اللجنة الوطنية الفلسطينية">
       <div><div class="org-name">استبيان استكمال ملف الموظف</div><div class="system-name">بيانات العمل والتعيين والتسكين</div></div>
-      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="شعار نظام مسار">
+      <img src="{{ masar_logo_src }}" alt="شعار نظام مسار">
     </header>
 
     <div class="section">
@@ -360,15 +414,15 @@
     </div>
 
     <div class="notice small"><strong>للموارد البشرية:</strong> عند التفريغ، طابق نص الإجابة مع القوائم المرجعية في «إعدادات ملف الموظف»، ولا تُنشئ قيمة جديدة قبل التحقق من عدم وجودها.</div>
-    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.0 / 2026-08</span><span>صفحة 2 من 6</span></footer>
+    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.1 / 2026-08</span><span>صفحة 2 من 6</span></footer>
   </section>
 
   <!-- الصفحة 3: البنك والتابعون -->
   <section class="paper-page">
     <header class="document-header">
-      <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" alt="شعار اللجنة الوطنية الفلسطينية">
+      <img src="{{ pncecs_logo_src }}" alt="شعار اللجنة الوطنية الفلسطينية">
       <div><div class="org-name">استبيان استكمال ملف الموظف</div><div class="system-name">المعلومات البنكية والتابعون</div></div>
-      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="شعار نظام مسار">
+      <img src="{{ masar_logo_src }}" alt="شعار نظام مسار">
     </header>
 
     <div class="section">
@@ -418,15 +472,15 @@
       <div class="section-body"><div class="write-line tall"></div><div class="write-line"></div></div>
     </div>
 
-    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.0 / 2026-08</span><span>صفحة 3 من 6</span></footer>
+    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.1 / 2026-08</span><span>صفحة 3 من 6</span></footer>
   </section>
 
   <!-- الصفحة 4: المؤهلات -->
   <section class="paper-page">
     <header class="document-header">
-      <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" alt="شعار اللجنة الوطنية الفلسطينية">
+      <img src="{{ pncecs_logo_src }}" alt="شعار اللجنة الوطنية الفلسطينية">
       <div><div class="org-name">استبيان استكمال ملف الموظف</div><div class="system-name">المؤهلات العلمية</div></div>
-      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="شعار نظام مسار">
+      <img src="{{ masar_logo_src }}" alt="شعار نظام مسار">
     </header>
 
     <div class="section">
@@ -477,15 +531,15 @@
       </div>
     </div>
 
-    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.0 / 2026-08</span><span>صفحة 4 من 6</span></footer>
+    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.1 / 2026-08</span><span>صفحة 4 من 6</span></footer>
   </section>
 
   <!-- الصفحة 5: التكليفات -->
   <section class="paper-page">
     <header class="document-header">
-      <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" alt="شعار اللجنة الوطنية الفلسطينية">
+      <img src="{{ pncecs_logo_src }}" alt="شعار اللجنة الوطنية الفلسطينية">
       <div><div class="org-name">استبيان استكمال ملف الموظف</div><div class="system-name">التكليفات/الانتدابات الحالية والسابقة</div></div>
-      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="شعار نظام مسار">
+      <img src="{{ masar_logo_src }}" alt="شعار نظام مسار">
     </header>
 
     <div class="section">
@@ -515,31 +569,31 @@
             <div class="field third" data-field="secondment.admin_title_lookup_id"><div class="field-label">المسمى الإداري <span class="field-code">S-10</span></div><div class="write-line"></div></div>
             <div class="field full" data-field="secondment.details"><div class="field-label">تفاصيل/مرجع القرار <span class="field-code">S-11</span></div><div class="write-line tall"></div></div>
           {% else %}
-            <div class="field quarter"><div class="field-label">من تاريخ <span class="field-code">S-01</span></div><div class="write-line"></div></div>
-            <div class="field quarter"><div class="field-label">إلى تاريخ <span class="field-code">S-02</span></div><div class="write-line"></div></div>
-            <div class="field quarter"><div class="field-label">الإدارة العامة <span class="field-code">S-03</span></div><div class="write-line"></div></div>
-            <div class="field quarter"><div class="field-label">الدائرة <span class="field-code">S-04</span></div><div class="write-line"></div></div>
-            <div class="field quarter"><div class="field-label">القسم <span class="field-code">S-05</span></div><div class="write-line"></div></div>
-            <div class="field quarter"><div class="field-label">الشعبة <span class="field-code">S-06</span></div><div class="write-line"></div></div>
-            <div class="field half"><div class="field-label">المسؤول المباشر <span class="field-code">S-07</span></div><div class="write-line"></div></div>
-            <div class="field third"><div class="field-label">محافظة العمل <span class="field-code">S-08</span></div><div class="write-line"></div></div>
-            <div class="field third"><div class="field-label">موقع العمل <span class="field-code">S-09</span></div><div class="write-line"></div></div>
-            <div class="field third"><div class="field-label">المسمى الإداري <span class="field-code">S-10</span></div><div class="write-line"></div></div>
-            <div class="field full"><div class="field-label">تفاصيل/مرجع القرار <span class="field-code">S-11</span></div><div class="write-line tall"></div></div>
+            <div class="field quarter" data-field="secondment.date_from"><div class="field-label">من تاريخ <span class="field-code">S-01</span></div><div class="write-line"></div></div>
+            <div class="field quarter" data-field="secondment.date_to"><div class="field-label">إلى تاريخ <span class="field-code">S-02</span></div><div class="write-line"></div></div>
+            <div class="field quarter" data-field="secondment.organization_id"><div class="field-label">الإدارة العامة <span class="field-code">S-03</span></div><div class="write-line"></div></div>
+            <div class="field quarter" data-field="secondment.directorate_id"><div class="field-label">الدائرة <span class="field-code">S-04</span></div><div class="write-line"></div></div>
+            <div class="field quarter" data-field="secondment.department_id"><div class="field-label">القسم <span class="field-code">S-05</span></div><div class="write-line"></div></div>
+            <div class="field quarter" data-field="secondment.division_id"><div class="field-label">الشعبة <span class="field-code">S-06</span></div><div class="write-line"></div></div>
+            <div class="field half" data-field="secondment.direct_manager_user_id"><div class="field-label">المسؤول المباشر <span class="field-code">S-07</span></div><div class="write-line"></div></div>
+            <div class="field third" data-field="secondment.work_governorate_lookup_id"><div class="field-label">محافظة العمل <span class="field-code">S-08</span></div><div class="write-line"></div></div>
+            <div class="field third" data-field="secondment.work_location_lookup_id"><div class="field-label">موقع العمل <span class="field-code">S-09</span></div><div class="write-line"></div></div>
+            <div class="field third" data-field="secondment.admin_title_lookup_id"><div class="field-label">المسمى الإداري <span class="field-code">S-10</span></div><div class="write-line"></div></div>
+            <div class="field full" data-field="secondment.details"><div class="field-label">تفاصيل/مرجع القرار <span class="field-code">S-11</span></div><div class="write-line tall"></div></div>
           {% endif %}
         </div>
       </div>
     {% endfor %}
 
-    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.0 / 2026-08</span><span>صفحة 5 من 6</span></footer>
+    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.1 / 2026-08</span><span>صفحة 5 من 6</span></footer>
   </section>
 
   <!-- الصفحة 6: المرفقات والإقرار -->
   <section class="paper-page">
     <header class="document-header">
-      <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" alt="شعار اللجنة الوطنية الفلسطينية">
+      <img src="{{ pncecs_logo_src }}" alt="شعار اللجنة الوطنية الفلسطينية">
       <div><div class="org-name">استبيان استكمال ملف الموظف</div><div class="system-name">المرفقات والإقرار ومراجعة الموارد البشرية</div></div>
-      <img src="{{ url_for('static', filename='images/logo.png') }}" alt="شعار نظام مسار">
+      <img src="{{ masar_logo_src }}" alt="شعار نظام مسار">
     </header>
 
     <div class="section">
@@ -600,7 +654,362 @@
     </div>
 
     <p class="small muted" style="margin-top:3mm">رموز الحقول المطبوعة مخصصة لتسهيل التفريغ الإلكتروني، ولا يلزم الموظف كتابتها. احتفظ بالصفحات الست معًا.</p>
-    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.0 / 2026-08 — Generated {{ generated_on.strftime('%Y-%m-%d') }}</span><span>صفحة 6 من 6</span></footer>
+    <footer class="page-footer"><span class="form-key">EMP-DATA-FORM / V1.1 / 2026-08 — Generated {{ generated_on.strftime('%Y-%m-%d') }}</span><span>صفحة 6 من 6</span></footer>
   </section>
+  <script>
+    (() => {
+      "use strict";
+
+      const FORM_SCHEMA = "EMP-DATA-FORM/V1.1";
+      const storageKey = `employee-data-form:${document.body.dataset.userKey || "guest"}:v1`;
+      const statusNode = document.getElementById("saveStatus");
+      const importInput = document.getElementById("importJsonInput");
+      const entries = [];
+      const checks = [];
+      const keyCounts = new Map();
+      let saveTimer = null;
+
+      const cleanText = (value) => (value || "").replace(/\s+/g, " ").trim();
+      const keySlug = (value) => cleanText(value).replace(/[^\p{L}\p{N}]+/gu, "_").replace(/^_+|_+$/g, "") || "field";
+
+      function setStatus(message, isError = false) {
+        statusNode.textContent = message;
+        statusNode.style.color = isError ? "#ffd3d3" : "#dff8f4";
+      }
+
+      function nextEntryId(baseKey) {
+        const count = (keyCounts.get(baseKey) || 0) + 1;
+        keyCounts.set(baseKey, count);
+        return `${baseKey}#${count}`;
+      }
+
+      function registerEntry(node, baseField, placeholder, tableName = "", rowNumber = null) {
+        const safeBase = baseField || "free_text";
+        node.contentEditable = "true";
+        node.spellcheck = true;
+        node.tabIndex = 0;
+        node.setAttribute("role", "textbox");
+        node.classList.add("interactive-entry");
+        node.dataset.fieldBase = safeBase;
+        node.dataset.entryId = nextEntryId(safeBase);
+        node.dataset.placeholder = placeholder || "اضغط هنا للكتابة";
+        if (tableName) node.dataset.tableName = tableName;
+        if (rowNumber !== null) node.dataset.rowNumber = String(rowNumber);
+        entries.push(node);
+      }
+
+      document.querySelectorAll(".write-line").forEach((node) => {
+        const dateHint = node.querySelector(".date-pattern");
+        const placeholder = dateHint ? cleanText(dateHint.textContent) : "اضغط هنا للكتابة";
+        if (dateHint) node.textContent = "";
+
+        const fieldContainer = node.closest("[data-field]");
+        let baseField = fieldContainer?.dataset.field;
+        if (!baseField) {
+          const signatureLabel = node.closest(".signature-box")?.querySelector("strong")?.textContent;
+          const sectionLabel = node.closest(".section")?.querySelector(".section-title span")?.textContent;
+          baseField = `free.${keySlug(signatureLabel || sectionLabel || "text")}`;
+        }
+        registerEntry(node, baseField, placeholder);
+      });
+
+      document.querySelectorAll("table").forEach((table, tableIndex) => {
+        const tableName = table.getAttribute("aria-label") || `table_${tableIndex + 1}`;
+        const headers = [...table.querySelectorAll("thead th")];
+        table.querySelectorAll("tbody tr").forEach((row, rowIndex) => {
+          [...row.children].forEach((cell, columnIndex) => {
+            if (cell.classList.contains("row-no") || cell.querySelector(".box") || cleanText(cell.textContent)) return;
+            const header = headers[columnIndex];
+            const baseField = header?.dataset.field || `table.${keySlug(tableName)}.${keySlug(header?.textContent || `column_${columnIndex + 1}`)}`;
+            registerEntry(cell, baseField, "اكتب هنا", tableName, rowIndex + 1);
+          });
+        });
+      });
+
+      function checkboxLabel(box) {
+        const parent = box.parentElement;
+        if (parent && parent.tagName === "SPAN") return cleanText(parent.textContent);
+        const row = box.closest("tr");
+        const rowLabel = row ? cleanText(row.children[1]?.textContent) : "";
+        const headerIndex = box.closest("td")?.cellIndex;
+        const header = row?.closest("table")?.querySelectorAll("thead th")[headerIndex];
+        return cleanText([rowLabel, header?.textContent].filter(Boolean).join(" - ")) || "اختيار";
+      }
+
+      function checkboxField(box) {
+        const field = box.closest("[data-field]")?.dataset.field;
+        if (field) return field;
+        const row = box.closest("tr");
+        return row ? `table.${keySlug(row.closest("table")?.getAttribute("aria-label") || "table")}` : "selection";
+      }
+
+      function setChecked(box, checked) {
+        box.classList.toggle("checked", Boolean(checked));
+        box.setAttribute("aria-checked", checked ? "true" : "false");
+      }
+
+      document.querySelectorAll(".box").forEach((box, index) => {
+        box.setAttribute("role", "checkbox");
+        box.setAttribute("aria-checked", "false");
+        box.tabIndex = 0;
+        box.dataset.checkId = `check#${index + 1}`;
+        box.dataset.fieldBase = checkboxField(box);
+        box.dataset.choiceLabel = checkboxLabel(box);
+        checks.push(box);
+
+        const toggle = () => {
+          const willCheck = !box.classList.contains("checked");
+          const group = box.closest(".choices");
+          if (willCheck && group?.closest("[data-field]")) {
+            group.querySelectorAll(".box").forEach((other) => setChecked(other, false));
+          }
+          setChecked(box, willCheck);
+          scheduleSave();
+        };
+        box.addEventListener("click", toggle);
+        box.addEventListener("keydown", (event) => {
+          if (event.key === " " || event.key === "Enter") {
+            event.preventDefault();
+            toggle();
+          }
+        });
+      });
+
+      function firstEntry(fieldName) {
+        return entries.find((node) => node.dataset.fieldBase === fieldName);
+      }
+
+      function syncReferenceFields() {
+        const mappings = [
+          ["full_name_quad", /^page_\d+_employee_name$/],
+          ["employee_no", /^page_\d+_employee_no$/],
+        ];
+        mappings.forEach(([sourceField, targetPattern]) => {
+          const source = firstEntry(sourceField);
+          if (!source) return;
+          entries.forEach((target) => {
+            if (targetPattern.test(target.dataset.fieldBase)) target.textContent = source.textContent;
+          });
+        });
+      }
+
+      function createSnapshot() {
+        return {
+          entries: Object.fromEntries(entries.map((node) => [node.dataset.entryId, cleanText(node.textContent)])),
+          checks: Object.fromEntries(checks.map((box) => [box.dataset.checkId, box.classList.contains("checked")])),
+        };
+      }
+
+      function applySnapshot(snapshot) {
+        if (!snapshot || typeof snapshot !== "object") throw new Error("ملف المسودة غير صالح");
+        entries.forEach((node) => {
+          const value = snapshot.entries?.[node.dataset.entryId];
+          node.textContent = typeof value === "string" ? value : "";
+        });
+        checks.forEach((box) => setChecked(box, snapshot.checks?.[box.dataset.checkId] === true));
+        syncReferenceFields();
+      }
+
+      function saveDraft(showConfirmation = false) {
+        try {
+          localStorage.setItem(storageKey, JSON.stringify({ schema: FORM_SCHEMA, saved_at: new Date().toISOString(), snapshot: createSnapshot() }));
+          const time = new Intl.DateTimeFormat("ar", { hour: "2-digit", minute: "2-digit" }).format(new Date());
+          setStatus(`${showConfirmation ? "تم الحفظ" : "حفظ تلقائي"} — ${time}`);
+          return true;
+        } catch (error) {
+          setStatus("تعذر حفظ المسودة على هذا الجهاز", true);
+          return false;
+        }
+      }
+
+      function scheduleSave() {
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => saveDraft(false), 350);
+      }
+
+      function selectedChoicesWithin(container) {
+        return [...container.querySelectorAll(".box.checked")].map((box) => box.dataset.choiceLabel);
+      }
+
+      function collectStructuredFields() {
+        const fields = {};
+        entries.forEach((node) => {
+          const value = cleanText(node.textContent);
+          if (!value) return;
+          const field = node.dataset.fieldBase;
+          if (!fields[field]) fields[field] = [];
+          const occurrenceMatch = (node.dataset.entryId || "").match(/#(\d+)$/);
+          fields[field].push({
+            value,
+            row: node.dataset.rowNumber ? Number(node.dataset.rowNumber) : null,
+            entry_id: node.dataset.entryId || null,
+            occurrence: occurrenceMatch ? Number(occurrenceMatch[1]) : 1,
+          });
+        });
+
+        document.querySelectorAll("[data-field]:not(th)").forEach((container) => {
+          const selected = selectedChoicesWithin(container);
+          if (!selected.length) return;
+          const field = container.dataset.field;
+          if (!fields[field]) fields[field] = [];
+          selected.forEach((value) => fields[field].push({ value, type: "choice" }));
+        });
+        return fields;
+      }
+
+      function collectTables() {
+        const tables = {};
+        document.querySelectorAll("table").forEach((table, tableIndex) => {
+          const tableName = table.getAttribute("aria-label") || `table_${tableIndex + 1}`;
+          const headers = [...table.querySelectorAll("thead th")];
+          const records = [];
+          table.querySelectorAll("tbody tr").forEach((row) => {
+            const record = {};
+            [...row.children].forEach((cell, columnIndex) => {
+              if (cell.classList.contains("row-no")) return;
+              const header = headers[columnIndex];
+              const key = header?.dataset.field || keySlug(header?.textContent || `column_${columnIndex + 1}`);
+              const selected = [...cell.querySelectorAll(".box.checked")].map((box) => box.dataset.choiceLabel);
+              const value = selected.length ? selected : cleanText(cell.textContent);
+              if ((Array.isArray(value) && value.length) || (!Array.isArray(value) && value)) record[key] = value;
+            });
+            if (Object.keys(record).length) records.push(record);
+          });
+          if (records.length) tables[tableName] = records;
+        });
+        return tables;
+      }
+
+      function buildPayload() {
+        syncReferenceFields();
+        const snapshot = createSnapshot();
+        return {
+          schema: FORM_SCHEMA,
+          exported_at: new Date().toISOString(),
+          employee: {
+            employee_no: cleanText(firstEntry("employee_no")?.textContent),
+            full_name_quad: cleanText(firstEntry("full_name_quad")?.textContent),
+          },
+          fields: collectStructuredFields(),
+          tables: collectTables(),
+          selections: checks
+            .filter((box) => box.classList.contains("checked"))
+            .map((box) => ({ field: box.dataset.fieldBase, value: box.dataset.choiceLabel })),
+          snapshot,
+        };
+      }
+
+      function exportData() {
+        const payload = buildPayload();
+        const identifier = payload.employee.employee_no || payload.employee.full_name_quad || "employee";
+        const safeIdentifier = identifier.replace(/[\\/:*?"<>|]+/g, "-").replace(/\s+/g, "-").slice(0, 60);
+        const date = new Date().toISOString().slice(0, 10);
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `employee-data-${safeIdentifier}-${date}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        saveDraft(true);
+        setStatus("تم تنزيل ملف الإجابات");
+      }
+
+      async function submitOnline() {
+        const submitButton = document.getElementById("submitOnlineButton");
+        const submitUrl = document.body.dataset.submitUrl;
+        if (!submitButton || !submitUrl) return;
+        const payload = buildPayload();
+        if (!payload.employee.full_name_quad) {
+          setStatus("اكتب الاسم الرباعي قبل الإرسال", true);
+          firstEntry("full_name_quad")?.focus();
+          return;
+        }
+        if (!confirm("سيتم إرسال الإجابات إلى موظف الموارد البشرية للمراجعة. لن تتغير بيانات ملفك قبل اعتماده لها. هل تريد المتابعة؟")) return;
+
+        submitButton.disabled = true;
+        setStatus("جارٍ إرسال الإجابات إلى الموارد البشرية...");
+        try {
+          const response = await fetch(submitUrl, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRFToken": document.querySelector('meta[name="csrf-token"]')?.content || "",
+            },
+            body: JSON.stringify(payload),
+          });
+          const result = await response.json().catch(() => ({}));
+          if (!response.ok || !result.ok) throw new Error(result.message || "تعذر إرسال الإجابات");
+          saveDraft(true);
+          setStatus(result.message || "تم الإرسال إلى الموارد البشرية");
+          alert(`${result.message || "تم الإرسال إلى الموارد البشرية"}\nرقم الطلب: ${result.submission_id}`);
+        } catch (error) {
+          setStatus(error.message || "تعذر إرسال الإجابات", true);
+          alert(error.message || "تعذر إرسال الإجابات. تحقق من الاتصال وحاول مجددًا.");
+        } finally {
+          submitButton.disabled = false;
+        }
+      }
+
+      async function importData(file) {
+        try {
+          const payload = JSON.parse(await file.text());
+          if (!payload.snapshot || !String(payload.schema || "").startsWith("EMP-DATA-FORM/")) throw new Error("format");
+          applySnapshot(payload.snapshot);
+          saveDraft(true);
+          setStatus("تمت استعادة ملف الإجابات");
+        } catch (error) {
+          setStatus("الملف المختار ليس ملف إجابات صالحًا", true);
+          alert("تعذر استعادة الملف. اختر ملف JSON تم تنزيله من هذا النموذج.");
+        } finally {
+          importInput.value = "";
+        }
+      }
+
+      function clearForm() {
+        if (!confirm("سيتم حذف جميع الإجابات المحفوظة في هذا المتصفح. هل تريد المتابعة؟")) return;
+        localStorage.removeItem(storageKey);
+        entries.forEach((node) => { node.textContent = ""; });
+        checks.forEach((box) => setChecked(box, false));
+        setStatus("تم مسح البيانات من هذا الجهاز");
+        firstEntry("full_name_quad")?.focus();
+      }
+
+      entries.forEach((node) => {
+        node.addEventListener("input", () => {
+          if (["full_name_quad", "employee_no"].includes(node.dataset.fieldBase)) syncReferenceFields();
+          scheduleSave();
+        });
+        node.addEventListener("paste", (event) => {
+          event.preventDefault();
+          const text = event.clipboardData?.getData("text/plain") || "";
+          document.execCommand("insertText", false, text);
+        });
+      });
+
+      document.getElementById("saveDraftButton").addEventListener("click", () => saveDraft(true));
+      document.getElementById("downloadJsonButton").addEventListener("click", exportData);
+      document.getElementById("importJsonButton").addEventListener("click", () => importInput.click());
+      document.getElementById("clearFormButton").addEventListener("click", clearForm);
+      document.getElementById("submitOnlineButton")?.addEventListener("click", submitOnline);
+      importInput.addEventListener("change", () => importInput.files?.[0] && importData(importInput.files[0]));
+      window.addEventListener("beforeunload", () => saveDraft(false));
+
+      try {
+        const stored = JSON.parse(localStorage.getItem(storageKey) || "null");
+        if (stored?.snapshot) {
+          applySnapshot(stored.snapshot);
+          setStatus("تمت استعادة المسودة المحفوظة");
+        } else {
+          setStatus("ابدأ التعبئة — الحفظ تلقائي");
+        }
+      } catch (error) {
+        setStatus("ابدأ التعبئة — تعذر قراءة مسودة قديمة", true);
+      }
+    })();
+  </script>
 </body>
 </html>

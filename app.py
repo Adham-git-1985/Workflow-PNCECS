@@ -680,6 +680,49 @@ def _ensure_runtime_schema():
             if not _col_exists("hr_training_program", "publish_conditions_only"):
                 _add_column_retry("hr_training_program", "publish_conditions_only", "INTEGER DEFAULT 0")
 
+            # Unified HR attendance centre.  Some long-running local SQLite
+            # installations predate Alembic and therefore have the tables but
+            # not the newly introduced columns.  Keep those installations
+            # usable on startup, just like the other runtime schema upgrades.
+            for _table, _col, _ctype in [
+                ("work_schedule", "start_grace_minutes", "INTEGER"),
+                ("work_schedule", "end_grace_minutes", "INTEGER"),
+                ("work_policy", "hybrid_selection_mode", "TEXT NOT NULL DEFAULT 'FLEXIBLE'"),
+                ("work_policy", "hybrid_fixed_days_mask", "INTEGER"),
+                ("hr_att_deduction_config", "permission_allowance_hours", "REAL NOT NULL DEFAULT 6"),
+                ("hr_att_deduction_config", "annual_leave_type_id", "INTEGER"),
+                ("hr_att_deduction_config", "deduction_sequence", "TEXT NOT NULL DEFAULT 'LEAVE_THEN_SALARY'"),
+                ("hr_att_deduction_config", "require_approval", "INTEGER NOT NULL DEFAULT 1"),
+                ("hr_att_deduction_run", "config_snapshot_json", "TEXT"),
+                ("hr_att_deduction_run", "approved_at", "TEXT"),
+                ("hr_att_deduction_run", "approved_by_id", "INTEGER"),
+                ("hr_att_deduction_run", "approval_note", "TEXT"),
+                ("hr_att_deduction_item", "approved_permission_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "permission_allowance_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "excluded_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "chargeable_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "deduction_leave_type_id", "INTEGER"),
+                ("hr_att_deduction_item", "leave_deduction_days", "REAL NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "salary_deduction_days", "REAL NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "remainder_minutes", "INTEGER NOT NULL DEFAULT 0"),
+            ]:
+                if not _col_exists(_table, _col):
+                    _add_column_retry(_table, _col, _ctype)
+
+            try:
+                db.session.execute(text(
+                    "UPDATE work_schedule SET "
+                    "start_grace_minutes=COALESCE(start_grace_minutes, grace_minutes), "
+                    "end_grace_minutes=COALESCE(end_grace_minutes, grace_minutes)"
+                ))
+                db.session.execute(text(
+                    "UPDATE hr_att_deduction_item SET salary_deduction_days=amount "
+                    "WHERE COALESCE(salary_deduction_days, 0)=0 AND COALESCE(amount, 0)>0"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
 
             # backfill directorate_id from department_id for existing users
             if _col_exists("users", "directorate_id"):

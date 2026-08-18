@@ -1938,6 +1938,65 @@ class EmployeeSecondment(db.Model):
     updated_by = db.relationship('User', foreign_keys=[updated_by_id], lazy='joined')
 
 
+class EmployeeDataSubmission(db.Model):
+    """Staged employee questionnaire awaiting an explicit HR review/apply step."""
+
+    __tablename__ = "employee_data_submission"
+
+    id = db.Column(db.Integer, primary_key=True)
+    employee_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    submitted_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+
+    source = db.Column(db.String(20), nullable=False, default="ONLINE", index=True)  # ONLINE/OFFLINE
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)  # PENDING/APPLIED/REJECTED
+    schema_version = db.Column(db.String(50), nullable=False, default="EMP-DATA-FORM/V1.1")
+    payload_json = db.Column(db.Text, nullable=False)
+    payload_sha256 = db.Column(db.String(64), nullable=False, index=True)
+    original_filename = db.Column(db.String(255), nullable=True)
+
+    submitted_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    reviewed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    applied_at = db.Column(db.DateTime, nullable=True)
+    review_note = db.Column(db.Text, nullable=True)
+    apply_summary_json = db.Column(db.Text, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    employee = db.relationship("User", foreign_keys=[employee_user_id], lazy="joined")
+    submitted_by = db.relationship("User", foreign_keys=[submitted_by_id], lazy="joined")
+    reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "employee_user_id",
+            "payload_sha256",
+            name="uq_employee_data_submission_employee_hash",
+        ),
+        db.CheckConstraint(
+            "source IN ('ONLINE','OFFLINE')",
+            name="ck_employee_data_submission_source",
+        ),
+        db.CheckConstraint(
+            "status IN ('PENDING','APPLIED','REJECTED')",
+            name="ck_employee_data_submission_status",
+        ),
+    )
+
+    def payload(self) -> dict:
+        try:
+            return json.loads(self.payload_json or "{}") or {}
+        except Exception:
+            return {}
+
+    def apply_summary(self) -> dict:
+        try:
+            return json.loads(self.apply_summary_json or "{}") or {}
+        except Exception:
+            return {}
+
+
 # =========================================================
 
 # Portal HR: Self-Service Requests (Light Workflow - داخل HR فقط)
@@ -2201,6 +2260,9 @@ class WorkSchedule(db.Model):
     required_minutes = db.Column(db.Integer, nullable=True)  # for FLEX/REMOTE
     break_minutes = db.Column(db.Integer, default=0, nullable=False)
     grace_minutes = db.Column(db.Integer, default=0, nullable=False)
+    # Separate grace windows. ``grace_minutes`` remains as a legacy fallback.
+    start_grace_minutes = db.Column(db.Integer, nullable=True)
+    end_grace_minutes = db.Column(db.Integer, nullable=True)
     overtime_threshold_minutes = db.Column(db.Integer, nullable=True)  # minutes after end_time to start overtime
 
     is_active = db.Column(db.Boolean, default=True, nullable=False)
@@ -2268,6 +2330,10 @@ class WorkPolicy(db.Model):
 
     hybrid_office_days = db.Column(db.Integer, nullable=True)
     hybrid_remote_days = db.Column(db.Integer, nullable=True)
+    # FLEXIBLE: any office days may satisfy the weekly quota.
+    # FIXED: office days must match hybrid_fixed_days_mask.
+    hybrid_selection_mode = db.Column(db.String(20), nullable=False, default="FLEXIBLE")
+    hybrid_fixed_days_mask = db.Column(db.Integer, nullable=True)
 
     location_policy = db.Column(db.String(20), nullable=False, default="ONSITE")
 
@@ -2795,6 +2861,12 @@ class HRAttendanceDeductionConfig(db.Model):
 
     carry_method = db.Column(db.String(40), default="CARRY_TO_NEXT", nullable=False)  # CARRY_TO_NEXT / WITHIN_MONTH
 
+    # Monthly permission allowance and the leave type consumed before salary.
+    permission_allowance_hours = db.Column(db.Float, default=6.0, nullable=False)
+    annual_leave_type_id = db.Column(db.Integer, db.ForeignKey("hr_leave_type.id"), nullable=True, index=True)
+    deduction_sequence = db.Column(db.String(40), default="LEAVE_THEN_SALARY", nullable=False)
+    require_approval = db.Column(db.Boolean, default=True, nullable=False)
+
     currency = db.Column(db.String(10), default="ILS", nullable=False)
 
     note = db.Column(db.Text, nullable=True)
@@ -2803,6 +2875,7 @@ class HRAttendanceDeductionConfig(db.Model):
     updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
 
     updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
+    annual_leave_type = db.relationship("HRLeaveType", foreign_keys=[annual_leave_type_id], lazy="joined")
 
 
 class HRAttendanceDeductionRun(db.Model):
@@ -2818,12 +2891,18 @@ class HRAttendanceDeductionRun(db.Model):
     status = db.Column(db.String(20), default="DRAFT", nullable=False)  # DRAFT/FINAL
     note = db.Column(db.Text, nullable=True)
 
+    config_snapshot_json = db.Column(db.Text, nullable=True)
     totals_json = db.Column(db.Text, nullable=True)  # summary JSON string
+
+    approved_at = db.Column(db.DateTime, nullable=True, index=True)
+    approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    approval_note = db.Column(db.Text, nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    approved_by = db.relationship("User", foreign_keys=[approved_by_id], lazy="joined")
 class HRAttendanceDeductionItem(db.Model):
     """Per-employee deduction totals linked to a run."""
 
@@ -2838,12 +2917,23 @@ class HRAttendanceDeductionItem(db.Model):
     early_leave_minutes = db.Column(db.Integer, default=0, nullable=False)
     absent_days = db.Column(db.Integer, default=0, nullable=False)
 
+    approved_permission_minutes = db.Column(db.Integer, default=0, nullable=False)
+    permission_allowance_minutes = db.Column(db.Integer, default=0, nullable=False)
+    excluded_minutes = db.Column(db.Integer, default=0, nullable=False)
+    chargeable_minutes = db.Column(db.Integer, default=0, nullable=False)
+    deduction_leave_type_id = db.Column(db.Integer, db.ForeignKey("hr_leave_type.id"), nullable=True, index=True)
+    leave_deduction_days = db.Column(db.Float, default=0.0, nullable=False)
+    salary_deduction_days = db.Column(db.Float, default=0.0, nullable=False)
+    remainder_minutes = db.Column(db.Integer, default=0, nullable=False)
+
+    # Legacy-compatible field: salary deduction in work-day units.
     amount = db.Column(db.Float, default=0.0, nullable=False)
 
     note = db.Column(db.Text, nullable=True)
 
     run = db.relationship("HRAttendanceDeductionRun", backref=db.backref("items", lazy="selectin", cascade="all, delete-orphan"))
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    deduction_leave_type = db.relationship("HRLeaveType", foreign_keys=[deduction_leave_type_id], lazy="joined")
 
     __table_args__ = (
         db.UniqueConstraint("run_id", "user_id", name="uq_hr_att_deduct_run_user"),

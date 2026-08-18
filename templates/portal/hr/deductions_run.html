@@ -1,55 +1,81 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}تنفيذ الخصم{% endblock %}
+{% block title %}معاينة الخصومات{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="dedRunPrint">
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <h4 class="mb-1"><i class="bi bi-play-circle"></i> تنفيذ الخصم</h4>
-      <div class="text-muted">احتساب تجميعي بسيط من (التأخير/الخروج المبكر/الغياب) اعتمادًا على سجل الدوام.</div>
+      <div class="text-primary fw-semibold small mb-1">المرحلة 1 من 2</div>
+      <h4 class="mb-1"><i class="bi bi-eye"></i> إنشاء معاينة الخصومات</h4>
+      <div class="text-muted">هذه العملية تنشئ مسودة قابلة للمراجعة والتعديل؛ لا تخصم شيئاً قبل اعتمادها.</div>
     </div>
-    <div class="d-flex gap-2">
+    <div class="d-flex gap-2 flex-wrap">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-clock-history"></i> سجل الخصومات</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-gear"></i> الإعدادات</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-sliders"></i> إعدادات السياسة</a>
     </div>
   </div>
 </div>
 
-{% if cfg %}
-  <div class="alert alert-info">
-    <div class="d-flex flex-wrap gap-3">
-      <div><strong>قيمة دقيقة التأخير:</strong> {{ cfg.late_minute_value or 0 }}</div>
-      <div><strong>قيمة دقيقة الخروج المبكر:</strong> {{ cfg.early_minute_value or 0 }}</div>
-      <div><strong>قيمة يوم الغياب:</strong> {{ cfg.absent_day_value or 0 }}</div>
-      <div><strong>العملة:</strong> {{ cfg.currency }}</div>
-    </div>
-  </div>
-{% else %}
-  <div class="alert alert-warning">لم يتم ضبط إعدادات الخصم بعد. يمكنك ضبطها من صفحة الإعدادات.</div>
-{% endif %}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3"><div class="bg-white border rounded-3 p-3 h-100"><div class="text-muted small">سماح المغادرات</div><div class="fs-4 fw-bold">{{ cfg.permission_allowance_hours or 6 }} <small class="fs-6">ساعات</small></div></div></div>
+  <div class="col-6 col-lg-3"><div class="bg-white border rounded-3 p-3 h-100"><div class="text-muted small">يوم الخصم</div><div class="fs-4 fw-bold">{{ cfg.hours_per_day or 7 }} <small class="fs-6">ساعات</small></div></div></div>
+  <div class="col-6 col-lg-3"><div class="bg-white border rounded-3 p-3 h-100"><div class="text-muted small">الخصم الأول</div><div class="fw-bold mt-2">{{ cfg.annual_leave_type.name_ar if cfg.annual_leave_type else 'الرصيد غير محدد' }}</div></div></div>
+  <div class="col-6 col-lg-3"><div class="bg-white border border-warning rounded-3 p-3 h-100"><div class="text-muted small">الحالة الناتجة</div><div class="fw-bold mt-2 text-warning-emphasis"><i class="bi bi-pencil-square"></i> مسودة للمراجعة</div></div></div>
+</div>
 
-<div class="bg-white rounded-3 shadow-sm p-3">
-  <form method="post" class="row g-2 align-items-end">
-    <div class="col-md-2">
-      <label class="form-label">السنة</label>
-      <input class="form-control" type="number" name="year" value="{{ year }}" min="2000" max="2100">
-    </div>
-    <div class="col-md-2">
-      <label class="form-label">الشهر</label>
-      <input class="form-control" type="number" name="month" value="{{ month }}" min="1" max="12">
-    </div>
-    <div class="col-md-6">
-      <label class="form-label">ملاحظة</label>
-      <input class="form-control" name="note" placeholder="اختياري">
-    </div>
-    <div class="col-md-2">
-      <button class="btn btn-primary w-100" type="submit" {% if not can_manage %}disabled{% endif %}>
-        <i class="bi bi-play"></i> تنفيذ
-      </button>
-    </div>
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-6 col-md-2"><label class="form-label">السنة</label><input class="form-control" type="number" name="year" value="{{ year }}" min="2000" max="2100"></div>
+    <div class="col-6 col-md-2"><label class="form-label">الشهر</label><input class="form-control" type="number" name="month" value="{{ month }}" min="1" max="12"></div>
+    <div class="col-12 col-md-3"><label class="form-label">محافظة العمل</label><select class="form-select" name="work_governorate_lookup_id"><option value="">الكل</option>{% for item in govs %}<option value="{{ item.id }}" {% if work_governorate_lookup_id|string == item.id|string %}selected{% endif %}>{{ item.name_ar }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-3"><label class="form-label">موقع العمل</label><select class="form-select" name="work_location_lookup_id"><option value="">الكل</option>{% for item in locs %}<option value="{{ item.id }}" {% if work_location_lookup_id|string == item.id|string %}selected{% endif %}>{{ item.name_ar }}</option>{% endfor %}</select></div>
+    <div class="col-9 col-md-1"><label class="form-label">بحث</label><input class="form-control" name="q" value="{{ q }}" placeholder="اسم"></div>
+    <div class="col-3 col-md-1"><button class="btn btn-outline-primary w-100" type="submit"><i class="bi bi-search"></i></button></div>
   </form>
-  {% if not can_manage %}
-    <div class="text-muted small mt-2">لا يمكنك التنفيذ إلا بصلاحيات الإدارة (الموارد البشرية Masterdata/الحضور إنشاء).</div>
-  {% endif %}
 </div>
+
+<form method="post" class="bg-white rounded-3 shadow-sm p-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+  <input type="hidden" name="year" value="{{ year }}">
+  <input type="hidden" name="month" value="{{ month }}">
+  <input type="hidden" name="work_governorate_lookup_id" value="{{ work_governorate_lookup_id }}">
+  <input type="hidden" name="work_location_lookup_id" value="{{ work_location_lookup_id }}">
+  <input type="hidden" name="q" value="{{ q }}">
+
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+    <h5 class="mb-0">اختر الموظفين</h5>
+    <button class="btn btn-sm btn-outline-secondary" type="button" id="toggleEmployees">تحديد/إلغاء الكل</button>
+  </div>
+  <div class="table-responsive border rounded-3 mb-3" style="max-height: 420px;">
+    <table class="table table-sm table-hover align-middle mb-0">
+      <thead class="table-light sticky-top"><tr><th style="width:42px"></th><th>الموظف</th><th>الرقم الوظيفي</th><th>البريد</th></tr></thead>
+      <tbody>
+        {% for user in users %}
+          <tr>
+            <td><input class="form-check-input employee-check" type="checkbox" name="user_ids" value="{{ user.id }}"></td>
+            <td class="fw-semibold">{{ user.employee_file.full_name_quad if user.employee_file and user.employee_file.full_name_quad else (user.full_name or user.name or user.email) }}</td>
+            <td>{{ user.employee_file.employee_no if user.employee_file else '—' }}</td>
+            <td class="text-muted">{{ user.email }}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="4" class="text-center text-muted py-4">لا يوجد موظفون مطابقون.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-md-9"><label class="form-label">ملاحظة المعاينة</label><input class="form-control" name="note" placeholder="مثال: مراجعة خصومات شهر {{ month }}/{{ year }} قبل الاعتماد"></div>
+    <div class="col-12 col-md-3"><button class="btn btn-primary w-100" type="submit" {% if not can_manage %}disabled{% endif %}><i class="bi bi-calculator"></i> احتساب وعرض المسودة</button></div>
+  </div>
+  {% if not can_manage %}<div class="text-muted small mt-2">لا تملك صلاحية إنشاء معاينة.</div>{% endif %}
+</form>
+
+<script>
+  document.getElementById('toggleEmployees')?.addEventListener('click', function () {
+    const boxes = Array.from(document.querySelectorAll('.employee-check'));
+    const shouldCheck = boxes.some(box => !box.checked);
+    boxes.forEach(box => { box.checked = shouldCheck; });
+  });
+</script>
 {% endblock %}

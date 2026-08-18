@@ -4,7 +4,10 @@ import secrets
 
 class BaseConfig:
     # Security
-    SECRET_KEY = os.getenv("SECRET_KEY", "change-me")
+    # An explicitly empty value (common in a freshly copied .env) must not
+    # disable Flask sessions. Generate a process-local fallback; production
+    # should still provide a persistent value so sessions survive restarts.
+    SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 
     # 🗄Database
     SQLALCHEMY_TRACK_MODIFICATIONS = False

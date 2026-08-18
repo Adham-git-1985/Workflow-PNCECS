@@ -25,6 +25,12 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
         self.assertIn("def hr_employee_data_collection_form():", routes)
         self.assertIn("portal.hr_employee_data_collection_form", employees)
 
+        route_start = routes.index('@portal_bp.route("/hr/employees/data-collection-form")')
+        route_end = routes.index("def _employee_upload_dir", route_start)
+        route_block = routes[route_start:route_end]
+        self.assertIn("@login_required", route_block)
+        self.assertNotIn("@_perm(HR_EMP_READ)", route_block)
+
     def test_form_is_a_six_page_a4_print_document(self):
         self.assertIn("@page", self.template)
         self.assertIn("size: A4 portrait", self.template)
@@ -113,6 +119,65 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
         self.assertIn('input type="text" name="notes"', qualification)
         self.assertIn("notes=_to_str(request.form.get('notes'))", routes)
         self.assertIn("qual.notes = _to_str(request.form.get('notes'))", routes)
+
+    def test_form_supports_device_entry_drafts_and_json_handoff(self):
+        for feature in (
+            'id="saveDraftButton"',
+            'id="downloadJsonButton"',
+            'id="importJsonInput"',
+            'id="clearFormButton"',
+            'contentEditable = "true"',
+            "localStorage.setItem",
+            "localStorage.getItem",
+            'new Blob([JSON.stringify(payload, null, 2)]',
+            'type: "application/json;charset=utf-8"',
+            'const FORM_SCHEMA = "EMP-DATA-FORM/V1.1"',
+        ):
+            with self.subTest(feature=feature):
+                self.assertIn(feature, self.template)
+
+    def test_online_and_offline_handoff_are_staged_for_hr_review(self):
+        routes = (PROJECT_ROOT / "portal" / "routes.py").read_text(encoding="utf-8")
+        inbox = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "employee_data_submissions.html"
+        ).read_text(encoding="utf-8")
+        review = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "employee_data_submission_view.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('id="submitOnlineButton"', self.template)
+        self.assertIn("portal.hr_employee_data_collection_form_offline", self.template)
+        self.assertIn("function submitOnline()", self.template)
+        self.assertIn('@portal_bp.route("/hr/employee-data-submissions/online", methods=["POST"])', routes)
+        self.assertIn('@portal_bp.route("/hr/employee-data-submissions/upload", methods=["POST"])', routes)
+        self.assertIn('@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/apply", methods=["POST"])', routes)
+        self.assertIn("@_perm(HR_EMP_MANAGE)", routes)
+        self.assertIn("رفع إجابات نموذج عُبّئ من الجهاز", inbox)
+        self.assertIn("اعتماد وترحيل إلى ملف الموظف", review)
+        self.assertIn("رفض دون ترحيل", review)
+
+    def test_offline_download_embeds_images_and_removes_server_actions(self):
+        self.assertIn("offline_pncecs_logo", self.template)
+        self.assertIn("offline_masar_logo", self.template)
+        self.assertIn("{% if not offline_mode %}", self.template)
+        self.assertIn('data-submit-url="{{ \'\' if offline_mode', self.template)
+
+    def test_employee_self_service_links_to_interactive_form(self):
+        me_home = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "me_home.html"
+        ).read_text(encoding="utf-8")
+        self.assertIn("استكمال بياناتي", me_home)
+        self.assertIn("portal.hr_employee_data_collection_form", me_home)
+
+    def test_both_secondment_rows_keep_machine_readable_fields(self):
+        self.assertEqual(
+            self.template.count('data-field="secondment.date_from"'),
+            2,
+        )
+        self.assertEqual(
+            self.template.count('data-field="secondment.details"'),
+            2,
+        )
 
 
 if __name__ == "__main__":

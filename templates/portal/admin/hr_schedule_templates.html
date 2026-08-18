@@ -6,7 +6,7 @@
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
     <div>
       <h5 class="mb-0"><i class="bi bi-clock"></i> قوالب الدوام</h5>
-      <div class="text-muted small">قالب الدوام = وقت البداية والنهاية + مدة السماح + خيارات إضافية.</div>
+      <div class="text-muted small">قالب الدوام = وقت البداية والنهاية + سماح صباحي مستقل + سماح مسائي مستقل.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_hr_dashboard') }}">
@@ -55,8 +55,13 @@
       </div>
 
       <div class="col-md-2">
-        <label class="form-label">سماح (دقيقة)</label>
-        <input class="form-control" name="grace_minutes" value="0" type="number" min="0">
+        <label class="form-label">سماح صباحي (دقيقة)</label>
+        <input class="form-control" name="start_grace_minutes" value="15" type="number" min="0">
+      </div>
+
+      <div class="col-md-2">
+        <label class="form-label">سماح مسائي (دقيقة)</label>
+        <input class="form-control" name="end_grace_minutes" value="15" type="number" min="0">
       </div>
 
       <div class="col-md-2">
@@ -98,7 +103,8 @@
           <th>النوع</th>
           <th>{{ portal_sort_link('بداية', 'start_time') }}</th>
           <th>{{ portal_sort_link('نهاية', 'end_time') }}</th>
-          <th>{{ portal_sort_link('سماح', 'grace_minutes') }}</th>
+          <th>سماح صباحي</th>
+          <th>سماح مسائي</th>
           <th>{{ portal_sort_link('استراحة', 'break_minutes') }}</th>
           <th>{{ portal_sort_link('مطلوب', 'required_minutes') }}</th>
           <th>نشط</th>
@@ -124,7 +130,8 @@
               </td>
               <td style="width:110px;"><input class="form-control form-control-sm" name="start_time" value="{{ s.start_time }}"></td>
               <td style="width:110px;"><input class="form-control form-control-sm" name="end_time" value="{{ s.end_time }}"></td>
-              <td style="width:90px;"><input class="form-control form-control-sm" name="grace_minutes" type="number" min="0" value="{{ s.grace_minutes or 0 }}"></td>
+              <td style="width:100px;"><input class="form-control form-control-sm" name="start_grace_minutes" type="number" min="0" value="{{ s.start_grace_minutes if s.start_grace_minutes is not none else (s.grace_minutes or 0) }}"></td>
+              <td style="width:100px;"><input class="form-control form-control-sm" name="end_grace_minutes" type="number" min="0" value="{{ s.end_grace_minutes if s.end_grace_minutes is not none else (s.grace_minutes or 0) }}"></td>
               <td style="width:90px;"><input class="form-control form-control-sm" name="break_minutes" type="number" min="0" value="{{ s.break_minutes or 0 }}"></td>
               <td style="width:90px;"><input class="form-control form-control-sm" name="required_minutes" type="number" min="0" value="{{ s.required_minutes or '' }}"></td>
               <td>
@@ -139,7 +146,7 @@
             </form>
           </tr>
           <tr>
-            <td colspan="10" class="text-end">
+            <td colspan="11" class="text-end">
               <div class="d-flex justify-content-end gap-2 flex-wrap">
                 <form method="post" class="d-inline">
                   <input type="hidden" name="op" value="toggle">
@@ -167,7 +174,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="10" class="text-muted">لا توجد قوالب.</td></tr>
+          <tr><td colspan="11" class="text-muted">لا توجد قوالب.</td></tr>
         {% endfor %}
       </tbody>
     </table>

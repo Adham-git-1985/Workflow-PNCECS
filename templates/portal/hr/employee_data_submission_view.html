@@ -1,0 +1,139 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}مراجعة طلب بيانات موظف #{{ item.id }}{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-clipboard-check"></i> مراجعة طلب بيانات الموظف #{{ item.id }}</h4>
+    <div class="text-muted">{{ item.employee.full_name or item.employee.name or item.employee.email }} — {{ item.employee.email }}</div>
+  </div>
+  <div class="d-flex gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_employee_file', user_id=item.employee_user_id) }}" target="_blank">فتح ملف الموظف</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_employee_data_submissions') }}">العودة إلى الوارد</a>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body row g-3">
+    <div class="col-md-3"><div class="text-muted small">الحالة</div>
+      {% if item.status == 'PENDING' %}<span class="badge bg-warning text-dark">بانتظار المراجعة</span>
+      {% elif item.status == 'APPLIED' %}<span class="badge bg-success">تم الاعتماد والترحيل</span>
+      {% else %}<span class="badge bg-danger">مرفوض</span>{% endif %}
+    </div>
+    <div class="col-md-3"><div class="text-muted small">المصدر</div>{{ 'إرسال إلكتروني' if item.source == 'ONLINE' else 'ملف من الجهاز' }}</div>
+    <div class="col-md-3"><div class="text-muted small">تاريخ الإرسال</div>{{ item.submitted_at.strftime('%Y-%m-%d %H:%M') if item.submitted_at else '—' }}</div>
+    <div class="col-md-3"><div class="text-muted small">مقدّم الطلب</div>{{ item.submitted_by.full_name or item.submitted_by.name or item.submitted_by.email }}</div>
+    {% if item.original_filename %}<div class="col-12"><div class="text-muted small">اسم الملف المرفوع</div>{{ item.original_filename }}</div>{% endif %}
+    {% if item.reviewed_by %}<div class="col-md-6"><div class="text-muted small">تمت المراجعة بواسطة</div>{{ item.reviewed_by.full_name or item.reviewed_by.name or item.reviewed_by.email }}</div>{% endif %}
+    {% if item.review_note %}<div class="col-12"><div class="text-muted small">ملاحظة الموارد البشرية</div>{{ item.review_note }}</div>{% endif %}
+  </div>
+</div>
+
+{% if plan.unresolved %}
+<div class="alert alert-danger">
+  <div class="fw-bold mb-2"><i class="bi bi-exclamation-triangle"></i> قيم تحتاج إلى معالجة قبل الاعتماد</div>
+  <ul class="mb-0">
+    {% for issue in plan.unresolved %}
+    <li><strong>{{ issue.field }}:</strong> «{{ issue.value }}» — {{ issue.reason }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<div class="card shadow-sm mb-3">
+  <div class="card-header fw-bold">مقارنة حقول ملف الموظف</div>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead class="table-light"><tr><th>الحقل</th><th>القيمة الحالية</th><th>إجابة الموظف</th><th>القيمة التي ستُحفظ</th><th>التغيير</th></tr></thead>
+      <tbody>
+        {% for op in plan.operations %}
+        <tr class="{{ 'table-warning' if op.changed else '' }}">
+          <td class="fw-semibold">{{ op.label }}</td>
+          <td>{{ op.current_label if op.current_label is defined else (op.current if op.current is not none else '—') }}</td>
+          <td>{{ op.incoming }}</td>
+          <td>{{ op.resolved_label if op.resolved_label is not none else '—' }}</td>
+          <td>{% if op.changed %}<span class="badge bg-warning text-dark">سيتغير</span>{% else %}<span class="badge bg-light text-dark border">مطابق</span>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="text-center text-muted py-4">لا توجد حقول فردية قابلة للترحيل في هذا الطلب.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-header fw-bold">التابعون ({{ plan.dependents|length }})</div>
+      <ul class="list-group list-group-flush">
+        {% for row in plan.dependents %}
+        <li class="list-group-item"><span class="badge bg-{{ 'primary' if row.action == 'create' else 'secondary' }}">{{ 'إضافة' if row.action == 'create' else 'تحديث' }}</span> {{ row.full_name }}{% if row.national_id %} — {{ row.national_id }}{% endif %}</li>
+        {% else %}<li class="list-group-item text-muted">لا توجد بيانات.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-header fw-bold">المؤهلات ({{ plan.qualifications|length }})</div>
+      <ul class="list-group list-group-flush">
+        {% for row in plan.qualifications %}
+        <li class="list-group-item"><span class="badge bg-{{ 'primary' if row.action == 'create' else 'secondary' }}">{{ 'إضافة' if row.action == 'create' else 'تحديث' }}</span> {{ row.labels.degree_lookup_id or 'مؤهل' }}{% if row.labels.specialization_lookup_id %} — {{ row.labels.specialization_lookup_id }}{% endif %}</li>
+        {% else %}<li class="list-group-item text-muted">لا توجد بيانات.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-header fw-bold">التكليفات ({{ plan.secondments|length }})</div>
+      <ul class="list-group list-group-flush">
+        {% for row in plan.secondments %}
+        <li class="list-group-item"><span class="badge bg-{{ 'primary' if row.action == 'create' else 'secondary' }}">{{ 'إضافة' if row.action == 'create' else 'تحديث' }}</span> {{ row.date_from or 'دون تاريخ' }}{% if row.date_to %} إلى {{ row.date_to }}{% endif %}{% if row.details %}<div class="small text-muted">{{ row.details }}</div>{% endif %}</li>
+        {% else %}<li class="list-group-item text-muted">لا توجد بيانات.</li>{% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+
+{% if item.status == 'PENDING' and current_user.has_perm('HR_EMPLOYEE_MANAGE') %}
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card border-success shadow-sm">
+      <div class="card-header bg-success text-white fw-bold">اعتماد وترحيل الإجابات</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('portal.hr_employee_data_submission_apply', submission_id=item.id) }}" onsubmit="return confirm('سيتم الآن تحديث ملف الموظف بالبيانات المعروضة. هل تريد الاعتماد؟')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-label">ملاحظة المراجع (اختيارية)</label>
+          <textarea class="form-control mb-3" name="review_note" rows="2"></textarea>
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="create_missing_lookups" value="1" id="createMissingLookups">
+            <label class="form-check-label" for="createMissingLookups">إنشاء القيم النصية غير الموجودة في القوائم المرجعية تلقائيًا</label>
+            <div class="form-text">لا ينطبق على الإدارات والدوائر والأقسام والمسؤول المباشر؛ يجب أن تكون موجودة مسبقًا.</div>
+          </div>
+          <button class="btn btn-success" type="submit"><i class="bi bi-check2-circle"></i> اعتماد وترحيل إلى ملف الموظف</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card border-danger shadow-sm">
+      <div class="card-header bg-danger text-white fw-bold">رفض الطلب</div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('portal.hr_employee_data_submission_reject', submission_id=item.id) }}" onsubmit="return confirm('سيُرفض الطلب دون تعديل ملف الموظف. هل تريد المتابعة؟')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-label">سبب الرفض</label>
+          <textarea class="form-control mb-3" name="review_note" rows="3" required></textarea>
+          <button class="btn btn-outline-danger" type="submit"><i class="bi bi-x-circle"></i> رفض دون ترحيل</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% elif item.status == 'APPLIED' %}
+{% set summary = item.apply_summary() %}
+<div class="alert alert-success">
+  <div class="fw-bold">تم ترحيل هذا الطلب إلى ملف الموظف.</div>
+  <div class="small mt-1">الحقول المحدّثة: {{ summary.updated_fields|length }}، التابعون: {{ summary.dependents.created|default(0) }} إضافة / {{ summary.dependents.updated|default(0) }} تحديث، المؤهلات: {{ summary.qualifications.created|default(0) }} إضافة / {{ summary.qualifications.updated|default(0) }} تحديث، التكليفات: {{ summary.secondments.created|default(0) }} إضافة / {{ summary.secondments.updated|default(0) }} تحديث.</div>
+</div>
+{% endif %}
+{% endblock %}

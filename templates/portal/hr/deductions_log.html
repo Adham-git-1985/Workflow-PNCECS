@@ -2,49 +2,36 @@
 {% block title %}سجل الخصومات{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="dedLogPrint">
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-    <div>
-      <h4 class="mb-1"><i class="bi bi-list-check"></i> سجل الخصومات</h4>
-      <div class="text-muted">جميع عمليات الخصم (مسودة/نهائي) المسجلة في النظام.</div>
-    </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-play-circle"></i> تنفيذ خصم</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-gear"></i> الإعدادات</a>
-      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
-    </div>
+    <div><h4 class="mb-1"><i class="bi bi-list-check"></i> سجل الخصومات</h4><div class="text-muted">المسودات للمعاينة فقط؛ المعتمدة وحدها تؤثر على الإجازة والراتب.</div></div>
+    <div class="d-flex gap-2 flex-wrap"><a class="btn btn-primary" href="{{ url_for('portal.hr_deductions_run') }}"><i class="bi bi-plus-circle"></i> معاينة جديدة</a><a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-sliders"></i> السياسة</a></div>
   </div>
 </div>
 
 <div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="d-flex gap-2 flex-wrap mb-3">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}">الكل</a>
+    <a class="btn btn-sm btn-outline-warning" href="{{ url_for('portal.hr_deductions_log', status='DRAFT') }}">مسودات للمراجعة</a>
+    <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_deductions_log', status='FINAL') }}">معتمدة</a>
+  </div>
   <div class="table-responsive">
     <table class="table table-sm align-middle">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>الشهر</th>
-          <th>الحالة</th>
-          <th>الملخص</th>
-          <th>أنشئ بواسطة</th>
-          <th>التاريخ</th>
-          <th></th>
-        </tr>
-      </thead>
+      <thead><tr><th>#</th><th>الشهر</th><th>الحالة</th><th>الموظفون</th><th>من الإجازة</th><th>من الراتب</th><th>أنشأها</th><th>اعتمدها</th><th></th></tr></thead>
       <tbody>
-        {% for r in rows %}
+        {% for row in rows %}
           <tr>
-            <td>{{ r.id }}</td>
-            <td>{{ "%02d"|format(r.month) }}/{{ r.year }}</td>
-            <td><span class="badge text-bg-secondary">{{ r.status|ui_label }}</span></td>
-            <td class="text-muted small">{{ r.totals_json or '' }}</td>
-            <td>{{ r.created_by.name if r.created_by else '-' }}</td>
-            <td class="text-muted small">{{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '' }}</td>
-            <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=r.id) }}"><i class="bi bi-eye"></i> عرض</a>
-              <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_deductions_view', run_id=r.id, export='csv') }}"><i class="bi bi-download"></i> CSV</a>
-            </td>
+            <td>{{ row.id }}</td>
+            <td class="fw-bold">{{ "%02d"|format(row.month) }}/{{ row.year }}</td>
+            <td>{% if (row.status or '')|upper == 'FINAL' %}<span class="badge text-bg-success">معتمد</span>{% else %}<span class="badge text-bg-warning">مسودة</span>{% endif %}</td>
+            <td>{{ row.items|length }}</td>
+            <td>{{ "%.2f"|format(row.items|sum(attribute='leave_deduction_days')) }} يوم</td>
+            <td>{{ "%.2f"|format(row.items|sum(attribute='salary_deduction_days')) }} يوم</td>
+            <td><div>{{ row.created_by.full_name if row.created_by else '—' }}</div><small class="text-muted">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '' }}</small></td>
+            <td>{{ row.approved_by.full_name if row.approved_by else '—' }}</td>
+            <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=row.id) }}"><i class="bi bi-eye"></i> {{ 'عرض' if (row.status or '')|upper == 'FINAL' else 'مراجعة' }}</a></td>
           </tr>
-        {% endfor %}
+        {% else %}<tr><td colspan="9" class="text-center text-muted py-4">لا توجد عمليات خصم.</td></tr>{% endfor %}
       </tbody>
     </table>
   </div>
