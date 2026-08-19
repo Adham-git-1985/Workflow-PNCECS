@@ -161,6 +161,15 @@ def _can_view_movement(row: TransportPermit) -> bool:
     return any(action.actor_user_id == current_user.id for action in row.actions or [])
 
 
+def _can_read_movement_requests() -> bool:
+    configured_ids = {
+        _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID")),
+        _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
+        _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
+    }
+    return current_user.id in configured_ids or current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE") or current_user.has_perm("TRANSPORT_ADMIN_APPROVE")
+
+
 def _record_movement_action(row: TransportPermit, action: str, note: str | None = None) -> None:
     db.session.add(TransportPermitAction(
         permit_id=row.id,
@@ -615,7 +624,7 @@ def transport_permits():
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
 
-    can_manage = current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE")
+    can_manage = _can_read_movement_requests()
     if not can_manage and not _can_request_movement():
         abort(403)
     query = TransportPermit.query.filter(TransportPermit.is_deleted == False)  # noqa: E712
@@ -825,8 +834,9 @@ def transport_movement_tasks():
 
 @portal_bp.route("/transport/movements/report")
 @login_required
-@perm_required("TRANSPORT_READ")
 def transport_movements_report():
+    if not _can_read_movement_requests():
+        abort(403)
     status = (request.args.get("status") or "").strip().upper()
     stage = (request.args.get("stage") or "").strip().upper()
     date_from = _parse_dt((request.args.get("date_from") or "") + "T00:00")
