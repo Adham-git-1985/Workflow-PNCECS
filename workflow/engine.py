@@ -370,6 +370,43 @@ def resolve_template_participant_user_ids(template: WorkflowTemplate) -> set[int
     return {int(user_id) for user_id in participant_ids if user_id}
 
 
+def resolve_template_parallel_candidate_user_ids(
+    template: WorkflowTemplate,
+    step_order: int,
+) -> list[int]:
+    """Resolve the eligible candidate pool for one parallel template step."""
+    if not template:
+        return []
+    step = next(
+        (
+            row for row in (getattr(template, "steps", None) or [])
+            if int(getattr(row, "step_order", 0) or 0) == int(step_order)
+        ),
+        None,
+    )
+    if not step or (getattr(step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC":
+        return []
+
+    candidate_ids = set(_resolve_users_by_kind(
+        getattr(step, "approver_kind", None),
+        user_id=getattr(step, "approver_user_id", None),
+        role=getattr(step, "approver_role", None),
+        dept_id=getattr(step, "approver_department_id", None),
+        dir_id=getattr(step, "approver_directorate_id", None),
+        unit_id=getattr(step, "approver_unit_id", None),
+        section_id=getattr(step, "approver_section_id", None),
+        division_id=getattr(step, "approver_division_id", None),
+        org_node_id=getattr(step, "approver_org_node_id", None),
+        committee_id=getattr(step, "approver_committee_id", None),
+        committee_delivery_mode=getattr(step, "committee_delivery_mode", None),
+    ))
+    candidate_ids.update(_resolve_parallel_extra_assignees(
+        getattr(template, "id", None),
+        int(step_order),
+    ))
+    return sorted(int(user_id) for user_id in candidate_ids if user_id)
+
+
 def _notify_users(
     user_ids,
     message,
@@ -433,20 +470,48 @@ def _is_parallel_sync(step: WorkflowInstanceStep) -> bool:
     return (getattr(step, "mode", "SEQUENTIAL") or "SEQUENTIAL") == "PARALLEL_SYNC"
 
 
-def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: WorkflowInstanceStep):
-    """Create per-assignee tasks for a PARALLEL_SYNC step (idempotent)."""
+def resolve_parallel_candidate_user_ids(
+    req: WorkflowRequest,
+    inst: WorkflowInstance,
+    step: WorkflowInstanceStep,
+) -> list[int]:
+    """Resolve the users eligible for an instance's PARALLEL_SYNC step.
+
+    Eligibility comes from the template/runtime step and the correspondence
+    confidentiality gate.  Eligibility alone does not grant workflow access;
+    the previous-step actor must explicitly authorize a subset first.
+    """
+    if not _is_parallel_sync(step):
+        return []
+
+    assignees = _resolve_approver_users(step)
+    assignees += _resolve_parallel_extra_assignees(
+        getattr(inst, "template_id", None),
+        step.step_order,
+    )
+    return sorted(filter_confidential_workflow_user_ids(
+        req,
+        {int(uid) for uid in assignees if uid},
+    ))
+
+
+def _ensure_parallel_tasks(
+    req: WorkflowRequest,
+    inst: WorkflowInstance,
+    step: WorkflowInstanceStep,
+    authorized_user_ids=None,
+):
+    """Create authorized per-assignee tasks for a PARALLEL_SYNC step.
+
+    A task is the runtime access grant for a parallel participant.  When no
+    explicit authorization is supplied, this function only preserves existing
+    tasks; it never expands the template's full candidate list automatically.
+    """
     if not _is_parallel_sync(step):
         return
 
     now = datetime.utcnow()
-
-    assignees = _resolve_approver_users(step)
-    # Add extra assignees linked to this PARALLEL_SYNC step number (template definition).
-    assignees += _resolve_parallel_extra_assignees(getattr(inst, "template_id", None), step.step_order)
-    desired_ids = filter_confidential_workflow_user_ids(
-        req,
-        {int(uid) for uid in assignees if uid},
-    )
+    candidate_ids = set(resolve_parallel_candidate_user_ids(req, inst, step))
 
     existing_ids = {
         int(uid) for (uid,) in (
@@ -456,6 +521,22 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
         )
         if uid
     }
+
+    if authorized_user_ids is None:
+        # Existing workflows/tasks remain valid, but merely appearing in the
+        # template must not grant a new participant access.
+        desired_ids = existing_ids.intersection(candidate_ids)
+    else:
+        try:
+            desired_ids = {int(uid) for uid in authorized_user_ids if int(uid) > 0}
+        except (TypeError, ValueError):
+            raise ValueError("قائمة المخولين في الخطوة المتزامنة غير صالحة")
+
+        invalid_ids = desired_ids.difference(candidate_ids)
+        if invalid_ids:
+            raise ValueError("تتضمن قائمة التوجيه مستخدمين غير مرشحين للخطوة المتزامنة")
+        if not desired_ids:
+            raise ValueError("يجب اختيار شخص واحد على الأقل للخطوة المتزامنة")
 
     # Legacy secret workflows may already contain pending tasks for users who
     # are outside the ACL.  Hide-and-leave would deadlock a parallel step, so
@@ -534,8 +615,91 @@ def _ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: W
 
 
 def ensure_parallel_tasks(req: WorkflowRequest, inst: WorkflowInstance, step: WorkflowInstanceStep):
-    """Public wrapper used by views before rendering PARALLEL_SYNC task status."""
+    """Preserve/render already-authorized PARALLEL_SYNC task status."""
     return _ensure_parallel_tasks(req, inst, step)
+
+
+def authorize_parallel_step(
+    req: WorkflowRequest,
+    inst: WorkflowInstance,
+    step: WorkflowInstanceStep,
+    authorized_user_ids,
+    actor_user_id: int,
+    effective_user_id: int | None = None,
+    on_behalf_of_id: int | None = None,
+    delegation_id: int | None = None,
+    auto_commit: bool = False,
+) -> list[int]:
+    """Authorize and activate a PARALLEL_SYNC step exactly once.
+
+    Authorization belongs to the actor who completed the previous step (or an
+    administrator).  Only selected candidates receive tasks and notifications.
+    """
+    if not _is_parallel_sync(step):
+        raise ValueError("هذه ليست خطوة متزامنة")
+    if int(getattr(inst, "current_step_order", 0) or 0) != int(step.step_order):
+        raise ValueError("الخطوة المتزامنة ليست نشطة حاليًا")
+    if (getattr(step, "status", "") or "").upper() != "PENDING":
+        raise ValueError("الخطوة المتزامنة ليست قيد الانتظار")
+
+    effective_user_id = int(effective_user_id or actor_user_id)
+    actor_user = db.session.get(User, int(actor_user_id))
+    effective_user = db.session.get(User, effective_user_id)
+    is_admin = bool(
+        (actor_user and (actor_user.has_role("ADMIN") or actor_user.has_role("SUPER_ADMIN")))
+        or (effective_user and (effective_user.has_role("ADMIN") or effective_user.has_role("SUPER_ADMIN")))
+    )
+    if not is_admin and int(getattr(inst, "last_step_actor_id", 0) or 0) != effective_user_id:
+        raise PermissionError("غير مخوّل بتوجيه هذه الخطوة المتزامنة")
+
+    existing_count = WorkflowStepTask.query.filter_by(
+        instance_id=inst.id,
+        step_order=step.step_order,
+    ).count()
+    if existing_count or getattr(step, "parallel_notified_at", None):
+        raise ValueError("تم توجيه الخطوة المتزامنة مسبقًا")
+
+    candidate_ids = set(resolve_parallel_candidate_user_ids(req, inst, step))
+    try:
+        selected_ids = {int(uid) for uid in authorized_user_ids if int(uid) > 0}
+    except (TypeError, ValueError):
+        raise ValueError("قائمة المخولين في الخطوة المتزامنة غير صالحة")
+    if not selected_ids:
+        raise ValueError("يجب اختيار شخص واحد على الأقل للخطوة المتزامنة")
+    if not selected_ids.issubset(candidate_ids):
+        raise ValueError("يمكن التوجيه فقط إلى المرشحين المحددين في قالب المسار")
+
+    _ensure_parallel_tasks(
+        req,
+        inst,
+        step,
+        authorized_user_ids=selected_ids,
+    )
+    selected = sorted(selected_ids)
+    selected_users = User.query.filter(User.id.in_(selected)).all()
+    selected_labels = sorted(
+        (user.full_name or user.email or f"مستخدم #{user.id}")
+        for user in selected_users
+    )
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=int(actor_user_id),
+        on_behalf_of_id=on_behalf_of_id,
+        delegation_id=delegation_id,
+        action="PARALLEL_SYNC_AUTHORIZED",
+        old_status=None,
+        new_status=None,
+        note=(
+            f"الخطوة المتزامنة {step.step_order}: تم توجيهها إلى: "
+            + "، ".join(selected_labels)
+        ),
+        target_type="WORKFLOW_INSTANCE_STEP",
+        target_id=step.id,
+    ))
+
+    if auto_commit:
+        db.session.commit()
+    return selected
 
 
 def _parallel_is_complete(inst_id: int, step_order: int) -> bool:
@@ -580,7 +744,8 @@ def start_workflow_for_request(
     req: WorkflowRequest,
     template: WorkflowTemplate,
     created_by_user_id: int,
-    auto_commit: bool = False
+    auto_commit: bool = False,
+    initial_parallel_user_ids=None,
 ):
     """
     Creates workflow instance + instance steps from template.
@@ -663,7 +828,18 @@ def start_workflow_for_request(
 
     if first:
         if _is_parallel_sync(first):
-            _ensure_parallel_tasks(req, inst, first)
+            if initial_parallel_user_ids is not None:
+                authorize_parallel_step(
+                    req,
+                    inst,
+                    first,
+                    authorized_user_ids=initial_parallel_user_ids,
+                    actor_user_id=created_by_user_id,
+                    effective_user_id=created_by_user_id,
+                    auto_commit=False,
+                )
+            else:
+                _ensure_parallel_tasks(req, inst, first)
         else:
             approvers = _resolve_approver_users(first)
             _notify_users(
@@ -1053,6 +1229,7 @@ def decide_step(
     effective_user_id: int | None = None,
     on_behalf_of_id: int | None = None,
     delegation_id: int | None = None,
+    authorized_parallel_user_ids=None,
 ):
     """
     Approve/Reject a step.
@@ -1195,6 +1372,29 @@ def decide_step(
     # -------------------------------------------------
     # SEQUENTIAL: approval decision drives routing
     # -------------------------------------------------
+    next_step_for_authorization = None
+    if decision == "APPROVED":
+        next_step_for_authorization = WorkflowInstanceStep.query.filter_by(
+            instance_id=inst.id,
+            step_order=step_order + 1,
+        ).first()
+        if next_step_for_authorization and _is_parallel_sync(next_step_for_authorization):
+            candidate_ids = set(resolve_parallel_candidate_user_ids(
+                req,
+                inst,
+                next_step_for_authorization,
+            ))
+            try:
+                selected_ids = {
+                    int(uid) for uid in (authorized_parallel_user_ids or []) if int(uid) > 0
+                }
+            except (TypeError, ValueError):
+                raise ValueError("قائمة المخولين في الخطوة المتزامنة غير صالحة")
+            if not selected_ids:
+                raise ValueError("اختر شخصًا واحدًا على الأقل لتوجيه الخطوة المتزامنة التالية")
+            if not selected_ids.issubset(candidate_ids):
+                raise ValueError("يمكن توجيه الخطوة المتزامنة فقط إلى المرشحين المحددين في القالب")
+
     # Track who executed this step (effective user). This is used as bypass authority
     # when the *next* step is PARALLEL_SYNC.
     inst.last_step_actor_id = effective_user_id
@@ -1288,7 +1488,17 @@ def decide_step(
     _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
     if _is_parallel_sync(next_step):
-        _ensure_parallel_tasks(req, inst, next_step)
+        authorize_parallel_step(
+            req,
+            inst,
+            next_step,
+            authorized_user_ids=authorized_parallel_user_ids,
+            actor_user_id=actor_user_id,
+            effective_user_id=effective_user_id,
+            on_behalf_of_id=on_behalf_of_id,
+            delegation_id=delegation_id,
+            auto_commit=False,
+        )
     else:
         approvers = _resolve_approver_users(next_step)
         _notify_users(

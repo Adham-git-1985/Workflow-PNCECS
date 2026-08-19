@@ -229,6 +229,39 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertIsNone(reply)
         openai_client.assert_not_called()
 
+    def test_external_ai_is_not_called_for_structure_content(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        structure_messages = (
+            "اشرح الهيكل التنظيمي للمؤسسة",
+            "من هو مدير دائرة الشؤون المالية؟",
+            "ما الوحدات التي تتبع للمديرية؟",
+            "أعطني التسلسل الإداري وخطوط الإشراف",
+            "من يتبع لمن؟",
+            "اشرح هيكل المشروع ومكونات النظام",
+            "Explain the organization chart and reporting lines",
+            "Describe the project structure and database schema",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            for message in structure_messages:
+                with self.subTest(message=message):
+                    reply = _try_external_ai(
+                        _FakeUser("EMPLOYEE"),
+                        message,
+                        [],
+                        {},
+                        [],
+                        {},
+                    )
+                    self.assertIsNone(reply)
+        openai_client.assert_not_called()
+
     def test_external_ai_is_not_called_when_local_knowledge_was_retrieved(self):
         app = Flask(__name__)
         app.config.update(

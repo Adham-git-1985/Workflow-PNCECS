@@ -8,6 +8,11 @@
 
 <form method="post" enctype="multipart/form-data" class="card shadow-sm">
   <div class="card-body">
+    {% if not edit_mode %}
+      <div class="alert alert-info py-2">
+        الإدخال نيابةً عن الموظف لا يعتمد الإجازة تلقائيًا؛ سيبقى الطلب معلقًا حتى موافقة مسؤول الموظف.
+      </div>
+    {% endif %}
     <div class="row g-3">
       <div class="col-md-6">
         <label class="form-label">الموظف</label>
@@ -108,7 +113,7 @@
     </div>
   </div>
   <div class="card-footer d-flex gap-2">
-    <button class="btn btn-primary" type="submit">حفظ</button>
+    <button class="btn btn-primary" type="submit">{{ 'حفظ التعديل' if edit_mode else 'حفظ وإرسال للاعتماد' }}</button>
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_leaves_admin_log') }}">إلغاء</a>
   </div>
 </form>

@@ -1,58 +1,102 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}تفاصيل الخصم{% endblock %}
+{% block title %}مراجعة الخصومات{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="dedViewPrint">
+{% set is_draft = (run.status or '')|upper == 'DRAFT' %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <h4 class="mb-1"><i class="bi bi-receipt"></i> تفاصيل الخصم</h4>
-      <div class="text-muted">{{ "%02d"|format(run.month) }}/{{ run.year }} - ID: {{ run.id }}</div>
+      <div class="{{ 'text-warning-emphasis' if is_draft else 'text-success' }} fw-semibold small mb-1">{{ 'المرحلة 2 من 2 — المراجعة والاعتماد' if is_draft else 'خصم معتمد' }}</div>
+      <h4 class="mb-1"><i class="bi bi-receipt"></i> خصومات {{ "%02d"|format(run.month) }}/{{ run.year }}</h4>
+      <div class="text-muted">رقم العملية {{ run.id }} · {{ run.note or 'لا توجد ملاحظة عامة' }}</div>
     </div>
-    <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=run.id, export='csv') }}"><i class="bi bi-download"></i> تنزيل CSV</a>
-      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-arrow-right"></i> السجل</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=run.id, export='csv') }}"><i class="bi bi-download"></i> CSV</a>
     </div>
   </div>
 </div>
+
+{% if is_draft %}
+  <div class="alert alert-warning d-flex gap-3 align-items-start">
+    <i class="bi bi-shield-exclamation fs-4"></i>
+    <div><strong>معاينة فقط:</strong> لم يُخصم أي يوم إجازة ولم يُرحّل أي خصم إلى الراتب. راجع التفاصيل وعدّل الساعات عند الحاجة، ثم اعتمد العملية.</div>
+  </div>
+{% else %}
+  <div class="alert alert-success d-flex gap-3 align-items-start">
+    <i class="bi bi-shield-check fs-4"></i>
+    <div>
+      <strong>تم الاعتماد.</strong> انعكست أيام الإجازة على الأرصدة وأصبحت أيام الراتب ظاهرة في التقرير النهائي.
+      {% if run.approved_by %}<div class="small mt-1">بواسطة {{ run.approved_by.full_name }} في {{ run.approved_at.strftime('%Y-%m-%d %H:%M') if run.approved_at else '' }}</div>{% endif %}
+    </div>
+  </div>
+{% endif %}
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
-  <div class="row g-2">
-    <div class="col-md-3"><div class="text-muted small">الحالة</div><div class="fw-bold">{{ run.status|ui_label }}</div></div>
-    <div class="col-md-3"><div class="text-muted small">تاريخ الإنشاء</div><div class="fw-bold">{{ run.created_at.strftime('%Y-%m-%d %H:%M') if run.created_at else '-' }}</div></div>
-    <div class="col-md-6"><div class="text-muted small">ملاحظة</div><div class="fw-bold">{{ run.note or '-' }}</div></div>
-  </div>
-</div>
-
-<div class="bg-white rounded-3 shadow-sm p-3">
   <div class="table-responsive">
-    <table class="table table-sm align-middle">
+    <table class="table table-sm align-middle mb-0">
       <thead>
         <tr>
-          <th>#</th>
           <th>الموظف</th>
-          <th>التأخير (دقيقة)</th>
-          <th>الخروج المبكر (دقيقة)</th>
-          <th>غياب (يوم)</th>
-          <th>المبلغ</th>
+          <th>تأخير</th>
+          <th>خروج مبكر</th>
+          <th>غياب</th>
+          <th>مغادرات معتمدة</th>
+          <th>السماح</th>
+          <th>مستبعد</th>
+          <th>ساعات محتسبة</th>
+          <th>من الإجازة</th>
+          <th>من الراتب</th>
+          <th>الملاحظات</th>
         </tr>
       </thead>
       <tbody>
-        {% for it in run.items %}
+        {% for item in run.items %}
           <tr>
-            <td>{{ loop.index }}</td>
-            <td>
-              <div class="fw-bold">{{ it.user.name or '-' }}</div>
-              <div class="text-muted small">{{ it.user.email or '' }}</div>
-            </td>
-            <td>{{ it.late_minutes }}</td>
-            <td>{{ it.early_leave_minutes }}</td>
-            <td>{{ it.absent_days }}</td>
-            <td>{{ "%.3f"|format(it.amount or 0) }}</td>
+            <td style="min-width:170px"><div class="fw-bold">{{ item.user.full_name or item.user.name or '—' }}</div><div class="text-muted small">{{ item.user.email or '' }}</div></td>
+            <td>{{ item.late_minutes }} د</td>
+            <td>{{ item.early_leave_minutes }} د</td>
+            <td>{{ item.absent_days }} يوم</td>
+            <td>{{ "%.2f"|format((item.approved_permission_minutes or 0) / 60) }} س</td>
+            <td>{{ "%.2f"|format((item.permission_allowance_minutes or 0) / 60) }} س</td>
+            <td>{{ "%.2f"|format((item.excluded_minutes or 0) / 60) }} س</td>
+            <td class="fw-bold">{{ "%.2f"|format((item.chargeable_minutes or 0) / 60) }} س</td>
+            <td><span class="badge text-bg-primary">{{ "%.2f"|format(item.leave_deduction_days or 0) }} يوم</span></td>
+            <td><span class="badge text-bg-danger">{{ "%.2f"|format(item.salary_deduction_days or 0) }} يوم</span></td>
+            <td class="small" style="min-width:220px">{{ item.note or '—' }}</td>
           </tr>
+          {% if can_adjust %}
+            <tr class="table-light">
+              <td colspan="11">
+                <form method="post" action="{{ url_for('portal.hr_deduction_item_adjust', run_id=run.id, item_id=item.id) }}" class="row g-2 align-items-end">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+                  <div class="col-12 col-md-3"><label class="form-label small">تعديل ساعات الخصم</label><input class="form-control form-control-sm" type="number" step="0.25" min="0" name="chargeable_hours" value="{{ '%.2f'|format((item.chargeable_minutes or 0) / 60) }}"></div>
+                  <div class="col-12 col-md-7"><label class="form-label small">سبب التعديل <span class="text-danger">مطلوب</span></label><input class="form-control form-control-sm" name="adjustment_note" required placeholder="اكتب سبب الزيادة أو التخفيض ليظهر في سجل التدقيق"></div>
+                  <div class="col-12 col-md-2"><button class="btn btn-sm btn-outline-primary w-100" type="submit"><i class="bi bi-pencil"></i> تحديث المسودة</button></div>
+                </form>
+              </td>
+            </tr>
+          {% endif %}
+        {% else %}
+          <tr><td colspan="11" class="text-center text-muted py-4">لا توجد بنود في هذه العملية.</td></tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
 </div>
+
+{% if is_draft and can_approve %}
+<form method="post" action="{{ url_for('portal.hr_deduction_approve', run_id=run.id) }}" class="bg-white border border-success rounded-3 shadow-sm p-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-md-9">
+      <label class="form-label fw-bold">ملاحظة الاعتماد</label>
+      <input class="form-control" name="approval_note" placeholder="اختياري: رقم القرار أو ملاحظة المراجع">
+    </div>
+    <div class="col-12 col-md-3">
+      <button class="btn btn-success w-100" type="submit" onclick="return confirm('اعتماد الخصم سيؤثر على أرصدة الإجازة وتقرير الراتب. متابعة؟')"><i class="bi bi-check2-circle"></i> اعتماد وتنفيذ الخصم</button>
+    </div>
+  </div>
+</form>
+{% endif %}
 {% endblock %}

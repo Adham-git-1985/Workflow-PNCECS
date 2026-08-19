@@ -63,6 +63,10 @@
               {% endfor %}
             </select>
           </div>
+          <div class="col-12">
+            <label class="form-label">ملاحظات</label>
+            <input type="text" name="notes" class="form-control" value="{{ item.notes if item and item.notes else '' }}" placeholder="اختياري">
+          </div>
         </div>
 
         <div class="mt-4 d-flex justify-content-end">

@@ -1,67 +1,150 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}شاشات النظام{% endblock %}
+{% block title %}مركز نظام الدوام والإجازات{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    .hr-system-hero { background: linear-gradient(135deg, #382b63 0%, #5a4a86 60%, #7565a7 100%); color: #fff; overflow: hidden; position: relative; }
+    .hr-system-hero::after { content: ""; position: absolute; inset-inline-end: -70px; top: -95px; width: 260px; height: 260px; border: 45px solid rgba(255,255,255,.08); border-radius: 50%; }
+    .hr-system-kpi { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.2); border-radius: 14px; padding: .85rem 1rem; min-width: 132px; backdrop-filter: blur(4px); }
+    .hr-system-kpi strong { display: block; font-size: 1.45rem; }
+    .system-section-title { display: flex; align-items: center; gap: .7rem; margin-bottom: 1rem; }
+    .system-section-title .number { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; background: #5a4a86; color: #fff; border-radius: 10px; font-weight: 800; }
+    .policy-card { border: 1px solid #e5e2ee; border-radius: 16px; background: #fff; height: 100%; }
+    .policy-card .policy-icon { width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border-radius: 12px; background: #f0edf8; color: #5a4a86; font-size: 1.2rem; }
+    .flow-step { position: relative; border: 1px solid #e5e2ee; background: #fff; border-radius: 14px; padding: 1rem; height: 100%; }
+    .flow-step .step-no { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: #5a4a86; color: #fff; font-weight: 800; }
+    .flow-arrow { color: #a59bbd; font-size: 1.35rem; align-self: center; }
+    .rule-row { border-bottom: 1px solid #eeeaf5; padding: .8rem 0; }
+    .rule-row:last-child { border-bottom: 0; }
+    .sticky-save { position: sticky; bottom: .75rem; z-index: 5; }
+    @media (max-width: 767.98px) { .flow-arrow { transform: rotate(90deg); text-align: center; } }
+    @media print { .no-print, .hr-subnav { display: none !important; } .policy-card, .flow-step { break-inside: avoid; } }
+  </style>
+{% endblock %}
 
 {% block hr_content %}
-<div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="sysScreensPrint">
-  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
-    <div>
-      <h4 class="mb-1"><i class="bi bi-display"></i> شاشات النظام</h4>
-      <div class="text-muted">روابط مختصرة للصفحات الإدارية التي كانت "قيد التطوير".</div>
-    </div>
-    <div class="d-flex gap-2">
-      <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
-    </div>
-  </div>
-</div>
+{# Keep the page renderable while the policy records are being created for the first time. #}
+{% set policy_map = policies|default({}) %}
+{% set regular = policy_map.regular|default(none) %}
+{% set inside = policy_map.inside|default(none) %}
+{% set outside = policy_map.outside|default(none) %}
+{% set regular_mask = regular.fixed_days_mask if regular and regular.fixed_days_mask is not none else 79 %}
+{% set inside_mode = inside.hybrid_selection_mode if inside else 'FLEXIBLE' %}
+{% set outside_mode = outside.hybrid_selection_mode if outside else 'FLEXIBLE' %}
+{% set inside_mask = inside.hybrid_fixed_days_mask if inside and inside.hybrid_fixed_days_mask else 0 %}
+{% set outside_mask = outside.hybrid_fixed_days_mask if outside and outside.hybrid_fixed_days_mask else 0 %}
 
-<div class="row g-3">
-  <div class="col-md-6">
-    <div class="bg-white rounded-3 shadow-sm p-3">
-      <h6 class="mb-3">الموظفين</h6>
-      <div class="d-grid gap-2">
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_employee_followup') }}"><i class="bi bi-clipboard-check"></i> متابعة الإدخال</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_employees') }}"><i class="bi bi-people"></i> قائمة الموظفين</a>
+<section class="hr-system-hero rounded-4 shadow-sm p-4 p-lg-5 mb-4">
+  <div class="position-relative" style="z-index:1">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+      <div>
+        <div class="small opacity-75 mb-2">شؤون الموظفين · الإعداد والتشغيل من مكان واحد</div>
+        <h2 class="mb-2">مركز نظام الدوام والإجازات</h2>
+        <p class="mb-0 opacity-75">عرّف الدوام والسماح مرة واحدة، ثم اتبع مساراً واحداً للطلبات والاعتماد ومعاينة الخصومات وتنفيذها.</p>
       </div>
+      <button class="btn btn-light no-print" type="button" onclick="window.print()"><i class="bi bi-printer"></i> طباعة السياسة</button>
+    </div>
+    <div class="d-flex flex-wrap gap-2 mt-4">
+      <div class="hr-system-kpi"><strong>{{ pending_leave_count }}</strong><span class="small">إجازات تنتظر الاعتماد</span></div>
+      <div class="hr-system-kpi"><strong>{{ pending_permission_count }}</strong><span class="small">مغادرات تنتظر الاعتماد</span></div>
+      <div class="hr-system-kpi"><strong>{{ draft_deduction_count }}</strong><span class="small">مسودات خصم للمراجعة</span></div>
+      <div class="hr-system-kpi"><strong>{{ active_assignment_count }}</strong><span class="small">تعيينات دوام نشطة</span></div>
     </div>
   </div>
+</section>
 
-  <div class="col-md-6">
-    <div class="bg-white rounded-3 shadow-sm p-3">
-      <h6 class="mb-3">الدوام</h6>
-      <div class="d-grid gap-2">
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_att_special_status_new') }}">إدخال حالة</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_att_special_exception_new') }}">إدخال استثناء</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_special_log') }}">سجل الحالات الخاصة</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_mass_closing') }}">الإغلاق الجماعي</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_monthly_schedule_new') }}">إضافة جدول شهري</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_monthly_schedule_log') }}">سجل الجداول</a>
-      </div>
-    </div>
+<section class="mb-4">
+  <div class="system-section-title"><span class="number">1</span><div><h4 class="mb-0">مسار العمل الإلزامي</h4><div class="text-muted small">لا يمكن تجاوز الاعتماد أو تنفيذ الخصم مباشرة.</div></div></div>
+  <div class="d-flex flex-column flex-md-row gap-2">
+    <div class="flow-step flex-fill"><span class="step-no">1</span><h6 class="mt-3">تسجيل الحالة</h6><div class="small text-muted">دوام، مغادرة، إجازة سنوية/طارئة/مرضية أو يوم عطلة رسمي.</div></div>
+    <div class="flow-arrow"><i class="bi bi-arrow-left"></i></div>
+    <div class="flow-step flex-fill"><span class="step-no">2</span><h6 class="mt-3">اعتماد المسؤول</h6><div class="small text-muted">تظل الإجازة أو المغادرة مقدمة فقط حتى يعتمدها مسؤول الموظف.</div></div>
+    <div class="flow-arrow"><i class="bi bi-arrow-left"></i></div>
+    <div class="flow-step flex-fill"><span class="step-no">3</span><h6 class="mt-3">الاستبعاد والسماح</h6><div class="small text-muted">استبعاد العطل والإجازات المعتمدة ثم تطبيق رصيد سماح المغادرات.</div></div>
+    <div class="flow-arrow"><i class="bi bi-arrow-left"></i></div>
+    <div class="flow-step flex-fill"><span class="step-no">4</span><h6 class="mt-3">معاينة الخصم</h6><div class="small text-muted">مسودة مفصلة قابلة لتعديل الساعات مع ملاحظة إلزامية.</div></div>
+    <div class="flow-arrow"><i class="bi bi-arrow-left"></i></div>
+    <div class="flow-step flex-fill border-success"><span class="step-no bg-success">5</span><h6 class="mt-3">الاعتماد والتنفيذ</h6><div class="small text-muted">خصم رصيد الإجازة أولاً، ثم الراتب عند نفاد الرصيد.</div></div>
   </div>
+</section>
 
-  <div class="col-md-6">
-    <div class="bg-white rounded-3 shadow-sm p-3">
-      <h6 class="mb-3">الخصم</h6>
-      <div class="d-grid gap-2">
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_run') }}">تنفيذ الخصم</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}">سجل الخصومات</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_yearly') }}">الجدول السنوي</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_settings') }}">إعدادات الخصم</a>
+<section class="mb-4" id="policy-builder">
+  <div class="system-section-title"><span class="number">2</span><div><h4 class="mb-0">الإعداد الأساسي</h4><div class="text-muted small">جميع القيم قابلة للتغيير وتُستخدم في المعاينات الجديدة.</div></div></div>
+  <form method="post" class="bg-white rounded-4 shadow-sm p-3 p-lg-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+    <div class="row g-4">
+      <div class="col-12">
+        <h5 class="border-bottom pb-2"><i class="bi bi-clock text-primary"></i> الدوام الاعتيادي</h5>
       </div>
-    </div>
-  </div>
+      <div class="col-12 col-md-4"><label class="form-label">اسم القالب</label><input class="form-control" name="schedule_name" value="{{ schedule.name if schedule else 'الدوام الاعتيادي' }}" {% if not can_manage %}disabled{% endif %}></div>
+      <div class="col-6 col-md-2"><label class="form-label">بداية الدوام</label><input class="form-control" type="time" name="start_time" value="{{ schedule.start_time if schedule else '08:00' }}" {% if not can_manage %}disabled{% endif %}></div>
+      <div class="col-6 col-md-2"><label class="form-label">نهاية الدوام</label><input class="form-control" type="time" name="end_time" value="{{ schedule.end_time if schedule else '15:00' }}" {% if not can_manage %}disabled{% endif %}></div>
+      <div class="col-6 col-md-2"><label class="form-label">سماح صباحي</label><div class="input-group"><input class="form-control" type="number" min="0" name="start_grace_minutes" value="{{ schedule.start_grace_minutes if schedule and schedule.start_grace_minutes is not none else 15 }}" {% if not can_manage %}disabled{% endif %}><span class="input-group-text">د</span></div><div class="form-text">08:15 عند بداية 08:00</div></div>
+      <div class="col-6 col-md-2"><label class="form-label">سماح مسائي</label><div class="input-group"><input class="form-control" type="number" min="0" name="end_grace_minutes" value="{{ schedule.end_grace_minutes if schedule and schedule.end_grace_minutes is not none else 15 }}" {% if not can_manage %}disabled{% endif %}><span class="input-group-text">د</span></div><div class="form-text">14:45 عند نهاية 15:00</div></div>
+      <div class="col-12"><label class="form-label">أيام العمل الاعتيادي</label><div class="d-flex flex-wrap gap-3">{% for idx, label in weekdays %}<label class="form-check"><input class="form-check-input" type="checkbox" name="regular_days" value="{{ idx }}" {% if ((regular_mask // (2 ** idx)) % 2) == 1 %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><span class="form-check-label">{{ label }}</span></label>{% endfor %}</div><div class="form-text">تُستبعد العطل الأسبوعية والرسمية حتى إن وقع تاريخها ضمن أيام العمل.</div></div>
 
-  <div class="col-md-6">
-    <div class="bg-white rounded-3 shadow-sm p-3">
-      <h6 class="mb-3">تنظيم الدوام</h6>
-      <div class="d-grid gap-2">
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_official_missions') }}">المهمات الرسمية</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_official_occasions') }}">المناسبات الرسمية</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_weekly_holidays') }}">العطل الأسبوعية</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_room_bookings') }}">حجز القاعة</a>
-        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_rooms_manage') }}">إدارة القاعات</a>
-      </div>
+      <div class="col-12"><h5 class="border-bottom pb-2 mt-2"><i class="bi bi-buildings text-primary"></i> الدوام غير الاعتيادي حسب المحافظة</h5></div>
+      {% for key, title, default_days, policy, mode, mask in [
+        ('inside', 'داخل محافظة رام الله', 3, inside, inside_mode, inside_mask),
+        ('outside', 'خارج محافظة رام الله', 2, outside, outside_mode, outside_mask)
+      ] %}
+        <div class="col-12 col-lg-6">
+          <div class="policy-card p-3">
+            <div class="d-flex align-items-center gap-2 mb-3"><span class="policy-icon"><i class="bi bi-geo-alt"></i></span><div><h6 class="mb-0">{{ title }}</h6><div class="small text-muted">الباقي دوام عن بُعد</div></div></div>
+            <div class="row g-2">
+              <div class="col-5"><label class="form-label small">أيام المكتب أسبوعياً</label><input class="form-control" type="number" min="0" max="7" name="{{ key }}_office_days" value="{{ policy.hybrid_office_days if policy else default_days }}" {% if not can_manage %}disabled{% endif %}></div>
+              <div class="col-7"><label class="form-label small">طريقة اختيار الأيام</label><select class="form-select hybrid-mode" name="{{ key }}_selection_mode" data-days-target="{{ key }}FixedDays" {% if not can_manage %}disabled{% endif %}><option value="FLEXIBLE" {% if mode != 'FIXED' %}selected{% endif %}>أية أيام تحقق العدد</option><option value="FIXED" {% if mode == 'FIXED' %}selected{% endif %}>أيام محددة لا تتغير</option></select></div>
+              <div class="col-12 hybrid-fixed-days" id="{{ key }}FixedDays"><label class="form-label small mt-2">حدد أيام المكتب الثابتة</label><div class="d-flex flex-wrap gap-2">{% for idx, label in weekdays %}<label class="form-check form-check-inline m-0 small"><input class="form-check-input" type="checkbox" name="{{ key }}_fixed_days" value="{{ idx }}" {% if ((mask // (2 ** idx)) % 2) == 1 %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><span class="form-check-label">{{ label }}</span></label>{% endfor %}</div></div>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+
+      <div class="col-12"><h5 class="border-bottom pb-2 mt-2"><i class="bi bi-calculator text-primary"></i> السماح وترتيب الخصم</h5></div>
+      <div class="col-12 col-md-3"><label class="form-label">سماح المغادرات الشهري</label><div class="input-group"><input class="form-control" type="number" min="0" name="permission_allowance_hours" value="{{ cfg.permission_allowance_hours if cfg else default_permission_hours }}" {% if not can_manage %}disabled{% endif %}><span class="input-group-text">س</span></div></div>
+      <div class="col-12 col-md-3"><label class="form-label">ساعات يوم الخصم</label><div class="input-group"><input class="form-control" type="number" min="1" name="hours_per_day" value="{{ cfg.hours_per_day if cfg else default_workday_hours }}" {% if not can_manage %}disabled{% endif %}><span class="input-group-text">س/يوم</span></div></div>
+      <div class="col-12 col-md-6"><label class="form-label">رصيد الإجازة الذي يخصم أولاً</label><select class="form-select" name="annual_leave_type_id" {% if not can_manage %}disabled{% endif %}><option value="">— اختر نوع الإجازة السنوية —</option>{% for leave_type in leave_types %}<option value="{{ leave_type.id }}" {% if cfg and cfg.annual_leave_type_id == leave_type.id %}selected{% endif %}>{{ leave_type.name_ar }}</option>{% endfor %}</select><div class="form-text">بعد نفاد هذا الرصيد يتحول الجزء المتبقي تلقائياً إلى خصم راتب.</div></div>
+      <div class="col-12"><label class="form-label">ملاحظات السياسة</label><textarea class="form-control" rows="3" name="policy_note" placeholder="اكتب مرجع القرار أو أي توضيحات لازمة..." {% if not can_manage %}disabled{% endif %}>{{ policy_note or (cfg.note if cfg else '') }}</textarea></div>
+      {% if can_manage %}<div class="col-12 sticky-save"><button class="btn btn-primary btn-lg w-100 shadow" type="submit"><i class="bi bi-check2-circle"></i> حفظ الإعداد الأساسي كاملاً</button></div>{% else %}<div class="col-12"><div class="alert alert-secondary mb-0">هذه القيم للعرض فقط. يلزم امتلاك صلاحية إدارة الموارد البشرية لتعديلها.</div></div>{% endif %}
     </div>
+  </form>
+</section>
+
+<section class="mb-4">
+  <div class="system-section-title"><span class="number">3</span><div><h4 class="mb-0">التشغيل اليومي</h4><div class="text-muted small">كل إجراء يقود مباشرة إلى الخطوة التالية.</div></div></div>
+  <div class="row g-3">
+    <div class="col-12 col-md-6 col-xl-4"><div class="policy-card p-3"><div class="d-flex gap-2 align-items-center"><span class="policy-icon"><i class="bi bi-calendar-event"></i></span><div><h6 class="mb-0">العطل والمناسبات</h6><small class="text-muted">دينية ووطنية ورسمية مسبقاً</small></div></div><p class="small text-muted mt-3">تُستبعد تلقائياً من الحضور والخصومات وفق المحافظة وموقع العمل.</p><div class="d-grid gap-2"><a class="btn btn-outline-primary" href="{{ url_for('portal.hr_official_occasions') }}">المناسبات الرسمية</a><a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_weekly_holidays') }}">العطل الأسبوعية</a></div></div></div>
+    <div class="col-12 col-md-6 col-xl-4"><div class="policy-card p-3"><div class="d-flex gap-2 align-items-center"><span class="policy-icon"><i class="bi bi-person-plus"></i></span><div><h6 class="mb-0">إدخال نيابة عن موظف</h6><small class="text-muted">حسب الصلاحية ونطاق الفريق</small></div></div><p class="small text-muted mt-3">الإدخال لا يعني الاعتماد؛ يُرسل الطلب لمسؤول الموظف حتى لو أدخله مسؤول مخوّل.</p><div class="d-grid gap-2">{% if can_manage %}<a class="btn btn-outline-primary" href="{{ url_for('portal.hr_leaves_admin_new') }}">إجازة / مرضية / طارئة لموظف</a>{% endif %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_permission_request_new') }}">مغادرة لموظف</a></div></div></div>
+    <div class="col-12 col-md-6 col-xl-4"><div class="policy-card p-3"><div class="d-flex gap-2 align-items-center"><span class="policy-icon"><i class="bi bi-check2-square"></i></span><div><h6 class="mb-0">صندوق الاعتمادات</h6><small class="text-muted">الإجازات والمغادرات</small></div></div><p class="small text-muted mt-3">تعتمد الإجازة السنوية أو الطارئة أو المرضية من مسؤول الموظف قبل دخولها في الحساب.</p>{% if can_approve %}<a class="btn btn-primary w-100" href="{{ url_for('portal.hr_approvals') }}">فتح الطلبات المنتظرة ({{ pending_leave_count + pending_permission_count }})</a>{% else %}<button class="btn btn-outline-secondary w-100" disabled>تحتاج صلاحية اعتماد</button>{% endif %}</div></div>
+    <div class="col-12 col-md-6 col-xl-4"><div class="policy-card p-3"><div class="d-flex gap-2 align-items-center"><span class="policy-icon"><i class="bi bi-person-check"></i></span><div><h6 class="mb-0">تعيين سياسات الدوام</h6><small class="text-muted">اعتيادي، داخل رام الله، خارجها</small></div></div><p class="small text-muted mt-3">بعد حفظ السياسات اربط القالب والسياسة بالموظف أو الدور أو الدائرة.</p>{% if can_manage %}<a class="btn btn-outline-primary w-100" href="{{ url_for('portal.portal_admin_hr_work_assignments') }}">إدارة التعيينات</a>{% endif %}</div></div>
+    <div class="col-12 col-md-6 col-xl-4"><div class="policy-card p-3"><div class="d-flex gap-2 align-items-center"><span class="policy-icon"><i class="bi bi-eye"></i></span><div><h6 class="mb-0">معاينة الخصومات</h6><small class="text-muted">دون أثر مالي أو رصيد</small></div></div><p class="small text-muted mt-3">يعرض سبب الخصم، المستبعد، السماح، أيام الإجازة وأيام الراتب لكل موظف.</p><a class="btn btn-outline-primary w-100" href="{{ url_for('portal.hr_deductions_run') }}">إنشاء معاينة جديدة</a></div></div>
+    <div class="col-12 col-md-6 col-xl-4"><div class="policy-card p-3"><div class="d-flex gap-2 align-items-center"><span class="policy-icon"><i class="bi bi-shield-check"></i></span><div><h6 class="mb-0">اعتماد وتنفيذ الخصم</h6><small class="text-muted">المرحلة النهائية فقط</small></div></div><p class="small text-muted mt-3">يمكن تعديل الساعات في المسودة بسبب مكتوب، ثم الاعتماد ليظهر الأثر النهائي.</p><a class="btn btn-outline-success w-100" href="{{ url_for('portal.hr_deductions_log', status='DRAFT') }}">مسودات تنتظر الاعتماد ({{ draft_deduction_count }})</a></div></div>
   </div>
-</div>
+</section>
+
+<section class="bg-white rounded-4 shadow-sm p-3 p-lg-4 mb-3">
+  <div class="system-section-title mb-2"><span class="number">4</span><div><h4 class="mb-0">قواعد النظام المختصرة</h4></div></div>
+  {% for icon, title, text in [
+    ('bi-clock', 'السماح منفصل', 'يمكن تغيير سماح الوصول الصباحي وسماح الخروج المسائي كلٌ على حدة.'),
+    ('bi-calendar-x', 'لا خصم في يوم مستبعد', 'العطل الأسبوعية والدينية والوطنية، والإجازة السنوية أو الطارئة أو المرضية المعتمدة، لا تنتج خصماً.'),
+    ('bi-person-check', 'المسؤول يعتمد', 'جميع الإجازات والمغادرات المقدمة تمر على مسؤول الموظف؛ الإدخال بالنيابة لا يتجاوز الاعتماد.'),
+    ('bi-house-door', 'الهجين بنفس القواعد', 'المغادرات والإجازات والسماح في الدوام الهجين تُحسب بالطريقة نفسها، سواء كانت أيام المكتب مرنة أو ثابتة.'),
+    ('bi-wallet2', 'الإجازة ثم الراتب', 'بعد استنفاد سماح المغادرات يتحول الاحتساب إلى أيام إجازة، ثم إلى الراتب عندما لا يكفي الرصيد.'),
+    ('bi-pencil-square', 'أي تعديل موثق', 'تغيير ساعات الخصم داخل المسودة يتطلب كتابة السبب ويُحفظ قبل الاعتماد.')
+  ] %}
+    <div class="rule-row d-flex gap-3"><i class="bi {{ icon }} text-primary fs-5"></i><div><strong>{{ title }}</strong><div class="text-muted small">{{ text }}</div></div></div>
+  {% endfor %}
+</section>
+
+<script>
+  function refreshHybridMode(select) {
+    const target = document.getElementById(select.dataset.daysTarget || '');
+    if (target) target.classList.toggle('d-none', select.value !== 'FIXED');
+  }
+  document.querySelectorAll('.hybrid-mode').forEach(select => {
+    select.addEventListener('change', () => refreshHybridMode(select));
+    refreshHybridMode(select);
+  });
+</script>
 {% endblock %}

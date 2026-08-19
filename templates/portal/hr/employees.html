@@ -10,6 +10,12 @@
     </div>
     {% set next_url = request.full_path %}
     <div class="d-flex gap-2 flex-wrap align-items-center">
+      <a class="btn btn-warning" href="{{ url_for('portal.hr_employee_data_submissions') }}">
+        <i class="bi bi-inboxes"></i> وارد نماذج الموظفين
+      </a>
+      <a class="btn btn-dark" href="{{ url_for('portal.hr_employee_data_collection_form') }}" target="_blank">
+        <i class="bi bi-printer"></i> طباعة استبيان بيانات الموظف
+      </a>
       <a class="btn btn-outline-success" href="{{ url_for('portal.hr_employees', q=q, export=1) }}">
         <i class="bi bi-file-earmark-excel"></i> تصدير Excel
       </a>

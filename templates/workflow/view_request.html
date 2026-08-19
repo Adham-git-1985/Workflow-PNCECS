@@ -515,8 +515,52 @@
             {% if can_bypass_parallel %}
               <div class="form-text mt-2">صلاحية التجاوز: منفّذ الخطوة السابقة أو مدير النظام.</div>
             {% endif %}
+          {% elif parallel_awaiting_authorization %}
+            {% if can_authorize_parallel %}
+              <div class="alert alert-warning">
+                <div class="fw-bold mb-1">هذه الخطوة محجوبة حتى تحدد المعنيين</div>
+                <div class="small">
+                  اختر من سيستلم المسار. لن تُنشأ مهمة ولن يظهر المسار لأي مرشح غير محدد.
+                </div>
+              </div>
+              {% if parallel_candidates %}
+                <form method="post"
+                      action="{{ url_for('workflow.authorize_parallel_assignees', request_id=req.id, step_order=current_step.step_order) }}">
+                  <div class="row g-2 mb-3">
+                    {% for user in parallel_candidates %}
+                      <div class="col-md-6">
+                        <label class="border rounded p-2 d-flex gap-2 align-items-start h-100">
+                          <input class="form-check-input mt-1"
+                                 type="checkbox"
+                                 name="parallel_assignee_ids"
+                                 value="{{ user.id }}">
+                          <span>
+                            <span class="fw-semibold d-block">{{ user.full_name or user.email }}</span>
+                            {% if user.name and user.email %}
+                              <span class="small text-muted">{{ user.email }}</span>
+                            {% endif %}
+                          </span>
+                        </label>
+                      </div>
+                    {% endfor %}
+                  </div>
+                  <button class="btn btn-primary" type="submit">
+                    توجيه المسار إلى المختارين
+                  </button>
+                  <div class="form-text">يجب اختيار شخص واحد على الأقل. يُحفظ التوجيه في سجل التدقيق.</div>
+                </form>
+              {% else %}
+                <div class="alert alert-danger mb-0">
+                  لا يوجد مرشح مخوّل في قالب هذه الخطوة. راجع إعدادات القالب أو سرية المعاملة.
+                </div>
+              {% endif %}
+            {% else %}
+              <div class="alert alert-info mb-0">
+                بانتظار منفذ الخطوة السابقة لتحديد المعنيين وتوجيه المسار إليهم.
+              </div>
+            {% endif %}
           {% else %}
-            <div class="text-muted">لا توجد مهام متزامنة لهذه الخطوة (سيتم إنشاؤها عند دخول الخطوة).</div>
+            <div class="text-muted">لا توجد مهام متزامنة لهذه الخطوة.</div>
           {% endif %}
         </div>
       </div>
@@ -534,6 +578,42 @@
             <label class="form-label">الملاحظة</label>
             <textarea class="form-control" name="note" rows="3" placeholder="ملاحظة اختيارية"></textarea>
           </div>
+
+          {% if next_parallel_step %}
+            <div class="border border-warning rounded p-3 mb-3 bg-warning-subtle">
+              <div class="fw-bold mb-1">
+                توجيه الخطوة المتزامنة التالية (الخطوة {{ next_parallel_step.step_order }})
+              </div>
+              <div class="small text-muted mb-3">
+                عند الموافقة سيظهر المسار للمختارين فقط، ولن تُنشأ مهمة أو يُرسل إشعار لغير المحددين.
+              </div>
+              {% if next_parallel_candidates %}
+                <div class="row g-2">
+                  {% for user in next_parallel_candidates %}
+                    <div class="col-md-6">
+                      <label class="border rounded bg-white p-2 d-flex gap-2 align-items-start h-100">
+                        <input class="form-check-input mt-1"
+                               type="checkbox"
+                               name="parallel_assignee_ids"
+                               value="{{ user.id }}">
+                        <span>
+                          <span class="fw-semibold d-block">{{ user.full_name or user.email }}</span>
+                          {% if user.name and user.email %}
+                            <span class="small text-muted">{{ user.email }}</span>
+                          {% endif %}
+                        </span>
+                      </label>
+                    </div>
+                  {% endfor %}
+                </div>
+                <div class="form-text">اختيار شخص واحد على الأقل مطلوب عند الضغط على «موافقة».</div>
+              {% else %}
+                <div class="alert alert-danger mb-0">
+                  لا يوجد مرشح مخوّل في قالب الخطوة التالية؛ لن يقبل النظام الموافقة قبل معالجة إعدادات القالب.
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
 
           <div class="mb-3">
             <label class="form-label">📎 مرفقات (اختياري)</label>

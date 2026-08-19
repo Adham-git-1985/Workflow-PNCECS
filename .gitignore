@@ -28,5 +28,6 @@ instance/*.db-wal
 
 # Backups and uploaded archive files
 instance/backups/
+instance/automatic_backup_state.json
 storage/archive/
 storage/archive_before_restore_*/

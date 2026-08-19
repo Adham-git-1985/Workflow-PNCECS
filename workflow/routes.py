@@ -15,7 +15,7 @@ from urllib.parse import quote
 from flask import (
     send_file, abort, render_template,
     request, redirect, url_for,
-    flash, jsonify, Response, stream_with_context
+    flash, jsonify, Response, stream_with_context, current_app
 )
 from flask_login import login_required, current_user
 
@@ -60,6 +60,12 @@ from services.correspondence_procedure import (
 from services.circulars import (
     can_user_view_circular,
     visible_circulars_query,
+)
+from services.correspondence_intake import (
+    CorrespondenceIntakeError,
+    OcrConfig,
+    analyze_workflow_attachment,
+    read_limited_upload,
 )
 
 from models import (
@@ -111,6 +117,8 @@ from workflow.engine import (
     bypass_parallel_task,
     bypass_all_parallel_tasks,
     ensure_parallel_tasks,
+    authorize_parallel_step,
+    resolve_parallel_candidate_user_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -2086,9 +2094,117 @@ def _get_request_followers_user_ids(req_id: int) -> set[int]:
 # =========================
 # View request
 # =========================
+@workflow_bp.route("/new/analyze-attachment", methods=["POST"])
+@login_required
+def analyze_new_request_attachment():
+    """Extract local, reviewable workflow fields from one selected file."""
+    upload = request.files.get("file")
+    try:
+        max_bytes = int(
+            current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)
+        )
+        max_text_chars = int(
+            current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000)
+        )
+        max_pdf_pages = int(
+            current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40)
+        )
+        ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
+        ocr_config = OcrConfig(
+            enabled=str(ocr_enabled_value).strip().lower() in {"1", "true", "yes", "on"},
+            command=str(current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract")),
+            languages=str(current_app.config.get("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")),
+            max_pages=int(current_app.config.get("CORR_INTAKE_OCR_MAX_PAGES", 10)),
+            dpi=int(current_app.config.get("CORR_INTAKE_OCR_DPI", 200)),
+            timeout_seconds=float(
+                current_app.config.get("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+            ),
+            max_image_pixels=int(
+                current_app.config.get("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+            ),
+        )
+        payload = read_limited_upload(upload, max_bytes)
+        request_types = (
+            RequestType.query
+            .filter_by(is_active=True)
+            .order_by(RequestType.name_ar.asc())
+            .all()
+        )
+        templates = (
+            WorkflowTemplate.query
+            .filter_by(is_active=True)
+            .order_by(WorkflowTemplate.name.asc())
+            .all()
+        )
+        analysis = analyze_workflow_attachment(
+            payload,
+            getattr(upload, "filename", "") or "attachment",
+            request_type_choices=[
+                {
+                    "value": str(row.id),
+                    "label": row.label,
+                    "match_text": " ".join(
+                        value
+                        for value in (row.label, row.name_en, row.code)
+                        if value
+                    ),
+                }
+                for row in request_types
+            ],
+            workflow_choices=[
+                {"value": str(template.id), "label": template.name}
+                for template in templates
+            ],
+            max_text_chars=max_text_chars,
+            max_pdf_pages=max_pdf_pages,
+            ocr_config=ocr_config,
+        )
+
+        request_type_suggestion = analysis.get("suggestions", {}).get("request_type")
+        request_type_value = str(
+            (request_type_suggestion or {}).get("select_value") or ""
+        )
+        if request_type_value.isdigit():
+            routed_template, matched_rule = _select_template_for(
+                current_user,
+                int(request_type_value),
+            )
+            if routed_template:
+                analysis["suggestions"]["workflow_template"] = {
+                    "value": routed_template.name,
+                    "select_value": str(routed_template.id),
+                    "confidence": 0.98,
+                    "reason": (
+                        f"قالب محدد بقاعدة التوجيه #{matched_rule.id} لنوع الطلب"
+                        if matched_rule
+                        else "قالب محدد من توجيه نوع الطلب"
+                    ),
+                }
+
+        return jsonify({"ok": True, "analysis": analysis})
+    except CorrespondenceIntakeError as exc:
+        return jsonify({
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }), exc.status_code
+    except Exception:
+        current_app.logger.exception("Failed to analyze a new workflow attachment")
+        return jsonify({
+            "ok": False,
+            "error": {
+                "code": "ANALYSIS_FAILED",
+                "message": "تعذر تحليل المرفق حالياً. يمكنك متابعة إنشاء المسار يدوياً.",
+            },
+        }), 500
+
+
 @workflow_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new_request():
+    intake_max_bytes = max(
+        1,
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
+    )
     # load request types (may be empty)
     request_types = (
         RequestType.query
@@ -2226,7 +2342,9 @@ def new_request():
         templates=templates,
         selected_rt_id=int(selected_rt_id) if (selected_rt_id and str(selected_rt_id).isdigit()) else None,
         suggested_template=suggested_template,
-        matched_rule=matched_rule
+        matched_rule=matched_rule,
+        intake_max_bytes=intake_max_bytes,
+        intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
     )
 
 
@@ -3171,6 +3289,11 @@ def view_request(request_id):
     current_step = None
     can_decide = False
     can_escalate = False
+    next_parallel_step = None
+    next_parallel_candidates = []
+    parallel_candidates = []
+    parallel_awaiting_authorization = False
+    can_authorize_parallel = False
 
     if inst:
         steps = (
@@ -3182,6 +3305,32 @@ def view_request(request_id):
         current_step = next((s for s in steps if s.step_order == inst.current_step_order), None)
         if current_step and current_step.status == "PENDING":
             can_decide = any(_user_can_act_on_step(u, current_step) for u in actor_users)
+
+        # A sequential approver must select the recipients of an immediately
+        # following parallel step as part of the approval transaction.
+        if current_step and can_decide and (getattr(current_step, "mode", "") or "").upper() != "PARALLEL_SYNC":
+            next_parallel_step = next(
+                (
+                    s for s in steps
+                    if int(getattr(s, "step_order", 0) or 0) == int(current_step.step_order) + 1
+                    and (getattr(s, "mode", "") or "").strip().upper() == "PARALLEL_SYNC"
+                ),
+                None,
+            )
+            if next_parallel_step:
+                candidate_ids = resolve_parallel_candidate_user_ids(
+                    req,
+                    inst,
+                    next_parallel_step,
+                )
+                candidate_map = {
+                    int(u.id): u
+                    for u in User.query.filter(User.id.in_(candidate_ids)).all()
+                } if candidate_ids else {}
+                next_parallel_candidates = sorted(
+                    (candidate_map[uid] for uid in candidate_ids if uid in candidate_map),
+                    key=lambda u: ((u.full_name or u.email or "").casefold(), int(u.id)),
+                )
 
         # ✅ Allow escalation for viewers while workflow is still in progress
         try:
@@ -3478,6 +3627,19 @@ def view_request(request_id):
                             break
                 except Exception:
                     pass
+
+            if not parallel_tasks:
+                parallel_awaiting_authorization = True
+                candidate_ids = resolve_parallel_candidate_user_ids(req, inst, current_step)
+                candidate_map = {
+                    int(u.id): u
+                    for u in User.query.filter(User.id.in_(candidate_ids)).all()
+                } if candidate_ids else {}
+                parallel_candidates = sorted(
+                    (candidate_map[uid] for uid in candidate_ids if uid in candidate_map),
+                    key=lambda u: ((u.full_name or u.email or "").casefold(), int(u.id)),
+                )
+                can_authorize_parallel = can_bypass_parallel
     except Exception:
         parallel_tasks = []
         my_parallel_task = None
@@ -3520,6 +3682,11 @@ def view_request(request_id):
         parallel_tasks=parallel_tasks,
         my_parallel_task=my_parallel_task,
         can_bypass_parallel=can_bypass_parallel,
+        can_authorize_parallel=can_authorize_parallel,
+        parallel_awaiting_authorization=parallel_awaiting_authorization,
+        parallel_candidates=parallel_candidates,
+        next_parallel_step=next_parallel_step,
+        next_parallel_candidates=next_parallel_candidates,
         mentioned_users=mentioned_users,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
@@ -4362,6 +4529,7 @@ def decide_request_step(request_id, step_order):
 
     decision = (request.form.get("decision") or "").strip().upper()
     note = (request.form.get("note") or "").strip()
+    authorized_parallel_user_ids = request.form.getlist("parallel_assignee_ids")
 
     if decision not in ("APPROVED", "REJECTED"):
         flash("قرار غير صالح.", "danger")
@@ -4376,7 +4544,8 @@ def decide_request_step(request_id, step_order):
                   note=note, auto_commit=False,
                   effective_user_id=acting_user.id,
                   on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
-                  delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None))
+                  delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None),
+                  authorized_parallel_user_ids=authorized_parallel_user_ids)
         sync_correspondence_from_workflow(
             req,
             actor_user_id=current_user.id,
@@ -4422,6 +4591,86 @@ def decide_request_step(request_id, step_order):
             except Exception:
                 pass
         flash(f"خطأ أثناء حفظ الإجراء: {e}", "danger")
+
+    return redirect(url_for("workflow.view_request", request_id=req.id))
+
+
+# =========================
+# PARALLEL_SYNC - Authorize selected assignees
+# =========================
+@workflow_bp.route("/request/<int:request_id>/step/<int:step_order>/parallel/authorize", methods=["POST"])
+@login_required
+def authorize_parallel_assignees(request_id: int, step_order: int):
+    req = WorkflowRequest.query.get_or_404(request_id)
+    delegations = get_active_delegations()
+    actor_users = [current_user]
+    for delegation in (delegations or []):
+        user = getattr(delegation, "from_user", None)
+        if user and user.id not in [actor.id for actor in actor_users]:
+            actor_users.append(user)
+
+    if not _actor_context_can_view_request(req, actor_users):
+        abort(403)
+
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first_or_404()
+    step = WorkflowInstanceStep.query.filter_by(
+        instance_id=inst.id,
+        step_order=step_order,
+    ).first_or_404()
+    if (
+        int(getattr(inst, "current_step_order", 0) or 0) != int(step_order)
+        or (getattr(step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC"
+    ):
+        flash("الخطوة المتزامنة ليست نشطة حاليًا.", "warning")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    acting_user = None
+    used_delegation = None
+    if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
+        acting_user = current_user
+    elif int(getattr(inst, "last_step_actor_id", 0) or 0) == int(current_user.id):
+        acting_user = current_user
+    else:
+        for delegation in (delegations or []):
+            user = getattr(delegation, "from_user", None)
+            if user and int(getattr(inst, "last_step_actor_id", 0) or 0) == int(user.id):
+                acting_user = user
+                used_delegation = delegation
+                break
+
+    if not acting_user:
+        abort(403)
+
+    selected_ids = request.form.getlist("parallel_assignee_ids")
+    try:
+        selected = authorize_parallel_step(
+            req,
+            inst,
+            step,
+            authorized_user_ids=selected_ids,
+            actor_user_id=current_user.id,
+            effective_user_id=acting_user.id,
+            on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
+            delegation_id=(
+                used_delegation.id
+                if used_delegation and acting_user.id != current_user.id
+                else None
+            ),
+            auto_commit=False,
+        )
+        sync_correspondence_from_workflow(
+            req,
+            actor_user_id=current_user.id,
+            note=(
+                f"توجيه الخطوة المتزامنة {step_order} في مسار #{req.id} "
+                f"إلى {len(selected)} مشارك/مشاركين"
+            ),
+        )
+        db.session.commit()
+        flash("تم توجيه الخطوة المتزامنة إلى المختارين فقط.", "success")
+    except Exception as exc:
+        db.session.rollback()
+        flash(f"تعذّر توجيه الخطوة المتزامنة: {exc}", "danger")
 
     return redirect(url_for("workflow.view_request", request_id=req.id))
 

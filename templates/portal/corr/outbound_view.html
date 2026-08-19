@@ -118,25 +118,110 @@
 
       <div class="border rounded p-3 mb-3 bg-light">
         <div class="fw-semibold small mb-2"><i class="bi bi-diagram-3"></i> الأرشيف والمسارات</div>
-        <form method="post" action="{{ url_for('portal.outbound_start_workflow', outbound_id=item.id) }}" class="d-grid gap-2">
+        <form method="post"
+              action="{{ url_for('portal.outbound_start_workflow', outbound_id=item.id) }}"
+              class="d-grid gap-2"
+              id="outboundWorkflowStartForm">
           {% if item.confidentiality == 'SECRET' %}
             <div class="alert alert-warning py-2 px-3 mb-0 small">
               <i class="bi bi-shield-lock"></i>
               هذه المعاملة سرية. لن يبدأ المسار إذا كان القالب يضم أي مشارك غير موجود ضمن الأشخاص المخولين.
             </div>
           {% endif %}
-          <select class="form-select form-select-sm" name="template_id" required>
+          <select class="form-select form-select-sm" name="template_id" id="outboundWorkflowTemplate" required>
             <option value="">اختر قالب المسار</option>
             {% for t in workflow_templates|default([]) %}
               <option value="{{ t.id }}" {% if item.workflow_template_id == t.id %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
           </select>
+          <div id="outboundParallelSelection" class="d-none">
+            {% for template_id, users in (workflow_parallel_candidates|default({})).items() %}
+              <div class="d-none border border-warning rounded bg-white p-3"
+                   data-parallel-template-id="{{ template_id }}">
+                <div class="fw-semibold mb-1">تحديد المعنيين في الخطوة المتزامنة الأولى</div>
+                <div class="small text-muted mb-2">
+                  لن يظهر المسار ولن تُرسل مهمة إلا للأشخاص الذين تحددهم هنا.
+                </div>
+                {% if users %}
+                  <div class="row g-2">
+                    {% for user in users %}
+                      <div class="col-md-6">
+                        <label class="border rounded p-2 d-flex gap-2 align-items-start h-100">
+                          <input class="form-check-input mt-1"
+                                 type="checkbox"
+                                 name="parallel_assignee_ids"
+                                 value="{{ user.id }}"
+                                 disabled>
+                          <span>
+                            <span class="fw-semibold d-block">{{ user.full_name or user.email }}</span>
+                            {% if user.name and user.email %}
+                              <span class="small text-muted">{{ user.email }}</span>
+                            {% endif %}
+                          </span>
+                        </label>
+                      </div>
+                    {% endfor %}
+                  </div>
+                {% else %}
+                  <div class="alert alert-danger py-2 mb-0">
+                    لا يوجد مرشح مخوّل في أول خطوة متزامنة لهذا القالب.
+                  </div>
+                {% endif %}
+              </div>
+            {% endfor %}
+            <div class="small text-danger d-none" id="outboundParallelSelectionError">
+              اختر شخصًا واحدًا على الأقل قبل بدء المسار.
+            </div>
+          </div>
           <button class="btn btn-sm btn-primary" type="submit">
             <i class="bi bi-play-circle"></i> بدء مسار للمعاملة
           </button>
           <div class="form-text">سيتم إرفاق بطاقة PDF للمعاملة تلقائيًا مع المسار.</div>
         </form>
       </div>
+
+      <script>
+      (function () {
+        "use strict";
+        var form = document.getElementById("outboundWorkflowStartForm");
+        var templateSelect = document.getElementById("outboundWorkflowTemplate");
+        var selectionBox = document.getElementById("outboundParallelSelection");
+        var errorBox = document.getElementById("outboundParallelSelectionError");
+        if (!form || !templateSelect || !selectionBox) return;
+
+        var groups = Array.prototype.slice.call(
+          selectionBox.querySelectorAll("[data-parallel-template-id]")
+        );
+
+        function activeGroup() {
+          var selectedTemplate = String(templateSelect.value || "");
+          var active = null;
+          groups.forEach(function (group) {
+            var show = group.getAttribute("data-parallel-template-id") === selectedTemplate;
+            group.classList.toggle("d-none", !show);
+            group.querySelectorAll('input[name="parallel_assignee_ids"]').forEach(function (input) {
+              input.disabled = !show;
+            });
+            if (show) active = group;
+          });
+          selectionBox.classList.toggle("d-none", !active);
+          if (errorBox) errorBox.classList.add("d-none");
+          return active;
+        }
+
+        templateSelect.addEventListener("change", activeGroup);
+        form.addEventListener("submit", function (event) {
+          var group = activeGroup();
+          if (!group) return;
+          var selected = group.querySelector('input[name="parallel_assignee_ids"]:checked');
+          if (!selected) {
+            event.preventDefault();
+            if (errorBox) errorBox.classList.remove("d-none");
+          }
+        });
+        activeGroup();
+      })();
+      </script>
 
       <ul class="list-group list-group-flush">
         {% for a in attachments %}

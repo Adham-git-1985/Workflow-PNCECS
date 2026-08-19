@@ -680,6 +680,49 @@ def _ensure_runtime_schema():
             if not _col_exists("hr_training_program", "publish_conditions_only"):
                 _add_column_retry("hr_training_program", "publish_conditions_only", "INTEGER DEFAULT 0")
 
+            # Unified HR attendance centre.  Some long-running local SQLite
+            # installations predate Alembic and therefore have the tables but
+            # not the newly introduced columns.  Keep those installations
+            # usable on startup, just like the other runtime schema upgrades.
+            for _table, _col, _ctype in [
+                ("work_schedule", "start_grace_minutes", "INTEGER"),
+                ("work_schedule", "end_grace_minutes", "INTEGER"),
+                ("work_policy", "hybrid_selection_mode", "TEXT NOT NULL DEFAULT 'FLEXIBLE'"),
+                ("work_policy", "hybrid_fixed_days_mask", "INTEGER"),
+                ("hr_att_deduction_config", "permission_allowance_hours", "REAL NOT NULL DEFAULT 6"),
+                ("hr_att_deduction_config", "annual_leave_type_id", "INTEGER"),
+                ("hr_att_deduction_config", "deduction_sequence", "TEXT NOT NULL DEFAULT 'LEAVE_THEN_SALARY'"),
+                ("hr_att_deduction_config", "require_approval", "INTEGER NOT NULL DEFAULT 1"),
+                ("hr_att_deduction_run", "config_snapshot_json", "TEXT"),
+                ("hr_att_deduction_run", "approved_at", "TEXT"),
+                ("hr_att_deduction_run", "approved_by_id", "INTEGER"),
+                ("hr_att_deduction_run", "approval_note", "TEXT"),
+                ("hr_att_deduction_item", "approved_permission_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "permission_allowance_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "excluded_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "chargeable_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "deduction_leave_type_id", "INTEGER"),
+                ("hr_att_deduction_item", "leave_deduction_days", "REAL NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "salary_deduction_days", "REAL NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "remainder_minutes", "INTEGER NOT NULL DEFAULT 0"),
+            ]:
+                if not _col_exists(_table, _col):
+                    _add_column_retry(_table, _col, _ctype)
+
+            try:
+                db.session.execute(text(
+                    "UPDATE work_schedule SET "
+                    "start_grace_minutes=COALESCE(start_grace_minutes, grace_minutes), "
+                    "end_grace_minutes=COALESCE(end_grace_minutes, grace_minutes)"
+                ))
+                db.session.execute(text(
+                    "UPDATE hr_att_deduction_item SET salary_deduction_days=amount "
+                    "WHERE COALESCE(salary_deduction_days, 0)=0 AND COALESCE(amount, 0)>0"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
 
             # backfill directorate_id from department_id for existing users
             if _col_exists("users", "directorate_id"):
@@ -807,6 +850,7 @@ try:
     from portal.timeclock_auto import start_timeclock_auto_sync
     from portal.hr_alerts_job import start_hr_alerts_job
     from portal.corr_deadlines_job import start_correspondence_deadline_job
+    from jobs.backup_job import start_automatic_backup_job
 
     _jobs_started = False
 
@@ -825,15 +869,16 @@ try:
 
         _jobs_started = True
         try:
+            start_automatic_backup_job(app)
             start_timeclock_auto_sync(app)
             start_hr_alerts_job(app)
             start_correspondence_deadline_job(app)
         except Exception:
             # Keep serving even if job fails
-            app.logger.exception("Failed to start timeclock auto-sync")
+            app.logger.exception("Failed to start a background job")
 except Exception as _e:
     # Don't fail the whole app if background job wiring fails
-    app.logger.exception("Failed to wire timeclock auto-sync: %s", _e)
+    app.logger.exception("Failed to wire background jobs: %s", _e)
 app.register_blueprint(masterdata_bp)
 app.register_blueprint(messages_bp)
 app.register_blueprint(delegation_bp)
@@ -1319,6 +1364,11 @@ def request_audit(request_id):
 if __name__ == "__main__":
     server_host = os.getenv("APP_HOST", "127.0.0.1")
     server_port = int(os.getenv("APP_PORT", "5000"))
+
+    # Start before the web server begins accepting requests so a missed 15:00
+    # backup is recovered immediately after the application process starts.
+    from jobs.backup_job import start_automatic_backup_job
+    start_automatic_backup_job(app)
 
     if _app_environment == "development":
         app.run(

@@ -77,6 +77,26 @@ class AuditStoryTests(unittest.TestCase):
         self.assertNotIn("_", sentence)
         self.assertIn("حذف", sentence)
 
+    def test_parallel_authorization_has_a_clear_arabic_story(self):
+        user = SimpleNamespace(full_name="سلمى أحمد", email="salma@example.com")
+        log = SimpleNamespace(
+            id=4,
+            created_at=datetime(2026, 8, 17, 12, 0),
+            action="PARALLEL_SYNC_AUTHORIZED",
+            user=user,
+            on_behalf_of_user=None,
+            request_id=51,
+            target_type="WORKFLOW_INSTANCE_STEP",
+            target_id=9,
+            note="الخطوة المتزامنة 2: تم توجيهها إلى: ليلى محمد",
+            old_status=None,
+            new_status=None,
+        )
+
+        entry = build_audit_story_entries([log])[0]
+        self.assertIn("وجّه سلمى أحمد الخطوة المتزامنة", entry["sentence"])
+        self.assertIn("ليلى محمد", entry["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -12,6 +12,7 @@ import tempfile
 import uuid
 import csv
 import json
+import base64
 import mimetypes
 import unicodedata
 from pathlib import Path
@@ -19,7 +20,7 @@ from io import BytesIO
 
 from flask import (
     render_template, request, redirect, url_for, flash, abort, current_app,
-    send_file, send_from_directory, has_request_context
+    send_file, send_from_directory, has_request_context, jsonify
 )
 
 from utils.portal_search import apply_search_all_columns
@@ -33,6 +34,8 @@ from reportlab.lib import colors
 from reportlab.graphics.barcode import qr
 
 from flask_login import login_required, current_user
+from flask_wtf.csrf import validate_csrf
+from wtforms.validators import ValidationError
 
 # Used for safe filesystem storage of uploaded filenames. We keep the original
 # name for display (Arabic-friendly) but use secure_filename as a fallback when
@@ -61,6 +64,20 @@ from services.meeting_service import (
     validate_docx_package,
     validate_embedded_attachments,
 )
+from services.correspondence_intake import (
+    CorrespondenceIntakeError,
+    OcrConfig,
+    analyze_correspondence_attachment,
+    read_limited_upload,
+)
+from services.employee_data_import import (
+    EmployeeDataImportError,
+    apply_employee_import_payload,
+    build_employee_import_plan,
+    canonical_payload_hash,
+    validate_employee_payload,
+)
+from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -77,6 +94,7 @@ from models import (
     EmployeeDependent,
     EmployeeQualification,
     EmployeeSecondment,
+    EmployeeDataSubmission,
     Team,
     OrgUnitManager,
     OrgUnitAssignment,
@@ -124,6 +142,9 @@ from models import (
     StoreFile,
     StoreFilePermission,
     PortalAccessRequest,
+    TroubleTicket,
+    TroubleTicketComment,
+    TroubleTicketAttachment,
     PortalCircular,
     PortalCircularAttachment,
     PortalMeeting,
@@ -200,6 +221,7 @@ from models import (
     InvWarehousePermission,
 )
 from workflow.engine import (
+    resolve_template_parallel_candidate_user_ids,
     resolve_template_participant_user_ids,
     start_workflow_for_request,
 )
@@ -1211,6 +1233,33 @@ def _corr_workflow_templates() -> list[WorkflowTemplate]:
     return _active_workflow_templates()
 
 
+def _corr_first_parallel_candidate_map(item, templates) -> dict[int, list[User]]:
+    """Return selectable users for templates whose first step is parallel."""
+    result: dict[int, list[User]] = {}
+    for template in (templates or []):
+        first_step = next(
+            (
+                step for step in (getattr(template, "steps", None) or [])
+                if int(getattr(step, "step_order", 0) or 0) == 1
+            ),
+            None,
+        )
+        if not first_step or (getattr(first_step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC":
+            continue
+
+        candidate_ids = set(resolve_template_parallel_candidate_user_ids(template, 1))
+        candidate_ids = filter_confidential_correspondence_user_ids(item, candidate_ids)
+        users = (
+            User.query
+            .filter(User.id.in_(candidate_ids))
+            .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+            .all()
+            if candidate_ids else []
+        )
+        result[int(template.id)] = users
+    return result
+
+
 def _corr_final_reply_template() -> WorkflowTemplate | None:
     """Resolve the template used to route an official reply via the Secretariat."""
     configured = None
@@ -1389,6 +1438,7 @@ def _start_corr_workflow(
     template_id: str | None,
     *,
     auto_commit: bool = True,
+    initial_parallel_user_ids=None,
 ):
     existing = (
         WorkflowRequest.query
@@ -1413,6 +1463,36 @@ def _start_corr_workflow(
     if not template:
         flash("يرجى اختيار قالب مسار فعال.", "danger")
         return None
+
+    first_step = next(
+        (
+            step for step in (getattr(template, "steps", None) or [])
+            if int(getattr(step, "step_order", 0) or 0) == 1
+        ),
+        None,
+    )
+    if (
+        initial_parallel_user_ids is not None
+        and first_step
+        and (getattr(first_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC"
+    ):
+        try:
+            selected_ids = {
+                int(user_id)
+                for user_id in initial_parallel_user_ids
+                if int(user_id) > 0
+            }
+        except (TypeError, ValueError):
+            flash("قائمة المعنيين في الخطوة المتزامنة غير صالحة.", "danger")
+            return None
+        candidate_ids = set(resolve_template_parallel_candidate_user_ids(template, 1))
+        candidate_ids = filter_confidential_correspondence_user_ids(item, candidate_ids)
+        if not selected_ids:
+            flash("اختر شخصًا واحدًا على الأقل لبدء الخطوة المتزامنة.", "warning")
+            return None
+        if not selected_ids.issubset(candidate_ids):
+            flash("يمكن توجيه الخطوة المتزامنة فقط إلى مرشحي القالب المخولين.", "danger")
+            return None
 
     if (getattr(item, "confidentiality", "NORMAL") or "NORMAL").upper() == "SECRET":
         participant_ids = resolve_template_participant_user_ids(template)
@@ -1492,6 +1572,7 @@ def _start_corr_workflow(
         template,
         created_by_user_id=current_user.id,
         auto_commit=False,
+        initial_parallel_user_ids=initial_parallel_user_ids,
     )
     sync_correspondence_from_workflow(
         req,
@@ -3445,7 +3526,7 @@ def _portal_admin_user_ids() -> list[int]:
     try:
         urows = (
             db.session.query(User.id)
-            .filter(func.upper(User.role).in_(["SUPER_ADMIN", "SUPERADMIN"]))
+            .filter(func.upper(User.role).in_(["ADMIN", "SUPER_ADMIN", "SUPERADMIN"]))
             .all()
         )
         for (uid,) in urows:
@@ -3713,6 +3794,281 @@ def my_access_requests():
         rows = []
 
     return render_template("portal/access_requests_mine.html", rows=rows, defs=defs, can_enter_portal=can_enter_portal)
+
+
+# -------------------------
+# Portal: Trouble tickets
+# -------------------------
+
+TROUBLE_TICKET_CATEGORIES = {
+    "SYSTEM": "النظام والصلاحيات",
+    "HARDWARE": "الأجهزة والطابعات",
+    "NETWORK": "الشبكة والاتصال",
+    "DATA": "البيانات والتقارير",
+    "OTHER": "أخرى",
+}
+TROUBLE_TICKET_PRIORITIES = {
+    "LOW": "منخفضة",
+    "NORMAL": "عادية",
+    "HIGH": "عالية",
+    "URGENT": "عاجلة",
+}
+TROUBLE_TICKET_STATUSES = {
+    "OPEN": "مفتوحة",
+    "IN_PROGRESS": "قيد المعالجة",
+    "WAITING": "بانتظار معلومات",
+    "RESOLVED": "تم الحل",
+    "CLOSED": "مغلقة",
+}
+TROUBLE_TICKET_MAX_FILES = 10
+TROUBLE_TICKET_MAX_FILE_BYTES = 25 * 1024 * 1024
+TROUBLE_TICKET_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+
+def _trouble_ticket_attachment_dir(ticket_id: int) -> Path:
+    directory = Path(current_app.instance_path) / "uploads" / "trouble_tickets" / str(int(ticket_id))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _save_trouble_ticket_attachments(ticket: TroubleTicket, uploads) -> int:
+    candidates = [
+        (upload, clean_original_filename(getattr(upload, "filename", None)))
+        for upload in (uploads or [])
+        if is_allowed_attachment(getattr(upload, "filename", None))
+    ]
+    if len(candidates) > TROUBLE_TICKET_MAX_FILES:
+        raise ValueError(f"يمكن رفع {TROUBLE_TICKET_MAX_FILES} ملفات كحد أقصى.")
+
+    saved_paths: list[Path] = []
+    total_size = 0
+    try:
+        for upload, original_name in candidates:
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            saved_path = _trouble_ticket_attachment_dir(ticket.id) / stored_name
+            upload.save(str(saved_path))
+            saved_paths.append(saved_path)
+            file_size = saved_path.stat().st_size
+            if file_size > TROUBLE_TICKET_MAX_FILE_BYTES:
+                raise ValueError(f"حجم الملف «{original_name}» يتجاوز 25 م.ب.")
+            total_size += file_size
+            if total_size > TROUBLE_TICKET_MAX_TOTAL_BYTES:
+                raise ValueError("إجمالي حجم المرفقات يتجاوز 50 م.ب.")
+            mime_type = (getattr(upload, "mimetype", None) or mimetypes.guess_type(original_name)[0] or "application/octet-stream")
+            db.session.add(TroubleTicketAttachment(
+                ticket_id=ticket.id,
+                original_name=original_name[:255],
+                stored_name=stored_name,
+                mime_type=mime_type[:120],
+                file_size=file_size,
+                uploaded_by_id=current_user.id,
+            ))
+    except Exception:
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+    return len(candidates)
+
+
+def _can_manage_trouble_tickets() -> bool:
+    return bool(
+        current_user.has_perm("PORTAL_ADMIN_READ")
+        or current_user.has_perm("PORTAL_ADMIN_PERMISSIONS_MANAGE")
+        or current_user.has_perm("TROUBLE_TICKETS_MANAGE")
+    )
+
+
+def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
+    return mapping.get((value or "").upper(), value or "-")
+
+
+@portal_bp.route("/trouble-tickets")
+@login_required
+def trouble_tickets():
+    status = (request.args.get("status") or "").strip().upper()
+    query = TroubleTicket.query.filter(TroubleTicket.requester_id == current_user.id)
+    if status in TROUBLE_TICKET_STATUSES:
+        query = query.filter(TroubleTicket.status == status)
+    rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
+    return render_template(
+        "portal/trouble_tickets/list.html",
+        rows=rows,
+        statuses=TROUBLE_TICKET_STATUSES,
+        active_status=status,
+        is_manager=_can_manage_trouble_tickets(),
+    )
+
+
+@portal_bp.route("/trouble-tickets/new", methods=["GET", "POST"])
+@login_required
+def trouble_ticket_new():
+    if request.method == "POST":
+        subject = (request.form.get("subject") or "").strip()
+        description = (request.form.get("description") or "").strip()
+        category = (request.form.get("category") or "OTHER").strip().upper()
+        priority = (request.form.get("priority") or "NORMAL").strip().upper()
+        if not subject or not description:
+            flash("يرجى إدخال عنوان ووصف المشكلة.", "danger")
+        elif category not in TROUBLE_TICKET_CATEGORIES or priority not in TROUBLE_TICKET_PRIORITIES:
+            flash("بيانات التذكرة غير صالحة.", "danger")
+        else:
+            ticket = TroubleTicket(
+                requester_id=current_user.id,
+                subject=subject[:250],
+                description=description,
+                category=category,
+                priority=priority,
+                status="OPEN",
+            )
+            db.session.add(ticket)
+            db.session.flush()
+            try:
+                _save_trouble_ticket_attachments(ticket, request.files.getlist("attachments"))
+                db.session.add(AuditLog(
+                    user_id=current_user.id,
+                    action="TROUBLE_TICKET_CREATE",
+                    note=f"تذكرة دعم #{ticket.id}: {ticket.subject}",
+                    target_type="TROUBLE_TICKET",
+                    target_id=ticket.id,
+                ))
+                for admin_id in _portal_admin_user_ids():
+                    if int(admin_id) != int(current_user.id):
+                        db.session.add(Notification(
+                            user_id=int(admin_id),
+                            message=f"تذكرة دعم جديدة #{ticket.id}: {ticket.subject}",
+                            type="PORTAL",
+                            source="portal",
+                            is_read=False,
+                            created_at=datetime.utcnow(),
+                        ))
+            except ValueError as exc:
+                db.session.rollback()
+                flash(str(exc), "danger")
+                return render_template(
+                    "portal/trouble_tickets/new.html",
+                    categories=TROUBLE_TICKET_CATEGORIES,
+                    priorities=TROUBLE_TICKET_PRIORITIES,
+                )
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception("Unable to save trouble ticket attachments")
+                flash("تعذر حفظ المرفقات. يرجى المحاولة مرة أخرى.", "danger")
+                return render_template(
+                    "portal/trouble_tickets/new.html",
+                    categories=TROUBLE_TICKET_CATEGORIES,
+                    priorities=TROUBLE_TICKET_PRIORITIES,
+                )
+            db.session.commit()
+            flash("تم إرسال تذكرة الدعم بنجاح.", "success")
+            return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+    return render_template(
+        "portal/trouble_tickets/new.html",
+        categories=TROUBLE_TICKET_CATEGORIES,
+        priorities=TROUBLE_TICKET_PRIORITIES,
+    )
+
+
+@portal_bp.route("/trouble-tickets/<int:ticket_id>/attachments/<int:attachment_id>/download")
+@login_required
+def trouble_ticket_attachment_download(ticket_id: int, attachment_id: int):
+    ticket = TroubleTicket.query.get_or_404(ticket_id)
+    if ticket.requester_id != current_user.id and not _can_manage_trouble_tickets():
+        abort(403)
+    attachment = TroubleTicketAttachment.query.filter_by(id=attachment_id, ticket_id=ticket.id).first_or_404()
+    response = send_from_directory(
+        str(_trouble_ticket_attachment_dir(ticket.id)),
+        attachment.stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=True,
+        download_name=attachment.original_name,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@portal_bp.route("/trouble-tickets/<int:ticket_id>", methods=["GET", "POST"])
+@login_required
+def trouble_ticket_view(ticket_id: int):
+    ticket = TroubleTicket.query.get_or_404(ticket_id)
+    is_manager = _can_manage_trouble_tickets()
+    if ticket.requester_id != current_user.id and not is_manager:
+        abort(403)
+
+    if request.method == "POST":
+        action = (request.form.get("action") or "comment").strip().lower()
+        if action == "comment":
+            body = (request.form.get("body") or "").strip()
+            if not body:
+                flash("يرجى كتابة تعليق قبل الإرسال.", "warning")
+            else:
+                db.session.add(TroubleTicketComment(ticket_id=ticket.id, author_id=current_user.id, body=body))
+                ticket.updated_at = datetime.utcnow()
+                if ticket.status == "WAITING" and ticket.requester_id == current_user.id:
+                    ticket.status = "IN_PROGRESS"
+                db.session.commit()
+                flash("تمت إضافة التعليق.", "success")
+            return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+        if action == "update" and is_manager:
+            status = (request.form.get("status") or "").strip().upper()
+            assignee_id = (request.form.get("assigned_to_id") or "").strip()
+            if status not in TROUBLE_TICKET_STATUSES:
+                flash("الحالة المختارة غير صالحة.", "danger")
+            else:
+                ticket.status = status
+                ticket.assigned_to_id = int(assignee_id) if assignee_id.isdigit() else None
+                ticket.resolved_at = datetime.utcnow() if status in {"RESOLVED", "CLOSED"} else None
+                ticket.updated_at = datetime.utcnow()
+                db.session.add(AuditLog(
+                    user_id=current_user.id,
+                    action="TROUBLE_TICKET_UPDATE",
+                    note=f"تحديث تذكرة الدعم #{ticket.id} إلى {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
+                    target_type="TROUBLE_TICKET",
+                    target_id=ticket.id,
+                ))
+                db.session.add(Notification(
+                    user_id=ticket.requester_id,
+                    message=f"تم تحديث تذكرة الدعم #{ticket.id} إلى: {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
+                    type="PORTAL",
+                    source="portal",
+                    is_read=False,
+                    created_at=datetime.utcnow(),
+                ))
+                db.session.commit()
+                flash("تم تحديث التذكرة.", "success")
+            return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+    assignees = []
+    if is_manager:
+        assignees = User.query.order_by(User.name, User.email).all()
+    return render_template(
+        "portal/trouble_tickets/view.html",
+        ticket=ticket,
+        is_manager=is_manager,
+        assignees=assignees,
+        categories=TROUBLE_TICKET_CATEGORIES,
+        priorities=TROUBLE_TICKET_PRIORITIES,
+        statuses=TROUBLE_TICKET_STATUSES,
+    )
+
+
+@portal_bp.route("/trouble-tickets/manage")
+@login_required
+def trouble_tickets_manage():
+    if not _can_manage_trouble_tickets():
+        abort(403)
+    status = (request.args.get("status") or "").strip().upper()
+    query = TroubleTicket.query
+    if status in TROUBLE_TICKET_STATUSES:
+        query = query.filter(TroubleTicket.status == status)
+    rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
+    return render_template("portal/trouble_tickets/manage.html", rows=rows, statuses=TROUBLE_TICKET_STATUSES, active_status=status)
 
 
 # -------------------------
@@ -6596,11 +6952,10 @@ def hr_report_attendance_permissions():
                     dur_h = None
                 if dur_h is None:
                     try:
-                        ft = _parse_hhmm(r.from_time)
-                        tt = _parse_hhmm(r.to_time)
-                        if ft and tt:
-                            mins = (datetime.combine(date.today(), tt) - datetime.combine(date.today(), ft)).total_seconds() / 60.0
-                            dur_h = max(0.0, mins / 60.0)
+                        ft = _parse_hhmm_minutes(r.from_time)
+                        tt = _parse_hhmm_minutes(r.to_time)
+                        if ft is not None and tt is not None:
+                            dur_h = max(0.0, float(tt - ft) / 60.0)
                     except Exception:
                         dur_h = None
 
@@ -9238,10 +9593,20 @@ def hr_deductions_settings():
         special_permission_source = _pick('special_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
         unauthorized_permission_source = _pick('unauthorized_permission_source', 'SALARY', {'LEAVE', 'SALARY'})
         carry_method = _pick('carry_method', 'CARRY_TO_NEXT', {'CARRY_TO_NEXT', 'WITHIN_MONTH'})
+        deduction_sequence = _pick(
+            'deduction_sequence',
+            'LEAVE_THEN_SALARY',
+            {'LEAVE_THEN_SALARY', 'SALARY_ONLY'},
+        )
 
         hours_per_day = _f('hours_per_day') or 7.0
         if hours_per_day <= 0:
             hours_per_day = 7.0
+        permission_allowance_hours = _f('permission_allowance_hours')
+        if permission_allowance_hours is None or permission_allowance_hours < 0:
+            permission_allowance_hours = 6.0
+        annual_leave_type_id = (request.form.get('annual_leave_type_id') or '').strip()
+        annual_leave_type_id = int(annual_leave_type_id) if annual_leave_type_id.isdigit() else None
 
         if not cfg:
             cfg = HRAttendanceDeductionConfig()
@@ -9258,8 +9623,17 @@ def hr_deductions_settings():
         cfg.unauthorized_permission_source = unauthorized_permission_source
         cfg.carry_method = carry_method
         cfg.hours_per_day = hours_per_day
+        cfg.permission_allowance_hours = permission_allowance_hours
+        cfg.annual_leave_type_id = annual_leave_type_id
+        cfg.deduction_sequence = deduction_sequence
+        cfg.require_approval = True
+        cfg.note = (request.form.get('note') or '').strip() or None
 
         cfg.updated_at = datetime.utcnow()
+        cfg.updated_by_id = getattr(current_user, 'id', None)
+        _setting_set('HR_ALLOWED_PERMISSION_HOURS_MONTH', str(permission_allowance_hours))
+        _setting_set('HR_WORKDAY_HOURS', str(hours_per_day))
+        _setting_set('HR_EXCESS_PERM_DEDUCT_LEAVE_TYPE_ID', str(annual_leave_type_id or ''))
         db.session.commit()
 
         flash('تم حفظ إعدادات الخصم.', 'success')
@@ -9271,6 +9645,7 @@ def hr_deductions_settings():
         style_opts=style_opts,
         source_opts=source_opts,
         carry_opts=carry_opts,
+        leave_types=HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all(),
         can_manage=_hr_can_manage(),
     )
 
@@ -9294,6 +9669,10 @@ def hr_deductions_run():
             unauthorized_permission_source='SALARY',
             carry_method='CARRY_TO_NEXT',
             hours_per_day=7.0,
+            permission_allowance_hours=6.0,
+            annual_leave_type_id=_permission_excess_leave_type_id(),
+            deduction_sequence='LEAVE_THEN_SALARY',
+            require_approval=True,
         )
         db.session.add(cfg)
         db.session.commit()
@@ -9332,32 +9711,25 @@ def hr_deductions_run():
             flash('اختر موظفاً واحداً على الأقل لتنفيذ الخصم.', 'danger')
             return redirect(url_for('portal.hr_deductions_run', year=year, month=month, work_governorate_lookup_id=gov_id, work_location_lookup_id=loc_id, q=qtxt))
 
-        # Aggregate attendance minutes for the selected employees
-        agg = db.session.query(
-            AttendanceDailySummary.user_id,
-            func.coalesce(func.sum(AttendanceDailySummary.late_minutes), 0),
-            func.coalesce(func.sum(AttendanceDailySummary.early_leave_minutes), 0),
-            func.coalesce(func.sum(AttendanceDailySummary.absent), 0),
-        ).filter(
-            AttendanceDailySummary.year == year,
-            AttendanceDailySummary.month == month,
-            AttendanceDailySummary.user_id.in_(selected_ids),
-        ).group_by(AttendanceDailySummary.user_id).all()
-
         minutes_per_day = int(round((cfg.hours_per_day or 7.0) * 60))
         if minutes_per_day <= 0:
             minutes_per_day = 420
+        month_start = f"{year:04d}-{month:02d}-01"
+        month_end = _end_of_month_str(year, month)
+        annual_leave_type_id = cfg.annual_leave_type_id or _permission_excess_leave_type_id()
 
         run = HRAttendanceDeductionRun(
             year=year,
             month=month,
+            status='DRAFT',
+            note=(request.form.get('note') or '').strip() or None,
             config_snapshot_json=json.dumps({
                 'deduction_style': cfg.deduction_style,
                 'hours_per_day': cfg.hours_per_day,
-                'late_source': cfg.late_source,
-                'early_source': cfg.early_source,
-                'special_permission_source': cfg.special_permission_source,
-                'unauthorized_permission_source': cfg.unauthorized_permission_source,
+                'permission_allowance_hours': cfg.permission_allowance_hours,
+                'annual_leave_type_id': annual_leave_type_id,
+                'deduction_sequence': cfg.deduction_sequence,
+                'require_approval': True,
                 'carry_method': cfg.carry_method,
             }, ensure_ascii=False),
             created_by_id=getattr(current_user, 'id', None),
@@ -9366,27 +9738,60 @@ def hr_deductions_run():
         db.session.flush()
 
         items_payload = []
-        total_days = 0
+        total_leave_days = 0.0
+        total_salary_days = 0.0
 
-        for uid, late_min, early_min, absent_days in agg:
-            late_min = int(late_min or 0)
-            early_min = int(early_min or 0)
-            absent_days = int(absent_days or 0)
+        for uid in selected_ids:
+            summaries = (
+                AttendanceDailySummary.query
+                .filter(AttendanceDailySummary.user_id == uid)
+                .filter(AttendanceDailySummary.day >= month_start)
+                .filter(AttendanceDailySummary.day <= month_end)
+                .all()
+            )
+            late_min = 0
+            early_min = 0
+            absent_days = 0
+            excluded_minutes = 0
+            excluded_days = 0
+            for summary in summaries:
+                summary_minutes = int(summary.late_minutes or 0) + int(summary.early_leave_minutes or 0)
+                is_absent = (summary.status or '').upper() == 'ABSENT'
+                if _attendance_exemption_reason(uid, summary.day):
+                    excluded_minutes += summary_minutes + (minutes_per_day if is_absent else 0)
+                    excluded_days += 1
+                    continue
+                late_min += int(summary.late_minutes or 0)
+                early_min += int(summary.early_leave_minutes or 0)
+                absent_days += 1 if is_absent else 0
 
-            if (cfg.deduction_style or 'AGGREGATE').upper() == 'PER_CATEGORY':
-                days_from_minutes = (late_min // minutes_per_day) + (early_min // minutes_per_day)
-                remainder_minutes = (late_min % minutes_per_day) + (early_min % minutes_per_day)
+            permission_minutes = _permission_minutes_in_range(uid, month_start, month_end)
+            allowed_hours = _get_monthly_allowed_hours(uid, year, month)
+            if not HRMonthlyPermissionAllowance.query.filter_by(user_id=uid, year=year, month=month).first():
+                allowed_hours = float(cfg.permission_allowance_hours or 6.0)
+            allowance_minutes = max(0, int(round(float(allowed_hours) * 60)))
+            excess_permission_minutes = max(0, permission_minutes - allowance_minutes)
+            chargeable_minutes = late_min + early_min + excess_permission_minutes + (absent_days * minutes_per_day)
+            deduction_days = round(float(chargeable_minutes) / float(minutes_per_day), 4)
+            remainder_minutes = int(chargeable_minutes % minutes_per_day)
+
+            available_leave_days = 0.0
+            if annual_leave_type_id:
+                leave_type = HRLeaveType.query.get(int(annual_leave_type_id))
+                if leave_type:
+                    entitlement = float(_leave_entitlement_days(uid, leave_type, year))
+                    used = float(_leave_used_days_as_of(uid, leave_type.id, year, _parse_yyyy_mm_dd(month_end)))
+                    available_leave_days = max(0.0, entitlement - used)
+
+            if (cfg.deduction_sequence or 'LEAVE_THEN_SALARY').upper() == 'LEAVE_THEN_SALARY' and annual_leave_type_id:
+                leave_days = min(deduction_days, available_leave_days)
+                salary_days = max(0.0, deduction_days - leave_days)
             else:
-                total_minutes = late_min + early_min
-                days_from_minutes = total_minutes // minutes_per_day
-                remainder_minutes = total_minutes % minutes_per_day
+                leave_days = 0.0
+                salary_days = deduction_days
 
-            if (cfg.carry_method or 'CARRY_TO_NEXT').upper() == 'WITHIN_MONTH':
-                # within month only: we ignore remainder in totals
-                remainder_minutes = 0
-
-            days_total = float(days_from_minutes + absent_days)
-            total_days += int(days_from_minutes) + absent_days
+            total_leave_days += leave_days
+            total_salary_days += salary_days
 
             item = HRAttendanceDeductionItem(
                 run_id=run.id,
@@ -9394,8 +9799,16 @@ def hr_deductions_run():
                 late_minutes=late_min,
                 early_leave_minutes=early_min,
                 absent_days=absent_days,
-                amount=days_total,  # amount = days (for now)
-                note=f"دقائق متبقية: {remainder_minutes}",
+                approved_permission_minutes=permission_minutes,
+                permission_allowance_minutes=allowance_minutes,
+                excluded_minutes=excluded_minutes,
+                chargeable_minutes=chargeable_minutes,
+                deduction_leave_type_id=annual_leave_type_id,
+                leave_deduction_days=leave_days,
+                salary_deduction_days=salary_days,
+                remainder_minutes=remainder_minutes,
+                amount=salary_days,
+                note=f"استُبعد {excluded_days} يوم عطلة/إجازة معتمدة. الرصيد المتاح قبل الاعتماد: {available_leave_days:.2f} يوم.",
             )
             db.session.add(item)
             items_payload.append({
@@ -9403,19 +9816,25 @@ def hr_deductions_run():
                 'late_minutes': late_min,
                 'early_leave_minutes': early_min,
                 'absent_days': absent_days,
-                'deduction_days': days_total,
+                'permission_minutes': permission_minutes,
+                'allowance_minutes': allowance_minutes,
+                'excluded_minutes': excluded_minutes,
+                'chargeable_minutes': chargeable_minutes,
+                'leave_deduction_days': leave_days,
+                'salary_deduction_days': salary_days,
                 'remainder_minutes': remainder_minutes,
             })
 
         run.totals_json = json.dumps({
             'employees_count': len(items_payload),
-            'total_deduction_days': total_days,
+            'total_leave_deduction_days': round(total_leave_days, 4),
+            'total_salary_deduction_days': round(total_salary_days, 4),
             'minutes_per_day': minutes_per_day,
             'items': items_payload,
         }, ensure_ascii=False)
         db.session.commit()
 
-        flash('تم تنفيذ الخصم للموظفين المحددين.', 'success')
+        flash('تم إنشاء معاينة الخصم كمسودة. لن يتأثر رصيد الإجازة أو الراتب قبل الاعتماد.', 'success')
         return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
     return render_template(
@@ -9429,6 +9848,7 @@ def hr_deductions_run():
         work_location_lookup_id=loc_id,
         q=qtxt,
         users=users,
+        can_manage=_hr_can_manage_attendance(),
     )
 
 
@@ -9444,7 +9864,11 @@ def hr_deductions_view(run_id: int):
         import csv, io
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(['Employee', 'Email', 'Late minutes', 'Early minutes', 'Absent days', 'Amount'])
+        w.writerow([
+            'Employee', 'Email', 'Late minutes', 'Early minutes', 'Absent days',
+            'Approved permission minutes', 'Allowance minutes', 'Excluded minutes',
+            'Chargeable minutes', 'Leave deduction days', 'Salary deduction days', 'Note',
+        ])
         for it in run.items:
             u = it.user
             w.writerow([
@@ -9453,7 +9877,13 @@ def hr_deductions_view(run_id: int):
                 it.late_minutes,
                 it.early_leave_minutes,
                 it.absent_days,
-                it.amount,
+                it.approved_permission_minutes,
+                it.permission_allowance_minutes,
+                it.excluded_minutes,
+                it.chargeable_minutes,
+                it.leave_deduction_days,
+                it.salary_deduction_days,
+                it.note or '',
             ])
         data = buf.getvalue().encode('utf-8-sig')
         return send_file(
@@ -9463,7 +9893,162 @@ def hr_deductions_view(run_id: int):
             download_name=f"deductions_{run.year:04d}_{run.month:02d}.csv",
         )
 
-    return render_template('portal/hr/deductions_view.html', run=run)
+    can_approve = False
+    try:
+        can_approve = bool(
+            current_user.has_perm(HR_REQUESTS_APPROVE)
+            or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
+            or current_user.has_perm(HR_MASTERDATA_MANAGE)
+        )
+    except Exception:
+        pass
+    return render_template(
+        'portal/hr/deductions_view.html',
+        run=run,
+        can_approve=can_approve,
+        can_adjust=bool(can_approve and (run.status or '').upper() == 'DRAFT'),
+    )
+
+
+def _refresh_deduction_run_totals(run: HRAttendanceDeductionRun) -> None:
+    payload = {
+        'employees_count': len(run.items),
+        'total_leave_deduction_days': round(sum(float(x.leave_deduction_days or 0) for x in run.items), 4),
+        'total_salary_deduction_days': round(sum(float(x.salary_deduction_days or 0) for x in run.items), 4),
+        'items': [
+            {
+                'user_id': x.user_id,
+                'chargeable_minutes': int(x.chargeable_minutes or 0),
+                'leave_deduction_days': float(x.leave_deduction_days or 0),
+                'salary_deduction_days': float(x.salary_deduction_days or 0),
+            }
+            for x in run.items
+        ],
+    }
+    try:
+        snapshot = json.loads(run.config_snapshot_json or '{}')
+        payload['minutes_per_day'] = int(round(float(snapshot.get('hours_per_day') or 7.0) * 60))
+    except Exception:
+        payload['minutes_per_day'] = 420
+    run.totals_json = json.dumps(payload, ensure_ascii=False)
+
+
+@portal_bp.route('/hr/deductions/<int:run_id>/items/<int:item_id>/adjust', methods=['POST'])
+@login_required
+@_perm_any(HR_REQUESTS_APPROVE, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
+def hr_deduction_item_adjust(run_id: int, item_id: int):
+    run = HRAttendanceDeductionRun.query.get_or_404(run_id)
+    item = HRAttendanceDeductionItem.query.filter_by(id=item_id, run_id=run.id).first_or_404()
+    if (run.status or '').upper() != 'DRAFT':
+        flash('لا يمكن تعديل خصم بعد اعتماده.', 'warning')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    note = (request.form.get('adjustment_note') or '').strip()
+    try:
+        hours = float(request.form.get('chargeable_hours') or 0)
+    except Exception:
+        hours = -1
+    if hours < 0 or not note:
+        flash('أدخل ساعات خصم صحيحة واكتب سبب التعديل.', 'danger')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    try:
+        snapshot = json.loads(run.config_snapshot_json or '{}')
+    except Exception:
+        snapshot = {}
+    minutes_per_day = max(1, int(round(float(snapshot.get('hours_per_day') or 7.0) * 60)))
+    item.chargeable_minutes = max(0, int(round(hours * 60)))
+    item.remainder_minutes = item.chargeable_minutes % minutes_per_day
+    deduction_days = round(float(item.chargeable_minutes) / float(minutes_per_day), 4)
+
+    available_leave = 0.0
+    leave_type = item.deduction_leave_type
+    if leave_type:
+        month_end = _parse_yyyy_mm_dd(_end_of_month_str(run.year, run.month))
+        entitlement = float(_leave_entitlement_days(item.user_id, leave_type, run.year))
+        used = float(_leave_used_days_as_of(item.user_id, leave_type.id, run.year, month_end))
+        available_leave = max(0.0, entitlement - used)
+
+    if (snapshot.get('deduction_sequence') or 'LEAVE_THEN_SALARY').upper() == 'LEAVE_THEN_SALARY' and leave_type:
+        item.leave_deduction_days = min(deduction_days, available_leave)
+        item.salary_deduction_days = max(0.0, deduction_days - item.leave_deduction_days)
+    else:
+        item.leave_deduction_days = 0.0
+        item.salary_deduction_days = deduction_days
+    item.amount = item.salary_deduction_days
+    item.note = f"تعديل يدوي بواسطة {current_user.full_name}: {note}"
+    _refresh_deduction_run_totals(run)
+    _portal_audit(
+        'HR_DEDUCTION_ITEM_ADJUST',
+        f'تعديل ساعات الخصم للموظف #{item.user_id} إلى {hours:.2f} ساعة: {note}',
+        target_type='HR_ATT_DEDUCTION_RUN',
+        target_id=run.id,
+    )
+    db.session.commit()
+    flash('تم تحديث ساعات الخصم في المسودة فقط.', 'success')
+    return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+
+@portal_bp.route('/hr/deductions/<int:run_id>/approve', methods=['POST'])
+@login_required
+@_perm_any(HR_REQUESTS_APPROVE, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
+def hr_deduction_approve(run_id: int):
+    run = HRAttendanceDeductionRun.query.get_or_404(run_id)
+    if (run.status or '').upper() != 'DRAFT':
+        flash('عملية الخصم معتمدة مسبقاً.', 'info')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+    user_ids = [item.user_id for item in run.items]
+    month_start = f"{run.year:04d}-{run.month:02d}-01"
+    month_end = _end_of_month_str(run.year, run.month)
+
+    duplicate = (
+        HRAttendanceDeductionItem.query
+        .join(HRAttendanceDeductionRun, HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id)
+        .filter(HRAttendanceDeductionRun.id != run.id)
+        .filter(HRAttendanceDeductionRun.status == 'FINAL')
+        .filter(HRAttendanceDeductionRun.year == run.year)
+        .filter(HRAttendanceDeductionRun.month == run.month)
+        .filter(HRAttendanceDeductionItem.user_id.in_(user_ids))
+        .first()
+    )
+    if duplicate:
+        flash('يوجد خصم معتمد لنفس الشهر ولبعض الموظفين. أنشئ معاينة للموظفين غير المعتمدين فقط.', 'danger')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    pending_leave = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(user_ids))
+        .filter(HRLeaveRequest.status == 'SUBMITTED')
+        .filter(HRLeaveRequest.start_date <= month_end)
+        .filter(HRLeaveRequest.end_date >= month_start)
+        .first()
+    )
+    pending_permission = (
+        HRPermissionRequest.query
+        .filter(HRPermissionRequest.user_id.in_(user_ids))
+        .filter(HRPermissionRequest.status == 'SUBMITTED')
+        .filter(HRPermissionRequest.day >= month_start)
+        .filter(HRPermissionRequest.day <= month_end)
+        .first()
+    )
+    if pending_leave or pending_permission:
+        flash('لا يمكن اعتماد الخصم قبل معالجة جميع الإجازات والمغادرات المنتظرة ضمن الشهر.', 'warning')
+        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
+
+    run.status = 'FINAL'
+    run.approved_at = datetime.utcnow()
+    run.approved_by_id = current_user.id
+    run.approval_note = (request.form.get('approval_note') or '').strip() or None
+    _refresh_deduction_run_totals(run)
+    _portal_audit(
+        'HR_DEDUCTION_APPROVE',
+        f'اعتماد خصومات {run.year}-{run.month:02d}',
+        target_type='HR_ATT_DEDUCTION_RUN',
+        target_id=run.id,
+    )
+    db.session.commit()
+    flash('تم اعتماد الخصم. انعكس خصم الإجازة على الرصيد، وأصبح خصم الراتب نهائياً.', 'success')
+    return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
 
 @portal_bp.route('/hr/deductions/yearly')
@@ -9735,12 +10320,176 @@ def hr_rooms_toggle(room_id: int):
     return redirect(url_for('portal.hr_rooms_manage'))
 
 
-@portal_bp.route('/hr/system-screens')
+@portal_bp.route('/hr/system-screens', methods=['GET', 'POST'])
 @login_required
 @_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
 def hr_system_screens():
-    """شاشات النظام: صفحة روابط تشخيصية/مختصرة."""
-    return render_template('portal/hr/system_screens.html')
+    """Unified HR policy builder and operating map."""
+    _ensure_work_policy_tables()
+    can_manage = _hr_can_manage()
+
+    def _form_int(name: str, default: int, minimum: int = 0) -> int:
+        try:
+            return max(minimum, int(request.form.get(name) or default))
+        except Exception:
+            return default
+
+    def _policy_for_setting(setting_key: str, default_name: str) -> WorkPolicy:
+        raw_id = (_setting_get(setting_key) or '').strip()
+        policy = WorkPolicy.query.get(int(raw_id)) if raw_id.isdigit() else None
+        if not policy:
+            policy = WorkPolicy(name=default_name, created_by_id=getattr(current_user, 'id', None))
+            db.session.add(policy)
+            db.session.flush()
+            _setting_set(setting_key, str(policy.id))
+        return policy
+
+    if request.method == 'POST':
+        if not can_manage:
+            abort(403)
+
+        start_time = _parse_hhmm(request.form.get('start_time') or '08:00')
+        end_time = _parse_hhmm(request.form.get('end_time') or '15:00')
+        if not start_time or not end_time:
+            flash('وقت بداية أو نهاية الدوام غير صحيح.', 'danger')
+            return redirect(url_for('portal.hr_system_screens'))
+
+        start_grace = _form_int('start_grace_minutes', 15)
+        end_grace = _form_int('end_grace_minutes', 15)
+        allowed_permission_hours = _form_int('permission_allowance_hours', 6)
+        hours_per_day = _form_int('hours_per_day', 7, 1)
+        annual_leave_type_id = (request.form.get('annual_leave_type_id') or '').strip()
+        annual_leave_type_id = int(annual_leave_type_id) if annual_leave_type_id.isdigit() else None
+
+        schedule_id = (_setting_get('HR_DEFAULT_SCHEDULE_ID') or '').strip()
+        schedule = WorkSchedule.query.get(int(schedule_id)) if schedule_id.isdigit() else None
+        if not schedule:
+            schedule = WorkSchedule(name='الدوام الاعتيادي 08:00–15:00', kind='FIXED')
+            db.session.add(schedule)
+            db.session.flush()
+            _setting_set('HR_DEFAULT_SCHEDULE_ID', str(schedule.id))
+        schedule.name = (request.form.get('schedule_name') or '').strip() or 'الدوام الاعتيادي'
+        schedule.kind = 'FIXED'
+        schedule.start_time = start_time
+        schedule.end_time = end_time
+        schedule.grace_minutes = start_grace
+        schedule.start_grace_minutes = start_grace
+        schedule.end_grace_minutes = end_grace
+        schedule.is_active = True
+        schedule.created_by_id = getattr(current_user, 'id', None)
+
+        regular_days_mask = _days_mask_from_list(request.form.getlist('regular_days'))
+        if not regular_days_mask:
+            flash('اختر يوم عمل اعتيادي واحداً على الأقل.', 'danger')
+            return redirect(url_for('portal.hr_system_screens'))
+        regular_policy = _policy_for_setting('HR_REGULAR_POLICY_ID', 'سياسة الدوام الاعتيادي')
+        regular_policy.name = 'سياسة الدوام الاعتيادي'
+        regular_policy.days_policy = 'FIXED'
+        regular_policy.fixed_days_mask = regular_days_mask
+        regular_policy.location_policy = 'ONSITE'
+        regular_policy.hybrid_office_days = None
+        regular_policy.hybrid_remote_days = None
+        regular_policy.hybrid_selection_mode = 'FLEXIBLE'
+        regular_policy.hybrid_fixed_days_mask = None
+        regular_policy.is_active = True
+
+        workdays_count = bin(regular_days_mask).count('1')
+        for prefix, setting_key, default_name, default_office_days in (
+            ('inside', 'HR_RAMALLAH_POLICY_ID', 'دوام هجين — داخل محافظة رام الله', 3),
+            ('outside', 'HR_OUTSIDE_RAMALLAH_POLICY_ID', 'دوام هجين — خارج محافظة رام الله', 2),
+        ):
+            office_days = min(workdays_count, _form_int(f'{prefix}_office_days', default_office_days))
+            mode = (request.form.get(f'{prefix}_selection_mode') or 'FLEXIBLE').strip().upper()
+            if mode not in {'FLEXIBLE', 'FIXED'}:
+                mode = 'FLEXIBLE'
+            fixed_mask = _days_mask_from_list(request.form.getlist(f'{prefix}_fixed_days'))
+            if mode == 'FIXED' and bin(fixed_mask).count('1') != office_days:
+                flash(f'عدد الأيام الثابتة في سياسة {default_name} يجب أن يساوي {office_days}.', 'danger')
+                return redirect(url_for('portal.hr_system_screens'))
+            policy = _policy_for_setting(setting_key, default_name)
+            policy.name = default_name
+            policy.days_policy = 'HYBRID_WEEKLY_QUOTA'
+            policy.fixed_days_mask = None
+            policy.hybrid_office_days = office_days
+            policy.hybrid_remote_days = max(0, workdays_count - office_days)
+            policy.hybrid_selection_mode = mode
+            policy.hybrid_fixed_days_mask = fixed_mask if mode == 'FIXED' else None
+            policy.location_policy = 'HYBRID'
+            policy.is_active = True
+
+        cfg = HRAttendanceDeductionConfig.query.order_by(HRAttendanceDeductionConfig.updated_at.desc()).first()
+        if not cfg:
+            cfg = HRAttendanceDeductionConfig()
+            db.session.add(cfg)
+        cfg.hours_per_day = float(hours_per_day)
+        cfg.permission_allowance_hours = float(allowed_permission_hours)
+        cfg.annual_leave_type_id = annual_leave_type_id
+        cfg.deduction_sequence = 'LEAVE_THEN_SALARY'
+        cfg.require_approval = True
+        cfg.note = (request.form.get('policy_note') or '').strip() or None
+        cfg.updated_at = datetime.utcnow()
+        cfg.updated_by_id = getattr(current_user, 'id', None)
+
+        _setting_set('HR_ALLOWED_PERMISSION_HOURS_MONTH', str(allowed_permission_hours))
+        _setting_set('HR_WORKDAY_HOURS', str(hours_per_day))
+        _setting_set('HR_EXCESS_PERM_DEDUCT_LEAVE_TYPE_ID', str(annual_leave_type_id or ''))
+        _setting_set('HR_ATTENDANCE_POLICY_NOTE', cfg.note or '')
+        _portal_audit(
+            'HR_POLICY_FOUNDATION_UPDATE',
+            'تحديث الإعداد الموحد للدوام والسماح والخصومات',
+            target_type='SYSTEM',
+            target_id=None,
+        )
+        db.session.commit()
+        flash('تم حفظ منظومة الدوام والخصم. التغييرات الجديدة أصبحت أساس المعاينة القادمة.', 'success')
+        return redirect(url_for('portal.hr_system_screens'))
+
+    default_schedule_id = (_setting_get('HR_DEFAULT_SCHEDULE_ID') or '').strip()
+    schedule = WorkSchedule.query.get(int(default_schedule_id)) if default_schedule_id.isdigit() else None
+    cfg = HRAttendanceDeductionConfig.query.order_by(HRAttendanceDeductionConfig.updated_at.desc()).first()
+
+    def _load_policy(setting_key: str):
+        raw_id = (_setting_get(setting_key) or '').strip()
+        return WorkPolicy.query.get(int(raw_id)) if raw_id.isdigit() else None
+
+    policies = {
+        'regular': _load_policy('HR_REGULAR_POLICY_ID'),
+        'inside': _load_policy('HR_RAMALLAH_POLICY_ID'),
+        'outside': _load_policy('HR_OUTSIDE_RAMALLAH_POLICY_ID'),
+    }
+    pending_leave_count = HRLeaveRequest.query.filter_by(status='SUBMITTED').count()
+    pending_permission_count = HRPermissionRequest.query.filter_by(status='SUBMITTED').count()
+    draft_deduction_count = HRAttendanceDeductionRun.query.filter_by(status='DRAFT').count()
+    active_assignment_count = WorkAssignment.query.filter_by(is_active=True).count()
+    leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
+
+    can_approve = False
+    try:
+        can_approve = bool(
+            current_user.has_perm(HR_REQUESTS_APPROVE)
+            or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
+            or current_user.has_perm(HR_MASTERDATA_MANAGE)
+        )
+    except Exception:
+        pass
+
+    return render_template(
+        'portal/hr/system_screens.html',
+        can_manage=can_manage,
+        can_approve=can_approve,
+        schedule=schedule,
+        cfg=cfg,
+        policies=policies,
+        weekdays=_WEEKDAYS_AR,
+        leave_types=leave_types,
+        pending_leave_count=pending_leave_count,
+        pending_permission_count=pending_permission_count,
+        draft_deduction_count=draft_deduction_count,
+        active_assignment_count=active_assignment_count,
+        default_permission_hours=_default_allowed_permission_hours(),
+        default_workday_hours=_workday_hours(),
+        policy_note=_setting_get('HR_ATTENDANCE_POLICY_NOTE', ''),
+    )
 
 @portal_bp.route("/hr/me")
 @login_required
@@ -10255,10 +11004,9 @@ def hr_leave_request_new():
         decided_at = None
         decided_by_id = None
 
-        if lt.requires_approval is False and not exceptional:
-            status = "APPROVED"
-            decided_at = submitted_at
-            decided_by_id = current_user.id
+        # All submitted leave types require the employee's responsible
+        # manager. The type-level flag is retained for compatibility, but no
+        # longer bypasses this mandatory approval gate.
 
         is_external = bool(getattr(lt, "is_external", False))
 
@@ -10452,7 +11200,14 @@ def hr_permission_request_new():
     try:
         if not current_user.has_perm(HR_READ):
             abort(403)
-        if not current_user.has_perm(HR_REQUESTS_CREATE):
+        can_submit_permission = any([
+            current_user.has_perm(HR_REQUESTS_CREATE),
+            current_user.has_perm(HR_REQUESTS_APPROVE),
+            current_user.has_perm(HR_REQUESTS_VIEW_ALL),
+            current_user.has_perm(HR_EMP_MANAGE),
+            current_user.has_perm(HR_MASTERDATA_MANAGE),
+        ])
+        if not can_submit_permission:
             abort(403)
     except Exception:
         abort(403)
@@ -10466,6 +11221,8 @@ def hr_permission_request_new():
     try:
         can_pick_any = bool(
             current_user.has_perm(HR_REQUESTS_VIEW_ALL)
+            or current_user.has_perm(HR_EMP_MANAGE)
+            or current_user.has_perm(HR_MASTERDATA_MANAGE)
             or current_user.has_role("SUPER_ADMIN")
             or current_user.has_role("SUPERADMIN")
         )
@@ -10594,25 +11351,16 @@ def hr_permission_request_new():
         decided_at = None
         approver_user_id = None
 
-        # For admin-entry, consider it approved directly
-        if is_admin_entry:
-            status = "APPROVED"
-            decided_by_id = current_user.id
-            decided_at = datetime.utcnow()
-        else:
-            if not pt.requires_approval:
-                status = "APPROVED"
-                decided_by_id = current_user.id
-                decided_at = datetime.utcnow()
-            else:
-                approver_user_id = _hr_find_approver_for_user(target_user_id)
+        # Entry on behalf of an employee is not approval. Every chargeable
+        # permission remains pending until the responsible manager approves it.
+        approver_user_id = _hr_find_approver_for_user(target_user_id)
 
         req = HRPermissionRequest(
             user_id=target_user_id,
             permission_type_id=permission_type_id,
             day=day,
-            from_time=f"{ft.hour:02d}:{ft.minute:02d}" if ft else None,
-            to_time=f"{tt.hour:02d}:{tt.minute:02d}" if tt else None,
+            from_time=ft,
+            to_time=tt,
             note=note or None,
             status=status,
             submitted_at=datetime.utcnow() if status in {"SUBMITTED", "APPROVED"} else None,
@@ -10807,8 +11555,8 @@ def hr_permission_request_edit(req_id: int):
         r.user_id = target_user_id
         r.permission_type_id = permission_type_id
         r.day = day
-        r.from_time = f"{ft.hour:02d}:{ft.minute:02d}" if ft else None
-        r.to_time = f"{tt.hour:02d}:{tt.minute:02d}" if tt else None
+        r.from_time = ft
+        r.to_time = tt
         r.note = note or None
         r.updated_at = datetime.utcnow()
 
@@ -12441,6 +13189,344 @@ def hr_employees():
     return render_template("portal/hr/employees.html", users=users, q=q, files=files)
 
 
+@portal_bp.route("/hr/employees/data-collection-form")
+@login_required
+def hr_employee_data_collection_form():
+    """Interactive employee questionnaire; official HR records stay unchanged."""
+    return render_template(
+        "portal/hr/employee_data_collection_form.html",
+        generated_on=datetime.now(),
+        offline_mode=False,
+    )
+
+
+def _employee_submission_require_csrf() -> None:
+    token = request.headers.get("X-CSRFToken") or request.form.get("csrf_token")
+    try:
+        validate_csrf(token)
+    except ValidationError:
+        abort(400, description="رمز حماية النموذج غير صالح. حدّث الصفحة وحاول مجددًا.")
+
+
+def _employee_form_inline_image(filename: str) -> str:
+    path = Path(current_app.static_folder or "static") / "images" / filename
+    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return f"data:{mime};base64,{data}"
+
+
+def _create_employee_data_submission(
+    *,
+    employee: User,
+    submitted_by: User,
+    payload: dict,
+    source: str,
+    original_filename: str | None = None,
+) -> tuple[EmployeeDataSubmission, bool]:
+    validate_employee_payload(payload)
+    payload_hash = canonical_payload_hash(payload)
+    existing = EmployeeDataSubmission.query.filter_by(
+        employee_user_id=employee.id,
+        payload_sha256=payload_hash,
+    ).first()
+    if existing:
+        return existing, False
+
+    row = EmployeeDataSubmission(
+        employee_user_id=employee.id,
+        submitted_by_id=submitted_by.id,
+        source=source,
+        status="PENDING",
+        schema_version=(payload.get("schema") or "EMP-DATA-FORM/V1.1")[:50],
+        payload_json=json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        payload_sha256=payload_hash,
+        original_filename=(original_filename or "")[:255] or None,
+        submitted_at=datetime.utcnow(),
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    db.session.add(row)
+    db.session.flush()
+    _portal_audit(
+        action="HR_EMPLOYEE_DATA_SUBMIT",
+        note=f"تقديم استبيان بيانات موظف ({source}) للموظف: {employee.email}",
+        target_type="EMPLOYEE_DATA_SUBMISSION",
+        target_id=row.id,
+    )
+    return row, True
+
+
+@portal_bp.route("/hr/employees/data-collection-form/offline")
+@login_required
+def hr_employee_data_collection_form_offline():
+    """Download one self-contained interactive HTML form for offline entry."""
+    html = render_template(
+        "portal/hr/employee_data_collection_form.html",
+        generated_on=datetime.now(),
+        offline_mode=True,
+        offline_pncecs_logo=_employee_form_inline_image("pncecs_logo.png"),
+        offline_masar_logo=_employee_form_inline_image("logo.png"),
+    )
+    return send_file(
+        io.BytesIO(html.encode("utf-8")),
+        mimetype="text/html; charset=utf-8",
+        as_attachment=True,
+        download_name="employee-data-form-offline.html",
+    )
+
+
+@portal_bp.route("/hr/employees/data-collection-form/word")
+@login_required
+def hr_employee_data_collection_form_word():
+    """Download the controlled, importable Word version of the questionnaire."""
+    return send_file(
+        io.BytesIO(build_employee_word_form()),
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name="employee-data-form.docx",
+    )
+
+
+@portal_bp.route("/hr/employee-data-submissions/online", methods=["POST"])
+@login_required
+def hr_employee_data_submission_online():
+    """Stage the logged-in employee's online answers for HR review."""
+    _employee_submission_require_csrf()
+    try:
+        payload = validate_employee_payload(request.get_json(silent=True))
+        employee_info = payload.setdefault("employee", {})
+        employee_info["user_id"] = current_user.id
+        employee_info["account_email"] = current_user.email
+        row, created = _create_employee_data_submission(
+            employee=current_user,
+            submitted_by=current_user,
+            payload=payload,
+            source="ONLINE",
+        )
+        db.session.commit()
+        return jsonify({
+            "ok": True,
+            "created": created,
+            "submission_id": row.id,
+            "status": row.status,
+            "message": "تم إرسال الإجابات إلى الموارد البشرية للمراجعة." if created else "هذه الإجابات مرسلة سابقًا.",
+        })
+    except EmployeeDataImportError as exc:
+        db.session.rollback()
+        return jsonify({"ok": False, "message": str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Employee data online submission failed")
+        return jsonify({"ok": False, "message": "تعذر إرسال الإجابات في الوقت الحالي."}), 500
+
+
+@portal_bp.route("/hr/employee-data-submissions")
+@login_required
+@_perm_any(HR_EMP_READ, HR_EMP_MANAGE)
+def hr_employee_data_submissions():
+    status = (request.args.get("status") or "PENDING").strip().upper()
+    if status not in {"PENDING", "APPLIED", "REJECTED", "ALL"}:
+        status = "PENDING"
+    query = EmployeeDataSubmission.query
+    if status != "ALL":
+        query = query.filter_by(status=status)
+    rows = query.order_by(EmployeeDataSubmission.submitted_at.desc(), EmployeeDataSubmission.id.desc()).limit(1000).all()
+    users = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).limit(5000).all()
+    counts = {
+        key: EmployeeDataSubmission.query.filter_by(status=key).count()
+        for key in ("PENDING", "APPLIED", "REJECTED")
+    }
+    return render_template(
+        "portal/hr/employee_data_submissions.html",
+        rows=rows,
+        users=users,
+        selected_status=status,
+        counts=counts,
+    )
+
+
+@portal_bp.route("/hr/employee-data-submissions/upload", methods=["POST"])
+@login_required
+@_perm(HR_EMP_MANAGE)
+def hr_employee_data_submission_upload():
+    _employee_submission_require_csrf()
+    target_user_id = _to_int(request.form.get("employee_user_id"))
+    employee = User.query.get(target_user_id) if target_user_id else None
+    upload = request.files.get("answers_file")
+    if not employee or not upload or not upload.filename:
+        flash("اختر الموظف وملف الإجابات JSON أو Word.", "warning")
+        return redirect(url_for("portal.hr_employee_data_submissions"))
+    original_name = clean_original_filename(upload.filename)
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in {".json", ".docx"}:
+        flash("يجب رفع ملف JSON أو نموذج Word DOCX صادر عن نموذج بيانات الموظف.", "danger")
+        return redirect(url_for("portal.hr_employee_data_submissions"))
+    raw = upload.stream.read((5 * 1024 * 1024) + 1)
+    if len(raw) > 5 * 1024 * 1024:
+        flash("حجم ملف الإجابات يتجاوز 5 ميجابايت.", "danger")
+        return redirect(url_for("portal.hr_employee_data_submissions"))
+    try:
+        payload = parse_employee_word_form(raw) if suffix == ".docx" else json.loads(raw.decode("utf-8-sig"))
+        payload = validate_employee_payload(payload)
+        payload.setdefault("employee", {})["user_id"] = employee.id
+        row, created = _create_employee_data_submission(
+            employee=employee,
+            submitted_by=current_user,
+            payload=payload,
+            source="OFFLINE",
+            original_filename=original_name,
+        )
+        db.session.commit()
+        flash("تم رفع ملف الإجابات وأصبح جاهزًا للمراجعة." if created else "هذا الملف مرفوع سابقًا؛ تم فتح السجل الموجود.", "success" if created else "info")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+    except (UnicodeDecodeError, json.JSONDecodeError, EmployeeDataImportError) as exc:
+        db.session.rollback()
+        flash(f"ملف الإجابات غير صالح: {exc}", "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Employee data offline upload failed")
+        flash("تعذر رفع ملف الإجابات.", "danger")
+    return redirect(url_for("portal.hr_employee_data_submissions"))
+
+
+@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>")
+@login_required
+@_perm_any(HR_EMP_READ, HR_EMP_MANAGE)
+def hr_employee_data_submission_view(submission_id: int):
+    row = EmployeeDataSubmission.query.get_or_404(submission_id)
+    try:
+        plan = build_employee_import_plan(row.payload(), row.employee)
+    except EmployeeDataImportError as exc:
+        plan = exc.plan or {"operations": [], "unresolved": [{"field": "الملف", "value": "", "reason": str(exc)}], "dependents": [], "qualifications": [], "secondments": []}
+    return render_template(
+        "portal/hr/employee_data_submission_view.html",
+        item=row,
+        plan=plan,
+    )
+
+
+@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/correct", methods=["POST"])
+@login_required
+@_perm(HR_EMP_MANAGE)
+def hr_employee_data_submission_correct(submission_id: int):
+    """Save HR corrections into the staged import payload before applying it."""
+    _employee_submission_require_csrf()
+    row = EmployeeDataSubmission.query.get_or_404(submission_id)
+    if row.status != "PENDING":
+        flash("لا يمكن تعديل طلب تمت معالجته سابقاً.", "warning")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+    payload = row.payload()
+    fields = payload.setdefault("fields", {})
+    changed = 0
+    for key, value in request.form.items():
+        if not key.startswith("correction_"):
+            continue
+        field = key.removeprefix("correction_")
+        cleaned = (value or "").strip()
+        current_raw = fields.get(field) or []
+        if not isinstance(current_raw, list):
+            current_raw = [current_raw]
+        first_value = current_raw[0] if current_raw else ""
+        current = (first_value.get("value") if isinstance(first_value, dict) else first_value) or ""
+        current = str(current).strip()
+        if cleaned == current:
+            continue
+        fields[field] = [{"value": cleaned, "entry_id": field, "occurrence": 1}]
+        changed += 1
+
+    if not changed:
+        flash("لم يتم تغيير أي قيمة.", "info")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+    try:
+        validate_employee_payload(payload)
+        row.payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        row.payload_sha256 = canonical_payload_hash(payload)
+        row.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash("تم حفظ التصحيحات وإعادة فحص الطلب. يمكنك الآن الاعتماد عند اختفاء التنبيهات.", "success")
+    except EmployeeDataImportError as exc:
+        db.session.rollback()
+        flash(f"تعذر حفظ التصحيحات: {exc}", "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Employee data submission correction failed")
+        flash("تعذر حفظ التصحيحات.", "danger")
+    return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+
+@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/apply", methods=["POST"])
+@login_required
+@_perm(HR_EMP_MANAGE)
+def hr_employee_data_submission_apply(submission_id: int):
+    _employee_submission_require_csrf()
+    row = EmployeeDataSubmission.query.get_or_404(submission_id)
+    if row.status != "PENDING":
+        flash("تمت معالجة هذا التقديم سابقًا.", "warning")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+    create_missing = (request.form.get("create_missing_lookups") or "") == "1"
+    try:
+        summary = apply_employee_import_payload(
+            row.payload(),
+            row.employee,
+            current_user.id,
+            create_missing_lookups=create_missing,
+        )
+        row.status = "APPLIED"
+        row.reviewed_by_id = current_user.id
+        row.reviewed_at = datetime.utcnow()
+        row.applied_at = datetime.utcnow()
+        row.review_note = _to_str(request.form.get("review_note"))
+        row.apply_summary_json = json.dumps(summary, ensure_ascii=False, separators=(",", ":"))
+        row.updated_at = datetime.utcnow()
+        _portal_audit(
+            action="HR_EMPLOYEE_DATA_APPLY",
+            note=f"اعتماد وتفريغ استبيان بيانات الموظف: {row.employee.email}",
+            target_type="EMPLOYEE_DATA_SUBMISSION",
+            target_id=row.id,
+        )
+        db.session.commit()
+        flash("تم اعتماد الإجابات وتوزيعها على ملف الموظف بنجاح.", "success")
+    except EmployeeDataImportError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Employee data submission apply failed")
+        flash("تعذر تفريغ الإجابات؛ لم يُحفظ أي تغيير.", "danger")
+    return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+
+@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/reject", methods=["POST"])
+@login_required
+@_perm(HR_EMP_MANAGE)
+def hr_employee_data_submission_reject(submission_id: int):
+    _employee_submission_require_csrf()
+    row = EmployeeDataSubmission.query.get_or_404(submission_id)
+    if row.status != "PENDING":
+        flash("تمت معالجة هذا التقديم سابقًا.", "warning")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+    note = _to_str(request.form.get("review_note"))
+    if not note:
+        flash("اكتب سبب الرفض.", "warning")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+    row.status = "REJECTED"
+    row.reviewed_by_id = current_user.id
+    row.reviewed_at = datetime.utcnow()
+    row.review_note = note
+    row.updated_at = datetime.utcnow()
+    _portal_audit(
+        action="HR_EMPLOYEE_DATA_REJECT",
+        note=f"رفض استبيان بيانات الموظف: {row.employee.email} - {note}",
+        target_type="EMPLOYEE_DATA_SUBMISSION",
+        target_id=row.id,
+    )
+    db.session.commit()
+    flash("تم رفض التقديم دون تعديل ملف الموظف.", "info")
+    return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+
 
 
 def _employee_upload_dir(user_id: int) -> Path:
@@ -12914,6 +14000,7 @@ def hr_employee_qualification_new(user_id: int):
             qualification_date=_to_str(request.form.get('qualification_date')),
             university_lookup_id=_to_int(request.form.get('university_lookup_id')),
             country_lookup_id=_to_int(request.form.get('country_lookup_id')),
+            notes=_to_str(request.form.get('notes')),
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
             updated_by_id=current_user.id,
@@ -12972,6 +14059,7 @@ def hr_employee_qualification_edit(user_id: int, qual_id: int):
         qual.qualification_date = _to_str(request.form.get('qualification_date'))
         qual.university_lookup_id = _to_int(request.form.get('university_lookup_id'))
         qual.country_lookup_id = _to_int(request.form.get('country_lookup_id'))
+        qual.notes = _to_str(request.form.get('notes'))
         qual.updated_at = datetime.utcnow()
         qual.updated_by_id = current_user.id
 
@@ -15301,7 +16389,7 @@ def _setting_set(key: str, value: str | None):
         row.value = (value or "")
 
 
-def _parse_hhmm(s: str | None):
+def _parse_hhmm_minutes(s: str | None):
     if not s:
         return None
     s = s.strip()
@@ -15359,6 +16447,10 @@ def _work_policy_days_label(p: WorkPolicy | None) -> str:
     if dp == "HYBRID_WEEKLY_QUOTA":
         off = p.hybrid_office_days or 0
         rem = p.hybrid_remote_days or 0
+        if (getattr(p, "hybrid_selection_mode", None) or "FLEXIBLE").upper() == "FIXED":
+            names = _days_mask_to_names(getattr(p, "hybrid_fixed_days_mask", None))
+            suffix = "، ".join(names) if names else "أيام ثابتة غير محددة"
+            return f"ثابت هجينيًا ({off} مكتب + {rem} عن بعد: {suffix})"
         return f"مرن أسبوعيًا ({off} مكتب + {rem} عن بعد)"
     # FIXED
     names = _days_mask_to_names(p.fixed_days_mask)
@@ -16499,34 +17591,51 @@ def _get_monthly_allowed_hours(user_id: int, year: int, month: int) -> int:
     return int(_default_allowed_permission_hours())
 
 
-def _permission_hours_in_range(user_id: int, start_day: str, end_day: str) -> int:
-    """Sum approved permission hours (departures) in range [start_day, end_day].
-
-    We exclude permission types that are marked counts_as_work.
-    """
-    if not start_day or not end_day or end_day < start_day:
-        return 0
+def _permission_request_minutes(row: HRPermissionRequest) -> int:
+    """Resolve a permission duration without losing partial hours."""
+    start = _parse_hhmm_minutes(getattr(row, 'from_time', None))
+    end = _parse_hhmm_minutes(getattr(row, 'to_time', None))
+    if start is not None and end is not None and end >= start:
+        return int(end - start)
     try:
-        q = (HRPermissionRequest.query
-             .join(HRPermissionType, HRPermissionRequest.permission_type_id == HRPermissionType.id)
-             .filter(HRPermissionRequest.user_id == user_id)
-             .filter(HRPermissionRequest.status == 'APPROVED')
-             .filter(HRPermissionType.counts_as_work == False)  # noqa: E712
-             .filter(HRPermissionRequest.day >= start_day)
-             .filter(HRPermissionRequest.day <= end_day))
-        rows = q.all()
-        total = 0
-        for r in rows:
-            try:
-                total += int(r.hours or 0)
-            except Exception:
-                continue
-        return int(total)
+        return max(0, int(round(float(row.hours or 0) * 60)))
     except Exception:
         return 0
 
 
-def _permission_excess_hours_year(user_id: int, year: int, as_of_str: str) -> int:
+def _permission_minutes_in_range(user_id: int, start_day: str, end_day: str) -> int:
+    """Sum approved, chargeable permission minutes in the given date range."""
+    if not start_day or not end_day or end_day < start_day:
+        return 0
+    try:
+        rows = (
+            HRPermissionRequest.query
+            .join(HRPermissionType, HRPermissionRequest.permission_type_id == HRPermissionType.id)
+            .filter(HRPermissionRequest.user_id == user_id)
+            .filter(HRPermissionRequest.status == 'APPROVED')
+            .filter(HRPermissionType.counts_as_work == False)  # noqa: E712
+            .filter(HRPermissionRequest.day >= start_day)
+            .filter(HRPermissionRequest.day <= end_day)
+            .all()
+        )
+        return int(sum(
+            _permission_request_minutes(row)
+            for row in rows
+            if not _attendance_exemption_reason(user_id, row.day)
+        ))
+    except Exception:
+        return 0
+
+
+def _permission_hours_in_range(user_id: int, start_day: str, end_day: str) -> float:
+    """Sum approved permission hours (departures) in range [start_day, end_day].
+
+    We exclude permission types that are marked counts_as_work.
+    """
+    return float(_permission_minutes_in_range(user_id, start_day, end_day)) / 60.0
+
+
+def _permission_excess_hours_year(user_id: int, year: int, as_of_str: str) -> float:
     """Compute total excess permission hours in a year up to as_of_str."""
     try:
         # If year is in the future, no excess.
@@ -16535,7 +17644,7 @@ def _permission_excess_hours_year(user_id: int, year: int, as_of_str: str) -> in
     except Exception:
         pass
 
-    total_excess = 0
+    total_excess = 0.0
     for m in range(1, 13):
         m_start = f"{year:04d}-{m:02d}-01"
         m_end = _end_of_month_str(year, m)
@@ -16545,8 +17654,8 @@ def _permission_excess_hours_year(user_id: int, year: int, as_of_str: str) -> in
             continue
         used = _permission_hours_in_range(user_id, m_start, end)
         allowed = _get_monthly_allowed_hours(user_id, year, m)
-        total_excess += max(0, int(used) - int(allowed))
-    return int(total_excess)
+        total_excess += max(0.0, float(used) - float(allowed))
+    return float(total_excess)
 
 
 def _permission_excess_leave_type_id() -> int | None:
@@ -16624,13 +17733,20 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
             days = (e - s).days + 1
             total += float(days)
 
-        # Add permission-excess deduction (treated as fractional leave) on one selected leave type
+        # Add only approved deduction runs. Draft previews must never affect
+        # leave balances or salary reports.
         try:
-            excess_lt_id = _permission_excess_leave_type_id()
-            if excess_lt_id and int(excess_lt_id) == int(leave_type_id):
-                workday_hours = _workday_hours()
-                excess_hours = _permission_excess_hours_year(user_id, year, as_of_str)
-                total += float(excess_hours) / float(workday_hours)
+            approved_days = (
+                db.session.query(func.coalesce(func.sum(HRAttendanceDeductionItem.leave_deduction_days), 0.0))
+                .join(HRAttendanceDeductionRun, HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id)
+                .filter(HRAttendanceDeductionItem.user_id == user_id)
+                .filter(HRAttendanceDeductionItem.deduction_leave_type_id == leave_type_id)
+                .filter(HRAttendanceDeductionRun.status == 'FINAL')
+                .filter(HRAttendanceDeductionRun.year == year)
+                .filter(HRAttendanceDeductionRun.month <= as_of.month)
+                .scalar()
+            )
+            total += float(approved_days or 0.0)
         except Exception:
             pass
 
@@ -17896,6 +19012,63 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
 # -------------------------
 
 
+def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
+    """Return why a day must not create attendance deductions."""
+    day_obj = _parse_yyyy_mm_dd(day_str)
+    if not day_obj:
+        return None
+
+    try:
+        if _is_weekly_off(day_obj, _weekly_mask()):
+            return "WEEKLY_OFF"
+    except Exception:
+        pass
+
+    try:
+        if HROfficialOccasion.query.filter_by(day=day_str, is_day_off=True).first():
+            return "OFFICIAL_HOLIDAY"
+    except Exception:
+        pass
+
+    try:
+        from models import HROfficialOccasionRange
+
+        employee = EmployeeFile.query.filter_by(user_id=user_id).first()
+        gov_id = getattr(employee, "work_governorate_lookup_id", None) if employee else None
+        loc_id = getattr(employee, "work_location_lookup_id", None) if employee else None
+        occasions = (
+            HROfficialOccasionRange.query
+            .filter(HROfficialOccasionRange.start_day <= day_str)
+            .filter(HROfficialOccasionRange.end_day >= day_str)
+            .filter(HROfficialOccasionRange.is_day_off == True)  # noqa: E712
+            .all()
+        )
+        for occasion in occasions:
+            if occasion.work_governorate_lookup_id and occasion.work_governorate_lookup_id != gov_id:
+                continue
+            if occasion.work_location_lookup_id and occasion.work_location_lookup_id != loc_id:
+                continue
+            return "OFFICIAL_HOLIDAY"
+    except Exception:
+        pass
+
+    try:
+        approved_leave = (
+            HRLeaveRequest.query
+            .filter(HRLeaveRequest.user_id == user_id)
+            .filter(HRLeaveRequest.status == "APPROVED")
+            .filter(HRLeaveRequest.start_date <= day_str)
+            .filter(HRLeaveRequest.end_date >= day_str)
+            .first()
+        )
+        if approved_leave:
+            return "APPROVED_LEAVE"
+    except Exception:
+        pass
+
+    return None
+
+
 def _summary_compute_one(user_id: int, day_str: str):
     # Collect day events
     dt_from = datetime.fromisoformat(day_str + 'T00:00:00')
@@ -17922,9 +19095,18 @@ def _summary_compute_one(user_id: int, day_str: str):
 
     break_minutes = int(getattr(schedule, 'break_minutes', 0) or 0) if schedule else 0
     grace_minutes = int(getattr(schedule, 'grace_minutes', 0) or 0) if schedule else 0
+    start_grace_minutes = grace_minutes
+    end_grace_minutes = grace_minutes
+    if schedule:
+        if getattr(schedule, 'start_grace_minutes', None) is not None:
+            start_grace_minutes = int(schedule.start_grace_minutes or 0)
+        if getattr(schedule, 'end_grace_minutes', None) is not None:
+            end_grace_minutes = int(schedule.end_grace_minutes or 0)
 
     status = 'OK'
-    if not first_in or not last_out:
+    if not first_in and not last_out:
+        status = 'ABSENT'
+    elif not first_in or not last_out:
         status = 'INCOMPLETE'
 
     work_minutes = 0
@@ -17937,8 +19119,11 @@ def _summary_compute_one(user_id: int, day_str: str):
         if break_minutes:
             work_minutes = max(0, work_minutes - break_minutes)
 
-    # Compute late/early/overtime based on schedule times
-    if schedule and schedule.kind in ('FIXED', 'RAMADAN', 'SHIFT'):
+    exemption_reason = _attendance_exemption_reason(user_id, day_str)
+
+    # Compute late/early/overtime based on schedule times. Approved leave and
+    # religious/national/weekly holidays stay visible but never create a charge.
+    if not exemption_reason and schedule and schedule.kind in ('FIXED', 'RAMADAN', 'SHIFT'):
         weekday = _weekday_of(day_str)
         st = schedule.start_time
         en = schedule.end_time
@@ -17948,24 +19133,26 @@ def _summary_compute_one(user_id: int, day_str: str):
                 st = day_cfg.start_time or st
                 en = day_cfg.end_time or en
                 break_minutes = int(day_cfg.break_minutes or break_minutes)
-                grace_minutes = int(day_cfg.grace_minutes or grace_minutes)
+                day_grace = int(day_cfg.grace_minutes or grace_minutes)
+                start_grace_minutes = day_grace
+                end_grace_minutes = day_grace
 
-        st_min = _parse_hhmm(st)
-        en_min = _parse_hhmm(en)
+        st_min = _parse_hhmm_minutes(st)
+        en_min = _parse_hhmm_minutes(en)
 
         if first_in and st_min is not None:
             actual_in = first_in.hour * 60 + first_in.minute
-            late_minutes = max(0, actual_in - st_min - grace_minutes)
+            late_minutes = max(0, actual_in - st_min - start_grace_minutes)
 
         if last_out and en_min is not None:
             actual_out = last_out.hour * 60 + last_out.minute
-            early_leave_minutes = max(0, en_min - actual_out - grace_minutes)
+            early_leave_minutes = max(0, en_min - actual_out - end_grace_minutes)
 
             thr = schedule.overtime_threshold_minutes
             thr = int(thr) if (thr is not None) else 0
             overtime_minutes = max(0, actual_out - en_min - thr)
 
-    if schedule and schedule.kind in ('FLEX', 'REMOTE'):
+    if not exemption_reason and schedule and schedule.kind in ('FLEX', 'REMOTE'):
         # Late/Early undefined; overtime is minutes above required_minutes (if set)
         req = schedule.required_minutes or 0
         if req and work_minutes > req:
@@ -17982,7 +19169,7 @@ def _summary_compute_one(user_id: int, day_str: str):
         late_minutes=late_minutes,
         early_leave_minutes=early_leave_minutes,
         overtime_minutes=overtime_minutes,
-        status=status,
+        status=exemption_reason or status,
     )
 
 
@@ -19603,7 +20790,87 @@ def inbound_list():
         **filters
     )
 
+@portal_bp.route("/corr/inbound/analyze-attachment", methods=["POST"])
+@login_required
+@_perm(CORR_CREATE)
+def inbound_analyze_attachment():
+    """Extract local, reviewable suggestions from one manually selected file."""
+    upload = request.files.get("file")
+    try:
+        max_bytes = int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))
+        max_text_chars = int(current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
+        max_pdf_pages = int(current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40))
+        ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
+        ocr_enabled = str(ocr_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+        ocr_config = OcrConfig(
+            enabled=ocr_enabled,
+            command=str(current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract")),
+            languages=str(current_app.config.get("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")),
+            max_pages=int(current_app.config.get("CORR_INTAKE_OCR_MAX_PAGES", 10)),
+            dpi=int(current_app.config.get("CORR_INTAKE_OCR_DPI", 200)),
+            timeout_seconds=float(
+                current_app.config.get("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+            ),
+            max_image_pixels=int(
+                current_app.config.get("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+            ),
+        )
+        payload = read_limited_upload(upload, max_bytes)
 
+        category_rows = (
+            CorrCategory.query
+            .filter_by(is_active=True)
+            .order_by(CorrCategory.code.asc())
+            .all()
+        )
+        sender_rows = (
+            CorrParty.query
+            .filter(CorrParty.is_active == True)  # noqa: E712
+            .filter(CorrParty.kind.in_(["SENDER", "BOTH"]))
+            .order_by(CorrParty.name_ar.asc())
+            .all()
+        )
+        competence_options = _corr_competence_options()
+        workflow_templates = _corr_workflow_templates()
+
+        analysis = analyze_correspondence_attachment(
+            payload,
+            getattr(upload, "filename", "") or "attachment",
+            sender_choices=[
+                {"value": row.label, "label": row.label}
+                for row in sender_rows
+                if row.label
+            ],
+            category_choices=[
+                {"value": row.code, "label": row.label}
+                for row in category_rows
+                if row.code
+            ],
+            competence_choices=competence_options,
+            workflow_choices=[
+                {"value": str(template.id), "label": template.name}
+                for template in workflow_templates
+            ],
+            received_date=date.today().isoformat(),
+            max_text_chars=max_text_chars,
+            max_pdf_pages=max_pdf_pages,
+            ocr_config=ocr_config,
+        )
+        return jsonify({"ok": True, "analysis": analysis})
+    except CorrespondenceIntakeError as exc:
+        return jsonify({
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }), exc.status_code
+    except Exception:
+        current_app.logger.exception("Failed to analyze inbound correspondence attachment")
+        return jsonify({
+            "ok": False,
+            "error": {
+                "code": "ANALYSIS_FAILED",
+                "message": "تعذر تحليل المرفق حالياً. يمكنك متابعة التسجيل اليدوي.",
+            },
+        }), 500
 
 
 @portal_bp.route("/corr/inbound/new", methods=["GET", "POST"])
@@ -19611,6 +20878,10 @@ def inbound_list():
 @_perm(CORR_CREATE)
 def inbound_new():
     _ensure_corr_competence_schema()
+    intake_max_bytes = max(
+        1,
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
+    )
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
     workflow_templates = _corr_workflow_templates()
@@ -19641,10 +20912,11 @@ def inbound_new():
             flash("التاريخ والموضوع مطلوبان.", "danger")
             return redirect(request.url)
 
-        files = request.files.getlist("files") or []
-        if not any(getattr(f, "filename", "") for f in files):
-            flash("رفع ملف/ملفات مطلوب لتسجيل الوارد.", "danger")
-            return redirect(request.url)
+        files = [
+            uploaded_file
+            for uploaded_file in (request.files.getlist("files") or [])
+            if getattr(uploaded_file, "filename", "")
+        ]
 
         try:
             ref_no = _corr_next_ref("IN", received_date)
@@ -19690,9 +20962,9 @@ def inbound_new():
             stamp_options=stamp_options,
             movement_id=movement.id,
         )
-        if not saved:
+        if files and not saved:
             db.session.rollback()
-            flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
+            flash("لم يتم قبول الملف المختار (تحقق من نوعه).", "danger")
             return redirect(request.url)
 
         affected_user_ids = _corr_notification_recipient_ids(
@@ -19737,6 +21009,30 @@ def inbound_new():
         except Exception:
             db.session.rollback()
 
+        if request.form.get("submit_action") == "save_and_start":
+            try:
+                attachments = (
+                    CorrAttachment.query
+                    .filter_by(inbound_id=item.id)
+                    .order_by(CorrAttachment.id.asc())
+                    .all()
+                )
+                workflow_request = _start_corr_workflow(
+                    "IN",
+                    item,
+                    attachments,
+                    request.form.get("workflow_template_id"),
+                )
+                if workflow_request:
+                    return redirect(url_for("workflow.view_request", request_id=workflow_request.id))
+            except Exception:
+                db.session.rollback()
+                current_app.logger.exception(
+                    "Inbound correspondence was saved but its workflow could not be started"
+                )
+                flash("تم تسجيل الوارد، لكن تعذر بدء المسار. يمكن بدء المسار من صفحة الوارد.", "warning")
+                return redirect(url_for("portal.inbound_view", inbound_id=item.id))
+
         flash("تم تسجيل الوارد.", "success")
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
 
@@ -19747,6 +21043,8 @@ def inbound_new():
         competence_options=competence_options,
         workflow_templates=workflow_templates,
         confidential_user_options=confidential_user_options,
+        intake_max_bytes=intake_max_bytes,
+        intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
         selected_confidential_user_ids={
             int(value) for value in request.form.getlist("authorized_user_ids") if value.isdigit()
         },
@@ -19820,11 +21118,99 @@ def outbound_list():
     )
 
 
+@portal_bp.route("/corr/outbound/analyze-attachment", methods=["POST"])
+@login_required
+@_perm(CORR_CREATE)
+def outbound_analyze_attachment():
+    """Extract local, reviewable outbound suggestions from one selected file."""
+    upload = request.files.get("file")
+    try:
+        max_bytes = int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))
+        max_text_chars = int(current_app.config.get("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
+        max_pdf_pages = int(current_app.config.get("CORR_INTAKE_MAX_PDF_PAGES", 40))
+        ocr_enabled_value = current_app.config.get("CORR_INTAKE_OCR_ENABLED", True)
+        ocr_enabled = str(ocr_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+        ocr_config = OcrConfig(
+            enabled=ocr_enabled,
+            command=str(current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract")),
+            languages=str(current_app.config.get("CORR_INTAKE_OCR_LANGUAGES", "ara+eng")),
+            max_pages=int(current_app.config.get("CORR_INTAKE_OCR_MAX_PAGES", 10)),
+            dpi=int(current_app.config.get("CORR_INTAKE_OCR_DPI", 200)),
+            timeout_seconds=float(
+                current_app.config.get("CORR_INTAKE_OCR_TIMEOUT_SECONDS", 45)
+            ),
+            max_image_pixels=int(
+                current_app.config.get("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+            ),
+        )
+        payload = read_limited_upload(upload, max_bytes)
+
+        category_rows = (
+            CorrCategory.query
+            .filter_by(is_active=True)
+            .order_by(CorrCategory.code.asc())
+            .all()
+        )
+        recipient_rows = (
+            CorrParty.query
+            .filter(CorrParty.is_active == True)  # noqa: E712
+            .filter(CorrParty.kind.in_(["RECIPIENT", "BOTH"]))
+            .order_by(CorrParty.name_ar.asc())
+            .all()
+        )
+        competence_options = _corr_competence_options()
+        workflow_templates = _corr_workflow_templates()
+
+        analysis = analyze_correspondence_attachment(
+            payload,
+            getattr(upload, "filename", "") or "attachment",
+            recipient_choices=[
+                {"value": row.label, "label": row.label}
+                for row in recipient_rows
+                if row.label
+            ],
+            category_choices=[
+                {"value": row.code, "label": row.label}
+                for row in category_rows
+                if row.code
+            ],
+            competence_choices=competence_options,
+            workflow_choices=[
+                {"value": str(template.id), "label": template.name}
+                for template in workflow_templates
+            ],
+            sent_date=date.today().isoformat(),
+            direction="OUT",
+            max_text_chars=max_text_chars,
+            max_pdf_pages=max_pdf_pages,
+            ocr_config=ocr_config,
+        )
+        return jsonify({"ok": True, "analysis": analysis})
+    except CorrespondenceIntakeError as exc:
+        return jsonify({
+            "ok": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }), exc.status_code
+    except Exception:
+        current_app.logger.exception("Failed to analyze outbound correspondence attachment")
+        return jsonify({
+            "ok": False,
+            "error": {
+                "code": "ANALYSIS_FAILED",
+                "message": "تعذر تحليل المرفق حالياً. يمكنك متابعة تسجيل الصادر يدوياً.",
+            },
+        }), 500
+
+
 @portal_bp.route("/corr/outbound/new", methods=["GET", "POST"])
 @login_required
 @_perm(CORR_CREATE)
 def outbound_new():
     _ensure_corr_competence_schema()
+    intake_max_bytes = max(
+        1,
+        int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
+    )
     cat_rows = CorrCategory.query.filter_by(is_active=True).order_by(CorrCategory.code.asc()).all()
     competence_options = _corr_competence_options()
     workflow_templates = _corr_workflow_templates()
@@ -19856,10 +21242,11 @@ def outbound_new():
             return redirect(request.url)
 
 
-        files = request.files.getlist("files") or []
-        if not any(getattr(f, "filename", "") for f in files):
-            flash("رفع ملف/ملفات مطلوب لتسجيل الصادر.", "danger")
-            return redirect(request.url)
+        files = [
+            uploaded_file
+            for uploaded_file in (request.files.getlist("files") or [])
+            if getattr(uploaded_file, "filename", "")
+        ]
 
         try:
             ref_no = _corr_next_ref("OUT", sent_date)
@@ -19905,9 +21292,9 @@ def outbound_new():
             stamp_options=stamp_options,
             movement_id=movement.id,
         )
-        if not saved:
+        if files and not saved:
             db.session.rollback()
-            flash("لم يتم رفع أي ملف (تحقق من نوع الملفات).", "danger")
+            flash("لم يتم قبول الملف المختار (تحقق من نوعه).", "danger")
             return redirect(request.url)
 
         affected_user_ids = _corr_notification_recipient_ids(
@@ -19962,6 +21349,8 @@ def outbound_new():
         competence_options=competence_options,
         workflow_templates=workflow_templates,
         confidential_user_options=confidential_user_options,
+        intake_max_bytes=intake_max_bytes,
+        intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
         selected_confidential_user_ids={
             int(value) for value in request.form.getlist("authorized_user_ids") if value.isdigit()
         },
@@ -19997,6 +21386,7 @@ def outbound_view(outbound_id: int):
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
     procedure_context = _corr_procedure_context("OUT", item)
+    workflow_templates = _corr_workflow_templates()
 
     return render_template(
         "portal/corr/outbound_view.html",
@@ -20006,7 +21396,11 @@ def outbound_view(outbound_id: int):
         can_update=can_update,
         can_delete=can_delete,
         can_upload=can_upload,
-        workflow_templates=_corr_workflow_templates(),
+        workflow_templates=workflow_templates,
+        workflow_parallel_candidates=_corr_first_parallel_candidate_map(
+            item,
+            workflow_templates,
+        ),
         source_inbound=getattr(item, "source_inbound", None),
         **procedure_context,
     )
@@ -20174,7 +21568,13 @@ def outbound_start_workflow(outbound_id: int):
         abort(403)
     attachments = CorrAttachment.query.filter_by(outbound_id=item.id).order_by(CorrAttachment.id.asc()).all()
     try:
-        req = _start_corr_workflow("OUT", item, attachments, request.form.get("template_id"))
+        req = _start_corr_workflow(
+            "OUT",
+            item,
+            attachments,
+            request.form.get("template_id"),
+            initial_parallel_user_ids=request.form.getlist("parallel_assignee_ids"),
+        )
         if req:
             return redirect(url_for("workflow.view_request", request_id=req.id))
     except Exception:
@@ -21373,6 +22773,14 @@ def portal_admin_hr_schedule_templates():
             obj.end_time = (request.form.get("end_time") or "15:00").strip()
 
             obj.grace_minutes = _to_int(request.form.get("grace_minutes"), 0)
+            obj.start_grace_minutes = _to_int(
+                request.form.get("start_grace_minutes"),
+                obj.grace_minutes,
+            )
+            obj.end_grace_minutes = _to_int(
+                request.form.get("end_grace_minutes"),
+                obj.grace_minutes,
+            )
             obj.break_minutes = _to_int(request.form.get("break_minutes"), 0)
             obj.required_minutes = _to_int(request.form.get("required_minutes"))
             obj.overtime_threshold_minutes = _to_int(request.form.get("overtime_threshold_minutes"))
@@ -21496,9 +22904,15 @@ def portal_admin_hr_work_policies():
                 obj.fixed_days_mask = None
                 obj.hybrid_office_days = _to_int(request.form.get("hybrid_office_days"), 0)
                 obj.hybrid_remote_days = _to_int(request.form.get("hybrid_remote_days"), 0)
+                selection_mode = (request.form.get("hybrid_selection_mode") or "FLEXIBLE").strip().upper()
+                obj.hybrid_selection_mode = selection_mode if selection_mode in {"FLEXIBLE", "FIXED"} else "FLEXIBLE"
+                fixed_mask = _days_mask_from_list(request.form.getlist("hybrid_fixed_days"))
+                obj.hybrid_fixed_days_mask = fixed_mask or None if obj.hybrid_selection_mode == "FIXED" else None
             else:
                 obj.hybrid_office_days = None
                 obj.hybrid_remote_days = None
+                obj.hybrid_selection_mode = "FLEXIBLE"
+                obj.hybrid_fixed_days_mask = None
                 mask = _days_mask_from_list(request.form.getlist("fixed_days"))
                 obj.fixed_days_mask = mask or None
 
@@ -25827,6 +27241,7 @@ def hr_leaves_admin_new():
         except Exception:
             sdef_id = None
 
+        approver = _hr_find_approver_for_user(int(user_id))
         row = HRLeaveRequest(
             user_id=int(user_id),
             leave_type_id=int(leave_type_id),
@@ -25844,9 +27259,9 @@ def hr_leaves_admin_new():
             entered_by="ADMIN",
             created_by_id=getattr(current_user,'id',None),
             admin_status_id=sdef_id,
-            status="APPROVED",
-            decided_at=datetime.utcnow(),
-            decided_by_id=getattr(current_user,'id',None),
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+            approver_user_id=(approver.id if approver else None),
         )
         db.session.add(row)
         db.session.commit()
@@ -26490,7 +27905,8 @@ def hr_report_salary_deductions():
     if user_ids:
         q = (HRAttendanceDeductionItem.query
              .join(HRAttendanceDeductionRun, HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id)
-             .filter(HRAttendanceDeductionItem.user_id.in_(user_ids)))
+             .filter(HRAttendanceDeductionItem.user_id.in_(user_ids))
+             .filter(HRAttendanceDeductionRun.status == 'FINAL'))
 
         if from_key is not None:
             q = q.filter((HRAttendanceDeductionRun.year * 100 + HRAttendanceDeductionRun.month) >= int(from_key))
@@ -26503,7 +27919,7 @@ def hr_report_salary_deductions():
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
-        headers = ['الشهر', 'الموظف', 'الرقم الوظيفي', 'موقع العمل', 'دقائق التأخير', 'دقائق الخروج المبكر', 'أيام الغياب', 'أيام الخصم', 'الحالة', 'ملاحظات']
+        headers = ['الشهر', 'الموظف', 'الرقم الوظيفي', 'موقع العمل', 'دقائق التأخير', 'دقائق الخروج المبكر', 'أيام الغياب', 'أيام خصم الإجازة', 'أيام خصم الراتب', 'الحالة', 'ملاحظات']
         xrows = []
         for it in rows:
             run = getattr(it, 'run', None)
@@ -26523,7 +27939,8 @@ def hr_report_salary_deductions():
                 int(getattr(it, 'late_minutes', 0) or 0),
                 int(getattr(it, 'early_leave_minutes', 0) or 0),
                 int(getattr(it, 'absent_days', 0) or 0),
-                float(getattr(it, 'amount', 0) or 0),
+                float(getattr(it, 'leave_deduction_days', 0) or 0),
+                float(getattr(it, 'salary_deduction_days', 0) or 0),
                 getattr(run, 'status', '') if run else '',
                 getattr(it, 'note', '') or '',
             ])

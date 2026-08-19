@@ -5,9 +5,11 @@ import os
 from waitress import serve
 
 from app import app
+from jobs.backup_job import start_automatic_backup_job
 
 
 if __name__ == "__main__":
+    start_automatic_backup_job(app)
     serve(
         app,
         host=os.getenv("APP_HOST", "10.10.10.204"),
