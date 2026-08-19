@@ -22506,6 +22506,7 @@ def portal_admin_dashboard():
     # Core admin cards
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "طلبات الصلاحيات", "مراجعة طلبات الموظفين لتفعيل خدمات البوابة.", "bi-inboxes", "portal.admin_access_requests")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "صلاحيات البوابة", "تعديل الصلاحيات للأدوار أو للمستخدمين.", "bi-person-gear", "portal.portal_admin_permissions")
+    add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات الحركة", "تعيين مسؤول الحركة ومدير النقل البديل ومدير الشؤون الإدارية.", "bi-car-front", "portal.transport_approval_settings")
     add_card(PORTAL_MEETINGS_MANAGE, "الاجتماعات والمتابعة", "ترتيب الاجتماعات، الأجندة، التذكيرات، المحاضر، ومهام ما بعد الاجتماع.", "bi-calendar2-week", "portal.meetings_dashboard")
 
     # HR admin

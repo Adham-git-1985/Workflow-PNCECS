@@ -11,9 +11,6 @@
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_movements_report') }}">تقرير الحركات</a>
     {% endif %}
     {% endif %}
-    {% if current_user.has_perm('TRANSPORT_UPDATE') %}
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_approval_settings') }}">مسؤولو الاعتماد</a>
-    {% endif %}
     {% if current_user.has_perm('TRANSPORT_READ') %}
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_trips') }}">الرحلات</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_tasks') }}">المهام</a>

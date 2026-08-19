@@ -181,9 +181,9 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
     return [user.id for user in User.query.all() if user.has_perm(permission)]
 
 
-@portal_bp.route("/transport/approval-settings", methods=["GET", "POST"])
+@portal_bp.route("/admin/transport-approval-settings", methods=["GET", "POST"])
 @login_required
-@perm_required("TRANSPORT_UPDATE")
+@perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")
 def transport_approval_settings():
     if request.method == "POST":
         _set_setting("TRANSPORT_MANAGER_USER_ID", request.form.get("transport_manager_user_id") or "")
