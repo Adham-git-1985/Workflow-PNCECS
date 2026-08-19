@@ -2727,6 +2727,23 @@ def inbox():
 
     corr_tasks = _correspondence_inbox_tasks(actor_users, search)
     request_summaries = {req.id: _workflow_user_summary(req, step) for req, _inst, step in rows}
+
+    movement_tasks = []
+    try:
+        from models import TransportPermit
+        from portal.transport import _can_process_movement
+
+        movement_tasks = [
+            permit for permit in (
+                TransportPermit.query
+                .filter(TransportPermit.status == "SUBMITTED", TransportPermit.is_deleted.is_(False))
+                .order_by(TransportPermit.created_at.desc())
+                .all()
+            )
+            if _can_process_movement(permit)
+        ]
+    except Exception:
+        movement_tasks = []
     
 
     # --- Circulars (last 5) ---
@@ -2746,6 +2763,7 @@ def inbox():
         q=search,
         last_circulars=last_circulars,
         request_summaries=request_summaries,
+        movement_tasks=movement_tasks,
     )
 
 
