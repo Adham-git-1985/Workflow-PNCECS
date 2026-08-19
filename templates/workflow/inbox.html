@@ -148,7 +148,7 @@
         <tr>
           <td>{{ req.id }}</td>
           <td>{{ req.title }}</td>
-          <td><span class="badge bg-primary">{{ req.status|ui_label }}</span></td>
+          <td><span class="badge {{ 'bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary') }}">{{ req.status|ui_label }}</span></td>
           <td>الخطوة {{ step.step_order }} {% if step.mode == 'PARALLEL_SYNC' %}<span class="badge bg-info ms-2">متزامن</span>{% endif %}</td>
           {% set summary = request_summaries.get(req.id) %}
           <td style="min-width:240px">

@@ -214,7 +214,7 @@
           </td>
           <td>{{ tpl.name if tpl else '—' }}</td>
           <td>
-            <span class="badge {% if is_closed %}bg-secondary{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
+            <span class="badge {% if req.status == 'APPROVED' %}bg-success{% elif req.status == 'REJECTED' %}bg-danger{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
               {{ req.status|ui_label }}
             </span>
           </td>

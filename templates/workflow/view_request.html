@@ -7,7 +7,7 @@
   <div>
     <h3 class="mb-1">📄 الطلب #{{ req.id }}</h3>
     <small class="text-muted">
-      الحالة: <strong>{{ req.status|ui_label }}</strong>
+      الحالة: <span class="badge {{ 'bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary') }}">{{ req.status|ui_label }}</span>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
       {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% endif %}
     </small>
