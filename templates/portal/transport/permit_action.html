@@ -1,0 +1,18 @@
+{% extends "portal/layout.html" %}
+{% block title %}إجراء طلب حركة #{{ item.id }}{% endblock %}
+{% block content %}
+<div class="d-flex align-items-center justify-content-between mb-3"><h5 class="mb-0">طلب حركة #{{ item.id }}</h5><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_permit_view', permit_id=item.id) }}">عرض الطلب</a></div>
+<div class="alert alert-info">الإجراء المطلوب منك: {{ stage_labels.get(item.approval_stage, item.approval_stage) }}</div>
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="mb-3"><b>{{ item.purpose }}</b><div class="text-muted">{{ item.origin_zone.name if item.origin_zone else (item.origin_text or '-') }} ← {{ item.dest_zone.name if item.dest_zone else (item.dest_text or '-') }}</div></div>
+  <form method="post" action="{{ url_for('portal.transport_permit_approve', permit_id=item.id) }}">
+    {% if item.approval_stage == 'TRANSPORT' %}
+    <label class="form-label">السيارة (اختياري)</label><select class="form-select mb-3" name="vehicle_id"><option value="">—</option>{% for vehicle in vehicles %}<option value="{{ vehicle.id }}">{{ vehicle.plate_no }}{% if vehicle.label %} — {{ vehicle.label }}{% endif %}</option>{% endfor %}</select>
+    <label class="form-label">السائق *</label><select class="form-select mb-3" name="driver_id" required><option value="">اختر السائق</option>{% for driver in drivers %}<option value="{{ driver.id }}">{{ driver.name }}</option>{% endfor %}</select>
+    {% endif %}
+    <label class="form-label">ملاحظة</label><textarea class="form-control" name="decision_note" rows="3"></textarea>
+    <button class="btn btn-success mt-3" type="submit">متابعة الطلب</button>
+  </form>
+  <form method="post" action="{{ url_for('portal.transport_permit_reject', permit_id=item.id) }}" class="mt-3"><label class="form-label">سبب التعليق</label><textarea class="form-control" name="decision_note" rows="2"></textarea><button class="btn btn-outline-danger mt-2" type="submit">تعليق الطلب</button></form>
+</div>
+{% endblock %}

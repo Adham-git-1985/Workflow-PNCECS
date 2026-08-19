@@ -696,6 +696,17 @@ def transport_permit_view(permit_id: int):
     return render_template("portal/transport/permit_view.html", item=row, can_approve=can_approve, can_update=can_update, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
 
 
+@portal_bp.route("/transport/permits/<int:permit_id>/action")
+@login_required
+def transport_permit_action(permit_id: int):
+    row = TransportPermit.query.get_or_404(permit_id)
+    if not _can_process_movement(row):
+        abort(403)
+    vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
+    drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
+    return render_template("portal/transport/permit_action.html", item=row, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
+
+
 @portal_bp.route("/transport/permits/<int:permit_id>/edit", methods=["GET", "POST"])
 @login_required
 def transport_permit_edit(permit_id: int):
