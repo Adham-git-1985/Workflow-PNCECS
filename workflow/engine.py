@@ -1458,7 +1458,7 @@ def decide_step(
         inst.is_completed = True
         db.session.add_all([req, inst])
 
-        msg = f"تمت الموافقة النهائية على طلبك #{req.id} من {actor_display}"
+        msg = f"تمت متابعة طلبك #{req.id} حتى اكتمال المسار بواسطة {actor_display}"
         if note:
             msg += f" | ملاحظة: {note}"
         _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
@@ -1470,7 +1470,7 @@ def decide_step(
         if follower_ids:
             _notify_users(
                 sorted(follower_ids),
-                message=f"تحديث على المسار: تمت الموافقة النهائية على الطلب #{req.id} من {actor_display}" + (f" | ملاحظة: {note}" if note else ""),
+                message=f"تحديث على المسار: تمت متابعة الطلب #{req.id} حتى اكتمال المسار بواسطة {actor_display}" + (f" | ملاحظة: {note}" if note else ""),
                 ntype="WORKFLOW",
                 req=req,
             )
@@ -1482,7 +1482,7 @@ def decide_step(
     inst.current_step_order = next_order
     db.session.add(inst)
 
-    msg = f"تمت الموافقة على طلبك #{req.id} (الخطوة {step_order}) من {actor_display} وتم تحويله للخطوة {next_order}"
+    msg = f"تمت متابعة طلبك #{req.id} (الخطوة {step_order}) بواسطة {actor_display} وتم تحويله للخطوة {next_order}"
     if note:
         msg += f" | ملاحظة: {note}"
     _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)

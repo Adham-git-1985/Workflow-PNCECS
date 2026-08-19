@@ -135,10 +135,6 @@
           <textarea class="form-control" name="decision_note" rows="2" placeholder="سبب الرفض..."></textarea>
           <button class="btn btn-outline-danger w-100 mt-2" type="submit" onclick="return confirm('رفض إذن الحركة؟');">رفض</button>
         </form>
-      {% else %}
-        <div class="alert alert-info mb-0">
-          هذا الطلب بانتظار <b>{{ stage_labels.get(item.approval_stage, item.approval_stage) }}</b>.
-        </div>
       {% endif %}
 
       {% if item.actions %}
