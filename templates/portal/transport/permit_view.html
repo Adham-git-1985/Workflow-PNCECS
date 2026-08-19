@@ -110,7 +110,7 @@
         </div>
       {% endif %}
 
-      {% if can_approve %}
+      {% if item.status == 'SUBMITTED' %}
         <hr id="decision">
         <form method="post" action="{{ url_for('portal.transport_permit_approve', permit_id=item.id) }}" class="mb-2">
           {% if item.approval_stage == 'TRANSPORT' %}

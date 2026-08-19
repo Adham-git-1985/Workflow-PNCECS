@@ -140,7 +140,7 @@
           <td>{{ permit.requester.name or permit.requester.email }}</td>
           <td>{{ permit.origin_zone.name if permit.origin_zone else (permit.origin_text or '-') }} ← {{ permit.dest_zone.name if permit.dest_zone else (permit.dest_text or '-') }}</td>
           <td>{{ permit.purpose }}</td>
-          <td class="text-end"><a class="btn btn-sm btn-success" href="{{ url_for('portal.transport_permit_action', permit_id=permit.id) }}">فتح ومتابعة</a></td>
+          <td class="text-end"><a class="btn btn-sm btn-success" href="{{ url_for('portal.transport_permit_view', permit_id=permit.id) }}">فتح ومتابعة</a></td>
         </tr>
         {% endfor %}
       </tbody>
