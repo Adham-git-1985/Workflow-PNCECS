@@ -148,11 +148,16 @@
       } catch(e) {}
     }
 
-    // Restore draft on load
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', restoreDraft);
-    } else {
-      restoreDraft();
+    const shouldRestoreDraft = new URL(window.location.href).searchParams.get('restore_draft') === '1';
+    if (shouldRestoreDraft) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', restoreDraft);
+      } else {
+        restoreDraft();
+      }
+      const cleanUrl = new URL(window.location.href);
+      cleanUrl.searchParams.delete('restore_draft');
+      window.history.replaceState({}, '', cleanUrl.toString());
     }
 
     // Keep saving while typing
@@ -172,6 +177,7 @@
         saveDraft();
         const v = this.value;
         const url = new URL(window.location.href);
+        url.searchParams.set('restore_draft', '1');
         if (v) url.searchParams.set('request_type_id', v);
         else url.searchParams.delete('request_type_id');
         window.location.href = url.toString();
