@@ -2493,7 +2493,7 @@ def _correspondence_inbox_tasks(actor_users, search: str = "") -> list[dict]:
 def _workflow_user_summary(req, step):
     """Small, non-technical status summary for request owners and assignees."""
     log = (AuditLog.query.filter_by(request_id=req.id)
-           .filter(~AuditLog.action.in_(("VIEW_PAGE", "REQUEST_VIEWED")))
+           .filter(~AuditLog.action.in_(("PAGE_VIEW", "VIEW_PAGE", "REQUEST_VIEWED", "USER_ACTION")))
            .order_by(AuditLog.created_at.desc()).first())
     actor = log.user.full_name if log and log.user else "النظام"
     action = (log.action or "").upper() if log else ""
@@ -2501,10 +2501,10 @@ def _workflow_user_summary(req, step):
         last_action = f"تمت إضافة تعليق من {actor}"
     elif action == "WORKFLOW_REPLY":
         last_action = f"تمت إضافة رد من {actor}"
-    elif action in {"APPROVE", "WORKFLOW_APPROVE"}:
-        last_action = f"تمت الموافقة من {actor}"
-    elif action in {"REJECT", "WORKFLOW_REJECT"}:
-        last_action = f"تم رفض الطلب من {actor}"
+    elif action in {"APPROVE", "WORKFLOW_APPROVE", "STEP_APPROVED"}:
+        last_action = f"تمت المتابعة من {actor}"
+    elif action in {"REJECT", "WORKFLOW_REJECT", "STEP_REJECTED"}:
+        last_action = f"تمت إضافة تعليق من {actor}"
     elif log:
         last_action = f"آخر إجراء: {ui_label(log.action)} بواسطة {actor}"
     else:
@@ -2528,6 +2528,11 @@ def _workflow_user_summary(req, step):
         elif kind == "ROLE":
             waiting_for = "بانتظار الجهة المسؤولة"
     return {"last_action": last_action, "waiting_for": waiting_for}
+
+
+def _clean_workflow_note(note: str | None) -> str:
+    """Remove audit-instrumentation metadata from comments shown to users."""
+    return (note or "").split("\nمصدر العملية:", 1)[0].strip()
 
 
 @workflow_bp.route("/inbox")
@@ -3454,9 +3459,15 @@ def view_request(request_id):
     )
     simple_audit = _workflow_user_summary(req, current_step)
     simple_comments = [
-        log for log in audit
+        {
+            "kind": "تعليق" if log.action == "WORKFLOW_COMMENT" else "رد",
+            "author": log.user.full_name if log.user else "النظام",
+            "created_at": log.created_at,
+            "note": _clean_workflow_note(log.note),
+        }
+        for log in audit
         if (log.action or "").upper() in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}
-        and (log.note or "").strip()
+        and _clean_workflow_note(log.note)
     ]
 
     # attachment counts per step (best-effort via audit meta)
