@@ -404,12 +404,27 @@ def build_employee_import_plan(
     qualification_rows = _build_qualifications(payload, employee.id, unresolved, create_missing_lookups, created_lookups)
     secondment_rows = _build_secondments(payload, employee.id, unresolved, create_missing_lookups, created_lookups)
 
+    field_labels = {
+        **TEXT_FIELDS,
+        **FLOAT_FIELDS,
+        **{field: label for field, (_, label) in LOOKUP_FIELDS.items()},
+        **{field: label for field, (_, label) in ORG_FIELDS.items()},
+        "direct_manager_user_id": "المسؤول المباشر",
+    }
+    unresolved_labels = {issue["field"] for issue in unresolved}
+    correction_fields = [
+        {"field": field, "label": label, "value": _first_value(payload, field) or ""}
+        for field, label in field_labels.items()
+        if label in unresolved_labels
+    ]
+
     return {
         "employee_id": employee.id,
         "employee_name": employee.name or employee.email,
         "employee_file_exists": employee_file is not None,
         "operations": operations,
         "unresolved": unresolved,
+        "correction_fields": correction_fields,
         "created_lookups": created_lookups,
         "dependents": dependent_rows,
         "qualifications": qualification_rows,

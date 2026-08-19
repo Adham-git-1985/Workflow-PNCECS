@@ -13405,6 +13405,57 @@ def hr_employee_data_submission_view(submission_id: int):
     )
 
 
+@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/correct", methods=["POST"])
+@login_required
+@_perm(HR_EMP_MANAGE)
+def hr_employee_data_submission_correct(submission_id: int):
+    """Save HR corrections into the staged import payload before applying it."""
+    _employee_submission_require_csrf()
+    row = EmployeeDataSubmission.query.get_or_404(submission_id)
+    if row.status != "PENDING":
+        flash("لا يمكن تعديل طلب تمت معالجته سابقاً.", "warning")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+    payload = row.payload()
+    fields = payload.setdefault("fields", {})
+    changed = 0
+    for key, value in request.form.items():
+        if not key.startswith("correction_"):
+            continue
+        field = key.removeprefix("correction_")
+        cleaned = (value or "").strip()
+        current_raw = fields.get(field) or []
+        if not isinstance(current_raw, list):
+            current_raw = [current_raw]
+        first_value = current_raw[0] if current_raw else ""
+        current = (first_value.get("value") if isinstance(first_value, dict) else first_value) or ""
+        current = str(current).strip()
+        if cleaned == current:
+            continue
+        fields[field] = [{"value": cleaned, "entry_id": field, "occurrence": 1}]
+        changed += 1
+
+    if not changed:
+        flash("لم يتم تغيير أي قيمة.", "info")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+    try:
+        validate_employee_payload(payload)
+        row.payload_json = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        row.payload_sha256 = canonical_payload_hash(payload)
+        row.updated_at = datetime.utcnow()
+        db.session.commit()
+        flash("تم حفظ التصحيحات وإعادة فحص الطلب. يمكنك الآن الاعتماد عند اختفاء التنبيهات.", "success")
+    except EmployeeDataImportError as exc:
+        db.session.rollback()
+        flash(f"تعذر حفظ التصحيحات: {exc}", "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Employee data submission correction failed")
+        flash("تعذر حفظ التصحيحات.", "danger")
+    return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
+
 @portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/apply", methods=["POST"])
 @login_required
 @_perm(HR_EMP_MANAGE)

@@ -38,6 +38,24 @@
     {% endfor %}
   </ul>
 </div>
+{% if item.status == 'PENDING' and current_user.has_perm('HR_EMPLOYEE_MANAGE') and plan.correction_fields %}
+<div class="card border-warning shadow-sm mb-3">
+  <div class="card-header bg-warning-subtle fw-bold"><i class="bi bi-pencil-square"></i> تصحيح القيم المستوردة</div>
+  <div class="card-body">
+    <p class="text-muted small">عدّل القيم أدناه ثم احفظها؛ سيُعاد فحص الطلب قبل الاعتماد.</p>
+    <form method="post" action="{{ url_for('portal.hr_employee_data_submission_correct', submission_id=item.id) }}" class="row g-3">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      {% for correction in plan.correction_fields %}
+      <div class="col-md-6">
+        <label class="form-label">{{ correction.label }}</label>
+        <input class="form-control ltr" type="text" name="correction_{{ correction.field }}" value="{{ correction.value }}">
+      </div>
+      {% endfor %}
+      <div class="col-12"><button class="btn btn-warning" type="submit"><i class="bi bi-save"></i> حفظ التصحيحات وإعادة الفحص</button></div>
+    </form>
+  </div>
+</div>
+{% endif %}
 {% endif %}
 
 <div class="card shadow-sm mb-3">
