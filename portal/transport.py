@@ -31,6 +31,7 @@ from models import (
     Notification,
     Message,
     MessageRecipient,
+    UserPermission,
 )
 
 
@@ -201,6 +202,16 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
     return [user.id for user in User.query.all() if user.has_perm(permission)]
 
 
+def _grant_transport_report_access(user_id: int | None) -> None:
+    if not user_id:
+        return
+    permission = UserPermission.query.filter_by(user_id=user_id, key="PORTAL_REPORTS_READ").first()
+    if permission:
+        permission.is_allowed = True
+    else:
+        db.session.add(UserPermission(user_id=user_id, key="PORTAL_REPORTS_READ", is_allowed=True))
+
+
 @portal_bp.route("/admin/transport-approval-settings", methods=["GET", "POST"])
 @login_required
 @perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")
@@ -209,6 +220,7 @@ def transport_approval_settings():
         _set_setting("TRANSPORT_MANAGER_USER_ID", request.form.get("transport_manager_user_id") or "")
         _set_setting("TRANSPORT_DIRECTOR_USER_ID", request.form.get("transport_director_user_id") or "")
         _set_setting("TRANSPORT_ADMIN_USER_ID", request.form.get("transport_admin_user_id") or "")
+        _grant_transport_report_access(_to_int(request.form.get("transport_admin_user_id") or ""))
         db.session.commit()
         flash("تم حفظ مسؤولي اعتماد طلبات الحركة.", "success")
         return redirect(url_for("portal.transport_approval_settings"))

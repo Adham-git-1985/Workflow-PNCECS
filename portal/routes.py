@@ -6573,7 +6573,7 @@ def hr_home():
 
 @portal_bp.route("/hr/reports")
 @login_required
-@_perm(HR_REPORTS_VIEW)
+@_perm_any(HR_REPORTS_VIEW, PORTAL_REPORTS_READ)
 def hr_reports_home():
     return render_template("portal/hr/reports_home.html")
 

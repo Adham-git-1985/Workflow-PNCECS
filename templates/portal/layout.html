@@ -318,7 +318,7 @@
             #}
 
 	            {% set _has_hr_affairs = can_hr_admin_tools %}
-            {% set _has_reports = (current_user.is_authenticated and current_user.has_perm('HR_REPORTS_VIEW')) %}
+            {% set _has_reports = (current_user.is_authenticated and (current_user.has_perm('HR_REPORTS_VIEW') or current_user.has_perm('PORTAL_REPORTS_READ'))) %}
             {% set _has_att_settings = au.has_perm('HR_MASTERDATA_MANAGE') %}
             {% set _has_org_manage = (au.has_perm('HR_MASTERDATA_MANAGE') or au.has_perm('HR_ORGSTRUCTURE_READ') or au.has_perm('HR_ORGSTRUCTURE_MANAGE')) %}
 
