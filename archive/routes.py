@@ -622,7 +622,7 @@ def _archive_user_can_view_workflow(user, req: WorkflowRequest) -> bool:
 
 
 def _search_workflows_from_archive(filters: dict) -> list[WorkflowRequest]:
-    term = (filters.get("workflow_q") or filters.get("q") or "").strip()
+    term = (filters.get("workflow_q") or "").strip()
     status = (filters.get("workflow_status") or "").strip().upper()
 
     if not term and not status:
@@ -650,6 +650,19 @@ def _search_workflows_from_archive(filters: dict) -> list[WorkflowRequest]:
         .all()
     )
     return [r for r in candidates if _archive_user_can_view_workflow(current_user, r)][:20]
+
+
+def _filter_files_to_workflow_results(query, filters: dict, workflow_results: list[WorkflowRequest]):
+    if not (filters.get("workflow_q") or filters.get("workflow_status")):
+        return query
+    request_ids = [row.id for row in workflow_results]
+    if not request_ids:
+        return query.filter(ArchivedFile.id == -1)
+    return (
+        query.join(RequestAttachment, RequestAttachment.archived_file_id == ArchivedFile.id)
+        .filter(RequestAttachment.request_id.in_(request_ids))
+        .distinct()
+    )
 
 
 # =========================
@@ -723,8 +736,10 @@ def archive_files():
     q = filters["q"]
     page = request.args.get("page", 1, type=int)
 
+    workflow_results = _search_workflows_from_archive(filters)
     query = archive_access_query(current_user)
     query = _apply_archive_filters(query, filters)
+    query = _filter_files_to_workflow_results(query, filters, workflow_results)
 
     pagination = (
         query
@@ -746,7 +761,7 @@ def archive_files():
         file_type_options=FILE_TYPE_OPTIONS,
         visibility_options=VISIBILITY_OPTIONS,
         workflow_status_options=WORKFLOW_STATUS_OPTIONS,
-        workflow_results=_search_workflows_from_archive(filters),
+        workflow_results=workflow_results,
         archive_reset_endpoint="archive.archive_files",
     )
 
@@ -1110,8 +1125,10 @@ def my_files():
     page = request.args.get("page", 1, type=int)
     per_page = 15
 
+    workflow_results = _search_workflows_from_archive(filters)
     query = archive_access_query(current_user)
     query = _apply_archive_filters(query, filters)
+    query = _filter_files_to_workflow_results(query, filters, workflow_results)
 
     pagination = (
         query
@@ -1146,7 +1163,7 @@ def my_files():
         file_type_options=FILE_TYPE_OPTIONS,
         visibility_options=VISIBILITY_OPTIONS,
         workflow_status_options=WORKFLOW_STATUS_OPTIONS,
-        workflow_results=_search_workflows_from_archive(filters),
+        workflow_results=workflow_results,
         archive_reset_endpoint="archive.my_files",
     )
 
