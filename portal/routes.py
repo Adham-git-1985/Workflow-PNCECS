@@ -5691,7 +5691,6 @@ def meeting_send_reminder(meeting_id: int):
 
 @portal_bp.route("/notifications", methods=["GET", "POST"])
 @login_required
-@_perm(PORTAL_READ)
 def portal_notifications():
     """Show user notifications inside the portal UI.
 

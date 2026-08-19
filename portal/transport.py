@@ -139,6 +139,17 @@ def _can_process_movement(row: TransportPermit) -> bool:
     return False
 
 
+def _can_edit_movement(row: TransportPermit) -> bool:
+    if row.status not in ("DRAFT", "SUBMITTED"):
+        return False
+    configured_ids = {
+        _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID")),
+        _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
+        _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
+    }
+    return row.requester_user_id == current_user.id or current_user.id in configured_ids or current_user.has_perm("TRANSPORT_UPDATE") or current_user.has_perm("TRANSPORT_APPROVE")
+
+
 def _record_movement_action(row: TransportPermit, action: str, note: str | None = None) -> None:
     db.session.add(TransportPermitAction(
         permit_id=row.id,
@@ -676,13 +687,44 @@ def transport_permit_new():
 def transport_permit_view(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
     can_manage = current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE")
-    if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row):
+    if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
-    can_update = current_user.has_perm("TRANSPORT_UPDATE") and row.status in ("DRAFT", "SUBMITTED")
+    can_update = _can_edit_movement(row)
     vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
     drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
     return render_template("portal/transport/permit_view.html", item=row, can_approve=can_approve, can_update=can_update, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
+
+
+@portal_bp.route("/transport/permits/<int:permit_id>/edit", methods=["GET", "POST"])
+@login_required
+def transport_permit_edit(permit_id: int):
+    row = TransportPermit.query.get_or_404(permit_id)
+    if not _can_edit_movement(row):
+        abort(403)
+    zones = TransportZone.query.filter(TransportZone.is_active.is_(True)).order_by(TransportZone.name.asc()).all()
+    if request.method == "POST":
+        purpose = (request.form.get("purpose") or "").strip()
+        origin_zone_id = _to_int(request.form.get("origin_zone_id") or "")
+        dest_zone_id = _to_int(request.form.get("dest_zone_id") or "")
+        origin_text = (request.form.get("origin_text") or "").strip() or None
+        dest_text = (request.form.get("dest_text") or "").strip() or None
+        if not purpose or not (origin_zone_id or origin_text) or not (dest_zone_id or dest_text):
+            flash("أدخل التبرير ومنطقة الانطلاق والوصول.", "danger")
+            return redirect(url_for("portal.transport_permit_edit", permit_id=row.id))
+        row.purpose = purpose
+        row.origin_zone_id, row.dest_zone_id = origin_zone_id, dest_zone_id
+        row.origin_text, row.dest_text = origin_text, dest_text
+        row.passengers_count = _to_int(request.form.get("passengers_count") or "")
+        row.depart_at = _parse_dt(request.form.get("depart_at") or "")
+        row.return_at = _parse_dt(request.form.get("return_at") or "")
+        row.note = (request.form.get("note") or "").strip() or None
+        _record_movement_action(row, "UPDATED", "تم تعديل تفاصيل طلب الحركة.")
+        _audit("TRANSPORT_PERMIT_UPDATE", f"تعديل طلب حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
+        db.session.commit()
+        flash("تم حفظ تعديل طلب الحركة.", "success")
+        return redirect(url_for("portal.transport_permit_view", permit_id=row.id))
+    return render_template("portal/transport/permit_form.html", item=row, zones=zones)
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>/approve", methods=["POST"])
