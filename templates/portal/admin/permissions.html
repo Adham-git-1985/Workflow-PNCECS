@@ -188,6 +188,17 @@
         </button>
       </div>
 
+      <div class="mt-3">
+        <label class="form-label">دمج اختصارات الصلاحيات</label>
+        <div class="d-flex gap-2">
+          <select class="form-select" name="preset_codes" multiple size="4">
+            {% for code, pr in presets.items() %}<option value="{{ code }}">{{ pr.label }}</option>{% endfor %}
+          </select>
+          <button type="submit" class="btn btn-outline-primary align-self-end">تطبيق الاختصارات المحددة</button>
+        </div>
+        <div class="form-text">استخدم Ctrl أو Shift لاختيار أكثر من اختصار، ثم احفظها معاً.</div>
+      </div>
+
       {% if presets_extra %}
         <div class="mt-3">
           <a class="small" data-bs-toggle="collapse" href="#morePresets" role="button" aria-expanded="false" aria-controls="morePresets">

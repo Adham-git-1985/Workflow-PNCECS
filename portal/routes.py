@@ -24551,9 +24551,17 @@ def portal_admin_permissions():
     # -------------------------
     if request.method == "POST":
         scope = (request.form.get("scope") or "role").strip().lower()
+        preset_codes = [code.strip() for code in request.form.getlist("preset_codes") if code.strip() in presets]
         preset_code = (request.form.get("preset_code") or "").strip()
         if preset_code and preset_code in presets:
-            perms = [(p or "").strip().upper() for p in (presets[preset_code].get("keys") or []) if (p or "").strip()]
+            preset_codes.append(preset_code)
+        if preset_codes:
+            perms = _normalize_keys([
+                (permission or "").strip().upper()
+                for code in preset_codes
+                for permission in (presets[code].get("keys") or [])
+                if (permission or "").strip()
+            ])
         else:
             perms = [(p or "").strip().upper() for p in request.form.getlist("permissions") if (p or "").strip()]
 
