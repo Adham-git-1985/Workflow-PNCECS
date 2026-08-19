@@ -28,6 +28,9 @@ from models import (
     EmployeeFile,
     User,
     TransportPermitAction,
+    Notification,
+    Message,
+    MessageRecipient,
 )
 
 
@@ -138,6 +141,51 @@ def _record_movement_action(row: TransportPermit, action: str, note: str | None 
         actor_user_id=current_user.id,
         note=note,
     ))
+
+
+def _movement_recipient_ids(row: TransportPermit) -> list[int]:
+    if row.approval_stage == "MANAGER":
+        return [row.manager_user_id] if row.manager_user_id else []
+    if row.approval_stage == "TRANSPORT":
+        permission = "TRANSPORT_MANAGER_APPROVE" if _has_transport_manager() else "TRANSPORT_DIRECTOR_APPROVE"
+    elif row.approval_stage == "ADMIN":
+        permission = "TRANSPORT_ADMIN_APPROVE"
+    else:
+        return []
+    return [user.id for user in User.query.all() if user.has_perm(permission)]
+
+
+def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message: str) -> None:
+    recipient_ids = sorted({user_id for user_id in recipient_ids if user_id and user_id != current_user.id})
+    if not recipient_ids:
+        return
+    link_url = url_for("portal.transport_permit_view", permit_id=row.id)
+    for user_id in recipient_ids:
+        db.session.add(Notification(
+            user_id=user_id,
+            message=message,
+            type="INFO",
+            source="portal",
+            link_url=link_url,
+            is_read=False,
+            created_at=datetime.utcnow(),
+        ))
+    internal_message = Message(
+        sender_id=current_user.id,
+        subject=f"طلب حركة #{row.id} بانتظار الإجراء",
+        body=f"{message}\nافتح الطلب مباشرة: {link_url}",
+        target_kind="USER",
+        target_id=recipient_ids[0],
+        created_at=datetime.utcnow(),
+    )
+    db.session.add(internal_message)
+    db.session.flush()
+    db.session.add_all([MessageRecipient(message_id=internal_message.id, recipient_user_id=user_id) for user_id in recipient_ids])
+
+
+def _notify_next_movement_stage(row: TransportPermit) -> None:
+    stage_name = _MOVEMENT_STAGES.get(row.approval_stage, row.approval_stage)
+    _send_movement_alert(row, _movement_recipient_ids(row), f"طلب الحركة #{row.id} بانتظار إجراءك لدى {stage_name}.")
 
 
 # -------------------------
@@ -576,6 +624,7 @@ def transport_permit_new():
         db.session.add(row)
         db.session.flush()
         _record_movement_action(row, "SUBMITTED", "تم إرسال طلب الحركة.")
+        _notify_next_movement_stage(row)
         _audit("TRANSPORT_PERMIT_CREATE", f"طلب إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
         db.session.commit()
 
@@ -627,6 +676,11 @@ def transport_permit_approve(permit_id: int):
         row.decided_at = datetime.utcnow()
         row.decision_note = decision_note
 
+    if row.status == "SUBMITTED":
+        _notify_next_movement_stage(row)
+    else:
+        _send_movement_alert(row, [row.requester_user_id], f"تم اعتماد طلب الحركة #{row.id} نهائياً.")
+
     _audit("TRANSPORT_PERMIT_APPROVE", f"اعتماد إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
     flash("تمت المتابعة وتحويل طلب الحركة للمرحلة التالية.", "success")
@@ -647,11 +701,25 @@ def transport_permit_reject(permit_id: int):
     row.decided_at = datetime.utcnow()
     row.decision_note = decision_note
     _record_movement_action(row, "REJECTED", decision_note)
+    _send_movement_alert(row, [row.requester_user_id], f"تم تعليق طلب الحركة #{row.id}." + (f" الملاحظة: {decision_note}" if decision_note else ""))
 
     _audit("TRANSPORT_PERMIT_REJECT", f"رفض إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
     flash("تم رفض إذن الحركة.", "success")
     return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+
+
+@portal_bp.route("/transport/movement-tasks")
+@login_required
+def transport_movement_tasks():
+    items = [
+        row for row in TransportPermit.query.filter(
+            TransportPermit.status == "SUBMITTED",
+            TransportPermit.is_deleted == False,  # noqa: E712
+        ).order_by(TransportPermit.created_at.desc()).all()
+        if _can_process_movement(row)
+    ]
+    return render_template("portal/transport/movement_tasks.html", items=items, stage_labels=_MOVEMENT_STAGES)
 
 
 @portal_bp.route("/transport/movements/report")

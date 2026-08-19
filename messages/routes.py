@@ -454,6 +454,7 @@ def view_message(message_id):
     payslip_url = None
     workflow_url = None
     meeting_url = None
+    movement_url = None
     try:
         if rec and msg and msg.body:
             m = re.search(r"/portal/hr/me/payslips/(\d+)/view", msg.body)
@@ -479,6 +480,14 @@ def view_message(message_id):
     except Exception:
         meeting_url = None
 
+    try:
+        if msg and msg.body:
+            m = re.search(r"/portal/transport/permits/(\d+)", msg.body)
+            if m:
+                movement_url = url_for("portal.transport_permit_view", permit_id=int(m.group(1)))
+    except Exception:
+        movement_url = None
+
     return render_template(
         "messages/view.html",
         rec=rec,
@@ -486,4 +495,5 @@ def view_message(message_id):
         payslip_url=payslip_url,
         workflow_url=workflow_url,
         meeting_url=meeting_url,
+        movement_url=movement_url,
     )

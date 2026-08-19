@@ -5,6 +5,7 @@
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_drivers') }}">السائقون</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_zones') }}">المناطق</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_permits') }}">أذون الحركة</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_movement_tasks') }}">مهام الحركة</a>
     {% if current_user.has_perm('TRANSPORT_READ') %}
       <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_movements_report') }}">تقرير الحركات</a>
     {% endif %}

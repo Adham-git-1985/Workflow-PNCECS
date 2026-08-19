@@ -657,6 +657,9 @@ def _ensure_runtime_schema():
                 if not _col_exists("transport_permit", col):
                     _add_column_retry("transport_permit", col, ctype)
 
+            if not _col_exists("notification", "link_url"):
+                _add_column_retry("notification", "link_url", "TEXT")
+
             for col, ctype in [
                 ("order_no", "TEXT"),
                 ("place_kind", "TEXT"),

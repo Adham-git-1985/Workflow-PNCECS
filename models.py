@@ -799,6 +799,7 @@ class Notification(db.Model):
 
     # source of notification: 'workflow' or 'portal' (helps UI separation)
     source = db.Column(db.String(20), default="workflow", nullable=True)
+    link_url = db.Column(db.String(500), nullable=True)
 
     # ===== Read-receipts / tracking =====
     # event_key groups notifications that belong to the same emitted event.
