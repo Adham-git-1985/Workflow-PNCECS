@@ -187,12 +187,17 @@ def _records_with_prefix(payload: dict, prefix: str) -> list[dict]:
 
 
 def _parse_date(value: str, context: str, unresolved: list[dict]) -> str | None:
-    try:
-        datetime.strptime(value, "%Y-%m-%d")
-        return value
-    except (TypeError, ValueError):
-        unresolved.append({"field": context, "value": value, "reason": "التاريخ يجب أن يكون بصيغة YYYY-MM-DD"})
-        return None
+    normalized = _clean(value).translate(str.maketrans(
+        "٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹",
+        "01234567890123456789",
+    )).replace("–", "-").replace("—", "-")
+    for pattern in ("%Y-%m-%d", "%Y/%m/%d", "%d-%m-%Y", "%d/%m/%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(normalized, pattern).strftime("%Y-%m-%d")
+        except ValueError:
+            continue
+    unresolved.append({"field": context, "value": value, "reason": "التاريخ غير صحيح؛ استخدم YYYY-MM-DD"})
+    return None
 
 
 def _parse_float(value: str, context: str, unresolved: list[dict]) -> float | None:

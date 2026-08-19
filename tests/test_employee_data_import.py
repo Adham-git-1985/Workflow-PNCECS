@@ -111,6 +111,18 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(len(plan["qualifications"]), 1)
         self.assertEqual(plan["dependents"][0]["action"], "create")
 
+    def test_plan_normalizes_common_date_formats(self):
+        payload = self.payload()
+        payload["fields"]["birth_date"] = answer("11-08-1985")
+        next(iter(payload["tables"].values()))[0]["dependent.birth_date"] = "٠٢/٠١/٢٠١٨"
+
+        plan = build_employee_import_plan(payload, self.employee)
+
+        self.assertEqual(plan["unresolved"], [])
+        birth_operation = next(item for item in plan["operations"] if item["field"] == "birth_date")
+        self.assertEqual(birth_operation["resolved"], "1985-08-11")
+        self.assertEqual(plan["dependents"][0]["birth_date"], "2018-01-02")
+
     def test_apply_updates_employee_file_and_is_idempotent_for_repeated_rows(self):
         summary = apply_employee_import_payload(
             self.payload(),
