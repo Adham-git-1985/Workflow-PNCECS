@@ -481,9 +481,9 @@
                       </td>
                       <td>
                         {% if (t.response or '') == 'APPROVED' %}
-                          <span class="badge bg-success">موافقة</span>
+                          <span class="badge bg-success">متابعة</span>
                         {% elif (t.response or '') == 'REJECTED' %}
-                          <span class="badge bg-danger">رفض</span>
+                          <span class="badge bg-danger">تعليق</span>
                         {% else %}
                           -
                         {% endif %}
@@ -592,7 +592,7 @@
                 توجيه الخطوة المتزامنة التالية (الخطوة {{ next_parallel_step.step_order }})
               </div>
               <div class="small text-muted mb-3">
-                عند الموافقة سيظهر المسار للمختارين فقط، ولن تُنشأ مهمة أو يُرسل إشعار لغير المحددين.
+                عند المتابعة سيظهر المسار للمختارين فقط، ولن تُنشأ مهمة أو يُرسل إشعار لغير المحددين.
               </div>
               {% if next_parallel_candidates %}
                 <div class="row g-2">
@@ -613,10 +613,10 @@
                     </div>
                   {% endfor %}
                 </div>
-                <div class="form-text">اختيار شخص واحد على الأقل مطلوب عند الضغط على «موافقة».</div>
+                <div class="form-text">اختيار شخص واحد على الأقل مطلوب عند الضغط على «متابعة».</div>
               {% else %}
                 <div class="alert alert-danger mb-0">
-                  لا يوجد مرشح مخوّل في قالب الخطوة التالية؛ لن يقبل النظام الموافقة قبل معالجة إعدادات القالب.
+                  لا يوجد مرشح مخوّل في قالب الخطوة التالية؛ لن يقبل النظام المتابعة قبل معالجة إعدادات القالب.
                 </div>
               {% endif %}
             </div>
@@ -629,8 +629,8 @@
           </div>
 
           <div class="d-flex gap-2">
-            <button class="btn btn-success w-100" name="decision" value="APPROVED">موافقة</button>
-            <button class="btn btn-danger w-100" name="decision" value="REJECTED">رفض</button>
+            <button class="btn btn-success w-100" name="decision" value="APPROVED">متابعة</button>
+            <button class="btn btn-danger w-100" name="decision" value="REJECTED">تعليق</button>
           </div>
         </form>
       </div>
