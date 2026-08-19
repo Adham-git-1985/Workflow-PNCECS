@@ -3452,7 +3452,12 @@ def view_request(request_id):
         .limit(200)
         .all()
     )
-    simple_audit = [_workflow_user_summary(req, current_step)]
+    simple_audit = _workflow_user_summary(req, current_step)
+    simple_comments = [
+        log for log in audit
+        if (log.action or "").upper() in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}
+        and (log.note or "").strip()
+    ]
 
     # attachment counts per step (best-effort via audit meta)
     step_att_counts = {}
@@ -3735,6 +3740,7 @@ def view_request(request_id):
         files_map=files_map,
         audit=audit,
         simple_audit=simple_audit,
+        simple_comments=simple_comments,
         show_detailed_audit=current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"),
         users_map=users_map,
         depts_map=depts_map,

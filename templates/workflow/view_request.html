@@ -227,10 +227,17 @@
             {% endfor %}
           </ul>
         {% elif simple_audit %}
-          {% for item in simple_audit %}
+          <div class="border rounded p-3 mb-3 bg-light">
+            <div class="fw-semibold">{{ simple_audit.last_action }}</div>
+            <div class="small text-muted mt-1">{{ simple_audit.waiting_for }}</div>
+          </div>
+          {% for comment in simple_comments %}
           <div class="border rounded p-3 mb-2">
-            <div class="fw-semibold">{{ item.last_action }}</div>
-            <div class="small text-muted mt-1">{{ item.waiting_for }}</div>
+            <div class="d-flex justify-content-between gap-2">
+              <strong>{{ 'تعليق' if comment.action == 'WORKFLOW_COMMENT' else 'رد' }} من {{ comment.user.full_name if comment.user else 'النظام' }}</strong>
+              <span class="small text-muted text-nowrap">{{ comment.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+            </div>
+            <div class="mt-2" style="white-space:pre-wrap">{{ comment.note }}</div>
           </div>
           {% endfor %}
         {% else %}
