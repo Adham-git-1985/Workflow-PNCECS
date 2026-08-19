@@ -122,6 +122,7 @@ new Chart(ctx, {
             <th>#</th>
             <th>العنوان</th>
             <th>الحالة</th>
+            <th>الطلب عند</th>
             <th class="text-center">إجراءات</th>
         </tr>
     </thead>
@@ -140,6 +141,7 @@ new Chart(ctx, {
                     {{ req.status|ui_label }}
                 </span>
             </td>
+            <td class="text-muted">{{ waiting_for.get(req.id, '—') }}</td>
             <td class="text-center">
                 <div class="d-flex gap-2 justify-content-center">
                     <a href="{{ url_for('workflow.view_request', request_id=req.id) }}"

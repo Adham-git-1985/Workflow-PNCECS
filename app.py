@@ -42,7 +42,8 @@ from sqlalchemy import text
 from models import (
     User, WorkflowRequest,
     Approval, AuditLog, Notification,
-    MessageRecipient
+    MessageRecipient, WorkflowInstance, WorkflowInstanceStep,
+    Department, Directorate, Committee,
 )
 
 # ======================
@@ -1142,11 +1143,40 @@ def my_requests():
         WorkflowRequest.id.desc()
     ).all()
 
+    waiting_for = {}
+    for workflow_request in requests:
+        instance = WorkflowInstance.query.filter_by(request_id=workflow_request.id).first()
+        step = (
+            WorkflowInstanceStep.query.filter_by(
+                instance_id=instance.id,
+                step_order=instance.current_step_order,
+                status="PENDING",
+            ).first()
+            if instance and not instance.is_completed else None
+        )
+        if not step:
+            waiting_for[workflow_request.id] = "لا يوجد إجراء معلّق"
+        elif step.approver_kind == "USER" and step.approver_user_id:
+            user = User.query.get(step.approver_user_id)
+            waiting_for[workflow_request.id] = f"بانتظار {user.full_name if user else 'مستخدم محدد'}"
+        elif step.approver_kind == "DEPARTMENT" and step.approver_department_id:
+            department = Department.query.get(step.approver_department_id)
+            waiting_for[workflow_request.id] = f"بانتظار إدارة {department.name_ar if department else 'محددة'}"
+        elif step.approver_kind == "DIRECTORATE" and step.approver_directorate_id:
+            directorate = Directorate.query.get(step.approver_directorate_id)
+            waiting_for[workflow_request.id] = f"بانتظار {directorate.name_ar if directorate else 'محددة'}"
+        elif step.approver_kind == "COMMITTEE" and step.approver_committee_id:
+            committee = Committee.query.get(step.approver_committee_id)
+            waiting_for[workflow_request.id] = f"بانتظار لجنة {committee.name_ar if committee else 'محددة'}"
+        else:
+            waiting_for[workflow_request.id] = "بانتظار الجهة المسؤولة"
+
 
     return render_template(
         "my_requests.html",
         requests=requests,
         counters=counters,
+        waiting_for=waiting_for,
         last_update=datetime.utcnow()
     )
 
