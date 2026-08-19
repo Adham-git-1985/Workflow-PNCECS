@@ -137,7 +137,7 @@
         </form>
       {% else %}
         <div class="alert alert-info mb-0">
-          لتفعيل الاعتماد، امنح المستخدم صلاحية <b>TRANSPORT_APPROVE</b>.
+          هذا الطلب بانتظار <b>{{ stage_labels.get(item.approval_stage, item.approval_stage) }}</b>.
         </div>
       {% endif %}
 
