@@ -24,8 +24,8 @@
             <input type="text" name="full_name_quad" class="form-control" value="{{ (emp_file.full_name_quad if emp_file else '') or '' }}" placeholder="الاسم الرباعي كما في الهوية">
           </div>
           <div class="col-md-3">
-            <label class="form-label">كود ساعة الدوام (9 أرقام)</label>
-            <input type="text" name="timeclock_code" class="form-control" value="{{ (emp_file.timeclock_code if emp_file else '') or '' }}" placeholder="000080439">
+            <label class="form-label">كود ساعة الدوام (أرقام فقط)</label>
+            <input type="text" name="timeclock_code" class="form-control" value="{{ (emp_file.timeclock_code if emp_file else '') or '' }}" placeholder="67300">
           </div>
         </div>
 

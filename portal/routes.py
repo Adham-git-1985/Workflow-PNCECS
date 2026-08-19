@@ -13653,8 +13653,8 @@ def hr_employee_file(user_id: int):
         # --- attendance mapping (timeclock) ---
         tc = _to_str(request.form.get("timeclock_code"))
         if tc:
-            if (not tc.isdigit()) or len(tc) != 9:
-                flash("كود الساعة يجب أن يكون 9 أرقام.", "danger")
+            if not tc.isdigit():
+                flash("كود الساعة يجب أن يحتوي أرقاماً فقط.", "danger")
                 return redirect(request.url)
             emp_file.timeclock_code = tc
         else:
@@ -18513,7 +18513,7 @@ def _timeclock_get_match_by() -> str:
     #  - EMPLOYEE_NO: match EmployeeFile.employee_no
     #  - NATIONAL_ID: match EmployeeFile.national_id
     #  - AUTO: try all (employee_no -> national_id -> timeclock_code)
-    return v if v in {'TIMECLK_CODE', 'EMPLOYEE_NO', 'NATIONAL_ID', 'AUTO'} else 'TIMECLK_CODE'
+    return v if v in {'TIMECLK_CODE', 'EMPLOYEE_NO', 'NATIONAL_ID', 'AUTO'} else 'AUTO'
 
 
 def _timeclock_build_code_to_user(match_by: str) -> dict:

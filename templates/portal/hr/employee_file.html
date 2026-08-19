@@ -34,8 +34,8 @@
             <input name="employee_no" class="form-control" value="{{ emp_file.employee_no if emp_file else '' }}">
           </div>
           <div class="col-12 col-md-6">
-            <label class="form-label">كود ساعة الدوام (9 أرقام)</label>
-            <input name="timeclock_code" class="form-control" value="{{ emp_file.timeclock_code if emp_file else '' }}" placeholder="000000000">
+            <label class="form-label">كود ساعة الدوام (أرقام فقط)</label>
+            <input name="timeclock_code" class="form-control" value="{{ emp_file.timeclock_code if emp_file else '' }}" placeholder="67300">
           </div>
 
           <div class="col-12 col-md-6">

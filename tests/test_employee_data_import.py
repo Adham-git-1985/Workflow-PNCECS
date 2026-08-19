@@ -17,6 +17,7 @@ from services.employee_data_import import (
     build_employee_import_plan,
     canonical_payload_hash,
 )
+from portal.routes import _timeclock_build_code_to_user
 
 
 def answer(value, occurrence=1):
@@ -122,6 +123,30 @@ class EmployeeDataImportTests(unittest.TestCase):
         birth_operation = next(item for item in plan["operations"] if item["field"] == "birth_date")
         self.assertEqual(birth_operation["resolved"], "1985-08-11")
         self.assertEqual(plan["dependents"][0]["birth_date"], "2018-01-02")
+
+    def test_plan_accepts_short_numeric_timeclock_code(self):
+        payload = self.payload()
+        payload["fields"]["timeclock_code"] = answer("67300")
+
+        plan = build_employee_import_plan(payload, self.employee)
+
+        self.assertEqual(plan["unresolved"], [])
+        timeclock_operation = next(item for item in plan["operations"] if item["field"] == "timeclock_code")
+        self.assertEqual(timeclock_operation["resolved"], "67300")
+
+    def test_auto_timeclock_matching_uses_employee_and_national_identifiers(self):
+        db.session.add(EmployeeFile(
+            user_id=self.employee.id,
+            employee_no="67300",
+            national_id="99887766",
+            timeclock_code="67300",
+        ))
+        db.session.commit()
+
+        matches = _timeclock_build_code_to_user("AUTO")
+
+        self.assertEqual(matches["67300"], self.employee.id)
+        self.assertEqual(matches["99887766"], self.employee.id)
 
     def test_apply_updates_employee_file_and_is_idempotent_for_repeated_rows(self):
         summary = apply_employee_import_payload(

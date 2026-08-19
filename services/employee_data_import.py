@@ -350,8 +350,8 @@ def build_employee_import_plan(
         resolved: Any = incoming
         if field in DATE_FIELDS:
             resolved = _parse_date(incoming, label, unresolved)
-        elif field == "timeclock_code" and (not incoming.isdigit() or len(incoming) != 9):
-            unresolved.append({"field": label, "value": incoming, "reason": "كود الساعة يجب أن يكون 9 أرقام"})
+        elif field == "timeclock_code" and not incoming.isdigit():
+            unresolved.append({"field": label, "value": incoming, "reason": "كود الساعة يجب أن يحتوي أرقاماً فقط"})
             resolved = None
         if resolved is None:
             continue

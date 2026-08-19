@@ -1722,7 +1722,7 @@ class EmployeeFile(db.Model):
     full_name_quad = db.Column(db.String(255), nullable=True, index=True)
 
     # Attendance mapping
-    timeclock_code = db.Column(db.String(20), nullable=True, index=True)  # 9 digits
+    timeclock_code = db.Column(db.String(20), nullable=True, index=True)  # numeric code; leading zeros are supported
 
     # -----------------------------
     # (1) Basic data - Section 1
