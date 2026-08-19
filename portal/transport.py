@@ -851,7 +851,7 @@ def transport_movements_report():
     if date_to:
         query = query.filter(TransportPermit.depart_at <= date_to)
     items = query.order_by(TransportPermit.created_at.desc()).all()
-    return render_template("portal/transport/movements_report.html", items=items, status=status, stage=stage, date_from=request.args.get("date_from") or "", date_to=request.args.get("date_to") or "", stage_labels=_MOVEMENT_STAGES)
+    return render_template("portal/transport/movements_report.html", items=items, status=status, stage=stage, date_from=request.args.get("date_from") or "", date_to=request.args.get("date_to") or "", stage_labels=_MOVEMENT_STAGES, can_manage=True)
 
 
 # -------------------------

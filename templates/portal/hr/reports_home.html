@@ -16,6 +16,16 @@
   <div class="col-12 col-md-6 col-lg-4">
     <div class="p-3 bg-white rounded-3 shadow-sm h-100">
       <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-car-front fs-4"></i>
+        <div class="fw-bold">تقارير الحركة والنقل</div>
+      </div>
+      <div class="text-muted small mb-3">سجل طلبات الحركة حسب الفترة والحالة والمرحلة.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.transport_movements_report') }}">فتح التقرير</a>
+    </div>
+  </div>
+  <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100">
+      <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-search fs-4"></i>
         <div class="fw-bold">الإستعلامات</div>
       </div>

@@ -7,9 +7,9 @@
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_vehicles') }}">السيارات</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_drivers') }}">السائقون</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_zones') }}">المناطق</a>
-    {% if current_user.has_perm('TRANSPORT_READ') %}
-      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_movements_report') }}">تقرير الحركات</a>
     {% endif %}
+    {% if current_user.has_perm('TRANSPORT_READ') or can_manage|default(false) %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_movements_report') }}">تقرير الحركات</a>
     {% endif %}
     {% if current_user.has_perm('TRANSPORT_READ') %}
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_trips') }}">الرحلات</a>
