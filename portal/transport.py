@@ -220,6 +220,7 @@ def transport_approval_settings():
         _set_setting("TRANSPORT_MANAGER_USER_ID", request.form.get("transport_manager_user_id") or "")
         _set_setting("TRANSPORT_DIRECTOR_USER_ID", request.form.get("transport_director_user_id") or "")
         _set_setting("TRANSPORT_ADMIN_USER_ID", request.form.get("transport_admin_user_id") or "")
+        _grant_transport_report_access(_to_int(request.form.get("transport_manager_user_id") or ""))
         _grant_transport_report_access(_to_int(request.form.get("transport_admin_user_id") or ""))
         db.session.commit()
         flash("تم حفظ مسؤولي اعتماد طلبات الحركة.", "success")
