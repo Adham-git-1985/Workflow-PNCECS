@@ -126,7 +126,7 @@
     <div class="me-3">
 
         <div class="mb-1">
-            <strong>{{ n.message }}</strong>
+            <strong>{{ notification_messages.get(n.id, n.message) }}</strong>
 
             {% if n.type == "CRITICAL" %}
                 <span class="badge bg-danger ms-2">حرج</span>

@@ -18,6 +18,7 @@ from flask import (
     flash, jsonify, Response, stream_with_context, current_app
 )
 from flask_login import login_required, current_user
+from markupsafe import Markup, escape
 
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph,
@@ -1431,6 +1432,24 @@ def preview_workflow_attachment(file_id):
 # =========================
 # Notifications
 # =========================
+_NOTIFICATION_REQUEST_NUMBER_RE = re.compile(r"#\s*(\d+)")
+
+
+def _notification_message_with_request_links(message: str | None) -> Markup:
+    """Link request references in notification text without trusting notification HTML."""
+    text = str(message or "وصل تنبيه جديد")
+
+    def replace(match):
+        request_id = int(match.group(1))
+        workflow_request = WorkflowRequest.query.get(request_id)
+        if not workflow_request or not _user_can_view_request(current_user, workflow_request):
+            return f"#{request_id}"
+        url = url_for("workflow.view_request", request_id=request_id)
+        return f'<a class="link-primary text-decoration-underline" href="{escape(url)}">#{request_id}</a>'
+
+    return Markup(_NOTIFICATION_REQUEST_NUMBER_RE.sub(replace, str(escape(text))))
+
+
 @workflow_bp.route("/notifications")
 @login_required
 def notifications():
@@ -1491,6 +1510,10 @@ def notifications():
         .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
         .count()
     )
+    notification_messages = {
+        notification.id: _notification_message_with_request_links(notification.message)
+        for notification in pagination.items
+    }
 
     return render_template(
         "workflow/notifications.html",
@@ -1498,6 +1521,7 @@ def notifications():
         pagination=pagination,
         unread_count=unread_count,
         pending_sent_count=pending_sent_count,
+        notification_messages=notification_messages,
         scope=scope,
         filters={
             "type": notif_type,
