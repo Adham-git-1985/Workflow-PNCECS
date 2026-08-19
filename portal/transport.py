@@ -109,7 +109,7 @@ _MOVEMENT_STAGES = {
 
 
 def _can_request_movement() -> bool:
-    return current_user.has_perm("TRANSPORT_REQUEST") or current_user.has_perm("TRANSPORT_CREATE")
+    return current_user.is_authenticated
 
 
 def _has_transport_manager() -> bool:

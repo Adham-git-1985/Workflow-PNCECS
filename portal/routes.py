@@ -3453,9 +3453,13 @@ def _access_service_defs():
         "transport": {
             "label": "الحركة والنقل",
             "options": [
+                ("REQUEST", "طلب حركة للموظفين", ["TRANSPORT_REQUEST"]),
                 ("READ", "عرض وحدة الحركة والنقل", ["TRANSPORT_READ"]),
                 ("MANAGE", "إدارة الحركة (سيارات/سائقين/أذون/رحلات)", ["TRANSPORT_READ", "TRANSPORT_CREATE", "TRANSPORT_UPDATE", "TRANSPORT_DELETE"]),
                 ("APPROVE", "اعتماد أذون الحركة", ["TRANSPORT_READ", "TRANSPORT_APPROVE"]),
+                ("TRANSPORT_MANAGER", "مسؤول الحركة والنقل (تعيين سائق)", ["TRANSPORT_READ", "TRANSPORT_MANAGER_APPROVE"]),
+                ("TRANSPORT_DIRECTOR", "مدير النقل البديل", ["TRANSPORT_READ", "TRANSPORT_DIRECTOR_APPROVE"]),
+                ("ADMIN_APPROVE", "مدير الشؤون الإدارية (اعتماد نهائي)", ["TRANSPORT_READ", "TRANSPORT_ADMIN_APPROVE"]),
                 ("TRACKING", "التتبع (الخيار C)", ["TRANSPORT_READ", "TRANSPORT_TRACKING_READ", "TRANSPORT_TRACKING_MANAGE"]),
             ],
         },
@@ -10503,6 +10507,7 @@ def hr_me_home():
     can_docs = False
     can_training = False
     can_sys_eval = False
+    can_transport_request = True
     try:
         can_hr = current_user.has_perm(HR_READ)
         can_att = current_user.has_perm(HR_ATT_READ)
@@ -10627,6 +10632,7 @@ def hr_me_home():
         can_ss=can_ss,
         can_docs=can_docs,
         can_sys_eval=can_sys_eval,
+        can_transport_request=can_transport_request,
         attendance_events_today=attendance_events_today,
         attendance_events_month=attendance_events_month,
         leaves_total=leaves_total,
