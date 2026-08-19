@@ -2466,6 +2466,46 @@ def _correspondence_inbox_tasks(actor_users, search: str = "") -> list[dict]:
     return tasks
 
 
+def _workflow_user_summary(req, step):
+    """Small, non-technical status summary for request owners and assignees."""
+    log = (AuditLog.query.filter_by(request_id=req.id)
+           .filter(~AuditLog.action.in_(("VIEW_PAGE", "REQUEST_VIEWED")))
+           .order_by(AuditLog.created_at.desc()).first())
+    actor = log.user.full_name if log and log.user else "النظام"
+    action = (log.action or "").upper() if log else ""
+    if action == "WORKFLOW_COMMENT":
+        last_action = f"تمت إضافة تعليق من {actor}"
+    elif action == "WORKFLOW_REPLY":
+        last_action = f"تمت إضافة رد من {actor}"
+    elif action in {"APPROVE", "WORKFLOW_APPROVE"}:
+        last_action = f"تمت الموافقة من {actor}"
+    elif action in {"REJECT", "WORKFLOW_REJECT"}:
+        last_action = f"تم رفض الطلب من {actor}"
+    elif log:
+        last_action = f"آخر إجراء: {ui_label(log.action)} بواسطة {actor}"
+    else:
+        last_action = "لم يُتخذ إجراء بعد"
+
+    waiting_for = "لا يوجد إجراء معلّق"
+    if step and (step.status or "").upper() == "PENDING":
+        kind = (step.approver_kind or "").upper()
+        if kind == "USER" and step.approver_user_id:
+            user = User.query.get(step.approver_user_id)
+            waiting_for = f"بانتظار {user.full_name if user else 'مستخدم محدد'}"
+        elif kind == "DEPARTMENT" and step.approver_department_id:
+            department = Department.query.get(step.approver_department_id)
+            waiting_for = f"بانتظار إدارة {department.name_ar if department else 'محددة'}"
+        elif kind == "DIRECTORATE" and step.approver_directorate_id:
+            directorate = Directorate.query.get(step.approver_directorate_id)
+            waiting_for = f"بانتظار {directorate.name_ar if directorate else 'إدارة محددة'}"
+        elif kind == "COMMITTEE" and step.approver_committee_id:
+            committee = Committee.query.get(step.approver_committee_id)
+            waiting_for = f"بانتظار لجنة {committee.name_ar if committee else 'محددة'}"
+        elif kind == "ROLE":
+            waiting_for = "بانتظار الجهة المسؤولة"
+    return {"last_action": last_action, "waiting_for": waiting_for}
+
+
 @workflow_bp.route("/inbox")
 @login_required
 def inbox():
@@ -2656,6 +2696,7 @@ def inbox():
             rows = filtered
 
     corr_tasks = _correspondence_inbox_tasks(actor_users, search)
+    request_summaries = {req.id: _workflow_user_summary(req, step) for req, _inst, step in rows}
     
 
     # --- Circulars (last 5) ---
@@ -2674,6 +2715,7 @@ def inbox():
         corr_tasks=corr_tasks,
         q=search,
         last_circulars=last_circulars,
+        request_summaries=request_summaries,
     )
 
 
@@ -3386,6 +3428,7 @@ def view_request(request_id):
         .limit(200)
         .all()
     )
+    simple_audit = [_workflow_user_summary(req, current_step)]
 
     # attachment counts per step (best-effort via audit meta)
     step_att_counts = {}
@@ -3667,6 +3710,8 @@ def view_request(request_id):
         attachments=atts,
         files_map=files_map,
         audit=audit,
+        simple_audit=simple_audit,
+        show_detailed_audit=current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"),
         users_map=users_map,
         depts_map=depts_map,
         dirs_map=dirs_map,

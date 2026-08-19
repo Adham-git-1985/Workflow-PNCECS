@@ -138,6 +138,7 @@
           <th>العنوان</th>
           <th>الحالة</th>
           <th>الخطوة</th>
+          <th>آخر إجراء / مكان الطلب</th>
           <th>تاريخ الإنشاء</th>
           <th></th>
         </tr>
@@ -149,6 +150,11 @@
           <td>{{ req.title }}</td>
           <td><span class="badge bg-primary">{{ req.status|ui_label }}</span></td>
           <td>الخطوة {{ step.step_order }} {% if step.mode == 'PARALLEL_SYNC' %}<span class="badge bg-info ms-2">متزامن</span>{% endif %}</td>
+          {% set summary = request_summaries.get(req.id) %}
+          <td style="min-width:240px">
+            <div>{{ summary.last_action }}</div>
+            <div class="small text-muted">{{ summary.waiting_for }}</div>
+          </td>
           <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
           <td class="text-end">
             <a class="btn btn-sm btn-outline-primary"

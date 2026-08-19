@@ -200,7 +200,7 @@
         <strong>🧾 سجل الإجراءات</strong>
       </div>
       <div class="card-body">
-        {% if audit %}
+        {% if show_detailed_audit and audit %}
           <ul class="list-group">
             {% for log in audit %}
               <li class="list-group-item">
@@ -226,6 +226,13 @@
               </li>
             {% endfor %}
           </ul>
+        {% elif simple_audit %}
+          {% for item in simple_audit %}
+          <div class="border rounded p-3 mb-2">
+            <div class="fw-semibold">{{ item.last_action }}</div>
+            <div class="small text-muted mt-1">{{ item.waiting_for }}</div>
+          </div>
+          {% endfor %}
         {% else %}
           <div class="text-muted">لا يوجد سجل بعد.</div>
         {% endif %}
