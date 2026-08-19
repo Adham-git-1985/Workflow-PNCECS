@@ -3469,6 +3469,27 @@ def view_request(request_id):
         if (log.action or "").upper() in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}
         and _clean_workflow_note(log.note)
     ]
+    technical_actions = {"PAGE_VIEW", "VIEW_PAGE", "REQUEST_VIEWED", "USER_ACTION"}
+    action_labels = {
+        "WORKFLOW_STARTED": "تم بدء المسار",
+        "STEP_APPROVED": "تمت المتابعة",
+        "STEP_REJECTED": "تمت إضافة تعليق",
+        "WORKFLOW_COMMENT": "تمت إضافة تعليق",
+        "WORKFLOW_REPLY": "تمت إضافة رد",
+        "PARALLEL_SYNC_AUTHORIZED": "تم توجيه الخطوة المتزامنة",
+        "PARALLEL_SYNC_RESPONDED": "تمت متابعة الخطوة المتزامنة",
+        "WORKFLOW_ATTACHMENT_UPLOADED": "تمت إضافة مرفق",
+    }
+    user_audit = [
+        {
+            "action": action_labels.get((log.action or "").upper(), ui_label(log.action)),
+            "author": log.user.full_name if log.user else "النظام",
+            "created_at": log.created_at,
+            "note": _clean_workflow_note(log.note),
+        }
+        for log in reversed(audit)
+        if (log.action or "").upper() not in technical_actions
+    ]
     if not audit:
         decided_steps = [row for row in steps if getattr(row, "decided_at", None)]
         if decided_steps:
@@ -3769,6 +3790,7 @@ def view_request(request_id):
         audit=audit,
         simple_audit=simple_audit,
         simple_comments=simple_comments,
+        user_audit=user_audit,
         show_detailed_audit=current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"),
         users_map=users_map,
         depts_map=depts_map,
