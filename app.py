@@ -1126,7 +1126,7 @@ def my_requests():
         ).count()
     }
 
-    if status:
+    if status and status.lower() != "all":
         if status == "in_progress":
             base_query = base_query.filter(
                 WorkflowRequest.status.notin_(
