@@ -3469,6 +3469,23 @@ def view_request(request_id):
         if (log.action or "").upper() in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}
         and _clean_workflow_note(log.note)
     ]
+    if not audit:
+        decided_steps = [row for row in steps if getattr(row, "decided_at", None)]
+        if decided_steps:
+            latest_step = max(decided_steps, key=lambda row: row.decided_at)
+            actor = User.query.get(latest_step.decided_by_id) if latest_step.decided_by_id else None
+            actor_name = actor.full_name if actor else "الجهة المسؤولة"
+            if latest_step.status == "APPROVED":
+                simple_audit["last_action"] = f"تمت المتابعة من {actor_name}"
+            elif latest_step.status == "REJECTED":
+                simple_audit["last_action"] = f"تمت إضافة تعليق من {actor_name}"
+            if _clean_workflow_note(latest_step.note):
+                simple_comments.append({
+                    "kind": "تعليق",
+                    "author": actor_name,
+                    "created_at": latest_step.decided_at,
+                    "note": _clean_workflow_note(latest_step.note),
+                })
 
     # attachment counts per step (best-effort via audit meta)
     step_att_counts = {}
