@@ -150,6 +150,17 @@ def _can_edit_movement(row: TransportPermit) -> bool:
     return row.requester_user_id == current_user.id or current_user.id in configured_ids or current_user.has_perm("TRANSPORT_UPDATE") or current_user.has_perm("TRANSPORT_APPROVE")
 
 
+def _can_view_movement(row: TransportPermit) -> bool:
+    configured_ids = {
+        _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID")),
+        _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
+        _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
+    }
+    if current_user.id in configured_ids or row.approver_user_id == current_user.id:
+        return True
+    return any(action.actor_user_id == current_user.id for action in row.actions or [])
+
+
 def _record_movement_action(row: TransportPermit, action: str, note: str | None = None) -> None:
     db.session.add(TransportPermitAction(
         permit_id=row.id,
@@ -687,7 +698,7 @@ def transport_permit_new():
 def transport_permit_view(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
     can_manage = current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE")
-    if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row):
+    if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row) and not _can_edit_movement(row) and not _can_view_movement(row):
         abort(403)
     can_approve = _can_process_movement(row)
     can_update = _can_edit_movement(row)
@@ -769,7 +780,7 @@ def transport_permit_approve(permit_id: int):
     if row.status == "SUBMITTED":
         _notify_next_movement_stage(row)
     else:
-        _send_movement_alert(row, [row.requester_user_id], f"تم اعتماد طلب الحركة #{row.id} نهائياً.")
+        _send_movement_alert(row, [row.requester_user_id], f"تمت الموافقة والاعتماد النهائي على طلب الحركة #{row.id}.")
 
     _audit("TRANSPORT_PERMIT_APPROVE", f"اعتماد إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
