@@ -651,6 +651,13 @@ def _ensure_runtime_schema():
                     _add_column_retry("transport_trip", col, ctype)
 
             for col, ctype in [
+                ("approval_stage", "TEXT NOT NULL DEFAULT 'MANAGER'"),
+                ("manager_user_id", "INTEGER"),
+            ]:
+                if not _col_exists("transport_permit", col):
+                    _add_column_retry("transport_permit", col, ctype)
+
+            for col, ctype in [
                 ("order_no", "TEXT"),
                 ("place_kind", "TEXT"),
             ]:

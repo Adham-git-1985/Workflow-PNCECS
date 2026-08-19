@@ -6,7 +6,7 @@
 
 
 <div class="d-flex align-items-center justify-content-between mb-3">
-  <h5 class="mb-0"><i class="bi bi-file-earmark-plus"></i> إذن حركة جديد</h5>
+  <h5 class="mb-0"><i class="bi bi-file-earmark-plus"></i> طلب حركة جديد</h5>
   <div class="d-flex gap-2">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('users.help_transport_guide') }}" target="_blank">
       <i class="bi bi-book"></i> دليل الحركة
@@ -20,24 +20,6 @@
     <div class="col-md-6">
       <label class="form-label">سبب/غرض الحركة *</label>
       <input class="form-control" name="purpose" required placeholder="مثال: مهمة رسمية / توصيل وثائق / ...">
-    </div>
-    <div class="col-md-3">
-      <label class="form-label">السيارة</label>
-      <select class="form-select" name="vehicle_id">
-        <option value="">—</option>
-        {% for v in vehicles %}
-          <option value="{{ v.id }}">{{ v.plate_no }}{% if v.label %} — {{ v.label }}{% endif %}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <div class="col-md-3">
-      <label class="form-label">السائق</label>
-      <select class="form-select" name="driver_id">
-        <option value="">—</option>
-        {% for d in drivers %}
-          <option value="{{ d.id }}">{{ d.name }}</option>
-        {% endfor %}
-      </select>
     </div>
 
     <div class="col-md-3">
@@ -90,7 +72,7 @@
 
     <div class="col-12">
       <div class="alert alert-info mb-0">
-        <b>ملاحظة:</b> تم تجهيز الأساسيات لبدء العمل فوراً. يمكن لاحقاً إضافة مرفقات، وتحديد المسار بدقة (Multi-stops)، وتوليد رقم مرجعي تلقائي.
+        <b>مسار الاعتماد:</b> المدير المباشر، ثم مسؤول الحركة والنقل لتعيين السائق، ثم مدير الشؤون الإدارية للاعتماد النهائي.
       </div>
     </div>
   </form>

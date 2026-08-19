@@ -1,0 +1,17 @@
+{% extends "portal/layout.html" %}
+{% block title %}تقرير الحركات{% endblock %}
+{% block content %}
+{% include "portal/transport/_nav.html" %}
+<div class="d-flex align-items-center justify-content-between mb-3"><h5 class="mb-0"><i class="bi bi-clipboard-data"></i> تقرير طلبات الحركة</h5></div>
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-3"><label class="form-label">من تاريخ</label><input class="form-control" type="date" name="date_from" value="{{ date_from }}"></div>
+    <div class="col-md-3"><label class="form-label">إلى تاريخ</label><input class="form-control" type="date" name="date_to" value="{{ date_to }}"></div>
+    <div class="col-md-3"><label class="form-label">الحالة</label><select class="form-select" name="status"><option value="">الكل</option>{% for value, label in [('SUBMITTED','قيد الاعتماد'),('APPROVED','معتمد'),('REJECTED','معلّق/مرفوض'),('COMPLETED','مكتمل')] %}<option value="{{ value }}" {% if status==value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><button class="btn btn-primary">عرض التقرير</button></div>
+  </form>
+</div>
+<div class="bg-white rounded-3 shadow-sm overflow-hidden"><div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead class="table-light"><tr><th>#</th><th>الموظف</th><th>من / إلى</th><th>التبرير</th><th>السائق</th><th>الحالة</th><th>التاريخ</th></tr></thead><tbody>
+{% for item in items %}<tr><td><a href="{{ url_for('portal.transport_permit_view', permit_id=item.id) }}">#{{ item.id }}</a></td><td>{{ item.requester.name or item.requester.email }}</td><td>{{ item.origin_zone.name if item.origin_zone else (item.origin_text or '-') }} ← {{ item.dest_zone.name if item.dest_zone else (item.dest_text or '-') }}</td><td>{{ item.purpose }}</td><td>{{ item.driver.name if item.driver else '-' }}</td><td>{{ 'معتمد' if item.status == 'APPROVED' else ('قيد ' ~ stage_labels.get(item.approval_stage, item.approval_stage) if item.status == 'SUBMITTED' else item.status|ui_label) }}</td><td>{{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</td></tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-4">لا توجد طلبات حركة.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

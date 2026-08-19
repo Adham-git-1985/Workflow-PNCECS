@@ -12,7 +12,7 @@
       <i class="bi bi-book"></i> دليل الحركة
     </a>
     {% if can_create %}
-      <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_permit_new') }}">إذن جديد</a>
+      <a class="btn btn-sm btn-primary" href="{{ url_for('portal.transport_permit_new') }}">طلب حركة جديد</a>
     {% endif %}
   </div>
 </div>
@@ -81,6 +81,7 @@
             <td>
               {% if it.status == 'SUBMITTED' %}
                 <span class="badge text-bg-warning">قيد الاعتماد</span>
+                <div class="small text-muted mt-1">بانتظار {{ stage_labels.get(it.approval_stage, it.approval_stage) }}</div>
               {% elif it.status == 'APPROVED' %}
                 <span class="badge text-bg-success">معتمد</span>
               {% elif it.status == 'REJECTED' %}

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, time
 from typing import Optional
 
-from flask import render_template, request, redirect, url_for, flash
+from flask import render_template, request, redirect, url_for, flash, abort
 from flask_login import login_required, current_user
 from sqlalchemy import or_
 
@@ -25,6 +25,9 @@ from models import (
     HRLookupItem,
     SystemSetting,
     AuditLog,
+    EmployeeFile,
+    User,
+    TransportPermitAction,
 )
 
 
@@ -95,6 +98,46 @@ def _audit(action: str, note: str, target_type: str = "TRANSPORT", target_id: in
         ))
     except Exception:
         pass
+
+
+_MOVEMENT_STAGES = {
+    "MANAGER": "المدير المباشر",
+    "TRANSPORT": "مسؤول الحركة والنقل",
+    "ADMIN": "مدير الشؤون الإدارية",
+    "DONE": "مكتمل",
+}
+
+
+def _can_request_movement() -> bool:
+    return current_user.has_perm("TRANSPORT_REQUEST") or current_user.has_perm("TRANSPORT_CREATE")
+
+
+def _has_transport_manager() -> bool:
+    return any(user.has_perm("TRANSPORT_MANAGER_APPROVE") for user in User.query.all())
+
+
+def _can_process_movement(row: TransportPermit) -> bool:
+    if row.status != "SUBMITTED":
+        return False
+    if row.approval_stage == "MANAGER":
+        return row.manager_user_id == current_user.id or current_user.has_perm("TRANSPORT_APPROVE")
+    if row.approval_stage == "TRANSPORT":
+        return current_user.has_perm("TRANSPORT_MANAGER_APPROVE") or (
+            not _has_transport_manager() and current_user.has_perm("TRANSPORT_DIRECTOR_APPROVE")
+        ) or current_user.has_perm("TRANSPORT_APPROVE")
+    if row.approval_stage == "ADMIN":
+        return current_user.has_perm("TRANSPORT_ADMIN_APPROVE") or current_user.has_perm("TRANSPORT_APPROVE")
+    return False
+
+
+def _record_movement_action(row: TransportPermit, action: str, note: str | None = None) -> None:
+    db.session.add(TransportPermitAction(
+        permit_id=row.id,
+        stage=row.approval_stage,
+        action=action,
+        actor_user_id=current_user.id,
+        note=note,
+    ))
 
 
 # -------------------------
@@ -461,12 +504,16 @@ def transport_zone_delete(zone_id: int):
 # -------------------------
 @portal_bp.route("/transport/permits")
 @login_required
-@perm_required("TRANSPORT_READ")
 def transport_permits():
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
 
-    query = TransportPermit.query
+    can_manage = current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE")
+    if not can_manage and not _can_request_movement():
+        abort(403)
+    query = TransportPermit.query.filter(TransportPermit.is_deleted == False)  # noqa: E712
+    if not can_manage:
+        query = query.filter(TransportPermit.requester_user_id == current_user.id)
     if status in ("DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "COMPLETED"):
         query = query.filter(TransportPermit.status == status)
     if q:
@@ -475,23 +522,20 @@ def transport_permits():
 
     items = query.order_by(TransportPermit.created_at.desc(), TransportPermit.id.desc()).all()
 
-    can_create = current_user.has_perm("TRANSPORT_CREATE")
+    can_create = _can_request_movement()
     can_approve = current_user.has_perm("TRANSPORT_APPROVE")
     can_update = current_user.has_perm("TRANSPORT_UPDATE")
-    return render_template("portal/transport/permits_list.html", items=items, q=q, status=status, can_create=can_create, can_approve=can_approve, can_update=can_update)
+    return render_template("portal/transport/permits_list.html", items=items, q=q, status=status, can_create=can_create, can_approve=can_approve, can_update=can_update, can_manage=can_manage, stage_labels=_MOVEMENT_STAGES)
 
 
 @portal_bp.route("/transport/permits/new", methods=["GET", "POST"])
 @login_required
-@perm_required("TRANSPORT_CREATE")
 def transport_permit_new():
-    vehicles = TransportVehicle.query.order_by(TransportVehicle.plate_no.asc()).all()
-    drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
+    if not _can_request_movement():
+        abort(403)
     zones = TransportZone.query.filter(TransportZone.is_active == True).order_by(TransportZone.name.asc()).all()  # noqa: E712
 
     if request.method == "POST":
-        vehicle_id = _to_int(request.form.get("vehicle_id") or "")
-        driver_id = _to_int(request.form.get("driver_id") or "")
         origin_zone_id = _to_int(request.form.get("origin_zone_id") or "")
         dest_zone_id = _to_int(request.form.get("dest_zone_id") or "")
         origin_text = (request.form.get("origin_text") or "").strip() or None
@@ -505,11 +549,16 @@ def transport_permit_new():
         if not purpose:
             flash("سبب/غرض الحركة مطلوب.", "danger")
             return redirect(url_for("portal.transport_permit_new"))
+        if not (origin_zone_id or origin_text) or not (dest_zone_id or dest_text):
+            flash("حدد منطقة الانطلاق والوصول.", "danger")
+            return redirect(url_for("portal.transport_permit_new"))
+
+        employee = EmployeeFile.query.get(current_user.id)
+        manager_id = employee.direct_manager_user_id if employee else None
+        stage = "MANAGER" if manager_id else "TRANSPORT"
 
         row = TransportPermit(
             requester_user_id=current_user.id,
-            vehicle_id=vehicle_id,
-            driver_id=driver_id,
             origin_zone_id=origin_zone_id,
             dest_zone_id=dest_zone_id,
             origin_text=origin_text,
@@ -520,56 +569,75 @@ def transport_permit_new():
             return_at=return_at,
             note=note,
             status="SUBMITTED",
+            approval_stage=stage,
+            manager_user_id=manager_id,
             submitted_at=datetime.utcnow(),
         )
         db.session.add(row)
         db.session.flush()
+        _record_movement_action(row, "SUBMITTED", "تم إرسال طلب الحركة.")
         _audit("TRANSPORT_PERMIT_CREATE", f"طلب إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
         db.session.commit()
 
-        flash("تم إرسال إذن الحركة للاعتماد.", "success")
+        flash("تم إرسال طلب الحركة للاعتماد" + (" إلى المدير المباشر." if manager_id else " إلى مسؤول الحركة والنقل لعدم تعيين مدير مباشر."), "success")
         return redirect(url_for("portal.transport_permits"))
 
-    return render_template("portal/transport/permit_form.html", item=None, vehicles=vehicles, drivers=drivers, zones=zones)
+    return render_template("portal/transport/permit_form.html", item=None, zones=zones)
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>")
 @login_required
-@perm_required("TRANSPORT_READ")
 def transport_permit_view(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
-    can_approve = current_user.has_perm("TRANSPORT_APPROVE") and row.status == "SUBMITTED"
+    can_manage = current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE")
+    if row.requester_user_id != current_user.id and not can_manage and not _can_process_movement(row):
+        abort(403)
+    can_approve = _can_process_movement(row)
     can_update = current_user.has_perm("TRANSPORT_UPDATE") and row.status in ("DRAFT", "SUBMITTED")
-    return render_template("portal/transport/permit_view.html", item=row, can_approve=can_approve, can_update=can_update)
+    vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
+    drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
+    return render_template("portal/transport/permit_view.html", item=row, can_approve=can_approve, can_update=can_update, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>/approve", methods=["POST"])
 @login_required
-@perm_required("TRANSPORT_APPROVE")
 def transport_permit_approve(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
-    if row.status != "SUBMITTED":
+    if not _can_process_movement(row):
         flash("لا يمكن اعتماد هذا الإذن بهذه الحالة.", "warning")
         return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 
     decision_note = (request.form.get("decision_note") or "").strip() or None
-    row.status = "APPROVED"
-    row.approver_user_id = current_user.id
-    row.decided_at = datetime.utcnow()
-    row.decision_note = decision_note
+    if row.approval_stage == "TRANSPORT":
+        vehicle_id = _to_int(request.form.get("vehicle_id") or "")
+        driver_id = _to_int(request.form.get("driver_id") or "")
+        if not driver_id:
+            flash("يجب تعيين سائق قبل تحويل الطلب للاعتماد النهائي.", "danger")
+            return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+        row.vehicle_id, row.driver_id = vehicle_id, driver_id
+    _record_movement_action(row, "APPROVED", decision_note)
+    if row.approval_stage == "MANAGER":
+        row.approval_stage = "TRANSPORT"
+    elif row.approval_stage == "TRANSPORT":
+        row.approval_stage = "ADMIN"
+    else:
+        row.status = "APPROVED"
+        row.approval_stage = "DONE"
+        row.approver_user_id = current_user.id
+        row.decided_at = datetime.utcnow()
+        row.decision_note = decision_note
 
     _audit("TRANSPORT_PERMIT_APPROVE", f"اعتماد إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
-    flash("تم اعتماد إذن الحركة.", "success")
+    flash("تمت المتابعة وتحويل طلب الحركة للمرحلة التالية.", "success")
     return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>/reject", methods=["POST"])
 @login_required
-@perm_required("TRANSPORT_APPROVE")
 def transport_permit_reject(permit_id: int):
     row = TransportPermit.query.get_or_404(permit_id)
-    if row.status != "SUBMITTED":
+    if not _can_process_movement(row):
         flash("لا يمكن رفض هذا الإذن بهذه الحالة.", "warning")
         return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
 
@@ -578,11 +646,33 @@ def transport_permit_reject(permit_id: int):
     row.approver_user_id = current_user.id
     row.decided_at = datetime.utcnow()
     row.decision_note = decision_note
+    _record_movement_action(row, "REJECTED", decision_note)
 
     _audit("TRANSPORT_PERMIT_REJECT", f"رفض إذن حركة: #{row.id}", target_type="TRANSPORT_PERMIT", target_id=row.id)
     db.session.commit()
     flash("تم رفض إذن الحركة.", "success")
     return redirect(url_for("portal.transport_permit_view", permit_id=permit_id))
+
+
+@portal_bp.route("/transport/movements/report")
+@login_required
+@perm_required("TRANSPORT_READ")
+def transport_movements_report():
+    status = (request.args.get("status") or "").strip().upper()
+    stage = (request.args.get("stage") or "").strip().upper()
+    date_from = _parse_dt((request.args.get("date_from") or "") + "T00:00")
+    date_to = _parse_dt((request.args.get("date_to") or "") + "T23:59")
+    query = TransportPermit.query.filter(TransportPermit.is_deleted == False)  # noqa: E712
+    if status in ("SUBMITTED", "APPROVED", "REJECTED", "COMPLETED", "CANCELLED"):
+        query = query.filter(TransportPermit.status == status)
+    if stage in _MOVEMENT_STAGES:
+        query = query.filter(TransportPermit.approval_stage == stage)
+    if date_from:
+        query = query.filter(TransportPermit.depart_at >= date_from)
+    if date_to:
+        query = query.filter(TransportPermit.depart_at <= date_to)
+    items = query.order_by(TransportPermit.created_at.desc()).all()
+    return render_template("portal/transport/movements_report.html", items=items, status=status, stage=stage, date_from=request.args.get("date_from") or "", date_to=request.args.get("date_to") or "", stage_labels=_MOVEMENT_STAGES)
 
 
 # -------------------------

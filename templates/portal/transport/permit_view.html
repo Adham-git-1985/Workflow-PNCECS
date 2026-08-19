@@ -95,7 +95,7 @@
 
       {% if item.status == 'SUBMITTED' %}
         <div class="text-muted small mb-2">
-          هذا الإذن بانتظار اعتماد مسؤول الحركة.
+          هذا الطلب بانتظار: <b>{{ stage_labels.get(item.approval_stage, item.approval_stage) }}</b>.
         </div>
       {% elif item.status == 'APPROVED' %}
         <div class="text-muted small mb-2">
@@ -112,9 +112,21 @@
       {% if can_approve %}
         <hr id="decision">
         <form method="post" action="{{ url_for('portal.transport_permit_approve', permit_id=item.id) }}" class="mb-2">
+          {% if item.approval_stage == 'TRANSPORT' %}
+            <label class="form-label">السيارة (اختياري)</label>
+            <select class="form-select mb-2" name="vehicle_id">
+              <option value="">—</option>
+              {% for vehicle in vehicles %}<option value="{{ vehicle.id }}" {% if item.vehicle_id == vehicle.id %}selected{% endif %}>{{ vehicle.plate_no }}{% if vehicle.label %} — {{ vehicle.label }}{% endif %}</option>{% endfor %}
+            </select>
+            <label class="form-label">السائق *</label>
+            <select class="form-select mb-2" name="driver_id" required>
+              <option value="">اختر السائق</option>
+              {% for driver in drivers %}<option value="{{ driver.id }}" {% if item.driver_id == driver.id %}selected{% endif %}>{{ driver.name }}</option>{% endfor %}
+            </select>
+          {% endif %}
           <label class="form-label">ملاحظة (اختياري)</label>
           <textarea class="form-control" name="decision_note" rows="2" placeholder="ملاحظة الاعتماد..."></textarea>
-          <button class="btn btn-success w-100 mt-2" type="submit" onclick="return confirm('اعتماد إذن الحركة؟');">اعتماد</button>
+          <button class="btn btn-success w-100 mt-2" type="submit" onclick="return confirm('متابعة طلب الحركة؟');">متابعة</button>
         </form>
 
         <form method="post" action="{{ url_for('portal.transport_permit_reject', permit_id=item.id) }}">
@@ -126,6 +138,18 @@
         <div class="alert alert-info mb-0">
           لتفعيل الاعتماد، امنح المستخدم صلاحية <b>TRANSPORT_APPROVE</b>.
         </div>
+      {% endif %}
+
+      {% if item.actions %}
+        <hr>
+        <div class="fw-semibold mb-2">سجل إجراءات الطلب</div>
+        {% for action in item.actions|sort(attribute='created_at') %}
+          <div class="border rounded p-2 mb-2 small">
+            <div class="fw-semibold">{{ stage_labels.get(action.stage, action.stage) }} — {{ 'تمت المتابعة' if action.action == 'APPROVED' else ('تم التعليق/الرفض' if action.action == 'REJECTED' else 'تم إرسال الطلب') }}</div>
+            <div class="text-muted">{{ action.actor.name or action.actor.email }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+            {% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}
+          </div>
+        {% endfor %}
       {% endif %}
     </div>
   </div>

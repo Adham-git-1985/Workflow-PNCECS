@@ -4702,6 +4702,8 @@ class TransportPermit(db.Model):
     return_at = db.Column(db.DateTime, nullable=True, index=True)
 
     status = db.Column(db.String(20), nullable=False, default="DRAFT", index=True)  # DRAFT/SUBMITTED/APPROVED/REJECTED/CANCELLED/COMPLETED
+    approval_stage = db.Column(db.String(30), nullable=False, default="MANAGER", index=True)
+    manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
 
     note = db.Column(db.Text, nullable=True)
 
@@ -4721,6 +4723,7 @@ class TransportPermit(db.Model):
 
     requester = db.relationship("User", foreign_keys=[requester_user_id], lazy="joined")
     approver = db.relationship("User", foreign_keys=[approver_user_id], lazy="joined")
+    manager = db.relationship("User", foreign_keys=[manager_user_id], lazy="joined")
     deleted_by = db.relationship("User", foreign_keys=[deleted_by_id], lazy="joined")
 
     vehicle = db.relationship("TransportVehicle", foreign_keys=[vehicle_id], lazy="joined")
@@ -4733,6 +4736,21 @@ class TransportPermit(db.Model):
         db.CheckConstraint("status IN ('DRAFT','SUBMITTED','APPROVED','REJECTED','CANCELLED','COMPLETED')", name="ck_transport_permit_status"),
         db.Index("ix_transport_permit_status_date", "status", "depart_at"),
     )
+
+
+class TransportPermitAction(db.Model):
+    __tablename__ = "transport_permit_action"
+
+    id = db.Column(db.Integer, primary_key=True)
+    permit_id = db.Column(db.Integer, db.ForeignKey("transport_permit.id"), nullable=False, index=True)
+    stage = db.Column(db.String(30), nullable=False, index=True)
+    action = db.Column(db.String(20), nullable=False)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    permit = db.relationship("TransportPermit", foreign_keys=[permit_id], backref=db.backref("actions", lazy="selectin", cascade="all, delete-orphan"))
+    actor = db.relationship("User", foreign_keys=[actor_user_id], lazy="joined")
 
 
 class TransportTrip(db.Model):
