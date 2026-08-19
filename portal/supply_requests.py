@@ -34,11 +34,11 @@ def _recipient(row):
 
 def _can_process(row):
     if row.status != 'SUBMITTED': return False
-    return _recipient(row) == current_user.id or current_user.has_perm('STORE_MANAGE')
+    return _recipient(row) == current_user.id or current_user.has_perm('INVENTORY_REQUEST_APPROVE') or current_user.has_perm('STORE_MANAGE')
 
 
 def _can_manage():
-    return current_user.id in {_setting('INVENTORY_WAREHOUSE_MANAGER_USER_ID'), _setting('INVENTORY_ADMIN_MANAGER_USER_ID')} or current_user.has_perm('STORE_MANAGE')
+    return current_user.id in {_setting('INVENTORY_WAREHOUSE_MANAGER_USER_ID'), _setting('INVENTORY_ADMIN_MANAGER_USER_ID')} or current_user.has_perm('INVENTORY_REQUEST_APPROVE') or current_user.has_perm('STORE_MANAGE')
 
 
 def _can_view(row):

@@ -3448,6 +3448,7 @@ def _access_service_defs():
             "options": [
                 ("READ", "عرض المستودع", ["STORE_READ"]),
                 ("MANAGE", "رفع/إدارة المستودع", ["STORE_READ", "STORE_MANAGE"]),
+                ("REQUEST_APPROVE", "مدير المستودع (اعتماد طلبات المواد)", ["INVENTORY_REQUEST_APPROVE"]),
             ],
         },
         "transport": {
@@ -22507,6 +22508,7 @@ def portal_admin_dashboard():
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "طلبات الصلاحيات", "مراجعة طلبات الموظفين لتفعيل خدمات البوابة.", "bi-inboxes", "portal.admin_access_requests")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "صلاحيات البوابة", "تعديل الصلاحيات للأدوار أو للمستخدمين.", "bi-person-gear", "portal.portal_admin_permissions")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات الحركة", "تعيين مسؤول الحركة ومدير النقل البديل ومدير الشؤون الإدارية.", "bi-car-front", "portal.transport_approval_settings")
+    add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات المواد", "تعيين مدير المستودع ومدير الشؤون الإدارية.", "bi-box-seam", "portal.inventory_request_settings")
     add_card(PORTAL_MEETINGS_MANAGE, "الاجتماعات والمتابعة", "ترتيب الاجتماعات، الأجندة، التذكيرات، المحاضر، ومهام ما بعد الاجتماع.", "bi-calendar2-week", "portal.meetings_dashboard")
 
     # HR admin
