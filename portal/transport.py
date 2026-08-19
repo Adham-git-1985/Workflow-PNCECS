@@ -116,7 +116,8 @@ def _can_request_movement() -> bool:
 
 
 def _has_transport_manager() -> bool:
-    return any(user.has_perm("TRANSPORT_MANAGER_APPROVE") for user in User.query.all())
+    configured_id = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
+    return bool(configured_id) or any(user.has_perm("TRANSPORT_MANAGER_APPROVE") for user in User.query.all())
 
 
 def _can_process_movement(row: TransportPermit) -> bool:
@@ -125,11 +126,16 @@ def _can_process_movement(row: TransportPermit) -> bool:
     if row.approval_stage == "MANAGER":
         return row.manager_user_id == current_user.id or current_user.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "TRANSPORT":
-        return current_user.has_perm("TRANSPORT_MANAGER_APPROVE") or (
+        configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
+        configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
+        return current_user.id == configured_manager or (
+            not configured_manager and current_user.id == configured_director
+        ) or current_user.has_perm("TRANSPORT_MANAGER_APPROVE") or (
             not _has_transport_manager() and current_user.has_perm("TRANSPORT_DIRECTOR_APPROVE")
         ) or current_user.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "ADMIN":
-        return current_user.has_perm("TRANSPORT_ADMIN_APPROVE") or current_user.has_perm("TRANSPORT_APPROVE")
+        configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
+        return current_user.id == configured_admin or current_user.has_perm("TRANSPORT_ADMIN_APPROVE") or current_user.has_perm("TRANSPORT_APPROVE")
     return False
 
 
@@ -147,12 +153,43 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
     if row.approval_stage == "MANAGER":
         return [row.manager_user_id] if row.manager_user_id else []
     if row.approval_stage == "TRANSPORT":
+        configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
+        configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
+        if configured_manager:
+            return [configured_manager]
+        if configured_director:
+            return [configured_director]
         permission = "TRANSPORT_MANAGER_APPROVE" if _has_transport_manager() else "TRANSPORT_DIRECTOR_APPROVE"
     elif row.approval_stage == "ADMIN":
+        configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
+        if configured_admin:
+            return [configured_admin]
         permission = "TRANSPORT_ADMIN_APPROVE"
     else:
         return []
     return [user.id for user in User.query.all() if user.has_perm(permission)]
+
+
+@portal_bp.route("/transport/approval-settings", methods=["GET", "POST"])
+@login_required
+@perm_required("TRANSPORT_UPDATE")
+def transport_approval_settings():
+    if request.method == "POST":
+        _set_setting("TRANSPORT_MANAGER_USER_ID", request.form.get("transport_manager_user_id") or "")
+        _set_setting("TRANSPORT_DIRECTOR_USER_ID", request.form.get("transport_director_user_id") or "")
+        _set_setting("TRANSPORT_ADMIN_USER_ID", request.form.get("transport_admin_user_id") or "")
+        db.session.commit()
+        flash("تم حفظ مسؤولي اعتماد طلبات الحركة.", "success")
+        return redirect(url_for("portal.transport_approval_settings"))
+
+    users = User.query.order_by(User.name.asc(), User.email.asc()).all()
+    return render_template(
+        "portal/transport/approval_settings.html",
+        users=users,
+        transport_manager_user_id=_to_int(_get_setting("TRANSPORT_MANAGER_USER_ID")),
+        transport_director_user_id=_to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
+        transport_admin_user_id=_to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
+    )
 
 
 def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message: str) -> None:
