@@ -2532,7 +2532,8 @@ def _workflow_user_summary(req, step):
 
 def _clean_workflow_note(note: str | None) -> str:
     """Remove audit-instrumentation metadata from comments shown to users."""
-    return (note or "").split("\nمصدر العملية:", 1)[0].strip()
+    cleaned = (note or "").split("\nمصدر العملية:", 1)[0].strip()
+    return cleaned.replace("موافق عليه", "متابعة").replace("مرفوض", "تعليق")
 
 
 @workflow_bp.route("/inbox")
