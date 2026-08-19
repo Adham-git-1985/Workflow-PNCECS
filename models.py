@@ -3455,6 +3455,40 @@ class InvRequest(db.Model):
     )
 
 
+class InvEmployeeRequest(db.Model):
+    __tablename__ = "inv_employee_request"
+
+    id = db.Column(db.Integer, primary_key=True)
+    requester_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    items_text = db.Column(db.Text, nullable=False)
+    purpose = db.Column(db.String(255), nullable=False)
+    note = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(20), nullable=False, default="SUBMITTED", index=True)
+    approval_stage = db.Column(db.String(20), nullable=False, default="MANAGER", index=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    requester = db.relationship("User", foreign_keys=[requester_user_id], lazy="joined")
+    manager = db.relationship("User", foreign_keys=[manager_user_id], lazy="joined")
+
+
+class InvEmployeeRequestAction(db.Model):
+    __tablename__ = "inv_employee_request_action"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(db.Integer, db.ForeignKey("inv_employee_request.id"), nullable=False, index=True)
+    stage = db.Column(db.String(20), nullable=False)
+    action = db.Column(db.String(20), nullable=False)
+    actor_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    request = db.relationship("InvEmployeeRequest", backref=db.backref("actions", lazy="selectin", cascade="all, delete-orphan"))
+    actor = db.relationship("User", foreign_keys=[actor_user_id], lazy="joined")
+
+
 
 # ----------------------
 # Inventory: Suppliers / Units / Rooms

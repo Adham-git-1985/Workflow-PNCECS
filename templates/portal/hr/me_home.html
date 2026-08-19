@@ -16,6 +16,17 @@
   <div class="col-12 col-md-6 col-lg-3">
     <div class="p-3 bg-white rounded-3 shadow-sm h-100 border border-primary">
       <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-box-seam fs-4 text-primary"></i>
+        <div class="fw-bold">طلب مواد</div>
+      </div>
+      <div class="text-muted small mb-3">طلب القرطاسية والمواد الاستهلاكية من المستودع.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.inventory_employee_request_new') }}">طلب مواد جديد</a>
+      <a class="btn btn-outline-secondary w-100 mt-2" href="{{ url_for('portal.inventory_employee_requests') }}">متابعة طلباتي</a>
+    </div>
+  </div>
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100 border border-primary">
+      <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-car-front-fill fs-4 text-primary"></i>
         <div class="fw-bold">طلب حركة</div>
       </div>
