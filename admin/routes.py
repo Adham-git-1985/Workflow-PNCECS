@@ -29,6 +29,7 @@ from io import BytesIO
 
 import os
 import json
+import hashlib
 import shutil
 import sqlite3
 import zipfile
@@ -1149,6 +1150,8 @@ def workflow_routing_delete(rule_id):
 # Backup & Restore (Full System)
 # =========================
 
+BACKUP_FORMAT_VERSION = 2
+
 PERMISSION_BACKUP_MODELS = [
     ("roles", Role),
     ("role_permissions", RolePermission),
@@ -1182,6 +1185,214 @@ def _get_portal_uploads_dir() -> str:
 def _get_static_uploads_dir() -> str:
     """Static uploads live under static/uploads (e.g., user avatars/photos)."""
     return os.path.join(_get_project_root(), "static", "uploads")
+
+
+def _sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sqlite_identifier(name: str) -> str:
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _inspect_sqlite_database(db_path: str) -> dict:
+    """Validate a SQLite file and return every table, column and row count."""
+    if not os.path.isfile(db_path) or os.path.getsize(db_path) < 100:
+        raise ValueError("SQLite database file is missing or empty")
+
+    connection = sqlite3.connect(f"file:{os.path.abspath(db_path)}?mode=ro", uri=True)
+    try:
+        quick_check = [str(row[0]) for row in connection.execute("PRAGMA quick_check").fetchall()]
+        if quick_check != ["ok"]:
+            raise ValueError("SQLite quick_check failed: " + "; ".join(quick_check[:5]))
+
+        table_rows = connection.execute(
+            "SELECT name, sql FROM sqlite_master "
+            "WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+        ).fetchall()
+        tables = {}
+        total_rows = 0
+        for table_name, create_sql in table_rows:
+            quoted_name = _sqlite_identifier(table_name)
+            row_count = int(connection.execute(f"SELECT COUNT(*) FROM {quoted_name}").fetchone()[0])
+            total_rows += row_count
+            columns = [
+                {
+                    "name": column[1],
+                    "type": column[2],
+                    "not_null": bool(column[3]),
+                    "default": column[4],
+                    "primary_key": int(column[5] or 0),
+                }
+                for column in connection.execute(f"PRAGMA table_info({quoted_name})").fetchall()
+            ]
+            tables[table_name] = {
+                "row_count": row_count,
+                "columns": columns,
+                "create_sql": create_sql,
+            }
+
+        if "users" not in tables:
+            raise ValueError("Backup database does not contain the users table")
+
+        return {
+            "table_count": len(tables),
+            "total_rows": total_rows,
+            "tables": tables,
+        }
+    finally:
+        connection.close()
+
+
+def _database_module_summary(database_manifest: dict) -> dict:
+    tables = database_manifest.get("tables") or {}
+
+    def summarize(predicate) -> dict:
+        selected = [payload for name, payload in tables.items() if predicate(name.lower())]
+        return {
+            "table_count": len(selected),
+            "row_count": sum(int(payload.get("row_count") or 0) for payload in selected),
+        }
+
+    return {
+        "support_tickets": summarize(lambda name: name.startswith("trouble_")),
+        "transport": summarize(lambda name: name.startswith("transport_")),
+        "inventory": summarize(lambda name: name.startswith("inv_") or name.startswith("store_")),
+        "permissions": summarize(lambda name: "permission" in name or name in {"roles", "portal_permission_preset"}),
+        "workflow": summarize(lambda name: name.startswith("workflow_") or name in {"requests", "approvals", "audit_logs", "notifications", "messages"}),
+        "human_resources": summarize(lambda name: name.startswith("hr_") or name.startswith("employee_") or name.startswith("attendance_")),
+    }
+
+
+def _validate_sqlite_snapshot(snapshot_path: str, expected_manifest: dict | None = None) -> dict:
+    actual = _inspect_sqlite_database(snapshot_path)
+    expected_manifest = expected_manifest or {}
+
+    expected_sha256 = (expected_manifest.get("sha256") or "").strip().lower()
+    if expected_sha256 and _sha256_file(snapshot_path).lower() != expected_sha256:
+        raise ValueError("Database checksum does not match backup manifest")
+
+    expected_tables = expected_manifest.get("tables") or {}
+    for table_name, expected in expected_tables.items():
+        actual_table = actual["tables"].get(table_name)
+        if actual_table is None:
+            raise ValueError(f"Database table is missing: {table_name}")
+        if int(actual_table.get("row_count") or 0) != int(expected.get("row_count") or 0):
+            raise ValueError(f"Database row count mismatch: {table_name}")
+        expected_columns = [column.get("name") for column in (expected.get("columns") or [])]
+        actual_columns = [column.get("name") for column in (actual_table.get("columns") or [])]
+        if expected_columns and actual_columns != expected_columns:
+            raise ValueError(f"Database schema mismatch: {table_name}")
+
+    return actual
+
+
+def _persistent_path_is_excluded(scope: str, relative_path: str) -> bool:
+    normalized = relative_path.replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    if not parts or any("_before_restore_" in part.lower() for part in parts):
+        return True
+
+    top = parts[0].lower()
+    if scope == "instance":
+        if top in {"backups", "tmp"} or top.startswith("uploads_before_restore_"):
+            return True
+        if len(parts) == 1 and (
+            top == "automatic_backup_state.json"
+            or top.endswith(".log")
+            or top.endswith(".db")
+            or top.endswith(".db-wal")
+            or top.endswith(".db-shm")
+        ):
+            return True
+    return False
+
+
+def _iter_persistent_backup_files():
+    source_specs = [
+        ("instance", current_app.instance_path, "instance"),
+        ("storage", os.path.join(_get_project_root(), "storage"), "storage"),
+        ("static/uploads", _get_static_uploads_dir(), "static"),
+    ]
+
+    for archive_prefix, source_root, scope in source_specs:
+        if not os.path.isdir(source_root):
+            continue
+        for root, directories, filenames in os.walk(source_root):
+            relative_root = os.path.relpath(root, source_root)
+            directories[:] = [
+                directory
+                for directory in directories
+                if not _persistent_path_is_excluded(
+                    scope,
+                    directory if relative_root == "." else os.path.join(relative_root, directory),
+                )
+            ]
+            for filename in filenames:
+                full_path = os.path.join(root, filename)
+                relative_path = os.path.relpath(full_path, source_root)
+                if _persistent_path_is_excluded(scope, relative_path):
+                    continue
+                archive_path = f"{archive_prefix}/{relative_path.replace(os.sep, '/')}"
+                if archive_prefix == "static/uploads":
+                    restore_root = "static/uploads"
+                else:
+                    top_level = relative_path.replace("\\", "/").split("/", 1)[0]
+                    restore_root = f"{archive_prefix}/{top_level}"
+                yield full_path, archive_path, restore_root
+
+
+def _discover_persistent_restore_roots() -> list[str]:
+    roots = []
+    for archive_prefix, source_root, scope in [
+        ("instance", current_app.instance_path, "instance"),
+        ("storage", os.path.join(_get_project_root(), "storage"), "storage"),
+    ]:
+        if not os.path.isdir(source_root):
+            continue
+        for name in os.listdir(source_root):
+            source_path = os.path.join(source_root, name)
+            if os.path.isdir(source_path) and not _persistent_path_is_excluded(scope, name):
+                roots.append(f"{archive_prefix}/{name}")
+    if os.path.isdir(_get_static_uploads_dir()):
+        roots.append("static/uploads")
+    return sorted(set(roots))
+
+
+def _validate_files_manifest(extract_dir: str, files_manifest: dict) -> None:
+    for entry in files_manifest.get("files") or []:
+        archive_path = (entry.get("path") or "").replace("\\", "/").strip("/")
+        if not archive_path:
+            raise ValueError("Backup file manifest contains an empty path")
+        extracted_path = os.path.abspath(os.path.join(extract_dir, *archive_path.split("/")))
+        if os.path.commonpath([os.path.abspath(extract_dir), extracted_path]) != os.path.abspath(extract_dir):
+            raise ValueError("Backup file manifest contains an unsafe path")
+        if not os.path.isfile(extracted_path):
+            raise ValueError(f"Backup file is missing: {archive_path}")
+        if os.path.getsize(extracted_path) != int(entry.get("size") or 0):
+            raise ValueError(f"Backup file size mismatch: {archive_path}")
+        expected_hash = (entry.get("sha256") or "").strip().lower()
+        if expected_hash and _sha256_file(extracted_path).lower() != expected_hash:
+            raise ValueError(f"Backup file checksum mismatch: {archive_path}")
+
+
+def _write_file_to_zip(archive: zipfile.ZipFile, source_path: str, archive_path: str) -> dict:
+    digest = hashlib.sha256()
+    total_size = 0
+    with open(source_path, "rb") as source, archive.open(archive_path, "w") as destination:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            destination.write(chunk)
+            digest.update(chunk)
+            total_size += len(chunk)
+    return {
+        "path": archive_path,
+        "size": total_size,
+        "sha256": digest.hexdigest(),
+    }
 
 
 def _backup_json_value(value):
@@ -1322,7 +1533,7 @@ def _create_sqlite_snapshot(src_db_path: str, snapshot_path: str) -> None:
 
 
 def _build_backup_zip() -> str:
-    """Build a ZIP backup containing DB + storage/archive + portal uploads."""
+    """Build a verified full-data ZIP with every DB table and persistent file."""
     ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     backups_dir = _make_runtime_tmp_subdir(f"workflow_backup_{ts}")
 
@@ -1331,59 +1542,64 @@ def _build_backup_zip() -> str:
 
     # DB snapshot
     _create_sqlite_snapshot(_get_db_path(), tmp_db_path)
+    database_manifest = _inspect_sqlite_database(tmp_db_path)
+    database_manifest["sha256"] = _sha256_file(tmp_db_path)
+    database_manifest["modules"] = _database_module_summary(database_manifest)
     permissions_export = _build_permissions_export()
-
-    meta = {
-        "created_at_utc": datetime.utcnow().isoformat() + "Z",
-        "project": "Workflow-PNCECS",
-        "includes": [
-            "db/workflow.db",
-            "permissions/permissions_export.json",
-            "storage/archive/*",
-            "instance/uploads/*",
-            "static/uploads/*",
-        ],
-        "permission_counts": _permission_backup_counts(permissions_export),
+    persistent_files = list(_iter_persistent_backup_files())
+    restore_roots = sorted(
+        {restore_root for _source, _archive, restore_root in persistent_files}
+        | set(_discover_persistent_restore_roots())
+    )
+    files_manifest = {
+        "version": 1,
+        "restore_roots": restore_roots,
+        "files": [],
+        "file_count": 0,
+        "total_bytes": 0,
     }
 
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("backup_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
         z.writestr(
             "permissions/permissions_export.json",
             json.dumps(permissions_export, ensure_ascii=False, indent=2)
         )
         z.write(tmp_db_path, "db/workflow.db")
+        for restore_root in restore_roots:
+            z.writestr(restore_root.rstrip("/") + "/", b"")
+        for source_path, archive_path, _restore_root in persistent_files:
+            files_manifest["files"].append(_write_file_to_zip(z, source_path, archive_path))
 
-        # Archive storage
-        archive_dir = _get_archive_storage_dir()
-        if os.path.isdir(archive_dir):
-            for root, _dirs, files in os.walk(archive_dir):
-                for fn in files:
-                    full = os.path.join(root, fn)
-                    rel = os.path.relpath(full, _get_project_root())
-                    z.write(full, rel)
+        files_manifest["file_count"] = len(files_manifest["files"])
+        files_manifest["total_bytes"] = sum(entry["size"] for entry in files_manifest["files"])
+        z.writestr("database/database_manifest.json", json.dumps(database_manifest, ensure_ascii=False, indent=2))
+        z.writestr("files/files_manifest.json", json.dumps(files_manifest, ensure_ascii=False, indent=2))
 
-        # Portal uploads (instance/uploads/*)
-        uploads_dir = _get_portal_uploads_dir()
-        if os.path.isdir(uploads_dir):
-            for root, _dirs, files in os.walk(uploads_dir):
-                for fn in files:
-                    full = os.path.join(root, fn)
-                    rel_inside = os.path.relpath(full, uploads_dir)
-                    arcname = os.path.join("instance", "uploads", rel_inside)
-                    z.write(full, arcname)
-
-
-
-        # Static uploads (static/uploads/*) - e.g., user avatars/photos
-        static_uploads_dir = _get_static_uploads_dir()
-        if os.path.isdir(static_uploads_dir):
-            for root, _dirs, files in os.walk(static_uploads_dir):
-                for fn in files:
-                    full = os.path.join(root, fn)
-                    rel_inside = os.path.relpath(full, static_uploads_dir)
-                    arcname = os.path.join("static", "uploads", rel_inside)
-                    z.write(full, arcname)
+        meta = {
+            "format_version": BACKUP_FORMAT_VERSION,
+            "created_at_utc": datetime.utcnow().isoformat() + "Z",
+            "project": "Workflow-PNCECS",
+            "includes": [
+                "all SQLite tables, rows, indexes and schema",
+                "all persistent instance data",
+                "all active storage data",
+                "all static uploads",
+                "explicit permissions export",
+            ],
+            "database": {
+                "table_count": database_manifest["table_count"],
+                "total_rows": database_manifest["total_rows"],
+                "sha256": database_manifest["sha256"],
+                "modules": database_manifest["modules"],
+            },
+            "files": {
+                "file_count": files_manifest["file_count"],
+                "total_bytes": files_manifest["total_bytes"],
+                "restore_roots": restore_roots,
+            },
+            "permission_counts": _permission_backup_counts(permissions_export),
+        }
+        z.writestr("backup_meta.json", json.dumps(meta, ensure_ascii=False, indent=2))
     # cleanup temp snapshot
     try:
         os.remove(tmp_db_path)
@@ -1485,6 +1701,108 @@ def _copy_tree(src_dir: str, dst_dir: str) -> None:
             shutil.copy2(s, t)
 
 
+def _read_backup_json(extract_dir: str, relative_path: str) -> dict:
+    path = os.path.join(extract_dir, *relative_path.split("/"))
+    if not os.path.isfile(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as source:
+        payload = json.load(source)
+    if not isinstance(payload, dict):
+        raise ValueError(f"Backup manifest is invalid: {relative_path}")
+    return payload
+
+
+def _restore_destination_for_root(archive_root: str) -> str:
+    normalized = (archive_root or "").replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    if any(part in {".", ".."} or ":" in part for part in parts):
+        raise ValueError(f"Unsafe restore root: {archive_root}")
+
+    if len(parts) == 2 and parts[0] == "instance":
+        return os.path.join(current_app.instance_path, parts[1])
+    if len(parts) == 2 and parts[0] == "storage":
+        return os.path.join(_get_project_root(), "storage", parts[1])
+    if parts == ["static", "uploads"]:
+        return _get_static_uploads_dir()
+    raise ValueError(f"Unsupported restore root: {archive_root}")
+
+
+def _replace_persistent_path(source_path: str, destination_path: str, timestamp: str) -> dict:
+    os.makedirs(os.path.dirname(destination_path), exist_ok=True)
+    safety_path = f"{destination_path}_before_restore_{timestamp}_{uuid.uuid4().hex[:8]}"
+    had_original = os.path.exists(destination_path)
+
+    if had_original:
+        shutil.move(destination_path, safety_path)
+
+    try:
+        if os.path.isdir(source_path):
+            shutil.copytree(source_path, destination_path)
+        else:
+            shutil.copy2(source_path, destination_path)
+    except Exception:
+        if os.path.isdir(destination_path):
+            shutil.rmtree(destination_path, ignore_errors=True)
+        elif os.path.exists(destination_path):
+            os.remove(destination_path)
+        if had_original and os.path.exists(safety_path):
+            shutil.move(safety_path, destination_path)
+        raise
+
+    return {
+        "destination": destination_path,
+        "safety": safety_path,
+        "had_original": had_original,
+    }
+
+
+def _rollback_persistent_replacements(replacements: list[dict]) -> None:
+    for replacement in reversed(replacements):
+        destination = replacement["destination"]
+        safety = replacement["safety"]
+        if os.path.isdir(destination):
+            shutil.rmtree(destination, ignore_errors=True)
+        elif os.path.exists(destination):
+            os.remove(destination)
+        if replacement.get("had_original") and os.path.exists(safety):
+            shutil.move(safety, destination)
+
+
+def _restore_persistent_files(extract_dir: str, files_manifest: dict, timestamp: str) -> list[dict]:
+    restore_roots = list(files_manifest.get("restore_roots") or [])
+    if not restore_roots:
+        restore_roots = [
+            root
+            for root in ("storage/archive", "instance/uploads", "static/uploads")
+            if os.path.exists(os.path.join(extract_dir, *root.split("/")))
+        ]
+
+    replacements = []
+    try:
+        for archive_root in sorted(set(restore_roots)):
+            source_path = os.path.join(extract_dir, *archive_root.replace("\\", "/").split("/"))
+            if not os.path.exists(source_path):
+                raise ValueError(f"Backup restore root is missing: {archive_root}")
+            destination_path = _restore_destination_for_root(archive_root)
+            replacements.append(_replace_persistent_path(source_path, destination_path, timestamp))
+        return replacements
+    except Exception:
+        _rollback_persistent_replacements(replacements)
+        raise
+
+
+def _cleanup_restore_work_files(uploaded_zip: str, extract_tmp: _RuntimeTempDir) -> None:
+    try:
+        extract_tmp.cleanup()
+    except Exception:
+        pass
+    try:
+        if os.path.exists(uploaded_zip):
+            os.remove(uploaded_zip)
+    except Exception:
+        pass
+
+
 @admin_bp.route("/backup", methods=["GET"])
 @login_required
 @roles_required("ADMIN", "SUPER_ADMIN")
@@ -1501,7 +1819,14 @@ def backup_page():
     except Exception:
         backups = []
 
-    return render_template("admin/backup.html", backups=backups)
+    backup_summary = {}
+    try:
+        backup_summary = _inspect_sqlite_database(_get_db_path())
+        backup_summary["modules"] = _database_module_summary(backup_summary)
+    except Exception:
+        current_app.logger.exception("Could not inspect current database for backup page")
+
+    return render_template("admin/backup.html", backups=backups, backup_summary=backup_summary)
 
 
 @admin_bp.route("/backup/download", methods=["GET"])
@@ -1576,18 +1901,13 @@ def backup_restore():
             pass
 
         with zipfile.ZipFile(uploaded_zip, "r") as z:
+            damaged_member = z.testzip()
+            if damaged_member:
+                raise zipfile.BadZipFile(f"Damaged backup member: {damaged_member}")
             _safe_extract_backup_zip(z, extract_dir)
     except Exception:
         current_app.logger.exception("Backup archive validation or extraction failed")
-        try:
-            extract_tmp.cleanup()
-        except Exception:
-            pass
-        try:
-            if os.path.exists(uploaded_zip):
-                os.remove(uploaded_zip)
-        except Exception:
-            pass
+        _cleanup_restore_work_files(uploaded_zip, extract_tmp)
         flash("ملف النسخة الاحتياطية غير صالح أو تالف.", "danger")
         return redirect(url_for("admin.backup_page"))
 
@@ -1600,107 +1920,56 @@ def backup_restore():
     snap_db = next((p for p in db_candidates if os.path.exists(p)), None)
 
     if not snap_db:
-        try:
-            extract_tmp.cleanup()
-        except Exception:
-            pass
-        try:
-            if os.path.exists(uploaded_zip):
-                os.remove(uploaded_zip)
-        except Exception:
-            pass
+        _cleanup_restore_work_files(uploaded_zip, extract_tmp)
         flash("النسخة الاحتياطية لا تحتوي على قاعدة بيانات (workflow.db).", "danger")
         return redirect(url_for("admin.backup_page"))
 
-    # Restore DB content
     try:
-        _restore_sqlite_from_snapshot(snap_db, _get_db_path())
-    except Exception as e:
-        try:
-            extract_tmp.cleanup()
-        except Exception:
-            pass
-        try:
-            if os.path.exists(uploaded_zip):
-                os.remove(uploaded_zip)
-        except Exception:
-            pass
-        flash(
-            "تعذر استيراد قاعدة البيانات. تأكد أن لا يوجد برنامج آخر فاتح workflow.db ثم حاول مرة أخرى.",
-            "danger"
-        )
+        backup_meta = _read_backup_json(extract_dir, "backup_meta.json")
+        if backup_meta.get("project") not in {None, "", "Workflow-PNCECS"}:
+            raise ValueError("Backup belongs to a different project")
+        format_version = int(backup_meta.get("format_version") or 1)
+        database_manifest = _read_backup_json(extract_dir, "database/database_manifest.json")
+        files_manifest = _read_backup_json(extract_dir, "files/files_manifest.json")
+        if format_version >= BACKUP_FORMAT_VERSION and (not database_manifest or not files_manifest):
+            raise ValueError("Full backup manifests are missing")
+        validated_database = _validate_sqlite_snapshot(snap_db, database_manifest)
+        if files_manifest:
+            _validate_files_manifest(extract_dir, files_manifest)
+    except Exception:
+        current_app.logger.exception("Backup content validation failed before restore")
+        _cleanup_restore_work_files(uploaded_zip, extract_tmp)
+        flash("لم يتم الاستيراد: فشل فحص سلامة قاعدة البيانات أو الملفات داخل النسخة.", "danger")
         return redirect(url_for("admin.backup_page"))
 
+    safety_db_path = os.path.join(backups_dir, f"workflow_before_restore_{ts}.db")
     try:
-        _restore_permissions_export(extract_dir)
+        _create_sqlite_snapshot(_get_db_path(), safety_db_path)
+        _restore_sqlite_from_snapshot(snap_db, _get_db_path())
+        _validate_sqlite_snapshot(_get_db_path(), database_manifest)
+        db.create_all()
+
+        if format_version < BACKUP_FORMAT_VERSION:
+            _restore_permissions_export(extract_dir)
+
+        replacements = _restore_persistent_files(extract_dir, files_manifest, ts)
+        _validate_sqlite_snapshot(_get_db_path(), database_manifest)
     except Exception:
-        flash("تمت استعادة قاعدة البيانات، لكن تعذر تطبيق ملف الصلاحيات المصدّر.", "warning")
-
-    # Restore archive storage
-    backup_archive = os.path.join(extract_dir, "storage", "archive")
-    if os.path.isdir(backup_archive):
-        dest_archive = _get_archive_storage_dir()
-
-        # keep current archive as safety copy
+        current_app.logger.exception("Backup restore failed; rolling back current data")
         try:
-            if os.path.isdir(dest_archive) and os.listdir(dest_archive):
-                shutil.move(dest_archive, dest_archive + f"_before_restore_{ts}")
+            if "replacements" in locals():
+                _rollback_persistent_replacements(replacements)
         except Exception:
-            # If move fails, we'll merge instead of replace
-            pass
-
+            current_app.logger.exception("Could not roll back restored persistent files")
         try:
-            # If dest doesn't exist now, copy fresh
-            if not os.path.isdir(dest_archive):
-                _copy_tree(backup_archive, dest_archive)
-            else:
-                # Merge (copy over)
-                _copy_tree(backup_archive, dest_archive)
+            if os.path.isfile(safety_db_path):
+                _restore_sqlite_from_snapshot(safety_db_path, _get_db_path())
+                db.create_all()
         except Exception:
-            flash("تم استيراد قاعدة البيانات، لكن حدثت مشكلة أثناء استيراد ملفات الأرشفة.", "warning")
-
-    # Restore portal uploads (instance/uploads/*)
-    backup_uploads = os.path.join(extract_dir, "instance", "uploads")
-    if os.path.isdir(backup_uploads):
-        dest_uploads = _get_portal_uploads_dir()
-
-        # keep current uploads as safety copy
-        try:
-            if os.path.isdir(dest_uploads) and os.listdir(dest_uploads):
-                shutil.move(dest_uploads, dest_uploads + f"_before_restore_{ts}")
-        except Exception:
-            # If move fails, we'll merge instead of replace
-            pass
-
-        try:
-            if not os.path.isdir(dest_uploads):
-                _copy_tree(backup_uploads, dest_uploads)
-            else:
-                _copy_tree(backup_uploads, dest_uploads)
-        except Exception:
-            flash("تم استيراد قاعدة البيانات، لكن حدثت مشكلة أثناء استيراد ملفات البوابة الإدارية (uploads).", "warning")
-
-
-    # Restore static uploads (static/uploads/*)
-    backup_static_uploads = os.path.join(extract_dir, "static", "uploads")
-    if os.path.isdir(backup_static_uploads):
-        dest_static_uploads = _get_static_uploads_dir()
-
-        # keep current static uploads as safety copy
-        try:
-            if os.path.isdir(dest_static_uploads) and os.listdir(dest_static_uploads):
-                shutil.move(dest_static_uploads, dest_static_uploads + f"_before_restore_{ts}")
-        except Exception:
-            # If move fails, we'll merge instead of replace
-            pass
-
-        try:
-            if not os.path.isdir(dest_static_uploads):
-                _copy_tree(backup_static_uploads, dest_static_uploads)
-            else:
-                _copy_tree(backup_static_uploads, dest_static_uploads)
-        except Exception:
-            flash("تم استيراد قاعدة البيانات، لكن حدثت مشكلة أثناء استيراد ملفات static/uploads.", "warning")
+            current_app.logger.exception("Could not roll back database after restore failure")
+        _cleanup_restore_work_files(uploaded_zip, extract_tmp)
+        flash("فشل الاستيراد وتمت إعادة البيانات السابقة تلقائيًا. لم تُعتمد النسخة المرفوعة.", "danger")
+        return redirect(url_for("admin.backup_page"))
 
     # After restore, force re-login
     try:
@@ -1708,17 +1977,14 @@ def backup_restore():
     except Exception:
         pass
 
-    flash("✅ تم استيراد النسخة الاحتياطية بنجاح. يرجى تسجيل الدخول من جديد.", "success")
-    flash("ملاحظة: يُفضّل إعادة تشغيل التطبيق بعد الاستيراد لضمان تحديث الاتصالات.", "warning")
+    restored_file_count = int(files_manifest.get("file_count") or 0)
+    flash(
+        f"✅ تم فحص واستيراد النسخة بنجاح: {validated_database['table_count']} جدول، "
+        f"{validated_database['total_rows']} سجل، {restored_file_count} ملف. يرجى تسجيل الدخول من جديد.",
+        "success",
+    )
+    flash(f"تم حفظ قاعدة البيانات السابقة احتياطياً في: {os.path.basename(safety_db_path)}", "info")
 
-    try:
-        extract_tmp.cleanup()
-    except Exception:
-        pass
-    try:
-        if os.path.exists(uploaded_zip):
-            os.remove(uploaded_zip)
-    except Exception:
-        pass
+    _cleanup_restore_work_files(uploaded_zip, extract_tmp)
 
     return redirect(url_for("login"))

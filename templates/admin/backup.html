@@ -4,7 +4,7 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3 class="mb-1">💾 النسخ الاحتياطي والاستيراد</h3>
-    <small class="text-muted">تنزيل نسخة احتياطية كاملة (مسار + البوابة الإدارية): قاعدة البيانات + ملفات الأرشفة + uploads + static/uploads أو استيراد نسخة ZIP.</small>
+    <small class="text-muted">نسخة شاملة وديناميكية لكل جداول النظام وملفاته الدائمة، مع فحص سلامة كامل قبل الاستيراد.</small>
   </div>
 </div>
 
@@ -16,8 +16,29 @@
       <div class="card-body">
         <h5 class="card-title mb-2">⬇️ تنزيل نسخة احتياطية</h5>
         <p class="text-muted mb-3" style="font-size: 0.95rem;">
-          سيتم إنشاء ملف ZIP يحتوي على قاعدة البيانات وملفات الأرشفة وملفات البوابة الإدارية (instance/uploads) وملفات static/uploads (مثل الصور/الأفاتار).
+          تشمل النسخة تلقائياً كل الجداول الحالية والمستقبلية: تذاكر الدعم، الحركة والنقل، المستودع، الموارد البشرية، التقارير، الصلاحيات، مسار، وجميع المرفقات والملفات الدائمة.
         </p>
+
+        {% if backup_summary %}
+        <div class="alert alert-success py-2 small">
+          <div class="fw-bold mb-1">المحتوى الذي سيُنسخ الآن</div>
+          <span class="badge text-bg-dark">{{ backup_summary.table_count }} جدول</span>
+          <span class="badge text-bg-primary">{{ backup_summary.total_rows }} سجل</span>
+          {% set module_labels = {'support_tickets':'تذاكر الدعم','transport':'الحركة والنقل','inventory':'المستودع','permissions':'الصلاحيات','workflow':'مسار','human_resources':'الموارد البشرية'} %}
+          <div class="d-flex flex-wrap gap-1 mt-2">
+            {% for key, summary in backup_summary.modules.items() %}
+            <span class="badge text-bg-light border text-dark">{{ module_labels.get(key, key) }}: {{ summary.table_count }} جدول / {{ summary.row_count }} سجل</span>
+            {% endfor %}
+          </div>
+          <div class="mt-2">التقارير تُستعاد من بياناتها الأصلية كاملة، لذلك تعود نتائجها كما كانت.</div>
+        </div>
+        {% endif %}
+
+        <ul class="small text-muted">
+          <li>بيان كامل بأسماء الجداول والأعمدة وعدد السجلات.</li>
+          <li>بصمة SHA-256 لقاعدة البيانات ولكل ملف مرفق.</li>
+          <li>أي جدول أو مجلد بيانات دائم جديد يدخل في النسخة تلقائياً.</li>
+        </ul>
 
         <div class="d-flex gap-2 flex-wrap">
           <a class="btn btn-primary" href="{{ url_for('admin.backup_download') }}">
@@ -47,8 +68,12 @@
       <div class="card-body">
         <h5 class="card-title mb-2">⬆️ استيراد نسخة احتياطية</h5>
         <p class="text-muted mb-3" style="font-size: 0.95rem;">
-          ⚠️ الاستيراد سيستبدل بيانات النظام الحالية (قاعدة البيانات وملفات الأرشفة وملفات uploads وملفات static/uploads). بعد الاستيراد سيتم تسجيل خروجك تلقائياً.
+          يتم أولاً فحص ZIP وبصمات الملفات وسلامة SQLite وعدد سجلات كل جدول. بعد نجاح الفحص فقط، تُحفظ قاعدة البيانات الحالية كنسخة أمان ثم يبدأ الاستيراد.
         </p>
+
+        <div class="alert alert-warning small py-2">
+          إذا فشل استيراد قاعدة البيانات أو أي مجلد ملفات، يعيد النظام البيانات السابقة تلقائياً ولا يعتمد النسخة المرفوعة.
+        </div>
 
         <form method="post" action="{{ url_for('admin.backup_restore') }}" enctype="multipart/form-data"
               onsubmit="return confirm('هل أنت متأكد؟ سيتم استبدال بيانات النظام الحالية بالكامل.');">
@@ -68,7 +93,7 @@
           <button class="btn btn-warning" type="submit">⬆️ استيراد</button>
 
           <div class="mt-3 small text-muted">
-            ملاحظة: إذا ظهر خطأ بسبب قفل قاعدة البيانات على Windows، أغلق أي برنامج فاتح workflow.db (السيرفر/DB Browser/PyCharm DB tool) ثم حاول مرة أخرى.
+            النسخ القديمة ما زالت مدعومة، بينما النسخ الجديدة تخضع للتحقق الشامل قبل الاستيراد.
           </div>
 
         </form>
