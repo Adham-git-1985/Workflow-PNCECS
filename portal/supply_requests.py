@@ -312,6 +312,7 @@ def inventory_employee_request_new():
                 items=items,
                 categories=categories,
                 item_totals=item_totals,
+                can_manage_catalog=_can_manage_catalog(),
             )
         employee = EmployeeFile.query.get(current_user.id)
         manager_id = employee.direct_manager_user_id if employee else None
@@ -343,6 +344,7 @@ def inventory_employee_request_new():
         items=items,
         categories=categories,
         item_totals=item_totals,
+        can_manage_catalog=_can_manage_catalog(),
     )
 
 
