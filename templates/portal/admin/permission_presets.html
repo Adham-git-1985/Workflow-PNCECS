@@ -4,246 +4,227 @@
 
 {% block head %}
 <style>
-  .perm-key { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier جديد", monospace; }
-  .preset-card { border: 1px solid rgba(0,0,0,.08); border-radius: .6rem; padding: .75rem; }
-  .preset-code { font-size: .8rem; }
-  .preset-meta { font-size: .85rem; color: #6c757d; }
+  .perm-key { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  .preset-card { border: 1px solid rgba(0,0,0,.08); border-radius: .65rem; padding: .85rem; height: 100%; }
+  .preset-perm-item { border-bottom: 1px solid rgba(0,0,0,.06); padding: .55rem .25rem; }
+  .preset-perm-item:last-child { border-bottom: 0; }
+  .preset-editor-actions { position: sticky; bottom: 0; z-index: 5; background: rgba(255,255,255,.96); border-top: 1px solid rgba(0,0,0,.08); }
 </style>
 {% endblock %}
 
 {% block content %}
-
-<div class="d-flex justify-content-between align-items-start mb-3">
+<div class="d-flex justify-content-between align-items-start gap-3 mb-3">
   <div>
     <h4 class="mb-1">اختصارات صلاحيات البوابة</h4>
-    <div class="text-muted small">
-      هنا تتحكم بالأزرار السريعة التي تظهر في صفحة <strong>إدارة صلاحيات البوابة</strong>.
-      ستجد <strong>معاينة مبسّطة</strong> أدناه + محرر JSON (متقدم) لمن يريد تعديلًا دقيقًا.
-    </div>
+    <div class="text-muted small">حدد الصلاحيات التي يتضمنها كل اختصار. الصلاحية غير المحددة لن تُطبق عند استخدام الاختصار.</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.portal_admin_permissions_catalog') }}">
-      <i class="bi bi-book"></i> دليل الصلاحيات
-    </a>
-    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.portal_admin_permissions') }}">
-      <i class="bi bi-arrow-right"></i> رجوع
-    </a>
+    <a class="btn btn-primary" href="{{ url_for('portal.portal_admin_permission_presets', new=1, _anchor='presetEditor') }}"><i class="bi bi-plus-circle"></i> اختصار جديد</a>
+    <a class="btn btn-outline-info" href="{{ url_for('portal.portal_admin_permissions_catalog') }}"><i class="bi bi-book"></i> دليل الصلاحيات</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_permissions') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
   </div>
 </div>
 
-{# -------------------- Preview -------------------- #}
-<div class="row g-3 mb-3">
-  <div class="col-12 col-lg-6">
-    <div class="card shadow-sm">
-      <div class="card-header bg-light">
-        <div class="fw-semibold">المعاينة — الاختصارات الرئيسية</div>
-        <div class="text-muted small">تظهر كأزرار كبيرة في أعلى صفحة الصلاحيات.</div>
-      </div>
-      <div class="card-body">
-        {% if presets_main %}
-          {% for code, pr in presets_main.items() %}
-            {# NOTE: pr is a dict (mapping). Avoid using pr.keys (dict method) which breaks |length #}
-            {% set keys = (pr.get('keys') if pr is mapping else []) or [] %}
-            {% set label = (pr.get('label') if pr is mapping else code) or code %}
-            <div class="preset-card mb-2">
-              <div class="d-flex justify-content-between align-items-center">
-                <div class="fw-semibold">{{ label }}</div>
-                <span class="badge bg-dark preset-code">{{ code }}</span>
-              </div>
-              <div class="preset-meta mt-1">
-                <span class="badge bg-secondary">{{ (keys|length) if keys else 0 }}</span>
-                <span class="ms-1">صلاحية داخل الاختصار</span>
-              </div>
-
-              {% if keys %}
-                <div class="d-flex flex-wrap gap-1 mt-2">
-                  {% for k in keys[:10] %}
-                    <span class="badge bg-light text-dark border">
-                      {{ perm_labels.get(k, k) }}
-                      <span class="text-muted perm-key">({{ k }})</span>
-                    </span>
-                  {% endfor %}
-                  {% if keys|length > 10 %}
-                    <a class="small ms-2" data-bs-toggle="collapse" href="#all_main_{{ code }}" role="button" aria-expanded="false">
-                      عرض الكل
-                    </a>
-                  {% endif %}
-                </div>
-
-                {% if keys|length > 10 %}
-                  <div class="collapse mt-2" id="all_main_{{ code }}">
-                    <div class="d-flex flex-wrap gap-1">
-                      {% for k in keys %}
-                        <span class="badge bg-light text-dark border">
-                          {{ perm_labels.get(k, k) }}
-                          <span class="text-muted perm-key">({{ k }})</span>
-                        </span>
-                      {% endfor %}
-                    </div>
-                  </div>
-                {% endif %}
-              {% else %}
-                <div class="text-muted small mt-2">لا توجد صلاحيات داخل هذا الاختصار.</div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        {% else %}
-          <div class="text-muted">لا يوجد اختصارات رئيسية.</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-
-  <div class="col-12 col-lg-6">
-    <div class="card shadow-sm">
-      <div class="card-header bg-light">
-        <div class="fw-semibold">المعاينة — اختصارات إضافية</div>
-        <div class="text-muted small">تظهر تحت “المزيد من الاختصارات”.</div>
-      </div>
-      <div class="card-body">
-        {% if presets_extra %}
-          {% for code, pr in presets_extra.items() %}
-            {# NOTE: pr is a dict (mapping). Avoid using pr.keys (dict method) which breaks |length #}
-            {% set keys = (pr.get('keys') if pr is mapping else []) or [] %}
-            {% set label = (pr.get('label') if pr is mapping else code) or code %}
-            <div class="preset-card mb-2">
-              <div class="d-flex justify-content-between align-items-center">
-                <div class="fw-semibold">{{ label }}</div>
-                <span class="badge bg-secondary preset-code">{{ code }}</span>
-              </div>
-              <div class="preset-meta mt-1">
-                <span class="badge bg-secondary">{{ (keys|length) if keys else 0 }}</span>
-                <span class="ms-1">صلاحية</span>
-              </div>
-
-              {% if keys %}
-                <div class="d-flex flex-wrap gap-1 mt-2">
-                  {% for k in keys[:10] %}
-                    <span class="badge bg-light text-dark border">
-                      {{ perm_labels.get(k, k) }}
-                      <span class="text-muted perm-key">({{ k }})</span>
-                    </span>
-                  {% endfor %}
-                  {% if keys|length > 10 %}
-                    <a class="small ms-2" data-bs-toggle="collapse" href="#all_extra_{{ code }}" role="button" aria-expanded="false">
-                      عرض الكل
-                    </a>
-                  {% endif %}
-                </div>
-
-                {% if keys|length > 10 %}
-                  <div class="collapse mt-2" id="all_extra_{{ code }}">
-                    <div class="d-flex flex-wrap gap-1">
-                      {% for k in keys %}
-                        <span class="badge bg-light text-dark border">
-                          {{ perm_labels.get(k, k) }}
-                          <span class="text-muted perm-key">({{ k }})</span>
-                        </span>
-                      {% endfor %}
-                    </div>
-                  </div>
-                {% endif %}
-              {% else %}
-                <div class="text-muted small mt-2">لا توجد صلاحيات داخل هذا الاختصار.</div>
-              {% endif %}
-            </div>
-          {% endfor %}
-        {% else %}
-          <div class="text-muted">لا يوجد اختصارات إضافية.</div>
-        {% endif %}
-      </div>
-    </div>
-  </div>
-</div>
-
-{# -------------------- JSON Editor -------------------- #}
-<div class="card shadow-sm">
-  <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
+<div class="card shadow-sm mb-4" id="presetEditor">
+  <div class="card-header bg-light d-flex justify-content-between align-items-center">
     <div>
-      <div class="fw-semibold">محرر JSON (متقدم)</div>
-      <div class="text-muted small">
-        المفتاح: <span class="badge bg-dark">{{ setting_key }}</span>
+      <div class="fw-bold">{{ 'إنشاء اختصار جديد' if new_mode else 'تعديل الاختصار: ' ~ editing_preset.label }}</div>
+      <div class="text-muted small">المحدد حاليًا: <span class="badge text-bg-primary" id="selectedPermissionCount">{{ editing_keys|length }}</span> صلاحية</div>
+    </div>
+    {% if not new_mode %}<span class="badge text-bg-dark perm-key">{{ editing_preset.code }}</span>{% endif %}
+  </div>
+  <form method="post" id="presetForm">
+    <input type="hidden" name="action" value="save_preset">
+    {% if not new_mode %}<input type="hidden" name="original_code" value="{{ editing_preset.code }}">{% endif %}
+    <div class="card-body">
+      <div class="row g-3 mb-3">
+        <div class="col-md-4">
+          <label class="form-label">رمز الاختصار</label>
+          <input class="form-control perm-key" name="code" value="{{ editing_preset.code if editing_preset else '' }}" placeholder="EMPLOYEE" {% if not new_mode %}readonly{% endif %} required dir="ltr">
+        </div>
+        <div class="col-md-5">
+          <label class="form-label">اسم الاختصار</label>
+          <input class="form-control" name="label" value="{{ editing_preset.label if editing_preset else '' }}" placeholder="موظف" required>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">مكان الظهور</label>
+          <select class="form-select" name="category">
+            <option value="main" {% if editing_preset and editing_preset.category == 'main' %}selected{% endif %}>اختصار رئيسي</option>
+            <option value="extra" {% if not editing_preset or editing_preset.category == 'extra' %}selected{% endif %}>اختصار إضافي</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="row g-2 align-items-end mb-3">
+        <div class="col-md-6">
+          <label class="form-label">البحث في الصلاحيات</label>
+          <input class="form-control" id="presetPermissionSearch" placeholder="ابحث بالاسم أو رمز الصلاحية...">
+        </div>
+        <div class="col-md-6">
+          <div class="d-flex flex-wrap gap-2">
+            <button class="btn btn-sm btn-outline-primary" type="button" onclick="setVisiblePermissions(true)"><i class="bi bi-check2-square"></i> تحديد الظاهر</button>
+            <button class="btn btn-sm btn-outline-secondary" type="button" onclick="setVisiblePermissions(false)"><i class="bi bi-square"></i> إلغاء تحديد الظاهر</button>
+            <button class="btn btn-sm btn-outline-dark" type="button" onclick="showAllPermissions()"><i class="bi bi-eye"></i> إظهار الكل</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="accordion" id="presetPermissionsAccordion">
+        {% for group_name, permissions in permission_groups.items() %}
+        {% set group_index = loop.index %}
+        <div class="accordion-item preset-permission-group">
+          <h2 class="accordion-header" id="presetGroupHeading{{ group_index }}">
+            <button class="accordion-button {% if group_index != 1 %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#presetGroup{{ group_index }}">
+              {{ group_name }}
+            </button>
+          </h2>
+          <div id="presetGroup{{ group_index }}" class="accordion-collapse collapse {% if group_index == 1 %}show{% endif %}" data-bs-parent="#presetPermissionsAccordion">
+            <div class="accordion-body">
+              <div class="d-flex gap-2 mb-2">
+                <button class="btn btn-sm btn-outline-primary" type="button" onclick="setPresetGroup({{ group_index }}, true)">تحديد المجموعة</button>
+                <button class="btn btn-sm btn-outline-secondary" type="button" onclick="setPresetGroup({{ group_index }}, false)">إلغاء المجموعة</button>
+              </div>
+              {% for permission in permissions %}
+              <div class="form-check preset-perm-item" data-group="{{ group_index }}" data-search="{{ (permission.label ~ ' ' ~ permission.key ~ ' ' ~ permission.desc)|lower }}">
+                <input class="form-check-input preset-permission-box" type="checkbox" name="permissions" value="{{ permission.key }}" id="presetPerm{{ permission.key }}" {% if permission.key in editing_keys %}checked{% endif %}>
+                <label class="form-check-label w-100" for="presetPerm{{ permission.key }}">
+                  <span class="fw-semibold">{{ permission.label }}</span>
+                  <span class="text-muted small perm-key">({{ permission.key }})</span>
+                  {% if permission.desc %}<div class="text-muted small">{{ permission.desc }}</div>{% endif %}
+                </label>
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
       </div>
     </div>
-    <div class="d-flex flex-wrap gap-2">
-      <button type="button" class="btn btn-sm btn-outline-secondary" onclick="prettifyPresets()">
-        <i class="bi bi-braces"></i> تنسيق JSON
-      </button>
-      <button type="button" class="btn btn-sm btn-outline-info" onclick="validatePresets()">
-        <i class="bi bi-shield-check"></i> تحقق
-      </button>
+    <div class="preset-editor-actions p-3 d-flex justify-content-between align-items-center gap-2">
+      <div class="small text-muted">سيتم حفظ الصلاحيات المحددة فقط داخل هذا الاختصار.</div>
+      <button class="btn btn-success" type="submit"><i class="bi bi-save"></i> حفظ الاختصار</button>
     </div>
-  </div>
-
-  <div class="card-body">
-    <div id="jsonHint" class="alert alert-info py-2 small d-none"></div>
-
-    <form method="post">
-      <input type="hidden" name="action" value="save">
-      <textarea id="presetsTextarea" name="presets_json" class="form-control" rows="18"
-        style="font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;">{{ presets_json }}</textarea>
-
-      <div class="form-text mt-2">
-        البنية المتوقعة: كائن يحتوي <code>main</code> و <code>extra</code>، وكل واحد عبارة عن اختصارات: <code>{ "CODE": {"label": "...", "keys": ["PERM1","PERM2"]} }</code>
-      </div>
-
-      <div class="d-flex flex-wrap gap-2 mt-3">
-        <button class="btn btn-primary" type="submit">
-          <i class="bi bi-save"></i> حفظ
-        </button>
-
-        <button class="btn btn-outline-danger" type="submit" name="action" value="reset"
-                onclick="return confirm('إعادة ضبط الاختصارات للوضع الافتراضي؟');">
-          <i class="bi bi-arrow-counterclockwise"></i> إعادة ضبط
-        </button>
-      </div>
-    </form>
-  </div>
+  </form>
 </div>
 
+<div class="row g-3 mb-4">
+  <div class="col-12">
+    <h5 class="mb-1">الاختصارات الموجودة</h5>
+    <div class="text-muted small">اضغط «تعديل» لعرض جميع صلاحيات الاختصار كخانات اختيار.</div>
+  </div>
+  {% for category_label, category_class, presets in [('رئيسي', 'primary', presets_main), ('إضافي', 'secondary', presets_extra)] %}
+    {% for code, preset in presets.items() %}
+      {% set keys = preset.get('keys') or [] %}
+      <div class="col-md-6 col-xl-4">
+        <div class="preset-card">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              <div class="fw-bold">{{ preset.get('label') or code }}</div>
+              <span class="badge text-bg-{{ category_class }}">{{ category_label }}</span>
+              <span class="badge text-bg-light border text-dark">{{ keys|length }} صلاحية</span>
+            </div>
+            <span class="badge text-bg-dark perm-key">{{ code }}</span>
+          </div>
+          <div class="d-flex flex-wrap gap-1 mt-3">
+            {% for key in keys[:6] %}<span class="badge text-bg-light border text-dark">{{ perm_labels.get(key, key) }}</span>{% endfor %}
+            {% if keys|length > 6 %}<span class="small text-muted">+ {{ keys|length - 6 }}</span>{% endif %}
+            {% if not keys %}<span class="small text-muted">لا توجد صلاحيات محددة.</span>{% endif %}
+          </div>
+          <a class="btn btn-sm btn-outline-primary w-100 mt-3" href="{{ url_for('portal.portal_admin_permission_presets', edit_code=code, _anchor='presetEditor') }}"><i class="bi bi-pencil-square"></i> تعديل الصلاحيات</a>
+        </div>
+      </div>
+    {% endfor %}
+  {% endfor %}
+</div>
+
+<div class="accordion" id="advancedPresetEditor">
+  <div class="accordion-item">
+    <h2 class="accordion-header">
+      <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#advancedPresetJson">خيارات متقدمة: JSON وإعادة الضبط</button>
+    </h2>
+    <div id="advancedPresetJson" class="accordion-collapse collapse" data-bs-parent="#advancedPresetEditor">
+      <div class="accordion-body">
+        <div id="jsonHint" class="alert alert-info py-2 small d-none"></div>
+        <form method="post">
+          <input type="hidden" name="action" value="save">
+          <textarea id="presetsTextarea" name="presets_json" class="form-control perm-key" rows="14" dir="ltr">{{ presets_json }}</textarea>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <button class="btn btn-outline-primary" type="submit"><i class="bi bi-save"></i> حفظ JSON</button>
+            <button class="btn btn-outline-secondary" type="button" onclick="prettifyPresets()"><i class="bi bi-braces"></i> تنسيق JSON</button>
+            <button class="btn btn-outline-info" type="button" onclick="validatePresets()"><i class="bi bi-shield-check"></i> تحقق</button>
+            <button class="btn btn-outline-danger ms-auto" type="submit" name="action" value="reset" onclick="return confirm('إعادة ضبط جميع الاختصارات للوضع الافتراضي؟');"><i class="bi bi-arrow-counterclockwise"></i> إعادة ضبط الجميع</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-  function _showHint(msg, kind) {
-    const el = document.getElementById('jsonHint');
-    if (!el) return;
-    el.classList.remove('d-none','alert-info','alert-success','alert-danger','alert-warning');
-    el.classList.add('alert-' + (kind || 'info'));
-    el.textContent = msg;
+  const presetSearch = document.getElementById('presetPermissionSearch');
+  const presetBoxes = Array.from(document.querySelectorAll('.preset-permission-box'));
+
+  function updateSelectedPermissionCount() {
+    document.getElementById('selectedPermissionCount').textContent = presetBoxes.filter(box => box.checked).length;
+  }
+
+  function setVisiblePermissions(checked) {
+    document.querySelectorAll('.preset-perm-item').forEach(item => {
+      if (item.style.display !== 'none') item.querySelector('.preset-permission-box').checked = checked;
+    });
+    updateSelectedPermissionCount();
+  }
+
+  function setPresetGroup(groupIndex, checked) {
+    document.querySelectorAll('.preset-perm-item[data-group="' + groupIndex + '"] .preset-permission-box').forEach(box => { box.checked = checked; });
+    updateSelectedPermissionCount();
+  }
+
+  function showAllPermissions() {
+    presetSearch.value = '';
+    document.querySelectorAll('.preset-perm-item, .preset-permission-group').forEach(item => { item.style.display = ''; });
+  }
+
+  presetBoxes.forEach(box => box.addEventListener('change', updateSelectedPermissionCount));
+  presetSearch.addEventListener('input', function () {
+    const query = (this.value || '').trim().toLowerCase();
+    document.querySelectorAll('.preset-permission-group').forEach(group => {
+      let visibleCount = 0;
+      group.querySelectorAll('.preset-perm-item').forEach(item => {
+        const visible = !query || (item.dataset.search || '').includes(query);
+        item.style.display = visible ? '' : 'none';
+        if (visible) visibleCount += 1;
+      });
+      group.style.display = visibleCount ? '' : 'none';
+    });
+  });
+
+  function showJsonHint(message, kind) {
+    const hint = document.getElementById('jsonHint');
+    hint.className = 'alert py-2 small alert-' + kind;
+    hint.textContent = message;
   }
 
   function prettifyPresets() {
-    const ta = document.getElementById('presetsTextarea');
-    if (!ta) return;
-    const raw = (ta.value || '').trim();
-    if (!raw) { _showHint('لا يوجد نص لتنسيقه.', 'warning'); return; }
+    const textarea = document.getElementById('presetsTextarea');
     try {
-      const obj = JSON.parse(raw);
-      ta.value = JSON.stringify(obj, null, 2);
-      _showHint('تم تنسيق JSON بنجاح.', 'success');
-    } catch (e) {
-      _showHint('JSON غير صالح: تأكد من الأقواس والفواصل.', 'danger');
+      textarea.value = JSON.stringify(JSON.parse(textarea.value), null, 2);
+      showJsonHint('تم تنسيق JSON بنجاح.', 'success');
+    } catch (error) {
+      showJsonHint('JSON غير صالح.', 'danger');
     }
   }
 
   function validatePresets() {
-    const ta = document.getElementById('presetsTextarea');
-    if (!ta) return;
-    const raw = (ta.value || '').trim();
-    if (!raw) { _showHint('يرجى إدخال JSON أولًا.', 'warning'); return; }
     try {
-      const obj = JSON.parse(raw);
-      if (!obj || typeof obj !== 'object') { _showHint('JSON يجب أن يكون كائن (Object).', 'danger'); return; }
-
-      const pm = obj.main || obj.presets_main || {};
-      const pe = obj.extra || obj.presets_extra || {};
-      const cntMain = (pm && typeof pm === 'object') ? Object.keys(pm).length : 0;
-      const cntExtra = (pe && typeof pe === 'object') ? Object.keys(pe).length : 0;
-
-      _showHint('JSON صالح. عدد اختصارات main: ' + cntMain + ' — extra: ' + cntExtra + '.', 'success');
-    } catch (e) {
-      _showHint('JSON غير صالح: ' + (e && e.message ? e.message : 'خطأ في التحليل') , 'danger');
+      const data = JSON.parse(document.getElementById('presetsTextarea').value);
+      const mainCount = Object.keys(data.main || data.presets_main || {}).length;
+      const extraCount = Object.keys(data.extra || data.presets_extra || {}).length;
+      showJsonHint('JSON صالح: ' + mainCount + ' اختصار رئيسي و' + extraCount + ' إضافي.', 'success');
+    } catch (error) {
+      showJsonHint('JSON غير صالح.', 'danger');
     }
   }
 </script>

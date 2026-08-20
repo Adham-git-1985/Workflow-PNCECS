@@ -24119,6 +24119,8 @@ def _portal_perm_presets_load() -> tuple[dict, dict]:
             if not obj:
                 continue
 
+            presets_main.pop(code, None)
+            presets_extra.pop(code, None)
             cat = (getattr(r, "category", "") or "").strip().lower()
             if cat == "main":
                 main_override[code] = obj
@@ -24152,6 +24154,47 @@ def portal_admin_permission_presets():
                 db.session.rollback()
             flash("تمت إعادة ضبط اختصارات الصلاحيات للوضع الافتراضي.", "success")
             return redirect(url_for("portal.portal_admin_permission_presets"))
+
+        if action == "save_preset":
+            original_code = (request.form.get("original_code") or "").strip().upper()
+            code = original_code or (request.form.get("code") or "").strip().upper()
+            label = (request.form.get("label") or "").strip()
+            category = (request.form.get("category") or "extra").strip().lower()
+            if category not in {"main", "extra"}:
+                category = "extra"
+
+            if not code or not re.fullmatch(r"[A-Z0-9_-]+", code):
+                flash("رمز الاختصار مطلوب ويقبل الأحرف الإنجليزية والأرقام والشرطة فقط.", "warning")
+                return redirect(url_for("portal.portal_admin_permission_presets", new=1))
+            if not label:
+                flash("اسم الاختصار مطلوب.", "warning")
+                return redirect(url_for("portal.portal_admin_permission_presets", edit_code=original_code) if original_code else url_for("portal.portal_admin_permission_presets", new=1))
+
+            selected_keys = _normalize_keys([
+                (key or "").strip().upper()
+                for key in request.form.getlist("permissions")
+                if (key or "").strip().upper() in PORTAL_ALL_KEYS
+            ])
+
+            row = PortalPermissionPreset.query.filter_by(code=code).first()
+            if not original_code:
+                current_main, current_extra = _portal_perm_presets_load()
+                if code in current_main or code in current_extra:
+                    flash("رمز الاختصار موجود مسبقًا. افتح الاختصار الموجود لتعديله.", "warning")
+                    return redirect(url_for("portal.portal_admin_permission_presets", edit_code=code, _anchor="presetEditor"))
+            if row is None:
+                next_order = int(db.session.query(func.max(PortalPermissionPreset.sort_order)).scalar() or 0) + 1
+                row = PortalPermissionPreset(code=code, sort_order=next_order)
+                db.session.add(row)
+
+            row.label = label
+            row.category = category
+            row.keys_json = json.dumps(selected_keys, ensure_ascii=False)
+            row.is_active = True
+            row.updated_at = datetime.utcnow()
+            db.session.commit()
+            flash(f"تم حفظ الاختصار ({label}) بعدد {len(selected_keys)} صلاحية محددة.", "success")
+            return redirect(url_for("portal.portal_admin_permission_presets", edit_code=code, _anchor="presetEditor"))
 
         raw = (request.form.get("presets_json") or "").strip()
         if not raw:
@@ -24220,6 +24263,23 @@ def portal_admin_permission_presets():
     p_main, p_extra = _portal_perm_presets_load()
     raw = json.dumps({"main": p_main, "extra": p_extra}, ensure_ascii=False, indent=2)
 
+    all_presets = {**p_main, **p_extra}
+    new_mode = (request.args.get("new") or "").strip().lower() in {"1", "true", "yes"}
+    editing_code = (request.args.get("edit_code") or "").strip().upper()
+    if not new_mode and editing_code not in all_presets:
+        editing_code = next(iter(p_main or p_extra), "")
+
+    editing_preset = None
+    editing_keys = set()
+    if not new_mode and editing_code:
+        preset = all_presets.get(editing_code) or {}
+        editing_preset = {
+            "code": editing_code,
+            "label": (preset.get("label") or editing_code),
+            "category": "main" if editing_code in p_main else "extra",
+        }
+        editing_keys = set(preset.get("keys") or [])
+
     # Human-friendly labels for preview
     try:
         from portal.perm_defs import PERMS as PORTAL_PERMS
@@ -24236,6 +24296,10 @@ def portal_admin_permission_presets():
         presets_extra=p_extra,
         perm_labels=perm_labels,
         perm_descs=perm_descs,
+        permission_groups=PORTAL_PERMS,
+        editing_preset=editing_preset,
+        editing_keys=editing_keys,
+        new_mode=new_mode,
         setting_key=PORTAL_PERM_PRESETS_KEY,
     )
 
