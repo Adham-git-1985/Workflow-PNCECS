@@ -14,6 +14,7 @@ from models import (
     InvIssueVoucher,
     InvIssueVoucherLine,
     InvItem,
+    InvItemCategory,
     InvWarehouse,
     Message,
     MessageRecipient,
@@ -140,6 +141,7 @@ def _inventory_balances():
 
 def _catalog_context():
     items = InvItem.query.filter(InvItem.is_active.is_(True)).order_by(InvItem.name.asc()).all()
+    categories = InvItemCategory.query.filter(InvItemCategory.is_active.is_(True)).order_by(InvItemCategory.name.asc()).all()
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active.is_(True)).order_by(InvWarehouse.name.asc()).all()
     balances = _inventory_balances()
     item_totals = {
@@ -150,7 +152,7 @@ def _catalog_context():
         f"{warehouse_id}:{item_id}": float(quantity or 0)
         for (warehouse_id, item_id), quantity in balances.items()
     }
-    return items, warehouses, item_totals, warehouse_balances
+    return items, categories, warehouses, item_totals, warehouse_balances
 
 
 def _parse_requested_lines():
@@ -292,7 +294,7 @@ def inventory_employee_request_tasks():
 @portal_bp.route("/inventory/employee-requests/new", methods=["GET", "POST"])
 @login_required
 def inventory_employee_request_new():
-    items, warehouses, item_totals, warehouse_balances = _catalog_context()
+    items, categories, warehouses, item_totals, warehouse_balances = _catalog_context()
     if request.method == "POST":
         requested_lines = _parse_requested_lines()
         purpose = (request.form.get("purpose") or "").strip()
@@ -302,6 +304,7 @@ def inventory_employee_request_new():
                 "portal/inventory/employee_request_form.html",
                 item=None,
                 items=items,
+                categories=categories,
                 item_totals=item_totals,
             )
         employee = EmployeeFile.query.get(current_user.id)
@@ -332,6 +335,7 @@ def inventory_employee_request_new():
         "portal/inventory/employee_request_form.html",
         item=None,
         items=items,
+        categories=categories,
         item_totals=item_totals,
     )
 
@@ -342,7 +346,7 @@ def inventory_employee_request_view(request_id):
     row = InvEmployeeRequest.query.get_or_404(request_id)
     if not _can_view(row):
         abort(403)
-    items, warehouses, item_totals, warehouse_balances = _catalog_context()
+    items, categories, warehouses, item_totals, warehouse_balances = _catalog_context()
     can_edit = row.status == "SUBMITTED" and (row.requester_user_id == current_user.id or _can_manage())
     if request.method == "POST":
         if not can_edit:
@@ -374,6 +378,7 @@ def inventory_employee_request_view(request_id):
         "portal/inventory/employee_request_view.html",
         item=row,
         items=items,
+        categories=categories,
         warehouses=warehouses,
         item_totals=item_totals,
         warehouse_balances=warehouse_balances,

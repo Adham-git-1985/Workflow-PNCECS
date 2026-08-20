@@ -3157,6 +3157,7 @@ class InvItem(db.Model):
     name = db.Column(db.String(255), nullable=False, index=True)
     code = db.Column(db.String(80), nullable=True, index=True)
     unit = db.Column(db.String(80), nullable=True)
+    variant = db.Column(db.String(150), nullable=True)
 
     category_id = db.Column(db.Integer, db.ForeignKey("inv_item_category.id"), nullable=True, index=True)
 
@@ -3169,6 +3170,8 @@ class InvItem(db.Model):
     @property
     def label(self) -> str:
         base = (self.name or '').strip() or (self.code or '').strip() or str(self.id)
+        if self.variant and self.variant.strip():
+            base = f"{base} — {self.variant.strip()}"
         if self.code and self.code.strip() and self.code.strip() not in base:
             return f"{base} ({self.code.strip()})"
         return base

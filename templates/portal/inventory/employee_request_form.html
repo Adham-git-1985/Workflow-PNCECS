@@ -9,6 +9,10 @@
 <form method="post" class="card shadow-sm">
   <div class="card-body">
     {% if items %}<div class="alert alert-info">اختر الأصناف والكميات المطلوبة. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.</div>{% endif %}
+    <div class="row g-2 mb-3">
+      <div class="col-md-7"><label class="form-label">البحث عن صنف</label><input class="form-control" id="itemSearch" placeholder="ابحث بالاسم أو الكود أو النوع..."></div>
+      <div class="col-md-5"><label class="form-label">التصنيف</label><select class="form-select" id="itemCategory"><option value="">كل التصنيفات</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></div>
+    </div>
     <div class="table-responsive">
       <table class="table align-middle" id="requestLines">
         <thead><tr><th>الصنف</th><th style="width:170px">الكمية المطلوبة</th><th style="width:150px">المتاح إجمالاً</th><th style="width:60px"></th></tr></thead>
@@ -18,7 +22,7 @@
             <td>
               <select class="form-select item-select" name="item_id">
                 <option value="">اختر الصنف</option>
-                {% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}">{{ product.label }}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}
+                {% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}" data-category="{{ product.category_id or '' }}" data-search="{{ (product.name ~ ' ' ~ (product.code or '') ~ ' ' ~ (product.variant or '') ~ ' ' ~ (product.category.name if product.category else ''))|lower }}">{{ product.label }}{% if product.category %} — {{ product.category.name }}{% endif %}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}
               </select>
             </td>
             <td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td>
@@ -41,12 +45,26 @@
 {% block scripts %}
 <script>
   const tableBody = document.querySelector('#requestLines tbody');
+  const searchInput = document.getElementById('itemSearch');
+  const categoryInput = document.getElementById('itemCategory');
+  function filterOptions() {
+    const query = (searchInput.value || '').trim().toLowerCase();
+    const category = categoryInput.value;
+    document.querySelectorAll('.item-select').forEach(select => Array.from(select.options).forEach(option => {
+      if (!option.value) return;
+      const matches = (!query || (option.dataset.search || '').includes(query)) && (!category || option.dataset.category === category);
+      option.hidden = !matches && !option.selected;
+      option.disabled = !matches && !option.selected;
+    }));
+  }
   function refreshRow(row) {
     const option = row.querySelector('.item-select').selectedOptions[0];
     row.querySelector('.available').textContent = option && option.value ? Number(option.dataset.stock || 0).toLocaleString('ar') : '—';
   }
   tableBody.addEventListener('change', event => { if (event.target.classList.contains('item-select')) refreshRow(event.target.closest('tr')); });
   tableBody.addEventListener('click', event => { const button = event.target.closest('.remove-line'); if (button && tableBody.rows.length > 1) button.closest('tr').remove(); });
-  document.getElementById('addLine').addEventListener('click', () => { const row = tableBody.rows[0].cloneNode(true); row.querySelector('select').value = ''; row.querySelector('input').value = '1'; refreshRow(row); tableBody.appendChild(row); });
+  searchInput.addEventListener('input', filterOptions);
+  categoryInput.addEventListener('change', filterOptions);
+  document.getElementById('addLine').addEventListener('click', () => { const row = tableBody.rows[0].cloneNode(true); row.querySelector('select').value = ''; row.querySelector('input').value = '1'; refreshRow(row); tableBody.appendChild(row); filterOptions(); });
 </script>
 {% endblock %}

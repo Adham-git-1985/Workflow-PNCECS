@@ -660,6 +660,9 @@ def _ensure_runtime_schema():
             if not _col_exists("notification", "link_url"):
                 _add_column_retry("notification", "link_url", "TEXT")
 
+            if not _col_exists("inv_item", "variant"):
+                _add_column_retry("inv_item", "variant", "TEXT")
+
             for col, ctype in [
                 ("order_no", "TEXT"),
                 ("place_kind", "TEXT"),

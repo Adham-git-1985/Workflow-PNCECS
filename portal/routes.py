@@ -29344,6 +29344,8 @@ def inventory_admin_categories():
 @_perm(STORE_MANAGE)
 def inventory_admin_items():
     categories = InvItemCategory.query.filter(InvItemCategory.is_active == True).order_by(InvItemCategory.name.asc()).all()  # noqa: E712
+    search = (request.args.get("q") or "").strip()
+    selected_category_id = request.args.get("category_id") or ""
 
     edit_id = request.args.get("edit_id")
     edit = InvItem.query.get(int(edit_id)) if (edit_id and edit_id.isdigit()) else None
@@ -29362,6 +29364,7 @@ def inventory_admin_items():
         name = (request.form.get("name") or "").strip()
         code = (request.form.get("code") or "").strip() or None
         unit = (request.form.get("unit") or "").strip() or None
+        variant = (request.form.get("variant") or "").strip() or None
         note = (request.form.get("note") or "").strip() or None
         cat_id = request.form.get("category_id")
         is_active = bool(request.form.get("is_active"))
@@ -29381,6 +29384,7 @@ def inventory_admin_items():
             it.name = name
             it.code = code
             it.unit = unit
+            it.variant = variant
             it.note = note
             it.category_id = cat_id_val
             it.is_active = is_active
@@ -29388,14 +29392,27 @@ def inventory_admin_items():
             flash("تم تحديث الصنف.", "success")
             return redirect(url_for("portal.inventory_admin_items"))
 
-        it = InvItem(name=name, code=code, unit=unit, note=note, category_id=cat_id_val, is_active=is_active, created_at=datetime.utcnow())
+        it = InvItem(name=name, code=code, unit=unit, variant=variant, note=note, category_id=cat_id_val, is_active=is_active, created_at=datetime.utcnow())
         db.session.add(it)
         db.session.commit()
         flash("تم إضافة الصنف.", "success")
         return redirect(url_for("portal.inventory_admin_items"))
 
-    rows = InvItem.query.order_by(InvItem.id.desc()).all()
-    return render_template("portal/inventory/admin_items.html", rows=rows, categories=categories, edit=edit)
+    query = InvItem.query
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(InvItem.name.ilike(like), InvItem.code.ilike(like), InvItem.variant.ilike(like)))
+    if selected_category_id.isdigit():
+        query = query.filter(InvItem.category_id == int(selected_category_id))
+    rows = query.order_by(InvItem.id.desc()).all()
+    return render_template(
+        "portal/inventory/admin_items.html",
+        rows=rows,
+        categories=categories,
+        edit=edit,
+        search=search,
+        selected_category_id=int(selected_category_id) if selected_category_id.isdigit() else None,
+    )
 
 
 # ==========================================================
