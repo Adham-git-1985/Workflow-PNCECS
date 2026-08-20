@@ -85,6 +85,15 @@
         </div>
         {% endif %}
 
+        {% if supply_request_url %}
+        <div class="col-12">
+          <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap mb-0">
+            <div><span class="fw-semibold">طلب مواد مرتبط:</span> يمكنك فتح الطلب ومتابعة الاعتماد مباشرة.</div>
+            <a class="btn btn-sm btn-warning" href="{{ supply_request_url }}">فتح طلب المواد</a>
+          </div>
+        </div>
+        {% endif %}
+
         <div class="col-12">
           <hr>
           <div style="white-space:pre-wrap; line-height:1.8">{{ msg.body }}</div>

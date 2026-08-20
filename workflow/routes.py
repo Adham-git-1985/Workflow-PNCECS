@@ -2744,6 +2744,23 @@ def inbox():
         ]
     except Exception:
         movement_tasks = []
+
+    supply_tasks = []
+    try:
+        from models import InvEmployeeRequest
+        from portal.supply_requests import _can_process
+
+        supply_tasks = [
+            supply_request for supply_request in (
+                InvEmployeeRequest.query
+                .filter(InvEmployeeRequest.status == "SUBMITTED")
+                .order_by(InvEmployeeRequest.created_at.desc())
+                .all()
+            )
+            if _can_process(supply_request)
+        ]
+    except Exception:
+        supply_tasks = []
     
 
     # --- Circulars (last 5) ---
@@ -2764,6 +2781,7 @@ def inbox():
         last_circulars=last_circulars,
         request_summaries=request_summaries,
         movement_tasks=movement_tasks,
+        supply_tasks=supply_tasks,
     )
 
 

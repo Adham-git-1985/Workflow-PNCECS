@@ -4,6 +4,7 @@
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h4 class="m-0">لوحة المستودع</h4>
   <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-primary" href="{{ url_for('portal.inventory_employee_requests') }}"><i class="bi bi-person-lines-fill"></i> طلبات مواد الموظفين</a>
     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_issue_voucher_new') }}"><i class="bi bi-plus-circle"></i> سند صرف جديد</a>
     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_inbound_voucher_new') }}"><i class="bi bi-plus-circle"></i> سند إدخال جديد</a>
     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_custody_voucher_new') }}"><i class="bi bi-plus-circle"></i> سند عهدة جديد</a>

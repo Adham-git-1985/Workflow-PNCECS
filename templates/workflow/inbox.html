@@ -149,6 +149,19 @@
 </div>
 {% endif %}
 
+{% if supply_tasks %}
+<div class="card shadow-sm mb-3 border-warning-subtle">
+  <div class="card-header bg-warning bg-opacity-10 d-flex justify-content-between align-items-center">
+    <h5 class="mb-0"><i class="bi bi-box-seam"></i> طلبات مواد بانتظارك</h5>
+    <span class="badge text-bg-warning">{{ supply_tasks|length }}</span>
+  </div>
+  <div class="table-responsive"><table class="table table-hover align-middle mb-0">
+    <thead><tr><th>الطلب</th><th>الموظف</th><th>المواد</th><th>السبب</th><th></th></tr></thead>
+    <tbody>{% for supply_request in supply_tasks %}<tr><td class="fw-semibold">#{{ supply_request.id }}</td><td>{{ supply_request.requester.full_name }}</td><td>{% for line in supply_request.lines %}<div>{{ line.requested_qty|round(2) }} — {{ line.item.name }}</div>{% else %}{{ supply_request.items_text }}{% endfor %}</td><td>{{ supply_request.purpose }}</td><td class="text-end"><a class="btn btn-sm btn-warning" href="{{ url_for('portal.inventory_employee_request_view', request_id=supply_request.id) }}">فتح ومتابعة</a></td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endif %}
+
 {% if rows %}
 <div class="card shadow-sm">
   <div class="card-header bg-primary bg-opacity-10 d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -193,7 +206,7 @@
     </table>
   </div>
 </div>
-{% elif not corr_tasks and not movement_tasks %}
+{% elif not corr_tasks and not movement_tasks and not supply_tasks %}
 <div class="alert alert-light text-center text-muted py-4">
   لا توجد مهام حالياً ✅
 </div>

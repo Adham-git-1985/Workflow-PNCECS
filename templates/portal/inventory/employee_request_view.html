@@ -1,1 +1,72 @@
-{% extends "portal/layout.html" %}{% block content %}<div class="d-flex justify-content-between mb-3"><h4>طلب مواد #{{ item.id }}</h4><a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_requests') }}">رجوع</a></div><div class="row"><div class="col-md-8"><form method="post" class="card card-body"><label>المواد المطلوبة</label><textarea class="form-control mb-3" name="items_text" rows="5" {% if not can_edit %}readonly{% endif %}>{{ item.items_text }}</textarea><label>سبب الطلب</label><input class="form-control mb-3" name="purpose" value="{{ item.purpose }}" {% if not can_edit %}readonly{% endif %}><label>ملاحظات</label><textarea class="form-control mb-3" name="note" {% if not can_edit %}readonly{% endif %}>{{ item.note or '' }}</textarea>{% if can_edit %}<button class="btn btn-outline-primary">حفظ التعديل</button>{% endif %}</form></div><div class="col-md-4"><div class="card card-body"><p>الحالة: <b>{{ 'معتمد' if item.status == 'APPROVED' else 'بانتظار ' ~ stages[item.approval_stage] }}</b></p>{% if can_process %}<form method="post" action="{{ url_for('portal.inventory_employee_request_approve', request_id=item.id) }}"><textarea class="form-control mb-2" name="note" placeholder="ملاحظة"></textarea><button class="btn btn-success w-100">متابعة الاعتماد</button></form>{% endif %}<hr><b>سجل الإجراءات</b>{% for action in item.actions|sort(attribute='created_at') %}<div class="border rounded p-2 mt-2"><b>{{ stages[action.stage] }}</b><br>{{ action.actor.name or action.actor.email }}<br>{{ action.note or '' }}</div>{% endfor %}</div></div></div>{% endblock %}
+{% extends "portal/layout.html" %}
+{% block title %}طلب مواد #{{ item.id }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div><h4 class="mb-1">طلب مواد #{{ item.id }}</h4><div class="text-muted">مقدم الطلب: {{ item.requester.full_name }} · {{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</div></div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_requests') }}">رجوع</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card shadow-sm">
+      <div class="card-header d-flex justify-content-between"><span>تفاصيل الطلب</span><span class="badge {{ 'text-bg-success' if item.status == 'APPROVED' else 'text-bg-warning' }}">{{ 'معتمد ومصروف' if item.status == 'APPROVED' else 'بانتظار ' ~ stages[item.approval_stage] }}</span></div>
+      <div class="card-body">
+        {% if can_edit %}
+        <form method="post">
+          <div class="table-responsive"><table class="table align-middle" id="editLines"><thead><tr><th>الصنف</th><th>الكمية</th><th>المتاح إجمالاً</th><th></th></tr></thead><tbody>
+            {% for line in item.lines %}
+            <tr><td><select class="form-select item-select" name="item_id">{% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}" {% if line.item_id == product.id %}selected{% endif %}>{{ product.label }}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}</select></td><td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="{{ line.requested_qty }}"></td><td class="available">{{ item_totals.get(line.item_id, 0)|round(2) }}</td><td><button class="btn btn-sm btn-outline-danger remove-line" type="button"><i class="bi bi-x"></i></button></td></tr>
+            {% else %}
+            <tr><td><select class="form-select item-select" name="item_id"><option value="">اختر الصنف</option>{% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}">{{ product.label }}</option>{% endfor %}</select></td><td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td><td class="available">—</td><td></td></tr>
+            {% endfor %}
+          </tbody></table></div>
+          <button class="btn btn-sm btn-outline-primary mb-3" type="button" id="addEditLine">إضافة صنف</button>
+          <label class="form-label">سبب الطلب</label><input class="form-control mb-3" name="purpose" value="{{ item.purpose }}" required>
+          <label class="form-label">ملاحظات</label><textarea class="form-control mb-3" name="note">{{ item.note or '' }}</textarea>
+          <button class="btn btn-outline-primary">حفظ التعديل</button>
+        </form>
+        {% else %}
+        <table class="table"><thead><tr><th>الصنف</th><th>المطلوب</th><th>المعتمد</th><th>مستودع الصرف</th></tr></thead><tbody>
+          {% for line in item.lines %}<tr><td>{{ line.item.label }}</td><td>{{ line.requested_qty|round(2) }} {{ line.item.unit or '' }}</td><td>{{ line.approved_qty|round(2) if line.approved_qty is not none else '—' }}</td><td>{{ line.warehouse.label if line.warehouse else '—' }}</td></tr>{% else %}<tr><td colspan="4">{{ item.items_text }}</td></tr>{% endfor %}
+        </tbody></table>
+        <div><b>سبب الطلب:</b> {{ item.purpose }}</div>{% if item.note %}<div class="mt-2"><b>ملاحظات:</b> {{ item.note }}</div>{% endif %}
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    {% if can_process %}
+    <div class="card shadow-sm mb-3" id="decision"><div class="card-header fw-bold">متابعة الاعتماد</div><div class="card-body">
+      <form method="post" action="{{ url_for('portal.inventory_employee_request_approve', request_id=item.id) }}">
+        {% if item.approval_stage == 'WAREHOUSE' %}
+        <label class="form-label">مستودع الصرف *</label>
+        <select class="form-select mb-3" name="warehouse_id" id="warehouseSelect" required><option value="">اختر المستودع</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.label }}</option>{% endfor %}</select>
+        <div class="small text-muted mb-2">حدد الكمية التي سيصرفها المستودع:</div>
+        {% for line in item.lines %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ line.item.label }}</div><div class="input-group mt-1"><span class="input-group-text">المعتمد</span><input class="form-control approved-qty" type="number" min="0" max="{{ line.requested_qty }}" step="0.01" name="approved_qty_{{ line.id }}" value="{{ line.requested_qty }}" data-item="{{ line.item_id }}"><span class="input-group-text stock-value">المتاح: —</span></div></div>{% endfor %}
+        {% elif item.approval_stage == 'ADMIN' %}
+        <div class="alert alert-warning">عند الاعتماد النهائي سيُنشأ سند صرف آلي وتُخصم الكميات من المستودع.</div>
+        {% for line in item.lines %}<div class="d-flex justify-content-between border-bottom py-2"><span>{{ line.item.label }}</span><b>{{ line.approved_qty|round(2) }} من {{ line.warehouse.label }}</b></div>{% endfor %}
+        {% endif %}
+        <label class="form-label mt-3">ملاحظة الاعتماد</label><textarea class="form-control mb-2" name="note" rows="2"></textarea>
+        <button class="btn btn-success w-100">{{ 'اعتماد نهائي وصرف المواد' if item.approval_stage == 'ADMIN' else 'متابعة للمرحلة التالية' }}</button>
+      </form>
+    </div></div>
+    {% endif %}
+    <div class="card shadow-sm"><div class="card-header fw-bold">سجل الإجراءات</div><div class="card-body">
+      {% for action in item.actions|sort(attribute='created_at') %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ stages.get(action.stage, action.stage) }} — {{ {'SUBMITTED':'إرسال الطلب','APPROVED':'متابعة الاعتماد','UPDATED':'تعديل الطلب'}.get(action.action, action.action) }}</div><div class="small text-muted">{{ action.actor.full_name }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>{% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}</div>{% endfor %}
+    </div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const balances = {{ warehouse_balances|tojson }};
+  const warehouseSelect = document.getElementById('warehouseSelect');
+  function refreshStocks() { if (!warehouseSelect) return; document.querySelectorAll('.approved-qty').forEach(input => { const value = balances[warehouseSelect.value + ':' + input.dataset.item] || 0; input.closest('.input-group').querySelector('.stock-value').textContent = 'المتاح: ' + Number(value).toLocaleString('ar'); }); }
+  if (warehouseSelect) warehouseSelect.addEventListener('change', refreshStocks);
+  const editBody = document.querySelector('#editLines tbody');
+  function refreshEditRow(row) { const option = row.querySelector('.item-select').selectedOptions[0]; row.querySelector('.available').textContent = option ? Number(option.dataset.stock || 0).toLocaleString('ar') : '—'; }
+  if (editBody) { editBody.addEventListener('change', event => { if (event.target.classList.contains('item-select')) refreshEditRow(event.target.closest('tr')); }); editBody.addEventListener('click', event => { const button = event.target.closest('.remove-line'); if (button && editBody.rows.length > 1) button.closest('tr').remove(); }); document.getElementById('addEditLine').addEventListener('click', () => { const row = editBody.rows[0].cloneNode(true); row.querySelector('select').value = ''; row.querySelector('input').value = '1'; refreshEditRow(row); editBody.appendChild(row); }); }
+</script>
+{% endblock %}

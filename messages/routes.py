@@ -455,6 +455,7 @@ def view_message(message_id):
     workflow_url = None
     meeting_url = None
     movement_url = None
+    supply_request_url = None
     try:
         if rec and msg and msg.body:
             m = re.search(r"/portal/hr/me/payslips/(\d+)/view", msg.body)
@@ -488,6 +489,14 @@ def view_message(message_id):
     except Exception:
         movement_url = None
 
+    try:
+        if msg and msg.body:
+            m = re.search(r"/portal/inventory/employee-requests/(\d+)", msg.body)
+            if m:
+                supply_request_url = url_for("portal.inventory_employee_request_view", request_id=int(m.group(1)))
+    except Exception:
+        supply_request_url = None
+
     return render_template(
         "messages/view.html",
         rec=rec,
@@ -496,4 +505,5 @@ def view_message(message_id):
         workflow_url=workflow_url,
         meeting_url=meeting_url,
         movement_url=movement_url,
+        supply_request_url=supply_request_url,
     )

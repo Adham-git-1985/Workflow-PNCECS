@@ -23905,6 +23905,7 @@ def _portal_perm_presets_defaults():
         HR_SS_READ,
         HR_SS_CREATE,
         HR_DOCS_READ,
+        HR_PAYSLIP_VIEW,
     ]
 
     def _with_base(keys: list[str]) -> list[str]:

@@ -24,6 +24,9 @@
         <i class="bi bi-chevron-down chev"></i>
       </a>
       <div class="collapse show" id="invSecRequests">
+        <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/employee-requests') %}active{% endif %}" href="{{ url_for('portal.inventory_employee_requests') }}">
+          <i class="bi bi-person-lines-fill"></i> طلبات مواد الموظفين
+        </a>
         <a class="list-group-item list-group-item-action inv-sub {% if request.path.startswith('/portal/inventory/requests') %}active{% endif %}" href="{{ url_for('portal.inventory_requests_log') }}">
           سجل الطلبات
         </a>
@@ -114,6 +117,7 @@
         <i class="bi bi-chevron-down chev"></i>
       </a>
       <div class="collapse" id="invSecReports">
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_employee_requests_report') }}">تقرير استهلاك مواد الموظفين</a>
         <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_warehouses') }}">تقرير المخازن ومحتوياتها</a>
         <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_items_all') }}">تقرير الأصناف والكميات في كافة المخازن</a>
         <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_report_item_card') }}">تقرير بطاقة الصنف</a>

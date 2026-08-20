@@ -1,1 +1,52 @@
-{% extends "portal/layout.html" %}{% block content %}<h4 class="mb-3">طلب مواد جديد</h4><form method="post" class="card card-body"><label class="form-label">المواد المطلوبة والكميات *</label><textarea class="form-control mb-3" name="items_text" rows="5" required placeholder="مثال: 5 أقلام أزرق، 2 دفتر، 1 حبر طابعة"></textarea><label class="form-label">سبب الطلب *</label><input class="form-control mb-3" name="purpose" required><label class="form-label">ملاحظات</label><textarea class="form-control mb-3" name="note"></textarea><button class="btn btn-primary">إرسال للاعتماد</button></form>{% endblock %}
+{% extends "portal/layout.html" %}
+{% block title %}طلب مواد جديد{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0"><i class="bi bi-box-seam"></i> طلب مواد جديد</h4>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_requests') }}">طلباتي</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    {% if items %}<div class="alert alert-info">اختر الأصناف والكميات المطلوبة. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.</div>{% endif %}
+    <div class="table-responsive">
+      <table class="table align-middle" id="requestLines">
+        <thead><tr><th>الصنف</th><th style="width:170px">الكمية المطلوبة</th><th style="width:150px">المتاح إجمالاً</th><th style="width:60px"></th></tr></thead>
+        <tbody>
+          {% for row_no in range(3) %}
+          <tr>
+            <td>
+              <select class="form-select item-select" name="item_id">
+                <option value="">اختر الصنف</option>
+                {% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}">{{ product.label }}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}
+              </select>
+            </td>
+            <td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td>
+            <td class="available text-muted">—</td>
+            <td><button class="btn btn-sm btn-outline-danger remove-line" type="button"><i class="bi bi-x"></i></button></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <button class="btn btn-sm btn-outline-primary mb-3" type="button" id="addLine"><i class="bi bi-plus"></i> إضافة صنف</button>
+    <label class="form-label">سبب الطلب *</label>
+    <input class="form-control mb-3" name="purpose" required>
+    <label class="form-label">ملاحظات</label>
+    <textarea class="form-control mb-3" name="note" rows="3"></textarea>
+    <button class="btn btn-primary" type="submit">إرسال للاعتماد</button>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  const tableBody = document.querySelector('#requestLines tbody');
+  function refreshRow(row) {
+    const option = row.querySelector('.item-select').selectedOptions[0];
+    row.querySelector('.available').textContent = option && option.value ? Number(option.dataset.stock || 0).toLocaleString('ar') : '—';
+  }
+  tableBody.addEventListener('change', event => { if (event.target.classList.contains('item-select')) refreshRow(event.target.closest('tr')); });
+  tableBody.addEventListener('click', event => { const button = event.target.closest('.remove-line'); if (button && tableBody.rows.length > 1) button.closest('tr').remove(); });
+  document.getElementById('addLine').addEventListener('click', () => { const row = tableBody.rows[0].cloneNode(true); row.querySelector('select').value = ''; row.querySelector('input').value = '1'; refreshRow(row); tableBody.appendChild(row); });
+</script>
+{% endblock %}
