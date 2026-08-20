@@ -10,7 +10,7 @@
   <div class="card-body">
     {% if items %}<div class="alert alert-info">اختر الأصناف والكميات المطلوبة. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.</div>{% endif %}
     <div class="row g-2 mb-3">
-      <div class="col-md-7"><label class="form-label">البحث عن صنف</label><input class="form-control" id="itemSearch" placeholder="ابحث بالاسم أو الكود أو النوع..."></div>
+      <div class="col-md-7"><label class="form-label">البحث عن صنف</label><input class="form-control" id="itemSearch" placeholder="ابحث بالاسم أو الكود أو النوع أو المواصفات..."></div>
       <div class="col-md-5"><label class="form-label">التصنيف</label><select class="form-select" id="itemCategory"><option value="">كل التصنيفات</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></div>
     </div>
     <div class="table-responsive">
@@ -22,7 +22,7 @@
             <td>
               <select class="form-select item-select" name="item_id">
                 <option value="">اختر الصنف</option>
-                {% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}" data-category="{{ product.category_id or '' }}" data-search="{{ (product.name ~ ' ' ~ (product.code or '') ~ ' ' ~ (product.variant or '') ~ ' ' ~ (product.category.name if product.category else ''))|lower }}">{{ product.label }}{% if product.category %} — {{ product.category.name }}{% endif %}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}
+                {% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}" data-category="{{ product.category_id or '' }}" data-search="{{ (product.name ~ ' ' ~ (product.code or '') ~ ' ' ~ (product.variant or '') ~ ' ' ~ product.attributes_text ~ ' ' ~ (product.category.name if product.category else ''))|lower }}">{{ product.label }}{% if product.category %} — {{ product.category.name }}{% endif %}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}
               </select>
             </td>
             <td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td>

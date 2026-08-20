@@ -32,6 +32,7 @@
         </a>
       </div>
 
+      {% if current_user.has_perm('STORE_READ') or current_user.has_perm('STORE_MANAGE') %}
       {# السندات #}
       <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecVouchers" role="button" aria-expanded="true" aria-controls="invSecVouchers">
         <span><i class="bi bi-journal-text"></i> السندات</span>
@@ -162,6 +163,16 @@
         <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_warehouse_perms') }}"><i class="bi bi-shield-lock"></i> صلاحيات الموظفين على المخازن</a>
         <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_settings') }}"><i class="bi bi-gear"></i> الإعدادات العامة</a>
       </div>
+      {% else %}
+      <a class="list-group-item list-group-item-action inv-sec-toggle d-flex justify-content-between align-items-center" data-bs-toggle="collapse" href="#invSecCatalog" role="button" aria-expanded="true" aria-controls="invSecCatalog">
+        <span><i class="bi bi-boxes"></i> دليل الأصناف</span>
+        <i class="bi bi-chevron-down chev"></i>
+      </a>
+      <div class="collapse show" id="invSecCatalog">
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_items') }}"><i class="bi bi-boxes"></i> إدارة الأصناف والمواصفات</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.inventory_admin_categories') }}"><i class="bi bi-tags"></i> التصنيفات العامة</a>
+      </div>
+      {% endif %}
     </div>
 
   </div>

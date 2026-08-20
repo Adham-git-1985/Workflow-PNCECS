@@ -96,6 +96,10 @@ def _can_manage():
     return current_user.id in configured_ids or current_user.has_perm("INVENTORY_REQUEST_APPROVE") or current_user.has_perm("STORE_MANAGE")
 
 
+def _can_manage_catalog():
+    return current_user.has_perm("INVENTORY_REQUEST_APPROVE") or current_user.has_perm("STORE_MANAGE")
+
+
 def _can_view(row):
     return row.requester_user_id == current_user.id or _can_manage() or _can_process(row) or any(
         action.actor_user_id == current_user.id for action in row.actions
@@ -270,6 +274,7 @@ def inventory_employee_requests():
         rows=rows,
         stages=STAGES,
         can_manage=_can_manage(),
+        can_manage_catalog=_can_manage_catalog(),
         pending_count=pending_count,
     )
 
@@ -286,6 +291,7 @@ def inventory_employee_request_tasks():
         rows=rows,
         stages=STAGES,
         can_manage=_can_manage(),
+        can_manage_catalog=_can_manage_catalog(),
         pending_count=len(rows),
         tasks=True,
     )
@@ -385,6 +391,7 @@ def inventory_employee_request_view(request_id):
         stages=STAGES,
         can_process=_can_process(row),
         can_edit=can_edit,
+        can_manage_catalog=_can_manage_catalog(),
     )
 
 

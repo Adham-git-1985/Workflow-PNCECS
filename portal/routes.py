@@ -194,6 +194,7 @@ from models import (
     InvWarehouse,
     InvItemCategory,
     InvItem,
+    InvItemAttribute,
     InvIssueVoucher,
     InvIssueVoucherLine,
     InvIssueVoucherAttachment,
@@ -29294,7 +29295,7 @@ def inventory_admin_warehouses():
 
 @portal_bp.route("/inventory/admin/categories", methods=["GET", "POST"])
 @login_required
-@_perm(STORE_MANAGE)
+@_perm_any(STORE_MANAGE, "INVENTORY_REQUEST_APPROVE")
 def inventory_admin_categories():
     edit_id = request.args.get("edit_id")
     edit = InvItemCategory.query.get(int(edit_id)) if (edit_id and edit_id.isdigit()) else None
@@ -29341,7 +29342,7 @@ def inventory_admin_categories():
 
 @portal_bp.route("/inventory/admin/items", methods=["GET", "POST"])
 @login_required
-@_perm(STORE_MANAGE)
+@_perm_any(STORE_MANAGE, "INVENTORY_REQUEST_APPROVE")
 def inventory_admin_items():
     categories = InvItemCategory.query.filter(InvItemCategory.is_active == True).order_by(InvItemCategory.name.asc()).all()  # noqa: E712
     search = (request.args.get("q") or "").strip()
@@ -29369,6 +29370,25 @@ def inventory_admin_items():
         cat_id = request.form.get("category_id")
         is_active = bool(request.form.get("is_active"))
 
+        attribute_names = request.form.getlist("attribute_name")
+        attribute_values = request.form.getlist("attribute_value")
+        attribute_pairs = []
+        attribute_positions = {}
+        for raw_name, raw_value in zip(attribute_names, attribute_values):
+            attribute_name = (raw_name or "").strip()
+            attribute_value = (raw_value or "").strip()
+            if not attribute_name and not attribute_value:
+                continue
+            if not attribute_name or not attribute_value:
+                flash("يجب تعبئة اسم الخاصية وقيمتها معاً.", "warning")
+                return redirect(url_for("portal.inventory_admin_items", edit_id=edit.id) if edit else url_for("portal.inventory_admin_items"))
+            normalized_name = attribute_name.casefold()
+            if normalized_name in attribute_positions:
+                attribute_pairs[attribute_positions[normalized_name]] = (attribute_name, attribute_value)
+            else:
+                attribute_positions[normalized_name] = len(attribute_pairs)
+                attribute_pairs.append((attribute_name, attribute_value))
+
         cat_id_val = int(cat_id) if (cat_id and cat_id.isdigit()) else None
 
         if not name:
@@ -29388,11 +29408,25 @@ def inventory_admin_items():
             it.note = note
             it.category_id = cat_id_val
             it.is_active = is_active
+            it.attributes.clear()
+            db.session.flush()
+            for sort_order, (attribute_name, attribute_value) in enumerate(attribute_pairs):
+                it.attributes.append(InvItemAttribute(
+                    name=attribute_name,
+                    value=attribute_value,
+                    sort_order=sort_order,
+                ))
             db.session.commit()
             flash("تم تحديث الصنف.", "success")
             return redirect(url_for("portal.inventory_admin_items"))
 
         it = InvItem(name=name, code=code, unit=unit, variant=variant, note=note, category_id=cat_id_val, is_active=is_active, created_at=datetime.utcnow())
+        for sort_order, (attribute_name, attribute_value) in enumerate(attribute_pairs):
+            it.attributes.append(InvItemAttribute(
+                name=attribute_name,
+                value=attribute_value,
+                sort_order=sort_order,
+            ))
         db.session.add(it)
         db.session.commit()
         flash("تم إضافة الصنف.", "success")
@@ -29401,7 +29435,15 @@ def inventory_admin_items():
     query = InvItem.query
     if search:
         like = f"%{search}%"
-        query = query.filter(or_(InvItem.name.ilike(like), InvItem.code.ilike(like), InvItem.variant.ilike(like)))
+        query = query.filter(or_(
+            InvItem.name.ilike(like),
+            InvItem.code.ilike(like),
+            InvItem.variant.ilike(like),
+            InvItem.attributes.any(or_(
+                InvItemAttribute.name.ilike(like),
+                InvItemAttribute.value.ilike(like),
+            )),
+        ))
     if selected_category_id.isdigit():
         query = query.filter(InvItem.category_id == int(selected_category_id))
     rows = query.order_by(InvItem.id.desc()).all()

@@ -3166,15 +3166,49 @@ class InvItem(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     category = db.relationship("InvItemCategory", foreign_keys=[category_id], lazy="joined")
+    attributes = db.relationship(
+        "InvItemAttribute",
+        back_populates="item",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InvItemAttribute.sort_order",
+    )
+
+    @property
+    def attributes_text(self) -> str:
+        return "، ".join(
+            f"{attribute.name}: {attribute.value}"
+            for attribute in self.attributes
+            if attribute.name and attribute.value
+        )
 
     @property
     def label(self) -> str:
         base = (self.name or '').strip() or (self.code or '').strip() or str(self.id)
         if self.variant and self.variant.strip():
             base = f"{base} — {self.variant.strip()}"
+        if self.attributes_text:
+            base = f"{base} — {self.attributes_text}"
         if self.code and self.code.strip() and self.code.strip() not in base:
             return f"{base} ({self.code.strip()})"
         return base
+
+
+class InvItemAttribute(db.Model):
+    __tablename__ = "inv_item_attribute"
+
+    id = db.Column(db.Integer, primary_key=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("inv_item.id"), nullable=False, index=True)
+    name = db.Column(db.String(100), nullable=False)
+    value = db.Column(db.String(200), nullable=False)
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    item = db.relationship("InvItem", back_populates="attributes")
+
+    __table_args__ = (
+        db.UniqueConstraint("item_id", "name", name="uq_inv_item_attribute_name"),
+    )
 
 
 class InvIssueVoucher(db.Model):
