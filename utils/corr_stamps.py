@@ -173,13 +173,26 @@ def _draw_centered(
 
 
 def _shape_arabic(text: str) -> str:
+    text = _protect_ltr_reference(text or "")
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
 
-        return get_display(arabic_reshaper.reshape(text or ""))
+        return get_display(arabic_reshaper.reshape(text))
     except Exception:
-        return _shape_arabic_fallback(text or "")
+        return _shape_arabic_fallback(text)
+
+
+def _protect_ltr_reference(text: str) -> str:
+    """Keep a numeric correspondence reference in its logical order in RTL text."""
+    first_digit = next((index for index, char in enumerate(text) if char.isascii() and char.isdigit()), None)
+    if first_digit is None or not any("\u0600" <= char <= "\u08ff" for char in text[:first_digit]):
+        return text
+
+    boundary = first_digit
+    while boundary and text[boundary - 1] in " -/":
+        boundary -= 1
+    return f"{text[:boundary]}\u200f{text[boundary:]}"
 
 
 _ARABIC_FORMS = {

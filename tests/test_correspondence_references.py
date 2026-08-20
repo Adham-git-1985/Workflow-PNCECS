@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from utils.corr_refs import correspondence_reference_label
-from utils.corr_stamps import CorrStampOptions, build_stamp_image
+from utils.corr_stamps import CorrStampOptions, _shape_arabic, build_stamp_image
 
 
 class CorrespondenceReferenceTests(unittest.TestCase):
@@ -31,6 +31,12 @@ class CorrespondenceReferenceTests(unittest.TestCase):
             ),
             "صادر رقم OUT-2026-0001",
         )
+
+    def test_incoming_reference_digits_keep_their_logical_order_in_rtl_stamp(self):
+        displayed = _shape_arabic("وارد-0208-2026-000011")
+
+        self.assertIn("0208-2026-000011", displayed)
+        self.assertNotIn("000011-2026-0208", displayed)
 
     @patch("utils.corr_stamps._load_eagle", return_value=None)
     @patch("utils.corr_stamps._draw_centered")
