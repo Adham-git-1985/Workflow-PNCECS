@@ -1268,12 +1268,17 @@ def _database_module_summary(database_manifest: dict) -> dict:
     }
 
 
-def _validate_sqlite_snapshot(snapshot_path: str, expected_manifest: dict | None = None) -> dict:
+def _validate_sqlite_snapshot(
+    snapshot_path: str,
+    expected_manifest: dict | None = None,
+    *,
+    verify_checksum: bool = True,
+) -> dict:
     actual = _inspect_sqlite_database(snapshot_path)
     expected_manifest = expected_manifest or {}
 
     expected_sha256 = (expected_manifest.get("sha256") or "").strip().lower()
-    if expected_sha256 and _sha256_file(snapshot_path).lower() != expected_sha256:
+    if verify_checksum and expected_sha256 and _sha256_file(snapshot_path).lower() != expected_sha256:
         raise ValueError("Database checksum does not match backup manifest")
 
     expected_tables = expected_manifest.get("tables") or {}
@@ -1946,14 +1951,14 @@ def backup_restore():
     try:
         _create_sqlite_snapshot(_get_db_path(), safety_db_path)
         _restore_sqlite_from_snapshot(snap_db, _get_db_path())
-        _validate_sqlite_snapshot(_get_db_path(), database_manifest)
+        _validate_sqlite_snapshot(_get_db_path(), database_manifest, verify_checksum=False)
         db.create_all()
 
         if format_version < BACKUP_FORMAT_VERSION:
             _restore_permissions_export(extract_dir)
 
         replacements = _restore_persistent_files(extract_dir, files_manifest, ts)
-        _validate_sqlite_snapshot(_get_db_path(), database_manifest)
+        _validate_sqlite_snapshot(_get_db_path(), database_manifest, verify_checksum=False)
     except Exception:
         current_app.logger.exception("Backup restore failed; rolling back current data")
         try:

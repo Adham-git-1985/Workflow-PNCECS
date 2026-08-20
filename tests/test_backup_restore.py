@@ -107,6 +107,12 @@ class BackupRestoreTests(unittest.TestCase):
             changed_manifest["sha256"] = "0" * 64
             with self.assertRaises(ValueError):
                 _validate_sqlite_snapshot(database_path, changed_manifest)
+            validated = _validate_sqlite_snapshot(
+                database_path,
+                changed_manifest,
+                verify_checksum=False,
+            )
+            self.assertEqual(validated["tables"]["trouble_tickets"]["row_count"], 2)
 
     def test_restore_round_trip_preserves_new_module_tables(self):
         with tempfile.TemporaryDirectory() as root:
