@@ -7,7 +7,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFont, ImageOps, features
 
 from utils.corr_refs import correspondence_reference_label
 
@@ -165,34 +165,49 @@ def _draw_centered(
     y: int,
     stroke_width: int = 0,
 ) -> None:
-    shaped = _shape_arabic(text)
-    bbox = draw.textbbox((0, 0), shaped, font=font, stroke_width=stroke_width)
+    render_text = text
+    text_options = {"font": font, "stroke_width": stroke_width}
+    if _contains_arabic(text) and features.check("raqm"):
+        text_options["direction"] = "rtl"
+    else:
+        render_text = _shape_stamp_text(text)
+
+    bbox = draw.textbbox((0, 0), render_text, **text_options)
     width = bbox[2] - bbox[0]
     x = x1 + ((x2 - x1 - width) / 2)
-    draw.text((x, y), shaped, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=fill)
+    draw.text((x, y), render_text, fill=fill, stroke_fill=fill, **text_options)
 
 
-def _shape_arabic(text: str) -> str:
-    text = _protect_ltr_reference(text or "")
-    try:
-        import arabic_reshaper
-        from bidi.algorithm import get_display
-
-        return get_display(arabic_reshaper.reshape(text))
-    except Exception:
-        return _shape_arabic_fallback(text)
+def _contains_arabic(text: str) -> bool:
+    return any("\u0600" <= char <= "\u08ff" for char in text)
 
 
-def _protect_ltr_reference(text: str) -> str:
-    """Keep a numeric correspondence reference in its logical order in RTL text."""
+def _shape_stamp_text(text: str) -> str:
     first_digit = next((index for index, char in enumerate(text) if char.isascii() and char.isdigit()), None)
-    if first_digit is None or not any("\u0600" <= char <= "\u08ff" for char in text[:first_digit]):
-        return text
+    if first_digit is None:
+        return _shape_arabic(text)
 
     boundary = first_digit
     while boundary and text[boundary - 1] in " -/":
         boundary -= 1
-    return f"{text[:boundary]}\u200f{text[boundary:]}"
+    prefix = text[:boundary]
+    separator = text[boundary:first_digit]
+    if not prefix or not _contains_arabic(prefix) or any(
+        char.isascii() and char.isalpha() for char in prefix
+    ):
+        return _shape_arabic(text)
+
+    return f"{text[first_digit:]}{separator}{_shape_arabic(prefix)}"
+
+
+def _shape_arabic(text: str) -> str:
+    try:
+        import arabic_reshaper
+        from bidi.algorithm import get_display
+
+        return get_display(arabic_reshaper.reshape(text or ""))
+    except Exception:
+        return _shape_arabic_fallback(text or "")
 
 
 _ARABIC_FORMS = {

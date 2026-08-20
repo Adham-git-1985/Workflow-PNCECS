@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from utils.corr_refs import correspondence_reference_label
-from utils.corr_stamps import CorrStampOptions, _shape_arabic, build_stamp_image
+from utils.corr_stamps import CorrStampOptions, _shape_stamp_text, build_stamp_image
 
 
 class CorrespondenceReferenceTests(unittest.TestCase):
@@ -33,10 +33,24 @@ class CorrespondenceReferenceTests(unittest.TestCase):
         )
 
     def test_incoming_reference_digits_keep_their_logical_order_in_rtl_stamp(self):
-        displayed = _shape_arabic("وارد-0208-2026-000011")
+        displayed = _shape_stamp_text("وارد-0208-2026-000011")
 
         self.assertIn("0208-2026-000011", displayed)
         self.assertNotIn("000011-2026-0208", displayed)
+        self.assertNotIn("\u200f", displayed)
+
+    @patch("utils.corr_stamps.features.check", return_value=True)
+    def test_native_rtl_renderer_receives_logical_reference(self, _features_check):
+        draw = unittest.mock.Mock()
+        draw.textbbox.return_value = (0, 0, 100, 40)
+        reference = "وارد-0208-2026-000011"
+
+        from utils.corr_stamps import _draw_centered
+
+        _draw_centered(draw, reference, unittest.mock.Mock(), (0, 0, 0), 0, 200, 0)
+
+        self.assertEqual(draw.text.call_args.args[1], reference)
+        self.assertEqual(draw.text.call_args.kwargs["direction"], "rtl")
 
     @patch("utils.corr_stamps._load_eagle", return_value=None)
     @patch("utils.corr_stamps._draw_centered")
