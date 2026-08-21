@@ -945,7 +945,6 @@ class WorkflowTemplateStep(db.Model):
     approver_division_id = db.Column(db.Integer, db.ForeignKey("divisions.id"), nullable=True)
     approver_org_node_id = db.Column(db.Integer, db.ForeignKey("org_nodes.id"), nullable=True)
 
-
     approver_role = db.Column(db.String(50), nullable=True)
 
     # Committee target
@@ -1057,6 +1056,12 @@ class WorkflowInstanceStep(db.Model):
     approver_section_id = db.Column(db.Integer, db.ForeignKey("sections.id"), nullable=True)
     approver_division_id = db.Column(db.Integer, db.ForeignKey("divisions.id"), nullable=True)
     approver_org_node_id = db.Column(db.Integer, db.ForeignKey("org_nodes.id"), nullable=True)
+
+    # Frozen display context for dynamically generated routes.
+    routing_label = db.Column(db.String(200), nullable=True)
+    routing_job_title = db.Column(db.String(200), nullable=True)
+    routing_node_label = db.Column(db.Text, nullable=True)
+    routing_reason = db.Column(db.Text, nullable=True)
 
 
     approver_role = db.Column(db.String(50), nullable=True)
@@ -1467,11 +1472,11 @@ class Division(db.Model):
 
 
 class Team(db.Model):
-    """Team (فريق) under a Section (قسم). Optional link to Division (شعبة)."""
+    """Team (فريق), optionally linked to the organizational hierarchy."""
     __tablename__ = "teams"
 
     id = db.Column(db.Integer, primary_key=True)
-    section_id = db.Column(db.Integer, db.ForeignKey("sections.id"), nullable=False, index=True)
+    section_id = db.Column(db.Integer, db.ForeignKey("sections.id"), nullable=True, index=True)
     division_id = db.Column(db.Integer, db.ForeignKey("divisions.id"), nullable=True, index=True)
     name_ar = db.Column(db.String(200), nullable=False)
     name_en = db.Column(db.String(200), nullable=True)
@@ -1482,10 +1487,37 @@ class Team(db.Model):
     section = db.relationship("Section", backref=db.backref("teams", lazy="selectin"))
 
     division = db.relationship("Division", backref=db.backref("teams", lazy="selectin"))
+    memberships = db.relationship(
+        "TeamMembership",
+        back_populates="team",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
 
     @property
     def label(self) -> str:
         return (self.name_ar or self.name_en or "").strip()
+
+
+class TeamMembership(db.Model):
+    """Independent team membership that does not change org placement."""
+    __tablename__ = "team_memberships"
+
+    id = db.Column(db.Integer, primary_key=True)
+    team_id = db.Column(db.Integer, db.ForeignKey("teams.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    title = db.Column(db.String(200), nullable=True)
+    is_active = db.Column(db.Boolean, default=True, nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    team = db.relationship("Team", back_populates="memberships")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("team_id", "user_id", name="uq_team_membership_team_user"),
+    )
 
 
 

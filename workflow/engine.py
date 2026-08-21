@@ -742,10 +742,12 @@ def _resolve_followers_user_ids(inst_id: int) -> list[int]:
 # =========================
 def start_workflow_for_request(
     req: WorkflowRequest,
-    template: WorkflowTemplate,
+    template: WorkflowTemplate | None,
     created_by_user_id: int,
     auto_commit: bool = False,
     initial_parallel_user_ids=None,
+    runtime_steps: list[dict] | None = None,
+    workflow_label: str | None = None,
 ):
     """
     Creates workflow instance + instance steps from template.
@@ -753,7 +755,7 @@ def start_workflow_for_request(
     """
     inst = WorkflowInstance(
         request_id=req.id,
-        template_id=template.id,
+        template_id=template.id if template else None,
         current_step_order=1
     )
     # For PARALLEL_SYNC: the request creator is considered the "previous step actor"
@@ -762,19 +764,26 @@ def start_workflow_for_request(
     db.session.add(inst)
     db.session.flush()  # get inst.id
 
-    template_sla = template.sla_days_default
+    template_sla = template.sla_days_default if template else None
 
     # IMPORTANT: in your models, template.steps is a LIST (not dynamic query)
     # and already ordered by step_order (relationship order_by).
-    tsteps = list(template.steps or [])
+    tsteps = list(runtime_steps if runtime_steps is not None else (template.steps or [] if template else []))
+    if runtime_steps is not None and not tsteps:
+        raise ValueError("المسار الديناميكي لا يحتوي على خطوات.")
 
-    for ts in tsteps:
+    def step_value(step_source, field_name, default=None):
+        if isinstance(step_source, dict):
+            return step_source.get(field_name, default)
+        return getattr(step_source, field_name, default)
+
+    for runtime_order, ts in enumerate(tsteps, start=1):
         # Defensive normalization (some seeded/legacy data may store lowercase/extra spaces)
-        _kind = ((getattr(ts, 'approver_kind', None) or '').strip().upper())
-        if _kind not in ("USER", "ROLE", "DEPARTMENT", "DIRECTORATE", "UNIT", "SECTION", "DIVISION", "COMMITTEE"):
+        _kind = ((step_value(ts, 'approver_kind') or '').strip().upper())
+        if _kind not in ("USER", "ROLE", "DEPARTMENT", "DIRECTORATE", "UNIT", "SECTION", "DIVISION", "ORG_NODE", "COMMITTEE"):
             _kind = ""
 
-        _cmode = getattr(ts, 'committee_delivery_mode', None)
+        _cmode = step_value(ts, 'committee_delivery_mode')
         if _cmode:
             _cm = str(_cmode).strip()
             # accept both canonical and uppercase aliases
@@ -788,20 +797,25 @@ def start_workflow_for_request(
 
         step = WorkflowInstanceStep(
             instance_id=inst.id,
-            step_order=ts.step_order,
-            mode=getattr(ts, "mode", "SEQUENTIAL") or "SEQUENTIAL",
+            step_order=int(step_value(ts, "step_order", runtime_order) or runtime_order),
+            mode=step_value(ts, "mode", "SEQUENTIAL") or "SEQUENTIAL",
             approver_kind=_kind,
-            approver_user_id=ts.approver_user_id,
-            approver_department_id=ts.approver_department_id,
-            approver_directorate_id=getattr(ts, 'approver_directorate_id', None),
-            approver_unit_id=getattr(ts, 'approver_unit_id', None),
-            approver_section_id=getattr(ts, 'approver_section_id', None),
-            approver_division_id=getattr(ts, 'approver_division_id', None),
-            approver_role=ts.approver_role,
-            approver_committee_id=getattr(ts, 'approver_committee_id', None),
+            approver_user_id=step_value(ts, 'approver_user_id'),
+            approver_department_id=step_value(ts, 'approver_department_id'),
+            approver_directorate_id=step_value(ts, 'approver_directorate_id'),
+            approver_unit_id=step_value(ts, 'approver_unit_id'),
+            approver_section_id=step_value(ts, 'approver_section_id'),
+            approver_division_id=step_value(ts, 'approver_division_id'),
+            approver_org_node_id=step_value(ts, 'approver_org_node_id'),
+            routing_label=step_value(ts, 'label'),
+            routing_job_title=step_value(ts, 'job_title'),
+            routing_node_label=step_value(ts, 'node_label'),
+            routing_reason=step_value(ts, 'reason'),
+            approver_role=step_value(ts, 'approver_role'),
+            approver_committee_id=step_value(ts, 'approver_committee_id'),
             committee_delivery_mode=_cmode,
             status="PENDING",
-            due_at=_step_due_at(template_sla, ts.sla_days),
+            due_at=_step_due_at(template_sla, step_value(ts, 'sla_days')),
         )
         db.session.add(step)
 
@@ -809,13 +823,19 @@ def start_workflow_for_request(
     db.session.add(req)
     db.session.flush()
 
+    resolved_workflow_label = workflow_label or (template.name if template else "مسار ديناميكي حسب الهيكل الإداري")
+    audit_note = (
+        f"Template: {resolved_workflow_label} (#{template.id})"
+        if template
+        else f"Dynamic workflow: {resolved_workflow_label}"
+    )
     db.session.add(AuditLog(
         request_id=req.id,
         user_id=created_by_user_id,
         action="WORKFLOW_STARTED",
         old_status=None,
         new_status=req.status,
-        note=f"Template: {template.name} (#{template.id})",
+        note=audit_note,
         target_type="WORKFLOW",
         target_id=inst.id
     ))

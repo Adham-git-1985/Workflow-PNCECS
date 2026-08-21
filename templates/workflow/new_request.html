@@ -12,7 +12,7 @@
 </div>
 
 {% if request_types and not templates %}
-  <div class="alert alert-warning">لا توجد مسارات مفعّلة. يرجى إنشاء مسار عمل من صفحة المسارات.</div>
+  <div class="alert alert-warning">لا توجد مسارات محفوظة مفعّلة؛ يمكنك استخدام البناء الديناميكي حسب الهيكل الإداري إذا كان ربطك الهيكلي مكتملاً.</div>
 {% endif %}
 
 <form method="post" class="card shadow-sm" enctype="multipart/form-data" id="workflowNewRequestForm">
@@ -45,9 +45,28 @@
         <textarea class="form-control" name="description" rows="4" placeholder="اكتب التفاصيل..."></textarea>
       </div>
 
-      <div class="col-md-6">
+      <div class="col-12">
+        <label class="form-label fw-bold">طريقة بناء المسار</label>
+        <div class="d-flex flex-wrap gap-3 border rounded-3 p-3 bg-light">
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="route_mode" id="routeModePredefined" value="PREDEFINED" checked>
+            <label class="form-check-label fw-semibold" for="routeModePredefined">مسار محفوظ وقواعد التوجيه الحالية</label>
+          </div>
+          <div class="form-check">
+            <input class="form-check-input" type="radio" name="route_mode" id="routeModeDynamic" value="DYNAMIC" {% if not requester_org_node_id %}disabled{% endif %}>
+            <label class="form-check-label fw-semibold" for="routeModeDynamic">بناء ديناميكي حسب الهيكل الإداري</label>
+          </div>
+        </div>
+        {% if not requester_org_node_id %}
+          <div class="form-text text-danger">لا يمكن تفعيل البناء الديناميكي قبل ربط حسابك بعنصر أساسي في الهيكل التنظيمي.</div>
+        {% else %}
+          <div class="form-text">داخل الإدارة نفسها يكون الاختيار مباشراً؛ وخارجها يضيف النظام التسلسل الإداري المعتمد تلقائياً.</div>
+        {% endif %}
+      </div>
+
+      <div class="col-md-6" id="predefinedRouteBox">
         <label class="form-label fw-bold">المسار</label>
-        <select class="form-select" id="templateSelect" name="template_id" {% if not templates %}disabled{% endif %}>
+        <select class="form-select" id="templateSelect" name="template_id" data-has-templates="{{ '1' if templates else '0' }}" {% if not templates %}disabled{% endif %}>
           <option value="">— اختر —</option>
           {% for t in templates %}
             <option value="{{ t.id }}" {% if suggested_template and suggested_template.id == t.id %}selected{% endif %}>{{ t.name }} (#{{ t.id }})</option>
@@ -67,6 +86,100 @@
             ⚠️ لا توجد قاعدة توجيه مطابقة لهذا النوع (حسب دائرتك). يمكنك اختيار المسار يدوياً أو إضافة قاعدة توجيه.
           </div>
         {% endif %}
+      </div>
+
+      <div class="col-12 d-none" id="dynamicRouteBox">
+        <div class="border border-primary rounded-3 p-3">
+          <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+            <div>
+              <div class="fw-bold"><i class="bi bi-diagram-3"></i> خطوات المسار الديناميكي</div>
+              <div class="small text-muted">اختر الأشخاص بالترتيب المطلوب. يمكنك إعادة ترتيبهم قبل الإنشاء.</div>
+            </div>
+            <span class="badge text-bg-light border">الحد الأقصى 20 شخصاً</span>
+          </div>
+          <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
+          {% if dynamic_choices %}
+            <div class="row g-2 mb-2">
+              <div class="col-12 col-lg-7">
+                <label class="form-label" for="dynamicUserSearch">البحث عن شخص</label>
+                <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، البريد، أو التبعية..." autocomplete="off">
+              </div>
+              <div class="col-12 col-lg-5">
+                <label class="form-label" for="dynamicTeamFilter">الفريق</label>
+                <select class="form-select" id="dynamicTeamFilter">
+                  <option value="">كل الموظفين</option>
+                  {% for team in dynamic_teams %}
+                    <option value="{{ team.key }}">{{ team.name }}</option>
+                  {% endfor %}
+                  <option value="__NO_TEAM__">موظفون غير مرتبطين بفريق</option>
+                </select>
+              </div>
+            </div>
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+              <div class="small text-muted">اختر أفرادًا محددين، أو صفِّ حسب الفريق ثم حدد الأعضاء الظاهرين.</div>
+              <div class="btn-group btn-group-sm">
+                <button type="button" class="btn btn-outline-primary" id="dynamicSelectVisible">
+                  <i class="bi bi-check2-square"></i> تحديد الظاهرين
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="dynamicClearVisible">
+                  <i class="bi bi-square"></i> إلغاء تحديد الظاهرين
+                </button>
+              </div>
+            </div>
+            <div id="dynamicUserChoices" class="pe-1" style="max-height: 390px; overflow-y: auto;">
+              {% for choice in dynamic_choices %}
+                <div class="dynamic-user-choice border rounded-3 p-3 mb-2 bg-white"
+                     data-team-keys="{{ choice.team_keys|join(',') }}"
+                     data-search="{{ (choice.name ~ ' ' ~ choice.job_title ~ ' ' ~ choice.email ~ ' ' ~ choice.node_label ~ ' ' ~ choice.team_names|join(' '))|lower }}">
+                  <div class="d-flex align-items-start gap-3 flex-wrap flex-md-nowrap">
+                    <span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0" aria-label="رقم الشخص">{{ loop.index }}</span>
+                    <div class="flex-grow-1" style="min-width:0;">
+                      <div class="fw-bold text-break">{{ choice.name }}</div>
+                      <div class="text-primary small fw-semibold mt-1">
+                        <i class="bi bi-briefcase"></i> {{ choice.job_title or 'لا يوجد مسمى وظيفي مسجل' }}
+                      </div>
+                      {% if choice.email %}<div class="small text-muted mt-1" dir="ltr">{{ choice.email }}</div>{% endif %}
+                      <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
+                        <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
+                      </div>
+                      {% if choice.teams %}
+                        {% for team in choice.teams %}
+                          <span class="badge bg-info-subtle text-info-emphasis border mt-2">
+                            <i class="bi bi-people-fill"></i> {{ team.name }}
+                          </span>
+                        {% endfor %}
+                      {% else %}
+                        <span class="badge bg-light text-dark border mt-2">بدون فريق</span>
+                      {% endif %}
+                      <span class="badge mt-2 {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
+                        {{ 'اختيار مباشر ضمن الإدارة' if choice.same_administration else 'عبر التسلسل الإداري' }}
+                      </span>
+                    </div>
+                    <div class="form-check border rounded-3 px-3 py-2 flex-shrink-0 bg-light">
+                      <input type="checkbox"
+                             class="form-check-input dynamic-user-checkbox"
+                             id="dynamicUserChoice{{ choice.id }}"
+                             data-id="{{ choice.id }}"
+                             data-name="{{ choice.name }}"
+                             data-title="{{ choice.job_title }}"
+                             data-node="{{ choice.node_label }}"
+                             data-team="{{ choice.team_names|join('، ') }}"
+                             data-same-admin="{{ '1' if choice.same_administration else '0' }}">
+                      <label class="form-check-label fw-semibold" for="dynamicUserChoice{{ choice.id }}">اختيار</label>
+                    </div>
+                  </div>
+                </div>
+              {% endfor %}
+            </div>
+            <div class="alert alert-light border py-2 d-none" id="dynamicUserSearchEmpty">لا توجد أسماء مطابقة للبحث.</div>
+          {% endif %}
+          {% if not dynamic_choices %}
+            <div class="alert alert-warning py-2 mt-3 mb-0">لا يوجد موظفون آخرون مربوطون بالهيكل التنظيمي.</div>
+          {% endif %}
+          <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي شخص بعد.</span></div>
+          <ol class="list-group mt-3 d-none" id="dynamicSelectedList"></ol>
+          <div class="mt-3 d-none" id="dynamicPathPreview"></div>
+        </div>
       </div>
 
       <div class="col-12">
@@ -368,6 +481,233 @@
 
     analyzeButton.addEventListener("click", analyzeAttachment);
     applyButton.addEventListener("click", applySuggestions);
+  })();
+</script>
+
+<script>
+  (function(){
+    "use strict";
+
+    const form = document.getElementById('workflowNewRequestForm');
+    const predefinedRadio = document.getElementById('routeModePredefined');
+    const dynamicRadio = document.getElementById('routeModeDynamic');
+    const predefinedBox = document.getElementById('predefinedRouteBox');
+    const dynamicBox = document.getElementById('dynamicRouteBox');
+    const templateSelect = document.getElementById('templateSelect');
+    const userSearch = document.getElementById('dynamicUserSearch');
+    const teamFilter = document.getElementById('dynamicTeamFilter');
+    const userChoices = document.getElementById('dynamicUserChoices');
+    const searchEmpty = document.getElementById('dynamicUserSearchEmpty');
+    const selectVisibleButton = document.getElementById('dynamicSelectVisible');
+    const clearVisibleButton = document.getElementById('dynamicClearVisible');
+    const hiddenIds = document.getElementById('dynamicUserIds');
+    const selectedList = document.getElementById('dynamicSelectedList');
+    const emptyState = document.getElementById('dynamicSelectedEmpty');
+    const previewBox = document.getElementById('dynamicPathPreview');
+    const selected = [];
+    let previewTimer = null;
+
+    function isDynamic(){
+      return Boolean(dynamicRadio && dynamicRadio.checked);
+    }
+
+    function updateMode(){
+      const dynamic = isDynamic();
+      predefinedBox.classList.toggle('d-none', dynamic);
+      dynamicBox.classList.toggle('d-none', !dynamic);
+      if (templateSelect) {
+        templateSelect.disabled = dynamic || templateSelect.dataset.hasTemplates !== '1';
+      }
+      if (dynamic) schedulePreview();
+    }
+
+    function syncHidden(){
+      hiddenIds.value = selected.map(item => item.id).join(',');
+    }
+
+    function escapeHtml(value){
+      const element = document.createElement('div');
+      element.textContent = value || '';
+      return element.innerHTML;
+    }
+
+    function renderSelected(){
+      syncHidden();
+      selectedList.innerHTML = '';
+      selectedList.classList.toggle('d-none', selected.length === 0);
+      emptyState.classList.toggle('d-none', selected.length !== 0);
+
+      selected.forEach(function(item, index){
+        const listItem = document.createElement('li');
+        listItem.className = 'list-group-item border border-primary rounded-3 mb-2 d-flex justify-content-between align-items-start gap-3 flex-wrap flex-md-nowrap';
+        listItem.innerHTML =
+          '<div class="d-flex align-items-start gap-3 flex-grow-1" style="min-width:0">' +
+            '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
+            '<div class="flex-grow-1" style="min-width:0">' +
+              '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
+              '<div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> ' + escapeHtml(item.title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
+              '<div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere"><i class="bi bi-diagram-3"></i> ' + escapeHtml(item.node) + '</div>' +
+            (item.team ? '<span class="badge bg-info-subtle text-info-emphasis border mt-1"><i class="bi bi-people-fill"></i> ' + escapeHtml(item.team) + '</span> ' : '') +
+            '<span class="badge mt-1 ' + (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning') + '">' +
+              (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري') +
+            '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div class="btn-group btn-group-sm flex-shrink-0">' +
+            '<button type="button" class="btn btn-outline-secondary" data-action="up" data-index="' + index + '" title="أعلى">↑</button>' +
+            '<button type="button" class="btn btn-outline-secondary" data-action="down" data-index="' + index + '" title="أسفل">↓</button>' +
+            '<button type="button" class="btn btn-outline-danger" data-action="remove" data-index="' + index + '">حذف</button>' +
+          '</div>';
+        selectedList.appendChild(listItem);
+      });
+      document.querySelectorAll('.dynamic-user-checkbox').forEach(function(checkbox){
+        checkbox.checked = selected.some(item => item.id === checkbox.dataset.id);
+      });
+      schedulePreview();
+    }
+
+    function addSelectedUser(control){
+      if (!control || !control.dataset.id) return true;
+      if (selected.some(item => item.id === control.dataset.id)) return true;
+      if (selected.length >= 20) {
+        return false;
+      }
+      selected.push({
+        id: control.dataset.id,
+        name: control.dataset.name || '',
+        title: control.dataset.title || '',
+        node: control.dataset.node || '',
+        team: control.dataset.team || '',
+        sameAdmin: control.dataset.sameAdmin === '1'
+      });
+      return true;
+    }
+
+    function removeSelectedUser(userId){
+      const index = selected.findIndex(item => item.id === userId);
+      if (index >= 0) selected.splice(index, 1);
+    }
+
+    function filterChoices(){
+      const query = (userSearch && userSearch.value || '').trim().toLowerCase();
+      const selectedTeam = (teamFilter && teamFilter.value || '').trim();
+      let visibleCount = 0;
+      document.querySelectorAll('.dynamic-user-choice').forEach(function(card){
+        const matchesSearch = !query || (card.dataset.search || '').includes(query);
+        const cardTeamKeys = (card.dataset.teamKeys || '').split(',').filter(Boolean);
+        const matchesTeam = !selectedTeam
+          || (selectedTeam === '__NO_TEAM__' ? cardTeamKeys.length === 0 : cardTeamKeys.includes(selectedTeam));
+        const visible = matchesSearch && matchesTeam;
+        card.classList.toggle('d-none', !visible);
+        if (visible) visibleCount += 1;
+      });
+      if (searchEmpty) searchEmpty.classList.toggle('d-none', visibleCount !== 0);
+    }
+
+    async function loadPreview(){
+      if (!isDynamic()) return;
+      if (!selected.length) {
+        previewBox.classList.add('d-none');
+        previewBox.innerHTML = '';
+        return;
+      }
+      previewBox.classList.remove('d-none');
+      previewBox.innerHTML = '<div class="text-muted small">جاري بناء التسلسل الإداري…</div>';
+      const payload = new FormData();
+      payload.append('dynamic_user_ids', hiddenIds.value);
+      const csrfField = form.querySelector('[name="csrf_token"]');
+      if (csrfField) payload.append('csrf_token', csrfField.value);
+      try {
+        const response = await fetch('{{ url_for("workflow.preview_dynamic_request_path") }}', {
+          method: 'POST',
+          body: payload,
+          headers: {'Accept': 'application/json'}
+        });
+        const result = await response.json();
+        let html = '<div class="fw-bold mb-2">المسار الفعلي بعد تطبيق الهيكل:</div>';
+        (result.errors || []).forEach(message => {
+          html += '<div class="alert alert-danger py-2 mb-2">' + escapeHtml(message) + '</div>';
+        });
+        (result.warnings || []).forEach(message => {
+          html += '<div class="alert alert-warning py-2 mb-2">' + escapeHtml(message) + '</div>';
+        });
+        if ((result.steps || []).length) {
+          html += '<div class="d-grid gap-2">';
+          result.steps.forEach((step, index) => {
+            html += '<div class="border rounded-3 p-3 bg-white d-flex align-items-start gap-3">' +
+              '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
+              '<div style="min-width:0"><strong class="d-block text-break">' + escapeHtml(step.label) + '</strong>' +
+              '<div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> ' + escapeHtml(step.job_title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
+              '<div class="small text-muted mt-1">' + escapeHtml(step.reason) + '</div></div></div>';
+          });
+          html += '</div>';
+        }
+        previewBox.innerHTML = html;
+      } catch (error) {
+        previewBox.innerHTML = '<div class="alert alert-danger py-2 mb-0">تعذر معاينة المسار الهيكلي حالياً.</div>';
+      }
+    }
+
+    function schedulePreview(){
+      window.clearTimeout(previewTimer);
+      previewTimer = window.setTimeout(loadPreview, 250);
+    }
+
+    if (predefinedRadio) predefinedRadio.addEventListener('change', updateMode);
+    if (dynamicRadio) dynamicRadio.addEventListener('change', updateMode);
+    if (userChoices) userChoices.addEventListener('change', function(event){
+      const checkbox = event.target.closest('.dynamic-user-checkbox');
+      if (!checkbox) return;
+      if (checkbox.checked) {
+        if (!addSelectedUser(checkbox)) {
+          checkbox.checked = false;
+          window.alert('يمكن اختيار 20 شخصاً كحد أقصى.');
+          return;
+        }
+      } else {
+        removeSelectedUser(checkbox.dataset.id);
+      }
+      renderSelected();
+    });
+    if (userSearch) userSearch.addEventListener('input', filterChoices);
+    if (teamFilter) teamFilter.addEventListener('change', filterChoices);
+    if (selectVisibleButton) selectVisibleButton.addEventListener('click', function(){
+      let limitReached = false;
+      document.querySelectorAll('.dynamic-user-choice:not(.d-none) .dynamic-user-checkbox').forEach(function(checkbox){
+        if (!addSelectedUser(checkbox)) {
+          limitReached = true;
+          return;
+        }
+        checkbox.checked = true;
+      });
+      renderSelected();
+      if (limitReached) window.alert('تم تحديد أول 20 شخصاً فقط، وهو الحد الأقصى للمسار الديناميكي.');
+    });
+    if (clearVisibleButton) clearVisibleButton.addEventListener('click', function(){
+      document.querySelectorAll('.dynamic-user-choice:not(.d-none) .dynamic-user-checkbox').forEach(function(checkbox){
+        removeSelectedUser(checkbox.dataset.id);
+        checkbox.checked = false;
+      });
+      renderSelected();
+    });
+    if (selectedList) selectedList.addEventListener('click', function(event){
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const index = Number(button.dataset.index);
+      if (!Number.isInteger(index) || index < 0 || index >= selected.length) return;
+      const action = button.dataset.action;
+      if (action === 'remove') selected.splice(index, 1);
+      if (action === 'up' && index > 0) [selected[index - 1], selected[index]] = [selected[index], selected[index - 1]];
+      if (action === 'down' && index < selected.length - 1) [selected[index + 1], selected[index]] = [selected[index], selected[index + 1]];
+      renderSelected();
+    });
+    form.addEventListener('submit', function(event){
+      if (isDynamic() && !selected.length) {
+        event.preventDefault();
+        window.alert('اختر شخصاً واحداً على الأقل للمسار الديناميكي.');
+      }
+    });
+    updateMode();
   })();
 </script>
 

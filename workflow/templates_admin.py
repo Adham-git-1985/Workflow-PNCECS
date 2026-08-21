@@ -16,6 +16,7 @@ from extensions import db
 from utils.perms import perm_required
 from utils.org_dynamic import build_org_node_picker_tree
 from utils.ui_labels import ui_label
+from workflow.dynamic_paths import build_structural_template_path, node_path_label
 from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
@@ -694,6 +695,7 @@ def templates_edit(template_id):
     )
     role_choices = _get_role_choices()
     committees = Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all()
+    org_node_path_labels = {int(node.id): node_path_label(node) for node in org_nodes}
 
     return render_template(
         "workflow/templates_admin/edit.html",
@@ -706,9 +708,61 @@ def templates_edit(template_id):
         sections=sections,
         divisions=divisions,
         org_nodes=org_nodes,
+        org_node_path_labels=org_node_path_labels,
         role_choices=role_choices,
         committees=committees,
     )
+
+
+@workflow_bp.route("/templates/<int:template_id>/steps/generate-from-structure", methods=["POST"])
+@login_required
+@perm_required("WORKFLOW_TEMPLATES_UPDATE")
+def templates_steps_generate_from_structure(template_id: int):
+    template = WorkflowTemplate.query.get_or_404(template_id)
+    source_node_id = _to_int(request.form.get("source_org_node_id"), default=None)
+    target_node_id = _to_int(request.form.get("target_org_node_id"), default=None)
+    generation_mode = (request.form.get("generation_mode") or "append").strip().lower()
+    sla_days = _to_int(request.form.get("structure_sla_days"), default=None)
+
+    if not source_node_id or not target_node_id:
+        flash("يرجى اختيار نقطة البداية ونقطة النهاية من الهيكل التنظيمي.", "danger")
+        return redirect(url_for("workflow.templates_edit", template_id=template.id))
+
+    generated = build_structural_template_path(source_node_id, target_node_id)
+    if generated["errors"]:
+        flash(" ".join(generated["errors"]), "danger")
+        return redirect(url_for("workflow.templates_edit", template_id=template.id))
+
+    if generation_mode == "replace":
+        WorkflowTemplateParallelAssignee.query.filter_by(template_id=template.id).delete(synchronize_session=False)
+        WorkflowTemplateStep.query.filter_by(template_id=template.id).delete(synchronize_session=False)
+        next_order = 1
+    else:
+        max_order = (
+            db.session.query(func.max(WorkflowTemplateStep.step_order))
+            .filter(WorkflowTemplateStep.template_id == template.id)
+            .scalar()
+        ) or 0
+        next_order = int(max_order) + 1
+
+    for offset, specification in enumerate(generated["steps"]):
+        db.session.add(WorkflowTemplateStep(
+            template_id=template.id,
+            step_order=next_order + offset,
+            mode="SEQUENTIAL",
+            approver_kind="ORG_NODE",
+            approver_org_node_id=int(specification["approver_org_node_id"]),
+            sla_days=sla_days,
+        ))
+
+    db.session.commit()
+    for warning in generated["warnings"]:
+        flash(warning, "warning")
+    flash(
+        f"تم بناء {len(generated['steps'])} خطوة تلقائياً وفق التسلسل الإداري المحفوظ في الهيكل التنظيمي.",
+        "success",
+    )
+    return redirect(url_for("workflow.templates_edit", template_id=template.id))
 
 
 @workflow_bp.route("/templates/<int:template_id>/details")

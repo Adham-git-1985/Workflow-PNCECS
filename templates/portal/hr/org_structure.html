@@ -59,6 +59,9 @@
           <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_node_assignments') }}">
             <i class="bi bi-diagram-3"></i> تعيين الموظفين (الهيكلية الموحدة)
           </a>
+          <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_node_managers') }}">
+            <i class="bi bi-person-gear"></i> مديرو الهيكلية
+          </a>
           {% if not legacy_locked %}
           <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_org_assignments') }}">
             <i class="bi bi-people"></i> تعيين الموظفين (القديمة)
@@ -188,7 +191,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
       <h5 class="mb-1"><i class="bi bi-diagram-3"></i> الهيكل التنظيمي</h5>
-      <div class="text-muted small">مؤسسة → دوائر → إدارات → أقسام → فرق، مع تعيين المدير المباشر/البديل.</div>
+      <div class="text-muted small">مؤسسة → دوائر → إدارات → أقسام، مع إمكانية إنشاء فرق مرتبطة بقسم أو فرق مستقلة تمامًا عن الهيكلية.</div>
     </div>
     <div class="d-flex flex-wrap align-items-center gap-2">
       <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.hr_org_structure_export', fmt='mermaid') }}">
@@ -229,7 +232,7 @@
       <button type="button" class="btn btn-sm btn-outline-secondary"
               data-bs-toggle="modal" data-bs-target="#teamModal"
               data-team-id="{{ team.id }}"
-              data-section-id="{{ team.section_id }}"
+              data-section-id="{{ team.section_id or '' }}"
               data-name-ar="{{ team.name_ar|e }}"
               data-name-en="{{ (team.name_en or '')|e }}"
               data-code="{{ (team.code or '')|e }}">
@@ -238,16 +241,85 @@
     {% endif %}
   {% endmacro %}
 
-  {% macro team_add_btn(section_id) %}
+  {% macro team_add_btn(section_id='') %}
     {% if can_manage_org %}
       <button type="button" class="btn btn-sm btn-outline-success"
               data-bs-toggle="modal" data-bs-target="#teamModal"
               data-team-id="" data-section-id="{{ section_id }}"
               data-name-ar="" data-name-en="" data-code="">
-        <i class="bi bi-plus"></i> إضافة فريق
+        <i class="bi bi-plus"></i> {{ 'إضافة فريق للقسم' if section_id else 'إضافة فريق مستقل' }}
       </button>
     {% endif %}
   {% endmacro %}
+
+  <div class="card border-primary-subtle bg-primary bg-opacity-10 mb-4">
+    <div class="card-body">
+      <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+          <h6 class="mb-1"><i class="bi bi-people-fill"></i> الفرق المستقلة</h6>
+          <div class="text-muted small">هذه الفرق منفصلة عن تسلسل الإدارات والأقسام، ويمكن تعيين مدير وموظفين لها بشكل مستقل.</div>
+        </div>
+        {{ team_add_btn() }}
+      </div>
+
+      {% if independent_teams %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle bg-white mb-0">
+            <thead>
+              <tr>
+                <th>الفريق المستقل</th>
+                <th>Code</th>
+                <th>الحالة</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for team in independent_teams %}
+                {% set a_team = assignments.get(('TEAM', team.id)) %}
+                <tr id="u_TEAM_{{ team.id }}">
+                  <td>
+                    <div class="fw-semibold">{{ team.name_ar }}</div>
+                    {% if team.name_en %}<div class="small text-muted">{{ team.name_en }}</div>{% endif %}
+                    <div class="mgr mt-1">
+                      <span class="text-muted">المدير:</span>
+                      <span class="fw-semibold">{{ a_team.manager_user.full_name if a_team and a_team.manager_user else '—' }}</span>
+                      <span class="text-muted ms-2">البديل:</span>
+                      <span class="fw-semibold">{{ a_team.deputy_user.full_name if a_team and a_team.deputy_user else '—' }}</span>
+                    </div>
+                  </td>
+                  <td class="text-muted">{{ team.code or '—' }}</td>
+                  <td>
+                    <span class="badge {{ 'bg-success' if team.is_active else 'bg-secondary' }}">
+                      {{ 'فعّال' if team.is_active else 'غير فعّال' }}
+                    </span>
+                  </td>
+                  <td class="text-end">
+                    <div class="d-flex gap-2 justify-content-end flex-wrap">
+                      <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_team_members', team_id=team.id) }}">
+                        <i class="bi bi-people"></i> الأعضاء
+                      </a>
+                      {{ unit_assign_btn('TEAM', team.id, a_team.manager_user_id if a_team else None, a_team.deputy_user_id if a_team else None) }}
+                      {{ team_edit_btn(team) }}
+                      {% if can_manage_org %}
+                        <form method="post" action="{{ url_for('portal.hr_team_toggle', team_id=team.id) }}">
+                          <button class="btn btn-sm btn-outline-warning" title="تفعيل أو تعطيل"><i class="bi bi-power"></i></button>
+                        </form>
+                        <form method="post" action="{{ url_for('portal.hr_team_delete', team_id=team.id) }}" onsubmit="return confirm('حذف الفريق؟');">
+                          <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                      {% endif %}
+                    </div>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="alert alert-light border mb-0">لا توجد فرق مستقلة بعد. استخدم زر «إضافة فريق مستقل» لإنشاء أول فريق.</div>
+      {% endif %}
+    </div>
+  </div>
 
   <div class="accordion" id="orgAcc">
     {% for org in orgs %}
@@ -350,6 +422,9 @@
                                     <td class="text-muted">{{ team.code or '—' }}</td>
                                     <td class="text-end">
                                       <div class="d-flex gap-2 justify-content-end">
+                                        <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_team_members', team_id=team.id) }}" title="إدارة أعضاء الفريق">
+                                          <i class="bi bi-people"></i>
+                                        </a>
                                         {{ unit_assign_btn('TEAM', team.id, a_team.manager_user_id if a_team else None, a_team.deputy_user_id if a_team else None) }}
                                         {{ team_edit_btn(team) }}
                                         {% if can_manage_org %}
@@ -475,7 +550,17 @@
         </div>
         <div class="modal-body">
           <input type="hidden" name="team_id" id="team_id">
-          <input type="hidden" name="section_id" id="team_section_id">
+
+          <div class="mb-3">
+            <label class="form-label">الارتباط بالهيكل التنظيمي</label>
+            <select name="section_id" id="team_section_id" class="form-select">
+              <option value="">فريق مستقل (غير مرتبط بأي قسم)</option>
+              {% for section in sections %}
+                <option value="{{ section.id }}">مرتبط بقسم: {{ section.name_ar }}</option>
+              {% endfor %}
+            </select>
+            <div class="form-text">اترك الخيار على «فريق مستقل» إذا كان الفريق لا يتبع التسلسل الإداري.</div>
+          </div>
 
           <div class="mb-2">
             <label class="form-label">اسم الفريق (AR)</label>

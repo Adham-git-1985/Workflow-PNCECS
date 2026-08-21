@@ -69,6 +69,7 @@
         <label class="form-label">المسار / القالب</label>
         <select class="form-select" name="template_id">
           <option value="">كل المسارات</option>
+          <option value="dynamic" {% if filters.template_id == 'dynamic' %}selected{% endif %}>المسارات الديناميكية حسب الهيكل</option>
           {% for tpl in templates %}
             <option value="{{ tpl.id }}" {% if filters.template_id|string == tpl.id|string %}selected{% endif %}>{{ tpl.name }}</option>
           {% endfor %}
@@ -188,7 +189,7 @@
           <th>المسار</th>
           <th>الحالة</th>
           <th>الخطوة الحالية</th>
-          <th>اتفاقية مستوى الخدمة</th>
+          <th>الموعد / SLA</th>
           <th>تاريخ الإنشاء</th>
           <th></th>
         </tr>
@@ -212,15 +213,58 @@
               —
             {% endif %}
           </td>
-          <td>{{ tpl.name if tpl else '—' }}</td>
+          <td>
+            {% if tpl %}
+              <div class="fw-semibold">{{ tpl.name }}</div>
+              <span class="badge bg-light text-dark border">مسار محفوظ</span>
+            {% else %}
+              <div class="fw-semibold text-primary">ديناميكي حسب الهيكل</div>
+              <span class="badge bg-primary-subtle text-primary border">بُني عند إنشاء الطلب</span>
+            {% endif %}
+          </td>
           <td>
             <span class="badge {% if req.status == 'APPROVED' %}bg-success{% elif req.status == 'REJECTED' %}bg-danger{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
               {{ req.status|ui_label }}
             </span>
           </td>
-          <td>{% if inst %}{{ inst.current_step_order }}{% else %}—{% endif %}</td>
           <td>
-            {% if tpl and tpl.sla_days_default %}
+            {% if inst %}
+              {% set current_report_step = current_step_map.get(inst.id) if current_step_map else None %}
+              {% set total_steps = step_count_map.get(inst.id, 0) if step_count_map else 0 %}
+              <div class="fw-semibold">
+                {% if is_closed and not current_report_step %}
+                  مكتمل · {{ total_steps }} خطوات
+                {% else %}
+                  الخطوة {{ inst.current_step_order }}{% if total_steps %} من {{ total_steps }}{% endif %}
+                {% endif %}
+              </div>
+              {% if current_report_step %}
+                <div class="small text-muted text-break mt-1">
+                  <i class="bi bi-person-workspace"></i>
+                  {{ current_target_map.get(inst.id, '—') if current_target_map else '—' }}
+                </div>
+                {% if current_report_step.routing_node_label %}
+                  <div class="small text-muted text-break mt-1">
+                    <i class="bi bi-diagram-3"></i> {{ current_report_step.routing_node_label }}
+                  </div>
+                {% endif %}
+              {% endif %}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td>
+            {% set current_report_step = current_step_map.get(inst.id) if inst and current_step_map else None %}
+            {% if current_report_step and current_report_step.due_at %}
+              <div class="small {% if not is_closed and now and now > current_report_step.due_at %}text-danger fw-semibold{% else %}text-muted{% endif %}">
+                {{ current_report_step.due_at.strftime("%Y-%m-%d %H:%M") }}
+              </div>
+              {% if not is_closed and now and now > current_report_step.due_at %}
+                <span class="badge bg-danger">متأخر</span>
+              {% else %}
+                <span class="badge bg-success-subtle text-success border">ضمن الموعد</span>
+              {% endif %}
+            {% elif tpl and tpl.sla_days_default %}
               <a href="#" class="text-decoration-none"
                  data-bs-toggle="modal" data-bs-target="#slaInfoModal"
                  data-sla-label="SLA الكلي للمسار" data-sla-value="{{ tpl.sla_days_default }}">

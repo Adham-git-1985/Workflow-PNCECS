@@ -322,6 +322,60 @@ def _ensure_runtime_schema():
                         return False
                 return False
 
+            def _ensure_team_section_optional() -> bool:
+                """Rebuild the SQLite teams table once so section_id may be NULL."""
+                connection = None
+                try:
+                    rows = db.session.execute(text("PRAGMA table_info(teams)")).all()
+                    section_column = next((row for row in rows if row[1] == "section_id"), None)
+                    if not section_column or int(section_column[3] or 0) == 0:
+                        return True
+                    db.session.remove()
+                    connection = db.engine.raw_connection()
+                    cursor = connection.cursor()
+                    foreign_keys_enabled = int(cursor.execute("PRAGMA foreign_keys").fetchone()[0] or 0)
+                    cursor.execute("PRAGMA foreign_keys=OFF")
+                    cursor.execute("BEGIN IMMEDIATE")
+                    cursor.execute("DROP TABLE IF EXISTS teams__section_optional")
+                    cursor.execute(
+                        "CREATE TABLE teams__section_optional ("
+                        "id INTEGER NOT NULL PRIMARY KEY, "
+                        "section_id INTEGER, "
+                        "division_id INTEGER, "
+                        "name_ar VARCHAR(200) NOT NULL, "
+                        "name_en VARCHAR(200), "
+                        "code VARCHAR(50), "
+                        "is_active BOOLEAN NOT NULL, "
+                        "created_at DATETIME NOT NULL, "
+                        "FOREIGN KEY(section_id) REFERENCES sections (id), "
+                        "FOREIGN KEY(division_id) REFERENCES divisions (id)"
+                        ")"
+                    )
+                    cursor.execute(
+                        "INSERT INTO teams__section_optional "
+                        "(id, section_id, division_id, name_ar, name_en, code, is_active, created_at) "
+                        "SELECT id, section_id, division_id, name_ar, name_en, code, is_active, created_at FROM teams"
+                    )
+                    cursor.execute("DROP TABLE teams")
+                    cursor.execute("ALTER TABLE teams__section_optional RENAME TO teams")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS ix_teams_section_id ON teams (section_id)")
+                    cursor.execute("CREATE INDEX IF NOT EXISTS ix_teams_division_id ON teams (division_id)")
+                    connection.commit()
+                    if foreign_keys_enabled:
+                        cursor.execute("PRAGMA foreign_keys=ON")
+                    cursor.close()
+                    connection.close()
+                    return True
+                except Exception:
+                    try:
+                        if connection is not None:
+                            connection.rollback()
+                            connection.close()
+                    except Exception:
+                        pass
+                    app.logger.exception("Unable to make teams.section_id optional")
+                    return False
+
             # users.directorate_id
             if not _col_exists("users", "directorate_id"):
                 try:
@@ -491,6 +545,12 @@ def _ensure_runtime_schema():
                 ("workflow_template_steps", "approver_org_node_id", "INTEGER"),
                 ("workflow_template_parallel_assignees", "approver_org_node_id", "INTEGER"),
                 ("workflow_instance_steps", "approver_org_node_id", "INTEGER"),
+
+                # Frozen dynamic-route display context
+                ("workflow_instance_steps", "routing_label", "TEXT"),
+                ("workflow_instance_steps", "routing_job_title", "TEXT"),
+                ("workflow_instance_steps", "routing_node_label", "TEXT"),
+                ("workflow_instance_steps", "routing_reason", "TEXT"),
             ]:
                 if not _col_exists(table, col):
                     try:
@@ -498,6 +558,19 @@ def _ensure_runtime_schema():
                         db.session.commit()
                     except Exception:
                         db.session.rollback()
+
+            _ensure_team_section_optional()
+
+            try:
+                db.session.execute(text(
+                    "INSERT OR IGNORE INTO team_memberships "
+                    "(team_id, user_id, title, is_active, created_at, created_by_id) "
+                    "SELECT unit_id, user_id, title, 1, COALESCE(created_at, CURRENT_TIMESTAMP), created_by_id "
+                    "FROM org_unit_assignment WHERE UPPER(unit_type)='TEAM'"
+                ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
 
             # workflow_routing_rules: dynamic OrgNode scope

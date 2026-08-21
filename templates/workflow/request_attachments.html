@@ -8,7 +8,7 @@
     <h3 class="mb-1">📎 مرفقات المسار للطلب #{{ req.id }}</h3>
     <div class="text-muted small">
       <strong>{{ req.title or "" }}</strong>
-      {% if template %} · المسار: <strong>{{ template.name }}</strong>{% endif %}
+      {% if template %} · المسار: <strong>{{ template.name }}</strong>{% elif inst %} · المسار: <strong>ديناميكي حسب الهيكل الإداري</strong>{% endif %}
       · إجمالي المرفقات: <strong>{{ total_count }}</strong>
     </div>
   </div>

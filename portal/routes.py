@@ -84,7 +84,8 @@ from services.employee_data_word_form import build_employee_word_form, parse_emp
 require_permissions = perm_required
 
 from utils.events import emit_event
-from utils.org_dynamic import build_org_node_picker_tree
+from utils.org_dynamic import build_org_node_picker_tree, sync_legacy_now
+from workflow.dynamic_paths import node_path_label
 from models import (
     User,
     EmployeeFile,
@@ -96,6 +97,7 @@ from models import (
     EmployeeSecondment,
     EmployeeDataSubmission,
     Team,
+    TeamMembership,
     OrgUnitManager,
     OrgUnitAssignment,
     OrgNode,
@@ -265,6 +267,7 @@ PORTAL_ADMIN_PERMISSIONS_MANAGE = "PORTAL_ADMIN_PERMISSIONS_MANAGE"
 
 PORTAL_CIRCULARS_MANAGE = "PORTAL_CIRCULARS_MANAGE"
 PORTAL_MEETINGS_MANAGE = "PORTAL_MEETINGS_MANAGE"
+TROUBLE_TICKETS_MANAGE = "TROUBLE_TICKETS_MANAGE"
 
 HR_READ = "HR_READ"
 HR_ATT_READ = "HR_ATTENDANCE_READ"
@@ -3883,7 +3886,7 @@ def _can_manage_trouble_tickets() -> bool:
     return bool(
         current_user.has_perm("PORTAL_ADMIN_READ")
         or current_user.has_perm("PORTAL_ADMIN_PERMISSIONS_MANAGE")
-        or current_user.has_perm("TROUBLE_TICKETS_MANAGE")
+        or current_user.has_perm(TROUBLE_TICKETS_MANAGE)
     )
 
 
@@ -3895,7 +3898,18 @@ def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
 @login_required
 def trouble_tickets():
     status = (request.args.get("status") or "").strip().upper()
-    query = TroubleTicket.query.filter(TroubleTicket.requester_id == current_user.id)
+    is_manager = _can_manage_trouble_tickets()
+    scope = (request.args.get("scope") or ("all" if is_manager else "mine")).strip().lower()
+    if not is_manager:
+        scope = "mine"
+
+    query = TroubleTicket.query
+    if scope == "mine":
+        query = query.filter(TroubleTicket.requester_id == current_user.id)
+    elif scope == "assigned":
+        query = query.filter(TroubleTicket.assigned_to_id == current_user.id)
+    else:
+        scope = "all"
     if status in TROUBLE_TICKET_STATUSES:
         query = query.filter(TroubleTicket.status == status)
     rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
@@ -3904,7 +3918,9 @@ def trouble_tickets():
         rows=rows,
         statuses=TROUBLE_TICKET_STATUSES,
         active_status=status,
-        is_manager=_can_manage_trouble_tickets(),
+        is_manager=is_manager,
+        active_scope=scope,
+        show_requester=is_manager and scope != "mine",
     )
 
 
@@ -6519,6 +6535,7 @@ def hr_home():
     )
     add_item(HR_ORG_READ, "الهيكل التنظيمي", "عرض المنظمات/الإدارات/الدوائر/الأقسام والفرق.", "bi-diagram-3", "portal.hr_org_structure", "لوحة التحكم")
     add_item(HR_ORG_MANAGE, "تعيين تبعية الموظفين (هيكلية موحدة)", "ربط الموظفين بعناصر الهيكلية الموحدة لاستخدامها في المسارات والموافقات.", "bi-person-badge", "portal.hr_org_node_assignments", "لوحة التحكم")
+    add_item(HR_ORG_MANAGE, "مديرو الهيكلية الموحدة", "تعيين المدير والنائب المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
     # Reports
@@ -15543,6 +15560,7 @@ def hr_org_structure():
 
     include_people = (request.args.get('include_people') or '').strip().lower() in ('1', 'true', 'yes')
     org_tree = _build_org_tree(orgs, directorates, units, departments, sections, teams, mgr_map, org_assignments, include_people=include_people)
+    independent_teams = [team for team in teams if not getattr(team, 'section_id', None)]
 
     return render_template(
         'portal/hr/org_structure.html',
@@ -15553,6 +15571,7 @@ def hr_org_structure():
         sections=sections,
         divisions=divisions,
         teams=teams,
+        independent_teams=independent_teams,
         assignments=mgr_map,
         users=users,
         employee_rows=employee_rows,
@@ -15610,6 +15629,90 @@ def hr_org_node_assignments():
         users=users,
         node_map=node_map,
     )
+
+
+@portal_bp.route("/hr/org-nodes/managers", methods=["GET"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
+def hr_org_node_managers():
+    q = (request.args.get("q") or "").strip()
+    query = OrgNode.query.filter(OrgNode.is_active.is_(True))
+    if q:
+        query = query.filter(or_(OrgNode.name_ar.ilike(f"%{q}%"), OrgNode.code.ilike(f"%{q}%")))
+
+    nodes = query.order_by(OrgNode.sort_order.asc(), OrgNode.name_ar.asc(), OrgNode.id.asc()).all()
+    manager_rows = OrgNodeManager.query.filter(
+        OrgNodeManager.node_id.in_([int(node.id) for node in nodes])
+    ).all() if nodes else []
+    manager_map = {int(row.node_id): row for row in manager_rows}
+    users = User.query.order_by(User.name.asc().nullslast(), User.email.asc(), User.id.asc()).all()
+    path_labels = {int(node.id): node_path_label(node) for node in nodes}
+
+    return render_template(
+        "portal/hr/org_node_managers.html",
+        q=q,
+        nodes=nodes,
+        users=users,
+        manager_map=manager_map,
+        path_labels=path_labels,
+        configured_count=sum(
+            1 for row in manager_rows if row.manager_user_id or row.deputy_user_id
+        ),
+    )
+
+
+@portal_bp.route("/hr/org-nodes/<int:node_id>/manager", methods=["POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
+def hr_org_node_manager_set(node_id: int):
+    node = OrgNode.query.get_or_404(node_id)
+    manager_raw = (request.form.get("manager_user_id") or "").strip()
+    deputy_raw = (request.form.get("deputy_user_id") or "").strip()
+    manager_user_id = int(manager_raw) if manager_raw.isdigit() else None
+    deputy_user_id = int(deputy_raw) if deputy_raw.isdigit() else None
+
+    if manager_user_id and deputy_user_id and manager_user_id == deputy_user_id:
+        flash("يجب أن يكون نائب المدير شخصاً مختلفاً عن المدير.", "warning")
+        return redirect(url_for("portal.hr_org_node_managers", q=request.form.get("q", "")))
+
+    selected_ids = [user_id for user_id in (manager_user_id, deputy_user_id) if user_id]
+    existing_ids = {
+        int(user_id)
+        for user_id, in db.session.query(User.id).filter(User.id.in_(selected_ids)).all()
+    } if selected_ids else set()
+    if any(user_id not in existing_ids for user_id in selected_ids):
+        flash("تعذر العثور على المدير أو النائب المحدد.", "danger")
+        return redirect(url_for("portal.hr_org_node_managers", q=request.form.get("q", "")))
+
+    row = OrgNodeManager.query.filter_by(node_id=int(node.id)).first()
+    if not manager_user_id and not deputy_user_id:
+        if row:
+            db.session.delete(row)
+        action_note = f"إزالة مدير ونائب عنصر الهيكلية: {node.name_ar}"
+    else:
+        if not row:
+            row = OrgNodeManager(node_id=int(node.id))
+            db.session.add(row)
+        row.manager_user_id = manager_user_id
+        row.deputy_user_id = deputy_user_id
+        row.updated_at = datetime.utcnow()
+        row.updated_by_id = current_user.id
+        action_note = f"تعيين مدير/نائب لعنصر الهيكلية: {node.name_ar}"
+
+    _portal_audit(
+        "HR_ORG_NODE_MANAGER_SET",
+        action_note,
+        target_type="ORG_NODE",
+        target_id=int(node.id),
+    )
+    try:
+        db.session.commit()
+        flash("تم تحديث مدير العنصر الهيكلي ونائبه.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("تعذر حفظ مدير العنصر الهيكلي.", "danger")
+
+    return redirect(url_for("portal.hr_org_node_managers", q=request.form.get("q", "")))
 
 
 @portal_bp.route("/hr/org-nodes/assignments/<int:user_id>", methods=["GET", "POST"])
@@ -15807,21 +15910,30 @@ def hr_team_new():
     name_en = (request.form.get("name_en") or "").strip() or None
     code = (request.form.get("code") or "").strip() or None
 
-    if not section_id.isdigit() or not name_ar:
+    if not name_ar:
         flash("البيانات غير مكتملة.", "danger")
         return redirect(url_for("portal.hr_org_structure"))
 
-    sec = Section.query.get(int(section_id))
-    if not sec:
+    sec = Section.query.get(int(section_id)) if section_id.isdigit() else None
+    if section_id and not sec:
         flash("القسم غير موجود.", "danger")
         return redirect(url_for("portal.hr_org_structure"))
 
-    t = Team(section_id=sec.id, name_ar=name_ar, name_en=name_en, code=code, is_active=True, created_at=datetime.utcnow())
+    t = Team(
+        section_id=sec.id if sec else None,
+        division_id=None,
+        name_ar=name_ar,
+        name_en=name_en,
+        code=code,
+        is_active=True,
+        created_at=datetime.utcnow(),
+    )
     db.session.add(t)
     _portal_audit("HR_TEAM_CREATE", f"إنشاء فريق: {name_ar}", target_type="TEAM", target_id=0)
 
     try:
         db.session.commit()
+        sync_legacy_now()
         flash("تم إنشاء الفريق.", "success")
     except Exception:
         db.session.rollback()
@@ -15844,6 +15956,7 @@ def hr_team_toggle(team_id: int):
 
     try:
         db.session.commit()
+        sync_legacy_now()
         flash("تم تحديث حالة الفريق.", "success")
     except Exception:
         db.session.rollback()
@@ -15867,12 +15980,12 @@ def hr_team_save():
     name_en = (request.form.get("name_en") or "").strip() or None
     code = (request.form.get("code") or "").strip() or None
 
-    if not section_id.isdigit() or not name_ar:
+    if not name_ar:
         flash("البيانات غير مكتملة.", "danger")
         return redirect(url_for("portal.hr_org_structure"))
 
-    sec = Section.query.get(int(section_id))
-    if not sec:
+    sec = Section.query.get(int(section_id)) if section_id.isdigit() else None
+    if section_id and not sec:
         flash("القسم غير موجود.", "danger")
         return redirect(url_for("portal.hr_org_structure"))
 
@@ -15884,10 +15997,11 @@ def hr_team_save():
             is_new = False
 
     if not t:
-        t = Team(section_id=sec.id, created_at=datetime.utcnow(), is_active=True)
+        t = Team(created_at=datetime.utcnow(), is_active=True)
         db.session.add(t)
 
-    t.section_id = sec.id
+    t.section_id = sec.id if sec else None
+    t.division_id = None
     t.name_ar = name_ar
     t.name_en = name_en
     t.code = code
@@ -15899,6 +16013,7 @@ def hr_team_save():
 
     try:
         db.session.commit()
+        sync_legacy_now()
         flash("تم حفظ الفريق.", "success")
     except Exception:
         db.session.rollback()
@@ -15922,12 +16037,101 @@ def hr_team_delete(team_id: int):
     try:
         db.session.delete(t)
         db.session.commit()
+        sync_legacy_now()
         flash("تم حذف الفريق.", "success")
     except Exception:
         db.session.rollback()
         flash("تعذر حذف الفريق.", "danger")
 
     return redirect(url_for("portal.hr_org_structure"))
+
+
+@portal_bp.route("/hr/org-structure/team/<int:team_id>/members", methods=["GET", "POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE, PORTAL_ADMIN_PERMISSIONS_MANAGE)
+def hr_team_members(team_id: int):
+    team = Team.query.get_or_404(team_id)
+
+    if request.method == "POST":
+        user_id = (request.form.get("user_id") or "").strip()
+        title = (request.form.get("title") or "").strip() or None
+        if not user_id.isdigit() or not db.session.get(User, int(user_id)):
+            flash("اختر موظفًا صحيحًا.", "danger")
+            return redirect(url_for("portal.hr_team_members", team_id=team.id))
+
+        membership = TeamMembership.query.filter_by(
+            team_id=team.id,
+            user_id=int(user_id),
+        ).first()
+        if not membership:
+            membership = TeamMembership(
+                team_id=team.id,
+                user_id=int(user_id),
+                created_at=datetime.utcnow(),
+                created_by_id=current_user.id,
+            )
+            db.session.add(membership)
+        membership.title = title
+        membership.is_active = True
+        _portal_audit(
+            "HR_TEAM_MEMBER_ADD",
+            f"إضافة مستخدم #{user_id} إلى فريق {team.name_ar}",
+            target_type="TEAM",
+            target_id=team.id,
+        )
+        try:
+            db.session.commit()
+            flash("تمت إضافة الموظف إلى الفريق دون تغيير موقعه في الهيكل التنظيمي.", "success")
+        except Exception:
+            db.session.rollback()
+            flash("تعذر حفظ عضوية الفريق.", "danger")
+        return redirect(url_for("portal.hr_team_members", team_id=team.id))
+
+    memberships = (
+        TeamMembership.query
+        .filter_by(team_id=team.id, is_active=True)
+        .order_by(TeamMembership.id.asc())
+        .all()
+    )
+    org_assignments = _safe_query_org_assignments()
+    member_rows = []
+    for membership in memberships:
+        assignment = _primary_assignment_for_user(membership.user_id, org_assignments)
+        unit = _unit_obj(assignment.unit_type, assignment.unit_id) if assignment else None
+        member_rows.append({
+            "membership": membership,
+            "org_label": _unit_label(assignment.unit_type, unit) if assignment else "غير معيّن هيكليًا",
+        })
+
+    return render_template(
+        "portal/hr/team_members.html",
+        team=team,
+        member_rows=member_rows,
+        users=_all_users_for_select(),
+    )
+
+
+@portal_bp.route("/hr/org-structure/team/<int:team_id>/members/<int:membership_id>/remove", methods=["POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE, PORTAL_ADMIN_PERMISSIONS_MANAGE)
+def hr_team_member_remove(team_id: int, membership_id: int):
+    team = Team.query.get_or_404(team_id)
+    membership = TeamMembership.query.filter_by(id=membership_id, team_id=team.id).first_or_404()
+    user_name = membership.user.full_name if membership.user else f"#{membership.user_id}"
+    _portal_audit(
+        "HR_TEAM_MEMBER_REMOVE",
+        f"إزالة {user_name} من فريق {team.name_ar}",
+        target_type="TEAM",
+        target_id=team.id,
+    )
+    try:
+        db.session.delete(membership)
+        db.session.commit()
+        flash("تمت إزالة الموظف من الفريق فقط، وبقي تعيينه الهيكلي كما هو.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("تعذر إزالة عضوية الفريق.", "danger")
+    return redirect(url_for("portal.hr_team_members", team_id=team.id))
 
 
 @portal_bp.route("/hr/org-structure/manager", methods=["POST"])
@@ -15962,6 +16166,7 @@ def hr_org_set_manager():
 
     try:
         db.session.commit()
+        sync_legacy_now()
         flash("تم تحديث المدير المباشر/البديل.", "success")
     except Exception:
         db.session.rollback()
@@ -16091,6 +16296,7 @@ def hr_org_assignments_save():
 
     try:
         db.session.commit()
+        sync_legacy_now()
         flash("تم حفظ التعيين.", "success")
     except Exception:
         db.session.rollback()
@@ -16109,10 +16315,34 @@ def hr_org_assignments_delete(assign_id: int):
 
     row = OrgUnitAssignment.query.get_or_404(assign_id)
     name = row.user.full_name if row.user else str(row.user_id)
+    user_id = int(row.user_id)
+    unit_type = (row.unit_type or "").strip().upper()
+    unit_id = int(row.unit_id)
+    legacy_node = OrgNode.query.filter_by(legacy_type=unit_type, legacy_id=unit_id).first()
+    dynamic_assignment = None
+    team_membership = None
+    if legacy_node:
+        dynamic_assignment = OrgNodeAssignment.query.filter_by(
+            user_id=user_id,
+            node_id=legacy_node.id,
+        ).first()
+    if unit_type == "TEAM":
+        team_membership = TeamMembership.query.filter_by(
+            team_id=unit_id,
+            user_id=user_id,
+        ).first()
     _portal_audit("HR_ORG_ASSIGN_DELETE", f"حذف تعيين: {name} من {row.unit_type}#{row.unit_id}", target_type="ORG_ASSIGN", target_id=assign_id)
     try:
         db.session.delete(row)
+        if dynamic_assignment:
+            db.session.delete(dynamic_assignment)
+        if team_membership:
+            db.session.delete(team_membership)
+        user = db.session.get(User, user_id)
+        if user and legacy_node and int(getattr(user, "org_node_id", 0) or 0) == int(legacy_node.id):
+            user.org_node_id = None
         db.session.commit()
+        sync_legacy_now()
         flash("تم حذف التعيين.", "success")
     except Exception:
         db.session.rollback()
@@ -16192,7 +16422,8 @@ def hr_org_structure_export(fmt: str):
             w.writerow(["SECTION", s.id, ptype, pid or "", s.name_ar, s.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
         for t in teams:
             m = mgr_of("TEAM", t.id)
-            w.writerow(["TEAM", t.id, "SECTION", t.section_id, t.name_ar, t.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
+            parent_type = "SECTION" if t.section_id else ""
+            w.writerow(["TEAM", t.id, parent_type, t.section_id or "", t.name_ar, t.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
 
         bio = BytesIO(output.getvalue().encode("utf-8-sig"))
         bio.seek(0)
@@ -16234,7 +16465,8 @@ def hr_org_structure_export(fmt: str):
             })
         for t in teams:
             nodes.append({
-                "type": "TEAM", "id": t.id, "parent": {"type": "SECTION", "id": t.section_id},
+                "type": "TEAM", "id": t.id,
+                "parent": ({"type": "SECTION", "id": t.section_id} if t.section_id else None),
                 "name_ar": t.name_ar, "name_en": t.name_en, "code": t.code,
                 "managers": mgr_of("TEAM", t.id),
             })
@@ -16300,7 +16532,8 @@ def hr_org_structure_export(fmt: str):
                 lines.append(f'  {nid("DIR", pid)} --> {nid("SEC", s.id)}')
         for t in teams:
             lines.append(f'  {nid("TEA", t.id)}["{esc(t.name_ar)}"]')
-            lines.append(f'  {nid("SEC", t.section_id)} --> {nid("TEA", t.id)}')
+            if t.section_id:
+                lines.append(f'  {nid("SEC", t.section_id)} --> {nid("TEA", t.id)}')
 
         def person_id(user_id: int):
             return f"USR_{user_id}"
@@ -23162,7 +23395,7 @@ def portal_admin_hr_org_structure():
       - depts: Departments/Circles (belongs to either Directorate OR Unit - exactly one)
       - secs: Sections (belongs to either Department OR Directorate OR Unit - exactly one)
       - divs: Divisions (belongs to Section OR Department)
-      - teams: Teams (belongs to Section)
+      - teams: Teams (independent or optionally belongs to Section)
     """
 
     tab = (request.args.get("tab") or "orgs").strip().lower()
@@ -23327,6 +23560,8 @@ def portal_admin_hr_org_structure():
             try:
                 db.session.delete(row)
                 db.session.commit()
+                if kind == "teams":
+                    sync_legacy_now()
                 flash("تم الحذف.", "success")
             except Exception:
                 db.session.rollback()
@@ -23347,6 +23582,7 @@ def portal_admin_hr_org_structure():
             elif kind == "teams":
                 pid = to_int(request.form.get("parent_id"))
                 row.section_id = pid
+                row.division_id = None
             elif kind == "divs":
                 ptype = (request.form.get("parent_type") or "section").strip().lower()
                 pid_sec = to_int(request.form.get("parent_id_sec"))
@@ -23389,8 +23625,8 @@ def portal_admin_hr_org_structure():
             row.is_active = bool(request.form.get("is_active"))
 
             # validations (best-effort)
-            if kind in ("dirs", "units", "teams"):
-                if not getattr(row, {"dirs": "organization_id", "units": "organization_id", "teams": "section_id"}[kind]):
+            if kind in ("dirs", "units"):
+                if not getattr(row, {"dirs": "organization_id", "units": "organization_id"}[kind]):
                     flash("اختر التبعية (Parent).", "warning")
                     return redirect(url_for("portal.portal_admin_hr_org_structure", tab=kind))
             if kind == "depts":
@@ -23412,6 +23648,8 @@ def portal_admin_hr_org_structure():
             try:
                 db.session.add(row)
                 db.session.commit()
+                if kind == "teams":
+                    sync_legacy_now()
                 flash("تم الحفظ.", "success")
             except Exception:
                 db.session.rollback()
@@ -23759,13 +23997,14 @@ def _import_org_structure_excel(kind: str, file_storage):
 
                 elif kind == "teams":
                     sec = find_by_code(Section, sec_code) if sec_code else None
-                    if not sec:
+                    if sec_code and not sec:
                         skipped += 1
                         errors.append(f"row {ridx}: team code={code}: section_code not found ({sec_code})")
                         continue
                     obj = find_by_code(Team, code) or Team(code=code)
                     is_new = obj.id is None
-                    obj.section_id = sec.id
+                    obj.section_id = sec.id if sec else None
+                    obj.division_id = None
                     obj.name_ar = str(name_ar).strip() or None
                     obj.name_en = str(name_en).strip() or None
                     obj.is_active = bool(is_active)
@@ -23778,6 +24017,8 @@ def _import_org_structure_excel(kind: str, file_storage):
                 errors.append(f"row {ridx} code={code}: {e}")
 
         db.session.commit()
+        if kind == "teams":
+            sync_legacy_now()
 
         msg = f"تم الاستيراد: {inserted} إضافة، {updated} تحديث، {skipped} تجاوز."
         if errors:

@@ -1,0 +1,149 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}مديرو الهيكلية الموحدة{% endblock %}
+
+{% block hr_content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+  <div>
+    <h4 class="mb-1">مديرو الهيكلية الموحدة</h4>
+    <div class="text-muted small">تحديد المدير والنائب اللذين يعتمد عليهما بناء المسارات الإدارية الديناميكية.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_org_node_assignments') }}">
+    <i class="bi bi-people"></i> تعيين الموظفين
+  </a>
+</div>
+
+<div class="alert alert-info py-2">
+  عند انتقال الطلب إلى إدارة أخرى، يمر النظام بمديري العناصر المحددين هنا وفق ترتيب الهيكلية. داخل الإدارة نفسها يمكن اختيار الشخص مباشرة.
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+      <div class="col-md-9">
+        <label class="form-label">البحث عن عنصر هيكلي</label>
+        <input name="q" class="form-control" value="{{ q or '' }}" placeholder="اسم الإدارة، الدائرة، القسم، أو الرمز">
+      </div>
+      <div class="col-md-3 d-flex gap-2">
+        <button class="btn btn-primary flex-grow-1" type="submit">بحث</button>
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_org_node_managers') }}">مسح</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="d-flex gap-2 mb-2 small">
+  <span class="badge text-bg-primary">المعروض: {{ nodes|length }}</span>
+  <span class="badge text-bg-success">المعيّن: {{ configured_count }}</span>
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body p-0">
+    {% if nodes %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th>العنصر والمسار الهيكلي</th>
+              <th>المدير</th>
+              <th>النائب</th>
+              <th style="width: 130px">إجراء</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for node in nodes %}
+              {% set manager_row = manager_map.get(node.id) %}
+              <tr>
+                <td>
+                  <div class="fw-semibold">{{ node.name_ar }}</div>
+                  <div class="text-muted small">{{ path_labels.get(node.id) or '—' }}</div>
+                  {% if node.code %}<code class="small">{{ node.code }}</code>{% endif %}
+                </td>
+                <td>
+                  {% if manager_row and manager_row.manager_user %}
+                    <span class="badge bg-success-subtle text-success border">{{ manager_row.manager_user.full_name }}</span>
+                  {% else %}<span class="text-muted">غير معيّن</span>{% endif %}
+                </td>
+                <td>
+                  {% if manager_row and manager_row.deputy_user %}
+                    <span class="badge bg-info-subtle text-info-emphasis border">{{ manager_row.deputy_user.full_name }}</span>
+                  {% else %}<span class="text-muted">غير معيّن</span>{% endif %}
+                </td>
+                <td>
+                  <button
+                    type="button"
+                    class="btn btn-sm btn-outline-primary edit-manager"
+                    data-bs-toggle="modal"
+                    data-bs-target="#managerModal"
+                    data-node-id="{{ node.id }}"
+                    data-node-label="{{ node.name_ar }}"
+                    data-manager-id="{{ manager_row.manager_user_id if manager_row and manager_row.manager_user_id else '' }}"
+                    data-deputy-id="{{ manager_row.deputy_user_id if manager_row and manager_row.deputy_user_id else '' }}"
+                  >تعيين/تعديل</button>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="p-4 text-center text-muted">لا توجد عناصر مطابقة.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="modal fade" id="managerModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" id="managerForm" class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">تعيين مدير ونائب</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-light border py-2" id="managerNodeLabel">—</div>
+        <input type="hidden" name="q" value="{{ q or '' }}">
+        <div class="mb-3">
+          <label class="form-label">المدير</label>
+          <select class="form-select" name="manager_user_id" id="managerUserId">
+            <option value="">— غير معيّن —</option>
+            {% for user in users %}
+              <option value="{{ user.id }}">{{ user.full_name }}{% if user.email %} — {{ user.email }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label">نائب المدير</label>
+          <select class="form-select" name="deputy_user_id" id="deputyUserId">
+            <option value="">— غير معيّن —</option>
+            {% for user in users %}
+              <option value="{{ user.id }}">{{ user.full_name }}{% if user.email %} — {{ user.email }}{% endif %}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-text mt-2">لحذف التعيين، اترك المدير والنائب فارغين ثم احفظ.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button type="submit" class="btn btn-primary">حفظ</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  const form = document.getElementById('managerForm');
+  const label = document.getElementById('managerNodeLabel');
+  const manager = document.getElementById('managerUserId');
+  const deputy = document.getElementById('deputyUserId');
+  document.querySelectorAll('.edit-manager').forEach(function (button) {
+    button.addEventListener('click', function () {
+      const nodeId = button.dataset.nodeId || '';
+      form.action = {{ url_for('portal.hr_org_node_manager_set', node_id=0)|tojson }}.replace('/0/manager', '/' + nodeId + '/manager');
+      label.textContent = button.dataset.nodeLabel || '—';
+      manager.value = button.dataset.managerId || '';
+      deputy.value = button.dataset.deputyId || '';
+    });
+  });
+})();
+</script>
+{% endblock %}

@@ -3,15 +3,71 @@
 {% block content %}
 <div class="p-4 bg-white rounded-3 shadow-sm">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
-    <div><h4 class="mb-1"><i class="bi bi-life-preserver"></i> تذاكر الدعم الفني</h4><div class="text-muted">أرسل المشكلة وتابع تحديثاتها من مكان واحد.</div></div>
-    <div class="d-flex gap-2"><a class="btn btn-primary" href="{{ url_for('portal.trouble_ticket_new') }}"><i class="bi bi-plus-lg"></i> تذكرة جديدة</a>{% if is_manager %}<a class="btn btn-outline-primary" href="{{ url_for('portal.trouble_tickets_manage') }}">لوحة الإدارة</a>{% endif %}</div>
+    <div>
+      <h4 class="mb-1"><i class="bi bi-life-preserver"></i> تذاكر الدعم الفني</h4>
+      <div class="text-muted">
+        {% if is_manager %}جميع تذاكر الموظفين ظاهرة هنا مباشرة، مع إمكانية التصفية والإسناد.{% else %}أرسل المشكلة وتابع تحديثاتها من مكان واحد.{% endif %}
+      </div>
+    </div>
+    <div class="d-flex gap-2">
+      <a class="btn btn-primary" href="{{ url_for('portal.trouble_ticket_new') }}"><i class="bi bi-plus-lg"></i> تذكرة جديدة</a>
+      {% if is_manager %}<a class="btn btn-outline-primary" href="{{ url_for('portal.trouble_tickets_manage') }}">عرض الإدارة التقليدي</a>{% endif %}
+    </div>
   </div>
+
+  {% if is_manager %}
+  <div class="d-flex flex-wrap gap-2 mt-4">
+    <a class="btn btn-sm {{ 'btn-primary' if active_scope == 'all' else 'btn-outline-primary' }}"
+       href="{{ url_for('portal.trouble_tickets', scope='all', status=active_status) }}">جميع التذاكر</a>
+    <a class="btn btn-sm {{ 'btn-primary' if active_scope == 'assigned' else 'btn-outline-primary' }}"
+       href="{{ url_for('portal.trouble_tickets', scope='assigned', status=active_status) }}">المسندة إليّ</a>
+    <a class="btn btn-sm {{ 'btn-primary' if active_scope == 'mine' else 'btn-outline-primary' }}"
+       href="{{ url_for('portal.trouble_tickets', scope='mine', status=active_status) }}">تذاكري التي أرسلتها</a>
+  </div>
+  {% endif %}
+
   <div class="d-flex flex-wrap gap-2 my-4">
-    <a class="btn btn-sm {{ 'btn-dark' if not active_status else 'btn-outline-secondary' }}" href="{{ url_for('portal.trouble_tickets') }}">الكل</a>
-    {% for code, label in statuses.items() %}<a class="btn btn-sm {{ 'btn-dark' if active_status == code else 'btn-outline-secondary' }}" href="{{ url_for('portal.trouble_tickets', status=code) }}">{{ label }}</a>{% endfor %}
+    <a class="btn btn-sm {{ 'btn-dark' if not active_status else 'btn-outline-secondary' }}"
+       href="{{ url_for('portal.trouble_tickets', scope=active_scope) }}">كل الحالات</a>
+    {% for code, label in statuses.items() %}
+      <a class="btn btn-sm {{ 'btn-dark' if active_status == code else 'btn-outline-secondary' }}"
+         href="{{ url_for('portal.trouble_tickets', scope=active_scope, status=code) }}">{{ label }}</a>
+    {% endfor %}
   </div>
-  {% if rows %}<div class="table-responsive"><table class="table table-hover align-middle"><thead><tr><th>#</th><th>الموضوع</th><th>التصنيف</th><th>الأولوية</th><th>الحالة</th><th>آخر تحديث</th></tr></thead><tbody>
-  {% for ticket in rows %}<tr><td>#{{ ticket.id }}</td><td><a class="text-decoration-none fw-semibold" href="{{ url_for('portal.trouble_ticket_view', ticket_id=ticket.id) }}">{{ ticket.subject }}</a></td><td>{{ {'SYSTEM':'النظام والصلاحيات','HARDWARE':'الأجهزة والطابعات','NETWORK':'الشبكة والاتصال','DATA':'البيانات والتقارير','OTHER':'أخرى'}.get(ticket.category, ticket.category) }}</td><td><span class="badge text-bg-{{ 'danger' if ticket.priority == 'URGENT' else ('warning' if ticket.priority == 'HIGH' else 'secondary') }}">{{ {'LOW':'منخفضة','NORMAL':'عادية','HIGH':'عالية','URGENT':'عاجلة'}.get(ticket.priority, ticket.priority) }}</span></td><td><span class="badge text-bg-{{ 'success' if ticket.status in ['RESOLVED','CLOSED'] else ('warning' if ticket.status == 'WAITING' else 'primary') }}">{{ statuses.get(ticket.status, ticket.status) }}</span></td><td class="text-muted small">{{ ticket.updated_at.strftime('%Y-%m-%d %H:%M') }}</td></tr>{% endfor %}
-  </tbody></table></div>{% else %}<div class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>لا توجد تذاكر ضمن هذا الفلتر.</div>{% endif %}
+
+  {% if rows %}
+  <div class="table-responsive">
+    <table class="table table-hover align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          {% if show_requester %}<th>الموظف</th>{% endif %}
+          <th>الموضوع</th>
+          <th>التصنيف</th>
+          <th>الأولوية</th>
+          <th>الحالة</th>
+          {% if is_manager %}<th>المسند إلى</th>{% endif %}
+          <th>آخر تحديث</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for ticket in rows %}
+        <tr>
+          <td>#{{ ticket.id }}</td>
+          {% if show_requester %}<td>{{ ticket.requester.full_name }}</td>{% endif %}
+          <td><a class="text-decoration-none fw-semibold" href="{{ url_for('portal.trouble_ticket_view', ticket_id=ticket.id) }}">{{ ticket.subject }}</a></td>
+          <td>{{ {'SYSTEM':'النظام والصلاحيات','HARDWARE':'الأجهزة والطابعات','NETWORK':'الشبكة والاتصال','DATA':'البيانات والتقارير','OTHER':'أخرى'}.get(ticket.category, ticket.category) }}</td>
+          <td><span class="badge text-bg-{{ 'danger' if ticket.priority == 'URGENT' else ('warning' if ticket.priority == 'HIGH' else 'secondary') }}">{{ {'LOW':'منخفضة','NORMAL':'عادية','HIGH':'عالية','URGENT':'عاجلة'}.get(ticket.priority, ticket.priority) }}</span></td>
+          <td><span class="badge text-bg-{{ 'success' if ticket.status in ['RESOLVED','CLOSED'] else ('warning' if ticket.status == 'WAITING' else 'primary') }}">{{ statuses.get(ticket.status, ticket.status) }}</span></td>
+          {% if is_manager %}<td>{{ ticket.assigned_to.full_name if ticket.assigned_to else 'غير مسند' }}</td>{% endif %}
+          <td class="text-muted small">{{ ticket.updated_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+    <div class="text-muted py-4">لا توجد تذاكر ضمن هذا الفلتر.</div>
+  {% endif %}
 </div>
 {% endblock %}

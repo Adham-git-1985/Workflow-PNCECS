@@ -3033,7 +3033,8 @@ def _build_node_tree_for_picker(selected_type: OrgNodeType | None, exclude_node_
     if selected_type is not None:
         allowed = selected_type.allowed_parent_type_ids()
         allowed_type_ids = set(int(x) for x in allowed if int(x) > 0)
-        root_allowed = (len(allowed_type_ids) == 0)
+        type_code = (selected_type.code or "").strip().upper()
+        root_allowed = (len(allowed_type_ids) == 0) or type_code == "TEAM"
 
     def to_dict(node: OrgNode) -> dict:
         t = node.type
@@ -3099,12 +3100,13 @@ def org_nodes_new():
         parent_id = int(parent_id_raw) if parent_id_raw.isdigit() else None
 
         allowed = set(t.allowed_parent_type_ids() or [])
+        root_allowed = not allowed or (t.code or "").strip().upper() == "TEAM"
         if allowed:
-            if not parent_id:
+            if not parent_id and not root_allowed:
                 flash("هذا النوع يحتاج إلى أب (حسب تعريف التبعية).", "danger")
                 return redirect(request.url)
-            parent = OrgNode.query.get(parent_id)
-            if not parent or parent.type_id not in allowed:
+            parent = OrgNode.query.get(parent_id) if parent_id else None
+            if parent_id and (not parent or parent.type_id not in allowed):
                 flash("الأب المختار غير مسموح لهذا النوع.", "danger")
                 return redirect(request.url)
         else:
@@ -3175,12 +3177,13 @@ def org_nodes_edit(node_id: int):
             return redirect(request.url)
 
         allowed = set(t.allowed_parent_type_ids() or [])
+        root_allowed = not allowed or (t.code or "").strip().upper() == "TEAM"
         if allowed:
-            if not parent_id:
+            if not parent_id and not root_allowed:
                 flash("هذا النوع يحتاج إلى أب (حسب تعريف التبعية).", "danger")
                 return redirect(request.url)
-            parent = OrgNode.query.get(parent_id)
-            if not parent or parent.type_id not in allowed:
+            parent = OrgNode.query.get(parent_id) if parent_id else None
+            if parent_id and (not parent or parent.type_id not in allowed):
                 flash("الأب المختار غير مسموح لهذا النوع.", "danger")
                 return redirect(request.url)
         else:

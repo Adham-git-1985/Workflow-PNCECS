@@ -60,7 +60,7 @@
                 <span class="text-muted">طلب داخلي</span>
               {% endif %}
             </td>
-            <td>{{ row.template.name if row.template else '-' }}</td>
+            <td>{{ row.template.name if row.template else 'ديناميكي حسب الهيكل' }}</td>
             <td><span class="badge {{ 'text-bg-success' if row.completed else ('text-bg-danger' if row.returned else 'text-bg-primary') }}">{{ row.req.status|ui_label }}</span></td>
             <td>
               {% if row.step %}

@@ -483,7 +483,7 @@
     {# -------------------- TEAMS -------------------- #}
     <div class="tab-pane fade {% if tab=='teams' %}show active{% endif %}" id="tab-teams">
       <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-        <div class="text-muted small">مرتبطة بالقسم</div>
+        <div class="text-muted small">يمكن إنشاء فريق مستقل، أو ربط الفريق بقسم اختياريًا.</div>
         <form class="d-flex gap-2" method="post" enctype="multipart/form-data">
           <input type="hidden" name="op" value="import"><input type="hidden" name="kind" value="teams">
           <input class="form-control form-control-sm" type="file" name="file" accept=".xlsx" required>
@@ -492,15 +492,15 @@
       </div>
       <div class="table-responsive">
         <table class="table table-sm align-middle">
-          <thead><tr><th>القسم</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
+          <thead><tr><th>التبعية</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
           <tbody>
             {% for t in teams %}
               <tr>
                 <form method="post">
                   <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="teams"><input type="hidden" name="id" value="{{ t.id }}">
                   <td style="min-width:240px">
-                    <select class="form-select form-select-sm" name="parent_id" required>
-                      <option value="">-- اختر --</option>
+                    <select class="form-select form-select-sm" name="parent_id">
+                      <option value="">فريق مستقل (بدون قسم)</option>
                       {% for s in sections %}
                         <option value="{{ s.id }}" {% if t.section_id==s.id %}selected{% endif %}>{{ s.name_ar }}</option>
                       {% endfor %}
@@ -510,7 +510,12 @@
                   <td><input class="form-control form-control-sm" name="name_ar" value="{{ t.name_ar or '' }}"></td>
                   <td><input class="form-control form-control-sm" name="name_en" value="{{ t.name_en or '' }}"></td>
                   <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if t.is_active %}checked{% endif %}></td>
-                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
+                  <td class="text-nowrap">
+                    <button class="btn btn-sm btn-primary" type="submit">حفظ</button>
+                    <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_team_members', team_id=t.id) }}">
+                      <i class="bi bi-people"></i> الأعضاء
+                    </a>
+                  </td>
                 </form>
                 <td>
                   <form method="post" onsubmit="return confirm('حذف الفريق؟');">
@@ -526,8 +531,8 @@
               <form method="post">
                 <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="teams">
                 <td>
-                  <select class="form-select form-select-sm" name="parent_id" required>
-                    <option value="">-- اختر القسم --</option>
+                  <select class="form-select form-select-sm" name="parent_id">
+                    <option value="">فريق مستقل (بدون قسم)</option>
                     {% for s in sections %}<option value="{{ s.id }}">{{ s.name_ar }}</option>{% endfor %}
                   </select>
                 </td>

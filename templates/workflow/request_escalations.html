@@ -7,7 +7,7 @@
       <h3 class="mb-0">🚨 تصعيدات الطلب #{{ req.id }}</h3>
       <div class="text-muted small">{{ req.title }}</div>
       {% if template %}
-        <div class="text-muted small">المسار: <b>{{ template.name }}</b></div>
+        <div class="text-muted small">المسار: <b>{{ template.name if template else 'ديناميكي حسب الهيكل الإداري' }}</b></div>
       {% endif %}
     </div>
 

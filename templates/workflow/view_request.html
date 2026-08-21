@@ -9,7 +9,7 @@
     <small class="text-muted">
       الحالة: <span class="badge {{ 'bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary') }}">{{ req.status|ui_label }}</span>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
-      {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% endif %}
+      {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% elif inst %} · المسار: <strong>ديناميكي حسب الهيكل الإداري</strong>{% endif %}
     </small>
   </div>
 
@@ -286,9 +286,9 @@
             <hr class="my-2">
           {% endif %}
 
-          <ol class="mb-0">
+          <ol class="list-group list-group-numbered mb-0">
             {% for s in steps %}
-              <li class="mb-2">
+              <li class="list-group-item border rounded-3 mb-2 ps-3">
                 <div class="d-flex justify-content-between">
                   <div>
                     <strong>الخطوة {{ s.step_order }}</strong>
@@ -301,12 +301,21 @@
   {% if k == "ROLE" %}
     <span class="badge bg-secondary">دور وظيفي</span> {{ s.approver_role|ui_label }}
   {% elif k == "USER" %}
-    <span class="badge bg-secondary">مستخدم</span>
-    {% if s.approver_user_id and users_map.get(s.approver_user_id) %}
-      {{ users_map.get(s.approver_user_id).email }}
-    {% else %}
-      #{{ s.approver_user_id }}
-    {% endif %}
+    {% set route_user = users_map.get(s.approver_user_id) if s.approver_user_id else None %}
+    {% set route_name = s.routing_label or (route_user.full_name if route_user else None) or (route_user.email if route_user else None) or ('#' ~ s.approver_user_id) %}
+    {% set route_title = s.routing_job_title or (route_user.job_title if route_user else None) %}
+    {% set route_node = s.routing_node_label or (user_org_path_map.get(s.approver_user_id) if user_org_path_map else None) %}
+    <div class="border-start border-4 border-primary ps-2 mt-1">
+      <div><span class="badge bg-secondary me-1">مستخدم</span> <strong class="text-body">{{ route_name }}</strong></div>
+      <div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> {{ route_title or 'لا يوجد مسمى وظيفي مسجل' }}</div>
+      {% if route_user and route_user.email %}<div class="small text-muted" dir="ltr">{{ route_user.email }}</div>{% endif %}
+      {% if route_node %}<div class="small text-muted mt-1 text-break"><i class="bi bi-diagram-3"></i> {{ route_node }}</div>{% endif %}
+      {% if s.routing_reason %}
+        <div class="small mt-2"><span class="badge bg-primary-subtle text-primary border">سبب الإضافة</span> {{ s.routing_reason }}</div>
+      {% elif not template %}
+        <div class="small mt-2 text-muted">خطوة منشأة ضمن المسار الديناميكي حسب الهيكل الإداري.</div>
+      {% endif %}
+    </div>
   {% elif k == "DIRECTORATE" %}
     <span class="badge bg-secondary">إدارة</span>
     {% if s.approver_directorate_id and dirs_map.get(s.approver_directorate_id) %}
@@ -315,6 +324,22 @@
       #{{ s.approver_directorate_id }}
     {% endif %}
     → <span class="text-muted">مدير عام الإدارة</span>
+  {% elif k == "UNIT" %}
+    <span class="badge bg-secondary">وحدة</span>
+    {{ units_map.get(s.approver_unit_id).name_ar if s.approver_unit_id and units_map.get(s.approver_unit_id) else ('#' ~ s.approver_unit_id) }}
+    → <span class="text-muted">المدير/النائب</span>
+  {% elif k == "SECTION" %}
+    <span class="badge bg-secondary">قسم</span>
+    {{ sections_map.get(s.approver_section_id).name_ar if s.approver_section_id and sections_map.get(s.approver_section_id) else ('#' ~ s.approver_section_id) }}
+    → <span class="text-muted">المدير/النائب</span>
+  {% elif k == "DIVISION" %}
+    <span class="badge bg-secondary">شعبة</span>
+    {{ divisions_map.get(s.approver_division_id).name_ar if s.approver_division_id and divisions_map.get(s.approver_division_id) else ('#' ~ s.approver_division_id) }}
+    → <span class="text-muted">المدير/النائب</span>
+  {% elif k == "ORG_NODE" %}
+    <span class="badge bg-secondary">عنصر هيكلي</span>
+    {{ org_nodes_map.get(s.approver_org_node_id).name_ar if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) else ('#' ~ s.approver_org_node_id) }}
+    → <span class="text-muted">المدير/النائب المعيّن</span>
   {% elif k == "COMMITTEE" %}
     <span class="badge bg-secondary">لجنة</span>
     {% if s.approver_committee_id and committees_map and committees_map.get(s.approver_committee_id) %}
@@ -364,6 +389,21 @@
                        data-sla-value="{{ sla_val if sla_val is not none else '-' }}">
                       SLA: {{ s.due_at.strftime("%Y-%m-%d %H:%M") }}{% if rem is not none %} ({{ rem }} يوم){% endif %}
                     </a>
+                  </div>
+                {% endif %}
+
+                {% if s.decided_at %}
+                  {% set decision_user = users_map.get(s.decided_by_id) if s.decided_by_id else None %}
+                  <div class="small mt-2">
+                    <i class="bi bi-person-check"></i>
+                    نُفذت بواسطة <strong>{{ decision_user.full_name if decision_user else ('#' ~ s.decided_by_id) }}</strong>
+                    بتاريخ {{ s.decided_at.strftime('%Y-%m-%d %H:%M') }}
+                  </div>
+                {% endif %}
+                {% if s.note %}
+                  <div class="alert alert-warning py-2 mt-2 mb-1">
+                    <strong><i class="bi bi-chat-right-text"></i> التعليق:</strong>
+                    <span style="white-space:pre-wrap">{{ s.note }}</span>
                   </div>
                 {% endif %}
 

@@ -111,6 +111,7 @@ from models import (
 )
 
 from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
+from workflow.dynamic_paths import build_dynamic_user_path, dynamic_user_choices, node_path_label
 
 from workflow.engine import (
     start_workflow_for_request,
@@ -627,7 +628,17 @@ def _step_target_label(step, users_map=None, depts_map=None, dirs_map=None, unit
         except Exception:
             uid_int = None
         u = users_map.get(uid_int) if (users_map and uid_int) else None
-        return f"مستخدم: {(getattr(u, 'email', None) if u else ('#' + str(uid_int)))}"
+        display_name = (
+            getattr(step, 'routing_label', None)
+            or (getattr(u, 'full_name', None) if u else None)
+            or (getattr(u, 'email', None) if u else None)
+            or ('#' + str(uid_int))
+        )
+        job_title = (
+            getattr(step, 'routing_job_title', None)
+            or (getattr(u, 'job_title', None) if u else None)
+        )
+        return f"{display_name}{' — ' + job_title if job_title else ''}"
 
     if kind == 'ROLE':
         return f"دور: {getattr(step, 'approver_role', '-') or '-'}"
@@ -671,6 +682,16 @@ def _step_target_label(step, users_map=None, depts_map=None, dirs_map=None, unit
         vo = divisions_map.get(vid_int) if (divisions_map and vid_int) else None
         name = getattr(vo, 'name_ar', None) if vo else (f"#{vid_int}" if vid_int else '-')
         return f"شعبة: {name} (manager)"
+
+    if kind == 'ORG_NODE':
+        node_id = getattr(step, 'approver_org_node_id', None)
+        try:
+            node_id = int(node_id) if node_id is not None else None
+        except Exception:
+            node_id = None
+        node = OrgNode.query.get(node_id) if node_id else None
+        name = getattr(node, 'name_ar', None) if node else (f"#{node_id}" if node_id else '-')
+        return f"عنصر هيكلي: {name} (المدير/النائب)"
 
     if kind == 'COMMITTEE':
         cid = getattr(step, 'approver_committee_id', None)
@@ -2222,6 +2243,24 @@ def analyze_new_request_attachment():
         }), 500
 
 
+@workflow_bp.route("/new/dynamic-path/preview", methods=["POST"])
+@login_required
+def preview_dynamic_request_path():
+    selected_values = [
+        value.strip()
+        for value in (request.form.get("dynamic_user_ids") or "").split(",")
+        if value.strip()
+    ]
+    result = build_dynamic_user_path(current_user, selected_values)
+    return jsonify({
+        "ok": not result["errors"],
+        "steps": result["steps"],
+        "segments": result["segments"],
+        "warnings": result["warnings"],
+        "errors": result["errors"],
+    })
+
+
 @workflow_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new_request():
@@ -2248,6 +2287,17 @@ def new_request():
     selected_rt_id = request.args.get("request_type_id")
     suggested_template = None
     matched_rule = None
+    dynamic_choices = dynamic_user_choices(current_user)
+    dynamic_team_map = {
+        team["key"]: team["name"]
+        for choice in dynamic_choices
+        for team in choice.get("teams", [])
+    }
+    dynamic_teams = [
+        {"key": team_key, "name": team_name}
+        for team_key, team_name in sorted(dynamic_team_map.items(), key=lambda item: item[1])
+    ]
+    requester_org_node_id = resolve_user_org_node_id(current_user)
 
     if selected_rt_id and str(selected_rt_id).isdigit():
         suggested_template, matched_rule = _select_template_for(current_user, int(selected_rt_id))
@@ -2258,6 +2308,9 @@ def new_request():
 
         rt_id = (request.form.get("request_type_id") or "").strip()
         template_id = (request.form.get("template_id") or "").strip()
+        route_mode = (request.form.get("route_mode") or "PREDEFINED").strip().upper()
+        if route_mode not in {"PREDEFINED", "DYNAMIC"}:
+            route_mode = "PREDEFINED"
 
         # validate request type if exists
         request_type_id = None
@@ -2269,18 +2322,34 @@ def new_request():
 
         # choose template: manual first, else routing, else single-template fallback
         template = None
-        if template_id.isdigit():
-            template = WorkflowTemplate.query.get_or_404(int(template_id))
-        elif request_type_id:
-            template, matched = _select_template_for(current_user, request_type_id)
+        dynamic_path = None
+        workflow_label = ""
+        if route_mode == "DYNAMIC":
+            selected_values = [
+                value.strip()
+                for value in (request.form.get("dynamic_user_ids") or "").split(",")
+                if value.strip()
+            ]
+            dynamic_path = build_dynamic_user_path(current_user, selected_values)
+            if dynamic_path["errors"]:
+                for error in dynamic_path["errors"]:
+                    flash(error, "danger")
+                return redirect(request.url)
+            workflow_label = "مسار ديناميكي حسب الهيكل الإداري"
+        else:
+            if template_id.isdigit():
+                template = WorkflowTemplate.query.get_or_404(int(template_id))
+            elif request_type_id:
+                template, matched = _select_template_for(current_user, request_type_id)
 
-        # If there is only one active template, auto-select it (common during early setup)
-        if not template and templates and len(templates) == 1:
-            template = templates[0]
+            # If there is only one active template, auto-select it (common during early setup)
+            if not template and templates and len(templates) == 1:
+                template = templates[0]
 
-        if not template:
-            flash("لا يوجد مسار مناسب. يرجى اختيار مسار (Template) يدويًا أو إضافة Routing Rule.", "danger")
-            return redirect(request.url)
+            if not template:
+                flash("لا يوجد مسار مناسب. اختر مساراً محفوظاً أو استخدم البناء الديناميكي حسب الهيكل.", "danger")
+                return redirect(request.url)
+            workflow_label = template.name
 
         req = WorkflowRequest(
             requester_id=current_user.id,
@@ -2297,7 +2366,9 @@ def new_request():
             req,
             template,
             created_by_user_id=current_user.id,
-            auto_commit=False
+            auto_commit=False,
+            runtime_steps=dynamic_path["steps"] if dynamic_path else None,
+            workflow_label=workflow_label,
         )
 
 
@@ -2345,7 +2416,7 @@ def new_request():
             emit_event(
                 actor_id=current_user.id,
                 action='REQUEST_CREATED',
-                message=f"تم إنشاء طلب جديد #{req.id} وبدء المسار: {template.name}",
+                message=f"تم إنشاء طلب جديد #{req.id} وبدء المسار: {workflow_label}",
                 target_type='WorkflowRequest',
                 target_id=req.id,
                 notify_user_id=current_user.id,
@@ -2357,7 +2428,12 @@ def new_request():
             pass
 
         db.session.commit()
-        flash("تم إنشاء الطلب وبدء مسار العمل.", "success")
+        flash(
+            "تم إنشاء الطلب وبناء مساره ديناميكياً حسب الهيكل الإداري."
+            if dynamic_path
+            else "تم إنشاء الطلب وبدء مسار العمل المحفوظ.",
+            "success",
+        )
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
     return render_template(
@@ -2367,6 +2443,9 @@ def new_request():
         selected_rt_id=int(selected_rt_id) if (selected_rt_id and str(selected_rt_id).isdigit()) else None,
         suggested_template=suggested_template,
         matched_rule=matched_rule,
+        dynamic_choices=dynamic_choices,
+        dynamic_teams=dynamic_teams,
+        requester_org_node_id=requester_org_node_id,
         intake_max_bytes=intake_max_bytes,
         intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
     )
@@ -2838,7 +2917,7 @@ def work_dashboard():
                 instance_id=inst.id,
                 step_order=inst.current_step_order,
             ).first()
-            template = db.session.get(WorkflowTemplate, inst.template_id)
+            template = db.session.get(WorkflowTemplate, inst.template_id) if inst.template_id else None
 
         needs_action = bool(
             current_step
@@ -3169,6 +3248,8 @@ def following():
             User.email.ilike(like),
             WorkflowTemplate.name.ilike(like),
         ]
+        if "ديناميكي" in search or "هيكل" in search:
+            conds.append(WorkflowInstance.template_id.is_(None))
         if search.isdigit():
             try:
                 conds.insert(0, WorkflowRequest.id == int(search))
@@ -3180,9 +3261,12 @@ def following():
     if status in allowed_statuses:
         q = q.filter(WorkflowRequest.status == status)
 
-    tid = _arg_int(template_id)
-    if tid:
-        q = q.filter(WorkflowInstance.template_id == tid)
+    if template_id.lower() == "dynamic":
+        q = q.filter(WorkflowInstance.template_id.is_(None))
+    else:
+        tid = _arg_int(template_id)
+        if tid:
+            q = q.filter(WorkflowInstance.template_id == tid)
 
     rtid = _arg_int(request_type_id)
     if rtid:
@@ -3238,8 +3322,15 @@ def following():
     # SLA filter is applied after loading because it depends on template SLA + current time.
     now = datetime.utcnow()
 
-    def _is_overdue(req, tpl):
+    def _is_overdue(req, inst, tpl):
         try:
+            if inst and (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED"):
+                current_step_row = WorkflowInstanceStep.query.filter_by(
+                    instance_id=inst.id,
+                    step_order=inst.current_step_order,
+                ).first()
+                if current_step_row and current_step_row.due_at:
+                    return now > current_step_row.due_at
             days = int(getattr(tpl, "sla_days_default", 0) or 0)
             created_at = getattr(req, "created_at", None)
             if not days or not created_at:
@@ -3251,9 +3342,9 @@ def following():
             return False
 
     if sla_state == "overdue":
-        rows = [(req, inst, tpl) for (req, inst, tpl) in rows if _is_overdue(req, tpl)]
+        rows = [(req, inst, tpl) for (req, inst, tpl) in rows if _is_overdue(req, inst, tpl)]
     elif sla_state == "on_time":
-        rows = [(req, inst, tpl) for (req, inst, tpl) in rows if not _is_overdue(req, tpl)]
+        rows = [(req, inst, tpl) for (req, inst, tpl) in rows if not _is_overdue(req, inst, tpl)]
 
     try:
         templates = WorkflowTemplate.query.order_by(WorkflowTemplate.name.asc()).all()
@@ -3287,7 +3378,7 @@ def following():
         "total": len(summary_rows),
         "open": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED")),
         "closed": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED")),
-        "overdue": sum(1 for req, _inst, tpl in summary_rows if _is_overdue(req, tpl)),
+        "overdue": sum(1 for req, inst, tpl in summary_rows if _is_overdue(req, inst, tpl)),
         "active_filters": active_filters_count,
     }
 
@@ -3302,7 +3393,7 @@ def following():
             if (getattr(row[0], "status", "") or "").upper() in ("APPROVED", "REJECTED")
         ]
     elif summary_filter == "overdue":
-        rows = [row for row in summary_rows if _is_overdue(row[0], row[2])]
+        rows = [row for row in summary_rows if _is_overdue(row[0], row[1], row[2])]
 
     summary_urls = {}
     summary_url_args = {
@@ -3316,6 +3407,58 @@ def following():
             url_args["summary_filter"] = filter_key
         summary_urls[filter_key] = url_for("workflow.following", **url_args)
 
+    instance_ids = [int(inst.id) for _req, inst, _tpl in rows if inst and getattr(inst, "id", None)]
+    report_steps = []
+    if instance_ids:
+        report_steps = (
+            WorkflowInstanceStep.query
+            .filter(WorkflowInstanceStep.instance_id.in_(instance_ids))
+            .order_by(WorkflowInstanceStep.instance_id.asc(), WorkflowInstanceStep.step_order.asc())
+            .all()
+        )
+
+    step_count_map = {}
+    current_step_map = {}
+    instance_order_map = {
+        int(inst.id): int(inst.current_step_order or 0)
+        for _req, inst, _tpl in rows
+        if inst and getattr(inst, "id", None)
+    }
+    for step in report_steps:
+        instance_id = int(step.instance_id)
+        step_count_map[instance_id] = step_count_map.get(instance_id, 0) + 1
+        if int(step.step_order or 0) == instance_order_map.get(instance_id):
+            current_step_map[instance_id] = step
+
+    user_ids = {
+        int(step.approver_user_id)
+        for step in report_steps
+        if getattr(step, "approver_user_id", None)
+    }
+    users_map = {
+        int(user.id): user
+        for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
+    }
+    depts_map = {int(row.id): row for row in Department.query.all()}
+    dirs_map = {int(row.id): row for row in Directorate.query.all()}
+    units_map = {int(row.id): row for row in Unit.query.all()}
+    sections_map = {int(row.id): row for row in Section.query.all()}
+    divisions_map = {int(row.id): row for row in Division.query.all()}
+    committees_map = {int(row.id): row for row in Committee.query.all()}
+    current_target_map = {
+        instance_id: _step_target_label(
+            step,
+            users_map=users_map,
+            depts_map=depts_map,
+            dirs_map=dirs_map,
+            units_map=units_map,
+            sections_map=sections_map,
+            divisions_map=divisions_map,
+            committees_map=committees_map,
+        )
+        for instance_id, step in current_step_map.items()
+    }
+
     return render_template(
         "workflow/following.html",
         rows=rows,
@@ -3328,6 +3471,10 @@ def following():
         summary_filter=summary_filter,
         summary_urls=summary_urls,
         displayed_total=len(rows),
+        now=now,
+        step_count_map=step_count_map,
+        current_step_map=current_step_map,
+        current_target_map=current_target_map,
     )
 
 # =========================
@@ -3375,7 +3522,7 @@ def view_request(request_id):
         db.session.rollback()
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
-    template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+    template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
     corr_source = correspondence_context(req)
     if corr_source:
         corr_source["url"] = url_for(
@@ -3597,8 +3744,17 @@ def view_request(request_id):
 
     # maps for readable routing display
     users_map = {u.id: u for u in User.query.all()}
+    user_org_path_map = {
+        int(user.id): node_path_label(resolve_user_org_node_id(user))
+        for user in users_map.values()
+        if resolve_user_org_node_id(user)
+    }
     depts_map = {d.id: d for d in Department.query.all()}
     dirs_map = {d.id: d for d in Directorate.query.all()}
+    units_map = {row.id: row for row in Unit.query.all()}
+    sections_map = {row.id: row for row in Section.query.all()}
+    divisions_map = {row.id: row for row in Division.query.all()}
+    org_nodes_map = {row.id: row for row in OrgNode.query.all()}
     committees_map = {c.id: c for c in Committee.query.all()}
     mentioned_users = []
     try:
@@ -3830,8 +3986,13 @@ def view_request(request_id):
         user_audit=user_audit,
         show_detailed_audit=current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"),
         users_map=users_map,
+        user_org_path_map=user_org_path_map,
         depts_map=depts_map,
         dirs_map=dirs_map,
+        units_map=units_map,
+        sections_map=sections_map,
+        divisions_map=divisions_map,
+        org_nodes_map=org_nodes_map,
         committees_map=committees_map,
         step_att_counts=step_att_counts,
         step_att_items=step_att_items,
@@ -3890,7 +4051,7 @@ def request_attachments(request_id):
         abort(403)
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
-    template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+    template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
 
     atts = (
         RequestAttachment.query
@@ -4038,6 +4199,7 @@ def request_attachments(request_id):
     return render_template(
         "workflow/request_attachments.html",
         req=req,
+        inst=inst,
         template=template,
         groups=groups,
         total_count=total_count,
@@ -4095,7 +4257,7 @@ def request_escalations(request_id):
 
     users_map = {u.id: u for u in User.query.all()}
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
-    template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+    template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
 
     return render_template(
         "workflow/request_escalations.html",
@@ -4383,7 +4545,7 @@ def escalate_request(request_id):
         return redirect(url_for("workflow.inbox"))
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
-    template = WorkflowTemplate.query.get(inst.template_id) if inst else None
+    template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
 
     if not inst or getattr(inst, 'is_completed', False):
         flash("لا يمكن تصعيد طلب مكتمل أو بدون مسار.", "warning")
@@ -4525,7 +4687,7 @@ def escalate_request(request_id):
             "تم تسجيل تصعيد على مسار الطلب (Warning).",
             "",
             f"الطلب: #{req.id} — {req.title or ''}",
-            f"المسار: {template.name if template else '-'}",
+            f"المسار: {template.name if template else 'ديناميكي حسب الهيكل الإداري'}",
             f"الخطوة الحالية: {current_step.step_order}",
             f"الجهة المسؤولة: {target_label}",
             f"موعد SLA لهذه الخطوة: {due_str}" + (f" (متبقي {remaining_days} يوم)" if remaining_days is not None else ""),

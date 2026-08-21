@@ -291,6 +291,56 @@
   </div>
 </div>
 
+<div class="card shadow-sm mb-3 border-primary">
+  <div class="card-header bg-primary bg-opacity-10 d-flex justify-content-between align-items-center">
+    <strong>🌳 بناء خطوات تلقائياً حسب الهيكلية</strong>
+    <span class="badge text-bg-primary">إضافي — لا يغيّر البناء اليدوي</span>
+  </div>
+  <div class="card-body">
+    <p class="text-muted small">
+      اختر نقطة البداية والنهاية، وسيضيف النظام مديري العناصر الواقعة على التسلسل الإداري بالترتيب.
+      العناصر التي لم يُعيّن لها مدير أو نائب لن تتحول إلى خطوة حتى لا يتوقف الطلب دون مستلم.
+    </p>
+    <form method="post" action="{{ url_for('workflow.templates_steps_generate_from_structure', template_id=t.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="row g-3 align-items-end">
+        <div class="col-lg-4">
+          <label class="form-label fw-bold">البداية الهيكلية</label>
+          <select class="form-select" name="source_org_node_id" required>
+            <option value="">— اختر —</option>
+            {% for node in org_nodes %}
+              <option value="{{ node.id }}">{{ org_node_path_labels.get(node.id, node.name_ar) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-lg-4">
+          <label class="form-label fw-bold">النهاية الهيكلية</label>
+          <select class="form-select" name="target_org_node_id" required>
+            <option value="">— اختر —</option>
+            {% for node in org_nodes %}
+              <option value="{{ node.id }}">{{ org_node_path_labels.get(node.id, node.name_ar) }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fw-bold">طريقة الإضافة</label>
+          <select class="form-select" name="generation_mode">
+            <option value="append" selected>إضافة بعد الحالي</option>
+            <option value="replace">استبدال الخطوات</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label fw-bold">SLA بالأيام</label>
+          <input class="form-control" name="structure_sla_days" type="number" min="1" placeholder="اختياري">
+        </div>
+        <div class="col-12">
+          <button class="btn btn-primary" type="submit"><i class="bi bi-diagram-3"></i> بناء الخطوات الهيكلية</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
 <div class="card shadow-sm">
   <div class="card-header bg-white"><strong>➕ إضافة خطوة</strong></div>
   <div class="card-body">

@@ -10,7 +10,7 @@ from extensions import db
 from models import (
     SystemSetting,
     OrgNodeType, OrgNode, OrgNodeManager, OrgNodeAssignment,
-    Organization, Directorate, Unit, Department, Section, Division, Team,
+    Organization, Directorate, Unit, Department, Section, Division, Team, TeamMembership, User,
     OrgUnitManager, OrgUnitAssignment,
 )
 
@@ -134,6 +134,7 @@ def sync_legacy_now():
         _sync_legacy_nodes()
         _sync_legacy_managers()
         _sync_legacy_assignments()
+        _sync_legacy_team_memberships()
         db.session.commit()
     except Exception:
         try:
@@ -161,25 +162,32 @@ def resolve_user_org_node_id(user) -> int | None:
     """Best-effort resolve a user's effective OrgNode.
 
     Priority:
-      1) User.org_node_id
-      2) OrgNodeAssignment primary
+      1) OrgNodeAssignment primary
+      2) User.org_node_id
       3) Legacy mapping via user's (division/section/unit/department/directorate)
     """
     try:
-        if getattr(user, "org_node_id", None):
-            return int(user.org_node_id)
-    except Exception:
-        pass
-
-    try:
         a = (
             OrgNodeAssignment.query
-            .filter_by(user_id=user.id, is_primary=True)
+            .join(OrgNode, OrgNodeAssignment.node_id == OrgNode.id)
+            .filter(
+                OrgNodeAssignment.user_id == user.id,
+                OrgNodeAssignment.is_primary.is_(True),
+                OrgNode.is_active.is_(True),
+            )
             .order_by(OrgNodeAssignment.id.desc())
             .first()
         )
         if a:
             return int(a.node_id)
+    except Exception:
+        pass
+
+    try:
+        if getattr(user, "org_node_id", None):
+            node = db.session.get(OrgNode, int(user.org_node_id))
+            if node and node.is_active:
+                return int(node.id)
     except Exception:
         pass
 
@@ -546,13 +554,15 @@ def _sync_legacy_nodes():
         team_rows = Team.query.order_by(Team.id.asc()).all()
     except Exception:
         team_rows = []
+    active_legacy_team_ids = set()
     for tm in team_rows:
+        active_legacy_team_ids.add(int(tm.id))
         parent = None
         if getattr(tm, "division_id", None):
             parent = div_nodes.get(tm.division_id)
         if parent is None:
             parent = sec_nodes.get(tm.section_id)
-        _get_or_create_node(
+        node = _get_or_create_node(
             "TEAM",
             "TEAM",
             tm.id,
@@ -561,6 +571,11 @@ def _sync_legacy_nodes():
             getattr(tm, "code", None),
             parent,
         )
+        node.is_active = bool(getattr(tm, "is_active", True))
+
+    for stale_node in OrgNode.query.filter_by(legacy_type="TEAM").all():
+        if int(stale_node.legacy_id or 0) not in active_legacy_team_ids:
+            stale_node.is_active = False
 
     db.session.flush()
 
@@ -597,8 +612,11 @@ def _sync_legacy_assignments():
     except Exception:
         rows = []
 
+    legacy_primary_nodes: dict[int, int] = {}
     for a in rows:
         ut = (a.unit_type or "").strip().upper()
+        if ut == "TEAM":
+            continue
         uid = getattr(a, "unit_id", None)
         if uid is None:
             continue
@@ -616,6 +634,21 @@ def _sync_legacy_assignments():
             db.session.add(row)
         row.title = getattr(a, "title", None)
         row.is_primary = bool(getattr(a, "is_primary", False))
+        if row.is_primary:
+            legacy_primary_nodes[int(a.user_id)] = int(node.id)
+
+    for user_id, node_id in legacy_primary_nodes.items():
+        (
+            OrgNodeAssignment.query
+            .filter(
+                OrgNodeAssignment.user_id == user_id,
+                OrgNodeAssignment.node_id != node_id,
+            )
+            .update({OrgNodeAssignment.is_primary: False}, synchronize_session=False)
+        )
+        user = db.session.get(User, user_id)
+        if user:
+            user.org_node_id = node_id
 
     # Ensure single primary per user in node assignments as well
     try:
@@ -629,5 +662,74 @@ def _sync_legacy_assignments():
                     first.is_primary = True
     except Exception:
         pass
+
+    db.session.flush()
+
+
+def _sync_legacy_team_memberships():
+    """Copy old TEAM unit assignments into independent memberships."""
+    try:
+        rows = OrgUnitAssignment.query.filter(
+            db.func.upper(OrgUnitAssignment.unit_type) == "TEAM"
+        ).all()
+    except Exception:
+        rows = []
+
+    affected_user_ids = set()
+    for assignment in rows:
+        affected_user_ids.add(int(assignment.user_id))
+        assignment.is_primary = False
+        team = db.session.get(Team, int(assignment.unit_id))
+        if not team:
+            continue
+        membership = TeamMembership.query.filter_by(
+            team_id=team.id,
+            user_id=assignment.user_id,
+        ).first()
+        if not membership:
+            membership = TeamMembership(
+                team_id=team.id,
+                user_id=assignment.user_id,
+                created_at=getattr(assignment, "created_at", None) or datetime.utcnow(),
+                created_by_id=getattr(assignment, "created_by_id", None),
+            )
+            db.session.add(membership)
+        membership.title = getattr(assignment, "title", None)
+        membership.is_active = True
+
+        team_node = OrgNode.query.filter_by(legacy_type="TEAM", legacy_id=team.id).first()
+        if team_node:
+            old_org_assignment = OrgNodeAssignment.query.filter_by(
+                user_id=assignment.user_id,
+                node_id=team_node.id,
+            ).first()
+            if old_org_assignment:
+                db.session.delete(old_org_assignment)
+            user = db.session.get(User, int(assignment.user_id))
+            if user and int(getattr(user, "org_node_id", 0) or 0) == int(team_node.id):
+                user.org_node_id = None
+
+    for user_id in affected_user_ids:
+        primary_org_assignment = (
+            OrgUnitAssignment.query
+            .filter(
+                OrgUnitAssignment.user_id == user_id,
+                db.func.upper(OrgUnitAssignment.unit_type) != "TEAM",
+                OrgUnitAssignment.is_primary.is_(True),
+            )
+            .first()
+        )
+        if not primary_org_assignment:
+            primary_org_assignment = (
+                OrgUnitAssignment.query
+                .filter(
+                    OrgUnitAssignment.user_id == user_id,
+                    db.func.upper(OrgUnitAssignment.unit_type) != "TEAM",
+                )
+                .order_by(OrgUnitAssignment.id.asc())
+                .first()
+            )
+            if primary_org_assignment:
+                primary_org_assignment.is_primary = True
 
     db.session.flush()
