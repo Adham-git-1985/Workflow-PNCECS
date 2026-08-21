@@ -111,7 +111,12 @@ from models import (
 )
 
 from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
-from workflow.dynamic_paths import build_dynamic_user_path, dynamic_user_choices, node_path_label
+from workflow.dynamic_paths import (
+    build_dynamic_target_path,
+    dynamic_org_browser_nodes,
+    dynamic_user_choices,
+    node_path_label,
+)
 
 from workflow.engine import (
     start_workflow_for_request,
@@ -2248,10 +2253,14 @@ def analyze_new_request_attachment():
 def preview_dynamic_request_path():
     selected_values = [
         value.strip()
-        for value in (request.form.get("dynamic_user_ids") or "").split(",")
+        for value in (
+            request.form.get("dynamic_target_refs")
+            or request.form.get("dynamic_user_ids")
+            or ""
+        ).split(",")
         if value.strip()
     ]
-    result = build_dynamic_user_path(current_user, selected_values)
+    result = build_dynamic_target_path(current_user, selected_values)
     return jsonify({
         "ok": not result["errors"],
         "steps": result["steps"],
@@ -2288,6 +2297,7 @@ def new_request():
     suggested_template = None
     matched_rule = None
     dynamic_choices = dynamic_user_choices(current_user)
+    dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, current_user)
     dynamic_team_map = {
         team["key"]: team["name"]
         for choice in dynamic_choices
@@ -2327,10 +2337,14 @@ def new_request():
         if route_mode == "DYNAMIC":
             selected_values = [
                 value.strip()
-                for value in (request.form.get("dynamic_user_ids") or "").split(",")
+                for value in (
+                    request.form.get("dynamic_target_refs")
+                    or request.form.get("dynamic_user_ids")
+                    or ""
+                ).split(",")
                 if value.strip()
             ]
-            dynamic_path = build_dynamic_user_path(current_user, selected_values)
+            dynamic_path = build_dynamic_target_path(current_user, selected_values)
             if dynamic_path["errors"]:
                 for error in dynamic_path["errors"]:
                     flash(error, "danger")
@@ -2444,6 +2458,7 @@ def new_request():
         suggested_template=suggested_template,
         matched_rule=matched_rule,
         dynamic_choices=dynamic_choices,
+        dynamic_org_nodes=dynamic_org_nodes,
         dynamic_teams=dynamic_teams,
         requester_org_node_id=requester_org_node_id,
         intake_max_bytes=intake_max_bytes,

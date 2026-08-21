@@ -93,30 +93,62 @@
           <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
             <div>
               <div class="fw-bold"><i class="bi bi-diagram-3"></i> خطوات المسار الديناميكي</div>
-              <div class="small text-muted">اختر الأشخاص بالترتيب المطلوب. يمكنك إعادة ترتيبهم قبل الإنشاء.</div>
+              <div class="small text-muted">اختر الجهات التنظيمية أو الأشخاص بالترتيب المطلوب. يمكنك إضافة عدة جهات من المستوى نفسه وإعادة ترتيبها.</div>
             </div>
-            <span class="badge text-bg-light border">الحد الأقصى 20 شخصاً</span>
+            <span class="badge text-bg-light border">الحد الأقصى 20 اختياراً</span>
           </div>
+          <input type="hidden" name="dynamic_target_refs" id="dynamicTargetRefs" value="">
           <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
-          {% if dynamic_choices %}
-            <div class="row g-2 mb-2">
-              <div class="col-12 col-lg-7">
-                <label class="form-label" for="dynamicUserSearch">البحث عن شخص</label>
-                <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، البريد، أو التبعية..." autocomplete="off">
+          {% if dynamic_choices or dynamic_org_nodes %}
+            <script type="application/json" id="dynamicOrgNodesData">{{ (dynamic_org_nodes|default([], true))|tojson }}</script>
+            <div class="btn-group w-100 mb-3" role="tablist" aria-label="طريقة الوصول إلى الموظف">
+              <button type="button" class="btn btn-primary dynamic-browser-tab" data-browser-mode="org" aria-selected="true">
+                <i class="bi bi-diagram-3"></i> تصفح الهيكل الإداري
+              </button>
+              <button type="button" class="btn btn-outline-primary dynamic-browser-tab" data-browser-mode="team" aria-selected="false">
+                <i class="bi bi-people-fill"></i> الفرق المستقلة
+              </button>
+            </div>
+
+            <div id="dynamicOrgBrowser" class="border rounded-3 p-3 bg-light mb-3">
+              <nav id="dynamicOrgBreadcrumb" class="d-flex flex-wrap align-items-center gap-1 mb-3" aria-label="الموقع في الهيكل الإداري"></nav>
+              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-3">
+                <div>
+                  <div class="fw-bold" id="dynamicOrgCurrentTitle">الهيكل التنظيمي</div>
+                  <div class="small text-muted" id="dynamicOrgCurrentHint">يمكنك إضافة أكثر من جهة ظاهرة إلى المسار، أو فتح أي جهة للتنقل داخلها.</div>
+                </div>
+                <div class="btn-group btn-group-sm">
+                  <button type="button" class="btn btn-outline-success d-none" id="dynamicAddCurrentOrgNode">
+                    <i class="bi bi-plus-circle"></i> إضافة الجهة الحالية
+                  </button>
+                  <button type="button" class="btn btn-outline-secondary" id="dynamicOrgBack" disabled>
+                    <i class="bi bi-arrow-right"></i> رجوع مستوى
+                  </button>
+                </div>
               </div>
-              <div class="col-12 col-lg-5">
-                <label class="form-label" for="dynamicTeamFilter">الفريق</label>
-                <select class="form-select" id="dynamicTeamFilter">
-                  <option value="">كل الموظفين</option>
-                  {% for team in dynamic_teams %}
-                    <option value="{{ team.key }}">{{ team.name }}</option>
-                  {% endfor %}
-                  <option value="__NO_TEAM__">موظفون غير مرتبطين بفريق</option>
-                </select>
+              <div class="row g-2" id="dynamicOrgChildren"></div>
+              <div class="alert alert-light border py-2 mb-0 d-none" id="dynamicOrgChildrenEmpty">
+                لا توجد وحدات فرعية أخرى هنا. يمكنك إضافة الجهة الحالية إلى المسار أو اختيار أحد موظفيها.
               </div>
+            </div>
+
+            <div id="dynamicTeamBrowser" class="border rounded-3 p-3 bg-light mb-3 d-none">
+              <label class="form-label fw-semibold" for="dynamicTeamFilter">اختر الفريق لعرض أعضائه</label>
+              <select class="form-select" id="dynamicTeamFilter">
+                <option value="">— اختر الفريق —</option>
+                {% for team in dynamic_teams %}
+                  <option value="{{ team.key }}">{{ team.name }}</option>
+                {% endfor %}
+                <option value="__NO_TEAM__">موظفون غير مرتبطين بفريق</option>
+              </select>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة أو الفريق الحالي</label>
+              <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، أو البريد..." autocomplete="off">
             </div>
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-              <div class="small text-muted">اختر أفرادًا محددين، أو صفِّ حسب الفريق ثم حدد الأعضاء الظاهرين.</div>
+              <div class="small text-muted" id="dynamicVisibleScopeHint">اختر جهة من الهيكل لعرض موظفيها المباشرين.</div>
               <div class="btn-group btn-group-sm">
                 <button type="button" class="btn btn-outline-primary" id="dynamicSelectVisible">
                   <i class="bi bi-check2-square"></i> تحديد الظاهرين
@@ -128,7 +160,8 @@
             </div>
             <div id="dynamicUserChoices" class="pe-1" style="max-height: 390px; overflow-y: auto;">
               {% for choice in dynamic_choices %}
-                <div class="dynamic-user-choice border rounded-3 p-3 mb-2 bg-white"
+                <div class="dynamic-user-choice border rounded-3 p-3 mb-2 bg-white d-none"
+                     data-node-id="{{ choice.node_id }}"
                      data-team-keys="{{ choice.team_keys|join(',') }}"
                      data-search="{{ (choice.name ~ ' ' ~ choice.job_title ~ ' ' ~ choice.email ~ ' ' ~ choice.node_label ~ ' ' ~ choice.team_names|join(' '))|lower }}">
                   <div class="d-flex align-items-start gap-3 flex-wrap flex-md-nowrap">
@@ -171,12 +204,12 @@
                 </div>
               {% endfor %}
             </div>
-            <div class="alert alert-light border py-2 d-none" id="dynamicUserSearchEmpty">لا توجد أسماء مطابقة للبحث.</div>
+            <div class="alert alert-light border py-2" id="dynamicUserSearchEmpty">اختر جهة من الهيكل الإداري لعرض الموظفين.</div>
           {% endif %}
-          {% if not dynamic_choices %}
-            <div class="alert alert-warning py-2 mt-3 mb-0">لا يوجد موظفون آخرون مربوطون بالهيكل التنظيمي.</div>
+          {% if not dynamic_choices and not dynamic_org_nodes %}
+            <div class="alert alert-warning py-2 mt-3 mb-0">لا توجد جهات أو موظفون متاحون لبناء المسار الديناميكي.</div>
           {% endif %}
-          <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي شخص بعد.</span></div>
+          <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي جهة أو شخص بعد.</span></div>
           <ol class="list-group mt-3 d-none" id="dynamicSelectedList"></ol>
           <div class="mt-3 d-none" id="dynamicPathPreview"></div>
         </div>
@@ -496,16 +529,39 @@
     const templateSelect = document.getElementById('templateSelect');
     const userSearch = document.getElementById('dynamicUserSearch');
     const teamFilter = document.getElementById('dynamicTeamFilter');
+    const browserTabs = Array.from(document.querySelectorAll('.dynamic-browser-tab'));
+    const orgBrowser = document.getElementById('dynamicOrgBrowser');
+    const teamBrowser = document.getElementById('dynamicTeamBrowser');
+    const orgBreadcrumb = document.getElementById('dynamicOrgBreadcrumb');
+    const orgCurrentTitle = document.getElementById('dynamicOrgCurrentTitle');
+    const orgCurrentHint = document.getElementById('dynamicOrgCurrentHint');
+    const orgBackButton = document.getElementById('dynamicOrgBack');
+    const addCurrentOrgNodeButton = document.getElementById('dynamicAddCurrentOrgNode');
+    const orgChildren = document.getElementById('dynamicOrgChildren');
+    const orgChildrenEmpty = document.getElementById('dynamicOrgChildrenEmpty');
+    const visibleScopeHint = document.getElementById('dynamicVisibleScopeHint');
     const userChoices = document.getElementById('dynamicUserChoices');
     const searchEmpty = document.getElementById('dynamicUserSearchEmpty');
     const selectVisibleButton = document.getElementById('dynamicSelectVisible');
     const clearVisibleButton = document.getElementById('dynamicClearVisible');
-    const hiddenIds = document.getElementById('dynamicUserIds');
+    const targetRefsField = document.getElementById('dynamicTargetRefs');
+    const legacyUserIdsField = document.getElementById('dynamicUserIds');
     const selectedList = document.getElementById('dynamicSelectedList');
     const emptyState = document.getElementById('dynamicSelectedEmpty');
     const previewBox = document.getElementById('dynamicPathPreview');
     const selected = [];
+    let browserMode = 'org';
+    let currentOrgNodeId = null;
+    let orgNodes = [];
     let previewTimer = null;
+
+    try {
+      const orgNodesElement = document.getElementById('dynamicOrgNodesData');
+      orgNodes = orgNodesElement ? JSON.parse(orgNodesElement.textContent || '[]') : [];
+    } catch (error) {
+      orgNodes = [];
+    }
+    const orgNodesById = new Map(orgNodes.map(node => [String(node.id), node]));
 
     function isDynamic(){
       return Boolean(dynamicRadio && dynamicRadio.checked);
@@ -522,7 +578,11 @@
     }
 
     function syncHidden(){
-      hiddenIds.value = selected.map(item => item.id).join(',');
+      targetRefsField.value = selected.map(item => item.ref).join(',');
+      legacyUserIdsField.value = selected
+        .filter(item => item.kind === 'USER')
+        .map(item => item.id)
+        .join(',');
     }
 
     function escapeHtml(value){
@@ -545,11 +605,11 @@
             '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
             '<div class="flex-grow-1" style="min-width:0">' +
               '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
-              '<div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> ' + escapeHtml(item.title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
+              '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + (item.kind === 'NODE' ? 'bi-building' : 'bi-briefcase') + '"></i> ' + escapeHtml(item.title || (item.kind === 'NODE' ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل')) + '</div>' +
               '<div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere"><i class="bi bi-diagram-3"></i> ' + escapeHtml(item.node) + '</div>' +
             (item.team ? '<span class="badge bg-info-subtle text-info-emphasis border mt-1"><i class="bi bi-people-fill"></i> ' + escapeHtml(item.team) + '</span> ' : '') +
-            '<span class="badge mt-1 ' + (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning') + '">' +
-              (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري') +
+            '<span class="badge mt-1 ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
+              (item.kind === 'NODE' ? 'جهة تنظيمية — الاعتماد لدى مديرها' : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
             '</span>' +
             '</div>' +
           '</div>' +
@@ -561,18 +621,22 @@
         selectedList.appendChild(listItem);
       });
       document.querySelectorAll('.dynamic-user-checkbox').forEach(function(checkbox){
-        checkbox.checked = selected.some(item => item.id === checkbox.dataset.id);
+        checkbox.checked = selected.some(item => item.ref === 'USER:' + checkbox.dataset.id);
       });
+      syncNodeSelectionButtons();
       schedulePreview();
     }
 
     function addSelectedUser(control){
       if (!control || !control.dataset.id) return true;
-      if (selected.some(item => item.id === control.dataset.id)) return true;
+      const targetRef = 'USER:' + control.dataset.id;
+      if (selected.some(item => item.ref === targetRef)) return true;
       if (selected.length >= 20) {
         return false;
       }
       selected.push({
+        ref: targetRef,
+        kind: 'USER',
         id: control.dataset.id,
         name: control.dataset.name || '',
         title: control.dataset.title || '',
@@ -583,25 +647,164 @@
       return true;
     }
 
-    function removeSelectedUser(userId){
-      const index = selected.findIndex(item => item.id === userId);
+    function addSelectedOrgNode(node){
+      if (!node || !node.can_select) return true;
+      const targetRef = 'NODE:' + String(node.id);
+      if (selected.some(item => item.ref === targetRef)) return true;
+      if (selected.length >= 20) return false;
+      selected.push({
+        ref: targetRef,
+        kind: 'NODE',
+        id: String(node.id),
+        name: (node.type_name ? node.type_name + ': ' : '') + (node.name || ''),
+        title: (node.manager_role || 'مدير') + ': ' + (node.manager_name || ''),
+        node: node.node_label || node.name || '',
+        team: '',
+        sameAdmin: Boolean(node.same_administration)
+      });
+      return true;
+    }
+
+    function removeSelectedTarget(targetRef){
+      const index = selected.findIndex(item => item.ref === targetRef);
       if (index >= 0) selected.splice(index, 1);
+    }
+
+    function syncNodeSelectionButtons(){
+      document.querySelectorAll('[data-select-org-node-id]').forEach(function(button){
+        if (button.disabled) return;
+        const isSelected = selected.some(item => item.ref === 'NODE:' + button.dataset.selectOrgNodeId);
+        button.classList.toggle('btn-success', isSelected);
+        button.classList.toggle('btn-outline-success', !isSelected);
+        button.innerHTML = isSelected
+          ? '<i class="bi bi-check2"></i> تمت الإضافة'
+          : '<i class="bi bi-plus-circle"></i> إضافة للمسار';
+      });
+    }
+
+    function nodeParentId(node){
+      if (!node || node.parent_id === null || typeof node.parent_id === 'undefined') return null;
+      return String(node.parent_id);
+    }
+
+    function orgNodeChain(nodeId){
+      const chain = [];
+      const visited = new Set();
+      let cursor = nodeId ? orgNodesById.get(String(nodeId)) : null;
+      while (cursor && !visited.has(String(cursor.id))) {
+        visited.add(String(cursor.id));
+        chain.unshift(cursor);
+        const parentId = nodeParentId(cursor);
+        cursor = parentId ? orgNodesById.get(parentId) : null;
+      }
+      return chain;
+    }
+
+    function renderHierarchy(){
+      if (!orgChildren || !orgBreadcrumb) return;
+      const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
+      const childNodes = orgNodes.filter(function(node){
+        const parentId = nodeParentId(node);
+        return currentNode ? parentId === String(currentNode.id) : parentId === null;
+      });
+
+      orgBreadcrumb.innerHTML = '<button type="button" class="btn btn-sm btn-link text-decoration-none px-1" data-org-node-id="">الهيكل التنظيمي</button>';
+      orgNodeChain(currentOrgNodeId).forEach(function(node){
+        orgBreadcrumb.insertAdjacentHTML(
+          'beforeend',
+          '<span class="text-muted">/</span>' +
+          '<button type="button" class="btn btn-sm btn-link text-decoration-none px-1" data-org-node-id="' + String(node.id) + '">' + escapeHtml(node.name) + '</button>'
+        );
+      });
+
+      orgCurrentTitle.textContent = currentNode ? currentNode.name : 'الهيكل التنظيمي';
+      if (currentNode) {
+        const directCount = Number(currentNode.direct_user_count || 0);
+        orgCurrentHint.textContent = 'يمكنك إضافة هذه الجهة نفسها إلى المسار، أو متابعة النزول إلى جهاتها الفرعية' +
+          (directCount ? '، أو اختيار أحد موظفيها المباشرين.' : '.');
+      } else {
+        orgCurrentHint.textContent = 'يمكنك إضافة عدة جهات من المستوى نفسه، أو فتح أي جهة للتنقل داخلها.';
+      }
+      orgBackButton.disabled = !currentNode;
+      if (addCurrentOrgNodeButton) {
+        addCurrentOrgNodeButton.classList.toggle('d-none', !currentNode);
+        addCurrentOrgNodeButton.disabled = !currentNode || !currentNode.can_select;
+        addCurrentOrgNodeButton.dataset.selectOrgNodeId = currentNode ? String(currentNode.id) : '';
+        if (currentNode && !currentNode.can_select) {
+          addCurrentOrgNodeButton.innerHTML = '<i class="bi bi-exclamation-circle"></i> لا يوجد مدير معتمد';
+        }
+      }
+
+      orgChildren.innerHTML = '';
+      childNodes.forEach(function(node){
+        const wrapper = document.createElement('div');
+        wrapper.className = 'col-12 col-md-6 col-xl-4';
+        wrapper.innerHTML =
+          '<div class="border border-primary-subtle rounded-3 bg-white h-100 p-3">' +
+            '<span class="badge bg-primary-subtle text-primary-emphasis border mb-2">' + escapeHtml(node.type_name || 'جهة إدارية') + '</span>' +
+            '<span class="d-block fw-bold text-break">' + escapeHtml(node.name) + '</span>' +
+            '<span class="d-block small text-muted mt-2"><i class="bi bi-person"></i> ' + String(node.total_user_count || 0) + ' موظف ضمن هذه الجهة</span>' +
+            '<span class="d-block small mt-2 ' + (node.can_select ? 'text-success' : 'text-danger') + '"><i class="bi bi-person-badge"></i> ' +
+              (node.can_select ? escapeHtml((node.manager_role || 'مدير') + ': ' + (node.manager_name || '')) : 'لا يوجد مدير أو نائب مدير معتمد') +
+            '</span>' +
+            '<div class="btn-group btn-group-sm w-100 mt-3">' +
+              '<button type="button" class="btn btn-outline-primary" data-org-node-id="' + String(node.id) + '"><i class="bi bi-folder2-open"></i> فتح</button>' +
+              '<button type="button" class="btn ' + (node.can_select ? 'btn-outline-success' : 'btn-outline-secondary') + '" data-select-org-node-id="' + String(node.id) + '" ' + (node.can_select ? '' : 'disabled') + '>' +
+                (node.can_select ? '<i class="bi bi-plus-circle"></i> إضافة للمسار' : 'غير متاح') +
+              '</button>' +
+            '</div>' +
+          '</div>';
+        orgChildren.appendChild(wrapper);
+      });
+      orgChildrenEmpty.classList.toggle('d-none', childNodes.length !== 0);
+      syncNodeSelectionButtons();
+      filterChoices();
+    }
+
+    function setBrowserMode(mode){
+      browserMode = mode === 'team' ? 'team' : 'org';
+      browserTabs.forEach(function(tab){
+        const active = tab.dataset.browserMode === browserMode;
+        tab.classList.toggle('btn-primary', active);
+        tab.classList.toggle('btn-outline-primary', !active);
+        tab.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      if (orgBrowser) orgBrowser.classList.toggle('d-none', browserMode !== 'org');
+      if (teamBrowser) teamBrowser.classList.toggle('d-none', browserMode !== 'team');
+      if (userSearch) userSearch.value = '';
+      if (browserMode === 'org') renderHierarchy();
+      else filterChoices();
     }
 
     function filterChoices(){
       const query = (userSearch && userSearch.value || '').trim().toLowerCase();
       const selectedTeam = (teamFilter && teamFilter.value || '').trim();
       let visibleCount = 0;
+      const scopeReady = browserMode === 'org' ? Boolean(currentOrgNodeId) : Boolean(selectedTeam);
       document.querySelectorAll('.dynamic-user-choice').forEach(function(card){
         const matchesSearch = !query || (card.dataset.search || '').includes(query);
         const cardTeamKeys = (card.dataset.teamKeys || '').split(',').filter(Boolean);
-        const matchesTeam = !selectedTeam
-          || (selectedTeam === '__NO_TEAM__' ? cardTeamKeys.length === 0 : cardTeamKeys.includes(selectedTeam));
-        const visible = matchesSearch && matchesTeam;
+        const matchesScope = browserMode === 'org'
+          ? String(card.dataset.nodeId || '') === String(currentOrgNodeId || '')
+          : (selectedTeam === '__NO_TEAM__' ? cardTeamKeys.length === 0 : cardTeamKeys.includes(selectedTeam));
+        const visible = scopeReady && matchesSearch && matchesScope;
         card.classList.toggle('d-none', !visible);
         if (visible) visibleCount += 1;
       });
-      if (searchEmpty) searchEmpty.classList.toggle('d-none', visibleCount !== 0);
+      if (visibleScopeHint) {
+        const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
+        visibleScopeHint.textContent = browserMode === 'org'
+          ? (currentNode ? 'الموظفون المرتبطون مباشرة بجهة «' + currentNode.name + '».' : 'اختر جهة من الهيكل لعرض موظفيها المباشرين.')
+          : (selectedTeam ? 'أعضاء الفريق المحدد.' : 'اختر فريقًا لعرض أعضائه.');
+      }
+      if (searchEmpty) {
+        searchEmpty.classList.toggle('d-none', visibleCount !== 0);
+        searchEmpty.textContent = !scopeReady
+          ? (browserMode === 'org' ? 'اختر جهة من الهيكل الإداري لعرض الموظفين.' : 'اختر فريقًا لعرض أعضائه.')
+          : (query ? 'لا توجد أسماء مطابقة للبحث ضمن الاختيار الحالي.' : 'لا يوجد موظفون مرتبطون مباشرة بهذا الاختيار.');
+      }
+      if (selectVisibleButton) selectVisibleButton.disabled = visibleCount === 0;
+      if (clearVisibleButton) clearVisibleButton.disabled = visibleCount === 0;
     }
 
     async function loadPreview(){
@@ -614,7 +817,7 @@
       previewBox.classList.remove('d-none');
       previewBox.innerHTML = '<div class="text-muted small">جاري بناء التسلسل الإداري…</div>';
       const payload = new FormData();
-      payload.append('dynamic_user_ids', hiddenIds.value);
+      payload.append('dynamic_target_refs', targetRefsField.value);
       const csrfField = form.querySelector('[name="csrf_token"]');
       if (csrfField) payload.append('csrf_token', csrfField.value);
       try {
@@ -655,6 +858,42 @@
 
     if (predefinedRadio) predefinedRadio.addEventListener('change', updateMode);
     if (dynamicRadio) dynamicRadio.addEventListener('change', updateMode);
+    browserTabs.forEach(function(tab){
+      tab.addEventListener('click', function(){
+        setBrowserMode(tab.dataset.browserMode);
+      });
+    });
+    function navigateHierarchy(event){
+      const button = event.target.closest('[data-org-node-id]');
+      if (!button) return;
+      currentOrgNodeId = button.dataset.orgNodeId || null;
+      if (userSearch) userSearch.value = '';
+      renderHierarchy();
+    }
+    function toggleOrgNodeSelection(event){
+      const button = event.target.closest('[data-select-org-node-id]');
+      if (!button || button.disabled) return;
+      const node = orgNodesById.get(String(button.dataset.selectOrgNodeId));
+      if (!node) return;
+      const targetRef = 'NODE:' + String(node.id);
+      if (selected.some(item => item.ref === targetRef)) {
+        removeSelectedTarget(targetRef);
+      } else if (!addSelectedOrgNode(node)) {
+        window.alert('يمكن اختيار 20 جهة أو شخصاً كحد أقصى.');
+        return;
+      }
+      renderSelected();
+    }
+    if (orgChildren) orgChildren.addEventListener('click', navigateHierarchy);
+    if (orgChildren) orgChildren.addEventListener('click', toggleOrgNodeSelection);
+    if (orgBreadcrumb) orgBreadcrumb.addEventListener('click', navigateHierarchy);
+    if (addCurrentOrgNodeButton) addCurrentOrgNodeButton.addEventListener('click', toggleOrgNodeSelection);
+    if (orgBackButton) orgBackButton.addEventListener('click', function(){
+      const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
+      currentOrgNodeId = nodeParentId(currentNode);
+      if (userSearch) userSearch.value = '';
+      renderHierarchy();
+    });
     if (userChoices) userChoices.addEventListener('change', function(event){
       const checkbox = event.target.closest('.dynamic-user-checkbox');
       if (!checkbox) return;
@@ -665,7 +904,7 @@
           return;
         }
       } else {
-        removeSelectedUser(checkbox.dataset.id);
+        removeSelectedTarget('USER:' + checkbox.dataset.id);
       }
       renderSelected();
     });
@@ -685,7 +924,7 @@
     });
     if (clearVisibleButton) clearVisibleButton.addEventListener('click', function(){
       document.querySelectorAll('.dynamic-user-choice:not(.d-none) .dynamic-user-checkbox').forEach(function(checkbox){
-        removeSelectedUser(checkbox.dataset.id);
+        removeSelectedTarget('USER:' + checkbox.dataset.id);
         checkbox.checked = false;
       });
       renderSelected();
@@ -704,9 +943,10 @@
     form.addEventListener('submit', function(event){
       if (isDynamic() && !selected.length) {
         event.preventDefault();
-        window.alert('اختر شخصاً واحداً على الأقل للمسار الديناميكي.');
+        window.alert('اختر جهة تنظيمية أو شخصاً واحداً على الأقل للمسار الديناميكي.');
       }
     });
+    setBrowserMode('org');
     updateMode();
   })();
 </script>

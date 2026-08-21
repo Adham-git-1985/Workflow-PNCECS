@@ -21,8 +21,10 @@ from models import (
 )
 from workflow.dynamic_paths import (
     administration_anchor_id,
+    build_dynamic_target_path,
     build_dynamic_user_path,
     build_structural_template_path,
+    dynamic_org_browser_nodes,
     dynamic_user_choices,
     node_chain,
     same_administration,
@@ -128,6 +130,55 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertEqual([step["approver_user_id"] for step in result["steps"]], [self.same_target.id])
         self.assertIn("اختيار مباشر", result["steps"][0]["reason"])
+
+    def test_dynamic_org_browser_exposes_all_active_entities_and_manager_context(self):
+        empty_department = self._node("دائرة بلا موظفين", self.department_a1.type, self.directorate_a)
+        db.session.commit()
+
+        nodes = dynamic_org_browser_nodes(dynamic_user_choices(self.requester), self.requester)
+        nodes_by_id = {node["id"]: node for node in nodes}
+
+        self.assertIn(self.root.id, nodes_by_id)
+        self.assertIn(self.directorate_a.id, nodes_by_id)
+        self.assertIn(self.department_a2.id, nodes_by_id)
+        self.assertIn(empty_department.id, nodes_by_id)
+        self.assertEqual(nodes_by_id[self.department_a2.id]["direct_user_count"], 1)
+        self.assertTrue(nodes_by_id[self.department_a1.id]["can_select"])
+        self.assertEqual(
+            nodes_by_id[self.department_a1.id]["manager_user_id"],
+            self.source_manager.id,
+        )
+        self.assertFalse(nodes_by_id[empty_department.id]["can_select"])
+        self.assertGreaterEqual(
+            nodes_by_id[self.directorate_a.id]["total_user_count"],
+            nodes_by_id[self.department_a2.id]["direct_user_count"],
+        )
+
+    def test_multiple_sibling_entities_can_be_added_in_selected_order(self):
+        db.session.add(OrgNodeManager(
+            node_id=self.department_a2.id,
+            manager_user_id=self.same_target.id,
+        ))
+        db.session.commit()
+
+        result = build_dynamic_target_path(self.requester, [
+            f"NODE:{self.department_a1.id}",
+            f"NODE:{self.department_a2.id}",
+        ])
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [step["approver_kind"] for step in result["steps"]],
+            ["ORG_NODE", "ORG_NODE"],
+        )
+        self.assertEqual(
+            [step["approver_org_node_id"] for step in result["steps"]],
+            [self.department_a1.id, self.department_a2.id],
+        )
+        self.assertEqual(
+            [segment["target_kind"] for segment in result["segments"]],
+            ["NODE", "NODE"],
+        )
 
     def test_primary_team_assignment_is_exposed_in_dynamic_choices(self):
         team_type = self._node_type("TEAM", "فريق", 40)

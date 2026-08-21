@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from extensions import db
-from models import OrgNode, OrgNodeManager, Team, TeamMembership, User
+from models import OrgNode, OrgNodeManager, OrgNodeType, Team, TeamMembership, User
 from utils.org_dynamic import resolve_user_org_node_id
 
 
@@ -241,6 +241,82 @@ def dynamic_user_choices(requester: User) -> list[dict]:
     return choices
 
 
+def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None) -> list[dict]:
+    """Return active hierarchy nodes with their selectable manager context."""
+    nodes = (
+        OrgNode.query
+        .join(OrgNode.type)
+        .filter(
+            OrgNode.is_active.is_(True),
+            OrgNodeType.is_active.is_(True),
+        )
+        .order_by(
+            OrgNodeType.sort_order.asc(),
+            OrgNode.sort_order.asc(),
+            OrgNode.name_ar.asc(),
+            OrgNode.id.asc(),
+        )
+        .all()
+    )
+    nodes_by_id = {int(node.id): node for node in nodes}
+    direct_counts: dict[int, int] = {}
+    for choice in choices:
+        node_id = int(choice.get("node_id") or 0)
+        if node_id in nodes_by_id:
+            direct_counts[node_id] = direct_counts.get(node_id, 0) + 1
+
+    children_by_parent: dict[int | None, list[int]] = {}
+    for node in nodes:
+        parent_id = int(node.parent_id) if node.parent_id in nodes_by_id else None
+        children_by_parent.setdefault(parent_id, []).append(int(node.id))
+
+    total_counts: dict[int, int] = {}
+    requester_chain = node_chain(resolve_user_org_node_id(requester)) if requester else []
+
+    def selectable_count(node_id: int, active_path: set[int] | None = None) -> int:
+        if node_id in total_counts:
+            return total_counts[node_id]
+        active_path = set(active_path or ())
+        if node_id in active_path:
+            return direct_counts.get(node_id, 0)
+        active_path.add(node_id)
+        total = direct_counts.get(node_id, 0)
+        total += sum(
+            selectable_count(child_id, active_path)
+            for child_id in children_by_parent.get(node_id, [])
+        )
+        total_counts[node_id] = total
+        return total
+
+    result = []
+    for node in nodes:
+        node_id = int(node.id)
+        employee_count = selectable_count(node_id)
+        manager, manager_role = _manager_for_node(node)
+        result.append({
+            "id": node_id,
+            "parent_id": int(node.parent_id) if node.parent_id in nodes_by_id else None,
+            "name": node.name_ar,
+            "type_name": _node_type_name(node) or _node_type_code(node),
+            "node_label": node_path_label(node),
+            "direct_user_count": direct_counts.get(node_id, 0),
+            "total_user_count": employee_count,
+            "can_select": bool(manager and _node_allows_approval(node)),
+            "manager_user_id": int(manager.id) if manager else None,
+            "manager_name": (
+                manager.full_name or manager.email or f"مستخدم #{manager.id}"
+                if manager else ""
+            ),
+            "manager_job_title": (
+                (getattr(manager, "job_title", None) or "").strip()
+                if manager else ""
+            ),
+            "manager_role": manager_role or "",
+            "same_administration": same_administration(requester_chain, node_chain(node_id)),
+        })
+    return result
+
+
 def _normalized_user_ids(values) -> tuple[list[int], list[str]]:
     user_ids = []
     errors = []
@@ -367,6 +443,227 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
                 "المستلم المختار بعد المرور بالتسلسل الإداري",
                 target_chain[-1],
             )
+
+        segments.append(segment)
+        current_user = target_user
+        current_chain = target_chain
+
+    for index, step in enumerate(steps, start=1):
+        step["step_order"] = index
+
+    return {
+        "steps": steps,
+        "segments": segments,
+        "warnings": warnings,
+        "errors": list(dict.fromkeys(errors)),
+    }
+
+
+def _normalized_dynamic_target_refs(values) -> tuple[list[tuple[str, int]], list[str]]:
+    targets: list[tuple[str, int]] = []
+    errors: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    for raw_value in values or []:
+        value = str(raw_value or "").strip().upper()
+        if not value:
+            continue
+        kind = "USER"
+        raw_id = value
+        if ":" in value:
+            raw_kind, raw_id = value.split(":", 1)
+            kind = {"U": "USER", "USER": "USER", "N": "NODE", "NODE": "NODE"}.get(raw_kind, "")
+        if kind not in {"USER", "NODE"} or not raw_id.isdigit():
+            errors.append("قائمة الجهات أو الأشخاص المختارين تحتوي على قيمة غير صالحة.")
+            continue
+        target = (kind, int(raw_id))
+        if target in seen:
+            errors.append("لا يمكن تكرار الجهة أو الشخص نفسه ضمن خطوات المسار الديناميكي.")
+            continue
+        seen.add(target)
+        targets.append(target)
+    if len(targets) > MAX_DYNAMIC_TARGETS:
+        errors.append(f"يمكن اختيار {MAX_DYNAMIC_TARGETS} جهة أو شخصاً كحد أقصى للمسار الديناميكي.")
+    return targets[:MAX_DYNAMIC_TARGETS], errors
+
+
+def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
+    """Expand ordered USER/NODE targets into sequential runtime workflow steps."""
+    target_refs, errors = _normalized_dynamic_target_refs(selected_target_refs)
+    if not target_refs:
+        errors.append("اختر جهة تنظيمية أو شخصاً واحداً على الأقل للمسار الديناميكي.")
+
+    user_ids = [target_id for kind, target_id in target_refs if kind == "USER"]
+    node_ids = [target_id for kind, target_id in target_refs if kind == "NODE"]
+    users_map = {
+        int(user.id): user
+        for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
+    }
+    nodes_map = {
+        int(node.id): node
+        for node in (OrgNode.query.filter(OrgNode.id.in_(node_ids)).all() if node_ids else [])
+    }
+
+    requester_chain = node_chain(resolve_user_org_node_id(requester))
+    if not requester_chain:
+        errors.append("يجب ربط منشئ الطلب بعنصر أساسي في الهيكل التنظيمي أولاً.")
+
+    resolved_targets: list[dict] = []
+    for kind, target_id in target_refs:
+        if kind == "USER":
+            target_user = users_map.get(target_id)
+            if not target_user:
+                errors.append(f"تعذر العثور على الشخص المختار رقم {target_id}.")
+                continue
+            if int(target_user.id) == int(requester.id):
+                errors.append("لا يمكن اختيار منشئ الطلب كخطوة اعتماد لنفس الطلب.")
+                continue
+            target_node_id = resolve_user_org_node_id(target_user)
+            target_chain = node_chain(target_node_id)
+            if not target_chain:
+                errors.append(f"المستخدم «{target_user.full_name}» غير مربوط بالهيكل التنظيمي.")
+                continue
+            resolved_targets.append({
+                "kind": "USER",
+                "id": target_id,
+                "user": target_user,
+                "node": target_chain[-1],
+                "chain": target_chain,
+                "label": target_user.full_name or target_user.email or f"مستخدم #{target_user.id}",
+            })
+            continue
+
+        target_node = nodes_map.get(target_id)
+        if not target_node or not getattr(target_node, "is_active", False):
+            errors.append(f"تعذر العثور على الجهة التنظيمية المختارة رقم {target_id}.")
+            continue
+        if not _node_allows_approval(target_node):
+            errors.append(f"الجهة «{target_node.name_ar}» غير مفعلة ضمن خطوات الاعتماد.")
+            continue
+        target_manager, manager_role = _manager_for_node(target_node)
+        if not target_manager:
+            errors.append(f"لا يوجد مدير أو نائب مدير معيّن للجهة «{target_node.name_ar}».")
+            continue
+        if int(target_manager.id) == int(requester.id):
+            errors.append(f"لا يمكن لمنشئ الطلب اعتماد طلبه بصفته مدير الجهة «{target_node.name_ar}».")
+            continue
+        target_chain = node_chain(target_node.id)
+        if not target_chain:
+            errors.append(f"تعذر تحديد موقع الجهة «{target_node.name_ar}» في الهيكل التنظيمي.")
+            continue
+        resolved_targets.append({
+            "kind": "NODE",
+            "id": target_id,
+            "user": target_manager,
+            "node": target_node,
+            "chain": target_chain,
+            "manager_role": manager_role or "مدير",
+            "label": f"{_node_type_name(target_node) or _node_type_code(target_node)}: {target_node.name_ar}",
+        })
+
+    steps: list[dict] = []
+    warnings: list[str] = []
+    segments: list[dict] = []
+
+    def add_user_step(user: User, reason: str, node: OrgNode | None = None) -> bool:
+        if steps:
+            previous = steps[-1]
+            if (
+                previous.get("approver_kind") == "USER"
+                and int(previous.get("approver_user_id") or 0) == int(user.id)
+            ):
+                return False
+        steps.append({
+            "step_order": len(steps) + 1,
+            "mode": "SEQUENTIAL",
+            "approver_kind": "USER",
+            "approver_user_id": int(user.id),
+            "sla_days": None,
+            "label": user.full_name or user.email or f"مستخدم #{user.id}",
+            "job_title": (getattr(user, "job_title", None) or "").strip(),
+            "reason": reason,
+            "node_id": int(node.id) if node else None,
+            "node_label": node_path_label(node) if node else "",
+        })
+        return True
+
+    def add_target_step(target: dict, direct: bool) -> bool:
+        target_user = target["user"]
+        target_node = target["node"]
+        if target["kind"] == "USER":
+            return add_user_step(
+                target_user,
+                "اختيار مباشر ضمن الإدارة نفسها (أفقي أو عمودي)"
+                if direct else
+                "المستلم المختار بعد المرور بالتسلسل الإداري",
+                target_node,
+            )
+        steps.append({
+            "step_order": len(steps) + 1,
+            "mode": "SEQUENTIAL",
+            "approver_kind": "ORG_NODE",
+            "approver_org_node_id": int(target_node.id),
+            "sla_days": None,
+            "label": target["label"],
+            "job_title": (getattr(target_user, "job_title", None) or "").strip(),
+            "reason": (
+                f"الجهة المختارة — الاعتماد لدى {target['manager_role']} «{target_user.full_name}»"
+            ),
+            "node_id": int(target_node.id),
+            "node_label": node_path_label(target_node),
+        })
+        return True
+
+    current_user = requester
+    current_chain = requester_chain
+    for target in resolved_targets:
+        target_user = target["user"]
+        target_node = target["node"]
+        target_chain = target["chain"]
+        direct = same_administration(current_chain, target_chain)
+        segment = {
+            "from_user_id": int(current_user.id),
+            "to_user_id": int(target_user.id),
+            "target_kind": target["kind"],
+            "target_id": int(target["id"]),
+            "same_administration": direct,
+            "intermediate_manager_count": 0,
+        }
+
+        if direct:
+            add_target_step(target, True)
+        else:
+            route_nodes = structural_route_nodes(int(current_chain[-1].id), int(target_chain[-1].id))
+            resolved_manager_count = 0
+            skipped_nodes = []
+            for route_node in route_nodes:
+                if target["kind"] == "NODE" and int(route_node.id) == int(target_node.id):
+                    continue
+                if not _node_allows_approval(route_node):
+                    continue
+                manager, manager_role = _manager_for_node(route_node)
+                if not manager:
+                    skipped_nodes.append(route_node.name_ar)
+                    continue
+                resolved_manager_count += 1
+                if add_user_step(
+                    manager,
+                    f"{manager_role} «{route_node.name_ar}» ضمن التسلسل الإداري",
+                    route_node,
+                ):
+                    segment["intermediate_manager_count"] += 1
+
+            if not resolved_manager_count:
+                errors.append(
+                    f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target['label']}»: "
+                    "لم يتم تعيين مدير أو نائب مدير على التسلسل الإداري بينهما."
+                )
+            elif skipped_nodes:
+                warnings.append(
+                    "تم تجاوز عناصر بلا مدير معيّن بين "
+                    f"«{current_user.full_name}» و«{target['label']}»: "
+                    + "، ".join(skipped_nodes[:6])
+                )
+            add_target_step(target, False)
 
         segments.append(segment)
         current_user = target_user
