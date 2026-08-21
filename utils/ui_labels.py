@@ -80,6 +80,7 @@ UI_LABELS_AR = {
     "MESSAGE_DELETED": "حذف رسالة",
     "MESSAGE_REPLY_SENT": "إرسال رد على رسالة",
     "MESSAGE_SENT": "إرسال رسالة",
+    "DYNAMIC_BRANCH_SELECTED": "توجيه مسار ديناميكي إلى فرع مختار",
     "PARALLEL_SYNC_AUTHORIZED": "توجيه خطوة متزامنة إلى المعنيين",
     "PARALLEL_SYNC_BYPASS": "تجاوز مكلف في خطوة متزامنة",
     "PARALLEL_SYNC_BYPASS_ALL": "تجاوز جميع المتبقين في خطوة متزامنة",

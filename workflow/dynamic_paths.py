@@ -6,6 +6,8 @@ from utils.org_dynamic import resolve_user_org_node_id
 
 
 MAX_DYNAMIC_TARGETS = 20
+DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS = 2
+FINAL_SECRETARY_GENERAL_REF = "FINAL_SECRETARY_GENERAL"
 
 
 def _node_type_code(node: OrgNode | None) -> str:
@@ -127,6 +129,51 @@ def structural_route_nodes(source_node_id: int, target_node_id: int) -> list[Org
         seen.add(node_id)
         route.append(node)
     return route
+
+
+def dynamic_route_start_nodes(target_chain: list[OrgNode]) -> list[OrgNode]:
+    """Return selectable route starts after the two excluded top hierarchy levels."""
+    return list(target_chain[DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:])
+
+
+def scoped_structural_route_nodes(
+    source_chain: list[OrgNode],
+    target_chain: list[OrgNode],
+    route_start_node_id: int,
+) -> tuple[list[tuple[OrgNode, str]], str | None]:
+    """Build source ascent and target descent without traversing excluded ancestors."""
+    target_start_index = next(
+        (
+            index
+            for index, node in enumerate(target_chain)
+            if int(node.id) == int(route_start_node_id)
+        ),
+        None,
+    )
+    if target_start_index is None or target_start_index < DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:
+        return [], "نقطة بدء التسلسل لا تنتمي إلى الجزء المسموح من مسار الجهة المختارة."
+
+    source_start_index = next(
+        (
+            index
+            for index, node in enumerate(source_chain)
+            if int(node.id) == int(route_start_node_id)
+        ),
+        None,
+    )
+    if source_start_index is None:
+        source_start_index = target_start_index
+    if source_start_index >= len(source_chain):
+        return [], "تعذر تحديد مستوى أفقي موازٍ لنقطة بدء التسلسل ضمن هيكل منشئ الطلب."
+
+    route: list[tuple[OrgNode, str]] = []
+    for node in reversed(source_chain[source_start_index:]):
+        route.append((node, "SOURCE_ASCENT"))
+    for node in target_chain[target_start_index:]:
+        if route and int(route[-1][0].id) == int(node.id):
+            continue
+        route.append((node, "TARGET_DESCENT"))
+    return route, None
 
 
 def _node_allows_approval(node: OrgNode) -> bool:
@@ -288,11 +335,39 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
         total_counts[node_id] = total
         return total
 
+    manager_context = {
+        int(node.id): _manager_for_node(node)
+        for node in nodes
+    }
     result = []
     for node in nodes:
         node_id = int(node.id)
         employee_count = selectable_count(node_id)
-        manager, manager_role = _manager_for_node(node)
+        manager, manager_role = manager_context[node_id]
+        chain = node_chain(node_id)
+        route_start_options = []
+        for chain_index, start_node in enumerate(chain):
+            if chain_index < DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:
+                continue
+            start_manager, start_manager_role = manager_context.get(
+                int(start_node.id),
+                (None, None),
+            )
+            can_start = bool(start_manager and _node_allows_approval(start_node))
+            route_start_options.append({
+                "id": int(start_node.id),
+                "position": chain_index + 2,
+                "name": start_node.name_ar,
+                "type_name": _node_type_name(start_node) or _node_type_code(start_node),
+                "can_start": can_start,
+                "manager_name": (
+                    start_manager.full_name or start_manager.email or f"مستخدم #{start_manager.id}"
+                    if start_manager else ""
+                ),
+                "manager_role": start_manager_role or "",
+            })
+        has_route_start = any(option["can_start"] for option in route_start_options)
+        has_manager = bool(manager and _node_allows_approval(node))
         result.append({
             "id": node_id,
             "parent_id": int(node.parent_id) if node.parent_id in nodes_by_id else None,
@@ -301,7 +376,18 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
             "node_label": node_path_label(node),
             "direct_user_count": direct_counts.get(node_id, 0),
             "total_user_count": employee_count,
-            "can_select": bool(manager and _node_allows_approval(node)),
+            "can_select": bool(has_manager and has_route_start),
+            "has_manager": has_manager,
+            "route_start_options": route_start_options,
+            "unavailable_reason": (
+                "هذه الجهة ضمن أول مستويين المستبعدين من المسار الديناميكي."
+                if not route_start_options else
+                "لا توجد نقطة بدء متاحة بمسؤول معتمد ضمن مسار هذه الجهة."
+                if not has_route_start else
+                "لا يوجد مسؤول أو نائب مسؤول معتمد لهذه الجهة."
+                if not has_manager else
+                ""
+            ),
             "manager_user_id": int(manager.id) if manager else None,
             "manager_name": (
                 manager.full_name or manager.email or f"مستخدم #{manager.id}"
@@ -459,8 +545,8 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
     }
 
 
-def _normalized_dynamic_target_refs(values) -> tuple[list[tuple[str, int]], list[str]]:
-    targets: list[tuple[str, int]] = []
+def _normalized_dynamic_target_refs(values) -> tuple[list[tuple[str, int, int | None]], list[str]]:
+    targets: list[tuple[str, int, int | None]] = []
     errors: list[str] = []
     seen: set[tuple[str, int]] = set()
     for raw_value in values or []:
@@ -472,28 +558,39 @@ def _normalized_dynamic_target_refs(values) -> tuple[list[tuple[str, int]], list
         if ":" in value:
             raw_kind, raw_id = value.split(":", 1)
             kind = {"U": "USER", "USER": "USER", "N": "NODE", "NODE": "NODE"}.get(raw_kind, "")
+        route_start_id = None
+        if "@" in raw_id:
+            raw_id, raw_route_start_id = raw_id.split("@", 1)
+            if kind != "NODE" or not raw_route_start_id.isdigit():
+                errors.append("نقطة بدء التسلسل الإداري غير صالحة.")
+                continue
+            route_start_id = int(raw_route_start_id)
         if kind not in {"USER", "NODE"} or not raw_id.isdigit():
             errors.append("قائمة الجهات أو الأشخاص المختارين تحتوي على قيمة غير صالحة.")
             continue
-        target = (kind, int(raw_id))
-        if target in seen:
+        target_key = (kind, int(raw_id))
+        if target_key in seen:
             errors.append("لا يمكن تكرار الجهة أو الشخص نفسه ضمن خطوات المسار الديناميكي.")
             continue
-        seen.add(target)
-        targets.append(target)
+        seen.add(target_key)
+        targets.append((kind, int(raw_id), route_start_id))
     if len(targets) > MAX_DYNAMIC_TARGETS:
         errors.append(f"يمكن اختيار {MAX_DYNAMIC_TARGETS} جهة أو شخصاً كحد أقصى للمسار الديناميكي.")
     return targets[:MAX_DYNAMIC_TARGETS], errors
 
 
-def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
+def build_dynamic_target_path(
+    requester: User,
+    selected_target_refs,
+    include_secretary_general: bool = False,
+) -> dict:
     """Expand ordered USER/NODE targets into sequential runtime workflow steps."""
     target_refs, errors = _normalized_dynamic_target_refs(selected_target_refs)
     if not target_refs:
         errors.append("اختر جهة تنظيمية أو شخصاً واحداً على الأقل للمسار الديناميكي.")
 
-    user_ids = [target_id for kind, target_id in target_refs if kind == "USER"]
-    node_ids = [target_id for kind, target_id in target_refs if kind == "NODE"]
+    user_ids = [target_id for kind, target_id, _start_id in target_refs if kind == "USER"]
+    node_ids = [target_id for kind, target_id, _start_id in target_refs if kind == "NODE"]
     users_map = {
         int(user.id): user
         for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
@@ -508,7 +605,7 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
         errors.append("يجب ربط منشئ الطلب بعنصر أساسي في الهيكل التنظيمي أولاً.")
 
     resolved_targets: list[dict] = []
-    for kind, target_id in target_refs:
+    for kind, target_id, route_start_id in target_refs:
         if kind == "USER":
             target_user = users_map.get(target_id)
             if not target_user:
@@ -550,6 +647,24 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
         if not target_chain:
             errors.append(f"تعذر تحديد موقع الجهة «{target_node.name_ar}» في الهيكل التنظيمي.")
             continue
+        route_start_node = None
+        if route_start_id is not None:
+            allowed_start_nodes = {
+                int(start_node.id): start_node
+                for start_node in dynamic_route_start_nodes(target_chain)
+            }
+            route_start_node = allowed_start_nodes.get(int(route_start_id))
+            if not route_start_node:
+                errors.append(
+                    f"نقطة بدء التسلسل المحددة لا تقع ضمن الجزء المسموح من مسار الجهة «{target_node.name_ar}»."
+                )
+                continue
+            route_start_manager, _route_start_role = _manager_for_node(route_start_node)
+            if not route_start_manager or not _node_allows_approval(route_start_node):
+                errors.append(
+                    f"لا يمكن بدء التسلسل من «{route_start_node.name_ar}» لعدم وجود مسؤول معتمد عليها."
+                )
+                continue
         resolved_targets.append({
             "kind": "NODE",
             "id": target_id,
@@ -557,26 +672,25 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
             "node": target_node,
             "chain": target_chain,
             "manager_role": manager_role or "مسؤول",
+            "route_start_node": route_start_node,
+            "route_start_node_id": int(route_start_node.id) if route_start_node else None,
             "label": f"{_node_type_name(target_node) or _node_type_code(target_node)}: {target_node.name_ar}",
         })
 
     steps: list[dict] = []
     warnings: list[str] = []
     segments: list[dict] = []
+    seen_approver_user_ids: set[int] = {int(requester.id)}
 
     def add_user_step(user: User, reason: str, node: OrgNode | None = None) -> bool:
-        if steps:
-            previous = steps[-1]
-            if (
-                previous.get("approver_kind") == "USER"
-                and int(previous.get("approver_user_id") or 0) == int(user.id)
-            ):
-                return False
+        user_id = int(user.id)
+        if user_id in seen_approver_user_ids:
+            return False
         steps.append({
             "step_order": len(steps) + 1,
             "mode": "SEQUENTIAL",
             "approver_kind": "USER",
-            "approver_user_id": int(user.id),
+            "approver_user_id": user_id,
             "sla_days": None,
             "label": user.full_name or user.email or f"مستخدم #{user.id}",
             "job_title": (getattr(user, "job_title", None) or "").strip(),
@@ -584,6 +698,7 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
             "node_id": int(node.id) if node else None,
             "node_label": node_path_label(node) if node else "",
         })
+        seen_approver_user_ids.add(user_id)
         return True
 
     def add_target_step(target: dict, direct: bool) -> bool:
@@ -597,6 +712,9 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
                 "المستلم المختار بعد المرور بالتسلسل الإداري",
                 target_node,
             )
+        target_user_id = int(target_user.id)
+        if target_user_id in seen_approver_user_ids:
+            return False
         steps.append({
             "step_order": len(steps) + 1,
             "mode": "SEQUENTIAL",
@@ -605,12 +723,11 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
             "sla_days": None,
             "label": target["label"],
             "job_title": (getattr(target_user, "job_title", None) or "").strip(),
-            "reason": (
-                f"الجهة المختارة — الاعتماد لدى {target['manager_role']} «{target_user.full_name}»"
-            ),
+            "reason": "",
             "node_id": int(target_node.id),
             "node_label": node_path_label(target_node),
         })
+        seen_approver_user_ids.add(target_user_id)
         return True
 
     current_user = requester
@@ -620,16 +737,55 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
         target_node = target["node"]
         target_chain = target["chain"]
         direct = same_administration(current_chain, target_chain)
+        route_start_node = target.get("route_start_node")
+        target_ref = f"{target['kind']}:{int(target['id'])}"
+        if route_start_node:
+            target_ref += f"@{int(route_start_node.id)}"
         segment = {
             "from_user_id": int(current_user.id),
             "to_user_id": int(target_user.id),
             "target_kind": target["kind"],
             "target_id": int(target["id"]),
+            "target_ref": target_ref,
+            "route_start_node_id": int(route_start_node.id) if route_start_node else None,
+            "route_start_label": node_path_label(route_start_node) if route_start_node else "",
             "same_administration": direct,
             "intermediate_manager_count": 0,
         }
 
-        if direct:
+        if route_start_node:
+            scoped_route, route_error = scoped_structural_route_nodes(
+                current_chain,
+                target_chain,
+                int(route_start_node.id),
+            )
+            if route_error:
+                errors.append(
+                    f"لا يمكن بناء المسار من «{current_user.full_name}» إلى «{target['label']}»: {route_error}"
+                )
+                segments.append(segment)
+                continue
+
+            skipped_nodes = []
+            for route_node, _route_phase in scoped_route:
+                if int(route_node.id) == int(target_node.id):
+                    continue
+                if not _node_allows_approval(route_node):
+                    continue
+                manager, _manager_role = _manager_for_node(route_node)
+                if not manager:
+                    skipped_nodes.append(route_node.name_ar)
+                    continue
+                if add_user_step(manager, "", route_node):
+                    segment["intermediate_manager_count"] += 1
+
+            if skipped_nodes:
+                warnings.append(
+                    f"تم تجاوز عناصر بلا مسؤول معيّن ضمن التسلسل المحدد من «{route_start_node.name_ar}»: "
+                    + "، ".join(skipped_nodes[:8])
+                )
+            add_target_step(target, False)
+        elif direct:
             add_target_step(target, True)
         else:
             route_nodes = structural_route_nodes(int(current_chain[-1].id), int(target_chain[-1].id))
@@ -669,6 +825,34 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
         current_user = target_user
         current_chain = target_chain
 
+    if include_secretary_general:
+        final_chain = resolved_targets[-1]["chain"] if resolved_targets else requester_chain
+        secretary_general = final_chain[1] if len(final_chain) > 1 else None
+        secretary_manager, _secretary_role = (
+            _manager_for_node(secretary_general)
+            if secretary_general else
+            (None, None)
+        )
+        if not secretary_general or not _node_allows_approval(secretary_general):
+            errors.append("تعذر تحديد مستوى الأمين العام لإضافته كخطوة أخيرة.")
+        elif not secretary_manager:
+            errors.append("لا يوجد مسؤول معتمد على مستوى الأمين العام لإضافته كخطوة أخيرة.")
+        elif int(secretary_manager.id) == int(requester.id):
+            errors.append("لا يمكن لمنشئ الطلب اعتماد طلبه بصفته الأمين العام.")
+        else:
+            steps.append({
+                "step_order": len(steps) + 1,
+                "mode": "SEQUENTIAL",
+                "approver_kind": "ORG_NODE",
+                "approver_org_node_id": int(secretary_general.id),
+                "sla_days": None,
+                "label": f"{_node_type_name(secretary_general) or _node_type_code(secretary_general)}: {secretary_general.name_ar}",
+                "job_title": (getattr(secretary_manager, "job_title", None) or "").strip(),
+                "reason": "",
+                "node_id": int(secretary_general.id),
+                "node_label": node_path_label(secretary_general),
+            })
+
     for index, step in enumerate(steps, start=1):
         step["step_order"] = index
 
@@ -677,4 +861,5 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
         "segments": segments,
         "warnings": warnings,
         "errors": list(dict.fromkeys(errors)),
+        "include_secretary_general": bool(include_secretary_general),
     }

@@ -113,6 +113,7 @@ from models import (
 
 from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
 from workflow.dynamic_paths import (
+    FINAL_SECRETARY_GENERAL_REF,
     build_dynamic_target_path,
     dynamic_org_browser_nodes,
     dynamic_user_choices,
@@ -127,6 +128,7 @@ from workflow.engine import (
     ensure_parallel_tasks,
     authorize_parallel_step,
     resolve_parallel_candidate_user_ids,
+    resolve_dynamic_branch_steps,
 )
 
 logger = logging.getLogger(__name__)
@@ -2249,6 +2251,12 @@ def analyze_new_request_attachment():
         }), 500
 
 
+def _dynamic_secretary_general_requested() -> bool:
+    return (request.form.get("dynamic_add_secretary_general") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
 @workflow_bp.route("/new/dynamic-path/preview", methods=["POST"])
 @login_required
 def preview_dynamic_request_path():
@@ -2261,7 +2269,11 @@ def preview_dynamic_request_path():
         ).split(",")
         if value.strip()
     ]
-    result = build_dynamic_target_path(current_user, selected_values)
+    result = build_dynamic_target_path(
+        current_user,
+        selected_values,
+        include_secretary_general=_dynamic_secretary_general_requested(),
+    )
     return jsonify({
         "ok": not result["errors"],
         "steps": result["steps"],
@@ -2285,14 +2297,22 @@ def save_dynamic_path_preset():
         for value in (request.form.get("dynamic_target_refs") or "").split(",")
         if value.strip()
     ]
-    result = build_dynamic_target_path(current_user, selected_values)
+    include_secretary_general = _dynamic_secretary_general_requested()
+    result = build_dynamic_target_path(
+        current_user,
+        selected_values,
+        include_secretary_general=include_secretary_general,
+    )
     if result["errors"]:
         return jsonify({"ok": False, "errors": result["errors"]}), 400
 
     normalized_refs = [
-        f"{segment['target_kind']}:{segment['target_id']}"
+        segment.get("target_ref")
+        or f"{segment['target_kind']}:{segment['target_id']}"
         for segment in result["segments"]
     ]
+    if include_secretary_general:
+        normalized_refs.append(FINAL_SECRETARY_GENERAL_REF)
     preset = (
         UserDynamicWorkflowPreset.query
         .filter(
@@ -2420,7 +2440,11 @@ def new_request():
                 ).split(",")
                 if value.strip()
             ]
-            dynamic_path = build_dynamic_target_path(current_user, selected_values)
+            dynamic_path = build_dynamic_target_path(
+                current_user,
+                selected_values,
+                include_secretary_general=_dynamic_secretary_general_requested(),
+            )
             if dynamic_path["errors"]:
                 for error in dynamic_path["errors"]:
                     flash(error, "danger")
@@ -3638,6 +3662,7 @@ def view_request(request_id):
     can_escalate = False
     next_parallel_step = None
     next_parallel_candidates = []
+    next_dynamic_branch_steps = []
     parallel_candidates = []
     parallel_awaiting_authorization = False
     can_authorize_parallel = False
@@ -3656,6 +3681,7 @@ def view_request(request_id):
         # A sequential approver must select the recipients of an immediately
         # following parallel step as part of the approval transaction.
         if current_step and can_decide and (getattr(current_step, "mode", "") or "").upper() != "PARALLEL_SYNC":
+            next_dynamic_branch_steps = resolve_dynamic_branch_steps(inst, current_step)
             next_parallel_step = next(
                 (
                     s for s in steps
@@ -3752,6 +3778,7 @@ def view_request(request_id):
         "STEP_REJECTED": "تمت إضافة تعليق",
         "WORKFLOW_COMMENT": "تمت إضافة تعليق",
         "WORKFLOW_REPLY": "تمت إضافة رد",
+        "DYNAMIC_BRANCH_SELECTED": "تم توجيه المسار إلى دائرة مختارة",
         "PARALLEL_SYNC_AUTHORIZED": "تم توجيه الخطوة المتزامنة",
         "PARALLEL_SYNC_RESPONDED": "تمت متابعة الخطوة المتزامنة",
         "WORKFLOW_ATTACHMENT_UPLOADED": "تمت إضافة مرفق",
@@ -4102,6 +4129,7 @@ def view_request(request_id):
         parallel_candidates=parallel_candidates,
         next_parallel_step=next_parallel_step,
         next_parallel_candidates=next_parallel_candidates,
+        next_dynamic_branch_steps=next_dynamic_branch_steps,
         mentioned_users=mentioned_users,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
@@ -4946,6 +4974,7 @@ def decide_request_step(request_id, step_order):
     decision = (request.form.get("decision") or "").strip().upper()
     note = (request.form.get("note") or "").strip()
     authorized_parallel_user_ids = request.form.getlist("parallel_assignee_ids")
+    selected_dynamic_branch_step_order = request.form.get("dynamic_branch_step_order")
 
     if decision not in ("APPROVED", "REJECTED"):
         flash("قرار غير صالح.", "danger")
@@ -4960,8 +4989,9 @@ def decide_request_step(request_id, step_order):
                   note=note, auto_commit=False,
                   effective_user_id=acting_user.id,
                   on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
-                  delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None),
-                  authorized_parallel_user_ids=authorized_parallel_user_ids)
+                   delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None),
+                   authorized_parallel_user_ids=authorized_parallel_user_ids,
+                   selected_dynamic_branch_step_order=selected_dynamic_branch_step_order)
         sync_correspondence_from_workflow(
             req,
             actor_user_id=current_user.id,

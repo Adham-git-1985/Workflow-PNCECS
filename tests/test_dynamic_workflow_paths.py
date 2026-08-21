@@ -4,6 +4,7 @@ from flask import Flask
 
 from extensions import db
 from models import (
+    AuditLog,
     Notification,
     OrgNode,
     OrgNodeAssignment,
@@ -21,6 +22,7 @@ from models import (
     WorkflowTemplateStep,
 )
 from workflow.dynamic_paths import (
+    FINAL_SECRETARY_GENERAL_REF,
     administration_anchor_id,
     build_dynamic_target_path,
     build_dynamic_user_path,
@@ -31,7 +33,11 @@ from workflow.dynamic_paths import (
     same_administration,
     structural_route_nodes,
 )
-from workflow.engine import start_workflow_for_request
+from workflow.engine import (
+    decide_step,
+    resolve_dynamic_branch_steps,
+    start_workflow_for_request,
+)
 from utils.org_dynamic import resolve_user_org_node_id, sync_legacy_now
 from admin.masterdata import _build_node_tree_for_picker
 
@@ -149,6 +155,10 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             nodes_by_id[self.department_a1.id]["manager_user_id"],
             self.source_manager.id,
         )
+        self.assertEqual(
+            [option["id"] for option in nodes_by_id[self.department_a1.id]["route_start_options"]],
+            [self.department_a1.id],
+        )
         self.assertFalse(nodes_by_id[empty_department.id]["can_select"])
         self.assertGreaterEqual(
             nodes_by_id[self.directorate_a.id]["total_user_count"],
@@ -181,6 +191,112 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             ["NODE", "NODE"],
         )
 
+    def test_scoped_node_route_excludes_top_two_levels_and_crosses_horizontally(self):
+        directorate_type = self.directorate_a.type
+        department_type = self.department_a1.type
+        secretary_general = self._node("الأمين العام", directorate_type, self.root)
+        source_assistant = self._node("مساعد الأمين العام للشؤون الإدارية", directorate_type, secretary_general)
+        target_assistant = self._node("مساعد الأمين العام للمنظمات والبرامج", directorate_type, secretary_general)
+        source_general = self._node("الإدارة العامة للشؤون الإدارية", directorate_type, source_assistant)
+        target_general = self._node("الإدارة العامة للدوائر المتخصصة", directorate_type, target_assistant)
+        source_department = self._node("دائرة منشئ الطلب", department_type, source_general)
+        target_department = self._node("دائرة الثقافة", department_type, target_general)
+        second_target_department = self._node("دائرة التربية والتعليم العالي", department_type, target_general)
+
+        secretary_manager = self._user("secretary@example.test", "مسؤول الأمين العام")
+        source_assistant_manager = self._user("source-assistant@example.test", "مسؤول مساعد المصدر")
+        source_general_manager = self._user("source-general@example.test", "مسؤول الإدارة العامة للمصدر")
+        source_department_manager = self._user("source-department@example.test", "مسؤول دائرة المصدر")
+        target_assistant_manager = self._user("target-assistant@example.test", "مسؤول مساعد الهدف")
+        target_department_manager = self._user("culture@example.test", "مسؤول دائرة الثقافة")
+        second_target_department_manager = self._user("education@example.test", "مسؤول دائرة التربية")
+        self.requester.org_node_id = source_department.id
+        db.session.add_all([
+            OrgNodeManager(node_id=secretary_general.id, manager_user_id=secretary_manager.id),
+            OrgNodeManager(node_id=source_assistant.id, manager_user_id=source_assistant_manager.id),
+            OrgNodeManager(node_id=source_general.id, manager_user_id=source_general_manager.id),
+            OrgNodeManager(node_id=source_department.id, manager_user_id=source_department_manager.id),
+            OrgNodeManager(node_id=target_assistant.id, manager_user_id=target_assistant_manager.id),
+            OrgNodeManager(node_id=target_general.id, manager_user_id=target_assistant_manager.id),
+            OrgNodeManager(node_id=target_department.id, manager_user_id=target_department_manager.id),
+            OrgNodeManager(node_id=second_target_department.id, manager_user_id=second_target_department_manager.id),
+        ])
+        db.session.commit()
+
+        result = build_dynamic_target_path(self.requester, [
+            f"NODE:{target_department.id}@{target_assistant.id}",
+        ])
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [step["node_id"] for step in result["steps"]],
+            [
+                source_department.id,
+                source_general.id,
+                source_assistant.id,
+                target_assistant.id,
+                target_department.id,
+            ],
+        )
+        self.assertEqual(
+            [
+                step["approver_user_id"]
+                for step in result["steps"]
+                if step["approver_kind"] == "USER"
+            ].count(target_assistant_manager.id),
+            1,
+        )
+        self.assertNotIn(self.root.id, [step["node_id"] for step in result["steps"]])
+        self.assertNotIn(secretary_general.id, [step["node_id"] for step in result["steps"]])
+        self.assertEqual(
+            result["segments"][0]["target_ref"],
+            f"NODE:{target_department.id}@{target_assistant.id}",
+        )
+        self.assertTrue(all(not step["reason"] for step in result["steps"]))
+
+        with_secretary_general = build_dynamic_target_path(
+            self.requester,
+            [f"NODE:{target_department.id}@{target_assistant.id}"],
+            include_secretary_general=True,
+        )
+        self.assertEqual(with_secretary_general["errors"], [])
+        self.assertEqual(with_secretary_general["steps"][-1]["node_id"], secretary_general.id)
+        self.assertEqual(with_secretary_general["steps"][-1]["approver_kind"], "ORG_NODE")
+        self.assertEqual(with_secretary_general["steps"][-1]["reason"], "")
+
+        sibling_result = build_dynamic_target_path(
+            self.requester,
+            [
+                f"NODE:{target_department.id}@{target_assistant.id}",
+                f"NODE:{second_target_department.id}@{target_assistant.id}",
+            ],
+        )
+        self.assertEqual(sibling_result["errors"], [])
+        self.assertEqual(
+            [
+                step["approver_org_node_id"]
+                for step in sibling_result["steps"]
+                if step["approver_kind"] == "ORG_NODE"
+            ],
+            [target_department.id, second_target_department.id],
+        )
+        self.assertEqual(
+            [
+                step["approver_user_id"]
+                for step in sibling_result["steps"]
+                if step["approver_kind"] == "USER"
+            ].count(target_assistant_manager.id),
+            1,
+        )
+
+    def test_scoped_node_route_rejects_a_start_within_the_top_two_levels(self):
+        result = build_dynamic_target_path(self.requester, [
+            f"NODE:{self.department_b.id}@{self.root.id}",
+        ])
+
+        self.assertTrue(result["errors"])
+        self.assertIn("الجزء المسموح", " ".join(result["errors"]))
+
     def test_saved_dynamic_paths_are_scoped_to_their_owner(self):
         requester_preset = UserDynamicWorkflowPreset(
             user_id=self.requester.id,
@@ -189,6 +305,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         requester_preset.set_target_refs([
             f"NODE:{self.department_a1.id}",
             f"USER:{self.same_target.id}",
+            FINAL_SECRETARY_GENERAL_REF,
         ])
         other_preset = UserDynamicWorkflowPreset(
             user_id=self.same_target.id,
@@ -207,6 +324,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(requester_rows[0].target_refs(), [
             f"NODE:{self.department_a1.id}",
             f"USER:{self.same_target.id}",
+            FINAL_SECRETARY_GENERAL_REF,
         ])
         self.assertEqual(len(self.requester.dynamic_workflow_presets.all()), 1)
 
@@ -319,6 +437,112 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(step.routing_node_label, result["steps"][0]["node_label"])
         self.assertEqual(step.routing_reason, result["steps"][0]["reason"])
         self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
+
+    def test_shared_manager_selects_one_sibling_branch_and_other_is_skipped(self):
+        shared_manager = self._user("shared-manager@example.test", "مدير الإدارة العامة")
+        db.session.add_all([
+            OrgNodeManager(
+                node_id=self.directorate_a.id,
+                manager_user_id=shared_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=self.department_a2.id,
+                manager_user_id=self.same_target.id,
+            ),
+        ])
+        request = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="اختيار دائرة واحدة",
+            status="DRAFT",
+            confidentiality="NORMAL",
+        )
+        db.session.add(request)
+        db.session.flush()
+        start_workflow_for_request(
+            request,
+            None,
+            created_by_user_id=self.requester.id,
+            runtime_steps=[
+                {
+                    "step_order": 1,
+                    "mode": "SEQUENTIAL",
+                    "approver_kind": "USER",
+                    "approver_user_id": shared_manager.id,
+                    "label": shared_manager.full_name,
+                },
+                {
+                    "step_order": 2,
+                    "mode": "SEQUENTIAL",
+                    "approver_kind": "ORG_NODE",
+                    "approver_org_node_id": self.department_a1.id,
+                    "label": f"دائرة: {self.department_a1.name_ar}",
+                },
+                {
+                    "step_order": 3,
+                    "mode": "SEQUENTIAL",
+                    "approver_kind": "ORG_NODE",
+                    "approver_org_node_id": self.department_a2.id,
+                    "label": f"دائرة: {self.department_a2.name_ar}",
+                },
+            ],
+        )
+        db.session.flush()
+
+        instance = WorkflowInstance.query.filter_by(request_id=request.id).one()
+        current_step = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+            step_order=1,
+        ).one()
+        self.assertEqual(
+            [step.step_order for step in resolve_dynamic_branch_steps(instance, current_step)],
+            [2, 3],
+        )
+
+        with self.assertRaisesRegex(ValueError, "اختر دائرة واحدة"):
+            decide_step(
+                request.id,
+                1,
+                shared_manager.id,
+                "APPROVED",
+                auto_commit=False,
+            )
+
+        decide_step(
+            request.id,
+            1,
+            shared_manager.id,
+            "APPROVED",
+            auto_commit=False,
+            selected_dynamic_branch_step_order=3,
+        )
+        db.session.flush()
+
+        first_branch = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+            step_order=2,
+        ).one()
+        selected_branch = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+            step_order=3,
+        ).one()
+        self.assertEqual(first_branch.status, "SKIPPED")
+        self.assertEqual(selected_branch.status, "PENDING")
+        self.assertEqual(instance.current_step_order, 3)
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            request_id=request.id,
+            action="DYNAMIC_BRANCH_SELECTED",
+        ).first())
+
+        decide_step(
+            request.id,
+            3,
+            self.same_target.id,
+            "APPROVED",
+            auto_commit=False,
+        )
+        db.session.flush()
+        self.assertTrue(instance.is_completed)
+        self.assertEqual(request.status, "APPROVED")
 
     def test_team_can_be_created_without_hierarchy_parent(self):
         team = Team(name_ar="فريق مستقل", section_id=None, division_id=None, is_active=True)

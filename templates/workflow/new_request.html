@@ -54,7 +54,7 @@
           </div>
           <div class="form-check">
             <input class="form-check-input" type="radio" name="route_mode" id="routeModeDynamic" value="DYNAMIC" {% if not requester_org_node_id %}disabled{% endif %}>
-            <label class="form-check-label fw-semibold" for="routeModeDynamic">بناء ديناميكي حسب الهيكل الإداري</label>
+            <label class="form-check-label fw-semibold" for="routeModeDynamic">انشيء مسارك الذي تريد</label>
           </div>
         </div>
         {% if not requester_org_node_id %}
@@ -102,7 +102,7 @@
           <script type="application/json" id="dynamicSavedPresetsData">{{ (dynamic_presets|default([], true))|tojson }}</script>
           <div class="border rounded-3 p-3 bg-light mb-3" id="dynamicSavedPresetsBox">
             <div class="fw-bold mb-2"><i class="bi bi-bookmark-star"></i> مساراتي الديناميكية المحفوظة</div>
-            <div class="small text-muted mb-3">هذه المسارات محفوظة في ملفك أنت فقط، ولا تظهر لبقية المستخدمين.</div>
+            <div class="small text-muted mb-3">ابدأ من هنا إذا أردت استخدام مسار سابق أو تعديله. هذه المسارات خاصة بملفك ولا تظهر لبقية المستخدمين.</div>
             <div class="row g-2 align-items-end">
               <div class="col-12 col-lg-6">
                 <label class="form-label" for="dynamicSavedPresetSelect">المسار المحفوظ</label>
@@ -119,19 +119,8 @@
                   </button>
                 </div>
               </div>
-              <div class="col-12 col-lg-8">
-                <label class="form-label" for="dynamicPresetName">اسم المسار للحفظ</label>
-                <input type="text" class="form-control" id="dynamicPresetName" maxlength="160"
-                       placeholder="مثال: مسار طلبات الموارد البشرية">
-              </div>
-              <div class="col-12 col-lg-4">
-                <button type="button" class="btn btn-success w-100" id="dynamicSavePreset"
-                        data-url="{{ url_for('workflow.save_dynamic_path_preset') }}">
-                  <i class="bi bi-bookmark-plus"></i> حفظ المسار في ملفي
-                </button>
-              </div>
             </div>
-            <div class="small mt-2 d-none" id="dynamicPresetStatus" role="status"></div>
+            <div class="small mt-2 d-none" id="dynamicPresetLoadStatus" role="status"></div>
           </div>
           {% if dynamic_choices or dynamic_org_nodes %}
             <script type="application/json" id="dynamicOrgNodesData">{{ (dynamic_org_nodes|default([], true))|tojson }}</script>
@@ -246,6 +235,41 @@
           <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي جهة أو شخص بعد.</span></div>
           <ol class="list-group mt-3 d-none" id="dynamicSelectedList"></ol>
           <div class="mt-3 d-none" id="dynamicPathPreview"></div>
+
+          <div class="border rounded-3 p-3 mt-3 bg-white">
+            <div class="fw-bold mb-2"><i class="bi bi-person-check"></i> هل تريد إضافة الأمين العام كآخر خطوة؟</div>
+            <div class="d-flex flex-wrap gap-4">
+              <div class="form-check">
+                <input class="form-check-input dynamic-secretary-choice" type="radio"
+                       name="dynamic_add_secretary_general" id="dynamicSecretaryNo" value="0" checked>
+                <label class="form-check-label" for="dynamicSecretaryNo">لا</label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input dynamic-secretary-choice" type="radio"
+                       name="dynamic_add_secretary_general" id="dynamicSecretaryYes" value="1">
+                <label class="form-check-label" for="dynamicSecretaryYes">نعم، أضفه في النهاية</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="border border-success rounded-3 p-3 bg-success bg-opacity-10 mt-3" id="dynamicSavePresetBox">
+            <div class="fw-bold mb-2"><i class="bi bi-bookmark-plus"></i> حفظ المسار الحالي</div>
+            <div class="small text-muted mb-3">بعد الانتهاء من إنشاء المسار أو تعديل المسار المحفوظ، يمكنك حفظ النتيجة لاستخدامها لاحقًا.</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-lg-8">
+                <label class="form-label" for="dynamicPresetName">اسم المسار للحفظ</label>
+                <input type="text" class="form-control" id="dynamicPresetName" maxlength="160"
+                       placeholder="مثال: مسار طلبات الموارد البشرية">
+              </div>
+              <div class="col-12 col-lg-4">
+                <button type="button" class="btn btn-success w-100" id="dynamicSavePreset"
+                        data-url="{{ url_for('workflow.save_dynamic_path_preset') }}">
+                  <i class="bi bi-bookmark-plus"></i> حفظ المسار في ملفي
+                </button>
+              </div>
+            </div>
+            <div class="small mt-2 d-none" id="dynamicPresetSaveStatus" role="status"></div>
+          </div>
         </div>
       </div>
 
@@ -588,7 +612,10 @@
     const deletePresetButton = document.getElementById('dynamicDeletePreset');
     const savePresetButton = document.getElementById('dynamicSavePreset');
     const presetNameInput = document.getElementById('dynamicPresetName');
-    const presetStatus = document.getElementById('dynamicPresetStatus');
+    const presetLoadStatus = document.getElementById('dynamicPresetLoadStatus');
+    const presetSaveStatus = document.getElementById('dynamicPresetSaveStatus');
+    const secretaryChoices = Array.from(document.querySelectorAll('.dynamic-secretary-choice'));
+    const finalSecretaryGeneralRef = 'FINAL_SECRETARY_GENERAL';
     const selected = [];
     let browserMode = 'org';
     let currentOrgNodeId = null;
@@ -609,6 +636,21 @@
       savedPresets = [];
     }
     const orgNodesById = new Map(orgNodes.map(node => [String(node.id), node]));
+
+    function nodeTargetRef(nodeId, routeStartId){
+      const base = 'NODE:' + String(nodeId);
+      return routeStartId ? base + '@' + String(routeStartId) : base;
+    }
+
+    function selectedNodeIndex(nodeId){
+      return selected.findIndex(item => item.kind === 'NODE' && String(item.id) === String(nodeId));
+    }
+
+    function selectableRouteStarts(node){
+      return Array.isArray(node && node.route_start_options)
+        ? node.route_start_options.filter(option => option && option.can_start)
+        : [];
+    }
 
     function isDynamic(){
       return Boolean(dynamicRadio && dynamicRadio.checked);
@@ -643,10 +685,21 @@
       return field ? field.value : '';
     }
 
-    function setPresetStatus(message, level){
-      if (!presetStatus) return;
-      presetStatus.textContent = message || '';
-      presetStatus.className = 'small mt-2 ' + (message ? 'text-' + (level || 'muted') : 'd-none');
+    function includeSecretaryGeneral(){
+      const selectedChoice = secretaryChoices.find(control => control.checked);
+      return Boolean(selectedChoice && selectedChoice.value === '1');
+    }
+
+    function setIncludeSecretaryGeneral(include){
+      secretaryChoices.forEach(function(control){
+        control.checked = include ? control.value === '1' : control.value === '0';
+      });
+    }
+
+    function setPresetStatus(statusElement, message, level){
+      if (!statusElement) return;
+      statusElement.textContent = message || '';
+      statusElement.className = 'small mt-2 ' + (message ? 'text-' + (level || 'muted') : 'd-none');
     }
 
     function renderSavedPresets(selectedId){
@@ -671,14 +724,22 @@
     function loadPreset(preset){
       if (!preset) return;
       selected.splice(0, selected.length);
+      setIncludeSecretaryGeneral(false);
       const missingRefs = [];
       (preset.target_refs || []).forEach(function(targetRef){
+        if (String(targetRef || '').toUpperCase() === finalSecretaryGeneralRef) {
+          setIncludeSecretaryGeneral(true);
+          return;
+        }
         const parts = String(targetRef || '').split(':');
         const kind = (parts[0] || '').toUpperCase();
-        const targetId = parts[1] || '';
+        const targetSpec = parts[1] || '';
+        const targetParts = targetSpec.split('@');
+        const targetId = targetParts[0] || '';
+        const routeStartId = targetParts[1] || '';
         if (kind === 'NODE') {
           const node = orgNodesById.get(String(targetId));
-          if (!node || !node.can_select || !addSelectedOrgNode(node)) missingRefs.push(targetRef);
+          if (!node || !node.can_select || !addSelectedOrgNode(node, routeStartId)) missingRefs.push(targetRef);
           return;
         }
         if (kind === 'USER') {
@@ -691,6 +752,7 @@
       if (presetNameInput) presetNameInput.value = preset.name || '';
       renderSelected();
       setPresetStatus(
+        presetLoadStatus,
         missingRefs.length
           ? 'تم تحميل المتاح، لكن بعض عناصر المسار لم تعد موجودة أو لم يعد لها مسؤول معتمد.'
           : 'تم تحميل المسار المحفوظ ويمكنك استخدامه أو تعديله.',
@@ -701,18 +763,19 @@
     async function saveCurrentPreset(){
       const name = (presetNameInput && presetNameInput.value || '').trim();
       if (!name) {
-        setPresetStatus('اكتب اسمًا للمسار قبل الحفظ.', 'danger');
+        setPresetStatus(presetSaveStatus, 'اكتب اسمًا للمسار قبل الحفظ.', 'danger');
         if (presetNameInput) presetNameInput.focus();
         return;
       }
       if (!selected.length) {
-        setPresetStatus('أضف جهة أو شخصًا واحدًا على الأقل قبل الحفظ.', 'danger');
+        setPresetStatus(presetSaveStatus, 'أضف جهة أو شخصًا واحدًا على الأقل قبل الحفظ.', 'danger');
         return;
       }
       syncHidden();
       const payload = new FormData();
       payload.append('name', name);
       payload.append('dynamic_target_refs', targetRefsField.value);
+      payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
       payload.append('csrf_token', csrfToken());
       savePresetButton.disabled = true;
       try {
@@ -728,9 +791,9 @@
         savedPresets = savedPresets.filter(preset => String(preset.id) !== String(result.preset.id));
         savedPresets.unshift(result.preset);
         renderSavedPresets(result.preset.id);
-        setPresetStatus(result.message, 'success');
+        setPresetStatus(presetSaveStatus, result.message, 'success');
       } catch (error) {
-        setPresetStatus(error.message || 'تعذر حفظ المسار.', 'danger');
+        setPresetStatus(presetSaveStatus, error.message || 'تعذر حفظ المسار.', 'danger');
       } finally {
         savePresetButton.disabled = selected.length === 0;
       }
@@ -756,10 +819,10 @@
         }
         savedPresets = savedPresets.filter(item => String(item.id) !== String(presetId));
         renderSavedPresets();
-        setPresetStatus(result.message, 'success');
+        setPresetStatus(presetLoadStatus, result.message, 'success');
       } catch (error) {
         renderSavedPresets(presetId);
-        setPresetStatus(error.message || 'تعذر حذف المسار.', 'danger');
+        setPresetStatus(presetLoadStatus, error.message || 'تعذر حذف المسار.', 'danger');
       }
     }
 
@@ -771,6 +834,27 @@
 
       selected.forEach(function(item, index){
         const listItem = document.createElement('li');
+        let routeStartControl = '';
+        if (item.kind === 'NODE') {
+          const startOptions = (item.routeStartOptions || []).map(function(option){
+            const optionLabel = String(option.position || '') + ' — ' +
+              (option.type_name ? option.type_name + ': ' : '') + (option.name || '') +
+              (option.can_start ? '' : ' — لا يوجد مسؤول معتمد');
+            return '<option value="' + String(option.id) + '" ' +
+              (String(option.id) === String(item.routeStartId) ? 'selected ' : '') +
+              (option.can_start ? '' : 'disabled ') + '>' + escapeHtml(optionLabel) + '</option>';
+          }).join('');
+          routeStartControl =
+            '<div class="border rounded-3 p-2 mt-2 bg-light">' +
+              '<label class="form-label small fw-bold mb-1" for="dynamicRouteStart' + index + '">' +
+                '<i class="bi bi-signpost-split"></i> التسلسل الإداري يبدأ من' +
+              '</label>' +
+              '<select class="form-select form-select-sm dynamic-route-start" id="dynamicRouteStart' + index + '" data-index="' + index + '">' +
+                startOptions +
+              '</select>' +
+              '<div class="form-text">المستويان الأول والثاني في أعلى الهيكل مستبعدان تلقائياً.</div>' +
+            '</div>';
+        }
         listItem.className = 'list-group-item border border-primary rounded-3 mb-2 d-flex justify-content-between align-items-start gap-3 flex-wrap flex-md-nowrap';
         listItem.innerHTML =
           '<div class="d-flex align-items-start gap-3 flex-grow-1" style="min-width:0">' +
@@ -778,10 +862,10 @@
             '<div class="flex-grow-1" style="min-width:0">' +
               '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
               '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + (item.kind === 'NODE' ? 'bi-building' : 'bi-briefcase') + '"></i> ' + escapeHtml(item.title || (item.kind === 'NODE' ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل')) + '</div>' +
-              '<div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere"><i class="bi bi-diagram-3"></i> ' + escapeHtml(item.node) + '</div>' +
+            routeStartControl +
             (item.team ? '<span class="badge bg-info-subtle text-info-emphasis border mt-1"><i class="bi bi-people-fill"></i> ' + escapeHtml(item.team) + '</span> ' : '') +
             '<span class="badge mt-1 ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
-              (item.kind === 'NODE' ? 'جهة تنظيمية — الاعتماد لدى مسؤولها' : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
+              (item.kind === 'NODE' ? 'يبدأ من: ' + escapeHtml(item.routeStartName || '') : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
             '</span>' +
             '</div>' +
           '</div>' +
@@ -820,20 +904,28 @@
       return true;
     }
 
-    function addSelectedOrgNode(node){
+    function addSelectedOrgNode(node, preferredRouteStartId){
       if (!node || !node.can_select) return true;
-      const targetRef = 'NODE:' + String(node.id);
-      if (selected.some(item => item.ref === targetRef)) return true;
+      if (selectedNodeIndex(node.id) >= 0) return true;
       if (selected.length >= 20) return false;
+      const availableStarts = selectableRouteStarts(node);
+      if (!availableStarts.length) return false;
+      const routeStart = preferredRouteStartId
+        ? availableStarts.find(option => String(option.id) === String(preferredRouteStartId))
+        : availableStarts[0];
+      if (!routeStart) return false;
       selected.push({
-        ref: targetRef,
+        ref: nodeTargetRef(node.id, routeStart.id),
         kind: 'NODE',
         id: String(node.id),
         name: (node.type_name ? node.type_name + ': ' : '') + (node.name || ''),
         title: (node.manager_role || 'مسؤول') + ': ' + (node.manager_name || ''),
         node: node.node_label || node.name || '',
         team: '',
-        sameAdmin: Boolean(node.same_administration)
+        sameAdmin: Boolean(node.same_administration),
+        routeStartId: String(routeStart.id),
+        routeStartName: (routeStart.type_name ? routeStart.type_name + ': ' : '') + (routeStart.name || ''),
+        routeStartOptions: Array.isArray(node.route_start_options) ? node.route_start_options : []
       });
       return true;
     }
@@ -846,7 +938,7 @@
     function syncNodeSelectionButtons(){
       document.querySelectorAll('[data-select-org-node-id]').forEach(function(button){
         if (button.disabled) return;
-        const isSelected = selected.some(item => item.ref === 'NODE:' + button.dataset.selectOrgNodeId);
+        const isSelected = selectedNodeIndex(button.dataset.selectOrgNodeId) >= 0;
         button.classList.toggle('btn-success', isSelected);
         button.classList.toggle('btn-outline-success', !isSelected);
         button.innerHTML = isSelected
@@ -904,7 +996,8 @@
         addCurrentOrgNodeButton.disabled = !currentNode || !currentNode.can_select;
         addCurrentOrgNodeButton.dataset.selectOrgNodeId = currentNode ? String(currentNode.id) : '';
         if (currentNode && !currentNode.can_select) {
-          addCurrentOrgNodeButton.innerHTML = '<i class="bi bi-exclamation-circle"></i> لا يوجد مسؤول معتمد';
+          addCurrentOrgNodeButton.innerHTML = '<i class="bi bi-exclamation-circle"></i> ' +
+            escapeHtml(currentNode.unavailable_reason || 'لا يمكن إضافة هذه الجهة إلى المسار');
         }
       }
 
@@ -917,9 +1010,10 @@
             '<span class="badge bg-primary-subtle text-primary-emphasis border mb-2">' + escapeHtml(node.type_name || 'جهة إدارية') + '</span>' +
             '<span class="d-block fw-bold text-break">' + escapeHtml(node.name) + '</span>' +
             '<span class="d-block small text-muted mt-2"><i class="bi bi-person"></i> ' + String(node.total_user_count || 0) + ' موظف ضمن هذه الجهة</span>' +
-            '<span class="d-block small mt-2 ' + (node.can_select ? 'text-success' : 'text-danger') + '"><i class="bi bi-person-badge"></i> ' +
-              (node.can_select ? escapeHtml((node.manager_role || 'مسؤول') + ': ' + (node.manager_name || '')) : 'لا يوجد مسؤول أو نائب مسؤول معتمد') +
+            '<span class="d-block small mt-2 ' + (node.has_manager ? 'text-success' : 'text-danger') + '"><i class="bi bi-person-badge"></i> ' +
+              (node.has_manager ? escapeHtml((node.manager_role || 'مسؤول') + ': ' + (node.manager_name || '')) : 'لا يوجد مسؤول أو نائب مسؤول معتمد') +
             '</span>' +
+            (!node.can_select ? '<span class="d-block small text-warning mt-1"><i class="bi bi-info-circle"></i> ' + escapeHtml(node.unavailable_reason || '') + '</span>' : '') +
             '<div class="btn-group btn-group-sm w-100 mt-3">' +
               '<button type="button" class="btn btn-outline-primary" data-org-node-id="' + String(node.id) + '"><i class="bi bi-folder2-open"></i> فتح</button>' +
               '<button type="button" class="btn ' + (node.can_select ? 'btn-outline-success' : 'btn-outline-secondary') + '" data-select-org-node-id="' + String(node.id) + '" ' + (node.can_select ? '' : 'disabled') + '>' +
@@ -991,6 +1085,7 @@
       previewBox.innerHTML = '<div class="text-muted small">جاري بناء التسلسل الإداري…</div>';
       const payload = new FormData();
       payload.append('dynamic_target_refs', targetRefsField.value);
+      payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
       const csrfField = form.querySelector('[name="csrf_token"]');
       if (csrfField) payload.append('csrf_token', csrfField.value);
       try {
@@ -1014,7 +1109,8 @@
               '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
               '<div style="min-width:0"><strong class="d-block text-break">' + escapeHtml(step.label) + '</strong>' +
               '<div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> ' + escapeHtml(step.job_title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
-              '<div class="small text-muted mt-1">' + escapeHtml(step.reason) + '</div></div></div>';
+              (step.reason ? '<div class="small text-muted mt-1">' + escapeHtml(step.reason) + '</div>' : '') +
+              '</div></div>';
           });
           html += '</div>';
         }
@@ -1035,7 +1131,7 @@
       const hasSelection = Boolean(savedPresetSelect.value);
       loadPresetButton.disabled = !hasSelection;
       deletePresetButton.disabled = !hasSelection;
-      setPresetStatus('', 'muted');
+      setPresetStatus(presetLoadStatus, '', 'muted');
     });
     if (loadPresetButton) loadPresetButton.addEventListener('click', function(){
       const preset = savedPresets.find(item => String(item.id) === String(savedPresetSelect.value));
@@ -1043,6 +1139,9 @@
     });
     if (savePresetButton) savePresetButton.addEventListener('click', saveCurrentPreset);
     if (deletePresetButton) deletePresetButton.addEventListener('click', deleteCurrentPreset);
+    secretaryChoices.forEach(function(control){
+      control.addEventListener('change', schedulePreview);
+    });
     browserTabs.forEach(function(tab){
       tab.addEventListener('click', function(){
         setBrowserMode(tab.dataset.browserMode);
@@ -1060,11 +1159,11 @@
       if (!button || button.disabled) return;
       const node = orgNodesById.get(String(button.dataset.selectOrgNodeId));
       if (!node) return;
-      const targetRef = 'NODE:' + String(node.id);
-      if (selected.some(item => item.ref === targetRef)) {
-        removeSelectedTarget(targetRef);
+      const existingIndex = selectedNodeIndex(node.id);
+      if (existingIndex >= 0) {
+        selected.splice(existingIndex, 1);
       } else if (!addSelectedOrgNode(node)) {
-        window.alert('يمكن اختيار 20 جهة أو شخصاً كحد أقصى.');
+        window.alert(node.unavailable_reason || 'يمكن اختيار 20 جهة أو شخصاً كحد أقصى.');
         return;
       }
       renderSelected();
@@ -1112,6 +1211,22 @@
         removeSelectedTarget('USER:' + checkbox.dataset.id);
         checkbox.checked = false;
       });
+      renderSelected();
+    });
+    if (selectedList) selectedList.addEventListener('change', function(event){
+      const control = event.target.closest('.dynamic-route-start');
+      if (!control) return;
+      const index = Number(control.dataset.index);
+      if (!Number.isInteger(index) || index < 0 || index >= selected.length) return;
+      const item = selected[index];
+      if (!item || item.kind !== 'NODE') return;
+      const routeStart = (item.routeStartOptions || []).find(
+        option => option.can_start && String(option.id) === String(control.value)
+      );
+      if (!routeStart) return;
+      item.routeStartId = String(routeStart.id);
+      item.routeStartName = (routeStart.type_name ? routeStart.type_name + ': ' : '') + (routeStart.name || '');
+      item.ref = nodeTargetRef(item.id, item.routeStartId);
       renderSelected();
     });
     if (selectedList) selectedList.addEventListener('click', function(event){

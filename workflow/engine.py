@@ -22,6 +22,7 @@ from models import (
     Directorate,
     CommitteeAssignee,
     OrgUnitManager,
+    OrgNode,
     OrgNodeManager,
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
@@ -493,6 +494,71 @@ def resolve_parallel_candidate_user_ids(
         req,
         {int(uid) for uid in assignees if uid},
     ))
+
+
+def resolve_dynamic_branch_steps(
+    inst: WorkflowInstance,
+    current_step: WorkflowInstanceStep,
+) -> list[WorkflowInstanceStep]:
+    """Return sibling dynamic targets that the shared parent manager must route to.
+
+    Dynamic workflows are stored as a flat sequence.  When two or more
+    consecutive ORG_NODE targets share the same parent, the manager of that
+    parent is the routing decision point.  The manager selects exactly one
+    target; the remaining sibling targets are skipped for this request.
+    """
+    if not inst or not current_step or getattr(inst, "template_id", None) is not None:
+        return []
+    if (getattr(current_step, "status", "") or "").strip().upper() != "PENDING":
+        return []
+    if _is_parallel_sync(current_step):
+        return []
+
+    following_steps = (
+        WorkflowInstanceStep.query
+        .filter(
+            WorkflowInstanceStep.instance_id == int(inst.id),
+            WorkflowInstanceStep.step_order > int(current_step.step_order),
+            WorkflowInstanceStep.status == "PENDING",
+        )
+        .order_by(WorkflowInstanceStep.step_order.asc())
+        .all()
+    )
+    if not following_steps:
+        return []
+
+    expected_order = int(current_step.step_order) + 1
+    first_step = following_steps[0]
+    if int(first_step.step_order) != expected_order:
+        return []
+    if (getattr(first_step, "approver_kind", "") or "").strip().upper() != "ORG_NODE":
+        return []
+
+    first_node = db.session.get(OrgNode, int(first_step.approver_org_node_id or 0))
+    parent_id = int(getattr(first_node, "parent_id", 0) or 0)
+    if not parent_id:
+        return []
+
+    candidates: list[WorkflowInstanceStep] = []
+    for candidate in following_steps:
+        if int(candidate.step_order) != expected_order:
+            break
+        if (getattr(candidate, "approver_kind", "") or "").strip().upper() != "ORG_NODE":
+            break
+        node = db.session.get(OrgNode, int(candidate.approver_org_node_id or 0))
+        if not node or int(getattr(node, "parent_id", 0) or 0) != parent_id:
+            break
+        candidates.append(candidate)
+        expected_order += 1
+
+    if len(candidates) < 2:
+        return []
+
+    parent_manager_ids = set(_resolve_users_by_kind("ORG_NODE", org_node_id=parent_id))
+    current_approver_ids = set(_resolve_approver_users(current_step))
+    if not parent_manager_ids.intersection(current_approver_ids):
+        return []
+    return candidates
 
 
 def _ensure_parallel_tasks(
@@ -1250,6 +1316,7 @@ def decide_step(
     on_behalf_of_id: int | None = None,
     delegation_id: int | None = None,
     authorized_parallel_user_ids=None,
+    selected_dynamic_branch_step_order=None,
 ):
     """
     Approve/Reject a step.
@@ -1393,7 +1460,25 @@ def decide_step(
     # SEQUENTIAL: approval decision drives routing
     # -------------------------------------------------
     next_step_for_authorization = None
+    dynamic_branch_steps: list[WorkflowInstanceStep] = []
+    selected_dynamic_branch_step = None
     if decision == "APPROVED":
+        dynamic_branch_steps = resolve_dynamic_branch_steps(inst, step)
+        if dynamic_branch_steps:
+            try:
+                selected_branch_order = int(selected_dynamic_branch_step_order)
+            except (TypeError, ValueError):
+                raise ValueError("اختر دائرة واحدة لتوجيه المسار إليها")
+            selected_dynamic_branch_step = next(
+                (
+                    branch_step for branch_step in dynamic_branch_steps
+                    if int(branch_step.step_order) == selected_branch_order
+                ),
+                None,
+            )
+            if not selected_dynamic_branch_step:
+                raise ValueError("الدائرة المختارة ليست ضمن فروع المسار المتاحة")
+
         next_step_for_authorization = WorkflowInstanceStep.query.filter_by(
             instance_id=inst.id,
             step_order=step_order + 1,
@@ -1466,12 +1551,58 @@ def decide_step(
             db.session.commit()
         return
 
+    if selected_dynamic_branch_step:
+        branch_decided_at = datetime.utcnow()
+        skipped_labels: list[str] = []
+        for branch_step in dynamic_branch_steps:
+            if int(branch_step.step_order) == int(selected_dynamic_branch_step.step_order):
+                continue
+            branch_step.status = "SKIPPED"
+            branch_step.decided_by_id = effective_user_id
+            branch_step.decided_at = branch_decided_at
+            branch_step.note = (
+                f"تم استبعاد هذا الفرع عند توجيه المسار من الخطوة {step_order}."
+            )
+            skipped_labels.append(
+                branch_step.routing_label or f"الخطوة {branch_step.step_order}"
+            )
+            db.session.add(branch_step)
+
+        selected_label = (
+            selected_dynamic_branch_step.routing_label
+            or f"الخطوة {selected_dynamic_branch_step.step_order}"
+        )
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=actor_user_id,
+            on_behalf_of_id=on_behalf_of_id,
+            delegation_id=delegation_id,
+            action="DYNAMIC_BRANCH_SELECTED",
+            old_status=None,
+            new_status=None,
+            note=(
+                f"تم توجيه المسار إلى «{selected_label}»"
+                + (f" واستبعاد: {', '.join(skipped_labels)}" if skipped_labels else "")
+            ),
+            target_type="WORKFLOW_INSTANCE_STEP",
+            target_id=selected_dynamic_branch_step.id,
+        ))
+
     # move to next step
-    next_order = step_order + 1
-    next_step = WorkflowInstanceStep.query.filter_by(
-        instance_id=inst.id,
-        step_order=next_order
-    ).first()
+    if selected_dynamic_branch_step:
+        next_step = selected_dynamic_branch_step
+    else:
+        next_step = (
+            WorkflowInstanceStep.query
+            .filter(
+                WorkflowInstanceStep.instance_id == inst.id,
+                WorkflowInstanceStep.step_order > int(step_order),
+                WorkflowInstanceStep.status == "PENDING",
+            )
+            .order_by(WorkflowInstanceStep.step_order.asc())
+            .first()
+        )
+    next_order = int(next_step.step_order) if next_step else int(step_order) + 1
 
     if not next_step:
         req.status = "APPROVED"

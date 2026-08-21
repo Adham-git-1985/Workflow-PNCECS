@@ -304,12 +304,10 @@
     {% set route_user = users_map.get(s.approver_user_id) if s.approver_user_id else None %}
     {% set route_name = s.routing_label or (route_user.full_name if route_user else None) or (route_user.email if route_user else None) or ('#' ~ s.approver_user_id) %}
     {% set route_title = s.routing_job_title or (route_user.job_title if route_user else None) %}
-    {% set route_node = s.routing_node_label or (user_org_path_map.get(s.approver_user_id) if user_org_path_map else None) %}
     <div class="border-start border-4 border-primary ps-2 mt-1">
       <div><span class="badge bg-secondary me-1">مستخدم</span> <strong class="text-body">{{ route_name }}</strong></div>
       <div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> {{ route_title or 'لا يوجد مسمى وظيفي مسجل' }}</div>
       {% if route_user and route_user.email %}<div class="small text-muted" dir="ltr">{{ route_user.email }}</div>{% endif %}
-      {% if route_node %}<div class="small text-muted mt-1 text-break"><i class="bi bi-diagram-3"></i> {{ route_node }}</div>{% endif %}
       {% if s.routing_reason %}
         <div class="small mt-2"><span class="badge bg-primary-subtle text-primary border">سبب الإضافة</span> {{ s.routing_reason }}</div>
       {% elif not template %}
@@ -668,6 +666,33 @@
                   لا يوجد مرشح مخوّل في قالب الخطوة التالية؛ لن يقبل النظام المتابعة قبل معالجة إعدادات القالب.
                 </div>
               {% endif %}
+            </div>
+          {% endif %}
+
+          {% if next_dynamic_branch_steps %}
+            <div class="border border-primary rounded p-3 mb-3 bg-primary bg-opacity-10">
+              <div class="fw-bold mb-1">توجيه المسار إلى إحدى الدوائر التالية</div>
+              <div class="small text-muted mb-3">
+                اختر دائرة واحدة فقط. سيستمر المسار إلى الدائرة المختارة، ولن يُوجّه إلى الدوائر الأخرى.
+              </div>
+              <div class="row g-2">
+                {% for branch_step in next_dynamic_branch_steps %}
+                  <div class="col-md-6">
+                    <label class="border rounded bg-white p-2 d-flex gap-2 align-items-start h-100">
+                      <input class="form-check-input mt-1"
+                             type="radio"
+                             name="dynamic_branch_step_order"
+                             value="{{ branch_step.step_order }}"
+                             {% if loop.first %}checked{% endif %}
+                             required>
+                      <span class="fw-semibold">
+                        {{ branch_step.routing_label or ('الخطوة ' ~ branch_step.step_order) }}
+                      </span>
+                    </label>
+                  </div>
+                {% endfor %}
+              </div>
+              <div class="form-text">يُحفظ اختيار الدائرة واستبعاد الفروع الأخرى في سجل التدقيق.</div>
             </div>
           {% endif %}
 
