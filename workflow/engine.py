@@ -509,8 +509,8 @@ def resolve_dynamic_branch_steps(
 
     Dynamic workflows are stored as a flat sequence.  When two or more
     consecutive ORG_NODE targets share the same parent, the manager of that
-    parent is the routing decision point.  The manager selects exactly one
-    target; the remaining sibling targets are skipped for this request.
+    parent is the routing decision point.  The manager selects one or more
+    targets; the remaining sibling targets are skipped for this request.
     """
     if not inst or not current_step or getattr(inst, "template_id", None) is not None:
         return []
@@ -1322,6 +1322,7 @@ def decide_step(
     delegation_id: int | None = None,
     authorized_parallel_user_ids=None,
     selected_dynamic_branch_step_order=None,
+    selected_dynamic_branch_step_orders=None,
 ):
     """
     Approve/Reject a step.
@@ -1466,23 +1467,40 @@ def decide_step(
     # -------------------------------------------------
     next_step_for_authorization = None
     dynamic_branch_steps: list[WorkflowInstanceStep] = []
-    selected_dynamic_branch_step = None
+    selected_dynamic_branch_steps: list[WorkflowInstanceStep] = []
     if decision == "APPROVED":
         dynamic_branch_steps = resolve_dynamic_branch_steps(inst, step)
         if dynamic_branch_steps:
+            raw_selected_orders = selected_dynamic_branch_step_orders
+            if raw_selected_orders is None:
+                raw_selected_orders = (
+                    [selected_dynamic_branch_step_order]
+                    if selected_dynamic_branch_step_order is not None
+                    else []
+                )
+            elif isinstance(raw_selected_orders, (str, int)):
+                raw_selected_orders = [raw_selected_orders]
             try:
-                selected_branch_order = int(selected_dynamic_branch_step_order)
+                selected_branch_orders = {
+                    int(branch_order)
+                    for branch_order in raw_selected_orders
+                    if str(branch_order).strip()
+                }
             except (TypeError, ValueError):
-                raise ValueError("اختر دائرة واحدة لتوجيه المسار إليها")
-            selected_dynamic_branch_step = next(
-                (
-                    branch_step for branch_step in dynamic_branch_steps
-                    if int(branch_step.step_order) == selected_branch_order
-                ),
-                None,
-            )
-            if not selected_dynamic_branch_step:
-                raise ValueError("الدائرة المختارة ليست ضمن فروع المسار المتاحة")
+                raise ValueError("اختر دائرة واحدة على الأقل لتوجيه المسار إليها")
+            if not selected_branch_orders:
+                raise ValueError("اختر دائرة واحدة على الأقل لتوجيه المسار إليها")
+
+            available_branch_orders = {
+                int(branch_step.step_order) for branch_step in dynamic_branch_steps
+            }
+            if not selected_branch_orders.issubset(available_branch_orders):
+                raise ValueError("إحدى الدوائر المختارة ليست ضمن فروع المسار المتاحة")
+            selected_dynamic_branch_steps = [
+                branch_step
+                for branch_step in dynamic_branch_steps
+                if int(branch_step.step_order) in selected_branch_orders
+            ]
 
         next_step_for_authorization = WorkflowInstanceStep.query.filter_by(
             instance_id=inst.id,
@@ -1556,11 +1574,14 @@ def decide_step(
             db.session.commit()
         return
 
-    if selected_dynamic_branch_step:
+    if selected_dynamic_branch_steps:
         branch_decided_at = datetime.utcnow()
+        selected_branch_orders = {
+            int(branch_step.step_order) for branch_step in selected_dynamic_branch_steps
+        }
         skipped_labels: list[str] = []
         for branch_step in dynamic_branch_steps:
-            if int(branch_step.step_order) == int(selected_dynamic_branch_step.step_order):
+            if int(branch_step.step_order) in selected_branch_orders:
                 continue
             branch_step.status = "SKIPPED"
             branch_step.decided_by_id = effective_user_id
@@ -1573,10 +1594,10 @@ def decide_step(
             )
             db.session.add(branch_step)
 
-        selected_label = (
-            selected_dynamic_branch_step.routing_label
-            or f"الخطوة {selected_dynamic_branch_step.step_order}"
-        )
+        selected_labels = [
+            branch_step.routing_label or f"الخطوة {branch_step.step_order}"
+            for branch_step in selected_dynamic_branch_steps
+        ]
         db.session.add(AuditLog(
             request_id=req.id,
             user_id=actor_user_id,
@@ -1586,16 +1607,16 @@ def decide_step(
             old_status=None,
             new_status=None,
             note=(
-                f"تم توجيه المسار إلى «{selected_label}»"
+                f"تم توجيه المسار إلى: {', '.join(selected_labels)}"
                 + (f" واستبعاد: {', '.join(skipped_labels)}" if skipped_labels else "")
             ),
             target_type="WORKFLOW_INSTANCE_STEP",
-            target_id=selected_dynamic_branch_step.id,
+            target_id=selected_dynamic_branch_steps[0].id,
         ))
 
     # move to next step
-    if selected_dynamic_branch_step:
-        next_step = selected_dynamic_branch_step
+    if selected_dynamic_branch_steps:
+        next_step = selected_dynamic_branch_steps[0]
     else:
         next_step = (
             WorkflowInstanceStep.query

@@ -5019,7 +5019,11 @@ def decide_request_step(request_id, step_order):
     decision = (request.form.get("decision") or "").strip().upper()
     note = (request.form.get("note") or "").strip()
     authorized_parallel_user_ids = request.form.getlist("parallel_assignee_ids")
-    selected_dynamic_branch_step_order = request.form.get("dynamic_branch_step_order")
+    selected_dynamic_branch_step_orders = request.form.getlist("dynamic_branch_step_orders")
+    if not selected_dynamic_branch_step_orders:
+        legacy_branch_order = request.form.get("dynamic_branch_step_order")
+        if legacy_branch_order:
+            selected_dynamic_branch_step_orders = [legacy_branch_order]
 
     if decision not in ("APPROVED", "REJECTED"):
         flash("قرار غير صالح.", "danger")
@@ -5036,7 +5040,7 @@ def decide_request_step(request_id, step_order):
                   on_behalf_of_id=(acting_user.id if acting_user.id != current_user.id else None),
                    delegation_id=(delegation.id if delegation and acting_user.id != current_user.id else None),
                    authorized_parallel_user_ids=authorized_parallel_user_ids,
-                   selected_dynamic_branch_step_order=selected_dynamic_branch_step_order)
+                   selected_dynamic_branch_step_orders=selected_dynamic_branch_step_orders)
         sync_correspondence_from_workflow(
             req,
             actor_user_id=current_user.id,

@@ -174,10 +174,30 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             self.department_a1.type,
             self.directorate_a,
         )
+        general_administration = self._node(
+            "الإدارة العامة للبرامج والمشاريع",
+            self.directorate_a.type,
+            self.root,
+        )
+        assistant_secretary = self._node(
+            "مساعد الأمين العام للمنظمات والبرامج والمشاريع",
+            self.directorate_a.type,
+            self.root,
+        )
         db.session.add(OrgNodeManager(
             node_id=second_managed_node.id,
             deputy_user_id=self.source_manager.id,
         ))
+        db.session.add_all([
+            OrgNodeManager(
+                node_id=general_administration.id,
+                manager_user_id=self.source_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=assistant_secretary.id,
+                manager_user_id=self.source_manager.id,
+            ),
+        ])
         db.session.commit()
 
         self.assertEqual(
@@ -193,6 +213,35 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 routing_node_label=node_path_label(second_managed_node),
             ),
             "نائب مدير دائرة: دائرة إضافية",
+        )
+        self.assertEqual(
+            hierarchy_position_label(
+                self.source_manager,
+                routing_node_label=node_path_label(general_administration),
+            ),
+            "مدير عام الإدارة العامة للبرامج والمشاريع",
+        )
+        self.assertEqual(
+            hierarchy_position_label(
+                self.source_manager,
+                routing_node_label=node_path_label(assistant_secretary),
+            ),
+            "مساعد الأمين العام للمنظمات والبرامج والمشاريع",
+        )
+
+        db.session.add(OrgNodeAssignment(
+            user_id=self.source_manager.id,
+            node_id=second_managed_node.id,
+            is_primary=False,
+            title="القائم بأعمال مدير الدائرة",
+        ))
+        db.session.commit()
+        self.assertEqual(
+            hierarchy_position_label(
+                self.source_manager,
+                routing_node_label=node_path_label(second_managed_node),
+            ),
+            "القائم بأعمال مدير الدائرة",
         )
 
     def test_multiple_sibling_entities_can_be_added_in_selected_order(self):
@@ -469,8 +518,13 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(resolve_step_approver_user_ids(step), [self.same_target.id])
         self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
 
-    def test_shared_manager_selects_one_sibling_branch_and_other_is_skipped(self):
+    def test_shared_manager_selects_multiple_sibling_branches_and_others_are_skipped(self):
         shared_manager = self._user("shared-manager@example.test", "مدير الإدارة العامة")
+        third_branch_node = self._node(
+            "دائرة ثالثة",
+            self.department_a1.type,
+            self.directorate_a,
+        )
         db.session.add_all([
             OrgNodeManager(
                 node_id=self.directorate_a.id,
@@ -479,6 +533,10 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             OrgNodeManager(
                 node_id=self.department_a2.id,
                 manager_user_id=self.same_target.id,
+            ),
+            OrgNodeManager(
+                node_id=third_branch_node.id,
+                manager_user_id=self.cross_target.id,
             ),
         ])
         request = WorkflowRequest(
@@ -515,6 +573,13 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                     "approver_org_node_id": self.department_a2.id,
                     "label": f"دائرة: {self.department_a2.name_ar}",
                 },
+                {
+                    "step_order": 4,
+                    "mode": "SEQUENTIAL",
+                    "approver_kind": "ORG_NODE",
+                    "approver_org_node_id": third_branch_node.id,
+                    "label": f"دائرة: {third_branch_node.name_ar}",
+                },
             ],
         )
         db.session.flush()
@@ -526,10 +591,10 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         ).one()
         self.assertEqual(
             [step.step_order for step in resolve_dynamic_branch_steps(instance, current_step)],
-            [2, 3],
+            [2, 3, 4],
         )
 
-        with self.assertRaisesRegex(ValueError, "اختر دائرة واحدة"):
+        with self.assertRaisesRegex(ValueError, "اختر دائرة واحدة على الأقل"):
             decide_step(
                 request.id,
                 1,
@@ -544,21 +609,26 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             shared_manager.id,
             "APPROVED",
             auto_commit=False,
-            selected_dynamic_branch_step_order=3,
+            selected_dynamic_branch_step_orders=[2, 4],
         )
         db.session.flush()
 
-        first_branch = WorkflowInstanceStep.query.filter_by(
+        first_selected_branch = WorkflowInstanceStep.query.filter_by(
             instance_id=instance.id,
             step_order=2,
         ).one()
-        selected_branch = WorkflowInstanceStep.query.filter_by(
+        skipped_branch = WorkflowInstanceStep.query.filter_by(
             instance_id=instance.id,
             step_order=3,
         ).one()
-        self.assertEqual(first_branch.status, "SKIPPED")
-        self.assertEqual(selected_branch.status, "PENDING")
-        self.assertEqual(instance.current_step_order, 3)
+        second_selected_branch = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+            step_order=4,
+        ).one()
+        self.assertEqual(first_selected_branch.status, "PENDING")
+        self.assertEqual(skipped_branch.status, "SKIPPED")
+        self.assertEqual(second_selected_branch.status, "PENDING")
+        self.assertEqual(instance.current_step_order, 2)
         self.assertIsNotNone(AuditLog.query.filter_by(
             request_id=request.id,
             action="DYNAMIC_BRANCH_SELECTED",
@@ -566,8 +636,18 @@ class DynamicWorkflowPathTests(unittest.TestCase):
 
         decide_step(
             request.id,
-            3,
-            self.same_target.id,
+            2,
+            self.source_manager.id,
+            "APPROVED",
+            auto_commit=False,
+        )
+        db.session.flush()
+        self.assertEqual(instance.current_step_order, 4)
+
+        decide_step(
+            request.id,
+            4,
+            self.cross_target.id,
             "APPROVED",
             auto_commit=False,
         )

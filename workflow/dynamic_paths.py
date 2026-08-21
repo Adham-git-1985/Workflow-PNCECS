@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from extensions import db
-from models import OrgNode, OrgNodeManager, OrgNodeType, Team, TeamMembership, User
+from models import OrgNode, OrgNodeAssignment, OrgNodeManager, OrgNodeType, Team, TeamMembership, User
 from utils.org_dynamic import resolve_user_org_node_id
 
 
@@ -124,10 +124,31 @@ def hierarchy_position_label(
         return ""
 
     node = selected_assignment.node
+    configured_position = (
+        OrgNodeAssignment.query
+        .filter_by(user_id=user_id, node_id=int(node.id))
+        .filter(OrgNodeAssignment.title.isnot(None))
+        .order_by(OrgNodeAssignment.is_primary.desc(), OrgNodeAssignment.id.asc())
+        .first()
+    )
+    if configured_position and (configured_position.title or "").strip():
+        return configured_position.title.strip()
+
     node_type_name = _node_type_name(node) or _node_type_code(node)
+    normalized_node_name = _normalized_org_text(node.name_ar)
+    assistant_secretary_label = _normalized_org_text("مساعد الأمين العام")
+    general_administration_label = _normalized_org_text("الإدارة العامة")
     if int(selected_assignment.manager_user_id or 0) == user_id:
+        if _node_type_code(node) == "SEC_GEN_ASSIST" or assistant_secretary_label in normalized_node_name:
+            return node.name_ar
+        if general_administration_label in normalized_node_name:
+            return f"مدير عام {node.name_ar}"
         role_name = "مدير"
     elif int(selected_assignment.deputy_user_id or 0) == user_id:
+        if _node_type_code(node) == "SEC_GEN_ASSIST" or assistant_secretary_label in normalized_node_name:
+            return f"نائب {node.name_ar}"
+        if general_administration_label in normalized_node_name:
+            return f"نائب المدير العام {node.name_ar}"
         role_name = "نائب مدير"
     else:
         return ""
