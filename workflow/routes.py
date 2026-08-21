@@ -129,6 +129,7 @@ from workflow.engine import (
     authorize_parallel_step,
     resolve_parallel_candidate_user_ids,
     resolve_dynamic_branch_steps,
+    resolve_step_approver_user_ids,
 )
 
 logger = logging.getLogger(__name__)
@@ -3053,6 +3054,37 @@ def work_dashboard():
                 is not None
             )
 
+        step_assignee_ids = []
+        if current_step:
+            if (current_step.mode or "").strip().upper() == "PARALLEL_SYNC" and inst:
+                step_assignee_ids = [
+                    int(user_id) for (user_id,) in (
+                        db.session.query(WorkflowStepTask.assignee_user_id)
+                        .filter(
+                            WorkflowStepTask.instance_id == inst.id,
+                            WorkflowStepTask.step_order == current_step.step_order,
+                            WorkflowStepTask.status == "PENDING",
+                        )
+                        .order_by(WorkflowStepTask.assignee_user_id.asc())
+                        .all()
+                    )
+                    if user_id
+                ]
+            else:
+                step_assignee_ids = resolve_step_approver_user_ids(current_step)
+        step_assignee_map = {
+            int(user.id): user
+            for user in (
+                User.query.filter(User.id.in_(step_assignee_ids)).all()
+                if step_assignee_ids else []
+            )
+        }
+        step_assignees = [
+            step_assignee_map[user_id]
+            for user_id in step_assignee_ids
+            if user_id in step_assignee_map
+        ]
+
         follower_ids = _get_request_followers_user_ids(req.id)
         overdue = bool(
             current_step
@@ -3065,6 +3097,7 @@ def work_dashboard():
             "req": req,
             "inst": inst,
             "step": current_step,
+            "step_assignees": step_assignees,
             "template": template,
             "requester": db.session.get(User, req.requester_id),
             "needs_action": needs_action,

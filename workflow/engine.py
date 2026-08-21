@@ -298,6 +298,11 @@ def _resolve_approver_users(step: WorkflowInstanceStep):
     )
 
 
+def resolve_step_approver_user_ids(step: WorkflowInstanceStep) -> list[int]:
+    """Public, normalized view of the users currently responsible for a step."""
+    return sorted({int(user_id) for user_id in _resolve_approver_users(step) if user_id})
+
+
 def _resolve_parallel_extra_assignees(template_id: int | None, step_order: int) -> list[int]:
     """Extra assignees linked to a PARALLEL_SYNC step number (template step)."""
     try:

@@ -36,6 +36,7 @@ from workflow.dynamic_paths import (
 from workflow.engine import (
     decide_step,
     resolve_dynamic_branch_steps,
+    resolve_step_approver_user_ids,
     start_workflow_for_request,
 )
 from utils.org_dynamic import resolve_user_org_node_id, sync_legacy_now
@@ -436,6 +437,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(step.routing_label, self.same_target.full_name)
         self.assertEqual(step.routing_node_label, result["steps"][0]["node_label"])
         self.assertEqual(step.routing_reason, result["steps"][0]["reason"])
+        self.assertEqual(resolve_step_approver_user_ids(step), [self.same_target.id])
         self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
 
     def test_shared_manager_selects_one_sibling_branch_and_other_is_skipped(self):

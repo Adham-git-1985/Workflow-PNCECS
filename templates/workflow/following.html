@@ -244,8 +244,9 @@
                   {{ current_target_map.get(inst.id, '—') if current_target_map else '—' }}
                 </div>
                 {% if current_report_step.routing_node_label %}
+                  {% set current_node_label = current_report_step.routing_node_label.split(' ← ')[-1] %}
                   <div class="small text-muted text-break mt-1">
-                    <i class="bi bi-diagram-3"></i> {{ current_report_step.routing_node_label }}
+                    <i class="bi bi-diagram-3"></i> {{ current_node_label }}
                   </div>
                 {% endif %}
               {% endif %}
