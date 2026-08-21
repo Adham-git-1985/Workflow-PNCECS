@@ -1,11 +1,11 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}مديرو الهيكلية الموحدة{% endblock %}
+{% block title %}مسؤولو الهيكلية الموحدة{% endblock %}
 
 {% block hr_content %}
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
   <div>
-    <h4 class="mb-1">مديرو الهيكلية الموحدة</h4>
-    <div class="text-muted small">تحديد المدير والنائب اللذين يعتمد عليهما بناء المسارات الإدارية الديناميكية.</div>
+    <h4 class="mb-1">مسؤولو الهيكلية الموحدة</h4>
+    <div class="text-muted small">تحديد المسؤول ونائبه اللذين يعتمد عليهما بناء المسارات الإدارية الديناميكية.</div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_org_node_assignments') }}">
     <i class="bi bi-people"></i> تعيين الموظفين
@@ -13,7 +13,7 @@
 </div>
 
 <div class="alert alert-info py-2">
-  عند انتقال الطلب إلى إدارة أخرى، يمر النظام بمديري العناصر المحددين هنا وفق ترتيب الهيكلية. داخل الإدارة نفسها يمكن اختيار الشخص مباشرة.
+  عند انتقال الطلب إلى إدارة أخرى، يمر النظام بمسؤولي العناصر المحددين هنا وفق ترتيب الهيكلية. داخل الإدارة نفسها يمكن اختيار الشخص مباشرة.
 </div>
 
 <div class="card shadow-sm mb-3">
@@ -44,7 +44,7 @@
           <thead class="table-light">
             <tr>
               <th>العنصر والمسار الهيكلي</th>
-              <th>المدير</th>
+              <th>المسؤول</th>
               <th>النائب</th>
               <th style="width: 130px">إجراء</th>
             </tr>
@@ -95,14 +95,14 @@
   <div class="modal-dialog">
     <form method="post" id="managerForm" class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title">تعيين مدير ونائب</h5>
+        <h5 class="modal-title">تعيين مسؤول ونائب</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
       </div>
       <div class="modal-body">
         <div class="alert alert-light border py-2" id="managerNodeLabel">—</div>
         <input type="hidden" name="q" value="{{ q or '' }}">
         <div class="mb-3">
-          <label class="form-label">المدير</label>
+          <label class="form-label">المسؤول</label>
           <select class="form-select" name="manager_user_id" id="managerUserId">
             <option value="">— غير معيّن —</option>
             {% for user in users %}
@@ -111,7 +111,7 @@
           </select>
         </div>
         <div>
-          <label class="form-label">نائب المدير</label>
+          <label class="form-label">نائب المسؤول</label>
           <select class="form-select" name="deputy_user_id" id="deputyUserId">
             <option value="">— غير معيّن —</option>
             {% for user in users %}
@@ -119,7 +119,7 @@
             {% endfor %}
           </select>
         </div>
-        <div class="form-text mt-2">لحذف التعيين، اترك المدير والنائب فارغين ثم احفظ.</div>
+        <div class="form-text mt-2">لحذف التعيين، اترك المسؤول ونائبه فارغين ثم احفظ.</div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button>

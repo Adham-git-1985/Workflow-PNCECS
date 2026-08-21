@@ -13,6 +13,7 @@ from models import (
     Team,
     TeamMembership,
     User,
+    UserDynamicWorkflowPreset,
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
@@ -180,6 +181,35 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             ["NODE", "NODE"],
         )
 
+    def test_saved_dynamic_paths_are_scoped_to_their_owner(self):
+        requester_preset = UserDynamicWorkflowPreset(
+            user_id=self.requester.id,
+            name="مساري المتكرر",
+        )
+        requester_preset.set_target_refs([
+            f"NODE:{self.department_a1.id}",
+            f"USER:{self.same_target.id}",
+        ])
+        other_preset = UserDynamicWorkflowPreset(
+            user_id=self.same_target.id,
+            name="مساري المتكرر",
+        )
+        other_preset.set_target_refs([f"NODE:{self.department_b.id}"])
+        db.session.add_all([requester_preset, other_preset])
+        db.session.commit()
+
+        requester_rows = UserDynamicWorkflowPreset.query.filter_by(
+            user_id=self.requester.id,
+        ).all()
+
+        self.assertEqual(len(requester_rows), 1)
+        self.assertEqual(requester_rows[0].name, "مساري المتكرر")
+        self.assertEqual(requester_rows[0].target_refs(), [
+            f"NODE:{self.department_a1.id}",
+            f"USER:{self.same_target.id}",
+        ])
+        self.assertEqual(len(self.requester.dynamic_workflow_presets.all()), 1)
+
     def test_primary_team_assignment_is_exposed_in_dynamic_choices(self):
         team_type = self._node_type("TEAM", "فريق", 40)
         team_node = self._node("فريق المتابعة", team_type, self.department_a2)
@@ -248,7 +278,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         result = build_dynamic_user_path(self.requester, [self.cross_target.id])
 
         self.assertTrue(result["errors"])
-        self.assertIn("لم يتم تعيين مدير", " ".join(result["errors"]))
+        self.assertIn("لم يتم تعيين مسؤول", " ".join(result["errors"]))
 
     def test_template_path_uses_only_nodes_with_assigned_managers(self):
         result = build_structural_template_path(self.department_a1.id, self.department_b.id)

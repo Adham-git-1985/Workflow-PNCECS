@@ -890,6 +890,53 @@ class WorkflowTemplate(db.Model):
         cascade="all, delete-orphan",
         order_by="WorkflowTemplateStep.step_order"
     )
+
+
+class UserDynamicWorkflowPreset(db.Model):
+    __tablename__ = "user_dynamic_workflow_presets"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    name = db.Column(db.String(160), nullable=False)
+    target_refs_json = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    owner = db.relationship(
+        "User",
+        foreign_keys=[user_id],
+        backref=db.backref("dynamic_workflow_presets", lazy="dynamic", cascade="all, delete-orphan"),
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "name", name="uq_user_dynamic_workflow_preset_name"),
+        db.Index("ix_user_dynamic_workflow_preset_updated", "user_id", "updated_at"),
+    )
+
+    def target_refs(self) -> list[str]:
+        try:
+            values = json.loads(self.target_refs_json or "[]")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return []
+        if not isinstance(values, list):
+            return []
+        return [str(value).strip() for value in values if str(value).strip()]
+
+    def set_target_refs(self, values) -> None:
+        self.target_refs_json = json.dumps(
+            [str(value).strip() for value in values or [] if str(value).strip()],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "id": int(self.id),
+            "name": self.name,
+            "target_refs": self.target_refs(),
+        }
+
+
 class RequestEscalation(db.Model):
     __tablename__ = "request_escalation"
 
@@ -1794,6 +1841,7 @@ class EmployeeFile(db.Model):
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=True, index=True)
     directorate_id = db.Column(db.Integer, db.ForeignKey('directorates.id'), nullable=True, index=True)
     department_id = db.Column(db.Integer, db.ForeignKey('departments.id'), nullable=True, index=True)
+    section_id = db.Column(db.Integer, db.ForeignKey('sections.id'), nullable=True, index=True)
     division_id = db.Column(db.Integer, db.ForeignKey('divisions.id'), nullable=True, index=True)
 
     direct_manager_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
@@ -1827,6 +1875,7 @@ class EmployeeFile(db.Model):
     organization = db.relationship('Organization', foreign_keys=[organization_id], lazy='joined')
     directorate = db.relationship('Directorate', foreign_keys=[directorate_id], lazy='joined')
     department = db.relationship('Department', foreign_keys=[department_id], lazy='joined')
+    section = db.relationship('Section', foreign_keys=[section_id], lazy='joined')
     division = db.relationship('Division', foreign_keys=[division_id], lazy='joined')
 
     direct_manager = db.relationship('User', foreign_keys=[direct_manager_user_id], lazy='joined')

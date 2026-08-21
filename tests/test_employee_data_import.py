@@ -5,10 +5,15 @@ from flask import Flask
 
 from extensions import db
 from models import (
+    Department,
+    Directorate,
+    Division,
     EmployeeDependent,
     EmployeeFile,
     EmployeeQualification,
     HRLookupItem,
+    Organization,
+    Section,
     User,
 )
 from services.employee_data_import import (
@@ -17,7 +22,7 @@ from services.employee_data_import import (
     build_employee_import_plan,
     canonical_payload_hash,
 )
-from portal.routes import _timeclock_build_code_to_user
+from portal.routes import _resolve_employee_placement_ids, _timeclock_build_code_to_user
 
 
 def answer(value, occurrence=1):
@@ -147,6 +152,47 @@ class EmployeeDataImportTests(unittest.TestCase):
 
         self.assertEqual(matches["67300"], self.employee.id)
         self.assertEqual(matches["99887766"], self.employee.id)
+
+    def test_employee_placement_keeps_each_hierarchy_level_in_its_correct_field(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للموارد",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الموارد البشرية",
+            is_active=True,
+        )
+        db.session.add(department)
+        db.session.flush()
+        section = Section(
+            department_id=department.id,
+            name_ar="قسم شؤون الموظفين",
+            is_active=True,
+        )
+        db.session.add(section)
+        db.session.flush()
+        division = Division(
+            section_id=section.id,
+            name_ar="شعبة الملفات",
+            is_active=True,
+        )
+        db.session.add(division)
+        db.session.flush()
+
+        placement = _resolve_employee_placement_ids(division_id=division.id)
+
+        self.assertEqual(placement["organization_id"], organization.id)
+        self.assertEqual(placement["directorate_id"], directorate.id)
+        self.assertEqual(placement["department_id"], department.id)
+        self.assertEqual(placement["section_id"], section.id)
+        self.assertEqual(placement["division_id"], division.id)
 
     def test_apply_updates_employee_file_and_is_idempotent_for_repeated_rows(self):
         summary = apply_employee_import_payload(

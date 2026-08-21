@@ -80,6 +80,7 @@ from models import (
     MessageRecipient,
     WorkflowTemplate,
     WorkflowTemplateStep,
+    UserDynamicWorkflowPreset,
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowStepTask,
@@ -2270,6 +2271,75 @@ def preview_dynamic_request_path():
     })
 
 
+@workflow_bp.route("/new/dynamic-path/presets/save", methods=["POST"])
+@login_required
+def save_dynamic_path_preset():
+    name = (request.form.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "errors": ["اكتب اسمًا للمسار قبل الحفظ."]}), 400
+    if len(name) > 160:
+        return jsonify({"ok": False, "errors": ["اسم المسار يجب ألا يتجاوز 160 حرفًا."]}), 400
+
+    selected_values = [
+        value.strip()
+        for value in (request.form.get("dynamic_target_refs") or "").split(",")
+        if value.strip()
+    ]
+    result = build_dynamic_target_path(current_user, selected_values)
+    if result["errors"]:
+        return jsonify({"ok": False, "errors": result["errors"]}), 400
+
+    normalized_refs = [
+        f"{segment['target_kind']}:{segment['target_id']}"
+        for segment in result["segments"]
+    ]
+    preset = (
+        UserDynamicWorkflowPreset.query
+        .filter(
+            UserDynamicWorkflowPreset.user_id == current_user.id,
+            func.lower(UserDynamicWorkflowPreset.name) == name.lower(),
+        )
+        .first()
+    )
+    created = preset is None
+    if not preset:
+        preset = UserDynamicWorkflowPreset(user_id=current_user.id, name=name)
+        db.session.add(preset)
+    else:
+        preset.name = name
+    preset.set_target_refs(normalized_refs)
+    preset.updated_at = datetime.utcnow()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Unable to save personal dynamic workflow preset")
+        return jsonify({"ok": False, "errors": ["تعذر حفظ المسار في ملف المستخدم."]}), 500
+    return jsonify({
+        "ok": True,
+        "created": created,
+        "preset": preset.as_dict(),
+        "message": "تم حفظ المسار في ملفك الشخصي." if created else "تم تحديث المسار المحفوظ في ملفك الشخصي.",
+    })
+
+
+@workflow_bp.route("/new/dynamic-path/presets/delete", methods=["POST"])
+@login_required
+def delete_dynamic_path_preset():
+    preset_id = request.form.get("preset_id", type=int)
+    preset = (
+        UserDynamicWorkflowPreset.query
+        .filter_by(id=preset_id, user_id=current_user.id)
+        .first()
+        if preset_id else None
+    )
+    if not preset:
+        return jsonify({"ok": False, "errors": ["المسار المحفوظ غير موجود في ملفك."]}), 404
+    db.session.delete(preset)
+    db.session.commit()
+    return jsonify({"ok": True, "message": "تم حذف المسار من ملفك الشخصي."})
+
+
 @workflow_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new_request():
@@ -2307,6 +2377,12 @@ def new_request():
         {"key": team_key, "name": team_name}
         for team_key, team_name in sorted(dynamic_team_map.items(), key=lambda item: item[1])
     ]
+    dynamic_presets = (
+        UserDynamicWorkflowPreset.query
+        .filter_by(user_id=current_user.id)
+        .order_by(UserDynamicWorkflowPreset.updated_at.desc(), UserDynamicWorkflowPreset.id.desc())
+        .all()
+    )
     requester_org_node_id = resolve_user_org_node_id(current_user)
 
     if selected_rt_id and str(selected_rt_id).isdigit():
@@ -2460,6 +2536,7 @@ def new_request():
         dynamic_choices=dynamic_choices,
         dynamic_org_nodes=dynamic_org_nodes,
         dynamic_teams=dynamic_teams,
+        dynamic_presets=[preset.as_dict() for preset in dynamic_presets],
         requester_org_node_id=requester_org_node_id,
         intake_max_bytes=intake_max_bytes,
         intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",

@@ -212,15 +212,6 @@
                 <div class="row g-3">
                   <div class="col-md-3">
                     <label class="form-label">الإدارة العامة</label>
-                    <select name="organization_id" class="form-select">
-                      <option value="">—</option>
-                      {% for o in orgs %}
-                        <option value="{{ o.id }}" {% if emp_file and emp_file.organization_id == o.id %}selected{% endif %}>{{ o.name_ar }}</option>
-                      {% endfor %}
-                    </select>
-                  </div>
-                  <div class="col-md-3">
-                    <label class="form-label">الدائرة</label>
                     <select name="directorate_id" class="form-select">
                       <option value="">—</option>
                       {% for d in dirs %}
@@ -229,11 +220,27 @@
                     </select>
                   </div>
                   <div class="col-md-3">
-                    <label class="form-label">القسم</label>
+                    <label class="form-label">الدائرة</label>
                     <select name="department_id" class="form-select">
                       <option value="">—</option>
                       {% for dep in depts %}
-                        <option value="{{ dep.id }}" {% if emp_file and emp_file.department_id == dep.id %}selected{% endif %}>{{ dep.name_ar }}</option>
+                        <option value="{{ dep.id }}" {% if emp_file and emp_file.department_id == dep.id %}selected{% endif %}>
+                          {{ dep.name_ar }}{% if dep.directorate %} — {{ dep.directorate.name_ar }}{% endif %}
+                        </option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-md-3">
+                    <label class="form-label">القسم</label>
+                    <select name="section_id" class="form-select">
+                      <option value="">—</option>
+                      {% for section in sections %}
+                        <option value="{{ section.id }}" {% if emp_file and emp_file.section_id == section.id %}selected{% endif %}>
+                          {{ section.name_ar }}
+                          {% if section.department %} — {{ section.department.name_ar }}
+                          {% elif section.directorate %} — {{ section.directorate.name_ar }}
+                          {% elif section.unit %} — {{ section.unit.name_ar }}{% endif %}
+                        </option>
                       {% endfor %}
                     </select>
                   </div>
@@ -242,7 +249,9 @@
                     <select name="division_id" class="form-select">
                       <option value="">—</option>
                       {% for v in divs %}
-                        <option value="{{ v.id }}" {% if emp_file and emp_file.division_id == v.id %}selected{% endif %}>{{ v.name_ar }}</option>
+                        <option value="{{ v.id }}" {% if emp_file and emp_file.division_id == v.id %}selected{% endif %}>
+                          {{ v.name_ar }}{% if v.section %} — {{ v.section.name_ar }}{% elif v.department %} — {{ v.department.name_ar }}{% endif %}
+                        </option>
                       {% endfor %}
                     </select>
                   </div>

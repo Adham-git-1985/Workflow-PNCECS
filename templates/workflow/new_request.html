@@ -99,6 +99,40 @@
           </div>
           <input type="hidden" name="dynamic_target_refs" id="dynamicTargetRefs" value="">
           <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
+          <script type="application/json" id="dynamicSavedPresetsData">{{ (dynamic_presets|default([], true))|tojson }}</script>
+          <div class="border rounded-3 p-3 bg-light mb-3" id="dynamicSavedPresetsBox">
+            <div class="fw-bold mb-2"><i class="bi bi-bookmark-star"></i> مساراتي الديناميكية المحفوظة</div>
+            <div class="small text-muted mb-3">هذه المسارات محفوظة في ملفك أنت فقط، ولا تظهر لبقية المستخدمين.</div>
+            <div class="row g-2 align-items-end">
+              <div class="col-12 col-lg-6">
+                <label class="form-label" for="dynamicSavedPresetSelect">المسار المحفوظ</label>
+                <select class="form-select" id="dynamicSavedPresetSelect"></select>
+              </div>
+              <div class="col-12 col-lg-6">
+                <div class="btn-group w-100">
+                  <button type="button" class="btn btn-outline-primary" id="dynamicLoadPreset">
+                    <i class="bi bi-arrow-repeat"></i> تحميل وإعادة الاستخدام
+                  </button>
+                  <button type="button" class="btn btn-outline-danger" id="dynamicDeletePreset"
+                          data-url="{{ url_for('workflow.delete_dynamic_path_preset') }}">
+                    <i class="bi bi-trash"></i> حذف
+                  </button>
+                </div>
+              </div>
+              <div class="col-12 col-lg-8">
+                <label class="form-label" for="dynamicPresetName">اسم المسار للحفظ</label>
+                <input type="text" class="form-control" id="dynamicPresetName" maxlength="160"
+                       placeholder="مثال: مسار طلبات الموارد البشرية">
+              </div>
+              <div class="col-12 col-lg-4">
+                <button type="button" class="btn btn-success w-100" id="dynamicSavePreset"
+                        data-url="{{ url_for('workflow.save_dynamic_path_preset') }}">
+                  <i class="bi bi-bookmark-plus"></i> حفظ المسار في ملفي
+                </button>
+              </div>
+            </div>
+            <div class="small mt-2 d-none" id="dynamicPresetStatus" role="status"></div>
+          </div>
           {% if dynamic_choices or dynamic_org_nodes %}
             <script type="application/json" id="dynamicOrgNodesData">{{ (dynamic_org_nodes|default([], true))|tojson }}</script>
             <div class="btn-group w-100 mb-3" role="tablist" aria-label="طريقة الوصول إلى الموظف">
@@ -549,10 +583,17 @@
     const selectedList = document.getElementById('dynamicSelectedList');
     const emptyState = document.getElementById('dynamicSelectedEmpty');
     const previewBox = document.getElementById('dynamicPathPreview');
+    const savedPresetSelect = document.getElementById('dynamicSavedPresetSelect');
+    const loadPresetButton = document.getElementById('dynamicLoadPreset');
+    const deletePresetButton = document.getElementById('dynamicDeletePreset');
+    const savePresetButton = document.getElementById('dynamicSavePreset');
+    const presetNameInput = document.getElementById('dynamicPresetName');
+    const presetStatus = document.getElementById('dynamicPresetStatus');
     const selected = [];
     let browserMode = 'org';
     let currentOrgNodeId = null;
     let orgNodes = [];
+    let savedPresets = [];
     let previewTimer = null;
 
     try {
@@ -560,6 +601,12 @@
       orgNodes = orgNodesElement ? JSON.parse(orgNodesElement.textContent || '[]') : [];
     } catch (error) {
       orgNodes = [];
+    }
+    try {
+      const savedPresetsElement = document.getElementById('dynamicSavedPresetsData');
+      savedPresets = savedPresetsElement ? JSON.parse(savedPresetsElement.textContent || '[]') : [];
+    } catch (error) {
+      savedPresets = [];
     }
     const orgNodesById = new Map(orgNodes.map(node => [String(node.id), node]));
 
@@ -591,6 +638,131 @@
       return element.innerHTML;
     }
 
+    function csrfToken(){
+      const field = form.querySelector('[name="csrf_token"]');
+      return field ? field.value : '';
+    }
+
+    function setPresetStatus(message, level){
+      if (!presetStatus) return;
+      presetStatus.textContent = message || '';
+      presetStatus.className = 'small mt-2 ' + (message ? 'text-' + (level || 'muted') : 'd-none');
+    }
+
+    function renderSavedPresets(selectedId){
+      if (!savedPresetSelect) return;
+      savedPresetSelect.innerHTML = '';
+      const emptyOption = document.createElement('option');
+      emptyOption.value = '';
+      emptyOption.textContent = savedPresets.length ? '— اختر مسارًا محفوظًا —' : 'لا توجد مسارات محفوظة بعد';
+      savedPresetSelect.appendChild(emptyOption);
+      savedPresets.forEach(function(preset){
+        const option = document.createElement('option');
+        option.value = String(preset.id);
+        option.textContent = preset.name;
+        option.selected = String(preset.id) === String(selectedId || '');
+        savedPresetSelect.appendChild(option);
+      });
+      const hasSelection = Boolean(savedPresetSelect.value);
+      loadPresetButton.disabled = !hasSelection;
+      deletePresetButton.disabled = !hasSelection;
+    }
+
+    function loadPreset(preset){
+      if (!preset) return;
+      selected.splice(0, selected.length);
+      const missingRefs = [];
+      (preset.target_refs || []).forEach(function(targetRef){
+        const parts = String(targetRef || '').split(':');
+        const kind = (parts[0] || '').toUpperCase();
+        const targetId = parts[1] || '';
+        if (kind === 'NODE') {
+          const node = orgNodesById.get(String(targetId));
+          if (!node || !node.can_select || !addSelectedOrgNode(node)) missingRefs.push(targetRef);
+          return;
+        }
+        if (kind === 'USER') {
+          const control = document.querySelector('.dynamic-user-checkbox[data-id="' + CSS.escape(String(targetId)) + '"]');
+          if (!control || !addSelectedUser(control)) missingRefs.push(targetRef);
+          return;
+        }
+        missingRefs.push(targetRef);
+      });
+      if (presetNameInput) presetNameInput.value = preset.name || '';
+      renderSelected();
+      setPresetStatus(
+        missingRefs.length
+          ? 'تم تحميل المتاح، لكن بعض عناصر المسار لم تعد موجودة أو لم يعد لها مسؤول معتمد.'
+          : 'تم تحميل المسار المحفوظ ويمكنك استخدامه أو تعديله.',
+        missingRefs.length ? 'warning' : 'success'
+      );
+    }
+
+    async function saveCurrentPreset(){
+      const name = (presetNameInput && presetNameInput.value || '').trim();
+      if (!name) {
+        setPresetStatus('اكتب اسمًا للمسار قبل الحفظ.', 'danger');
+        if (presetNameInput) presetNameInput.focus();
+        return;
+      }
+      if (!selected.length) {
+        setPresetStatus('أضف جهة أو شخصًا واحدًا على الأقل قبل الحفظ.', 'danger');
+        return;
+      }
+      syncHidden();
+      const payload = new FormData();
+      payload.append('name', name);
+      payload.append('dynamic_target_refs', targetRefsField.value);
+      payload.append('csrf_token', csrfToken());
+      savePresetButton.disabled = true;
+      try {
+        const response = await fetch(savePresetButton.dataset.url, {
+          method: 'POST',
+          body: payload,
+          headers: {'Accept': 'application/json'}
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error((result.errors || ['تعذر حفظ المسار.']).join(' — '));
+        }
+        savedPresets = savedPresets.filter(preset => String(preset.id) !== String(result.preset.id));
+        savedPresets.unshift(result.preset);
+        renderSavedPresets(result.preset.id);
+        setPresetStatus(result.message, 'success');
+      } catch (error) {
+        setPresetStatus(error.message || 'تعذر حفظ المسار.', 'danger');
+      } finally {
+        savePresetButton.disabled = selected.length === 0;
+      }
+    }
+
+    async function deleteCurrentPreset(){
+      const presetId = savedPresetSelect && savedPresetSelect.value;
+      const preset = savedPresets.find(item => String(item.id) === String(presetId));
+      if (!preset || !window.confirm('حذف المسار المحفوظ «' + preset.name + '» من ملفك؟')) return;
+      const payload = new FormData();
+      payload.append('preset_id', presetId);
+      payload.append('csrf_token', csrfToken());
+      deletePresetButton.disabled = true;
+      try {
+        const response = await fetch(deletePresetButton.dataset.url, {
+          method: 'POST',
+          body: payload,
+          headers: {'Accept': 'application/json'}
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) {
+          throw new Error((result.errors || ['تعذر حذف المسار.']).join(' — '));
+        }
+        savedPresets = savedPresets.filter(item => String(item.id) !== String(presetId));
+        renderSavedPresets();
+        setPresetStatus(result.message, 'success');
+      } catch (error) {
+        renderSavedPresets(presetId);
+        setPresetStatus(error.message || 'تعذر حذف المسار.', 'danger');
+      }
+    }
+
     function renderSelected(){
       syncHidden();
       selectedList.innerHTML = '';
@@ -609,7 +781,7 @@
               '<div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere"><i class="bi bi-diagram-3"></i> ' + escapeHtml(item.node) + '</div>' +
             (item.team ? '<span class="badge bg-info-subtle text-info-emphasis border mt-1"><i class="bi bi-people-fill"></i> ' + escapeHtml(item.team) + '</span> ' : '') +
             '<span class="badge mt-1 ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
-              (item.kind === 'NODE' ? 'جهة تنظيمية — الاعتماد لدى مديرها' : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
+              (item.kind === 'NODE' ? 'جهة تنظيمية — الاعتماد لدى مسؤولها' : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
             '</span>' +
             '</div>' +
           '</div>' +
@@ -624,6 +796,7 @@
         checkbox.checked = selected.some(item => item.ref === 'USER:' + checkbox.dataset.id);
       });
       syncNodeSelectionButtons();
+      if (savePresetButton) savePresetButton.disabled = selected.length === 0;
       schedulePreview();
     }
 
@@ -657,7 +830,7 @@
         kind: 'NODE',
         id: String(node.id),
         name: (node.type_name ? node.type_name + ': ' : '') + (node.name || ''),
-        title: (node.manager_role || 'مدير') + ': ' + (node.manager_name || ''),
+        title: (node.manager_role || 'مسؤول') + ': ' + (node.manager_name || ''),
         node: node.node_label || node.name || '',
         team: '',
         sameAdmin: Boolean(node.same_administration)
@@ -731,7 +904,7 @@
         addCurrentOrgNodeButton.disabled = !currentNode || !currentNode.can_select;
         addCurrentOrgNodeButton.dataset.selectOrgNodeId = currentNode ? String(currentNode.id) : '';
         if (currentNode && !currentNode.can_select) {
-          addCurrentOrgNodeButton.innerHTML = '<i class="bi bi-exclamation-circle"></i> لا يوجد مدير معتمد';
+          addCurrentOrgNodeButton.innerHTML = '<i class="bi bi-exclamation-circle"></i> لا يوجد مسؤول معتمد';
         }
       }
 
@@ -745,7 +918,7 @@
             '<span class="d-block fw-bold text-break">' + escapeHtml(node.name) + '</span>' +
             '<span class="d-block small text-muted mt-2"><i class="bi bi-person"></i> ' + String(node.total_user_count || 0) + ' موظف ضمن هذه الجهة</span>' +
             '<span class="d-block small mt-2 ' + (node.can_select ? 'text-success' : 'text-danger') + '"><i class="bi bi-person-badge"></i> ' +
-              (node.can_select ? escapeHtml((node.manager_role || 'مدير') + ': ' + (node.manager_name || '')) : 'لا يوجد مدير أو نائب مدير معتمد') +
+              (node.can_select ? escapeHtml((node.manager_role || 'مسؤول') + ': ' + (node.manager_name || '')) : 'لا يوجد مسؤول أو نائب مسؤول معتمد') +
             '</span>' +
             '<div class="btn-group btn-group-sm w-100 mt-3">' +
               '<button type="button" class="btn btn-outline-primary" data-org-node-id="' + String(node.id) + '"><i class="bi bi-folder2-open"></i> فتح</button>' +
@@ -858,6 +1031,18 @@
 
     if (predefinedRadio) predefinedRadio.addEventListener('change', updateMode);
     if (dynamicRadio) dynamicRadio.addEventListener('change', updateMode);
+    if (savedPresetSelect) savedPresetSelect.addEventListener('change', function(){
+      const hasSelection = Boolean(savedPresetSelect.value);
+      loadPresetButton.disabled = !hasSelection;
+      deletePresetButton.disabled = !hasSelection;
+      setPresetStatus('', 'muted');
+    });
+    if (loadPresetButton) loadPresetButton.addEventListener('click', function(){
+      const preset = savedPresets.find(item => String(item.id) === String(savedPresetSelect.value));
+      loadPreset(preset);
+    });
+    if (savePresetButton) savePresetButton.addEventListener('click', saveCurrentPreset);
+    if (deletePresetButton) deletePresetButton.addEventListener('click', deleteCurrentPreset);
     browserTabs.forEach(function(tab){
       tab.addEventListener('click', function(){
         setBrowserMode(tab.dataset.browserMode);
@@ -946,6 +1131,8 @@
         window.alert('اختر جهة تنظيمية أو شخصاً واحداً على الأقل للمسار الديناميكي.');
       }
     });
+    renderSavedPresets();
+    if (savePresetButton) savePresetButton.disabled = true;
     setBrowserMode('org');
     updateMode();
   })();

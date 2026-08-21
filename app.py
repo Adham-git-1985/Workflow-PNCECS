@@ -397,6 +397,18 @@ def _ensure_runtime_schema():
                         except Exception:
                             pass
 
+            if not _col_exists("employee_file", "section_id"):
+                _add_column_retry("employee_file", "section_id", "INTEGER")
+            if _col_exists("employee_file", "section_id"):
+                try:
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_employee_file_section_id "
+                        "ON employee_file (section_id)"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             
             # users last successful login tracking (Portal HR reports)
             for _col, _ctype in [

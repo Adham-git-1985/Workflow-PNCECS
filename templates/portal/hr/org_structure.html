@@ -45,7 +45,7 @@
       <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
         <div>
           <h5 class="mb-0">مخطط الهيكلية</h5>
-          <div class="text-muted small">شجرة تفاعلية (البوابة) تُظهر الوحدات + المدير/البديل، ويمكن إظهار الموظفين داخل كل وحدة.</div>
+          <div class="text-muted small">شجرة تفاعلية (البوابة) تُظهر الوحدات + المسؤول/البديل، ويمكن إظهار الموظفين داخل كل وحدة.</div>
         </div>
         <div class="d-flex align-items-center flex-wrap gap-2">
           <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#orgTreePrint')">
@@ -60,7 +60,7 @@
             <i class="bi bi-diagram-3"></i> تعيين الموظفين (الهيكلية الموحدة)
           </a>
           <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_org_node_managers') }}">
-            <i class="bi bi-person-gear"></i> مديرو الهيكلية
+            <i class="bi bi-person-gear"></i> مسؤولو الهيكلية
           </a>
           {% if not legacy_locked %}
           <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_org_assignments') }}">
@@ -110,7 +110,7 @@
                 <span class="badge bg-primary-subtle text-primary border">{{ type_labels.get(node.type, node.type) }}</span>
                 <span class="org-title">{{ node.name_ar }}</span>
                 {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
-                <span class="org-meta">مدير: {{ node.manager }}</span>
+                <span class="org-meta">مسؤول: {{ node.manager }}</span>
                 <span class="org-meta">بديل: {{ node.deputy }}</span>
               </summary>
 
@@ -142,7 +142,7 @@
                 <span class="badge bg-success-subtle text-success border">{{ type_labels.get(node.type, node.type) }}</span>
                 <span class="org-title">{{ node.name_ar }}</span>
                 {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
-                <span class="org-meta">مدير: {{ node.manager }}</span>
+                <span class="org-meta">مسؤول: {{ node.manager }}</span>
                 <span class="org-meta">بديل: {{ node.deputy }}</span>
               </div>
 
@@ -257,7 +257,7 @@
       <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
         <div>
           <h6 class="mb-1"><i class="bi bi-people-fill"></i> الفرق المستقلة</h6>
-          <div class="text-muted small">هذه الفرق منفصلة عن تسلسل الإدارات والأقسام، ويمكن تعيين مدير وموظفين لها بشكل مستقل.</div>
+          <div class="text-muted small">هذه الفرق منفصلة عن تسلسل الإدارات والأقسام، ويمكن تعيين مسؤول وموظفين لها بشكل مستقل.</div>
         </div>
         {{ team_add_btn() }}
       </div>
@@ -281,7 +281,7 @@
                     <div class="fw-semibold">{{ team.name_ar }}</div>
                     {% if team.name_en %}<div class="small text-muted">{{ team.name_en }}</div>{% endif %}
                     <div class="mgr mt-1">
-                      <span class="text-muted">المدير:</span>
+                      <span class="text-muted">المسؤول:</span>
                       <span class="fw-semibold">{{ a_team.manager_user.full_name if a_team and a_team.manager_user else '—' }}</span>
                       <span class="text-muted ms-2">البديل:</span>
                       <span class="fw-semibold">{{ a_team.deputy_user.full_name if a_team and a_team.deputy_user else '—' }}</span>
@@ -335,7 +335,7 @@
           <div class="accordion-body">
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2" id="u_ORGANIZATION_{{ org.id }}">
               <div class="mgr">
-                <span class="text-muted">المدير:</span>
+                <span class="text-muted">المسؤول:</span>
                 <span class="fw-semibold">{{ a_org.manager_user.full_name if a_org and a_org.manager_user else '—' }}</span>
                 <span class="text-muted ms-2">البديل:</span>
                 <span class="fw-semibold">{{ a_org.deputy_user.full_name if a_org and a_org.deputy_user else '—' }}</span>
@@ -352,7 +352,7 @@
                   <div>
                     <div class="fw-semibold">{{ dir.name_ar }} {% if dir.code %}<span class="badge bg-light text-dark border unit-badge">{{ dir.code }}</span>{% endif %}</div>
                     <div class="mgr">
-                      <span class="text-muted">المدير:</span>
+                      <span class="text-muted">المسؤول:</span>
                       <span class="fw-semibold">{{ a_dir.manager_user.full_name if a_dir and a_dir.manager_user else '—' }}</span>
                       <span class="text-muted ms-2">البديل:</span>
                       <span class="fw-semibold">{{ a_dir.deputy_user.full_name if a_dir and a_dir.deputy_user else '—' }}</span>
@@ -368,7 +368,7 @@
                       <div>
                         <div class="fw-semibold">{{ dep.name_ar }} {% if dep.code %}<span class="badge bg-light text-dark border unit-badge">{{ dep.code }}</span>{% endif %}</div>
                         <div class="mgr">
-                          <span class="text-muted">المدير:</span>
+                          <span class="text-muted">المسؤول:</span>
                           <span class="fw-semibold">{{ a_dep.manager_user.full_name if a_dep and a_dep.manager_user else '—' }}</span>
                           <span class="text-muted ms-2">البديل:</span>
                           <span class="fw-semibold">{{ a_dep.deputy_user.full_name if a_dep and a_dep.deputy_user else '—' }}</span>
@@ -384,7 +384,7 @@
                           <div>
                             <div class="fw-semibold">{{ sec.name_ar }} {% if sec.code %}<span class="badge bg-light text-dark border unit-badge">{{ sec.code }}</span>{% endif %}</div>
                             <div class="mgr">
-                              <span class="text-muted">المدير:</span>
+                              <span class="text-muted">المسؤول:</span>
                               <span class="fw-semibold">{{ a_sec.manager_user.full_name if a_sec and a_sec.manager_user else '—' }}</span>
                               <span class="text-muted ms-2">البديل:</span>
                               <span class="fw-semibold">{{ a_sec.deputy_user.full_name if a_sec and a_sec.deputy_user else '—' }}</span>
@@ -413,7 +413,7 @@
                                     <td>
                                       <div class="fw-semibold">{{ team.name_ar }}</div>
                                       <div class="mgr">
-                                        <span class="text-muted">المدير:</span>
+                                        <span class="text-muted">المسؤول:</span>
                                         <span class="fw-semibold">{{ a_team.manager_user.full_name if a_team and a_team.manager_user else '—' }}</span>
                                         <span class="text-muted ms-2">البديل:</span>
                                         <span class="fw-semibold">{{ a_team.deputy_user.full_name if a_team and a_team.deputy_user else '—' }}</span>
@@ -461,7 +461,7 @@
   <hr class="my-4">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
     <h6 class="mb-0"><i class="bi bi-person-lines-fill"></i> سلسلة المدراء لكل موظف</h6>
-    <div class="text-muted small">تعتمد على تعيين الموظف للوحدة (تعيين الموظفين) وعلى تعيين مدير كل وحدة.</div>
+    <div class="text-muted small">تعتمد على تعيين الموظف للوحدة (تعيين الموظفين) وعلى تعيين مسؤول كل وحدة.</div>
   </div>
   <div class="table-responsive">
     <table class="table table-sm align-middle">
@@ -469,11 +469,11 @@
         <tr>
           <th>{{ portal_sort_link('الموظف', 'user') }}</th>
           <th class="text-muted">{{ portal_sort_link('الوحدة (Portal)', 'assigned_unit') }}</th>
-          <th>{{ portal_sort_link('مدير الفريق', 'team_mgr') }}</th>
-          <th>{{ portal_sort_link('مدير القسم', 'section_mgr') }}</th>
-          <th>{{ portal_sort_link('مدير الدائرة', 'department_mgr') }}</th>
-          <th>{{ portal_sort_link('مدير الإدارة', 'directorate_mgr') }}</th>
-          <th>{{ portal_sort_link('مدير المؤسسة', 'organization_mgr') }}</th>
+          <th>{{ portal_sort_link('مسؤول الفريق', 'team_mgr') }}</th>
+          <th>{{ portal_sort_link('مسؤول القسم', 'section_mgr') }}</th>
+          <th>{{ portal_sort_link('مسؤول الدائرة', 'department_mgr') }}</th>
+          <th>{{ portal_sort_link('مسؤول الإدارة', 'directorate_mgr') }}</th>
+          <th>{{ portal_sort_link('مسؤول المؤسسة', 'organization_mgr') }}</th>
           <th class="text-muted">{{ portal_sort_link('سلسلة', 'chain_text') }}</th>
         </tr>
       </thead>
@@ -501,7 +501,7 @@
     <div class="modal-content">
       <form method="post" action="{{ url_for('portal.hr_org_set_manager') }}">
         <div class="modal-header">
-          <h5 class="modal-title">تعيين مدير/بديل</h5>
+          <h5 class="modal-title">تعيين مسؤول/بديل</h5>
           <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
         </div>
         <div class="modal-body">
@@ -509,7 +509,7 @@
           <input type="hidden" name="unit_id" id="assign_unit_id">
 
           <div class="mb-3">
-            <label class="form-label">المدير المباشر</label>
+            <label class="form-label">المسؤول المباشر</label>
             <select name="manager_user_id" class="form-select" id="assign_manager">
               <option value="">—</option>
               {% for usr in users %}

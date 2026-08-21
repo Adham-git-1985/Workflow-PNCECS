@@ -147,7 +147,7 @@ def _manager_for_node(node: OrgNode) -> tuple[User | None, str | None]:
     if not user_id:
         return None, None
     user = db.session.get(User, int(user_id))
-    role = "مدير" if manager.manager_user_id else "نائب مدير"
+    role = "مسؤول" if manager.manager_user_id else "نائب المسؤول"
     return user, role
 
 
@@ -175,10 +175,10 @@ def build_structural_template_path(source_node_id: int, target_node_id: int) -> 
 
     errors = []
     if not steps:
-        errors.append("لا يوجد مدير أو نائب مدير معيّن على عناصر هذا المسار الهيكلي.")
+        errors.append("لا يوجد مسؤول أو نائب مسؤول معيّن على عناصر هذا المسار الهيكلي.")
     warnings = []
     if skipped:
-        warnings.append("تم تجاوز عناصر بلا مدير معيّن: " + "، ".join(skipped[:8]))
+        warnings.append("تم تجاوز عناصر بلا مسؤول معيّن: " + "، ".join(skipped[:8]))
     return {"steps": steps, "warnings": warnings, "errors": errors}
 
 
@@ -429,11 +429,11 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
             if not resolved_manager_count:
                 errors.append(
                     f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target_user.full_name}»: "
-                    "لم يتم تعيين مدير أو نائب مدير على التسلسل الإداري بينهما."
+                    "لم يتم تعيين مسؤول أو نائب مسؤول على التسلسل الإداري بينهما."
                 )
             elif skipped_nodes:
                 warnings.append(
-                    "تم تجاوز عناصر بلا مدير معيّن بين "
+                    "تم تجاوز عناصر بلا مسؤول معيّن بين "
                     f"«{current_user.full_name}» و«{target_user.full_name}»: "
                     + "، ".join(skipped_nodes[:6])
                 )
@@ -541,10 +541,10 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
             continue
         target_manager, manager_role = _manager_for_node(target_node)
         if not target_manager:
-            errors.append(f"لا يوجد مدير أو نائب مدير معيّن للجهة «{target_node.name_ar}».")
+            errors.append(f"لا يوجد مسؤول أو نائب مسؤول معيّن للجهة «{target_node.name_ar}».")
             continue
         if int(target_manager.id) == int(requester.id):
-            errors.append(f"لا يمكن لمنشئ الطلب اعتماد طلبه بصفته مدير الجهة «{target_node.name_ar}».")
+            errors.append(f"لا يمكن لمنشئ الطلب اعتماد طلبه بصفته مسؤول الجهة «{target_node.name_ar}».")
             continue
         target_chain = node_chain(target_node.id)
         if not target_chain:
@@ -556,7 +556,7 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
             "user": target_manager,
             "node": target_node,
             "chain": target_chain,
-            "manager_role": manager_role or "مدير",
+            "manager_role": manager_role or "مسؤول",
             "label": f"{_node_type_name(target_node) or _node_type_code(target_node)}: {target_node.name_ar}",
         })
 
@@ -655,11 +655,11 @@ def build_dynamic_target_path(requester: User, selected_target_refs) -> dict:
             if not resolved_manager_count:
                 errors.append(
                     f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target['label']}»: "
-                    "لم يتم تعيين مدير أو نائب مدير على التسلسل الإداري بينهما."
+                    "لم يتم تعيين مسؤول أو نائب مسؤول على التسلسل الإداري بينهما."
                 )
             elif skipped_nodes:
                 warnings.append(
-                    "تم تجاوز عناصر بلا مدير معيّن بين "
+                    "تم تجاوز عناصر بلا مسؤول معيّن بين "
                     f"«{current_user.full_name}» و«{target['label']}»: "
                     + "، ".join(skipped_nodes[:6])
                 )

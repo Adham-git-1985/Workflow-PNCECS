@@ -6535,7 +6535,7 @@ def hr_home():
     )
     add_item(HR_ORG_READ, "الهيكل التنظيمي", "عرض المنظمات/الإدارات/الدوائر/الأقسام والفرق.", "bi-diagram-3", "portal.hr_org_structure", "لوحة التحكم")
     add_item(HR_ORG_MANAGE, "تعيين تبعية الموظفين (هيكلية موحدة)", "ربط الموظفين بعناصر الهيكلية الموحدة لاستخدامها في المسارات والموافقات.", "bi-person-badge", "portal.hr_org_node_assignments", "لوحة التحكم")
-    add_item(HR_ORG_MANAGE, "مديرو الهيكلية الموحدة", "تعيين المدير والنائب المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
+    add_item(HR_ORG_MANAGE, "مسؤولو الهيكلية الموحدة", "تعيين المسؤول ونائبه المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
     # Reports
@@ -13630,6 +13630,57 @@ def _to_str(v):
     return s or None
 
 
+def _resolve_employee_placement_ids(
+    directorate_id=None,
+    department_id=None,
+    section_id=None,
+    division_id=None,
+) -> dict[str, int | None]:
+    directorate = db.session.get(Directorate, _to_int(directorate_id)) if _to_int(directorate_id) else None
+    department = db.session.get(Department, _to_int(department_id)) if _to_int(department_id) else None
+    section = db.session.get(Section, _to_int(section_id)) if _to_int(section_id) else None
+    division = db.session.get(Division, _to_int(division_id)) if _to_int(division_id) else None
+    organization = None
+
+    if division:
+        if division.section_id:
+            section = db.session.get(Section, int(division.section_id))
+        elif division.department_id:
+            section = None
+            department = db.session.get(Department, int(division.department_id))
+
+    if section:
+        if section.department_id:
+            department = db.session.get(Department, int(section.department_id))
+        elif section.directorate_id:
+            department = None
+            directorate = db.session.get(Directorate, int(section.directorate_id))
+        elif section.unit_id:
+            department = None
+            directorate = None
+            unit = db.session.get(Unit, int(section.unit_id))
+            organization = unit.organization if unit else None
+
+    if department:
+        if department.directorate_id:
+            directorate = db.session.get(Directorate, int(department.directorate_id))
+        elif department.unit_id:
+            directorate = None
+            unit = db.session.get(Unit, int(department.unit_id))
+            organization = unit.organization if unit else None
+
+    if directorate:
+        organization = directorate.organization
+
+    return {
+        "organization_id": int(organization.id) if organization else None,
+        "directorate_id": int(directorate.id) if directorate else None,
+        "department_id": int(department.id) if department else None,
+        "section_id": int(section.id) if section else None,
+        "division_id": int(division.id) if division else None,
+    }
+
+
 def _employee_nav_counts(user_id: int) -> dict:
     try:
         deps = EmployeeDependent.query.filter_by(user_id=user_id).count()
@@ -13715,10 +13766,17 @@ def hr_employee_file(user_id: int):
         emp_file.hourly_number = _to_float(request.form.get("hourly_number"))
 
         # (1) placement
-        emp_file.organization_id = _to_int(request.form.get("organization_id"))
-        emp_file.directorate_id = _to_int(request.form.get("directorate_id"))
-        emp_file.department_id = _to_int(request.form.get("department_id"))
-        emp_file.division_id = _to_int(request.form.get("division_id"))
+        placement = _resolve_employee_placement_ids(
+            directorate_id=request.form.get("directorate_id"),
+            department_id=request.form.get("department_id"),
+            section_id=request.form.get("section_id"),
+            division_id=request.form.get("division_id"),
+        )
+        emp_file.organization_id = placement["organization_id"]
+        emp_file.directorate_id = placement["directorate_id"]
+        emp_file.department_id = placement["department_id"]
+        emp_file.section_id = placement["section_id"]
+        emp_file.division_id = placement["division_id"]
         emp_file.direct_manager_user_id = _to_int(request.form.get("direct_manager_user_id"))
 
         emp_file.project_lookup_id = _to_int(request.form.get("project_lookup_id"))
@@ -13784,9 +13842,9 @@ def hr_employee_file(user_id: int):
     lookup_by_id = _lookup_label_by_id()
 
     # org structure dropdowns
-    orgs = Organization.query.filter(Organization.is_active.is_(True)).order_by(Organization.name_ar.asc()).all()
     dirs = Directorate.query.filter(Directorate.is_active.is_(True)).order_by(Directorate.name_ar.asc()).all()
     depts = Department.query.filter(Department.is_active.is_(True)).order_by(Department.name_ar.asc()).all()
+    sections = Section.query.filter(Section.is_active.is_(True)).order_by(Section.name_ar.asc()).all()
     divs = Division.query.filter(Division.is_active.is_(True)).order_by(Division.name_ar.asc()).all()
 
     managers = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).limit(3000).all()
@@ -13806,9 +13864,9 @@ def hr_employee_file(user_id: int):
         counts=counts,
         lookups=lookups,
         lookup_by_id=lookup_by_id,
-        orgs=orgs,
         dirs=dirs,
         depts=depts,
+        sections=sections,
         divs=divs,
         managers=managers,
         logs=logs,
@@ -15309,12 +15367,12 @@ def _build_employee_row(user: User, assignment: OrgUnitAssignment | None, mgr_ma
 
     parts = []
     for key, label in (
-        ("team_mgr", "مدير الفريق"),
-        ("section_mgr", "مدير القسم"),
-        ("department_mgr", "مدير الدائرة"),
-        ("unit_mgr", "مدير الوحدة"),
-        ("directorate_mgr", "مدير الإدارة"),
-        ("organization_mgr", "مدير المؤسسة"),
+        ("team_mgr", "مسؤول الفريق"),
+        ("section_mgr", "مسؤول القسم"),
+        ("department_mgr", "مسؤول الدائرة"),
+        ("unit_mgr", "مسؤول الوحدة"),
+        ("directorate_mgr", "مسؤول الإدارة"),
+        ("organization_mgr", "مسؤول المؤسسة"),
     ):
         val = out.get(key)
         if val and val != "—":
@@ -15672,7 +15730,7 @@ def hr_org_node_manager_set(node_id: int):
     deputy_user_id = int(deputy_raw) if deputy_raw.isdigit() else None
 
     if manager_user_id and deputy_user_id and manager_user_id == deputy_user_id:
-        flash("يجب أن يكون نائب المدير شخصاً مختلفاً عن المدير.", "warning")
+        flash("يجب أن يكون نائب المسؤول شخصاً مختلفاً عن المسؤول.", "warning")
         return redirect(url_for("portal.hr_org_node_managers", q=request.form.get("q", "")))
 
     selected_ids = [user_id for user_id in (manager_user_id, deputy_user_id) if user_id]
@@ -15681,7 +15739,7 @@ def hr_org_node_manager_set(node_id: int):
         for user_id, in db.session.query(User.id).filter(User.id.in_(selected_ids)).all()
     } if selected_ids else set()
     if any(user_id not in existing_ids for user_id in selected_ids):
-        flash("تعذر العثور على المدير أو النائب المحدد.", "danger")
+        flash("تعذر العثور على المسؤول أو نائبه المحدد.", "danger")
         return redirect(url_for("portal.hr_org_node_managers", q=request.form.get("q", "")))
 
     row = OrgNodeManager.query.filter_by(node_id=int(node.id)).first()
@@ -15710,7 +15768,7 @@ def hr_org_node_manager_set(node_id: int):
         flash("تم تحديث مدير العنصر الهيكلي ونائبه.", "success")
     except Exception:
         db.session.rollback()
-        flash("تعذر حفظ مدير العنصر الهيكلي.", "danger")
+        flash("تعذر حفظ مسؤول العنصر الهيكلي.", "danger")
 
     return redirect(url_for("portal.hr_org_node_managers", q=request.form.get("q", "")))
 
