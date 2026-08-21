@@ -68,12 +68,15 @@
                   الخطوة {{ row.step.step_order }}
                   {% if row.needs_action %}<span class="badge text-bg-warning">إجراءك مطلوب</span>{% endif %}
                 </div>
-                {% if row.step_assignees %}
-                  {% for assignee in row.step_assignees %}
+                {% if row.step_assignee_details %}
+                  {% for assignee_detail in row.step_assignee_details %}
+                    {% set assignee = assignee_detail.user %}
                     <div class="small mt-1">
                       <i class="bi bi-person"></i>
                       <span class="fw-semibold">{{ assignee.full_name or assignee.email }}</span>
-                      {% if assignee.job_title %}
+                      {% if assignee_detail.hierarchy_position %}
+                        <span class="text-muted">— {{ assignee_detail.hierarchy_position }}</span>
+                      {% elif assignee.job_title %}
                         <span class="text-muted">— {{ assignee.job_title }}</span>
                       {% elif row.step.routing_job_title %}
                         <span class="text-muted">— {{ row.step.routing_job_title }}</span>

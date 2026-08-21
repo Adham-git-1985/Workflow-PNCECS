@@ -58,6 +58,82 @@ def node_path_label(node_or_id: OrgNode | int | None) -> str:
     )
 
 
+def hierarchy_position_label(
+    user: User | None,
+    *,
+    routing_node_label: str | None = None,
+    org_node_id: int | None = None,
+) -> str:
+    """Return the user's managerial role for the node represented by a workflow step."""
+    user_id = int(getattr(user, "id", 0) or 0)
+    if not user_id:
+        return ""
+
+    assignments = (
+        OrgNodeManager.query
+        .filter(
+            (OrgNodeManager.manager_user_id == user_id)
+            | (OrgNodeManager.deputy_user_id == user_id)
+        )
+        .order_by(OrgNodeManager.node_id.asc())
+        .all()
+    )
+    if not assignments:
+        return ""
+
+    selected_assignment = None
+    if org_node_id:
+        selected_assignment = next(
+            (
+                assignment
+                for assignment in assignments
+                if int(assignment.node_id) == int(org_node_id)
+            ),
+            None,
+        )
+
+    if selected_assignment is None and routing_node_label:
+        step_node_label = routing_node_label.rsplit("←", 1)[-1].strip()
+        selected_assignment = next(
+            (
+                assignment
+                for assignment in assignments
+                if assignment.node
+                and (
+                    f"{_node_type_name(assignment.node) or _node_type_code(assignment.node)}: "
+                    f"{assignment.node.name_ar}"
+                ).strip() == step_node_label
+            ),
+            None,
+        )
+
+    if selected_assignment is None:
+        primary_node_id = resolve_user_org_node_id(user)
+        selected_assignment = next(
+            (
+                assignment
+                for assignment in assignments
+                if primary_node_id and int(assignment.node_id) == int(primary_node_id)
+            ),
+            None,
+        )
+
+    if selected_assignment is None and len(assignments) == 1:
+        selected_assignment = assignments[0]
+    if selected_assignment is None or not selected_assignment.node:
+        return ""
+
+    node = selected_assignment.node
+    node_type_name = _node_type_name(node) or _node_type_code(node)
+    if int(selected_assignment.manager_user_id or 0) == user_id:
+        role_name = "مدير"
+    elif int(selected_assignment.deputy_user_id or 0) == user_id:
+        role_name = "نائب مدير"
+    else:
+        return ""
+    return f"{role_name} {node_type_name}: {node.name_ar}"
+
+
 def administration_anchor_id(chain: list[OrgNode]) -> int | None:
     """Resolve the nearest general-administration branch for direct selection."""
     if not chain:

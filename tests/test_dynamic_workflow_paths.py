@@ -29,7 +29,9 @@ from workflow.dynamic_paths import (
     build_structural_template_path,
     dynamic_org_browser_nodes,
     dynamic_user_choices,
+    hierarchy_position_label,
     node_chain,
+    node_path_label,
     same_administration,
     structural_route_nodes,
 )
@@ -164,6 +166,33 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertGreaterEqual(
             nodes_by_id[self.directorate_a.id]["total_user_count"],
             nodes_by_id[self.department_a2.id]["direct_user_count"],
+        )
+
+    def test_hierarchy_position_uses_the_workflow_step_node(self):
+        second_managed_node = self._node(
+            "دائرة إضافية",
+            self.department_a1.type,
+            self.directorate_a,
+        )
+        db.session.add(OrgNodeManager(
+            node_id=second_managed_node.id,
+            deputy_user_id=self.source_manager.id,
+        ))
+        db.session.commit()
+
+        self.assertEqual(
+            hierarchy_position_label(
+                self.source_manager,
+                routing_node_label=node_path_label(self.department_a1),
+            ),
+            "مدير دائرة: دائرة المصدر",
+        )
+        self.assertEqual(
+            hierarchy_position_label(
+                self.source_manager,
+                routing_node_label=node_path_label(second_managed_node),
+            ),
+            "نائب مدير دائرة: دائرة إضافية",
         )
 
     def test_multiple_sibling_entities_can_be_added_in_selected_order(self):

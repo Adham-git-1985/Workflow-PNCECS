@@ -117,6 +117,7 @@ from workflow.dynamic_paths import (
     build_dynamic_target_path,
     dynamic_org_browser_nodes,
     dynamic_user_choices,
+    hierarchy_position_label,
     node_path_label,
 )
 
@@ -3084,6 +3085,17 @@ def work_dashboard():
             for user_id in step_assignee_ids
             if user_id in step_assignee_map
         ]
+        step_assignee_details = [
+            {
+                "user": assignee,
+                "hierarchy_position": hierarchy_position_label(
+                    assignee,
+                    routing_node_label=current_step.routing_node_label,
+                    org_node_id=current_step.approver_org_node_id,
+                ),
+            }
+            for assignee in step_assignees
+        ] if current_step else []
 
         follower_ids = _get_request_followers_user_ids(req.id)
         overdue = bool(
@@ -3097,7 +3109,7 @@ def work_dashboard():
             "req": req,
             "inst": inst,
             "step": current_step,
-            "step_assignees": step_assignees,
+            "step_assignee_details": step_assignee_details,
             "template": template,
             "requester": db.session.get(User, req.requester_id),
             "needs_action": needs_action,
