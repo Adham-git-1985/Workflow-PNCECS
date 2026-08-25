@@ -29,11 +29,12 @@
   </div>
 
   <div class="border rounded-3 p-3 mb-4">
-    <h6 class="mb-3">إضافة/تحديث تعيين</h6>
-    <form method="post" action="{{ url_for('portal.hr_org_assignments_save') }}" class="row g-3 align-items-end">
+    <h6 class="mb-3" id="assignmentFormTitle">إضافة تعيين</h6>
+    <form method="post" action="{{ url_for('portal.hr_org_assignments_save') }}" class="row g-3 align-items-end" id="orgAssignmentForm">
+      <input type="hidden" name="assignment_id" id="assignment_id" value="">
       <div class="col-12 col-lg-4">
         <label class="form-label">الموظف</label>
-        <select name="user_id" class="form-select" required>
+        <select name="user_id" id="assignment_user_id" class="form-select" required>
           <option value="">— اختر —</option>
           {% for u in users %}
             <option value="{{ u.id }}">{{ u.full_name }}{% if u.email %} ({{ u.email }}){% endif %}</option>
@@ -105,7 +106,7 @@
 
       <div class="col-12 col-lg-2">
         <label class="form-label">المسمّى/ملاحظة (اختياري)</label>
-        <input name="title" class="form-control" placeholder="مثال: موظف، منسق...">
+        <input name="title" id="assignment_title" class="form-control" placeholder="مثال: موظف، منسق...">
       </div>
 
       <div class="col-12 col-lg-2">
@@ -116,7 +117,10 @@
       </div>
 
       <div class="col-12 col-lg-2">
-        <button class="btn btn-primary w-100"><i class="bi bi-save"></i> حفظ</button>
+        <div class="d-grid gap-2">
+          <button class="btn btn-primary" id="assignmentSaveButton"><i class="bi bi-save"></i> حفظ</button>
+          <button class="btn btn-outline-secondary d-none" type="button" id="assignmentCancelEdit">إلغاء التعديل</button>
+        </div>
       </div>
     </form>
   </div>
@@ -153,9 +157,20 @@
             </td>
             <td class="text-muted">{{ r.title or '—' }}</td>
             <td class="text-end">
-              <form method="post" action="{{ url_for('portal.hr_org_assignments_delete', assign_id=r.id) }}" onsubmit="return confirm('حذف التعيين؟');">
-                <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-              </form>
+              <div class="d-flex justify-content-end gap-1">
+                <button type="button" class="btn btn-sm btn-outline-primary org-assignment-edit"
+                        data-assignment-id="{{ r.id }}"
+                        data-user-id="{{ r.user.id }}"
+                        data-unit-type="{{ r.unit_type }}"
+                        data-unit-id="{{ r.unit_id }}"
+                        data-title="{{ r.title or '' }}"
+                        data-is-primary="{{ '1' if r.is_primary else '0' }}">
+                  <i class="bi bi-pencil-square"></i> تعديل
+                </button>
+                <form method="post" action="{{ url_for('portal.hr_org_assignments_delete', assign_id=r.id) }}" onsubmit="return confirm('حذف التعيين؟');">
+                  <button class="btn btn-sm btn-outline-danger" title="حذف"><i class="bi bi-trash"></i></button>
+                </form>
+              </div>
             </td>
           </tr>
         {% endfor %}
@@ -170,6 +185,14 @@
 </div>
 
 <script>
+  const assignmentForm = document.getElementById('orgAssignmentForm');
+  const assignmentId = document.getElementById('assignment_id');
+  const assignmentUser = document.getElementById('assignment_user_id');
+  const assignmentTitle = document.getElementById('assignment_title');
+  const assignmentPrimary = document.getElementById('is_primary');
+  const assignmentFormTitle = document.getElementById('assignmentFormTitle');
+  const assignmentSaveButton = document.getElementById('assignmentSaveButton');
+  const assignmentCancelEdit = document.getElementById('assignmentCancelEdit');
   const unitType = document.getElementById('unit_type');
   const unitId = document.getElementById('unit_id');
   const sels = {
@@ -203,8 +226,41 @@
     unitId.value = '';
   }
 
+  function resetAssignmentForm() {
+    assignmentForm?.reset();
+    assignmentId.value = '';
+    assignmentFormTitle.textContent = 'إضافة تعيين';
+    assignmentSaveButton.innerHTML = '<i class="bi bi-save"></i> حفظ';
+    assignmentCancelEdit.classList.add('d-none');
+    onTypeChange();
+  }
+
+  function editAssignment(button) {
+    const type = (button.dataset.unitType || '').toUpperCase();
+    assignmentId.value = button.dataset.assignmentId || '';
+    assignmentUser.value = button.dataset.userId || '';
+    unitType.value = type;
+    onTypeChange();
+    const selectedUnit = sels[type];
+    if (selectedUnit) {
+      selectedUnit.value = button.dataset.unitId || '';
+      syncUnitId();
+    }
+    assignmentTitle.value = button.dataset.title || '';
+    assignmentPrimary.checked = button.dataset.isPrimary === '1';
+    assignmentFormTitle.textContent = 'تعديل التعيين';
+    assignmentSaveButton.innerHTML = '<i class="bi bi-save"></i> حفظ التعديل';
+    assignmentCancelEdit.classList.remove('d-none');
+    assignmentForm.scrollIntoView({behavior: 'smooth', block: 'center'});
+    assignmentUser.focus({preventScroll: true});
+  }
+
   unitType?.addEventListener('change', onTypeChange);
   Object.values(sels).forEach(el => el?.addEventListener('change', syncUnitId));
+  document.querySelectorAll('.org-assignment-edit').forEach(button => {
+    button.addEventListener('click', () => editAssignment(button));
+  });
+  assignmentCancelEdit?.addEventListener('click', resetAssignmentForm);
 
   // init
   onTypeChange();

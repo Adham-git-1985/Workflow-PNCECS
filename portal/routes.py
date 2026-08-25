@@ -16309,6 +16309,7 @@ def hr_org_assignments_save():
         flash('الهيكلية الثابتة مقفلة (قراءة فقط).', 'warning')
         return redirect(url_for('portal.hr_org_node_assignments'))
 
+    assignment_id = (request.form.get("assignment_id") or "").strip()
     user_id = (request.form.get("user_id") or "").strip()
     unit_type = (request.form.get("unit_type") or "").strip().upper()
     unit_id = (request.form.get("unit_id") or "").strip()
@@ -16317,6 +16318,9 @@ def hr_org_assignments_save():
 
     if not user_id.isdigit() or not unit_id.isdigit():
         flash("البيانات غير مكتملة.", "danger")
+        return redirect(url_for("portal.hr_org_assignments"))
+    if assignment_id and not assignment_id.isdigit():
+        flash("معرف التعيين غير صحيح.", "danger")
         return redirect(url_for("portal.hr_org_assignments"))
 
     uid = int(user_id)
@@ -16334,12 +16338,97 @@ def hr_org_assignments_save():
         flash("الوحدة المحددة غير موجودة.", "danger")
         return redirect(url_for("portal.hr_org_assignments"))
 
-    # Upsert by (user_id, unit_type, unit_id)
-    row = OrgUnitAssignment.query.filter_by(user_id=uid, unit_type=unit_type, unit_id=unit_pk).first()
+    # A submitted assignment_id means a real edit, including changing the
+    # employee or organizational unit without leaving the old row behind.
+    row = None
+    if assignment_id:
+        row = db.session.get(OrgUnitAssignment, int(assignment_id))
+        if not row:
+            flash("التعيين المطلوب تعديله غير موجود.", "danger")
+            return redirect(url_for("portal.hr_org_assignments"))
+
+    if row is not None:
+        duplicate = (
+            OrgUnitAssignment.query
+            .filter_by(user_id=uid, unit_type=unit_type, unit_id=unit_pk)
+            .filter(OrgUnitAssignment.id != row.id)
+            .first()
+        )
+        if duplicate:
+            flash("يوجد تعيين آخر للموظف على الوحدة نفسها.", "danger")
+            return redirect(url_for("portal.hr_org_assignments"))
+    else:
+        row = OrgUnitAssignment.query.filter_by(
+            user_id=uid,
+            unit_type=unit_type,
+            unit_id=unit_pk,
+        ).first()
+
+    old_identity = None
+    old_was_primary = False
+    if row is not None:
+        old_identity = (
+            int(row.user_id),
+            (row.unit_type or "").strip().upper(),
+            int(row.unit_id),
+        )
+        old_was_primary = bool(row.is_primary)
     if not row:
-        row = OrgUnitAssignment(user_id=uid, unit_type=unit_type, unit_id=unit_pk, created_at=datetime.utcnow(), created_by_id=current_user.id)
+        row = OrgUnitAssignment(
+            user_id=uid,
+            unit_type=unit_type,
+            unit_id=unit_pk,
+            created_at=datetime.utcnow(),
+            created_by_id=current_user.id,
+        )
         db.session.add(row)
 
+    new_identity = (uid, unit_type, unit_pk)
+    identity_changed = bool(old_identity and old_identity != new_identity)
+    if identity_changed:
+        old_user_id, old_unit_type, old_unit_id = old_identity
+        old_legacy_node = OrgNode.query.filter_by(
+            legacy_type=old_unit_type,
+            legacy_id=old_unit_id,
+        ).first()
+        if old_legacy_node:
+            old_dynamic_assignment = OrgNodeAssignment.query.filter_by(
+                user_id=old_user_id,
+                node_id=old_legacy_node.id,
+            ).first()
+            if old_dynamic_assignment:
+                db.session.delete(old_dynamic_assignment)
+            old_user = db.session.get(User, old_user_id)
+            if (
+                old_user
+                and int(getattr(old_user, "org_node_id", 0) or 0)
+                == int(old_legacy_node.id)
+            ):
+                old_user.org_node_id = None
+        if old_unit_type == "TEAM":
+            old_membership = TeamMembership.query.filter_by(
+                team_id=old_unit_id,
+                user_id=old_user_id,
+            ).first()
+            if old_membership:
+                db.session.delete(old_membership)
+
+        if old_was_primary and old_user_id != uid:
+            replacement = (
+                OrgUnitAssignment.query
+                .filter(
+                    OrgUnitAssignment.user_id == old_user_id,
+                    OrgUnitAssignment.id != row.id,
+                )
+                .order_by(OrgUnitAssignment.id.asc())
+                .first()
+            )
+            if replacement:
+                replacement.is_primary = True
+
+    row.user_id = uid
+    row.unit_type = unit_type
+    row.unit_id = unit_pk
     row.title = title
     row.is_primary = bool(is_primary)
 
@@ -16350,12 +16439,18 @@ def hr_org_assignments_save():
          .filter(OrgUnitAssignment.id != row.id)
          .update({OrgUnitAssignment.is_primary: False}))
 
-    _portal_audit("HR_ORG_ASSIGN", f"تعيين {u.full_name} على {unit_type}#{unit_pk}", target_type="ORG_ASSIGN", target_id=0)
+    audit_action = "HR_ORG_ASSIGN_UPDATE" if assignment_id else "HR_ORG_ASSIGN"
+    _portal_audit(
+        audit_action,
+        f"تعيين {u.full_name} على {unit_type}#{unit_pk}",
+        target_type="ORG_ASSIGN",
+        target_id=int(row.id or 0),
+    )
 
     try:
         db.session.commit()
         sync_legacy_now()
-        flash("تم حفظ التعيين.", "success")
+        flash("تم تحديث التعيين." if assignment_id else "تم حفظ التعيين.", "success")
     except Exception:
         db.session.rollback()
         flash("تعذر حفظ التعيين (قد يكون مكررًا).", "danger")
