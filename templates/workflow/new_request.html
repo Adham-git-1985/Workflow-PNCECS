@@ -3,6 +3,88 @@
 
 {% block content %}
 
+<style>
+  #dynamicRouteBox,
+  #dynamicRouteBox .dynamic-route-panel,
+  #dynamicRouteBox .dynamic-user-choice,
+  #dynamicRouteBox .list-group,
+  #dynamicRouteBox .list-group-item,
+  #dynamicRouteBox #dynamicPathPreview {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  #dynamicRouteBox .dynamic-route-panel {
+    overflow-x: hidden;
+  }
+
+  #dynamicRouteBox .dynamic-contained-select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  #dynamicRouteBox .dynamic-wrap-text,
+  #dynamicRouteBox .form-text,
+  #dynamicRouteBox #dynamicHierarchyHint,
+  #dynamicRouteBox #dynamicVisibleScopeHint,
+  #dynamicRouteBox #dynamicPresetLoadStatus,
+  #dynamicRouteBox #dynamicPresetSaveStatus {
+    min-width: 0;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  #dynamicRouteBox .dynamic-wrap-badge {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: start;
+    line-height: 1.35;
+  }
+
+  #dynamicRouteBox .dynamic-user-choice [dir="ltr"] {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-all;
+  }
+
+  #dynamicRouteBox .dynamic-preset-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    width: 100%;
+  }
+
+  #dynamicRouteBox .dynamic-preset-actions > .btn {
+    flex: 1 1 12rem;
+  }
+
+  @media (max-width: 575.98px) {
+    #dynamicRouteBox .dynamic-route-panel {
+      padding: .75rem !important;
+    }
+
+    #dynamicRouteBox .dynamic-user-choice {
+      padding: .75rem !important;
+    }
+
+    #dynamicSelectedList .dynamic-selected-actions {
+      display: flex;
+      width: 100%;
+    }
+
+    #dynamicSelectedList .dynamic-selected-actions > .btn {
+      flex: 1 1 0;
+    }
+  }
+</style>
+
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">➕ طلب جديد</h3>
@@ -58,7 +140,7 @@
       </div>
 
       <div class="col-12 d-none" id="dynamicRouteBox">
-        <div class="border border-primary rounded-3 p-3">
+        <div class="border border-primary rounded-3 p-3 dynamic-route-panel">
           <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
             <div>
               <div class="fw-bold"><i class="bi bi-diagram-3"></i> خطوات المسار الديناميكي</div>
@@ -75,10 +157,10 @@
             <div class="row g-2 align-items-end">
               <div class="col-12 col-lg-6">
                 <label class="form-label" for="dynamicSavedPresetSelect">المسار المحفوظ</label>
-                <select class="form-select" id="dynamicSavedPresetSelect"></select>
+                <select class="form-select dynamic-contained-select" id="dynamicSavedPresetSelect"></select>
               </div>
               <div class="col-12 col-lg-6">
-                <div class="btn-group w-100">
+                <div class="dynamic-preset-actions">
                   <button type="button" class="btn btn-outline-primary" id="dynamicLoadPreset">
                     <i class="bi bi-arrow-repeat"></i> تحميل وإعادة الاستخدام
                   </button>
@@ -97,11 +179,11 @@
               <label class="form-label fw-bold" for="dynamicHierarchySelect">
                 <i class="bi bi-diagram-3"></i> الهيكلية
               </label>
-              <select class="form-select" id="dynamicHierarchySelect">
+              <select class="form-select dynamic-contained-select" id="dynamicHierarchySelect">
                 <option value="">— اختر جهة من الهيكلية —</option>
                 {% for node in dynamic_org_nodes %}
-                  <option value="{{ node.id }}">
-                    {{ node.node_label }}{% if node.total_user_count %} — {{ node.total_user_count }} موظف{% endif %}
+                  <option value="{{ node.id }}" title="{{ node.node_label }}">
+                    {{ node.name }}{% if node.total_user_count %} — {{ node.total_user_count }} موظف{% endif %}
                   </option>
                 {% endfor %}
               </select>
@@ -137,14 +219,14 @@
                     <span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0" aria-label="رقم الشخص">{{ loop.index }}</span>
                     <div class="flex-grow-1" style="min-width:0;">
                       <div class="fw-bold text-break">{{ choice.name }}</div>
-                      <div class="text-primary small fw-semibold mt-1">
+                      <div class="text-primary small fw-semibold mt-1 dynamic-wrap-text">
                         <i class="bi bi-briefcase"></i> {{ choice.job_title or 'لا يوجد مسمى وظيفي مسجل' }}
                       </div>
-                      {% if choice.email %}<div class="small text-muted mt-1" dir="ltr">{{ choice.email }}</div>{% endif %}
+                      {% if choice.email %}<div class="small text-muted mt-1 dynamic-wrap-text" dir="ltr">{{ choice.email }}</div>{% endif %}
                       <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
                         <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
                       </div>
-                      <span class="badge mt-2 {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
+                      <span class="badge mt-2 dynamic-wrap-badge {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
                         {{ 'اختيار مباشر ضمن الإدارة' if choice.same_administration else 'عبر التسلسل الإداري' }}
                       </span>
                     </div>
@@ -742,7 +824,7 @@
               '<label class="form-label small fw-bold mb-1" for="dynamicRouteStart' + index + '">' +
                 '<i class="bi bi-signpost-split"></i> التسلسل الإداري يبدأ من' +
               '</label>' +
-              '<select class="form-select form-select-sm dynamic-route-start" id="dynamicRouteStart' + index + '" data-index="' + index + '">' +
+              '<select class="form-select form-select-sm dynamic-route-start dynamic-contained-select" id="dynamicRouteStart' + index + '" data-index="' + index + '">' +
                 startOptions +
               '</select>' +
               '<div class="form-text">المستويان الأول والثاني في أعلى الهيكل مستبعدان تلقائياً.</div>' +
@@ -756,12 +838,12 @@
               '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
               '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + (item.kind === 'NODE' ? 'bi-building' : 'bi-briefcase') + '"></i> ' + escapeHtml(item.title || (item.kind === 'NODE' ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل')) + '</div>' +
             routeStartControl +
-            '<span class="badge mt-1 ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
+            '<span class="badge mt-1 dynamic-wrap-badge ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
               (item.kind === 'NODE' ? 'يبدأ من: ' + escapeHtml(item.routeStartName || '') : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
             '</span>' +
             '</div>' +
           '</div>' +
-          '<div class="btn-group btn-group-sm flex-shrink-0">' +
+          '<div class="btn-group btn-group-sm flex-shrink-0 dynamic-selected-actions">' +
             '<button type="button" class="btn btn-outline-secondary" data-action="up" data-index="' + index + '" title="أعلى">↑</button>' +
             '<button type="button" class="btn btn-outline-secondary" data-action="down" data-index="' + index + '" title="أسفل">↓</button>' +
             '<button type="button" class="btn btn-outline-danger" data-action="remove" data-index="' + index + '">حذف</button>' +
@@ -918,9 +1000,9 @@
           result.steps.forEach((step, index) => {
             html += '<div class="border rounded-3 p-3 bg-white d-flex align-items-start gap-3">' +
               '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
-              '<div style="min-width:0"><strong class="d-block text-break">' + escapeHtml(step.label) + '</strong>' +
-              '<div class="small text-primary fw-semibold mt-1"><i class="bi bi-briefcase"></i> ' + escapeHtml(step.job_title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
-              (step.reason ? '<div class="small text-muted mt-1">' + escapeHtml(step.reason) + '</div>' : '') +
+              '<div class="flex-grow-1 dynamic-wrap-text" style="min-width:0"><strong class="d-block text-break">' + escapeHtml(step.label) + '</strong>' +
+              '<div class="small text-primary fw-semibold mt-1 dynamic-wrap-text"><i class="bi bi-briefcase"></i> ' + escapeHtml(step.job_title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
+              (step.reason ? '<div class="small text-muted mt-1 dynamic-wrap-text">' + escapeHtml(step.reason) + '</div>' : '') +
               '</div></div>';
           });
           html += '</div>';

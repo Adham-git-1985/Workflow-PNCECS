@@ -459,6 +459,15 @@ class CorrespondenceIntakeTests(unittest.TestCase):
             template.index("<span class=\"badge text-bg-primary ms-1\">2</span> بيانات الطلب"),
         )
         self.assertIn('id="dynamicHierarchySelect"', template)
+        self.assertIn(
+            'class="form-select dynamic-contained-select" id="dynamicHierarchySelect"',
+            template,
+        )
+        self.assertIn('{{ node.name }}{% if node.total_user_count %}', template)
+        self.assertNotIn('{{ node.type_name }}: {{ node.name }}', template)
+        self.assertIn('#dynamicRouteBox .dynamic-contained-select', template)
+        self.assertIn('overflow-wrap: anywhere', template)
+        self.assertIn('dynamic-selected-actions', template)
         self.assertNotIn("dynamic-browser-tab", template)
         self.assertNotIn('id="dynamicTeamFilter"', template)
         self.assertIn("_find_or_create_request_type(request_type_name)", routes)
