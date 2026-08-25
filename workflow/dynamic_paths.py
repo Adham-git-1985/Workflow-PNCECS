@@ -1,13 +1,28 @@
 from __future__ import annotations
 
 from extensions import db
-from models import OrgNode, OrgNodeAssignment, OrgNodeManager, OrgNodeType, Team, TeamMembership, User
+from models import (
+    Committee,
+    CommitteeAssignee,
+    OrgNode,
+    OrgNodeAssignment,
+    OrgNodeManager,
+    OrgNodeType,
+    Team,
+    TeamMembership,
+    User,
+)
 from utils.org_dynamic import resolve_user_org_node_id
 
 
 MAX_DYNAMIC_TARGETS = 20
 DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS = 2
 FINAL_SECRETARY_GENERAL_REF = "FINAL_SECRETARY_GENERAL"
+COMMITTEE_DELIVERY_MODES = {
+    "ALL": ("Committee_ALL", "كل أعضاء اللجنة"),
+    "CHAIR": ("Committee_CHAIR", "رئيس اللجنة"),
+    "SECRETARY": ("Committee_SECRETARY", "مقرر اللجنة"),
+}
 
 
 def _node_type_code(node: OrgNode | None) -> str:
@@ -18,6 +33,15 @@ def _node_type_code(node: OrgNode | None) -> str:
 def _node_type_name(node: OrgNode | None) -> str:
     node_type = getattr(node, "type", None)
     return (getattr(node_type, "name_ar", "") or getattr(node_type, "name_en", "") or "").strip()
+
+
+def _is_secretary_general_node(node: OrgNode | None) -> bool:
+    """The secretary general is opt-in and must never be an implicit route step."""
+    if _node_type_code(node) == "SECRETARY_GENERAL":
+        return True
+    normalized_name = _normalized_org_text(getattr(node, "name_ar", None))
+    normalized_english = _normalized_org_text(getattr(node, "name_en", None))
+    return normalized_name in {"الامينالعام", "امينعامالمجلس"} or normalized_english == "secretarygeneral"
 
 
 def _normalized_org_text(value: str | None) -> str:
@@ -385,6 +409,78 @@ def dynamic_user_choices(requester: User) -> list[dict]:
     return choices
 
 
+def _normalize_committee_delivery_mode(value: str | None) -> tuple[str, str, str] | None:
+    raw = (value or "ALL").strip().upper()
+    if raw.startswith("COMMITTEE_"):
+        raw = raw.split("_", 1)[1]
+    configured = COMMITTEE_DELIVERY_MODES.get(raw)
+    if not configured:
+        return None
+    canonical, label = configured
+    return raw, canonical, label
+
+
+def _committee_assignees_for_mode(
+    committee: Committee,
+    mode_key: str,
+) -> list[CommitteeAssignee]:
+    active_assignees = [
+        assignee
+        for assignee in (committee.assignees or [])
+        if bool(getattr(assignee, "is_active", False))
+    ]
+    if mode_key == "CHAIR":
+        return [
+            assignee for assignee in active_assignees
+            if (assignee.member_role or "").strip().upper() == "CHAIR"
+        ]
+    if mode_key == "SECRETARY":
+        return [
+            assignee for assignee in active_assignees
+            if (assignee.member_role or "").strip().upper() == "SECRETARY"
+        ]
+    return active_assignees
+
+
+def dynamic_committee_choices() -> list[dict]:
+    """Return active committees and delivery modes available for dynamic routing."""
+    committees = (
+        Committee.query
+        .filter(Committee.is_active.is_(True))
+        .order_by(Committee.name_ar.asc(), Committee.id.asc())
+        .all()
+    )
+    choices = []
+    for committee in committees:
+        available_modes = []
+        for mode_key, (canonical, label) in COMMITTEE_DELIVERY_MODES.items():
+            assignees = _committee_assignees_for_mode(committee, mode_key)
+            if assignees:
+                available_modes.append({
+                    "key": mode_key,
+                    "value": canonical,
+                    "label": label,
+                    "assignee_count": len(assignees),
+                })
+        all_mode = next(
+            (mode for mode in available_modes if mode["key"] == "ALL"),
+            None,
+        )
+        choices.append({
+            "id": int(committee.id),
+            "name": committee.label,
+            "code": (committee.code or "").strip(),
+            "can_select": bool(all_mode),
+            "member_count": int(all_mode["assignee_count"]) if all_mode else 0,
+            "available_modes": available_modes,
+            "unavailable_reason": (
+                "لا يوجد أعضاء نشطون في هذه اللجنة."
+                if not all_mode else ""
+            ),
+        })
+    return choices
+
+
 def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None) -> list[dict]:
     """Return active hierarchy nodes with their selectable manager context."""
     nodes = (
@@ -450,13 +546,26 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
                 int(start_node.id),
                 (None, None),
             )
-            can_start = bool(start_manager and _node_allows_approval(start_node))
+            is_secretary_general = _is_secretary_general_node(start_node)
+            can_start = bool(
+                start_manager
+                and _node_allows_approval(start_node)
+                and not is_secretary_general
+            )
             route_start_options.append({
                 "id": int(start_node.id),
                 "position": chain_index + 2,
                 "name": start_node.name_ar,
                 "type_name": _node_type_name(start_node) or _node_type_code(start_node),
                 "can_start": can_start,
+                "is_secretary_general": is_secretary_general,
+                "unavailable_reason": (
+                    "يُضاف الأمين العام فقط من خيار الإضافة المستقل في نهاية المسار."
+                    if is_secretary_general else
+                    "لا يوجد مسؤول معتمد لهذا المستوى."
+                    if not can_start else
+                    ""
+                ),
                 "manager_name": (
                     start_manager.full_name or start_manager.email or f"مستخدم #{start_manager.id}"
                     if start_manager else ""
@@ -642,8 +751,10 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
     }
 
 
-def _normalized_dynamic_target_refs(values) -> tuple[list[tuple[str, int, int | None]], list[str]]:
-    targets: list[tuple[str, int, int | None]] = []
+def _normalized_dynamic_target_refs(
+    values,
+) -> tuple[list[tuple[str, int, int | None, str | None]], list[str]]:
+    targets: list[tuple[str, int, int | None, str | None]] = []
     errors: list[str] = []
     seen: set[tuple[str, int]] = set()
     for raw_value in values or []:
@@ -654,25 +765,50 @@ def _normalized_dynamic_target_refs(values) -> tuple[list[tuple[str, int, int | 
         raw_id = value
         if ":" in value:
             raw_kind, raw_id = value.split(":", 1)
-            kind = {"U": "USER", "USER": "USER", "N": "NODE", "NODE": "NODE"}.get(raw_kind, "")
+            kind = {
+                "U": "USER",
+                "USER": "USER",
+                "N": "NODE",
+                "NODE": "NODE",
+                "C": "COMMITTEE",
+                "COMMITTEE": "COMMITTEE",
+            }.get(raw_kind, "")
         route_start_id = None
+        committee_delivery_mode = None
         if "@" in raw_id:
-            raw_id, raw_route_start_id = raw_id.split("@", 1)
-            if kind != "NODE" or not raw_route_start_id.isdigit():
-                errors.append("نقطة بدء التسلسل الإداري غير صالحة.")
+            raw_id, raw_suffix = raw_id.split("@", 1)
+            if kind == "NODE" and raw_suffix.isdigit():
+                route_start_id = int(raw_suffix)
+            elif kind == "COMMITTEE":
+                normalized_mode = _normalize_committee_delivery_mode(raw_suffix)
+                if not normalized_mode:
+                    errors.append("طريقة تسليم اللجنة المختارة غير صالحة.")
+                    continue
+                committee_delivery_mode = normalized_mode[0]
+            else:
+                errors.append("نقطة بدء التسلسل الإداري أو طريقة تسليم اللجنة غير صالحة.")
                 continue
-            route_start_id = int(raw_route_start_id)
-        if kind not in {"USER", "NODE"} or not raw_id.isdigit():
-            errors.append("قائمة الجهات أو الأشخاص المختارين تحتوي على قيمة غير صالحة.")
+        elif kind == "COMMITTEE":
+            committee_delivery_mode = "ALL"
+        if kind not in {"USER", "NODE", "COMMITTEE"} or not raw_id.isdigit():
+            errors.append("قائمة الجهات أو الأشخاص أو اللجان المختارة تحتوي على قيمة غير صالحة.")
             continue
         target_key = (kind, int(raw_id))
         if target_key in seen:
-            errors.append("لا يمكن تكرار الجهة أو الشخص نفسه ضمن خطوات المسار الديناميكي.")
+            errors.append("لا يمكن تكرار الجهة أو الشخص أو اللجنة نفسها ضمن خطوات المسار الديناميكي.")
             continue
         seen.add(target_key)
-        targets.append((kind, int(raw_id), route_start_id))
+        targets.append((kind, int(raw_id), route_start_id, committee_delivery_mode))
+    committee_indexes = [
+        index for index, target in enumerate(targets)
+        if target[0] == "COMMITTEE"
+    ]
+    if len(committee_indexes) > 1:
+        errors.append("يمكن اختيار لجنة واحدة فقط كوجهة للمسار الديناميكي.")
+    if committee_indexes and committee_indexes[-1] != len(targets) - 1:
+        errors.append("يجب أن تكون اللجنة آخر وجهة مختارة في المسار الديناميكي.")
     if len(targets) > MAX_DYNAMIC_TARGETS:
-        errors.append(f"يمكن اختيار {MAX_DYNAMIC_TARGETS} جهة أو شخصاً كحد أقصى للمسار الديناميكي.")
+        errors.append(f"يمكن اختيار {MAX_DYNAMIC_TARGETS} جهة أو شخصاً أو لجنة كحد أقصى للمسار الديناميكي.")
     return targets[:MAX_DYNAMIC_TARGETS], errors
 
 
@@ -681,13 +817,17 @@ def build_dynamic_target_path(
     selected_target_refs,
     include_secretary_general: bool = False,
 ) -> dict:
-    """Expand ordered USER/NODE targets into sequential runtime workflow steps."""
+    """Expand ordered USER/NODE/COMMITTEE targets into sequential runtime steps."""
     target_refs, errors = _normalized_dynamic_target_refs(selected_target_refs)
     if not target_refs:
-        errors.append("اختر جهة تنظيمية أو شخصاً واحداً على الأقل للمسار الديناميكي.")
+        errors.append("اختر جهة تنظيمية أو شخصاً أو لجنة واحدة على الأقل للمسار الديناميكي.")
 
-    user_ids = [target_id for kind, target_id, _start_id in target_refs if kind == "USER"]
-    node_ids = [target_id for kind, target_id, _start_id in target_refs if kind == "NODE"]
+    user_ids = [target_id for kind, target_id, _start_id, _mode in target_refs if kind == "USER"]
+    node_ids = [target_id for kind, target_id, _start_id, _mode in target_refs if kind == "NODE"]
+    committee_ids = [
+        target_id for kind, target_id, _start_id, _mode in target_refs
+        if kind == "COMMITTEE"
+    ]
     users_map = {
         int(user.id): user
         for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
@@ -696,13 +836,51 @@ def build_dynamic_target_path(
         int(node.id): node
         for node in (OrgNode.query.filter(OrgNode.id.in_(node_ids)).all() if node_ids else [])
     }
+    committees_map = {
+        int(committee.id): committee
+        for committee in (
+            Committee.query.filter(Committee.id.in_(committee_ids)).all()
+            if committee_ids else []
+        )
+    }
 
     requester_chain = node_chain(resolve_user_org_node_id(requester))
-    if not requester_chain:
+    requires_org_chain = bool(
+        include_secretary_general
+        or any(kind != "COMMITTEE" for kind, _target_id, _start_id, _mode in target_refs)
+    )
+    if not requester_chain and requires_org_chain:
         errors.append("يجب ربط منشئ الطلب بعنصر أساسي في الهيكل التنظيمي أولاً.")
 
     resolved_targets: list[dict] = []
-    for kind, target_id, route_start_id in target_refs:
+    for kind, target_id, route_start_id, committee_delivery_mode in target_refs:
+        if kind == "COMMITTEE":
+            committee = committees_map.get(target_id)
+            if not committee or not bool(getattr(committee, "is_active", False)):
+                errors.append(f"تعذر العثور على اللجنة المختارة رقم {target_id}.")
+                continue
+            normalized_mode = _normalize_committee_delivery_mode(committee_delivery_mode)
+            if not normalized_mode:
+                errors.append(f"طريقة تسليم اللجنة «{committee.label}» غير صالحة.")
+                continue
+            mode_key, canonical_mode, mode_label = normalized_mode
+            assignees = _committee_assignees_for_mode(committee, mode_key)
+            if not assignees:
+                errors.append(
+                    f"لا يوجد مستلم نشط بصفة «{mode_label}» في اللجنة «{committee.label}»."
+                )
+                continue
+            resolved_targets.append({
+                "kind": "COMMITTEE",
+                "id": target_id,
+                "committee": committee,
+                "committee_delivery_mode": canonical_mode,
+                "committee_mode_key": mode_key,
+                "committee_mode_label": mode_label,
+                "label": f"لجنة: {committee.label}",
+            })
+            continue
+
         if kind == "USER":
             target_user = users_map.get(target_id)
             if not target_user:
@@ -754,6 +932,12 @@ def build_dynamic_target_path(
             if not route_start_node:
                 errors.append(
                     f"نقطة بدء التسلسل المحددة لا تقع ضمن الجزء المسموح من مسار الجهة «{target_node.name_ar}»."
+                )
+                continue
+            if _is_secretary_general_node(route_start_node):
+                errors.append(
+                    "لا يمكن استخدام الأمين العام كنقطة بدء ضمنية؛ "
+                    "أضفه من خيار «هل تريد إضافة الأمين العام كآخر خطوة؟»."
                 )
                 continue
             route_start_manager, _route_start_role = _manager_for_node(route_start_node)
@@ -827,9 +1011,43 @@ def build_dynamic_target_path(
         seen_approver_user_ids.add(target_user_id)
         return True
 
+    def add_committee_step(target: dict) -> None:
+        committee = target["committee"]
+        steps.append({
+            "step_order": len(steps) + 1,
+            "mode": "SEQUENTIAL",
+            "approver_kind": "COMMITTEE",
+            "approver_committee_id": int(committee.id),
+            "committee_delivery_mode": target["committee_delivery_mode"],
+            "sla_days": None,
+            "label": target["label"],
+            "job_title": target["committee_mode_label"],
+            "reason": "وجهة لجنة مختارة ضمن المسار الديناميكي",
+            "node_id": None,
+            "node_label": "",
+        })
+
     current_user = requester
     current_chain = requester_chain
     for target in resolved_targets:
+        if target["kind"] == "COMMITTEE":
+            target_ref = (
+                f"COMMITTEE:{int(target['id'])}@{target['committee_mode_key']}"
+            )
+            add_committee_step(target)
+            segments.append({
+                "from_user_id": int(current_user.id),
+                "to_user_id": None,
+                "target_kind": "COMMITTEE",
+                "target_id": int(target["id"]),
+                "target_ref": target_ref,
+                "route_start_node_id": None,
+                "route_start_label": "",
+                "same_administration": False,
+                "intermediate_manager_count": 0,
+            })
+            continue
+
         target_user = target["user"]
         target_node = target["node"]
         target_chain = target["chain"]
@@ -865,6 +1083,8 @@ def build_dynamic_target_path(
 
             skipped_nodes = []
             for route_node, _route_phase in scoped_route:
+                if _is_secretary_general_node(route_node):
+                    continue
                 if int(route_node.id) == int(target_node.id):
                     continue
                 if not _node_allows_approval(route_node):
@@ -889,6 +1109,8 @@ def build_dynamic_target_path(
             resolved_manager_count = 0
             skipped_nodes = []
             for route_node in route_nodes:
+                if _is_secretary_general_node(route_node):
+                    continue
                 if target["kind"] == "NODE" and int(route_node.id) == int(target_node.id):
                     continue
                 if not _node_allows_approval(route_node):
@@ -923,8 +1145,18 @@ def build_dynamic_target_path(
         current_chain = target_chain
 
     if include_secretary_general:
-        final_chain = resolved_targets[-1]["chain"] if resolved_targets else requester_chain
-        secretary_general = final_chain[1] if len(final_chain) > 1 else None
+        final_chain = next(
+            (
+                target["chain"]
+                for target in reversed(resolved_targets)
+                if target.get("chain")
+            ),
+            requester_chain,
+        )
+        secretary_general = next(
+            (node for node in final_chain if _is_secretary_general_node(node)),
+            None,
+        )
         secretary_manager, _secretary_role = (
             _manager_for_node(secretary_general)
             if secretary_general else

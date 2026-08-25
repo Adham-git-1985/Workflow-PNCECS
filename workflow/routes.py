@@ -118,6 +118,7 @@ from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
 from workflow.dynamic_paths import (
     FINAL_SECRETARY_GENERAL_REF,
     build_dynamic_target_path,
+    dynamic_committee_choices,
     dynamic_org_browser_nodes,
     dynamic_user_choices,
     hierarchy_position_label,
@@ -2520,6 +2521,7 @@ def new_request():
         selected_request_type_name = selected_request_type.label if selected_request_type else ""
     dynamic_choices = dynamic_user_choices(current_user)
     dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, current_user)
+    dynamic_committees = dynamic_committee_choices()
     dynamic_presets = (
         UserDynamicWorkflowPreset.query
         .filter_by(user_id=current_user.id)
@@ -2527,6 +2529,10 @@ def new_request():
         .all()
     )
     requester_org_node_id = resolve_user_org_node_id(current_user)
+    dynamic_route_available = bool(
+        requester_org_node_id
+        or any(committee.get("can_select") for committee in dynamic_committees)
+    )
 
     if request.method == "POST":
         title = (request.form.get("title") or "").strip() or "طلب جديد"
@@ -2570,7 +2576,7 @@ def new_request():
                 for error in dynamic_path["errors"]:
                     flash(error, "danger")
                 return redirect(request.url)
-            workflow_label = "مسار ديناميكي حسب الهيكل الإداري"
+            workflow_label = "مسار ديناميكي"
         else:
             if template_id.isdigit():
                 template = WorkflowTemplate.query.get_or_404(int(template_id))
@@ -2664,7 +2670,7 @@ def new_request():
 
         db.session.commit()
         flash(
-            "تم إنشاء الطلب وبناء مساره ديناميكياً حسب الهيكل الإداري."
+            "تم إنشاء الطلب وبناء مساره الديناميكي."
             if dynamic_path
             else "تم إنشاء الطلب وبدء مسار العمل المحفوظ.",
             "success",
@@ -2678,8 +2684,10 @@ def new_request():
         selected_request_type_name=selected_request_type_name,
         dynamic_choices=dynamic_choices,
         dynamic_org_nodes=dynamic_org_nodes,
+        dynamic_committees=dynamic_committees,
         dynamic_presets=[preset.as_dict() for preset in dynamic_presets],
         requester_org_node_id=requester_org_node_id,
+        dynamic_route_available=dynamic_route_available,
         intake_max_bytes=intake_max_bytes,
         intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
     )
@@ -3283,13 +3291,25 @@ def work_dashboard():
 def circulars_list():
     rows = []
     try:
-        rows = (visible_circulars_query(PortalCircular.query, current_user)
+        rows = (visible_circulars_query(
+                    PortalCircular.query,
+                    current_user,
+                    include_inactive_for_managers=True,
+                )
                 .order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc())
                 .limit(200)
                 .all())
     except Exception:
         rows = []
-    return render_template("workflow/circulars.html", rows=rows)
+    try:
+        can_manage = bool(current_user.has_perm("PORTAL_CIRCULARS_MANAGE"))
+    except Exception:
+        can_manage = False
+    return render_template(
+        "workflow/circulars.html",
+        rows=rows,
+        can_manage=can_manage,
+    )
 
 
 @workflow_bp.route("/circulars/<int:circular_id>")

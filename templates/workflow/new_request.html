@@ -94,7 +94,7 @@
 </div>
 
 {% if not templates %}
-  <div class="alert alert-warning">لا توجد مسارات محفوظة مفعّلة؛ يمكنك استخدام البناء الديناميكي حسب الهيكل الإداري إذا كان ربطك الهيكلي مكتملاً.</div>
+  <div class="alert alert-warning">لا توجد مسارات محفوظة مفعّلة؛ يمكنك استخدام البناء الديناميكي حسب الهيكل الإداري أو التوجيه إلى إحدى اللجان.</div>
 {% endif %}
 
 <form method="post" class="card shadow-sm" enctype="multipart/form-data" id="workflowNewRequestForm">
@@ -117,12 +117,14 @@
             <label class="form-check-label fw-semibold" for="routeModePredefined">مسار منشأ مسبقًا</label>
           </div>
           <div class="form-check">
-            <input class="form-check-input" type="radio" name="route_mode" id="routeModeDynamic" value="DYNAMIC" {% if not requester_org_node_id %}disabled{% endif %}>
-            <label class="form-check-label fw-semibold" for="routeModeDynamic">إنشاء مسار جديد من الهيكلية</label>
+            <input class="form-check-input" type="radio" name="route_mode" id="routeModeDynamic" value="DYNAMIC" {% if not dynamic_route_available %}disabled{% endif %}>
+            <label class="form-check-label fw-semibold" for="routeModeDynamic">إنشاء مسار ديناميكي</label>
           </div>
         </div>
-        {% if not requester_org_node_id %}
-          <div class="form-text text-danger">لا يمكن تفعيل البناء الديناميكي قبل ربط حسابك بعنصر أساسي في الهيكل التنظيمي.</div>
+        {% if not dynamic_route_available %}
+          <div class="form-text text-danger">لا يمكن تفعيل البناء الديناميكي قبل ربط حسابك بالهيكل التنظيمي أو تفعيل لجنة تحتوي على أعضاء.</div>
+        {% elif not requester_org_node_id %}
+          <div class="form-text">يمكنك إنشاء مسار إلى لجنة نشطة. لاختيار جهات أو أشخاص، يجب ربط حسابك بالهيكل التنظيمي أولاً.</div>
         {% else %}
           <div class="form-text">داخل الإدارة نفسها يكون الاختيار مباشراً؛ وخارجها يضيف النظام التسلسل الإداري المعتمد تلقائياً.</div>
         {% endif %}
@@ -144,13 +146,14 @@
           <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
             <div>
               <div class="fw-bold"><i class="bi bi-diagram-3"></i> خطوات المسار الديناميكي</div>
-              <div class="small text-muted">اختر الجهات التنظيمية أو الأشخاص بالترتيب المطلوب. يمكنك إضافة عدة جهات من المستوى نفسه وإعادة ترتيبها.</div>
+              <div class="small text-muted">اختر الجهات التنظيمية أو الأشخاص بالترتيب المطلوب، ويمكنك إنهاء المسار بإحدى اللجان النشطة.</div>
             </div>
             <span class="badge text-bg-light border">الحد الأقصى 20 اختياراً</span>
           </div>
           <input type="hidden" name="dynamic_target_refs" id="dynamicTargetRefs" value="">
           <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
           <script type="application/json" id="dynamicSavedPresetsData">{{ (dynamic_presets|default([], true))|tojson }}</script>
+          <script type="application/json" id="dynamicCommitteesData">{{ (dynamic_committees|default([], true))|tojson }}</script>
           <div class="border rounded-3 p-3 bg-light mb-3" id="dynamicSavedPresetsBox">
             <div class="fw-bold mb-2"><i class="bi bi-bookmark-star"></i> مساراتي الديناميكية المحفوظة</div>
             <div class="small text-muted mb-3">ابدأ من هنا إذا أردت استخدام مسار سابق أو تعديله. هذه المسارات خاصة بملفك ولا تظهر لبقية المستخدمين.</div>
@@ -173,8 +176,48 @@
             </div>
             <div class="small mt-2 d-none" id="dynamicPresetLoadStatus" role="status"></div>
           </div>
-          {% if dynamic_choices or dynamic_org_nodes %}
+          {% if dynamic_choices or dynamic_org_nodes or dynamic_committees %}
             <script type="application/json" id="dynamicOrgNodesData">{{ (dynamic_org_nodes|default([], true))|tojson }}</script>
+            {% if dynamic_committees %}
+              <div class="border border-info rounded-3 p-3 bg-info bg-opacity-10 mb-3">
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" role="switch" id="dynamicEnableCommittee">
+                  <label class="form-check-label fw-bold" for="dynamicEnableCommittee">
+                    <i class="bi bi-people-fill"></i> هل تريد إضافة لجنة إلى المسار؟
+                  </label>
+                </div>
+                <div class="small text-muted mt-1">لن تظهر خيارات اللجان أو تُضاف أي لجنة إلا بعد تفعيل هذا الخيار.</div>
+                <div class="d-none mt-3" id="dynamicCommitteeControls">
+                  <div class="row g-2 align-items-end">
+                    <div class="col-12 col-lg-5">
+                      <label class="form-label" for="dynamicCommitteeSelect">اللجنة</label>
+                      <select class="form-select dynamic-contained-select" id="dynamicCommitteeSelect">
+                        <option value="">— اختر لجنة —</option>
+                        {% for committee in dynamic_committees %}
+                          <option value="{{ committee.id }}" {% if not committee.can_select %}disabled{% endif %}>
+                            {{ committee.name }}{% if committee.member_count %} — {{ committee.member_count }} عضو{% else %} — بلا أعضاء نشطين{% endif %}
+                          </option>
+                        {% endfor %}
+                      </select>
+                    </div>
+                    <div class="col-12 col-lg-4">
+                      <label class="form-label" for="dynamicCommitteeMode">طريقة التسليم</label>
+                      <select class="form-select dynamic-contained-select" id="dynamicCommitteeMode" disabled>
+                        <option value="">— اختر اللجنة أولاً —</option>
+                      </select>
+                    </div>
+                    <div class="col-12 col-lg-3">
+                      <button type="button" class="btn btn-outline-info w-100" id="dynamicAddCommittee" disabled>
+                        <i class="bi bi-plus-circle"></i> إضافة اللجنة
+                      </button>
+                    </div>
+                  </div>
+                  <div class="small text-muted mt-2" id="dynamicCommitteeHint">يمكن إضافة لجنة واحدة، وتبقى آخر وجهة مختارة تلقائياً.</div>
+                </div>
+              </div>
+            {% endif %}
+
+            {% if (dynamic_choices or dynamic_org_nodes) and requester_org_node_id %}
             <div class="border rounded-3 p-3 bg-light mb-3">
               <label class="form-label fw-bold" for="dynamicHierarchySelect">
                 <i class="bi bi-diagram-3"></i> الهيكلية
@@ -246,11 +289,12 @@
               {% endfor %}
             </div>
             <div class="alert alert-light border py-2" id="dynamicUserSearchEmpty">اختر جهة من الهيكل الإداري لعرض الموظفين.</div>
+            {% endif %}
           {% endif %}
-          {% if not dynamic_choices and not dynamic_org_nodes %}
-            <div class="alert alert-warning py-2 mt-3 mb-0">لا توجد جهات أو موظفون متاحون لبناء المسار الديناميكي.</div>
+          {% if not dynamic_choices and not dynamic_org_nodes and not dynamic_committees %}
+            <div class="alert alert-warning py-2 mt-3 mb-0">لا توجد جهات أو موظفون أو لجان متاحة لبناء المسار الديناميكي.</div>
           {% endif %}
-          <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي جهة أو شخص بعد.</span></div>
+          <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي جهة أو شخص أو لجنة بعد.</span></div>
           <ol class="list-group mt-3 d-none" id="dynamicSelectedList"></ol>
           <div class="mt-3 d-none" id="dynamicPathPreview"></div>
 
@@ -573,6 +617,12 @@
     const hierarchySelect = document.getElementById('dynamicHierarchySelect');
     const addHierarchyNodeButton = document.getElementById('dynamicAddHierarchyNode');
     const hierarchyHint = document.getElementById('dynamicHierarchyHint');
+    const committeeEnabledControl = document.getElementById('dynamicEnableCommittee');
+    const committeeControls = document.getElementById('dynamicCommitteeControls');
+    const committeeSelect = document.getElementById('dynamicCommitteeSelect');
+    const committeeModeSelect = document.getElementById('dynamicCommitteeMode');
+    const addCommitteeButton = document.getElementById('dynamicAddCommittee');
+    const committeeHint = document.getElementById('dynamicCommitteeHint');
     const visibleScopeHint = document.getElementById('dynamicVisibleScopeHint');
     const userChoices = document.getElementById('dynamicUserChoices');
     const searchEmpty = document.getElementById('dynamicUserSearchEmpty');
@@ -595,6 +645,7 @@
     const selected = [];
     let currentOrgNodeId = null;
     let orgNodes = [];
+    let committees = [];
     let savedPresets = [];
     let previewTimer = null;
 
@@ -605,20 +656,52 @@
       orgNodes = [];
     }
     try {
+      const committeesElement = document.getElementById('dynamicCommitteesData');
+      committees = committeesElement ? JSON.parse(committeesElement.textContent || '[]') : [];
+    } catch (error) {
+      committees = [];
+    }
+    try {
       const savedPresetsElement = document.getElementById('dynamicSavedPresetsData');
       savedPresets = savedPresetsElement ? JSON.parse(savedPresetsElement.textContent || '[]') : [];
     } catch (error) {
       savedPresets = [];
     }
     const orgNodesById = new Map(orgNodes.map(node => [String(node.id), node]));
+    const committeesById = new Map(committees.map(committee => [String(committee.id), committee]));
 
     function nodeTargetRef(nodeId, routeStartId){
       const base = 'NODE:' + String(nodeId);
       return routeStartId ? base + '@' + String(routeStartId) : base;
     }
 
+    function committeeTargetRef(committeeId, modeKey){
+      return 'COMMITTEE:' + String(committeeId) + '@' + String(modeKey || 'ALL').toUpperCase();
+    }
+
     function selectedNodeIndex(nodeId){
       return selected.findIndex(item => item.kind === 'NODE' && String(item.id) === String(nodeId));
+    }
+
+    function selectedCommitteeIndex(committeeId){
+      return selected.findIndex(item =>
+        item.kind === 'COMMITTEE' &&
+        (!committeeId || String(item.id) === String(committeeId))
+      );
+    }
+
+    function committeeEnabled(){
+      return Boolean(committeeEnabledControl && committeeEnabledControl.checked);
+    }
+
+    function setCommitteeEnabled(enabled){
+      if (committeeEnabledControl) committeeEnabledControl.checked = Boolean(enabled);
+      if (committeeControls) committeeControls.classList.toggle('d-none', !enabled);
+    }
+
+    function insertBeforeCommittee(item){
+      const committeeIndex = selectedCommitteeIndex();
+      selected.splice(committeeIndex >= 0 ? committeeIndex : selected.length, 0, item);
     }
 
     function selectableRouteStarts(node){
@@ -699,6 +782,7 @@
     function loadPreset(preset){
       if (!preset) return;
       selected.splice(0, selected.length);
+      setCommitteeEnabled(false);
       setIncludeSecretaryGeneral(false);
       const missingRefs = [];
       (preset.target_refs || []).forEach(function(targetRef){
@@ -722,6 +806,18 @@
           if (!control || !addSelectedUser(control)) missingRefs.push(targetRef);
           return;
         }
+        if (kind === 'COMMITTEE') {
+          const committee = committeesById.get(String(targetId));
+          setCommitteeEnabled(true);
+          if (committeeSelect) committeeSelect.value = String(targetId);
+          updateCommitteeSelection();
+          if (!committee || !committee.can_select || !addSelectedCommittee(committee, routeStartId || 'ALL')) {
+            missingRefs.push(targetRef);
+          } else {
+            updateCommitteeSelection();
+          }
+          return;
+        }
         missingRefs.push(targetRef);
       });
       if (presetNameInput) presetNameInput.value = preset.name || '';
@@ -743,7 +839,7 @@
         return;
       }
       if (!selected.length) {
-        setPresetStatus(presetSaveStatus, 'أضف جهة أو شخصًا واحدًا على الأقل قبل الحفظ.', 'danger');
+        setPresetStatus(presetSaveStatus, 'أضف جهة أو شخصًا أو لجنة واحدة على الأقل قبل الحفظ.', 'danger');
         return;
       }
       syncHidden();
@@ -809,12 +905,14 @@
 
       selected.forEach(function(item, index){
         const listItem = document.createElement('li');
+        const isNode = item.kind === 'NODE';
+        const isCommittee = item.kind === 'COMMITTEE';
         let routeStartControl = '';
-        if (item.kind === 'NODE') {
+        if (isNode) {
           const startOptions = (item.routeStartOptions || []).map(function(option){
             const optionLabel = String(option.position || '') + ' — ' +
               (option.type_name ? option.type_name + ': ' : '') + (option.name || '') +
-              (option.can_start ? '' : ' — لا يوجد مسؤول معتمد');
+              (option.can_start ? '' : ' — ' + (option.unavailable_reason || 'غير متاح'));
             return '<option value="' + String(option.id) + '" ' +
               (String(option.id) === String(item.routeStartId) ? 'selected ' : '') +
               (option.can_start ? '' : 'disabled ') + '>' + escapeHtml(optionLabel) + '</option>';
@@ -830,22 +928,30 @@
               '<div class="form-text">المستويان الأول والثاني في أعلى الهيكل مستبعدان تلقائياً.</div>' +
             '</div>';
         }
+        const iconClass = isCommittee ? 'bi-people-fill' : (isNode ? 'bi-building' : 'bi-briefcase');
+        const fallbackTitle = isCommittee ? 'لجنة' : (isNode ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل');
+        const badgeClass = isCommittee ? 'text-bg-info' : (isNode ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning'));
+        const badgeText = isCommittee
+          ? 'آخر وجهة — ' + (item.modeLabel || 'كل أعضاء اللجنة')
+          : (isNode ? 'يبدأ من: ' + (item.routeStartName || '') : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري'));
+        const disableUp = isCommittee || index === 0;
+        const disableDown = isCommittee || index === selected.length - 1 || (selected[index + 1] && selected[index + 1].kind === 'COMMITTEE');
         listItem.className = 'list-group-item border border-primary rounded-3 mb-2 d-flex justify-content-between align-items-start gap-3 flex-wrap flex-md-nowrap';
         listItem.innerHTML =
           '<div class="d-flex align-items-start gap-3 flex-grow-1" style="min-width:0">' +
             '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
             '<div class="flex-grow-1" style="min-width:0">' +
               '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
-              '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + (item.kind === 'NODE' ? 'bi-building' : 'bi-briefcase') + '"></i> ' + escapeHtml(item.title || (item.kind === 'NODE' ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل')) + '</div>' +
+              '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + iconClass + '"></i> ' + escapeHtml(item.title || fallbackTitle) + '</div>' +
             routeStartControl +
-            '<span class="badge mt-1 dynamic-wrap-badge ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
-              (item.kind === 'NODE' ? 'يبدأ من: ' + escapeHtml(item.routeStartName || '') : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
+            '<span class="badge mt-1 dynamic-wrap-badge ' + badgeClass + '">' +
+              escapeHtml(badgeText) +
             '</span>' +
             '</div>' +
           '</div>' +
           '<div class="btn-group btn-group-sm flex-shrink-0 dynamic-selected-actions">' +
-            '<button type="button" class="btn btn-outline-secondary" data-action="up" data-index="' + index + '" title="أعلى">↑</button>' +
-            '<button type="button" class="btn btn-outline-secondary" data-action="down" data-index="' + index + '" title="أسفل">↓</button>' +
+            '<button type="button" class="btn btn-outline-secondary" data-action="up" data-index="' + index + '" title="أعلى" ' + (disableUp ? 'disabled' : '') + '>↑</button>' +
+            '<button type="button" class="btn btn-outline-secondary" data-action="down" data-index="' + index + '" title="أسفل" ' + (disableDown ? 'disabled' : '') + '>↓</button>' +
             '<button type="button" class="btn btn-outline-danger" data-action="remove" data-index="' + index + '">حذف</button>' +
           '</div>';
         selectedList.appendChild(listItem);
@@ -854,6 +960,7 @@
         checkbox.checked = selected.some(item => item.ref === 'USER:' + checkbox.dataset.id);
       });
       syncNodeSelectionButtons();
+      syncCommitteeSelection();
       if (savePresetButton) savePresetButton.disabled = selected.length === 0;
       schedulePreview();
     }
@@ -865,7 +972,7 @@
       if (selected.length >= 20) {
         return false;
       }
-      selected.push({
+      insertBeforeCommittee({
         ref: targetRef,
         kind: 'USER',
         id: control.dataset.id,
@@ -887,7 +994,7 @@
         ? availableStarts.find(option => String(option.id) === String(preferredRouteStartId))
         : availableStarts[0];
       if (!routeStart) return false;
-      selected.push({
+      insertBeforeCommittee({
         ref: nodeTargetRef(node.id, routeStart.id),
         kind: 'NODE',
         id: String(node.id),
@@ -898,6 +1005,28 @@
         routeStartId: String(routeStart.id),
         routeStartName: (routeStart.type_name ? routeStart.type_name + ': ' : '') + (routeStart.name || ''),
         routeStartOptions: Array.isArray(node.route_start_options) ? node.route_start_options : []
+      });
+      return true;
+    }
+
+    function addSelectedCommittee(committee, preferredModeKey){
+      if (!committee || !committee.can_select) return false;
+      setCommitteeEnabled(true);
+      const modes = Array.isArray(committee.available_modes) ? committee.available_modes : [];
+      const mode = modes.find(option => String(option.key).toUpperCase() === String(preferredModeKey || 'ALL').toUpperCase());
+      if (!mode || selected.length >= 20 && selectedCommitteeIndex() < 0) return false;
+      const existingCommitteeIndex = selectedCommitteeIndex();
+      if (existingCommitteeIndex >= 0) selected.splice(existingCommitteeIndex, 1);
+      selected.push({
+        ref: committeeTargetRef(committee.id, mode.key),
+        kind: 'COMMITTEE',
+        id: String(committee.id),
+        name: 'لجنة: ' + (committee.name || ''),
+        title: mode.label || 'كل أعضاء اللجنة',
+        modeKey: mode.key,
+        modeLabel: mode.label || 'كل أعضاء اللجنة',
+        memberCount: Number(mode.assignee_count || 0),
+        sameAdmin: false
       });
       return true;
     }
@@ -921,6 +1050,65 @@
           : (isSelected
             ? '<i class="bi bi-check2"></i> تمت إضافة الجهة'
             : '<i class="bi bi-plus-circle"></i> إضافة الجهة نفسها إلى المسار'));
+    }
+
+    function syncCommitteeSelection(){
+      if (!addCommitteeButton) return;
+      const committee = committeeSelect && committeeSelect.value
+        ? committeesById.get(String(committeeSelect.value))
+        : null;
+      const modeKey = committeeModeSelect ? committeeModeSelect.value : '';
+      const selectedIndex = committee ? selectedCommitteeIndex(committee.id) : -1;
+      const selectedCommittee = selectedIndex >= 0 ? selected[selectedIndex] : null;
+      const isSelected = Boolean(
+        selectedCommittee && String(selectedCommittee.modeKey) === String(modeKey)
+      );
+      addCommitteeButton.disabled = !committeeEnabled() || !committee || !committee.can_select || !modeKey;
+      addCommitteeButton.classList.toggle('btn-info', isSelected);
+      addCommitteeButton.classList.toggle('btn-outline-info', !isSelected);
+      addCommitteeButton.innerHTML = isSelected
+        ? '<i class="bi bi-check2"></i> تمت إضافة اللجنة'
+        : (selectedCommittee
+          ? '<i class="bi bi-arrow-repeat"></i> تحديث طريقة التسليم'
+          : '<i class="bi bi-plus-circle"></i> إضافة اللجنة');
+    }
+
+    function updateCommitteeSelection(){
+      if (!committeeModeSelect) return;
+      const committee = committeeSelect && committeeSelect.value
+        ? committeesById.get(String(committeeSelect.value))
+        : null;
+      const selectedCommittee = committee
+        ? selected.find(item => item.kind === 'COMMITTEE' && String(item.id) === String(committee.id))
+        : null;
+      committeeModeSelect.innerHTML = '';
+      const modes = Array.isArray(committee && committee.available_modes)
+        ? committee.available_modes
+        : [];
+      if (!modes.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = committee ? 'لا يوجد مستلم نشط' : '— اختر اللجنة أولاً —';
+        committeeModeSelect.appendChild(option);
+        committeeModeSelect.disabled = true;
+      } else {
+        modes.forEach(function(mode){
+          const option = document.createElement('option');
+          option.value = mode.key;
+          option.textContent = mode.label + ' — ' + String(mode.assignee_count || 0) + ' مستلم';
+          option.selected = selectedCommittee
+            ? String(selectedCommittee.modeKey) === String(mode.key)
+            : String(mode.key) === 'ALL';
+          committeeModeSelect.appendChild(option);
+        });
+        committeeModeSelect.disabled = false;
+      }
+      if (committeeHint) {
+        committeeHint.textContent = !committee
+          ? 'يمكن إضافة لجنة واحدة، وتبقى آخر وجهة مختارة تلقائياً.'
+          : (committee.unavailable_reason || 'ستكون لجنة «' + committee.name + '» آخر وجهة مختارة تلقائياً.');
+      }
+      syncCommitteeSelection();
     }
 
     function updateHierarchySelection(){
@@ -1036,6 +1224,36 @@
       control.addEventListener('change', schedulePreview);
     });
     if (hierarchySelect) hierarchySelect.addEventListener('change', updateHierarchySelection);
+    if (committeeEnabledControl) committeeEnabledControl.addEventListener('change', function(){
+      const enabled = committeeEnabledControl.checked;
+      setCommitteeEnabled(enabled);
+      if (!enabled) {
+        const existingIndex = selectedCommitteeIndex();
+        if (existingIndex >= 0) selected.splice(existingIndex, 1);
+        if (committeeSelect) committeeSelect.value = '';
+      }
+      updateCommitteeSelection();
+      renderSelected();
+    });
+    if (committeeSelect) committeeSelect.addEventListener('change', updateCommitteeSelection);
+    if (committeeModeSelect) committeeModeSelect.addEventListener('change', syncCommitteeSelection);
+    if (addCommitteeButton) addCommitteeButton.addEventListener('click', function(){
+      if (addCommitteeButton.disabled || !committeeSelect || !committeeSelect.value) return;
+      const committee = committeesById.get(String(committeeSelect.value));
+      if (!committee) return;
+      const existingIndex = selectedCommitteeIndex(committee.id);
+      const selectedModeKey = committeeModeSelect && committeeModeSelect.value;
+      if (
+        existingIndex >= 0 &&
+        String(selected[existingIndex].modeKey) === String(selectedModeKey)
+      ) {
+        selected.splice(existingIndex, 1);
+      } else if (!addSelectedCommittee(committee, selectedModeKey)) {
+        window.alert(committee.unavailable_reason || 'تعذر إضافة اللجنة إلى المسار.');
+        return;
+      }
+      renderSelected();
+    });
     if (addHierarchyNodeButton) addHierarchyNodeButton.addEventListener('click', function(){
       if (addHierarchyNodeButton.disabled || !currentOrgNodeId) return;
       const node = orgNodesById.get(String(currentOrgNodeId));
@@ -1106,18 +1324,29 @@
       if (!Number.isInteger(index) || index < 0 || index >= selected.length) return;
       const action = button.dataset.action;
       if (action === 'remove') selected.splice(index, 1);
-      if (action === 'up' && index > 0) [selected[index - 1], selected[index]] = [selected[index], selected[index - 1]];
-      if (action === 'down' && index < selected.length - 1) [selected[index + 1], selected[index]] = [selected[index], selected[index + 1]];
+      if (action === 'up' && index > 0 && selected[index].kind !== 'COMMITTEE') {
+        [selected[index - 1], selected[index]] = [selected[index], selected[index - 1]];
+      }
+      if (
+        action === 'down' &&
+        index < selected.length - 1 &&
+        selected[index].kind !== 'COMMITTEE' &&
+        selected[index + 1].kind !== 'COMMITTEE'
+      ) {
+        [selected[index + 1], selected[index]] = [selected[index], selected[index + 1]];
+      }
       renderSelected();
     });
     form.addEventListener('submit', function(event){
       if (isDynamic() && !selected.length) {
         event.preventDefault();
-        window.alert('اختر جهة تنظيمية أو شخصاً واحداً على الأقل للمسار الديناميكي.');
+        window.alert('اختر جهة تنظيمية أو شخصاً أو لجنة واحدة على الأقل للمسار الديناميكي.');
       }
     });
     renderSavedPresets();
     if (savePresetButton) savePresetButton.disabled = true;
+    setCommitteeEnabled(false);
+    updateCommitteeSelection();
     updateHierarchySelection();
     updateMode();
   })();

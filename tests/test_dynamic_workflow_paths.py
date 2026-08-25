@@ -8,6 +8,8 @@ from PyPDF2 import PdfReader
 from extensions import db
 from models import (
     AuditLog,
+    Committee,
+    CommitteeAssignee,
     Notification,
     OrgNode,
     OrgNodeAssignment,
@@ -32,6 +34,7 @@ from workflow.dynamic_paths import (
     build_dynamic_target_path,
     build_dynamic_user_path,
     build_structural_template_path,
+    dynamic_committee_choices,
     dynamic_org_browser_nodes,
     dynamic_user_choices,
     hierarchy_position_label,
@@ -221,6 +224,134 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             nodes_by_id[self.department_a2.id]["direct_user_count"],
         )
 
+    def test_dynamic_committee_choices_expose_only_available_delivery_modes(self):
+        committee = Committee(name_ar="لجنة الاختبار", code="TEST", is_active=True)
+        inactive_committee = Committee(name_ar="لجنة غير مفعلة", is_active=False)
+        db.session.add_all([committee, inactive_committee])
+        db.session.flush()
+        db.session.add_all([
+            CommitteeAssignee(
+                committee_id=committee.id,
+                kind="USER",
+                user_id=self.same_target.id,
+                member_role="CHAIR",
+                is_active=True,
+            ),
+            CommitteeAssignee(
+                committee_id=committee.id,
+                kind="USER",
+                user_id=self.cross_target.id,
+                member_role="MEMBER",
+                is_active=True,
+            ),
+        ])
+        db.session.commit()
+
+        choices = dynamic_committee_choices()
+
+        self.assertEqual([choice["id"] for choice in choices], [committee.id])
+        self.assertTrue(choices[0]["can_select"])
+        self.assertEqual(choices[0]["member_count"], 2)
+        self.assertEqual(
+            [mode["key"] for mode in choices[0]["available_modes"]],
+            ["ALL", "CHAIR"],
+        )
+
+    def test_dynamic_path_can_end_at_committee_and_runtime_resolves_its_chair(self):
+        committee = Committee(name_ar="لجنة المسار الديناميكي", is_active=True)
+        db.session.add(committee)
+        db.session.flush()
+        db.session.add_all([
+            CommitteeAssignee(
+                committee_id=committee.id,
+                kind="USER",
+                user_id=self.same_target.id,
+                member_role="CHAIR",
+                is_active=True,
+            ),
+            CommitteeAssignee(
+                committee_id=committee.id,
+                kind="USER",
+                user_id=self.cross_target.id,
+                member_role="MEMBER",
+                is_active=True,
+            ),
+        ])
+        db.session.commit()
+
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"COMMITTEE:{committee.id}@CHAIR"],
+        )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(len(result["steps"]), 1)
+        self.assertEqual(result["steps"][0]["approver_kind"], "COMMITTEE")
+        self.assertEqual(result["steps"][0]["approver_committee_id"], committee.id)
+        self.assertEqual(result["steps"][0]["committee_delivery_mode"], "Committee_CHAIR")
+        self.assertEqual(
+            result["segments"][0]["target_ref"],
+            f"COMMITTEE:{committee.id}@CHAIR",
+        )
+        unlinked_requester = self._user("unlinked@example.test", "موظف غير مربوط")
+        db.session.commit()
+        unlinked_result = build_dynamic_target_path(
+            unlinked_requester,
+            [f"COMMITTEE:{committee.id}@ALL"],
+        )
+        self.assertEqual(unlinked_result["errors"], [])
+
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب إلى لجنة",
+            status="DRAFT",
+            confidentiality="NORMAL",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        start_workflow_for_request(
+            request_row,
+            None,
+            created_by_user_id=self.requester.id,
+            runtime_steps=result["steps"],
+            workflow_label="مسار ديناميكي إلى لجنة",
+        )
+        db.session.commit()
+
+        instance = WorkflowInstance.query.filter_by(request_id=request_row.id).one()
+        step = WorkflowInstanceStep.query.filter_by(instance_id=instance.id).one()
+        self.assertEqual(step.approver_kind, "COMMITTEE")
+        self.assertEqual(step.approver_committee_id, committee.id)
+        self.assertEqual(step.committee_delivery_mode, "Committee_CHAIR")
+        self.assertEqual(resolve_step_approver_user_ids(step), [self.same_target.id])
+        self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
+        self.assertIsNone(Notification.query.filter_by(user_id=self.cross_target.id).first())
+
+    def test_dynamic_committee_must_be_last_and_have_the_requested_member_role(self):
+        committee = Committee(name_ar="لجنة بلا مقرر", is_active=True)
+        db.session.add(committee)
+        db.session.flush()
+        db.session.add(CommitteeAssignee(
+            committee_id=committee.id,
+            kind="USER",
+            user_id=self.same_target.id,
+            member_role="CHAIR",
+            is_active=True,
+        ))
+        db.session.commit()
+
+        not_last = build_dynamic_target_path(self.requester, [
+            f"COMMITTEE:{committee.id}@ALL",
+            f"USER:{self.same_target.id}",
+        ])
+        missing_secretary = build_dynamic_target_path(
+            self.requester,
+            [f"COMMITTEE:{committee.id}@SECRETARY"],
+        )
+
+        self.assertIn("آخر وجهة", " ".join(not_last["errors"]))
+        self.assertIn("مقرر اللجنة", " ".join(missing_secretary["errors"]))
+
     def test_hierarchy_position_uses_the_workflow_step_node(self):
         second_managed_node = self._node(
             "دائرة إضافية",
@@ -326,7 +457,8 @@ class DynamicWorkflowPathTests(unittest.TestCase):
     def test_scoped_node_route_excludes_top_two_levels_and_crosses_horizontally(self):
         directorate_type = self.directorate_a.type
         department_type = self.department_a1.type
-        secretary_general = self._node("الأمين العام", directorate_type, self.root)
+        chairperson = self._node("رئيس اللجنة", directorate_type, self.root)
+        secretary_general = self._node("الأمين العام", directorate_type, chairperson)
         source_assistant = self._node("مساعد الأمين العام للشؤون الإدارية", directorate_type, secretary_general)
         target_assistant = self._node("مساعد الأمين العام للمنظمات والبرامج", directorate_type, secretary_general)
         source_general = self._node("الإدارة العامة للشؤون الإدارية", directorate_type, source_assistant)
@@ -354,6 +486,29 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             OrgNodeManager(node_id=second_target_department.id, manager_user_id=second_target_department_manager.id),
         ])
         db.session.commit()
+
+        browser_nodes = dynamic_org_browser_nodes(
+            dynamic_user_choices(self.requester),
+            self.requester,
+        )
+        target_browser = next(
+            node for node in browser_nodes if node["id"] == target_department.id
+        )
+        start_options = {
+            option["id"]: option
+            for option in target_browser["route_start_options"]
+        }
+        self.assertFalse(start_options[secretary_general.id]["can_start"])
+        self.assertIn("خيار الإضافة المستقل", start_options[secretary_general.id]["unavailable_reason"])
+        self.assertEqual(
+            next(option["id"] for option in target_browser["route_start_options"] if option["can_start"]),
+            target_assistant.id,
+        )
+
+        implicit_secretary = build_dynamic_target_path(self.requester, [
+            f"NODE:{target_department.id}@{secretary_general.id}",
+        ])
+        self.assertIn("لا يمكن استخدام الأمين العام", " ".join(implicit_secretary["errors"]))
 
         result = build_dynamic_target_path(self.requester, [
             f"NODE:{target_department.id}@{target_assistant.id}",

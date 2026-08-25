@@ -4,10 +4,12 @@ from pathlib import Path
 
 from flask import Flask
 from flask_login import LoginManager
+from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
 from models import PortalCircular, PortalCircularAttachment, User, UserPermission
 from portal import portal_bp
+from workflow import workflow_bp
 
 
 class CircularManagementRouteTests(unittest.TestCase):
@@ -39,6 +41,11 @@ class CircularManagementRouteTests(unittest.TestCase):
                 return None
 
         cls.app.register_blueprint(portal_bp)
+        cls.app.register_blueprint(workflow_bp)
+        cls.app.jinja_loader = ChoiceLoader([
+            DictLoader({"layout.html": "{% block content %}{% endblock %}"}),
+            cls.app.jinja_loader,
+        ])
         cls.context = cls.app.app_context()
         cls.context.push()
         db.create_all()
@@ -115,6 +122,20 @@ class CircularManagementRouteTests(unittest.TestCase):
             response = client.post(f"/portal/circulars/{self.circular_id}/toggle-active")
             self.assertEqual(response.status_code, 302)
             self.assertFalse(db.session.get(PortalCircular, self.circular_id).is_active)
+
+            response = client.get("/workflow/circulars")
+            self.assertEqual(response.status_code, 200)
+            body = response.get_data(as_text=True)
+            self.assertIn("تعميم اختبار الإدارة", body)
+            self.assertIn("غير مفعّل", body)
+            self.assertIn("تفعيل", body)
+            self.assertIn("حذف", body)
+
+            response = client.get(f"/workflow/circulars/{self.circular_id}")
+            self.assertEqual(response.status_code, 200)
+            detail_body = response.get_data(as_text=True)
+            self.assertIn("مخفي عن المستخدمين", detail_body)
+            self.assertIn("تفعيل وإظهار للمستخدمين", detail_body)
 
             self._login(client, self.admin.id)
             response = client.post(f"/portal/circulars/{self.circular_id}/delete")

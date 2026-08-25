@@ -6,7 +6,12 @@
     <h3 class="mb-1"><i class="bi bi-megaphone"></i> التعميمات</h3>
     <div class="text-muted">أحدث التعميمات الصادرة داخل النظام.</div>
   </div>
-  <a class="btn btn-outline-secondary" href="{{ url_for('workflow.inbox') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+  <div class="d-flex gap-2 flex-wrap">
+    <a class="btn btn-outline-secondary" href="{{ url_for('workflow.inbox') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+    {% if can_manage %}
+      <a class="btn btn-primary" href="{{ url_for('portal.circular_new') }}"><i class="bi bi-plus-circle"></i> إصدار تعميم</a>
+    {% endif %}
+  </div>
 </div>
 
 <div class="card shadow-sm">
@@ -17,19 +22,29 @@
           <th>العنوان</th>
           <th>التاريخ</th>
           <th>الجهة المستهدفة</th>
+          {% if can_manage %}<th>الحالة</th>{% endif %}
           <th>الوسم</th>
           <th class="text-end"></th>
         </tr>
       </thead>
       <tbody>
         {% for c in rows %}
-        <tr>
+        <tr{% if not c.is_active %} class="table-secondary text-muted"{% endif %}>
           <td class="fw-semibold">
             {{ c.title }}
             {% if c.attachments %}<span class="badge bg-light text-dark border ms-1"><i class="bi bi-paperclip"></i> {{ c.attachments|length }}</span>{% endif %}
           </td>
           <td>{{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}</td>
           <td><span class="badge bg-light text-dark border">{{ c.audience_label }}</span></td>
+          {% if can_manage %}
+          <td>
+            {% if c.is_active %}
+              <span class="badge bg-success">مفعّل</span>
+            {% else %}
+              <span class="badge bg-secondary">غير مفعّل</span>
+            {% endif %}
+          </td>
+          {% endif %}
           <td>
             {% if c.is_urgent %}
               <span class="badge bg-danger">مستعجل</span>
@@ -37,13 +52,24 @@
               <span class="badge bg-secondary">معلومة</span>
             {% endif %}
           </td>
-          <td class="text-end">
+          <td class="text-end text-nowrap">
             <a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.circulars_view', circular_id=c.id) }}">فتح</a>
+            {% if can_manage %}
+              <form method="post" action="{{ url_for('portal.circular_toggle_active', circular_id=c.id) }}" class="d-inline">
+                <button class="btn btn-sm {% if c.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}" type="submit">
+                  {% if c.is_active %}إلغاء التفعيل{% else %}تفعيل{% endif %}
+                </button>
+              </form>
+              <form method="post" action="{{ url_for('portal.circular_delete', circular_id=c.id) }}" class="d-inline"
+                    onsubmit="return confirm('سيتم حذف التعميم ومرفقاته نهائيًا. هل تريد المتابعة؟');">
+                <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i> حذف</button>
+              </form>
+            {% endif %}
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="5" class="text-center text-muted py-4">لا توجد تعميمات.</td>
+          <td colspan="{{ 6 if can_manage else 5 }}" class="text-center text-muted py-4">لا توجد تعميمات.</td>
         </tr>
         {% endfor %}
       </tbody>
