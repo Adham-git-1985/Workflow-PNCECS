@@ -22,11 +22,14 @@ from markupsafe import Markup, escape
 
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph,
-    Spacer, Table, TableStyle, PageBreak
+    Spacer, Table, TableStyle
 )
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 from sqlalchemy import func, update, or_
 from sqlalchemy.orm import joinedload
@@ -1054,6 +1057,36 @@ def _select_template_for(user, request_type_id: int):
     return best.template, best
 
 
+def _find_or_create_request_type(request_type_name: str) -> RequestType:
+    """Resolve a user-entered request type without using it to select a route."""
+    normalized_name = " ".join((request_type_name or "").split()).strip()
+    if not normalized_name:
+        raise ValueError("يرجى كتابة نوع الطلب.")
+    if len(normalized_name) > 200:
+        raise ValueError("نوع الطلب يجب ألا يتجاوز 200 حرف.")
+
+    normalized_key = normalized_name.casefold()
+    for row in RequestType.query.order_by(RequestType.id.asc()).all():
+        candidates = (row.name_ar, row.name_en, row.code)
+        if any(
+            " ".join((value or "").split()).strip().casefold() == normalized_key
+            for value in candidates
+            if value
+        ):
+            return row
+
+    # User-created types are reusable labels only; their generated code has no
+    # routing meaning and does not change the route selected in the form.
+    row = RequestType(
+        code=f"USR_{uuid.uuid4().hex[:12].upper()}",
+        name_ar=normalized_name,
+        is_active=True,
+    )
+    db.session.add(row)
+    db.session.flush()
+    return row
+
+
 def _is_admin(user) -> bool:
     role = (getattr(user, "role", "") or "").strip().upper()
     return role in ("ADMIN", "SUPER_ADMIN")
@@ -1153,6 +1186,100 @@ def _get_request_files(req: WorkflowRequest):
 # =========================
 # PDF Report
 # =========================
+def _register_workflow_pdf_fonts() -> tuple[str, str]:
+    regular_name = "WorkflowArabic"
+    bold_name = "WorkflowArabicBold"
+    regular_candidates = [
+        os.path.join(current_app.root_path, "assets", "fonts", "DejaVuSans.ttf"),
+        r"C:\Windows\Fonts\arial.ttf",
+    ]
+    bold_candidates = [
+        os.path.join(current_app.root_path, "assets", "fonts", "DejaVuSans-Bold.ttf"),
+        r"C:\Windows\Fonts\arialbd.ttf",
+    ]
+
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    if regular_name not in registered:
+        regular_path = next((path for path in regular_candidates if os.path.exists(path)), None)
+        if regular_path:
+            pdfmetrics.registerFont(TTFont(regular_name, regular_path))
+    if bold_name not in registered:
+        bold_path = next((path for path in bold_candidates if os.path.exists(path)), None)
+        if bold_path:
+            pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    return (
+        regular_name if regular_name in registered else "Helvetica",
+        bold_name if bold_name in registered else "Helvetica-Bold",
+    )
+
+
+def _workflow_pdf_text(value) -> str:
+    """Escape and shape Arabic text for ReportLab's paragraph renderer."""
+    import html
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+
+    text = "" if value is None else str(value)
+    shaped_lines = []
+    for line in text.splitlines() or [""]:
+        candidate = line
+        if re.search(r"[\u0600-\u06FF]", candidate):
+            try:
+                candidate = get_display(arabic_reshaper.reshape(candidate))
+            except Exception:
+                candidate = line
+        shaped_lines.append(html.escape(candidate))
+    return "<br/>".join(shaped_lines)
+
+
+def _workflow_pdf_step_target(step, maps: dict) -> str:
+    kind = (step.approver_kind or "").strip().upper()
+    if kind == "USER":
+        user = maps["users"].get(step.approver_user_id)
+        name = (
+            step.routing_label
+            or (user.full_name if user else "")
+            or (user.email if user else "")
+            or "مستخدم"
+        )
+        job_title = step.routing_job_title or (getattr(user, "job_title", "") if user else "")
+        return f"{name} — {job_title}" if job_title else name
+    if kind == "ROLE":
+        return f"الدور الوظيفي: {ui_label(step.approver_role) or step.approver_role or '—'}"
+    if kind == "DIRECTORATE":
+        row = maps["directorates"].get(step.approver_directorate_id)
+        return f"{row.name_ar if row else 'إدارة'} — مدير عام الإدارة"
+    if kind == "UNIT":
+        row = maps["units"].get(step.approver_unit_id)
+        return f"{row.name_ar if row else 'وحدة'} — المدير أو النائب"
+    if kind == "SECTION":
+        row = maps["sections"].get(step.approver_section_id)
+        return f"{row.name_ar if row else 'قسم'} — المدير أو النائب"
+    if kind == "DIVISION":
+        row = maps["divisions"].get(step.approver_division_id)
+        return f"{row.name_ar if row else 'شعبة'} — المدير أو النائب"
+    if kind == "ORG_NODE":
+        row = maps["org_nodes"].get(step.approver_org_node_id)
+        label = step.routing_label or (row.name_ar if row else "جهة هيكلية")
+        return f"{label} — {step.routing_job_title}" if step.routing_job_title else label
+    if kind == "COMMITTEE":
+        row = maps["committees"].get(step.approver_committee_id)
+        return f"اللجنة: {row.name_ar if row else '—'}"
+
+    row = maps["departments"].get(step.approver_department_id)
+    return f"{row.name_ar if row else 'دائرة'} — رئيس الدائرة"
+
+
+def _workflow_pdf_step_action(step) -> str:
+    if step.routing_reason:
+        return step.routing_reason
+    if (step.mode or "").strip().upper() == "PARALLEL_SYNC":
+        return "مراجعة الطلب وإضافة الرد أو الملاحظة للتوثيق"
+    return "مراجعة الطلب واتخاذ الإجراء أو قرار الاعتماد المناسب"
+
+
 @workflow_bp.route("/<int:request_id>/pdf")
 @login_required
 def request_pdf(request_id):
@@ -1161,14 +1288,30 @@ def request_pdf(request_id):
     if not _user_can_view_request(current_user, req):
         abort(403)
 
-    logs = (
-        AuditLog.query
-        .filter_by(request_id=request_id)
-        .order_by(AuditLog.created_at.asc())
-        .all()
+    inst = req.workflow_instance
+    steps = list(inst.steps or []) if inst else []
+    template = (
+        db.session.get(WorkflowTemplate, inst.template_id)
+        if inst and inst.template_id else None
     )
 
-    attachments = _get_request_files(req)
+    def rows_map(model, values):
+        ids = {int(value) for value in values if value}
+        return {
+            int(row.id): row
+            for row in (model.query.filter(model.id.in_(ids)).all() if ids else [])
+        }
+
+    maps = {
+        "users": rows_map(User, (step.approver_user_id for step in steps)),
+        "departments": rows_map(Department, (step.approver_department_id for step in steps)),
+        "directorates": rows_map(Directorate, (step.approver_directorate_id for step in steps)),
+        "units": rows_map(Unit, (step.approver_unit_id for step in steps)),
+        "sections": rows_map(Section, (step.approver_section_id for step in steps)),
+        "divisions": rows_map(Division, (step.approver_division_id for step in steps)),
+        "org_nodes": rows_map(OrgNode, (step.approver_org_node_id for step in steps)),
+        "committees": rows_map(Committee, (step.approver_committee_id for step in steps)),
+    }
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -1176,106 +1319,112 @@ def request_pdf(request_id):
         pagesize=A4,
         rightMargin=40,
         leftMargin=40,
-        topMargin=50,
+        topMargin=40,
         bottomMargin=40
     )
 
-    styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(
-        name="Header",
-        fontSize=14,
+    font_regular, font_bold = _register_workflow_pdf_fonts()
+    title_style = ParagraphStyle(
+        "WorkflowPrintTitle",
+        fontName=font_bold,
+        fontSize=16,
+        leading=22,
+        alignment=TA_CENTER,
+        textColor=colors.HexColor("#17375E"),
+        wordWrap="RTL",
+        spaceAfter=10,
+    )
+    heading_style = ParagraphStyle(
+        "WorkflowPrintHeading",
+        fontName=font_bold,
+        fontSize=12,
         leading=18,
-        alignment=1,
-        spaceAfter=20
-    ))
-    styles.add(ParagraphStyle(
-        name="Small",
-        fontSize=9,
-        textColor=colors.grey
-    ))
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor("#17375E"),
+        wordWrap="RTL",
+        spaceBefore=8,
+        spaceAfter=6,
+    )
+    body_style = ParagraphStyle(
+        "WorkflowPrintBody",
+        fontName=font_regular,
+        fontSize=10,
+        leading=17,
+        alignment=TA_RIGHT,
+        wordWrap="RTL",
+        spaceAfter=4,
+    )
+    step_title_style = ParagraphStyle(
+        "WorkflowPrintStepTitle",
+        parent=body_style,
+        fontName=font_bold,
+        textColor=colors.HexColor("#17375E"),
+    )
+    note_style = ParagraphStyle(
+        "WorkflowPrintNote",
+        parent=body_style,
+        textColor=colors.HexColor("#7A4E00"),
+    )
+
+    def p(value, style=body_style):
+        return Paragraph(_workflow_pdf_text(value), style)
 
     elements = []
-    elements.append(Paragraph("Workflow Request Report", styles["Header"]))
-    elements.append(Paragraph(f"<b>Request ID:</b> {req.id}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Title:</b> {req.title or '-'}", styles["Normal"]))
-    elements.append(Paragraph(f"<b>Status:</b> {ui_label(req.status) or '-'}", styles["Normal"]))
-    elements.append(
-        Paragraph(
-            f"<b>Generated at:</b> {datetime.utcnow().strftime('%Y-%m-%d %H:%M')} UTC",
-            styles["Small"]
+    elements.append(p(f"تفاصيل الطلب رقم {req.id}", title_style))
+    elements.append(p(f"الحالة: {ui_label(req.status) or req.status or '—'}"))
+    elements.append(p(
+        "تاريخ الإنشاء: " + (
+            req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "—"
         )
-    )
-    elements.append(Spacer(1, 20))
+    ))
+    requester_name = req.requester.full_name if req.requester else "—"
+    elements.append(p(f"مقدم الطلب: {requester_name}"))
+    elements.append(Spacer(1, 8))
 
-    elements.append(Paragraph("<b>Attachments</b>", styles["Heading2"]))
-    if attachments:
-        att_table = [["#", "File Name", "Type", "Size (KB)", "Uploaded"]]
-        for i, f in enumerate(attachments, start=1):
-            att_table.append([
-                i,
-                f.original_name,
-                f.mime_type or "-",
-                round((f.file_size or 0) / 1024, 1),
-                (f.upload_date.strftime("%Y-%m-%d") if f.upload_date else "-")
-            ])
+    elements.append(p("بيانات الطلب", heading_style))
+    elements.append(p(f"عنوان الطلب: {req.title or '—'}"))
+    elements.append(p(f"نوع الطلب: {req.request_type.label if req.request_type else '—'}"))
+    elements.append(p("الوصف:"))
+    elements.append(p(req.description or "لا يوجد وصف."))
+    elements.append(Spacer(1, 8))
 
-        elements.append(
-            Table(
-                att_table,
-                colWidths=[30, 180, 80, 70, 80],
+    elements.append(p("المسار المختصر", heading_style))
+    route_name = template.name if template else "مسار ديناميكي حسب الهيكلية"
+    elements.append(p(f"المسار: {route_name}"))
+
+    if steps:
+        for step in steps:
+            target = _workflow_pdf_step_target(step, maps)
+            action = _workflow_pdf_step_action(step)
+            content = [
+                p(f"الخطوة {step.step_order}: عند {target}", step_title_style),
+                p(f"المطلوب: {action}"),
+                p(f"الحالة: {ui_label(step.status) or step.status or '—'}"),
+            ]
+            if step.note:
+                content.append(p(f"التعليق: {step.note}", note_style))
+            elements.append(Table(
+                [[content]],
+                colWidths=[515],
                 style=TableStyle([
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ])
-            )
-        )
+                    ("BOX", (0, 0), (-1, -1), 0.6, colors.HexColor("#B8C6D9")),
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7F9FC")),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("TOPPADDING", (0, 0), (-1, -1), 8),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                ]),
+                spaceAfter=7,
+            ))
     else:
-        elements.append(Paragraph("No attachments.", styles["Normal"]))
-
-    elements.append(PageBreak())
-    elements.append(Paragraph("<b>Workflow Timeline</b>", styles["Heading2"]))
-
-    if logs:
-        log_table = [["Date", "Action", "From → To", "Note"]]
-        for log in logs:
-            log_table.append([
-                log.created_at.strftime("%Y-%m-%d %H:%M") if log.created_at else "-",
-                ui_label(log.action) or "-",
-                f"{ui_label(log.old_status) or '-'} → {ui_label(log.new_status) or '-'}",
-                ui_text(log.note) or ""
-            ])
-
-        elements.append(
-            Table(
-                log_table,
-                colWidths=[90, 90, 100, 160],
-                style=TableStyle([
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                    ("VALIGN", (0, 0), (-1, -1), "TOP")
-                ])
-            )
-        )
-    else:
-        elements.append(Paragraph("No workflow actions recorded.", styles["Normal"]))
-
-    signed_attachments = [f for f in attachments if getattr(f, "is_signed", False)]
-    if signed_attachments:
-        elements.append(Spacer(1, 20))
-        elements.append(
-            Paragraph(
-                f"<b>Signed:</b> {len(signed_attachments)} attachment(s) are signed.",
-                styles["Normal"]
-            )
-        )
+        elements.append(p("لا توجد خطوات منشأة لهذا الطلب."))
 
     doc.build(elements)
     buffer.seek(0)
 
     return send_file(
         buffer,
-        as_attachment=True,
+        as_attachment=False,
         download_name=f"workflow_request_{req.id}.pdf",
         mimetype="application/pdf"
     )
@@ -2215,27 +2364,6 @@ def analyze_new_request_attachment():
             ocr_config=ocr_config,
         )
 
-        request_type_suggestion = analysis.get("suggestions", {}).get("request_type")
-        request_type_value = str(
-            (request_type_suggestion or {}).get("select_value") or ""
-        )
-        if request_type_value.isdigit():
-            routed_template, matched_rule = _select_template_for(
-                current_user,
-                int(request_type_value),
-            )
-            if routed_template:
-                analysis["suggestions"]["workflow_template"] = {
-                    "value": routed_template.name,
-                    "select_value": str(routed_template.id),
-                    "confidence": 0.98,
-                    "reason": (
-                        f"قالب محدد بقاعدة التوجيه #{matched_rule.id} لنوع الطلب"
-                        if matched_rule
-                        else "قالب محدد من توجيه نوع الطلب"
-                    ),
-                }
-
         return jsonify({"ok": True, "analysis": analysis})
     except CorrespondenceIntakeError as exc:
         return jsonify({
@@ -2386,19 +2514,12 @@ def new_request():
     )
 
     selected_rt_id = request.args.get("request_type_id")
-    suggested_template = None
-    matched_rule = None
+    selected_request_type_name = ""
+    if selected_rt_id and str(selected_rt_id).isdigit():
+        selected_request_type = db.session.get(RequestType, int(selected_rt_id))
+        selected_request_type_name = selected_request_type.label if selected_request_type else ""
     dynamic_choices = dynamic_user_choices(current_user)
     dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, current_user)
-    dynamic_team_map = {
-        team["key"]: team["name"]
-        for choice in dynamic_choices
-        for team in choice.get("teams", [])
-    }
-    dynamic_teams = [
-        {"key": team_key, "name": team_name}
-        for team_key, team_name in sorted(dynamic_team_map.items(), key=lambda item: item[1])
-    ]
     dynamic_presets = (
         UserDynamicWorkflowPreset.query
         .filter_by(user_id=current_user.id)
@@ -2407,28 +2528,26 @@ def new_request():
     )
     requester_org_node_id = resolve_user_org_node_id(current_user)
 
-    if selected_rt_id and str(selected_rt_id).isdigit():
-        suggested_template, matched_rule = _select_template_for(current_user, int(selected_rt_id))
-
     if request.method == "POST":
         title = (request.form.get("title") or "").strip() or "طلب جديد"
         description = (request.form.get("description") or "").strip()
 
-        rt_id = (request.form.get("request_type_id") or "").strip()
+        request_type_name = " ".join(
+            (request.form.get("request_type_name") or "").split()
+        ).strip()
         template_id = (request.form.get("template_id") or "").strip()
         route_mode = (request.form.get("route_mode") or "PREDEFINED").strip().upper()
         if route_mode not in {"PREDEFINED", "DYNAMIC"}:
             route_mode = "PREDEFINED"
 
-        # validate request type if exists
-        request_type_id = None
-        if request_types:
-            if not rt_id.isdigit():
-                flash("يرجى اختيار نوع الطلب.", "danger")
-                return redirect(request.url)
-            request_type_id = int(rt_id)
+        if not request_type_name:
+            flash("يرجى كتابة نوع الطلب.", "danger")
+            return redirect(request.url)
+        if len(request_type_name) > 200:
+            flash("نوع الطلب يجب ألا يتجاوز 200 حرف.", "danger")
+            return redirect(request.url)
 
-        # choose template: manual first, else routing, else single-template fallback
+        # Route selection is independent from the user-entered request type.
         template = None
         dynamic_path = None
         workflow_label = ""
@@ -2455,24 +2574,24 @@ def new_request():
         else:
             if template_id.isdigit():
                 template = WorkflowTemplate.query.get_or_404(int(template_id))
-            elif request_type_id:
-                template, matched = _select_template_for(current_user, request_type_id)
-
-            # If there is only one active template, auto-select it (common during early setup)
-            if not template and templates and len(templates) == 1:
-                template = templates[0]
 
             if not template:
                 flash("لا يوجد مسار مناسب. اختر مساراً محفوظاً أو استخدم البناء الديناميكي حسب الهيكل.", "danger")
                 return redirect(request.url)
             workflow_label = template.name
 
+        try:
+            request_type = _find_or_create_request_type(request_type_name)
+        except ValueError as exc:
+            flash(str(exc), "danger")
+            return redirect(request.url)
+
         req = WorkflowRequest(
             requester_id=current_user.id,
             status="DRAFT",
             title=title,
             description=description,
-            request_type_id=request_type_id
+            request_type_id=request_type.id
         )
         db.session.add(req)
         db.session.flush()
@@ -2556,12 +2675,9 @@ def new_request():
         "workflow/new_request.html",
         request_types=request_types,
         templates=templates,
-        selected_rt_id=int(selected_rt_id) if (selected_rt_id and str(selected_rt_id).isdigit()) else None,
-        suggested_template=suggested_template,
-        matched_rule=matched_rule,
+        selected_request_type_name=selected_request_type_name,
         dynamic_choices=dynamic_choices,
         dynamic_org_nodes=dynamic_org_nodes,
-        dynamic_teams=dynamic_teams,
         dynamic_presets=[preset.as_dict() for preset in dynamic_presets],
         requester_org_node_id=requester_org_node_id,
         intake_max_bytes=intake_max_bytes,

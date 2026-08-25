@@ -134,7 +134,7 @@ AUTO_BACKUP_DIR=
 مباشرة، أو **حفظ فقط** لتأجيل تشغيل المسار.
 
 - التحليل محلي ولا يرسل نص المستند أو المرفق إلى نموذج ذكاء اصطناعي خارجي.
-- يدعم التحليل: PDF النصي وWord (`.docx`) وExcel (`.xlsx`) وPowerPoint (`.pptx`)
+- يدعم التحليل: PDF النصي وWord (`.doc` و`.docx`) وExcel (`.xlsx`) وPowerPoint (`.pptx`)
   والنصوص وCSV وHTML/XML/JSON وملف البريد (`.eml`).
 - يمكن حفظ أي نوع مرفق بالطريقة العادية، حتى إذا لم يكن قابلاً للتحليل الذكي.
 - الصور وPDF الممسوح ضوئيًا يدعمان OCR محليًا عبر Tesseract عند تثبيت المحرك وحزمتي
@@ -159,12 +159,18 @@ CORR_INTAKE_OCR_MAX_PAGES=10
 CORR_INTAKE_OCR_DPI=200
 CORR_INTAKE_OCR_TIMEOUT_SECONDS=45
 CORR_INTAKE_OCR_MAX_IMAGE_PIXELS=40000000
+CORR_INTAKE_LIBREOFFICE_CMD=
 ```
 
 يتطلب OCR تثبيت **Tesseract 5** على الخادم مع بيانات اللغتين `ara` و`eng`. إذا لم
 يكن الأمر `tesseract` مضافًا إلى `PATH`، توضع قيمة المسار الكامل للملف التنفيذي في
 `CORR_INTAKE_TESSERACT_CMD`. لا يحتاج تحليل PDF النصي أو Word/Excel/PowerPoint إلى
 Tesseract.
+
+تُحلَّل ملفات Word القديمة (`.doc`) محليًا. ولأفضل دقة مع الملفات الثنائية القديمة،
+ثبّت LibreOffice على الخادم؛ سيكتشف النظام أمر `soffice` تلقائيًا، أو عيّن مساره في
+`CORR_INTAKE_LIBREOFFICE_CMD`. عند عدم توفره، يستخدم النظام استخراجًا نصيًا احتياطيًا
+ويطلب من المستخدم مراجعة المقترحات قبل اعتمادها.
 
 ### تفريغ المرفق مباشرةً على مسار
 

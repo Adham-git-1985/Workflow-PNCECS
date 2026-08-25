@@ -256,6 +256,87 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertFalse(result["ocr"]["used"])
         self.assertTrue(any("Tesseract" in warning for warning in result["warnings"]))
 
+    def test_legacy_doc_rtf_content_is_analyzed_without_external_office(self):
+        source_text = "الموضوع: طلب شراء أجهزة قديمة\nيرجى مراجعة الطلب واعتماده."
+        rtf_text = "{\\rtf1\\ansi\\ansicpg1256 " + "".join(
+            (
+                f"\\u{ord(character)}?"
+                if ord(character) > 127
+                else ("\\par " if character == "\n" else character)
+            )
+            for character in source_text
+        ) + "}"
+
+        result = analyze_workflow_attachment(
+            rtf_text.encode("ascii"),
+            "legacy-request.doc",
+        )
+
+        self.assertEqual(result["format"], "Word (DOC)")
+        self.assertEqual(
+            result["suggestions"]["title"]["value"],
+            "طلب شراء أجهزة قديمة",
+        )
+        self.assertIn("مراجعة الطلب", result["suggestions"]["description"]["value"])
+
+    def test_binary_legacy_doc_uses_bounded_direct_text_fallback(self):
+        ole_signature = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+        expected_text = "الموضوع: طلب متابعة ملف قديم"
+        payload = ole_signature + (b"\x00" * 128) + expected_text.encode("utf-16le") + b"\x01\x02"
+
+        with patch(
+            "services.correspondence_intake._resolve_legacy_word_converter",
+            return_value=None,
+        ):
+            result = extract_attachment_text(payload, "legacy.doc")
+
+        self.assertEqual(result["format"], "Word (DOC)")
+        self.assertIn(expected_text, result["text"])
+        self.assertTrue(any("الاحتياطية" in warning for warning in result["warnings"]))
+
+    def test_binary_legacy_doc_filters_internal_noise_and_preserves_table_rows(self):
+        ole_signature = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+        table_text = (
+            "تقرير متابعة الأعمال – أغسطس 2026\r"
+            "العمل / النشاط\x07التفاصيل\x07التاريخ\x07\x07"
+            "متابعة نظام مسار\x07"
+            "مراجعة الأعمال والملاحظات المرتبطة بالنظام خلال التشغيل والتسليم\x07"
+            "25 أغسطس 2026\x07\x07"
+            "تحديث بيانات الموظفين\x07"
+            "إعداد وتنظيم بيانات الموظفين تمهيدًا لإدخالها إلى النظام\x07"
+            "24 أغسطس 2026\x07\x07"
+        )
+        noisy_prefix = ("ے" * 300).encode("utf-16le")
+        noisy_suffix = (
+            "Heading 1 Default Paragraph Font Table Normal Table Grid xmlns "
+            "㐀䈀䐀耀蠀ﳲﳲﳲﳲﳲﳲ"
+        ).encode("utf-16le")
+        payload = (
+            ole_signature
+            + noisy_prefix
+            + b"\x00\x00"
+            + table_text.encode("utf-16le")
+            + b"\x00\x00"
+            + noisy_suffix
+        )
+
+        with patch(
+            "services.correspondence_intake._resolve_legacy_word_converter",
+            return_value=None,
+        ):
+            result = extract_attachment_text(payload, "legacy-table.doc")
+
+        self.assertIn("العمل / النشاط | التفاصيل | التاريخ", result["text"])
+        self.assertIn(
+            "متابعة نظام مسار | مراجعة الأعمال والملاحظات المرتبطة بالنظام خلال التشغيل والتسليم | 25 أغسطس 2026",
+            result["text"],
+        )
+        self.assertNotIn("ےےے", result["text"])
+        self.assertNotIn("Heading 1", result["text"])
+        self.assertNotIn("Table Grid", result["text"])
+        self.assertNotIn("㐀", result["text"])
+        self.assertNotIn("ﳲ", result["text"])
+
     def test_unsupported_file_remains_available_only_for_normal_upload(self):
         with self.assertRaises(CorrespondenceIntakeError) as context:
             extract_attachment_text(b"data", "legacy.msg")
@@ -371,6 +452,16 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('route("/new/analyze-attachment"', routes)
         self.assertIn("analyze_workflow_attachment(", routes)
         self.assertIn("هذه الخطوة اختيارية", template)
+        self.assertIn('name="request_type_name"', template)
+        self.assertNotIn('name="request_type_id"', template)
+        self.assertLess(
+            template.index("<span class=\"badge text-bg-primary ms-1\">1</span> بناء المسار"),
+            template.index("<span class=\"badge text-bg-primary ms-1\">2</span> بيانات الطلب"),
+        )
+        self.assertIn('id="dynamicHierarchySelect"', template)
+        self.assertNotIn("dynamic-browser-tab", template)
+        self.assertNotIn('id="dynamicTeamFilter"', template)
+        self.assertIn("_find_or_create_request_type(request_type_name)", routes)
 
 
 if __name__ == "__main__":

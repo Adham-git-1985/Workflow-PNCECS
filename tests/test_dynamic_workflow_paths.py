@@ -1,6 +1,9 @@
 import unittest
+from io import BytesIO
+from unittest.mock import patch
 
 from flask import Flask
+from PyPDF2 import PdfReader
 
 from extensions import db
 from models import (
@@ -11,6 +14,7 @@ from models import (
     OrgNodeManager,
     OrgNodeType,
     OrgUnitAssignment,
+    RequestType,
     Team,
     TeamMembership,
     User,
@@ -21,6 +25,7 @@ from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
 )
+from workflow.routes import _find_or_create_request_type, request_pdf
 from workflow.dynamic_paths import (
     FINAL_SECRETARY_GENERAL_REF,
     administration_anchor_id,
@@ -140,6 +145,54 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertEqual([step["approver_user_id"] for step in result["steps"]], [self.same_target.id])
         self.assertIn("اختيار مباشر", result["steps"][0]["reason"])
+
+    def test_user_entered_request_type_is_created_and_reused_by_label(self):
+        created = _find_or_create_request_type("  طلب   متابعة خاص  ")
+        reused = _find_or_create_request_type("طلب متابعة خاص")
+
+        self.assertEqual(created.id, reused.id)
+        self.assertEqual(created.name_ar, "طلب متابعة خاص")
+        self.assertTrue(created.code.startswith("USR_"))
+        self.assertTrue(created.is_active)
+        self.assertEqual(RequestType.query.count(), 1)
+
+    def test_request_pdf_is_a_short_inline_report(self):
+        request_type = _find_or_create_request_type("طلب متابعة")
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            request_type_id=request_type.id,
+            title="طلب تجربة الطباعة",
+            description="وصف مفيد فقط",
+            status="DRAFT",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        start_workflow_for_request(
+            request_row,
+            None,
+            created_by_user_id=self.requester.id,
+            runtime_steps=[{
+                "approver_kind": "USER",
+                "approver_user_id": self.same_target.id,
+                "label": self.same_target.full_name,
+                "job_title": "موظف متابعة",
+                "reason": "مراجعة الطلب وإضافة الملاحظة",
+            }],
+            workflow_label="مسار ديناميكي حسب الهيكلية",
+        )
+        db.session.commit()
+
+        with self.app.test_request_context():
+            with patch("workflow.routes.current_user", self.requester), patch(
+                "workflow.routes._user_can_view_request", return_value=True
+            ):
+                response = request_pdf.__wrapped__(request_row.id)
+                response.direct_passthrough = False
+                payload = response.get_data()
+
+        self.assertTrue(payload.startswith(b"%PDF"))
+        self.assertEqual(len(PdfReader(BytesIO(payload)).pages), 1)
+        self.assertIn("inline", response.headers.get("Content-Disposition", ""))
 
     def test_dynamic_org_browser_exposes_all_active_entities_and_manager_context(self):
         empty_department = self._node("دائرة بلا موظفين", self.department_a1.type, self.directorate_a)

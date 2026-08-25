@@ -19,6 +19,7 @@ import html
 import os
 import re
 import shutil
+import struct
 import subprocess
 import tempfile
 import time
@@ -28,6 +29,7 @@ import zipfile
 
 SMART_INTAKE_EXTENSIONS = frozenset({
     ".csv",
+    ".doc",
     ".docx",
     ".eml",
     ".htm",
@@ -565,6 +567,437 @@ def _extract_docx(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]
     return _clean_text("\n".join(parts), max_chars), [], metadata
 
 
+def _resolve_legacy_word_converter() -> str | None:
+    """Find a local LibreOffice executable without invoking a shell."""
+    configured = str(os.getenv("CORR_INTAKE_LIBREOFFICE_CMD") or "").strip()
+    candidates = [
+        (shutil.which(configured) or configured) if configured else "",
+        shutil.which("soffice") or "",
+        shutil.which("libreoffice") or "",
+        r"C:\Program Files\LibreOffice\program\soffice.exe",
+        r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+    ]
+    return next(
+        (os.path.abspath(path) for path in candidates if path and os.path.isfile(path)),
+        None,
+    )
+
+
+def _extract_rtf_text(payload: bytes, max_chars: int) -> str:
+    """Extract reviewable text from an RTF document saved with a .doc suffix."""
+    source = payload.decode("latin-1", errors="replace")
+    source = re.sub(r"\\par[d]?\b", "\n", source, flags=re.IGNORECASE)
+    source = re.sub(r"\\tab\b", "\t", source, flags=re.IGNORECASE)
+
+    def unicode_character(match) -> str:
+        value = int(match.group(1))
+        if value < 0:
+            value += 65536
+        try:
+            return chr(value)
+        except ValueError:
+            return ""
+
+    source = re.sub(r"\\u(-?\d+)\??", unicode_character, source)
+
+    def encoded_character(match) -> str:
+        try:
+            return bytes([int(match.group(1), 16)]).decode("cp1256")
+        except (ValueError, UnicodeDecodeError):
+            return ""
+
+    source = re.sub(r"\\'([0-9a-fA-F]{2})", encoded_character, source)
+    source = re.sub(r"\\[A-Za-z]+-?\d* ?", "", source)
+    source = source.replace(r"\{", "{").replace(r"\}", "}").replace(r"\\", "\\")
+    source = source.replace("{", "").replace("}", "")
+    return _clean_text(source, max_chars)
+
+
+def _compound_file_stream(payload: bytes, stream_name: str) -> bytes | None:
+    """Read one stream from an OLE Compound File without external packages."""
+    signature = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    if len(payload) < 512 or not payload.startswith(signature):
+        return None
+
+    free_sector = 0xFFFFFFFF
+    end_of_chain = 0xFFFFFFFE
+    special_sector_min = 0xFFFFFFFA
+
+    try:
+        read_u16 = lambda offset: struct.unpack_from("<H", payload, offset)[0]
+        read_u32 = lambda offset: struct.unpack_from("<I", payload, offset)[0]
+        if read_u16(28) != 0xFFFE:
+            return None
+        major_version = read_u16(26)
+        sector_size = 1 << read_u16(30)
+        mini_sector_size = 1 << read_u16(32)
+        if sector_size not in (512, 4096) or mini_sector_size != 64:
+            return None
+
+        sector_count = max(0, len(payload) // sector_size - 1)
+
+        def sector(sector_id: int) -> bytes:
+            if not 0 <= sector_id < sector_count:
+                raise ValueError("OLE sector is outside the file")
+            start = (sector_id + 1) * sector_size
+            return payload[start : start + sector_size]
+
+        fat_sector_count = read_u32(44)
+        fat_sector_ids = [
+            read_u32(76 + index * 4)
+            for index in range(109)
+            if read_u32(76 + index * 4) < special_sector_min
+        ]
+
+        difat_sector_id = read_u32(68)
+        difat_sector_count = read_u32(72)
+        seen_difat: set[int] = set()
+        entries_per_difat_sector = sector_size // 4
+        for _ in range(min(difat_sector_count, sector_count)):
+            if (
+                difat_sector_id >= special_sector_min
+                or difat_sector_id in seen_difat
+            ):
+                break
+            seen_difat.add(difat_sector_id)
+            values = struct.unpack(
+                f"<{entries_per_difat_sector}I", sector(difat_sector_id)
+            )
+            fat_sector_ids.extend(
+                value for value in values[:-1] if value < special_sector_min
+            )
+            difat_sector_id = values[-1]
+
+        fat_sector_ids = fat_sector_ids[:fat_sector_count]
+        if not fat_sector_ids:
+            return None
+        entries_per_sector = sector_size // 4
+        fat: list[int] = []
+        for sector_id in fat_sector_ids:
+            fat.extend(struct.unpack(f"<{entries_per_sector}I", sector(sector_id)))
+
+        def chain(first_sector_id: int, allocation_table: list[int]) -> list[int]:
+            result: list[int] = []
+            seen: set[int] = set()
+            sector_id = first_sector_id
+            limit = len(allocation_table)
+            while (
+                sector_id < special_sector_min
+                and sector_id not in seen
+                and len(result) < limit
+            ):
+                if sector_id >= len(allocation_table):
+                    raise ValueError("OLE allocation chain is invalid")
+                result.append(sector_id)
+                seen.add(sector_id)
+                sector_id = allocation_table[sector_id]
+            if sector_id not in (end_of_chain, free_sector) and sector_id < special_sector_min:
+                raise ValueError("OLE allocation chain is cyclic")
+            return result
+
+        def regular_stream(first_sector_id: int, size: int | None = None) -> bytes:
+            value = b"".join(sector(item) for item in chain(first_sector_id, fat))
+            return value if size is None else value[:size]
+
+        directory_bytes = regular_stream(read_u32(48))
+        entries: dict[str, tuple[int, int, int]] = {}
+        root_entry: tuple[int, int, int] | None = None
+        for offset in range(0, len(directory_bytes), 128):
+            entry = directory_bytes[offset : offset + 128]
+            if len(entry) < 128:
+                break
+            name_length = struct.unpack_from("<H", entry, 64)[0]
+            entry_type = entry[66]
+            if not 2 <= name_length <= 64 or name_length % 2:
+                continue
+            name = entry[: name_length - 2].decode("utf-16le", errors="strict")
+            first_sector_id = struct.unpack_from("<I", entry, 116)[0]
+            stream_size = struct.unpack_from("<Q", entry, 120)[0]
+            if major_version == 3:
+                stream_size &= 0xFFFFFFFF
+            details = (entry_type, first_sector_id, stream_size)
+            entries[name.casefold()] = details
+            if entry_type == 5:
+                root_entry = details
+
+        details = entries.get(stream_name.casefold())
+        if details is None or details[0] != 2:
+            return None
+        _, first_sector_id, stream_size = details
+        if stream_size > len(payload):
+            return None
+
+        mini_stream_cutoff = read_u32(56)
+        if stream_size >= mini_stream_cutoff:
+            return regular_stream(first_sector_id, stream_size)
+
+        if root_entry is None:
+            return None
+        _, root_first_sector_id, root_size = root_entry
+        root_stream = regular_stream(root_first_sector_id, root_size)
+        mini_fat_bytes = regular_stream(read_u32(60), read_u32(64) * sector_size)
+        mini_fat = list(
+            struct.unpack(
+                f"<{len(mini_fat_bytes) // 4}I",
+                mini_fat_bytes[: len(mini_fat_bytes) // 4 * 4],
+            )
+        )
+        mini_parts: list[bytes] = []
+        for mini_sector_id in chain(first_sector_id, mini_fat):
+            start = mini_sector_id * mini_sector_size
+            if start >= len(root_stream):
+                raise ValueError("OLE mini stream is invalid")
+            mini_parts.append(root_stream[start : start + mini_sector_size])
+        return b"".join(mini_parts)[:stream_size]
+    except (OverflowError, UnicodeDecodeError, ValueError, struct.error):
+        return None
+
+
+def _legacy_doc_candidate_strings(payload: bytes) -> list[tuple[int, str]]:
+    """Return likely human-readable strings embedded in a binary .doc stream."""
+    unicode_candidates: list[tuple[int, str]] = []
+
+    def allowed_character(character: str) -> bool:
+        codepoint = ord(character)
+        return (
+            codepoint == 7  # Word table cell/end-of-row marker.
+            or character in "\r\n\t "
+            or character in "،؛؟,.!?():/\\-_@'\"%&#+=|[]{}"
+            or 0x2010 <= codepoint <= 0x2015
+            or 0x2018 <= codepoint <= 0x201F
+            or 0x30 <= codepoint <= 0x39
+            or 0x41 <= codepoint <= 0x5A
+            or 0x61 <= codepoint <= 0x7A
+            or 0x00C0 <= codepoint <= 0x024F
+            or 0x0600 <= codepoint <= 0x06FF
+            or 0x0750 <= codepoint <= 0x077F
+            or 0x08A0 <= codepoint <= 0x08FF
+            or 0xFB50 <= codepoint <= 0xFDFF
+            or 0xFE70 <= codepoint <= 0xFEFF
+        )
+
+    def useful_text(value: str) -> str:
+        value = value.replace("\u200e", "").replace("\u200f", "")
+        value = re.sub(r"\x07\s*\x07", "\n", value)
+        value = value.replace("\x07", " | ")
+        value = re.sub(r"[\x00-\x06\x08\x0b\x0c\x0e-\x1f]+", " ", value)
+        value = re.sub(r"[\t \u00a0]+", " ", value).strip(" \t|_-\x00")
+        if len(value) < 4 or len(value) > 10_000:
+            return ""
+        letters = sum(character.isalpha() for character in value)
+        if letters < 3:
+            return ""
+
+        alphanumeric = [
+            character.casefold() for character in value if character.isalnum()
+        ]
+        distinct_alphanumeric = len(set(alphanumeric))
+        if len(alphanumeric) >= 3 and distinct_alphanumeric == 1:
+            return ""
+        if len(alphanumeric) >= 6 and distinct_alphanumeric <= 2:
+            return ""
+        if len(alphanumeric) >= 30 and distinct_alphanumeric < 8:
+            return ""
+        if len(value) > 32 and not any(character.isspace() for character in value):
+            return ""
+
+        maximum_run = 0
+        current_run = 0
+        previous = ""
+        for character in alphanumeric:
+            if character == previous:
+                current_run += 1
+            else:
+                previous = character
+                current_run = 1
+            maximum_run = max(maximum_run, current_run)
+        if len(alphanumeric) >= 12 and maximum_run > max(12, len(alphanumeric) * 0.45):
+            return ""
+
+        normalized = re.sub(r"\s+", " ", value).casefold()
+        metadata_markers = (
+            "default paragraph font",
+            "document summary information",
+            "schemas.microsoft.com",
+            "summaryinformation",
+            "table grid",
+            "table normal",
+            "worddocument",
+            "xmlns",
+        )
+        if any(marker in normalized for marker in metadata_markers):
+            return ""
+        return value
+
+    # Uncompressed Word pieces commonly store Unicode text as UTF-16LE.
+    for alignment in (0, 1):
+        start = None
+        buffer: list[str] = []
+        for offset in range(alignment, len(payload) - 1, 2):
+            codepoint = payload[offset] | (payload[offset + 1] << 8)
+            character = chr(codepoint)
+            if allowed_character(character):
+                if start is None:
+                    start = offset
+                buffer.append(character)
+                continue
+            if buffer:
+                value = useful_text("".join(buffer))
+                if value:
+                    unicode_candidates.append((start or 0, value))
+            start = None
+            buffer = []
+        if buffer:
+            value = useful_text("".join(buffer))
+            if value:
+                unicode_candidates.append((start or 0, value))
+
+    # Avoid interpreting binary bytes a second time when clear Unicode content exists.
+    unicode_letter_count = sum(
+        sum(character.isalpha() for character in value)
+        for _offset, value in unicode_candidates
+    )
+    if unicode_letter_count >= 100:
+        return sorted(unicode_candidates, key=lambda item: item[0])
+
+    candidates = list(unicode_candidates)
+    # Compressed Word pieces store characters in a single-byte Windows codepage.
+    for match in re.finditer(rb"[\x09\x0A\x0D\x20-\x7E\x80-\xFF]{6,}", payload):
+        raw = match.group(0)
+        for encoding in ("cp1256", "cp1252"):
+            try:
+                decoded = raw.decode(encoding)
+                value = useful_text(
+                    "".join(character for character in decoded if allowed_character(character))
+                )
+            except UnicodeDecodeError:
+                value = ""
+            if value:
+                candidates.append((match.start(), value))
+                break
+
+    return sorted(candidates, key=lambda item: item[0])
+
+
+def _extract_legacy_doc_fallback(payload: bytes, max_chars: int) -> str:
+    document_stream = _compound_file_stream(payload, "WordDocument")
+    searchable_payload = document_stream if document_stream is not None else payload
+    parts: list[str] = []
+    seen: set[str] = set()
+    ignored = {
+        "worddocument",
+        "summaryinformation",
+        "documentsummaryinformation",
+        "microsoft office word",
+    }
+    for _offset, value in _legacy_doc_candidate_strings(searchable_payload):
+        normalized = re.sub(r"\s+", " ", value).strip().casefold()
+        if not normalized or normalized in ignored or normalized in seen:
+            continue
+        seen.add(normalized)
+        if parts:
+            previous_last_line = parts[-1].rstrip().rsplit("\n", 1)[-1]
+            current_first_line = value.lstrip().split("\n", 1)[0]
+            if previous_last_line.count("|") == current_first_line.count("|") == 1:
+                parts[-1] = f"{parts[-1].rstrip()} {value.lstrip()}"
+                continue
+        parts.append(value)
+        if sum(len(part) + 1 for part in parts) >= max_chars:
+            break
+    return _clean_text("\n".join(parts), max_chars)
+
+
+def _convert_legacy_doc_to_docx(payload: bytes, converter: str) -> bytes:
+    with tempfile.TemporaryDirectory(prefix="corr_legacy_doc_") as temporary_directory:
+        input_path = os.path.join(temporary_directory, "legacy.doc")
+        output_path = os.path.join(temporary_directory, "legacy.docx")
+        profile_path = Path(temporary_directory, "libreoffice-profile")
+        profile_path.mkdir()
+        with open(input_path, "wb") as handle:
+            handle.write(payload)
+        try:
+            completed = subprocess.run(
+                [
+                    converter,
+                    f"-env:UserInstallation={profile_path.as_uri()}",
+                    "--headless",
+                    "--nologo",
+                    "--nodefault",
+                    "--nofirststartwizard",
+                    "--convert-to",
+                    "docx",
+                    "--outdir",
+                    temporary_directory,
+                    input_path,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=False,
+                shell=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise CorrespondenceIntakeError(
+                "تعذر تشغيل محول Word المحلي.",
+                code="LEGACY_DOC_CONVERSION_FAILED",
+                status_code=422,
+            ) from exc
+        if completed.returncode != 0 or not os.path.isfile(output_path):
+            raise CorrespondenceIntakeError(
+                "تعذر تحويل ملف Word القديم إلى صيغة قابلة للتحليل.",
+                code="LEGACY_DOC_CONVERSION_FAILED",
+                status_code=422,
+            )
+        if os.path.getsize(output_path) > 50 * 1024 * 1024:
+            raise CorrespondenceIntakeError(
+                "حجم ملف Word بعد التحويل أكبر من الحد الآمن.",
+                code="EXPANDED_FILE_TOO_LARGE",
+                status_code=413,
+            )
+        with open(output_path, "rb") as handle:
+            return handle.read()
+
+
+def _extract_legacy_doc(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]:
+    # Some systems give an OOXML or RTF file the old .doc extension.
+    if payload.startswith(b"PK"):
+        text, warnings, metadata = _extract_docx(payload, max_chars)
+        return text, ["تم التعرف على الملف كـWord حديث رغم امتداده .doc.", *warnings], metadata
+    if payload.lstrip().startswith(b"{\\rtf"):
+        return _extract_rtf_text(payload, max_chars), [], {}
+
+    ole_signature = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+    if not payload.startswith(ole_signature):
+        raise CorrespondenceIntakeError(
+            "ملف Word القديم تالف أو ليس بصيغة .doc المتوقعة.",
+            code="INVALID_DOC",
+            status_code=422,
+        )
+
+    converter = _resolve_legacy_word_converter()
+    conversion_warning = ""
+    if converter:
+        try:
+            converted_payload = _convert_legacy_doc_to_docx(payload, converter)
+            text, warnings, metadata = _extract_docx(converted_payload, max_chars)
+            return text, ["تم تحويل ملف .doc محليًا قبل تحليله.", *warnings], metadata
+        except CorrespondenceIntakeError as exc:
+            conversion_warning = exc.message
+
+    text = _extract_legacy_doc_fallback(payload, max_chars)
+    warnings = []
+    if text:
+        warnings.append(
+            "تم استخراج نص ملف .doc مباشرةً بالطريقة الاحتياطية؛ راجع المقترحات قبل اعتمادها."
+        )
+    else:
+        warnings.append(
+            conversion_warning
+            or "لم يُعثر على نص واضح داخل ملف .doc؛ ثبّت LibreOffice على الخادم لتحويل الملفات القديمة بدقة أعلى."
+        )
+    return text, warnings, {}
+
+
 def _extract_xlsx(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]:
     _preflight_zip(payload)
     try:
@@ -703,6 +1136,9 @@ def extract_attachment_text(
     elif extension == ".docx":
         text, warnings, metadata = _extract_docx(payload, max_chars)
         format_label = "Word"
+    elif extension == ".doc":
+        text, warnings, metadata = _extract_legacy_doc(payload, max_chars)
+        format_label = "Word (DOC)"
     elif extension == ".xlsx":
         text, warnings, metadata = _extract_xlsx(payload, max_chars)
         format_label = "Excel"

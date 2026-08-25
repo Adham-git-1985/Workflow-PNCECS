@@ -11,7 +11,7 @@
   <a class="btn btn-outline-secondary" href="{{ url_for('workflow.inbox') }}">رجوع للصندوق</a>
 </div>
 
-{% if request_types and not templates %}
+{% if not templates %}
   <div class="alert alert-warning">لا توجد مسارات محفوظة مفعّلة؛ يمكنك استخدام البناء الديناميكي حسب الهيكل الإداري إذا كان ربطك الهيكلي مكتملاً.</div>
 {% endif %}
 
@@ -20,29 +20,11 @@
   <div class="card-body">
     <div class="row g-3">
 
-      <div class="col-md-6">
-        <label class="form-label fw-bold">عنوان الطلب</label>
-        <input class="form-control" name="title" placeholder="مثال: طلب شراء، طلب معين..." required>
-      </div>
-
-      <div class="col-md-6">
-        <label class="form-label fw-bold">نوع الطلب</label>
-        {% if request_types %}
-          <select class="form-select" id="rtSelect" name="request_type_id" required>
-            <option value="">— اختر —</option>
-            {% for rt in request_types %}
-              <option value="{{ rt.id }}" {% if selected_rt_id == rt.id %}selected{% endif %}>{{ rt.name_ar }} ({{ rt.code }})</option>
-            {% endfor %}
-          </select>
-          <div class="form-text">عند اختيار نوع الطلب سيتم اقتراح المسار تلقائياً (إذا كانت قواعد التوجيه مضبوطة).</div>
-        {% else %}
-          <div class="alert alert-light mb-0 text-muted">لا توجد أنواع طلبات بعد. يمكنك اختيار مسار مباشرة.</div>
-        {% endif %}
-      </div>
-
       <div class="col-12">
-        <label class="form-label fw-bold">الوصف / الملاحظات</label>
-        <textarea class="form-control" name="description" rows="4" placeholder="اكتب التفاصيل..."></textarea>
+        <div class="border-bottom pb-2 mb-1">
+          <h5 class="mb-1"><span class="badge text-bg-primary ms-1">1</span> بناء المسار</h5>
+          <div class="small text-muted">اختر أولًا مسارًا منشأ مسبقًا، أو أنشئ مسارًا جديدًا من الهيكلية.</div>
+        </div>
       </div>
 
       <div class="col-12">
@@ -50,11 +32,11 @@
         <div class="d-flex flex-wrap gap-3 border rounded-3 p-3 bg-light">
           <div class="form-check">
             <input class="form-check-input" type="radio" name="route_mode" id="routeModePredefined" value="PREDEFINED" checked>
-            <label class="form-check-label fw-semibold" for="routeModePredefined">مسار محفوظ وقواعد التوجيه الحالية</label>
+            <label class="form-check-label fw-semibold" for="routeModePredefined">مسار منشأ مسبقًا</label>
           </div>
           <div class="form-check">
             <input class="form-check-input" type="radio" name="route_mode" id="routeModeDynamic" value="DYNAMIC" {% if not requester_org_node_id %}disabled{% endif %}>
-            <label class="form-check-label fw-semibold" for="routeModeDynamic">انشيء مسارك الذي تريد</label>
+            <label class="form-check-label fw-semibold" for="routeModeDynamic">إنشاء مسار جديد من الهيكلية</label>
           </div>
         </div>
         {% if not requester_org_node_id %}
@@ -69,23 +51,10 @@
         <select class="form-select" id="templateSelect" name="template_id" data-has-templates="{{ '1' if templates else '0' }}" {% if not templates %}disabled{% endif %}>
           <option value="">— اختر —</option>
           {% for t in templates %}
-            <option value="{{ t.id }}" {% if suggested_template and suggested_template.id == t.id %}selected{% endif %}>{{ t.name }} (#{{ t.id }})</option>
+            <option value="{{ t.id }}">{{ t.name }} (#{{ t.id }})</option>
           {% endfor %}
         </select>
-        <div class="form-text">إذا لم يتم اقتراح مسار تلقائياً، اختره يدوياً.</div>
-
-        {% if suggested_template %}
-          <div class="alert alert-success mt-2 mb-0">
-            ✅ تم اقتراح المسار تلقائياً: <strong>{{ suggested_template.name }} (#{{ suggested_template.id }})</strong>
-            {% if matched_rule %}
-              <div class="mt-1"><small class="text-muted">قاعدة توجيه: #{{ matched_rule.id }} | الأولوية: {{ matched_rule.priority }}</small></div>
-            {% endif %}
-          </div>
-        {% elif selected_rt_id %}
-          <div class="alert alert-warning mt-2 mb-0">
-            ⚠️ لا توجد قاعدة توجيه مطابقة لهذا النوع (حسب دائرتك). يمكنك اختيار المسار يدوياً أو إضافة قاعدة توجيه.
-          </div>
-        {% endif %}
+        <div class="form-text">اختيار المسار مستقل عن نوع الطلب الذي ستكتبه في القسم التالي.</div>
       </div>
 
       <div class="col-12 d-none" id="dynamicRouteBox">
@@ -124,50 +93,28 @@
           </div>
           {% if dynamic_choices or dynamic_org_nodes %}
             <script type="application/json" id="dynamicOrgNodesData">{{ (dynamic_org_nodes|default([], true))|tojson }}</script>
-            <div class="btn-group w-100 mb-3" role="tablist" aria-label="طريقة الوصول إلى الموظف">
-              <button type="button" class="btn btn-primary dynamic-browser-tab" data-browser-mode="org" aria-selected="true">
-                <i class="bi bi-diagram-3"></i> تصفح الهيكل الإداري
-              </button>
-              <button type="button" class="btn btn-outline-primary dynamic-browser-tab" data-browser-mode="team" aria-selected="false">
-                <i class="bi bi-people-fill"></i> الفرق المستقلة
-              </button>
-            </div>
-
-            <div id="dynamicOrgBrowser" class="border rounded-3 p-3 bg-light mb-3">
-              <nav id="dynamicOrgBreadcrumb" class="d-flex flex-wrap align-items-center gap-1 mb-3" aria-label="الموقع في الهيكل الإداري"></nav>
-              <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap mb-3">
-                <div>
-                  <div class="fw-bold" id="dynamicOrgCurrentTitle">الهيكل التنظيمي</div>
-                  <div class="small text-muted" id="dynamicOrgCurrentHint">يمكنك إضافة أكثر من جهة ظاهرة إلى المسار، أو فتح أي جهة للتنقل داخلها.</div>
-                </div>
-                <div class="btn-group btn-group-sm">
-                  <button type="button" class="btn btn-outline-success d-none" id="dynamicAddCurrentOrgNode">
-                    <i class="bi bi-plus-circle"></i> إضافة الجهة الحالية
-                  </button>
-                  <button type="button" class="btn btn-outline-secondary" id="dynamicOrgBack" disabled>
-                    <i class="bi bi-arrow-right"></i> رجوع مستوى
-                  </button>
-                </div>
-              </div>
-              <div class="row g-2" id="dynamicOrgChildren"></div>
-              <div class="alert alert-light border py-2 mb-0 d-none" id="dynamicOrgChildrenEmpty">
-                لا توجد وحدات فرعية أخرى هنا. يمكنك إضافة الجهة الحالية إلى المسار أو اختيار أحد موظفيها.
-              </div>
-            </div>
-
-            <div id="dynamicTeamBrowser" class="border rounded-3 p-3 bg-light mb-3 d-none">
-              <label class="form-label fw-semibold" for="dynamicTeamFilter">اختر الفريق لعرض أعضائه</label>
-              <select class="form-select" id="dynamicTeamFilter">
-                <option value="">— اختر الفريق —</option>
-                {% for team in dynamic_teams %}
-                  <option value="{{ team.key }}">{{ team.name }}</option>
+            <div class="border rounded-3 p-3 bg-light mb-3">
+              <label class="form-label fw-bold" for="dynamicHierarchySelect">
+                <i class="bi bi-diagram-3"></i> الهيكلية
+              </label>
+              <select class="form-select" id="dynamicHierarchySelect">
+                <option value="">— اختر جهة من الهيكلية —</option>
+                {% for node in dynamic_org_nodes %}
+                  <option value="{{ node.id }}">
+                    {{ node.node_label }}{% if node.total_user_count %} — {{ node.total_user_count }} موظف{% endif %}
+                  </option>
                 {% endfor %}
-                <option value="__NO_TEAM__">موظفون غير مرتبطين بفريق</option>
               </select>
+              <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
+                <button type="button" class="btn btn-sm btn-outline-success" id="dynamicAddHierarchyNode" disabled>
+                  <i class="bi bi-plus-circle"></i> إضافة الجهة نفسها إلى المسار
+                </button>
+                <span class="small text-muted" id="dynamicHierarchyHint">اختر جهة واحدة من هذا الحقل لعرض موظفيها.</span>
+              </div>
             </div>
 
             <div class="mb-3">
-              <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة أو الفريق الحالي</label>
+              <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة المختارة</label>
               <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، أو البريد..." autocomplete="off">
             </div>
             <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -185,8 +132,7 @@
               {% for choice in dynamic_choices %}
                 <div class="dynamic-user-choice border rounded-3 p-3 mb-2 bg-white d-none"
                      data-node-id="{{ choice.node_id }}"
-                     data-team-keys="{{ choice.team_keys|join(',') }}"
-                     data-search="{{ (choice.name ~ ' ' ~ choice.job_title ~ ' ' ~ choice.email ~ ' ' ~ choice.node_label ~ ' ' ~ choice.team_names|join(' '))|lower }}">
+                     data-search="{{ (choice.name ~ ' ' ~ choice.job_title ~ ' ' ~ choice.email ~ ' ' ~ choice.node_label)|lower }}">
                   <div class="d-flex align-items-start gap-3 flex-wrap flex-md-nowrap">
                     <span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0" aria-label="رقم الشخص">{{ loop.index }}</span>
                     <div class="flex-grow-1" style="min-width:0;">
@@ -198,15 +144,6 @@
                       <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
                         <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
                       </div>
-                      {% if choice.teams %}
-                        {% for team in choice.teams %}
-                          <span class="badge bg-info-subtle text-info-emphasis border mt-2">
-                            <i class="bi bi-people-fill"></i> {{ team.name }}
-                          </span>
-                        {% endfor %}
-                      {% else %}
-                        <span class="badge bg-light text-dark border mt-2">بدون فريق</span>
-                      {% endif %}
                       <span class="badge mt-2 {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
                         {{ 'اختيار مباشر ضمن الإدارة' if choice.same_administration else 'عبر التسلسل الإداري' }}
                       </span>
@@ -219,7 +156,6 @@
                              data-name="{{ choice.name }}"
                              data-title="{{ choice.job_title }}"
                              data-node="{{ choice.node_label }}"
-                             data-team="{{ choice.team_names|join('، ') }}"
                              data-same-admin="{{ '1' if choice.same_administration else '0' }}">
                       <label class="form-check-label fw-semibold" for="dynamicUserChoice{{ choice.id }}">اختيار</label>
                     </div>
@@ -273,6 +209,39 @@
         </div>
       </div>
 
+      <div class="col-12 mt-4">
+        <div class="border-bottom pb-2 mb-1">
+          <h5 class="mb-1"><span class="badge text-bg-primary ms-1">2</span> بيانات الطلب</h5>
+          <div class="small text-muted">اكتب بيانات الطلب بعد الانتهاء من اختيار المسار. نوع الطلب لا يغيّر المسار المختار.</div>
+        </div>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold" for="workflowRequestTitle">عنوان الطلب</label>
+        <input class="form-control" id="workflowRequestTitle" name="title" maxlength="200"
+               placeholder="مثال: طلب شراء أجهزة" required>
+      </div>
+
+      <div class="col-md-6">
+        <label class="form-label fw-bold" for="requestTypeName">نوع الطلب</label>
+        <input class="form-control" id="requestTypeName" name="request_type_name"
+               list="requestTypeOptions" maxlength="200"
+               value="{{ selected_request_type_name or '' }}"
+               placeholder="اكتب نوع الطلب أو اختر نوعًا سابقًا" required autocomplete="off">
+        <datalist id="requestTypeOptions">
+          {% for rt in request_types %}
+            <option value="{{ rt.label }}"></option>
+          {% endfor %}
+        </datalist>
+        <div class="form-text">يمكنك كتابة نوع جديد مباشرة؛ سيُحفظ للاقتراح لاحقًا دون ربطه بالمسار.</div>
+      </div>
+
+      <div class="col-12">
+        <label class="form-label fw-bold" for="workflowRequestDescription">الوصف / الملاحظات</label>
+        <textarea class="form-control" id="workflowRequestDescription" name="description" rows="4"
+                  placeholder="اكتب تفاصيل الطلب وما المطلوب تنفيذه..."></textarea>
+      </div>
+
       <div class="col-12">
         <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
           <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
@@ -322,74 +291,6 @@
     </div>
   </div>
 </form>
-
-{% if request_types %}
-<script>
-  (function(){
-    const rt = document.getElementById('rtSelect');
-    const form = document.querySelector('form[method="post"]');
-    const titleEl = document.querySelector("input[name='title']");
-    const descEl = document.querySelector("textarea[name='description']");
-    const KEY = 'wf_newreq_draft_v1';
-
-    function saveDraft(){
-      try {
-        const payload = {
-          title: titleEl ? (titleEl.value || '') : '',
-          description: descEl ? (descEl.value || '') : ''
-        };
-        localStorage.setItem(KEY, JSON.stringify(payload));
-      } catch(e) {}
-    }
-
-    function restoreDraft(){
-      try {
-        const raw = localStorage.getItem(KEY);
-        if (!raw) return;
-        const payload = JSON.parse(raw);
-        if (titleEl && !titleEl.value && payload.title) titleEl.value = payload.title;
-        if (descEl && !descEl.value && payload.description) descEl.value = payload.description;
-      } catch(e) {}
-    }
-
-    const shouldRestoreDraft = new URL(window.location.href).searchParams.get('restore_draft') === '1';
-    if (shouldRestoreDraft) {
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', restoreDraft);
-      } else {
-        restoreDraft();
-      }
-      const cleanUrl = new URL(window.location.href);
-      cleanUrl.searchParams.delete('restore_draft');
-      window.history.replaceState({}, '', cleanUrl.toString());
-    }
-
-    // Keep saving while typing
-    if (titleEl) titleEl.addEventListener('input', saveDraft);
-    if (descEl) descEl.addEventListener('input', saveDraft);
-
-    // مسح draft after successful submit (best-effort)
-    if (form) {
-      form.addEventListener('submit', function(){
-        try { localStorage.removeItem(KEY); } catch(e) {}
-      });
-    }
-
-    // When request type changes, save draft then reload to apply routing suggestion
-    if (rt) {
-      rt.addEventListener('change', function(){
-        saveDraft();
-        const v = this.value;
-        const url = new URL(window.location.href);
-        url.searchParams.set('restore_draft', '1');
-        if (v) url.searchParams.set('request_type_id', v);
-        else url.searchParams.delete('request_type_id');
-        window.location.href = url.toString();
-      });
-    }
-  })();
-</script>
-{% endif %}
 
 <script>
   (function(){
@@ -508,10 +409,11 @@
         description.dispatchEvent(new Event("input", {bubbles: true}));
       }
       if (suggestions.request_type) {
-        setSelectValue(
-          form.querySelector('[name="request_type_id"]'),
-          suggestions.request_type.select_value
-        );
+        var requestTypeInput = form.querySelector('[name="request_type_name"]');
+        if (requestTypeInput) {
+          requestTypeInput.value = suggestions.request_type.value || "";
+          requestTypeInput.dispatchEvent(new Event("input", {bubbles: true}));
+        }
       }
       if (suggestions.workflow_template) {
         setSelectValue(
@@ -586,17 +488,9 @@
     const dynamicBox = document.getElementById('dynamicRouteBox');
     const templateSelect = document.getElementById('templateSelect');
     const userSearch = document.getElementById('dynamicUserSearch');
-    const teamFilter = document.getElementById('dynamicTeamFilter');
-    const browserTabs = Array.from(document.querySelectorAll('.dynamic-browser-tab'));
-    const orgBrowser = document.getElementById('dynamicOrgBrowser');
-    const teamBrowser = document.getElementById('dynamicTeamBrowser');
-    const orgBreadcrumb = document.getElementById('dynamicOrgBreadcrumb');
-    const orgCurrentTitle = document.getElementById('dynamicOrgCurrentTitle');
-    const orgCurrentHint = document.getElementById('dynamicOrgCurrentHint');
-    const orgBackButton = document.getElementById('dynamicOrgBack');
-    const addCurrentOrgNodeButton = document.getElementById('dynamicAddCurrentOrgNode');
-    const orgChildren = document.getElementById('dynamicOrgChildren');
-    const orgChildrenEmpty = document.getElementById('dynamicOrgChildrenEmpty');
+    const hierarchySelect = document.getElementById('dynamicHierarchySelect');
+    const addHierarchyNodeButton = document.getElementById('dynamicAddHierarchyNode');
+    const hierarchyHint = document.getElementById('dynamicHierarchyHint');
     const visibleScopeHint = document.getElementById('dynamicVisibleScopeHint');
     const userChoices = document.getElementById('dynamicUserChoices');
     const searchEmpty = document.getElementById('dynamicUserSearchEmpty');
@@ -617,7 +511,6 @@
     const secretaryChoices = Array.from(document.querySelectorAll('.dynamic-secretary-choice'));
     const finalSecretaryGeneralRef = 'FINAL_SECRETARY_GENERAL';
     const selected = [];
-    let browserMode = 'org';
     let currentOrgNodeId = null;
     let orgNodes = [];
     let savedPresets = [];
@@ -863,7 +756,6 @@
               '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
               '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + (item.kind === 'NODE' ? 'bi-building' : 'bi-briefcase') + '"></i> ' + escapeHtml(item.title || (item.kind === 'NODE' ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل')) + '</div>' +
             routeStartControl +
-            (item.team ? '<span class="badge bg-info-subtle text-info-emphasis border mt-1"><i class="bi bi-people-fill"></i> ' + escapeHtml(item.team) + '</span> ' : '') +
             '<span class="badge mt-1 ' + (item.kind === 'NODE' ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning')) + '">' +
               (item.kind === 'NODE' ? 'يبدأ من: ' + escapeHtml(item.routeStartName || '') : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري')) +
             '</span>' +
@@ -898,7 +790,6 @@
         name: control.dataset.name || '',
         title: control.dataset.title || '',
         node: control.dataset.node || '',
-        team: control.dataset.team || '',
         sameAdmin: control.dataset.sameAdmin === '1'
       });
       return true;
@@ -921,7 +812,6 @@
         name: (node.type_name ? node.type_name + ': ' : '') + (node.name || ''),
         title: (node.manager_role || 'مسؤول') + ': ' + (node.manager_name || ''),
         node: node.node_label || node.name || '',
-        team: '',
         sameAdmin: Boolean(node.same_administration),
         routeStartId: String(routeStart.id),
         routeStartName: (routeStart.type_name ? routeStart.type_name + ': ' : '') + (routeStart.name || ''),
@@ -936,138 +826,59 @@
     }
 
     function syncNodeSelectionButtons(){
-      document.querySelectorAll('[data-select-org-node-id]').forEach(function(button){
-        if (button.disabled) return;
-        const isSelected = selectedNodeIndex(button.dataset.selectOrgNodeId) >= 0;
-        button.classList.toggle('btn-success', isSelected);
-        button.classList.toggle('btn-outline-success', !isSelected);
-        button.innerHTML = isSelected
-          ? '<i class="bi bi-check2"></i> تمت الإضافة'
-          : '<i class="bi bi-plus-circle"></i> إضافة للمسار';
-      });
-    }
-
-    function nodeParentId(node){
-      if (!node || node.parent_id === null || typeof node.parent_id === 'undefined') return null;
-      return String(node.parent_id);
-    }
-
-    function orgNodeChain(nodeId){
-      const chain = [];
-      const visited = new Set();
-      let cursor = nodeId ? orgNodesById.get(String(nodeId)) : null;
-      while (cursor && !visited.has(String(cursor.id))) {
-        visited.add(String(cursor.id));
-        chain.unshift(cursor);
-        const parentId = nodeParentId(cursor);
-        cursor = parentId ? orgNodesById.get(parentId) : null;
-      }
-      return chain;
-    }
-
-    function renderHierarchy(){
-      if (!orgChildren || !orgBreadcrumb) return;
+      if (!addHierarchyNodeButton) return;
       const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
-      const childNodes = orgNodes.filter(function(node){
-        const parentId = nodeParentId(node);
-        return currentNode ? parentId === String(currentNode.id) : parentId === null;
-      });
+      const isSelected = Boolean(currentNode && selectedNodeIndex(currentNode.id) >= 0);
+      addHierarchyNodeButton.disabled = !currentNode || !currentNode.can_select;
+      addHierarchyNodeButton.classList.toggle('btn-success', isSelected);
+      addHierarchyNodeButton.classList.toggle('btn-outline-success', !isSelected);
+      addHierarchyNodeButton.innerHTML = !currentNode
+        ? '<i class="bi bi-plus-circle"></i> إضافة الجهة نفسها إلى المسار'
+        : (!currentNode.can_select
+          ? '<i class="bi bi-exclamation-circle"></i> لا يوجد مسؤول معتمد للجهة'
+          : (isSelected
+            ? '<i class="bi bi-check2"></i> تمت إضافة الجهة'
+            : '<i class="bi bi-plus-circle"></i> إضافة الجهة نفسها إلى المسار'));
+    }
 
-      orgBreadcrumb.innerHTML = '<button type="button" class="btn btn-sm btn-link text-decoration-none px-1" data-org-node-id="">الهيكل التنظيمي</button>';
-      orgNodeChain(currentOrgNodeId).forEach(function(node){
-        orgBreadcrumb.insertAdjacentHTML(
-          'beforeend',
-          '<span class="text-muted">/</span>' +
-          '<button type="button" class="btn btn-sm btn-link text-decoration-none px-1" data-org-node-id="' + String(node.id) + '">' + escapeHtml(node.name) + '</button>'
-        );
-      });
-
-      orgCurrentTitle.textContent = currentNode ? currentNode.name : 'الهيكل التنظيمي';
-      if (currentNode) {
-        const directCount = Number(currentNode.direct_user_count || 0);
-        orgCurrentHint.textContent = 'يمكنك إضافة هذه الجهة نفسها إلى المسار، أو متابعة النزول إلى جهاتها الفرعية' +
-          (directCount ? '، أو اختيار أحد موظفيها المباشرين.' : '.');
-      } else {
-        orgCurrentHint.textContent = 'يمكنك إضافة عدة جهات من المستوى نفسه، أو فتح أي جهة للتنقل داخلها.';
+    function updateHierarchySelection(){
+      currentOrgNodeId = hierarchySelect && hierarchySelect.value
+        ? String(hierarchySelect.value)
+        : null;
+      if (userSearch) userSearch.value = '';
+      const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
+      if (hierarchyHint) {
+        hierarchyHint.textContent = !currentNode
+          ? 'اختر جهة واحدة من هذا الحقل لعرض موظفيها.'
+          : (currentNode.can_select
+            ? (currentNode.manager_role || 'المسؤول') + ': ' + (currentNode.manager_name || '—') + ' — يمكنك إضافة الجهة أو اختيار أحد موظفيها.'
+            : 'سيظهر موظفو الجهة، لكن لا يمكن إضافة الجهة نفسها لعدم وجود مسؤول أو نائب معتمد.');
       }
-      orgBackButton.disabled = !currentNode;
-      if (addCurrentOrgNodeButton) {
-        addCurrentOrgNodeButton.classList.toggle('d-none', !currentNode);
-        addCurrentOrgNodeButton.disabled = !currentNode || !currentNode.can_select;
-        addCurrentOrgNodeButton.dataset.selectOrgNodeId = currentNode ? String(currentNode.id) : '';
-        if (currentNode && !currentNode.can_select) {
-          addCurrentOrgNodeButton.innerHTML = '<i class="bi bi-exclamation-circle"></i> ' +
-            escapeHtml(currentNode.unavailable_reason || 'لا يمكن إضافة هذه الجهة إلى المسار');
-        }
-      }
-
-      orgChildren.innerHTML = '';
-      childNodes.forEach(function(node){
-        const wrapper = document.createElement('div');
-        wrapper.className = 'col-12 col-md-6 col-xl-4';
-        wrapper.innerHTML =
-          '<div class="border border-primary-subtle rounded-3 bg-white h-100 p-3">' +
-            '<span class="badge bg-primary-subtle text-primary-emphasis border mb-2">' + escapeHtml(node.type_name || 'جهة إدارية') + '</span>' +
-            '<span class="d-block fw-bold text-break">' + escapeHtml(node.name) + '</span>' +
-            '<span class="d-block small text-muted mt-2"><i class="bi bi-person"></i> ' + String(node.total_user_count || 0) + ' موظف ضمن هذه الجهة</span>' +
-            '<span class="d-block small mt-2 ' + (node.has_manager ? 'text-success' : 'text-danger') + '"><i class="bi bi-person-badge"></i> ' +
-              (node.has_manager ? escapeHtml((node.manager_role || 'مسؤول') + ': ' + (node.manager_name || '')) : 'لا يوجد مسؤول أو نائب مسؤول معتمد') +
-            '</span>' +
-            (!node.can_select ? '<span class="d-block small text-warning mt-1"><i class="bi bi-info-circle"></i> ' + escapeHtml(node.unavailable_reason || '') + '</span>' : '') +
-            '<div class="btn-group btn-group-sm w-100 mt-3">' +
-              '<button type="button" class="btn btn-outline-primary" data-org-node-id="' + String(node.id) + '"><i class="bi bi-folder2-open"></i> فتح</button>' +
-              '<button type="button" class="btn ' + (node.can_select ? 'btn-outline-success' : 'btn-outline-secondary') + '" data-select-org-node-id="' + String(node.id) + '" ' + (node.can_select ? '' : 'disabled') + '>' +
-                (node.can_select ? '<i class="bi bi-plus-circle"></i> إضافة للمسار' : 'غير متاح') +
-              '</button>' +
-            '</div>' +
-          '</div>';
-        orgChildren.appendChild(wrapper);
-      });
-      orgChildrenEmpty.classList.toggle('d-none', childNodes.length !== 0);
       syncNodeSelectionButtons();
       filterChoices();
     }
 
-    function setBrowserMode(mode){
-      browserMode = mode === 'team' ? 'team' : 'org';
-      browserTabs.forEach(function(tab){
-        const active = tab.dataset.browserMode === browserMode;
-        tab.classList.toggle('btn-primary', active);
-        tab.classList.toggle('btn-outline-primary', !active);
-        tab.setAttribute('aria-selected', active ? 'true' : 'false');
-      });
-      if (orgBrowser) orgBrowser.classList.toggle('d-none', browserMode !== 'org');
-      if (teamBrowser) teamBrowser.classList.toggle('d-none', browserMode !== 'team');
-      if (userSearch) userSearch.value = '';
-      if (browserMode === 'org') renderHierarchy();
-      else filterChoices();
-    }
-
     function filterChoices(){
       const query = (userSearch && userSearch.value || '').trim().toLowerCase();
-      const selectedTeam = (teamFilter && teamFilter.value || '').trim();
       let visibleCount = 0;
-      const scopeReady = browserMode === 'org' ? Boolean(currentOrgNodeId) : Boolean(selectedTeam);
+      const scopeReady = Boolean(currentOrgNodeId);
       document.querySelectorAll('.dynamic-user-choice').forEach(function(card){
         const matchesSearch = !query || (card.dataset.search || '').includes(query);
-        const cardTeamKeys = (card.dataset.teamKeys || '').split(',').filter(Boolean);
-        const matchesScope = browserMode === 'org'
-          ? String(card.dataset.nodeId || '') === String(currentOrgNodeId || '')
-          : (selectedTeam === '__NO_TEAM__' ? cardTeamKeys.length === 0 : cardTeamKeys.includes(selectedTeam));
+        const matchesScope = String(card.dataset.nodeId || '') === String(currentOrgNodeId || '');
         const visible = scopeReady && matchesSearch && matchesScope;
         card.classList.toggle('d-none', !visible);
         if (visible) visibleCount += 1;
       });
       if (visibleScopeHint) {
         const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
-        visibleScopeHint.textContent = browserMode === 'org'
-          ? (currentNode ? 'الموظفون المرتبطون مباشرة بجهة «' + currentNode.name + '».' : 'اختر جهة من الهيكل لعرض موظفيها المباشرين.')
-          : (selectedTeam ? 'أعضاء الفريق المحدد.' : 'اختر فريقًا لعرض أعضائه.');
+        visibleScopeHint.textContent = currentNode
+          ? 'الموظفون المرتبطون مباشرة بجهة «' + currentNode.name + '».'
+          : 'اختر جهة من الهيكل لعرض موظفيها المباشرين.';
       }
       if (searchEmpty) {
         searchEmpty.classList.toggle('d-none', visibleCount !== 0);
         searchEmpty.textContent = !scopeReady
-          ? (browserMode === 'org' ? 'اختر جهة من الهيكل الإداري لعرض الموظفين.' : 'اختر فريقًا لعرض أعضائه.')
+          ? 'اختر جهة من الهيكل الإداري لعرض الموظفين.'
           : (query ? 'لا توجد أسماء مطابقة للبحث ضمن الاختيار الحالي.' : 'لا يوجد موظفون مرتبطون مباشرة بهذا الاختيار.');
       }
       if (selectVisibleButton) selectVisibleButton.disabled = visibleCount === 0;
@@ -1142,22 +953,10 @@
     secretaryChoices.forEach(function(control){
       control.addEventListener('change', schedulePreview);
     });
-    browserTabs.forEach(function(tab){
-      tab.addEventListener('click', function(){
-        setBrowserMode(tab.dataset.browserMode);
-      });
-    });
-    function navigateHierarchy(event){
-      const button = event.target.closest('[data-org-node-id]');
-      if (!button) return;
-      currentOrgNodeId = button.dataset.orgNodeId || null;
-      if (userSearch) userSearch.value = '';
-      renderHierarchy();
-    }
-    function toggleOrgNodeSelection(event){
-      const button = event.target.closest('[data-select-org-node-id]');
-      if (!button || button.disabled) return;
-      const node = orgNodesById.get(String(button.dataset.selectOrgNodeId));
+    if (hierarchySelect) hierarchySelect.addEventListener('change', updateHierarchySelection);
+    if (addHierarchyNodeButton) addHierarchyNodeButton.addEventListener('click', function(){
+      if (addHierarchyNodeButton.disabled || !currentOrgNodeId) return;
+      const node = orgNodesById.get(String(currentOrgNodeId));
       if (!node) return;
       const existingIndex = selectedNodeIndex(node.id);
       if (existingIndex >= 0) {
@@ -1167,16 +966,6 @@
         return;
       }
       renderSelected();
-    }
-    if (orgChildren) orgChildren.addEventListener('click', navigateHierarchy);
-    if (orgChildren) orgChildren.addEventListener('click', toggleOrgNodeSelection);
-    if (orgBreadcrumb) orgBreadcrumb.addEventListener('click', navigateHierarchy);
-    if (addCurrentOrgNodeButton) addCurrentOrgNodeButton.addEventListener('click', toggleOrgNodeSelection);
-    if (orgBackButton) orgBackButton.addEventListener('click', function(){
-      const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
-      currentOrgNodeId = nodeParentId(currentNode);
-      if (userSearch) userSearch.value = '';
-      renderHierarchy();
     });
     if (userChoices) userChoices.addEventListener('change', function(event){
       const checkbox = event.target.closest('.dynamic-user-checkbox');
@@ -1193,7 +982,6 @@
       renderSelected();
     });
     if (userSearch) userSearch.addEventListener('input', filterChoices);
-    if (teamFilter) teamFilter.addEventListener('change', filterChoices);
     if (selectVisibleButton) selectVisibleButton.addEventListener('click', function(){
       let limitReached = false;
       document.querySelectorAll('.dynamic-user-choice:not(.d-none) .dynamic-user-checkbox').forEach(function(checkbox){
@@ -1248,7 +1036,7 @@
     });
     renderSavedPresets();
     if (savePresetButton) savePresetButton.disabled = true;
-    setBrowserMode('org');
+    updateHierarchySelection();
     updateMode();
   })();
 </script>

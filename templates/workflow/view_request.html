@@ -14,8 +14,8 @@
   </div>
 
   <div class="d-flex gap-2">
-    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
-      PDF
+    <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
+      <i class="bi bi-printer"></i> طباعة الطلب
     </a>
 
     {% if current_user.has_role('SUPER_ADMIN') %}
@@ -121,8 +121,9 @@
       <div class="alert alert-info py-2 mb-3">
         هذه خطوة <strong>متزامنة</strong>؛ ردّك هنا للتوثيق ولن يغيّر مسار القرار.
       </div>
-      {% endif %}
+        {% endif %}
         <h5 class="mb-2">{{ req.title }}</h5>
+        <div class="small mb-2"><span class="text-muted">نوع الطلب:</span> <strong>{{ req.request_type.label if req.request_type else '—' }}</strong></div>
         <div class="text-muted">{{ req.description or "—" }}</div>
       </div>
     </div>
