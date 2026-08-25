@@ -4016,6 +4016,13 @@ class PortalCircular(db.Model):
     title = db.Column(db.String(200), nullable=False)
     body = db.Column(db.Text, nullable=False)
     is_urgent = db.Column(db.Boolean, default=True, nullable=False)
+    is_active = db.Column(
+        db.Boolean,
+        default=True,
+        server_default=db.true(),
+        nullable=False,
+        index=True,
+    )
 
     # Audience: the whole national committee, one directorate (إدارة), or one
     # department (دائرة). Legacy circulars are backfilled to ALL by migration.

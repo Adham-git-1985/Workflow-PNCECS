@@ -33,7 +33,7 @@ DEFAULT_TYPES = [
     # (code, name_ar, name_en, sort, allowed_parent_codes)
     ("ORGANIZATION", "منظمة", "Organization", 10, []),
     ("DIRECTORATE", "إدارة", "Directorate", 20, ["ORGANIZATION"]),
-    ("UNIT", "وحدة", "Unit", 30, ["DIRECTORATE"]),
+    ("UNIT", "وحدة", "Unit", 30, ["ORGANIZATION"]),
     ("DEPARTMENT", "دائرة", "Department", 40, ["DIRECTORATE", "UNIT"]),
     ("SECTION", "قسم", "Section", 50, ["DEPARTMENT", "UNIT", "DIRECTORATE"]),
     ("DIVISION", "شعبة", "Division", 60, ["SECTION"]),
@@ -121,12 +121,22 @@ def ensure_dynamic_org_seed():
             pass
 
 
-def sync_legacy_now():
+def sync_legacy_now(*, raise_errors: bool = False) -> bool:
     """Force-sync legacy org tables/managers/assignments into dynamic OrgNodes.
 
-    This does NOT use a one-time SystemSetting guard.
-    Useful after CRUD operations that create/update legacy org elements.
+    This does NOT use a one-time migration guard and is useful after CRUD
+    operations on legacy elements. It becomes a no-op while the legacy
+    structure is locked or an approved canonical version exists, so it cannot
+    reintroduce old nodes into the official chart.
     """
+    try:
+        legacy_locked = (_get_setting("ORG_LEGACY_LOCKED") or "").strip() == "1"
+        approved_version = (_get_setting("ORG_APPROVED_STRUCTURE_VERSION") or "").strip()
+        if legacy_locked or approved_version:
+            return False
+    except Exception:
+        pass
+
     try:
         # Ensure dynamic schema/types exist before syncing
         ensure_dynamic_org_seed()
@@ -136,11 +146,15 @@ def sync_legacy_now():
         _sync_legacy_assignments()
         _sync_legacy_team_memberships()
         db.session.commit()
+        return True
     except Exception:
         try:
             db.session.rollback()
         except Exception:
             pass
+        if raise_errors:
+            raise
+        return False
 
 
 def get_node_ancestor_ids(node_id: int) -> set[int]:
@@ -290,6 +304,7 @@ def build_chart_tree(include_people: bool = False) -> list[dict]:
         return {
             "id": n.id,
             "type": (t.code if t else "NODE"),
+            "type_name": (t.name_ar if t else "عنصر"),
             "name_ar": n.name_ar,
             "name_en": n.name_en,
             "code": n.code,
@@ -298,6 +313,21 @@ def build_chart_tree(include_people: bool = False) -> list[dict]:
             "members": people_map.get(node_id, []) if include_people else [],
             "children": kids_out,
         }
+
+    roots: list[int] = []
+    for n in nodes:
+        if not n.parent_id or n.parent_id not in node_by_id:
+            roots.append(n.id)
+
+    out: list[dict] = []
+    for rid in roots:
+        built = _build(rid)
+        if isinstance(built, list):
+            out.extend(built)
+        else:
+            out.append(built)
+
+    return out
 
 
 def build_org_node_picker_tree(mode: str = "all") -> list[dict]:
@@ -369,37 +399,6 @@ def build_org_node_picker_tree(mode: str = "all") -> list[dict]:
     roots = [to_dict(n) for n in children_map.get(None, [])]
     return [r for r in roots if r is not None]
 
-    roots: list[int] = []
-    for n in nodes:
-        if not n.parent_id or n.parent_id not in node_by_id:
-            roots.append(n.id)
-
-    out: list[dict] = []
-    for rid in roots:
-        built = _build(rid)
-        if isinstance(built, list):
-            out.extend(built)
-        else:
-            out.append(built)
-
-    return out
-
-    # Sync legacy only once
-    if (_get_setting("ORG_NODE_SYNC_LEGACY_V1") or "").strip() == "1":
-        return
-
-    try:
-        _sync_legacy_nodes()
-        _sync_legacy_managers()
-        _sync_legacy_assignments()
-        _set_setting("ORG_NODE_SYNC_LEGACY_V1", "1")
-        db.session.commit()
-    except Exception:
-        try:
-            db.session.rollback()
-        except Exception:
-            pass
-
 
 def _type_id_by_code() -> dict[str, int]:
     rows = OrgNodeType.query.all()
@@ -462,6 +461,7 @@ def _sync_legacy_nodes():
             getattr(o, "code", None),
             None,
         )
+        n.is_active = bool(getattr(o, "is_active", True))
         org_nodes[o.id] = n.id
 
     # Directorates
@@ -477,12 +477,13 @@ def _sync_legacy_nodes():
             getattr(d, "code", None),
             parent,
         )
+        n.is_active = bool(getattr(d, "is_active", True))
         dir_nodes[d.id] = n.id
 
     # Units
     unit_nodes: dict[int, int] = {}
     for u in Unit.query.order_by(Unit.id.asc()).all():
-        parent = dir_nodes.get(u.directorate_id)
+        parent = org_nodes.get(getattr(u, "organization_id", None))
         n = _get_or_create_node(
             "UNIT",
             "UNIT",
@@ -492,6 +493,7 @@ def _sync_legacy_nodes():
             getattr(u, "code", None),
             parent,
         )
+        n.is_active = bool(getattr(u, "is_active", True))
         unit_nodes[u.id] = n.id
 
     # Departments (may belong to directorate or unit)
@@ -511,6 +513,7 @@ def _sync_legacy_nodes():
             getattr(dp, "code", None),
             parent,
         )
+        n.is_active = bool(getattr(dp, "is_active", True))
         dept_nodes[dp.id] = n.id
 
     # Sections (may belong to department, unit or directorate)
@@ -532,12 +535,15 @@ def _sync_legacy_nodes():
             getattr(s, "code", None),
             parent,
         )
+        n.is_active = bool(getattr(s, "is_active", True))
         sec_nodes[s.id] = n.id
 
     # Divisions under Section
     div_nodes: dict[int, int] = {}
     for dv in Division.query.order_by(Division.id.asc()).all():
-        parent = sec_nodes.get(dv.section_id)
+        parent = sec_nodes.get(getattr(dv, "section_id", None))
+        if parent is None:
+            parent = dept_nodes.get(getattr(dv, "department_id", None))
         n = _get_or_create_node(
             "DIVISION",
             "DIVISION",
@@ -547,6 +553,7 @@ def _sync_legacy_nodes():
             getattr(dv, "code", None),
             parent,
         )
+        n.is_active = bool(getattr(dv, "is_active", True))
         div_nodes[dv.id] = n.id
 
     # Teams under Section or Division

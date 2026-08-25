@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import and_, or_, select
 
 from extensions import db
 from models import Department, PortalCircular, User
@@ -53,10 +53,12 @@ def user_directorate_ids(user) -> set[int]:
     return ids
 
 
-def circular_visibility_filter(user):
+def circular_visibility_filter(user, *, include_inactive_for_managers: bool = False):
     """SQL condition selecting circulars visible to ``user``."""
     if _user_can_manage_circulars(user):
-        return True
+        if include_inactive_for_managers:
+            return True
+        return PortalCircular.is_active.is_(True)
 
     conditions = [
         PortalCircular.target_scope.is_(None),  # compatibility before backfill
@@ -81,17 +83,23 @@ def circular_visibility_filter(user):
             & (PortalCircular.target_directorate_id.in_(directorate_ids))
         )
 
-    return or_(*conditions)
+    return and_(PortalCircular.is_active.is_(True), or_(*conditions))
 
 
-def visible_circulars_query(query, user):
-    return query.filter(circular_visibility_filter(user))
+def visible_circulars_query(query, user, *, include_inactive_for_managers: bool = False):
+    return query.filter(circular_visibility_filter(
+        user,
+        include_inactive_for_managers=include_inactive_for_managers,
+    ))
 
 
 def can_user_view_circular(row: PortalCircular, user) -> bool:
     """Object-level guard used by circular detail routes."""
     if _user_can_manage_circulars(user):
         return True
+
+    if not bool(getattr(row, "is_active", True)):
+        return False
 
     scope = normalize_circular_scope(getattr(row, "target_scope", None))
     if scope == CIRCULAR_SCOPE_ALL:
@@ -111,6 +119,9 @@ def can_user_view_circular(row: PortalCircular, user) -> bool:
 
 def circular_recipient_user_ids(row: PortalCircular) -> list[int]:
     """Resolve the exact internal recipients for a circular audience."""
+    if not bool(getattr(row, "is_active", True)):
+        return []
+
     scope = normalize_circular_scope(getattr(row, "target_scope", None))
     query = db.session.query(User.id)
 

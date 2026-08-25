@@ -45,7 +45,7 @@
       <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
         <div>
           <h5 class="mb-0">مخطط الهيكلية</h5>
-          <div class="text-muted small">شجرة تفاعلية (البوابة) تُظهر الوحدات + المسؤول/البديل، ويمكن إظهار الموظفين داخل كل وحدة.</div>
+          <div class="text-muted small">الهيكلية الرسمية المعتمدة بتاريخ 08-05-2023، مع المسؤول/البديل وإمكانية إظهار الموظفين داخل كل عنصر.</div>
         </div>
         <div class="d-flex align-items-center flex-wrap gap-2">
           <button class="btn btn-sm btn-outline-secondary no-print" type="button" onclick="wfPrintSmart('#orgTreePrint')">
@@ -95,19 +95,19 @@
     </div>
     <div class="card-body">
       {% if legacy_locked %}
-      <div class="alert alert-warning small mb-3">
-        الهيكلية الثابتة مقفلة (قراءة فقط). يفضل استخدام الهيكلية الموحدة (Dynamic) للتعيينات والمسارات والموافقات.
+      <div class="alert alert-success small mb-3">
+        الهيكلية الرسمية المعتمدة مفعّلة كمصدر موحد للمخطط والتعيينات والمسارات والموافقات. الهيكلية القديمة محفوظة للقراءة فقط.
       </div>
       {% endif %}
 
-      {% set type_labels = {'ORGANIZATION':'مؤسسة','DIRECTORATE':'إدارة','UNIT':'وحدة','DEPARTMENT':'دائرة','SECTION':'قسم','TEAM':'فريق'} %}
+      {% set type_labels = {'ORGANIZATION':'مؤسسة','CHAIRPERSON':'رئيس اللجنة','SECRETARY_GENERAL':'الأمين العام','GENERAL_DIRECTOR':'مدير عام','ADVISOR':'مستشار','SEC_GEN_ASSIST':'مساعد الأمين العام','COMMITTEE_GROUP':'لجان','COUNCIL':'مجلس','OFFICE':'مكتب','DIRECTORATE':'إدارة عامة','UNIT':'وحدة','DEPARTMENT':'دائرة','SECTION':'قسم','DIVISION':'شعبة','TEAM':'فريق'} %}
 
       {% macro render_node(node, level=0) %}
         <li class="org-li level-{{ level }}">
           {% if node.children and node.children|length > 0 %}
             <details class="org-details" {% if level < 2 %}open{% endif %}>
               <summary>
-                <span class="badge bg-primary-subtle text-primary border">{{ type_labels.get(node.type, node.type) }}</span>
+                <span class="badge bg-primary-subtle text-primary border">{{ node.type_name or type_labels.get(node.type, node.type) }}</span>
                 <span class="org-title">{{ node.name_ar }}</span>
                 {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
                 <span class="org-meta">مسؤول: {{ node.manager }}</span>
@@ -139,7 +139,7 @@
           {% else %}
             <div class="org-leaf">
               <div class="d-flex align-items-center flex-wrap gap-2">
-                <span class="badge bg-success-subtle text-success border">{{ type_labels.get(node.type, node.type) }}</span>
+                <span class="badge bg-success-subtle text-success border">{{ node.type_name or type_labels.get(node.type, node.type) }}</span>
                 <span class="org-title">{{ node.name_ar }}</span>
                 {% if node.code %}<span class="org-meta">(<code>{{ node.code }}</code>)</span>{% endif %}
                 <span class="org-meta">مسؤول: {{ node.manager }}</span>
@@ -181,12 +181,13 @@
         </div>
 
         <div class="text-muted small mt-2">
-          ملاحظة: هذا المخطط يعكس تعيينات البوابة الإدارية (البوابة) وليس تعيينات مسار.
+          يعكس المخطط المصدر الموحد المستخدم في تعيينات الموظفين والمسارات والموافقات.
         </div>
       </div>
     </div>
   </div>
 
+{% if not legacy_locked %}
 <div class="bg-white rounded-3 shadow-sm p-4">
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <div>
@@ -610,6 +611,7 @@
     });
   }
 </script>
+{% endif %}
 
 
 <script>

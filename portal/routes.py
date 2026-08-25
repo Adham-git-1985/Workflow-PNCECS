@@ -84,7 +84,7 @@ from services.employee_data_word_form import build_employee_word_form, parse_emp
 require_permissions = perm_required
 
 from utils.events import emit_event
-from utils.org_dynamic import build_org_node_picker_tree, sync_legacy_now
+from utils.org_dynamic import build_chart_tree, build_org_node_picker_tree, sync_legacy_now
 from workflow.dynamic_paths import node_path_label
 from models import (
     User,
@@ -101,6 +101,7 @@ from models import (
     OrgUnitManager,
     OrgUnitAssignment,
     OrgNode,
+    OrgNodeType,
     OrgNodeAssignment,
     OrgNodeManager,
     Organization,
@@ -4191,6 +4192,30 @@ def _save_circular_attachments(row: PortalCircular, uploads) -> tuple[int, list[
     return len(candidates), saved_paths
 
 
+def _remove_circular_attachment_files(circular_id: int, stored_names) -> int:
+    """Remove only the files explicitly registered for a deleted circular."""
+    directory = Path(current_app.instance_path) / "uploads" / "circulars" / str(int(circular_id))
+    removed = 0
+    for stored_name in stored_names or []:
+        clean_name = Path(str(stored_name or "")).name
+        if not clean_name or clean_name != str(stored_name or ""):
+            continue
+        try:
+            (directory / clean_name).unlink(missing_ok=True)
+            removed += 1
+        except OSError:
+            current_app.logger.warning(
+                "Unable to remove circular attachment file: circular_id=%s file=%s",
+                circular_id,
+                clean_name,
+            )
+    try:
+        directory.rmdir()
+    except OSError:
+        pass
+    return removed
+
+
 def _is_enabled_value(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -4630,7 +4655,11 @@ def circulars_list():
     """List circulars for portal users."""
     rows = []
     try:
-        rows = (visible_circulars_query(PortalCircular.query, current_user)
+        rows = (visible_circulars_query(
+                    PortalCircular.query,
+                    current_user,
+                    include_inactive_for_managers=True,
+                )
                 .order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc())
                 .limit(200)
                 .all())
@@ -4681,6 +4710,64 @@ def circular_attachment_download(circular_id: int, attachment_id: int):
     return response
 
 
+@portal_bp.route("/circulars/<int:circular_id>/toggle-active", methods=["POST"])
+@login_required
+@_perm(PORTAL_CIRCULARS_MANAGE)
+def circular_toggle_active(circular_id: int):
+    row = PortalCircular.query.get_or_404(circular_id)
+    row.is_active = not bool(row.is_active)
+    status_label = "مفعّل" if row.is_active else "غير مفعّل"
+    try:
+        _portal_audit(
+            "PORTAL_CIRCULAR_STATUS_UPDATE",
+            f"title={row.title[:120]} status={status_label}",
+            target_type="PORTAL_CIRCULAR",
+            target_id=row.id,
+        )
+        db.session.commit()
+        flash(
+            "تم تفعيل التعميم وإظهاره للمستخدمين."
+            if row.is_active
+            else "تم إلغاء تفعيل التعميم وإخفاؤه عن المستخدمين.",
+            "success",
+        )
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to toggle circular activation: %s", circular_id)
+        flash("تعذر تحديث حالة التعميم.", "danger")
+
+    if (request.form.get("return_to") or "").strip() == "view":
+        return redirect(url_for("portal.circular_view", circular_id=circular_id))
+    return redirect(url_for("portal.circulars_list"))
+
+
+@portal_bp.route("/circulars/<int:circular_id>/delete", methods=["POST"])
+@login_required
+@_perm(PORTAL_CIRCULARS_MANAGE)
+def circular_delete(circular_id: int):
+    row = PortalCircular.query.get_or_404(circular_id)
+    title = row.title
+    stored_names = [attachment.stored_name for attachment in row.attachments]
+    try:
+        _portal_audit(
+            "PORTAL_CIRCULAR_DELETE",
+            f"title={title[:120]} attachments={len(stored_names)}",
+            target_type="PORTAL_CIRCULAR",
+            target_id=row.id,
+        )
+        db.session.delete(row)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete circular: %s", circular_id)
+        flash("تعذر حذف التعميم.", "danger")
+        return redirect(url_for("portal.circular_view", circular_id=circular_id))
+
+    _remove_circular_attachment_files(circular_id, stored_names)
+    flash(f"تم حذف التعميم «{title}» نهائيًا.", "success")
+    return redirect(url_for("portal.circulars_list"))
+
+
 @portal_bp.route("/circulars/new", methods=["GET", "POST"])
 @login_required
 @_perm(PORTAL_CIRCULARS_MANAGE)
@@ -4721,6 +4808,7 @@ def circular_new():
                 title="",
                 body="",
                 is_urgent=True,
+                is_active=True,
                 send_whatsapp=False,
                 send_email=False,
                 target_scope=CIRCULAR_SCOPE_ALL,
@@ -4730,8 +4818,12 @@ def circular_new():
         title = (request.form.get("title") or "").strip()
         body = (request.form.get("body") or "").strip()
         is_urgent = (request.form.get("is_urgent") or "").strip() in ("1", "on", "true", "True")
+        is_active = (request.form.get("is_active") or "").strip() in ("1", "on", "true", "True")
         send_whatsapp = (request.form.get("send_whatsapp") or "").strip() in ("1", "on", "true", "True")
         send_email = (request.form.get("send_email") or "").strip() in ("1", "on", "true", "True")
+        if not is_active:
+            send_whatsapp = False
+            send_email = False
         target_scope = (request.form.get("target_scope") or "").strip().upper()
 
         def parse_target_id(field: str) -> int | None:
@@ -4747,6 +4839,7 @@ def circular_new():
             "title": title,
             "body": body,
             "is_urgent": is_urgent,
+            "is_active": is_active,
             "send_whatsapp": send_whatsapp,
             "send_email": send_email,
             "target_scope": target_scope or CIRCULAR_SCOPE_ALL,
@@ -4793,6 +4886,7 @@ def circular_new():
                 title=title[:200],
                 body=body,
                 is_urgent=bool(is_urgent),
+                is_active=bool(is_active),
                 target_scope=target_scope,
                 target_directorate_id=target_directorate_id,
                 target_department_id=target_department_id,
@@ -4842,6 +4936,7 @@ def circular_new():
                 f"title={title[:120]} scope={target_scope} "
                 f"target_directorate_id={target_directorate_id} "
                 f"target_department_id={target_department_id} "
+                f"is_active={int(bool(is_active))} "
                 f"attachments={attachment_count} "
                 f"notifications={len(user_ids)} internal_messages={internal_count}",
                 target_type="PORTAL_CIRCULAR",
@@ -4849,11 +4944,17 @@ def circular_new():
             )
             db.session.commit()
             attachment_note = f" وإرفاق {attachment_count} ملف" if attachment_count else ""
-            flash(
-                f"تم إصدار التعميم{attachment_note} وإرساله في التعميمات والمراسلات والإشعارات "
-                f"({len(user_ids)} مستخدم).",
-                "success",
-            )
+            if is_active:
+                flash(
+                    f"تم إصدار التعميم{attachment_note} وإرساله في التعميمات والمراسلات والإشعارات "
+                    f"({len(user_ids)} مستخدم).",
+                    "success",
+                )
+            else:
+                flash(
+                    f"تم حفظ التعميم كغير مفعّل{attachment_note} دون إظهاره أو إرسال إشعاراته للمستخدمين.",
+                    "success",
+                )
 
             if send_whatsapp:
                 wa_category, wa_message = _send_circular_to_whatsapp(circ)
@@ -4928,6 +5029,7 @@ def circular_new():
         title="",
         body="",
         is_urgent=True,
+        is_active=True,
         send_whatsapp=False,
         send_email=False,
         target_scope=CIRCULAR_SCOPE_ALL,
@@ -15617,7 +15719,7 @@ def hr_org_structure():
         employee_rows.append(_build_employee_row(u, a, mgr_map))
 
     include_people = (request.args.get('include_people') or '').strip().lower() in ('1', 'true', 'yes')
-    org_tree = _build_org_tree(orgs, directorates, units, departments, sections, teams, mgr_map, org_assignments, include_people=include_people)
+    org_tree = build_chart_tree(include_people=include_people)
     independent_teams = [team for team in teams if not getattr(team, 'section_id', None)]
 
     return render_template(
@@ -16507,31 +16609,36 @@ def hr_org_assignments_delete(assign_id: int):
 @login_required
 @_perm_any(HR_ORG_READ, HR_MASTERDATA_MANAGE)
 def hr_org_structure_export(fmt: str):
-    """Export org structure diagram/data.
-
-    Supported formats:
-      - mermaid
-      - csv (nodes)
-      - json (nodes + managers + people assignments)
-    """
+    """Export the canonical unified organizational structure."""
     fmt = (fmt or "").strip().lower()
+    nodes = (
+        OrgNode.query
+        .join(OrgNodeType, OrgNode.type_id == OrgNodeType.id)
+        .filter(
+            OrgNode.is_active.is_(True),
+            OrgNodeType.is_active.is_(True),
+            OrgNodeType.show_in_chart.is_(True),
+        )
+        .order_by(
+            OrgNode.parent_id.asc().nullslast(),
+            OrgNodeType.sort_order.asc(),
+            OrgNode.sort_order.asc(),
+            OrgNode.name_ar.asc(),
+        )
+        .all()
+    )
+    node_by_id = {node.id: node for node in nodes}
+    mgr_map = {row.node_id: row for row in OrgNodeManager.query.all()}
+    assignments = (
+        OrgNodeAssignment.query
+        .filter(OrgNodeAssignment.node_id.in_(list(node_by_id)))
+        .order_by(OrgNodeAssignment.user_id.asc(), OrgNodeAssignment.is_primary.desc(), OrgNodeAssignment.id.asc())
+        .all()
+        if node_by_id else []
+    )
 
-    orgs = Organization.query.order_by(Organization.id.asc()).all()
-    dirs = Directorate.query.order_by(Directorate.id.asc()).all()
-    units = Unit.query.order_by(Unit.id.asc()).all()
-    depts = Department.query.order_by(Department.id.asc()).all()
-    secs = Section.query.order_by(Section.id.asc()).all()
-    try:
-        teams = Team.query.order_by(Team.id.asc()).all()
-    except Exception:
-        teams = []
-
-    mgr_rows = OrgUnitManager.query.all()
-    mgr_map = {(m.unit_type, m.unit_id): m for m in mgr_rows}
-    org_assignments = _safe_query_org_assignments()
-
-    def mgr_of(t, i):
-        m = mgr_map.get((t, i))
+    def mgr_of(node_id: int):
+        m = mgr_map.get(node_id)
         return {
             "manager_user_id": getattr(m, "manager_user_id", None),
             "manager_name": (m.manager_user.full_name if m and m.manager_user else None),
@@ -16539,106 +16646,57 @@ def hr_org_structure_export(fmt: str):
             "deputy_name": (m.deputy_user.full_name if m and m.deputy_user else None),
         }
 
-    def dept_parent(d):
-        if getattr(d, "unit_id", None):
-            return ("UNIT", d.unit_id)
-        return ("DIRECTORATE", d.directorate_id)
-
-    def sec_parent(s):
-        if getattr(s, "department_id", None):
-            return ("DEPARTMENT", s.department_id)
-        if getattr(s, "unit_id", None):
-            return ("UNIT", s.unit_id)
-        return ("DIRECTORATE", s.directorate_id)
-
     if fmt == "csv":
         output = io.StringIO()
         w = csv.writer(output)
-        w.writerow(["type", "id", "parent_type", "parent_id", "name_ar", "code", "manager", "deputy"])
-
-        for o in orgs:
-            m = mgr_of("ORGANIZATION", o.id)
-            w.writerow(["ORGANIZATION", o.id, "", "", o.name_ar, o.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
-        for d in dirs:
-            m = mgr_of("DIRECTORATE", d.id)
-            w.writerow(["DIRECTORATE", d.id, "ORGANIZATION", d.organization_id, d.name_ar, d.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
-        for u in units:
-            m = mgr_of("UNIT", u.id)
-            w.writerow(["UNIT", u.id, "ORGANIZATION", u.organization_id, u.name_ar, u.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
-        for d in depts:
-            ptype, pid = dept_parent(d)
-            m = mgr_of("DEPARTMENT", d.id)
-            w.writerow(["DEPARTMENT", d.id, ptype, pid or "", d.name_ar, d.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
-        for s in secs:
-            ptype, pid = sec_parent(s)
-            m = mgr_of("SECTION", s.id)
-            w.writerow(["SECTION", s.id, ptype, pid or "", s.name_ar, s.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
-        for t in teams:
-            m = mgr_of("TEAM", t.id)
-            parent_type = "SECTION" if t.section_id else ""
-            w.writerow(["TEAM", t.id, parent_type, t.section_id or "", t.name_ar, t.code or "", m.get("manager_name") or "", m.get("deputy_name") or ""])
+        w.writerow(["type", "type_name", "id", "parent_type", "parent_id", "name_ar", "code", "manager", "deputy"])
+        for node in nodes:
+            parent = node_by_id.get(node.parent_id)
+            m = mgr_of(node.id)
+            w.writerow([
+                node.type.code if node.type else "NODE",
+                node.type.name_ar if node.type else "عنصر",
+                node.id,
+                parent.type.code if parent and parent.type else "",
+                parent.id if parent else "",
+                node.name_ar,
+                node.code or "",
+                m.get("manager_name") or "",
+                m.get("deputy_name") or "",
+            ])
 
         bio = BytesIO(output.getvalue().encode("utf-8-sig"))
         bio.seek(0)
         return send_file(bio, as_attachment=True, download_name="org_structure_nodes.csv", mimetype="text/csv")
 
     if fmt == "json":
-        nodes = []
-        for o in orgs:
-            nodes.append({
-                "type": "ORGANIZATION", "id": o.id, "parent": None,
-                "name_ar": o.name_ar, "name_en": o.name_en, "code": o.code,
-                "managers": mgr_of("ORGANIZATION", o.id),
-            })
-        for d in dirs:
-            nodes.append({
-                "type": "DIRECTORATE", "id": d.id, "parent": {"type": "ORGANIZATION", "id": d.organization_id},
-                "name_ar": d.name_ar, "name_en": d.name_en, "code": d.code,
-                "managers": mgr_of("DIRECTORATE", d.id),
-            })
-        for u in units:
-            nodes.append({
-                "type": "UNIT", "id": u.id, "parent": {"type": "ORGANIZATION", "id": u.organization_id},
-                "name_ar": u.name_ar, "name_en": u.name_en, "code": u.code,
-                "managers": mgr_of("UNIT", u.id),
-            })
-        for d in depts:
-            ptype, pid = dept_parent(d)
-            nodes.append({
-                "type": "DEPARTMENT", "id": d.id, "parent": {"type": ptype, "id": pid},
-                "name_ar": d.name_ar, "name_en": d.name_en, "code": d.code,
-                "managers": mgr_of("DEPARTMENT", d.id),
-            })
-        for s in secs:
-            ptype, pid = sec_parent(s)
-            nodes.append({
-                "type": "SECTION", "id": s.id, "parent": {"type": ptype, "id": pid},
-                "name_ar": s.name_ar, "name_en": s.name_en, "code": s.code,
-                "managers": mgr_of("SECTION", s.id),
-            })
-        for t in teams:
-            nodes.append({
-                "type": "TEAM", "id": t.id,
-                "parent": ({"type": "SECTION", "id": t.section_id} if t.section_id else None),
-                "name_ar": t.name_ar, "name_en": t.name_en, "code": t.code,
-                "managers": mgr_of("TEAM", t.id),
+        exported_nodes = []
+        for node in nodes:
+            parent = node_by_id.get(node.parent_id)
+            exported_nodes.append({
+                "type": node.type.code if node.type else "NODE",
+                "type_name": node.type.name_ar if node.type else "عنصر",
+                "id": node.id,
+                "parent": ({
+                    "type": parent.type.code if parent.type else "NODE",
+                    "id": parent.id,
+                } if parent else None),
+                "name_ar": node.name_ar,
+                "name_en": node.name_en,
+                "code": node.code,
+                "managers": mgr_of(node.id),
             })
 
-        people = []
-        users = User.query.order_by(User.id.asc()).all()
-        for u in users:
-            a = _primary_assignment_for_user(u.id, org_assignments)
-            if not a:
-                continue
-            people.append({
-                "user_id": u.id,
-                "name": u.full_name,
-                "email": u.email,
-                "assignment": {"unit_type": a.unit_type, "unit_id": a.unit_id, "title": a.title, "is_primary": bool(a.is_primary)},
-                "manager_chain": _build_employee_row(u, a, mgr_map),
-            })
+        people = [{
+            "user_id": assignment.user_id,
+            "name": assignment.user.full_name if assignment.user else None,
+            "email": assignment.user.email if assignment.user else None,
+            "node_id": assignment.node_id,
+            "title": assignment.title,
+            "is_primary": bool(assignment.is_primary),
+        } for assignment in assignments]
 
-        payload = {"nodes": nodes, "people": people}
+        payload = {"version": "2023-05-08", "nodes": exported_nodes, "people": people}
         import json
         bio = BytesIO(json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
         bio.seek(0)
@@ -16647,8 +16705,8 @@ def hr_org_structure_export(fmt: str):
     if fmt == "mermaid":
         include_people = (request.args.get("include_people") or "").strip().lower() in ("1", "true", "yes")
 
-        def nid(prefix: str, i: int):
-            return f"{prefix}_{i}"
+        def nid(node_id: int):
+            return f"NODE_{node_id}"
 
         def esc(s: str | None) -> str:
             txt = (s or "")
@@ -16658,40 +16716,18 @@ def hr_org_structure_export(fmt: str):
 
         lines = ["flowchart TD"]
 
-        for o in orgs:
-            lines.append(f'  {nid("ORG", o.id)}["{esc(o.name_ar)}"]')
-        for d in dirs:
-            lines.append(f'  {nid("DIR", d.id)}["{esc(d.name_ar)}"]')
-            lines.append(f'  {nid("ORG", d.organization_id)} --> {nid("DIR", d.id)}')
-        for u in units:
-            lines.append(f'  {nid("UNI", u.id)}["{esc(u.name_ar)}"]')
-            if getattr(u, "organization_id", None):
-                lines.append(f'  {nid("ORG", u.organization_id)} --> {nid("UNI", u.id)}')
-        for d in depts:
-            lines.append(f'  {nid("DEP", d.id)}["{esc(d.name_ar)}"]')
-            ptype, pid = dept_parent(d)
-            if ptype == "UNIT":
-                lines.append(f'  {nid("UNI", pid)} --> {nid("DEP", d.id)}')
-            else:
-                lines.append(f'  {nid("DIR", pid)} --> {nid("DEP", d.id)}')
-        for s in secs:
-            lines.append(f'  {nid("SEC", s.id)}["{esc(s.name_ar)}"]')
-            ptype, pid = sec_parent(s)
-            if ptype == "DEPARTMENT":
-                lines.append(f'  {nid("DEP", pid)} --> {nid("SEC", s.id)}')
-            elif ptype == "UNIT":
-                lines.append(f'  {nid("UNI", pid)} --> {nid("SEC", s.id)}')
-            else:
-                lines.append(f'  {nid("DIR", pid)} --> {nid("SEC", s.id)}')
-        for t in teams:
-            lines.append(f'  {nid("TEA", t.id)}["{esc(t.name_ar)}"]')
-            if t.section_id:
-                lines.append(f'  {nid("SEC", t.section_id)} --> {nid("TEA", t.id)}')
+        for node in nodes:
+            type_name = node.type.name_ar if node.type else "عنصر"
+            lines.append(f'  {nid(node.id)}["{esc(type_name)}: {esc(node.name_ar)}"]')
+            if node.parent_id in node_by_id:
+                lines.append(f'  {nid(node.parent_id)} --> {nid(node.id)}')
 
         def person_id(user_id: int):
             return f"USR_{user_id}"
 
-        for (ut, uid), m in mgr_map.items():
+        for node_id, m in mgr_map.items():
+            if node_id not in node_by_id:
+                continue
             if not m or not m.manager_user_id:
                 continue
             pu = m.manager_user
@@ -16699,39 +16735,18 @@ def hr_org_structure_export(fmt: str):
                 continue
             pid = person_id(pu.id)
             lines.append(f'  {pid}(["👤 {esc(pu.full_name)}"])')
-            if ut == "ORGANIZATION":
-                lines.append(f"  {nid('ORG', uid)} -. مدير .-> {pid}")
-            elif ut == "DIRECTORATE":
-                lines.append(f"  {nid('DIR', uid)} -. مدير .-> {pid}")
-            elif ut == "UNIT":
-                lines.append(f"  {nid('UNI', uid)} -. مدير .-> {pid}")
-            elif ut == "DEPARTMENT":
-                lines.append(f"  {nid('DEP', uid)} -. مدير .-> {pid}")
-            elif ut == "SECTION":
-                lines.append(f"  {nid('SEC', uid)} -. مدير .-> {pid}")
-            elif ut == "TEAM":
-                lines.append(f"  {nid('TEA', uid)} -. مدير .-> {pid}")
+            lines.append(f"  {nid(node_id)} -. مدير .-> {pid}")
 
         if include_people:
-            users = User.query.order_by(User.id.asc()).all()
-            for u in users:
-                a = _primary_assignment_for_user(u.id, org_assignments)
-                if not a:
+            emitted_people = set()
+            for assignment in assignments:
+                if not assignment.user:
                     continue
-                pid = person_id(u.id)
-                lines.append(f'  {pid}(["👥 {esc(u.full_name)}"])')
-                if a.unit_type == "ORGANIZATION":
-                    lines.append(f"  {nid('ORG', a.unit_id)} -->|موظف| {pid}")
-                elif a.unit_type == "DIRECTORATE":
-                    lines.append(f"  {nid('DIR', a.unit_id)} -->|موظف| {pid}")
-                elif a.unit_type == "UNIT":
-                    lines.append(f"  {nid('UNI', a.unit_id)} -->|موظف| {pid}")
-                elif a.unit_type == "DEPARTMENT":
-                    lines.append(f"  {nid('DEP', a.unit_id)} -->|موظف| {pid}")
-                elif a.unit_type == "SECTION":
-                    lines.append(f"  {nid('SEC', a.unit_id)} -->|موظف| {pid}")
-                elif a.unit_type == "TEAM":
-                    lines.append(f"  {nid('TEA', a.unit_id)} -->|موظف| {pid}")
+                pid = person_id(assignment.user_id)
+                if assignment.user_id not in emitted_people:
+                    lines.append(f'  {pid}(["👥 {esc(assignment.user.full_name)}"])')
+                    emitted_people.add(assignment.user_id)
+                lines.append(f"  {nid(assignment.node_id)} -->|موظف| {pid}")
 
         txt = "\n".join(lines) + "\n"
         bio = BytesIO(txt.encode("utf-8"))
@@ -23554,6 +23569,10 @@ def portal_admin_hr_org_structure():
     tab = (request.args.get("tab") or "orgs").strip().lower()
     kind = (request.form.get("kind") or tab).strip().lower()
     op = (request.form.get("op") or "").strip().lower() if request.method == "POST" else ""
+
+    if request.method == "POST" and _legacy_org_locked():
+        flash("الهيكلية القديمة مقفلة للقراءة فقط لأن الهيكلية الرسمية الموحدة مفعّلة.", "warning")
+        return redirect(url_for("portal.portal_admin_hr_org_structure", tab=tab))
 
     def to_code(v):
         if v is None:

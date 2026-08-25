@@ -10,6 +10,13 @@
       {% if row.is_urgent %}
         <span class="badge text-bg-danger ms-2">مستعجل</span>
       {% endif %}
+      {% if current_user.has_perm('PORTAL_CIRCULARS_MANAGE') %}
+        {% if row.is_active %}
+          <span class="badge text-bg-success ms-2">مفعّل</span>
+        {% else %}
+          <span class="badge text-bg-secondary ms-2">غير مفعّل — مخفي عن المستخدمين</span>
+        {% endif %}
+      {% endif %}
       <span class="badge text-bg-light border ms-2">{{ row.audience_label }}</span>
     </div>
   </div>
@@ -17,9 +24,25 @@
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.circulars_list') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
     {% if current_user.has_perm('PORTAL_CIRCULARS_MANAGE') %}
       <a class="btn btn-outline-primary" href="{{ url_for('portal.circular_new') }}"><i class="bi bi-plus-circle"></i> إصدار تعميم</a>
+      <form method="post" action="{{ url_for('portal.circular_toggle_active', circular_id=row.id) }}" class="d-inline">
+        <input type="hidden" name="return_to" value="view">
+        <button class="btn {% if row.is_active %}btn-outline-secondary{% else %}btn-outline-success{% endif %}" type="submit">
+          {% if row.is_active %}إلغاء التفعيل{% else %}تفعيل وإظهار للمستخدمين{% endif %}
+        </button>
+      </form>
+      <form method="post" action="{{ url_for('portal.circular_delete', circular_id=row.id) }}" class="d-inline"
+            onsubmit="return confirm('سيتم حذف التعميم ومرفقاته نهائيًا. هل تريد المتابعة؟');">
+        <button class="btn btn-outline-danger" type="submit"><i class="bi bi-trash"></i> حذف</button>
+      </form>
     {% endif %}
   </div>
 </div>
+
+{% if current_user.has_perm('PORTAL_CIRCULARS_MANAGE') and not row.is_active %}
+<div class="alert alert-warning">
+  هذا التعميم غير مفعّل ولا يظهر للمستخدمين في القوائم أو الصفحة الرئيسية أو صندوق الوارد، ولا يمكنهم فتحه أو تنزيل مرفقاته.
+</div>
+{% endif %}
 
 <div class="card shadow-sm">
   <div class="card-body">

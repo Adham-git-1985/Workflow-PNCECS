@@ -173,6 +173,31 @@ class CircularTargetingTests(unittest.TestCase):
         self.assertEqual(len(rows), 5)
         self.assertTrue(can_user_view_circular(self.department_a2_circular, self.admin))
 
+    def test_inactive_circular_is_hidden_but_manager_can_review_it(self):
+        inactive = PortalCircular(
+            title="غير مفعّل",
+            body="لا يظهر للمستخدمين",
+            target_scope="ALL",
+            is_active=False,
+        )
+        db.session.add(inactive)
+        db.session.commit()
+
+        employee_rows = visible_circulars_query(PortalCircular.query, self.user_a1).all()
+        manager_default_rows = visible_circulars_query(PortalCircular.query, self.admin).all()
+        manager_review_rows = visible_circulars_query(
+            PortalCircular.query,
+            self.admin,
+            include_inactive_for_managers=True,
+        ).all()
+
+        self.assertNotIn(inactive.id, {row.id for row in employee_rows})
+        self.assertNotIn(inactive.id, {row.id for row in manager_default_rows})
+        self.assertIn(inactive.id, {row.id for row in manager_review_rows})
+        self.assertFalse(can_user_view_circular(inactive, self.user_a1))
+        self.assertTrue(can_user_view_circular(inactive, self.admin))
+        self.assertEqual(circular_recipient_user_ids(inactive), [])
+
     def test_invalid_stored_audience_fails_closed(self):
         invalid = PortalCircular(
             title="غير صالح",

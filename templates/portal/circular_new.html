@@ -7,7 +7,7 @@
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
   <div>
     <h4 class="mb-1"><i class="bi bi-plus-circle"></i> إصدار تعميم</h4>
-    <div class="text-muted">سيتم نشر التعميم داخل البوابة وإرساله عبر الإشعارات والمراسلات الداخلية.</div>
+    <div class="text-muted">يمكن نشر التعميم مباشرة أو حفظه كغير مفعّل دون إظهاره أو إرسال إشعاراته للمستخدمين.</div>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.circulars_list') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
 </div>
@@ -96,6 +96,17 @@
         <div class="small text-muted mt-1">إذا ألغيت الخيار، فسيكون الإشعار من نوع «معلومة».</div>
       </div>
 
+      <div class="border rounded-3 p-3 mb-3">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" name="is_active" value="1" id="circularActive"
+                 {% if is_active|default(true) %}checked{% endif %}>
+          <label class="form-check-label fw-semibold" for="circularActive">تفعيل التعميم وإظهاره للمستخدمين</label>
+        </div>
+        <div class="form-text" id="circularActiveHelp">
+          عند إلغاء التفعيل سيُحفظ التعميم ومرفقاته دون نشره أو إرسال إشعارات أو مراسلات أو بريد أو واتساب.
+        </div>
+      </div>
+
       <div class="border rounded-3 p-3 mb-3 bg-light-subtle">
         <div class="fw-semibold mb-2"><i class="bi bi-broadcast"></i> قنوات النشر</div>
         <div class="d-flex flex-wrap gap-2 mb-3">
@@ -118,6 +129,7 @@
           <div class="col-md-6">
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" role="switch" name="send_email" value="1" id="sendEmail"
+                     data-ready="{{ '1' if mail_cfg.ready else '0' }}"
                      {% if send_email %}checked{% endif %}
                      {% if not mail_cfg.ready %}disabled{% endif %}>
               <label class="form-check-label" for="sendEmail">إرسال نسخة بالبريد الإلكتروني</label>
@@ -182,6 +194,8 @@
     var directorate = document.getElementById('targetDirectorate');
     var department = document.getElementById('targetDepartment');
     var whatsapp = document.getElementById('sendWhatsapp');
+    var email = document.getElementById('sendEmail');
+    var circularActive = document.getElementById('circularActive');
     var whatsappNotice = document.getElementById('targetedWhatsappNotice');
     var attachmentInputs = Array.prototype.slice.call(document.querySelectorAll('[data-circular-attachment-input]'));
     var attachmentSummary = document.getElementById('circularAttachmentSummary');
@@ -197,13 +211,20 @@
 
       if (whatsapp) {
         var targeted = value !== 'ALL';
-        whatsapp.disabled = targeted || whatsapp.dataset.ready !== '1';
-        if (targeted) whatsapp.checked = false;
+        var inactive = circularActive && !circularActive.checked;
+        whatsapp.disabled = inactive || targeted || whatsapp.dataset.ready !== '1';
+        if (inactive || targeted) whatsapp.checked = false;
         if (whatsappNotice) whatsappNotice.classList.toggle('d-none', !targeted);
+      }
+      if (email) {
+        var inactiveEmail = circularActive && !circularActive.checked;
+        email.disabled = inactiveEmail || email.dataset.ready !== '1';
+        if (inactiveEmail) email.checked = false;
       }
     }
 
     scope.addEventListener('change', syncAudienceFields);
+    if (circularActive) circularActive.addEventListener('change', syncAudienceFields);
     syncAudienceFields();
 
     function syncAttachmentSummary() {

@@ -466,6 +466,7 @@ def _ensure_runtime_schema():
             # Circular audience targeting. Existing circulars remain visible to
             # everyone, while new rows may target a directorate or department.
             for _col, _ctype in [
+                ("is_active", "BOOLEAN NOT NULL DEFAULT 1"),
                 ("target_scope", "TEXT NOT NULL DEFAULT 'ALL'"),
                 ("target_directorate_id", "INTEGER"),
                 ("target_department_id", "INTEGER"),
@@ -474,6 +475,10 @@ def _ensure_runtime_schema():
                     _add_column_retry("portal_circulars", _col, _ctype)
             if _col_exists("portal_circulars", "target_scope"):
                 try:
+                    db.session.execute(text(
+                        "UPDATE portal_circulars SET is_active=1 "
+                        "WHERE is_active IS NULL"
+                    ))
                     db.session.execute(text(
                         "UPDATE portal_circulars SET target_scope='ALL' "
                         "WHERE target_scope IS NULL OR TRIM(target_scope)=''"
@@ -489,6 +494,10 @@ def _ensure_runtime_schema():
                     db.session.execute(text(
                         "CREATE INDEX IF NOT EXISTS ix_portal_circulars_target_department_id "
                         "ON portal_circulars (target_department_id)"
+                    ))
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_portal_circulars_is_active "
+                        "ON portal_circulars (is_active)"
                     ))
                     db.session.commit()
                 except Exception:

@@ -12,6 +12,7 @@ from extensions import db
 from models import PortalCircular, PortalCircularAttachment
 from portal.routes import (
     _circular_whatsapp_text,
+    _remove_circular_attachment_files,
     _save_circular_attachments,
     _send_circular_to_email,
 )
@@ -134,6 +135,23 @@ class CircularAttachmentStorageTests(unittest.TestCase):
         self.assertEqual(len(attachments), 1)
         self.assertEqual(attachments[0].get_filename(), "مرفق التعميم.pdf")
         self.assertEqual(attachments[0].get_payload(decode=True), b"pdf-content")
+
+    def test_registered_attachment_files_are_removed_with_circular(self):
+        row = self._circular()
+        upload = FileStorage(
+            stream=BytesIO(b"to-delete"),
+            filename="للحذف.pdf",
+            content_type="application/pdf",
+        )
+        with self.app.test_request_context("/"):
+            _, saved_paths = _save_circular_attachments(row, [upload])
+            db.session.commit()
+            stored_names = [attachment.stored_name for attachment in row.attachments]
+            removed = _remove_circular_attachment_files(row.id, stored_names)
+
+        self.assertEqual(removed, 1)
+        self.assertFalse(saved_paths[0].exists())
+        self.assertFalse(saved_paths[0].parent.exists())
 
 
 if __name__ == "__main__":

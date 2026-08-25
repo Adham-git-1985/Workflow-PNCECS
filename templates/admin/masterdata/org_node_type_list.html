@@ -32,17 +32,17 @@
               {% if legacy_locked %}🔒 مقفلة{% else %}🔓 غير مقفلة{% endif %}
             </span>
           </form>
-          <div class="small text-muted">آخر مزامنة: <b>{{ last_sync or '—' }}</b></div>
+          <div class="small text-muted">آخر تطبيق للهيكلية المعتمدة: <b>{{ last_sync or '—' }}</b></div>
         </div>
         <div class="small text-muted mt-2">
           <b>ماذا يفعل القفل؟</b> يجعل الهيكلية القديمة <b>قراءة فقط</b> (يعطّل الإضافة/التعديل/الحذف في صفحات الهيكلية الثابتة مثل الفرق/المدراء/التعيينات القديمة) لمنع التعارض أثناء الانتقال إلى الهيكلية الموحدة.
           <span class="text-muted">لا يحذف أي بيانات.</span>
         </div>
-        <div class="small text-muted mt-2">المزامنة تقوم بإنشاء/تحديث عناصر الهيكلية الموحدة من الجداول الثابتة. لا تحذف العناصر الديناميكية التي أنشأتها يدويًا.</div>
+        <div class="small text-muted mt-2">يعيد التطبيق إنشاء/تحديث عناصر الهيكلية الموحدة وفق الهيكلية الرسمية المعتمدة بتاريخ 08-05-2023، مع الحفاظ على تعيينات الموظفين والمسؤولين.</div>
       </div>
       <div class="col-lg-6 text-lg-end">
-        <form method="post" action="{{ url_for('masterdata.org_dynamic_sync_legacy') }}" class="d-inline" onsubmit="return confirm('سيتم جلب الهيكلية من الجداول الثابتة إلى الهيكلية الموحدة. هل تريد المتابعة؟');">
-          <button class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> مزامنة من الهيكلية الثابتة الآن</button>
+        <form method="post" action="{{ url_for('masterdata.org_dynamic_sync_legacy') }}" class="d-inline" onsubmit="return confirm('سيتم إعادة تطبيق الهيكلية الرسمية المعتمدة على الهيكلية الموحدة مع الحفاظ على التعيينات. هل تريد المتابعة؟');">
+          <button class="btn btn-outline-primary"><i class="bi bi-arrow-repeat"></i> إعادة تطبيق الهيكلية المعتمدة</button>
         </form>
       </div>
     </div>

@@ -10,7 +10,8 @@ from extensions import db
 from utils.perms import perm_required
 from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
 from utils.importer import read_excel_rows, pick, to_str, to_int, to_bool, upsert_by_code, replace_all
-from utils.org_dynamic import ensure_dynamic_org_seed, sync_legacy_now
+from utils.org_dynamic import ensure_dynamic_org_seed
+from utils.approved_org_structure import apply_approved_org_structure
 
 from models import Organization, Directorate, Unit, Department, Section, Division, Role, User, UserPermission, RequestType, WorkflowRoutingRule, WorkflowRequest, Committee, CommitteeAssignee, WorkflowTemplateStep, WorkflowTemplateParallelAssignee, WorkflowInstanceStep, OrgNodeType, OrgNode, SystemSetting
 
@@ -2862,21 +2863,23 @@ def org_dynamic_toggle_legacy_lock():
 @login_required
 @perm_required("MASTERDATA_UPDATE")
 def org_dynamic_sync_legacy():
-    # Seed/sync Dynamic OrgNodes from legacy org tables.
-    # - Creates dynamic types if missing (ensure_dynamic_org_seed)
-    # - Upserts legacy-mapped nodes (does not delete custom dynamic nodes)
+    # Keep the historical endpoint for bookmarked links, but the approved chart
+    # is now the canonical source for the unified organizational structure.
     try:
         ensure_dynamic_org_seed()
-        sync_legacy_now()
-        _set_setting("ORG_NODE_LAST_SYNC", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
+        result = apply_approved_org_structure(deactivate_unlisted=True, lock_legacy=True)
         db.session.commit()
-        flash("تمت مزامنة الهيكلية الموحدة من الهيكلية الثابتة بنجاح.", "success")
-    except Exception:
+        flash(
+            f"تم تطبيق الهيكلية المعتمدة بنجاح ({result['expected']} عنصرًا؛ "
+            f"{result['created']} جديد، {result['reused']} محدث).",
+            "success",
+        )
+    except Exception as exc:
         try:
             db.session.rollback()
         except Exception:
             pass
-        flash("تعذر تنفيذ المزامنة. تحقق من السجلات.", "danger")
+        flash(f"تعذر تطبيق الهيكلية المعتمدة: {exc}", "danger")
 
     return redirect(url_for("masterdata.org_node_types_list"))
 
