@@ -16,7 +16,11 @@ from extensions import db
 from utils.perms import perm_required
 from utils.org_dynamic import build_org_node_picker_tree
 from utils.ui_labels import ui_label
-from workflow.dynamic_paths import build_structural_template_path, node_path_label
+from workflow.dynamic_paths import (
+    build_structural_template_path,
+    node_path_label,
+    org_node_approver_names,
+)
 from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
@@ -696,6 +700,9 @@ def templates_edit(template_id):
     role_choices = _get_role_choices()
     committees = Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all()
     org_node_path_labels = {int(node.id): node_path_label(node) for node in org_nodes}
+    org_node_approver_names_map = org_node_approver_names(
+        int(node.id) for node in org_nodes
+    )
 
     return render_template(
         "workflow/templates_admin/edit.html",
@@ -709,6 +716,7 @@ def templates_edit(template_id):
         divisions=divisions,
         org_nodes=org_nodes,
         org_node_path_labels=org_node_path_labels,
+        org_node_approver_names_map=org_node_approver_names_map,
         role_choices=role_choices,
         committees=committees,
     )

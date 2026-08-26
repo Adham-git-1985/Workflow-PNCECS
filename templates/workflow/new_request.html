@@ -124,6 +124,20 @@
     scroll-margin-top: 6rem;
   }
 
+  #predefinedRoutePreviewSteps {
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: .5rem;
+    overflow-x: auto;
+    white-space: nowrap;
+    padding-bottom: .25rem;
+  }
+
+  #predefinedRoutePreviewSteps .route-step-summary {
+    flex: 0 0 auto;
+  }
+
   @media (max-width: 575.98px) {
     #dynamicRouteBox .dynamic-route-panel {
       padding: .75rem !important;
@@ -202,6 +216,11 @@
           {% endfor %}
         </select>
         <div class="form-text">اختيار المسار مستقل عن نوع الطلب الذي ستكتبه في القسم التالي.</div>
+        <script type="application/json" id="predefinedTemplateStepsData">{{ (predefined_template_steps|default({}, true))|tojson }}</script>
+        <div class="alert alert-light border mt-2 mb-0 d-none" id="predefinedRoutePreview" aria-live="polite">
+          <div class="small fw-bold mb-2"><i class="bi bi-signpost-split"></i> خطوات المسار المختار</div>
+          <div id="predefinedRoutePreviewSteps"></div>
+        </div>
       </div>
 
       <div class="col-12 d-none" id="dynamicRouteBox">
@@ -732,6 +751,8 @@
     const predefinedBox = document.getElementById('predefinedRouteBox');
     const dynamicBox = document.getElementById('dynamicRouteBox');
     const templateSelect = document.getElementById('templateSelect');
+    const predefinedPreview = document.getElementById('predefinedRoutePreview');
+    const predefinedPreviewSteps = document.getElementById('predefinedRoutePreviewSteps');
     const userSearch = document.getElementById('dynamicUserSearch');
     const hierarchySelect = document.getElementById('dynamicHierarchySelect');
     const hierarchyTree = document.getElementById('dynamicHierarchyTree');
@@ -770,6 +791,16 @@
     let committees = [];
     let savedPresets = [];
     let previewTimer = null;
+    let predefinedTemplateSteps = {};
+
+    try {
+      const predefinedStepsElement = document.getElementById('predefinedTemplateStepsData');
+      predefinedTemplateSteps = predefinedStepsElement
+        ? JSON.parse(predefinedStepsElement.textContent || '{}')
+        : {};
+    } catch (error) {
+      predefinedTemplateSteps = {};
+    }
 
     try {
       const orgNodesElement = document.getElementById('dynamicOrgNodesData');
@@ -836,6 +867,25 @@
       return Boolean(dynamicRadio && dynamicRadio.checked);
     }
 
+    function renderPredefinedPreview(){
+      if (!predefinedPreview || !predefinedPreviewSteps || !templateSelect) return;
+      const steps = predefinedTemplateSteps[String(templateSelect.value || '')] || [];
+      predefinedPreview.classList.toggle('d-none', !steps.length || isDynamic());
+      predefinedPreviewSteps.innerHTML = '';
+      steps.forEach(function(step, index){
+        if (index > 0) {
+          const arrow = document.createElement('span');
+          arrow.className = 'text-primary fw-bold flex-shrink-0';
+          arrow.textContent = '←';
+          predefinedPreviewSteps.appendChild(arrow);
+        }
+        const item = document.createElement('span');
+        item.className = 'route-step-summary badge rounded-pill text-bg-light border text-dark p-2';
+        item.textContent = 'الخطوة ' + String(step.order) + ': ' + String(step.label || '');
+        predefinedPreviewSteps.appendChild(item);
+      });
+    }
+
     function updateMode(){
       const dynamic = isDynamic();
       predefinedBox.classList.toggle('d-none', dynamic);
@@ -843,6 +893,7 @@
       if (templateSelect) {
         templateSelect.disabled = dynamic || templateSelect.dataset.hasTemplates !== '1';
       }
+      renderPredefinedPreview();
       if (dynamic) schedulePreview();
     }
 
@@ -1402,6 +1453,7 @@
 
     if (predefinedRadio) predefinedRadio.addEventListener('change', updateMode);
     if (dynamicRadio) dynamicRadio.addEventListener('change', updateMode);
+    if (templateSelect) templateSelect.addEventListener('change', renderPredefinedPreview);
     if (previewToggle) previewToggle.addEventListener('click', schedulePreview);
     if (savedPresetSelect) savedPresetSelect.addEventListener('change', function(){
       const hasSelection = Boolean(savedPresetSelect.value);

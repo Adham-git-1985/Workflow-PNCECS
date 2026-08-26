@@ -320,6 +320,37 @@ def _manager_for_node(node: OrgNode) -> tuple[User | None, str | None]:
     return user, role
 
 
+def org_node_approver_names(node_ids=None) -> dict[int, str]:
+    """Return the currently assigned manager/deputy names for OrgNodes.
+
+    A predefined ``ORG_NODE`` step is resolved from the live hierarchy, so its
+    display should identify the same people instead of a generic placeholder.
+    """
+    query = OrgNodeManager.query
+    if node_ids is not None:
+        normalized_ids = {
+            int(node_id)
+            for node_id in node_ids
+            if node_id is not None and str(node_id).isdigit()
+        }
+        if not normalized_ids:
+            return {}
+        query = query.filter(OrgNodeManager.node_id.in_(normalized_ids))
+
+    result: dict[int, str] = {}
+    for assignment in query.all():
+        names = []
+        for user in (assignment.manager_user, assignment.deputy_user):
+            if not user:
+                continue
+            name = (user.full_name or user.email or "").strip()
+            if name and name not in names:
+                names.append(name)
+        if names:
+            result[int(assignment.node_id)] = " / ".join(names)
+    return result
+
+
 def build_structural_template_path(source_node_id: int, target_node_id: int) -> dict:
     """Build reusable ORG_NODE step specs from two nodes in the saved hierarchy."""
     source = db.session.get(OrgNode, int(source_node_id)) if source_node_id else None

@@ -124,6 +124,7 @@ from workflow.dynamic_paths import (
     dynamic_user_choices,
     hierarchy_position_label,
     node_path_label,
+    org_node_approver_names,
 )
 from workflow.project_workflows import PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME
 
@@ -142,6 +143,88 @@ from workflow.engine import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _predefined_template_steps_data(templates) -> dict[str, list[dict]]:
+    """Build concise, readable step summaries for the new-request picker."""
+    template_ids = [int(template.id) for template in (templates or []) if template.id]
+    result = {str(template_id): [] for template_id in template_ids}
+    if not template_ids:
+        return result
+
+    steps = (
+        WorkflowTemplateStep.query
+        .filter(WorkflowTemplateStep.template_id.in_(template_ids))
+        .order_by(
+            WorkflowTemplateStep.template_id.asc(),
+            WorkflowTemplateStep.step_order.asc(),
+        )
+        .all()
+    )
+    user_ids = {
+        int(step.approver_user_id)
+        for step in steps
+        if getattr(step, "approver_user_id", None)
+    }
+    node_ids = {
+        int(step.approver_org_node_id)
+        for step in steps
+        if getattr(step, "approver_org_node_id", None)
+    }
+    users_map = {
+        int(user.id): user
+        for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
+    }
+    nodes_map = {
+        int(node.id): node
+        for node in (OrgNode.query.filter(OrgNode.id.in_(node_ids)).all() if node_ids else [])
+    }
+    node_approvers = org_node_approver_names(node_ids)
+    departments_map = {int(row.id): row for row in Department.query.all()}
+    directorates_map = {int(row.id): row for row in Directorate.query.all()}
+    units_map = {int(row.id): row for row in Unit.query.all()}
+    sections_map = {int(row.id): row for row in Section.query.all()}
+    divisions_map = {int(row.id): row for row in Division.query.all()}
+    committees_map = {int(row.id): row for row in Committee.query.all()}
+
+    for step in steps:
+        kind = (getattr(step, "approver_kind", "") or "").strip().upper()
+        label = "وجهة غير محددة"
+        if kind == "USER":
+            user = users_map.get(int(step.approver_user_id or 0))
+            label = user.full_name if user else f"مستخدم #{step.approver_user_id}"
+        elif kind == "ROLE":
+            label = ui_label(step.approver_role or "دور وظيفي")
+        elif kind == "ORG_NODE":
+            node_id = int(step.approver_org_node_id or 0)
+            node = nodes_map.get(node_id)
+            node_name = node.name_ar if node else f"عنصر هيكلي #{node_id}"
+            approver_name = node_approvers.get(node_id)
+            label = f"{node_name} → {approver_name or 'لا يوجد مدير/نائب معيّن'}"
+        elif kind == "DIRECTORATE":
+            row = directorates_map.get(int(step.approver_directorate_id or 0))
+            label = row.name_ar if row else f"إدارة #{step.approver_directorate_id}"
+        elif kind == "DEPARTMENT" or not kind:
+            row = departments_map.get(int(step.approver_department_id or 0))
+            label = row.name_ar if row else f"دائرة #{step.approver_department_id}"
+        elif kind == "UNIT":
+            row = units_map.get(int(step.approver_unit_id or 0))
+            label = row.name_ar if row else f"وحدة #{step.approver_unit_id}"
+        elif kind == "SECTION":
+            row = sections_map.get(int(step.approver_section_id or 0))
+            label = row.name_ar if row else f"قسم #{step.approver_section_id}"
+        elif kind == "DIVISION":
+            row = divisions_map.get(int(step.approver_division_id or 0))
+            label = row.name_ar if row else f"شعبة #{step.approver_division_id}"
+        elif kind == "COMMITTEE":
+            row = committees_map.get(int(step.approver_committee_id or 0))
+            label = row.name_ar if row else f"لجنة #{step.approver_committee_id}"
+
+        result.setdefault(str(step.template_id), []).append({
+            "order": int(step.step_order),
+            "label": label,
+        })
+    return result
 
 
 # =========================
@@ -2569,6 +2652,7 @@ def new_request():
         .order_by(WorkflowTemplate.name.asc())
         .all()
     )
+    predefined_template_steps = _predefined_template_steps_data(templates)
 
     selected_rt_id = request.args.get("request_type_id")
     selected_request_type_name = ""
@@ -2746,6 +2830,7 @@ def new_request():
         "workflow/new_request.html",
         request_types=request_types,
         templates=templates,
+        predefined_template_steps=predefined_template_steps,
         project_workflow_metadata=PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME,
         selected_request_type_name=selected_request_type_name,
         dynamic_choices=dynamic_choices,
@@ -4195,6 +4280,7 @@ def view_request(request_id):
     sections_map = {row.id: row for row in Section.query.all()}
     divisions_map = {row.id: row for row in Division.query.all()}
     org_nodes_map = {row.id: row for row in OrgNode.query.all()}
+    org_node_approver_names_map = org_node_approver_names(org_nodes_map.keys())
     committees_map = {c.id: c for c in Committee.query.all()}
     mentioned_users = []
     try:
@@ -4434,6 +4520,7 @@ def view_request(request_id):
         sections_map=sections_map,
         divisions_map=divisions_map,
         org_nodes_map=org_nodes_map,
+        org_node_approver_names_map=org_node_approver_names_map,
         committees_map=committees_map,
         step_att_counts=step_att_counts,
         step_att_items=step_att_items,

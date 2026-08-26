@@ -212,6 +212,7 @@
                 <span class="text-muted">عنصر هيكلي (موحد):</span>
                 {% if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) %}
                   {{ org_nodes_map.get(s.approver_org_node_id).name_ar }} [#{{ s.approver_org_node_id }}]
+                  → <strong>{{ org_node_approver_names_map.get(s.approver_org_node_id, 'لا يوجد مدير/نائب معيّن') }}</strong>
                 {% else %}
                   {{ s.approver_org_node_id }}
                 {% endif %}

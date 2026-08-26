@@ -5,6 +5,7 @@ from flask import Flask
 from extensions import db
 from models import (
     OrgNode,
+    OrgNodeManager,
     OrgNodeType,
     RequestType,
     User,
@@ -18,6 +19,7 @@ from workflow.project_workflows import (
     ProjectWorkflowConfigurationError,
     upsert_project_workflows,
 )
+from workflow.dynamic_paths import org_node_approver_names
 
 
 class ProjectWorkflowSeedTests(unittest.TestCase):
@@ -183,6 +185,19 @@ class ProjectWorkflowSeedTests(unittest.TestCase):
 
         with self.assertRaises(ProjectWorkflowConfigurationError):
             upsert_project_workflows()
+
+    def test_org_node_approver_names_exposes_assigned_person(self):
+        projects_node = OrgNode.query.filter_by(code="DIR_PROGRAMS").one()
+        user = User.query.filter_by(email="admin@example.test").one()
+        db.session.add(OrgNodeManager(
+            node_id=projects_node.id,
+            manager_user_id=user.id,
+        ))
+        db.session.commit()
+
+        labels = org_node_approver_names([projects_node.id])
+
+        self.assertEqual(labels[projects_node.id], "مدير النظام")
 
 
 if __name__ == "__main__":

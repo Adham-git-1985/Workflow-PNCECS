@@ -308,9 +308,9 @@
             <hr class="my-2">
           {% endif %}
 
-          <ol class="list-group list-group-numbered mb-0">
+          <div class="list-group mb-0">
             {% for s in steps %}
-              <li class="list-group-item border rounded-3 mb-2 ps-3">
+              <div class="list-group-item border rounded-3 mb-2 ps-3">
                 <div class="d-flex justify-content-between">
                   <div>
                     <strong>الخطوة {{ s.step_order }}</strong>
@@ -359,7 +359,7 @@
   {% elif k == "ORG_NODE" %}
     <span class="badge bg-secondary">عنصر هيكلي</span>
     {{ org_nodes_map.get(s.approver_org_node_id).name_ar if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) else ('#' ~ s.approver_org_node_id) }}
-    → <span class="text-muted">المدير/النائب المعيّن</span>
+    → <strong class="text-body">{{ org_node_approver_names_map.get(s.approver_org_node_id, 'لا يوجد مدير/نائب معيّن') }}</strong>
   {% elif k == "COMMITTEE" %}
     <span class="badge bg-secondary">لجنة</span>
     {% if s.approver_committee_id and committees_map and committees_map.get(s.approver_committee_id) %}
@@ -469,9 +469,9 @@
                     </div>
                   </div>
                 {% endif %}
-              </li>
+              </div>
             {% endfor %}
-          </ol>
+          </div>
         {% else %}
           <div class="text-muted">لا يوجد مسار منشأ لهذا الطلب.</div>
         {% endif %}
