@@ -17296,11 +17296,20 @@ def hr_employee_lookups_import(category: str):
 
     mode = (request.form.get('mode') or 'upsert').strip().lower()  # upsert / replace / safe_replace
 
-    from utils.importer import read_excel_rows
+    from utils.importer import (
+        pick,
+        read_excel_rows,
+        to_bool,
+        to_int,
+        to_str,
+        validate_headers,
+    )
 
     try:
-        rows = read_excel_rows(f, required_headers={'code', 'name_ar'})
+        _sheet_title, rows, headers = read_excel_rows(f)
+        validate_headers(headers, {'code', 'name_ar'})
     except Exception:
+        current_app.logger.exception("Failed to read employee lookup Excel import for %s", cat)
         flash('تعذر قراءة ملف Excel. تأكد من الأعمدة: code, name_ar ...', 'danger')
         return redirect(url_for('portal.hr_employee_lookups_category', category=cat))
 
@@ -17314,22 +17323,13 @@ def hr_employee_lookups_import(category: str):
 
     upserted = 0
     for r in rows:
-        code = (r.get('code') or '').strip()
-        name_ar = (r.get('name_ar') or '').strip()
+        code = to_str(pick(r, 'code')) or ''
+        name_ar = to_str(pick(r, 'name_ar')) or ''
         if not code or not name_ar:
             continue
-        name_en = (r.get('name_en') or '').strip() or None
-        try:
-            sort_order = int((r.get('sort_order') or 0) or 0)
-        except Exception:
-            sort_order = 0
-        is_active = str(r.get('is_active') or '').strip()
-        if is_active in {'0', 'false', 'False', 'no', 'No'}:
-            active = False
-        elif is_active in {'1', 'true', 'True', 'yes', 'Yes'}:
-            active = True
-        else:
-            active = True
+        name_en = to_str(pick(r, 'name_en'))
+        sort_order = to_int(pick(r, 'sort_order'), default=0) or 0
+        active = bool(to_bool(pick(r, 'is_active'), default=True))
 
         item = HRLookupItem.query.filter_by(category=cat, code=code).first()
         if item:
