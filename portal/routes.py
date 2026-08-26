@@ -465,6 +465,25 @@ def _can_manage_corr() -> bool:
         return False
 
 
+def _is_super_admin() -> bool:
+    try:
+        return bool(
+            current_user.has_role("SUPER_ADMIN")
+            or current_user.has_role("SUPERADMIN")
+        )
+    except Exception:
+        return False
+
+
+def _can_delete_corr() -> bool:
+    if _is_super_admin():
+        return True
+    try:
+        return bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
+    except Exception:
+        return False
+
+
 def _safe_count(qry):
     """Safely count query results (handles missing tables during early setups)."""
     try:
@@ -20724,6 +20743,7 @@ def _corr_procedure_context(kind: str, item) -> dict:
         "corr_can_act": _corr_can_act(item),
         "corr_can_finalize": _corr_can_finalize(),
         "corr_can_approve": _corr_can_approve(item),
+        "corr_can_delete_procedures": _is_super_admin(),
         "corr_assignment_task": assignment_task,
         "corr_suggested_action": assignment_task.get("suggested_action") if assignment_task else "",
         "corr_due_state": corr_due_state(getattr(item, "due_date", None)),
@@ -21122,6 +21142,85 @@ def corr_procedure_action(kind: str, item_id: int):
     return redirect(url_for(redirect_endpoint, **redirect_values))
 
 
+@portal_bp.route(
+    "/corr/<string:kind>/<int:item_id>/procedure/<int:movement_id>/delete",
+    methods=["POST"],
+)
+@login_required
+def corr_procedure_delete(kind: str, item_id: int, movement_id: int):
+    """Delete one correspondence procedure and its direct attachments.
+
+    This is deliberately restricted to SUPER_ADMIN. Deleting a historical
+    procedure does not roll back the correspondence's current status or any
+    workflow/notification that the procedure may already have triggered.
+    """
+    if not _is_super_admin():
+        abort(403)
+
+    _ensure_corr_competence_schema()
+    normalized_kind = (kind or "").strip().upper()
+    if normalized_kind in {"IN", "INBOUND"}:
+        normalized_kind = "IN"
+        item = InboundMail.query.get_or_404(item_id)
+        movement = CorrMovement.query.filter_by(
+            id=movement_id,
+            inbound_id=item.id,
+            outbound_id=None,
+        ).first_or_404()
+        redirect_endpoint = "portal.inbound_view"
+        redirect_values = {"inbound_id": item.id}
+        target_type = "CORR_INBOUND"
+    elif normalized_kind in {"OUT", "OUTBOUND"}:
+        normalized_kind = "OUT"
+        item = OutboundMail.query.get_or_404(item_id)
+        movement = CorrMovement.query.filter_by(
+            id=movement_id,
+            inbound_id=None,
+            outbound_id=item.id,
+        ).first_or_404()
+        redirect_endpoint = "portal.outbound_view"
+        redirect_values = {"outbound_id": item.id}
+        target_type = "CORR_OUTBOUND"
+    else:
+        abort(404)
+
+    attachments = CorrAttachment.query.filter_by(movement_id=movement.id).all()
+    storage = _corr_storage_dir()
+    attachment_paths = [os.path.join(storage, att.stored_name) for att in attachments]
+    movement_action = movement.action
+
+    try:
+        for attachment in attachments:
+            db.session.delete(attachment)
+        db.session.delete(movement)
+        db.session.add(AuditLog(
+            user_id=current_user.id,
+            action="CORR_PROCEDURE_DELETE",
+            note=(
+                f"kind={normalized_kind} movement_id={movement_id} "
+                f"action={movement_action} files={len(attachments)}"
+            ),
+            target_type=target_type,
+            target_id=item.id,
+            created_at=datetime.utcnow(),
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        flash("تعذر حذف الإجراء.", "danger")
+        return redirect(url_for(redirect_endpoint, **redirect_values))
+
+    for file_path in attachment_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+
+    flash("تم حذف الإجراء ومرفقاته.", "success")
+    return redirect(url_for(redirect_endpoint, **redirect_values))
+
+
 @portal_bp.route("/corr/<string:kind>/<int:item_id>/confidential-access", methods=["POST"])
 @login_required
 def corr_update_confidential_access(kind: str, item_id: int):
@@ -21352,6 +21451,8 @@ def inbound_list():
 
     return render_template(
         "portal/corr/inbound_list.html",
+        can_update=bool(current_user.has_perm(CORR_UPDATE) or _can_manage_corr()),
+        can_delete=_can_delete_corr(),
         items=items,
         pagination=pagination,
         cat_rows=cat_rows,
@@ -21678,7 +21779,7 @@ def outbound_list():
     return render_template(
         "portal/corr/outbound_list.html",
         can_update=bool(current_user.has_perm(CORR_UPDATE) or _can_manage_corr()),
-        can_delete=bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr()),
+        can_delete=_can_delete_corr(),
         items=items,
         pagination=pagination,
         cat_rows=cat_rows,
@@ -21952,7 +22053,7 @@ def outbound_view(outbound_id: int):
     )
 
     can_update = bool(current_user.has_perm(CORR_UPDATE) or _can_manage_corr())
-    can_delete = bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
+    can_delete = _can_delete_corr()
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
     procedure_context = _corr_procedure_context("OUT", item)
@@ -21998,7 +22099,7 @@ def inbound_view(inbound_id: int):
     )
 
     can_update = bool(current_user.has_perm(CORR_UPDATE) or _can_manage_corr())
-    can_delete = bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
+    can_delete = _can_delete_corr()
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
     procedure_context = _corr_procedure_context("IN", item)
@@ -22268,7 +22369,7 @@ def inbound_edit(inbound_id: int):
         .limit(80)
         .all()
     )
-    can_delete = bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
+    can_delete = _can_delete_corr()
 
     cat_codes = [c.code for c in cat_rows]
     sender_labels = [p.label for p in sender_rows]
@@ -22419,7 +22520,7 @@ def outbound_edit(outbound_id: int):
         .limit(80)
         .all()
     )
-    can_delete = bool(current_user.has_perm(CORR_DELETE) or _can_manage_corr())
+    can_delete = _can_delete_corr()
 
     cat_codes = [c.code for c in cat_rows]
     recipient_labels = [p.label for p in recipient_rows]
@@ -22459,35 +22560,63 @@ def outbound_edit(outbound_id: int):
     )
 
 
+def _detach_corr_links_before_delete(kind: str, item_id: int) -> tuple[int, int]:
+    """Preserve linked records while removing references to deleted mail."""
+    normalized_kind = (kind or "").strip().upper()
+    workflow_kinds = (
+        ("IN", "INBOUND") if normalized_kind == "IN" else ("OUT", "OUTBOUND")
+    )
+    workflows = (
+        WorkflowRequest.query
+        .filter(
+            func.upper(WorkflowRequest.source_corr_kind).in_(workflow_kinds),
+            WorkflowRequest.source_corr_id == item_id,
+        )
+        .all()
+    )
+    for workflow_request in workflows:
+        workflow_request.source_corr_kind = None
+        workflow_request.source_corr_id = None
+
+    official_replies = []
+    if normalized_kind == "IN":
+        official_replies = OutboundMail.query.filter_by(source_inbound_id=item_id).all()
+        for reply in official_replies:
+            reply.source_inbound_id = None
+
+    return len(workflows), len(official_replies)
+
+
 @portal_bp.route("/corr/inbound/<int:inbound_id>/delete", methods=["POST"])
 @login_required
 def inbound_delete(inbound_id: int):
     _ensure_corr_attachment_stamp_schema()
     item = InboundMail.query.get_or_404(inbound_id)
-    _corr_require_access(item)
-    if not (current_user.has_perm(CORR_DELETE) or _can_manage_corr()):
+    if not _is_super_admin():
+        _corr_require_access(item)
+    if not _can_delete_corr():
         abort(403)
 
     storage = _corr_storage_dir()
 
     atts = CorrAttachment.query.filter_by(inbound_id=item.id).all()
+    attachment_paths = [os.path.join(storage, attachment.stored_name) for attachment in atts]
     for a in atts:
-        try:
-            fp = os.path.join(storage, a.stored_name)
-            if os.path.exists(fp):
-                os.remove(fp)
-        except Exception:
-            pass
         try:
             db.session.delete(a)
         except Exception:
             pass
 
     try:
+        detached_workflows, detached_replies = _detach_corr_links_before_delete("IN", item.id)
         db.session.add(AuditLog(
             user_id=current_user.id,
             action="CORR_IN_DELETE",
-            note=f"ref={item.ref_no or item.id}",
+            note=(
+                f"ref={item.ref_no or item.id} "
+                f"detached_workflows={detached_workflows} "
+                f"detached_official_replies={detached_replies}"
+            ),
             target_type="CORR_INBOUND",
             target_id=item.id,
             created_at=datetime.utcnow(),
@@ -22499,6 +22628,13 @@ def inbound_delete(inbound_id: int):
         flash("تعذر حذف الوارد.", "danger")
         return redirect(url_for("portal.inbound_view", inbound_id=item.id))
 
+    for file_path in attachment_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
+
     flash("تم حذف الوارد.", "success")
     return redirect(url_for("portal.inbound_list"))
 
@@ -22508,30 +22644,27 @@ def inbound_delete(inbound_id: int):
 def outbound_delete(outbound_id: int):
     _ensure_corr_attachment_stamp_schema()
     item = OutboundMail.query.get_or_404(outbound_id)
-    _corr_require_access(item)
-    if not (current_user.has_perm(CORR_DELETE) or _can_manage_corr()):
+    if not _is_super_admin():
+        _corr_require_access(item)
+    if not _can_delete_corr():
         abort(403)
 
     storage = _corr_storage_dir()
 
     atts = CorrAttachment.query.filter_by(outbound_id=item.id).all()
+    attachment_paths = [os.path.join(storage, attachment.stored_name) for attachment in atts]
     for a in atts:
-        try:
-            fp = os.path.join(storage, a.stored_name)
-            if os.path.exists(fp):
-                os.remove(fp)
-        except Exception:
-            pass
         try:
             db.session.delete(a)
         except Exception:
             pass
 
     try:
+        detached_workflows, _ = _detach_corr_links_before_delete("OUT", item.id)
         db.session.add(AuditLog(
             user_id=current_user.id,
             action="CORR_OUT_DELETE",
-            note=f"ref={item.ref_no or item.id}",
+            note=f"ref={item.ref_no or item.id} detached_workflows={detached_workflows}",
             target_type="CORR_OUTBOUND",
             target_id=item.id,
             created_at=datetime.utcnow(),
@@ -22542,6 +22675,13 @@ def outbound_delete(outbound_id: int):
         db.session.rollback()
         flash("تعذر حذف الصادر.", "danger")
         return redirect(url_for("portal.outbound_view", outbound_id=item.id))
+
+    for file_path in attachment_paths:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception:
+            pass
 
     flash("تم حذف الصادر.", "success")
     return redirect(url_for("portal.outbound_list"))

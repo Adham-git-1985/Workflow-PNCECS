@@ -272,7 +272,7 @@
   {% if corr_movements %}
     <div class="table-responsive">
       <table class="table table-sm align-middle mb-0">
-        <thead><tr><th>التاريخ</th><th>المستخدم</th><th>الإجراء</th><th>الحالة</th><th>الجهة</th><th>التفاصيل</th><th>مرفقات</th></tr></thead>
+        <thead><tr><th>التاريخ</th><th>المستخدم</th><th>الإجراء</th><th>الحالة</th><th>الجهة</th><th>التفاصيل</th><th>مرفقات</th>{% if corr_can_delete_procedures %}<th class="text-end no-print">إدارة</th>{% endif %}</tr></thead>
         <tbody>
           {% for movement in corr_movements %}
             <tr>
@@ -287,6 +287,15 @@
               <td>{{ movement.target_label or '-' }}</td>
               <td style="min-width: 220px">{{ movement.note or '-' }}</td>
               <td>{{ movement.attachments|length }}</td>
+              {% if corr_can_delete_procedures %}
+                <td class="text-end no-print">
+                  <form method="post"
+                        action="{{ url_for('portal.corr_procedure_delete', kind=corr_kind, item_id=item.id, movement_id=movement.id) }}"
+                        onsubmit="return confirm('حذف هذا الإجراء ومرفقاته؟ لن تتغير حالة المعاملة الحالية.');">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف الإجراء</button>
+                  </form>
+                </td>
+              {% endif %}
             </tr>
           {% endfor %}
         </tbody>
