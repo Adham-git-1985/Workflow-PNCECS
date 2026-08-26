@@ -71,6 +71,7 @@ from services.correspondence_intake import (
     analyze_workflow_attachment,
     read_limited_upload,
 )
+from filters.request_filters import get_sla_days
 
 from models import (
     WorkflowRequest,
@@ -801,74 +802,95 @@ def _directorate_head_user_ids(directorate_id: int | None) -> list[int]:
     return sorted({int(u.id) for u in users if u and getattr(u, 'id', None)})
 
 
+def _step_context_org_node_ids(req, step) -> list[int]:
+    """Resolve hierarchy starting points for predefined and dynamic routes."""
+    node_ids: list[int] = []
+
+    def add_node_id(value):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            return
+        if value > 0 and value not in node_ids:
+            node_ids.append(value)
+
+    kind = (getattr(step, "approver_kind", None) or "").strip().upper()
+    if kind == "ORG_NODE":
+        add_node_id(getattr(step, "approver_org_node_id", None))
+
+    # Legacy predefined targets may still map to a canonical dynamic node.
+    legacy_fields = {
+        "DIRECTORATE": "approver_directorate_id",
+        "DEPARTMENT": "approver_department_id",
+        "UNIT": "approver_unit_id",
+        "SECTION": "approver_section_id",
+        "DIVISION": "approver_division_id",
+    }
+    legacy_field = legacy_fields.get(kind)
+    legacy_id = getattr(step, legacy_field, None) if legacy_field else None
+    if legacy_id:
+        mapped = (
+            OrgNode.query
+            .filter_by(legacy_type=kind, legacy_id=int(legacy_id), is_active=True)
+            .order_by(OrgNode.id.asc())
+            .first()
+        )
+        if mapped:
+            add_node_id(mapped.id)
+
+    if kind == "USER" and getattr(step, "approver_user_id", None):
+        target_user = db.session.get(User, int(step.approver_user_id))
+        if target_user:
+            add_node_id(resolve_user_org_node_id(target_user))
+
+    # Group targets can resolve to one or more concrete users at runtime.
+    for user_id in _step_actor_user_ids(step):
+        target_user = db.session.get(User, int(user_id))
+        if target_user:
+            add_node_id(resolve_user_org_node_id(target_user))
+
+    # The requester's branch is only a fallback when the active target itself
+    # has no resolvable hierarchy context (for example, a legacy role target).
+    requester = getattr(req, "requester", None) if req else None
+    if not node_ids and requester:
+        add_node_id(resolve_user_org_node_id(requester))
+    return node_ids
+
+
+def _hierarchy_manager_user_ids(req, step, type_codes) -> list[int]:
+    """Return the nearest manager for the requested ancestor type(s)."""
+    wanted = {str(code).strip().upper() for code in type_codes if str(code).strip()}
+    recipients: set[int] = set()
+
+    for start_node_id in _step_context_org_node_ids(req, step):
+        node = db.session.get(OrgNode, int(start_node_id))
+        seen: set[int] = set()
+        while node and int(node.id) not in seen:
+            seen.add(int(node.id))
+            node_type = getattr(node, "type", None)
+            type_code = (getattr(node_type, "code", None) or "").strip().upper()
+            if type_code in wanted:
+                manager_row = OrgNodeManager.query.filter_by(node_id=node.id).first()
+                manager_id = getattr(manager_row, "manager_user_id", None) if manager_row else None
+                # If the position is temporarily vacant, use its formally
+                # assigned deputy rather than dropping the alert entirely.
+                manager_id = manager_id or (
+                    getattr(manager_row, "deputy_user_id", None) if manager_row else None
+                )
+                if manager_id:
+                    recipients.add(int(manager_id))
+                break
+            node = db.session.get(OrgNode, int(node.parent_id)) if node.parent_id else None
+
+    return sorted(recipients)
+
+
 def _step_actor_user_ids(step) -> list[int]:
-    """Return user ids that can act on the given step (best-effort)."""
+    """Return the actual runtime assignees for every supported step kind."""
     try:
-        kind = (getattr(step, 'approver_kind', None) or '').upper()
+        return resolve_step_approver_user_ids(step)
     except Exception:
-        kind = ''
-
-    if kind == 'USER':
-        try:
-            return [int(step.approver_user_id)] if getattr(step, 'approver_user_id', None) else []
-        except Exception:
-            return []
-
-    if kind == 'ROLE':
-        role = (getattr(step, 'approver_role', None) or '').strip()
-        if not role:
-            return []
-        vars_ = _role_variants(role)
-        q = User.query
-        if vars_:
-            q = q.filter(or_(*[User.role.ilike(v) for v in vars_]))
-        else:
-            q = q.filter(User.role.ilike(role))
-        users = q.all()
-        return sorted({int(u.id) for u in users if u and getattr(u, 'id', None)})
-
-    if kind == 'DEPARTMENT':
-        if not getattr(step, 'approver_department_id', None):
-            return []
-        vars_ = _role_variants('dept_head')
-        q = User.query.filter(User.department_id == int(step.approver_department_id))
-        if vars_:
-            q = q.filter(or_(*[User.role.ilike(v) for v in vars_]))
-        else:
-            q = q.filter(User.role.ilike('dept_head'))
-        users = q.all()
-        return sorted({int(u.id) for u in users if u and getattr(u, 'id', None)})
-
-    if kind == 'DIRECTORATE':
-        if not getattr(step, 'approver_directorate_id', None):
-            return []
-
-        role_vars = _role_variants('directorate_head') + _role_variants('directorate_deputy')
-        role_vars = sorted({v for v in role_vars if v})
-
-        dept_ids: list[int] = []
-        try:
-            dept_ids = [int(did) for (did,) in (
-                db.session.query(Department.id)
-                .filter(Department.directorate_id == int(step.approver_directorate_id))
-                .all()
-            )]
-        except Exception:
-            dept_ids = []
-
-        q = User.query
-        if role_vars:
-            q = q.filter(or_(*[User.role.ilike(v) for v in role_vars]))
-
-        if dept_ids:
-            q = q.filter(or_(User.directorate_id == int(step.approver_directorate_id), User.department_id.in_(dept_ids)))
-        else:
-            q = q.filter(User.directorate_id == int(step.approver_directorate_id))
-
-        users = q.all()
-        return sorted({int(u.id) for u in users if u and getattr(u, 'id', None)})
-
-    return []
+        return []
 # =========================
 # Storage (same as archive)
 # =========================
@@ -1387,6 +1409,7 @@ def request_pdf(request_id):
     elements.append(p("بيانات الطلب", heading_style))
     elements.append(p(f"عنوان الطلب: {req.title or '—'}"))
     elements.append(p(f"نوع الطلب: {req.request_type.label if req.request_type else '—'}"))
+    elements.append(p(f"الأولوية: {ui_label(req.priority) or req.priority or 'عادي'}"))
     elements.append(p("الوصف:"))
     elements.append(p(req.description or "لا يوجد وصف."))
     elements.append(Spacer(1, 8))
@@ -2408,6 +2431,17 @@ def _dynamic_secretary_general_requested() -> bool:
     }
 
 
+def _requested_dynamic_sla_days(default=None) -> int | None:
+    raw = request.form.get("dynamic_sla_days")
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if 1 <= value <= 365 else None
+
+
 @workflow_bp.route("/new/dynamic-path/preview", methods=["POST"])
 @login_required
 def preview_dynamic_request_path():
@@ -2424,6 +2458,7 @@ def preview_dynamic_request_path():
         current_user,
         selected_values,
         include_secretary_general=_dynamic_secretary_general_requested(),
+        sla_days=_requested_dynamic_sla_days(default=get_sla_days()),
     )
     return jsonify({
         "ok": not result["errors"],
@@ -2557,6 +2592,9 @@ def new_request():
     if request.method == "POST":
         title = (request.form.get("title") or "").strip() or "طلب جديد"
         description = (request.form.get("description") or "").strip()
+        priority = (request.form.get("priority") or "NORMAL").strip().upper()
+        if priority not in {"NORMAL", "LOW", "HIGH", "URGENT"}:
+            priority = "NORMAL"
 
         request_type_name = " ".join(
             (request.form.get("request_type_name") or "").split()
@@ -2578,6 +2616,10 @@ def new_request():
         dynamic_path = None
         workflow_label = ""
         if route_mode == "DYNAMIC":
+            dynamic_sla_days = _requested_dynamic_sla_days()
+            if dynamic_sla_days is None:
+                flash("حدد مدة SLA للمسار الديناميكي من 1 إلى 365 يومًا لكل خطوة.", "danger")
+                return redirect(request.url)
             selected_values = [
                 value.strip()
                 for value in (
@@ -2591,6 +2633,7 @@ def new_request():
                 current_user,
                 selected_values,
                 include_secretary_general=_dynamic_secretary_general_requested(),
+                sla_days=dynamic_sla_days,
             )
             if dynamic_path["errors"]:
                 for error in dynamic_path["errors"]:
@@ -2617,6 +2660,7 @@ def new_request():
             status="DRAFT",
             title=title,
             description=description,
+            priority=priority,
             request_type_id=request_type.id
         )
         db.session.add(req)
@@ -2708,6 +2752,7 @@ def new_request():
         dynamic_presets=[preset.as_dict() for preset in dynamic_presets],
         requester_org_node_id=requester_org_node_id,
         dynamic_route_available=dynamic_route_available,
+        dynamic_sla_days_default=get_sla_days(),
         intake_max_bytes=intake_max_bytes,
         intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
     )
@@ -3309,7 +3354,8 @@ def work_dashboard():
             "created": int(req.requester_id or 0) == int(current_user.id),
             "following": bool(actor_ids.intersection(follower_ids)),
             "in_progress": (req.status or "").upper() == "IN_PROGRESS",
-            "completed": (req.status or "").upper() == "APPROVED",
+            "completed": (req.status or "").upper() in {"APPROVED", "CLOSED"},
+            "closed": (req.status or "").upper() == "CLOSED",
             "returned": (req.status or "").upper() == "REJECTED",
             "correspondence": bool(corr_source),
             "corr_source": corr_source,
@@ -3623,7 +3669,7 @@ def following():
                 pass
         q = q.filter(or_(*conds))
 
-    allowed_statuses = ["DRAFT", "IN_PROGRESS", "APPROVED", "REJECTED"]
+    allowed_statuses = ["DRAFT", "IN_PROGRESS", "APPROVED", "REJECTED", "CLOSED"]
     if status in allowed_statuses:
         q = q.filter(WorkflowRequest.status == status)
 
@@ -3690,7 +3736,7 @@ def following():
 
     def _is_overdue(req, inst, tpl):
         try:
-            if inst and (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED"):
+            if inst and (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED", "CLOSED"):
                 current_step_row = WorkflowInstanceStep.query.filter_by(
                     instance_id=inst.id,
                     step_order=inst.current_step_order,
@@ -3701,7 +3747,7 @@ def following():
             created_at = getattr(req, "created_at", None)
             if not days or not created_at:
                 return False
-            if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED"):
+            if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED", "CLOSED"):
                 return False
             return now > (created_at + timedelta(days=days))
         except Exception:
@@ -3742,8 +3788,8 @@ def following():
     summary_rows = list(rows)
     summary = {
         "total": len(summary_rows),
-        "open": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED")),
-        "closed": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() in ("APPROVED", "REJECTED")),
+        "open": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() != "CLOSED"),
+        "closed": sum(1 for req, _inst, _tpl in summary_rows if (getattr(req, "status", "") or "").upper() == "CLOSED"),
         "overdue": sum(1 for req, inst, tpl in summary_rows if _is_overdue(req, inst, tpl)),
         "active_filters": active_filters_count,
     }
@@ -3751,12 +3797,12 @@ def following():
     if summary_filter == "open":
         rows = [
             row for row in summary_rows
-            if (getattr(row[0], "status", "") or "").upper() not in ("APPROVED", "REJECTED")
+            if (getattr(row[0], "status", "") or "").upper() != "CLOSED"
         ]
     elif summary_filter == "closed":
         rows = [
             row for row in summary_rows
-            if (getattr(row[0], "status", "") or "").upper() in ("APPROVED", "REJECTED")
+            if (getattr(row[0], "status", "") or "").upper() == "CLOSED"
         ]
     elif summary_filter == "overdue":
         rows = [row for row in summary_rows if _is_overdue(row[0], row[1], row[2])]
@@ -3967,12 +4013,28 @@ def view_request(request_id):
         except Exception:
             can_escalate = False
 
+    # Closing is a separate lifecycle action after the workflow has reached a
+    # final decision. It belongs exclusively to the original request creator;
+    # delegation does not transfer this permission.
+    can_close = (
+        int(getattr(current_user, "id", 0) or 0) == int(req.requester_id or 0)
+        and (req.status or "").strip().upper() in {"APPROVED", "REJECTED"}
+    )
+
     # =========================
     # SLA helpers for UI (step SLA value + remaining days)
     # =========================
     step_sla_days_map = {}
     sla_days_remaining_map = {}
     try:
+        # Runtime values are authoritative for both predefined and dynamic
+        # routes. They preserve the SLA that was effective when the request
+        # was created even if the template/settings change later.
+        for s in (steps or []):
+            runtime_sla = getattr(s, "sla_days", None)
+            if runtime_sla is not None:
+                step_sla_days_map[int(getattr(s, "step_order", 0) or 0)] = runtime_sla
+
         if template:
             tsteps = WorkflowTemplateStep.query.filter_by(template_id=template.id).all()
             for ts in tsteps:
@@ -3983,7 +4045,8 @@ def view_request(request_id):
                 val = getattr(ts, 'sla_days', None)
                 if val is None:
                     val = getattr(template, 'sla_days_default', None)
-                step_sla_days_map[so] = val
+                if so not in step_sla_days_map:
+                    step_sla_days_map[so] = val
 
         now = datetime.utcnow()
         for s in (steps or []):
@@ -4353,6 +4416,7 @@ def view_request(request_id):
         current_step=current_step,
         can_decide=can_decide,
         can_escalate=can_escalate,
+        can_close=can_close,
         attachments=atts,
         files_map=files_map,
         audit=audit,
@@ -4392,6 +4456,42 @@ def view_request(request_id):
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
     )
+
+
+
+@workflow_bp.route("/request/<int:request_id>/close", methods=["POST"])
+@login_required
+def close_request(request_id):
+    """Let the original creator close a request after its workflow is final."""
+    req = WorkflowRequest.query.get_or_404(request_id)
+
+    if int(req.requester_id or 0) != int(current_user.id or 0):
+        abort(403)
+
+    current_status = (req.status or "").strip().upper()
+    if current_status == "CLOSED":
+        flash("الطلب مغلق بالفعل.", "info")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    if current_status not in {"APPROVED", "REJECTED"}:
+        flash("يمكن إغلاق الطلب بعد انتهاء مساره فقط.", "warning")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    req.status = "CLOSED"
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=current_user.id,
+        action="REQUEST_CLOSED",
+        old_status=current_status,
+        new_status="CLOSED",
+        target_type="WorkflowRequest",
+        target_id=req.id,
+        note="أغلق منشئ الطلب الطلب بعد انتهاء المسار.",
+    ))
+    db.session.commit()
+
+    flash("تم إغلاق الطلب بنجاح.", "success")
+    return redirect(url_for("workflow.view_request", request_id=req.id))
 
 
 
@@ -4780,6 +4880,7 @@ def delete_request(request_id):
                 "title": req.title,
                 "description": req.description,
                 "status": req.status,
+                "priority": req.priority,
                 "created_at": req.created_at.isoformat() if req.created_at else None,
                 "requester": {
                     "id": requester_obj.id,
@@ -4889,13 +4990,15 @@ def delete_request(request_id):
 @workflow_bp.route("/request/<int:request_id>/escalate", methods=["GET", "POST"])
 @login_required
 def escalate_request(request_id):
-    """Escalate the current workflow step.
+    """Send a first- or second-level alert for the active workflow step.
 
     Behavior:
-    - Escalation is routed automatically to the current step assignee(s) (who can act now)
-      PLUS the directorate head of the related directorate.
+    - Level 1 goes to the current assignee(s) and the related directorate head.
+    - Level 2 goes to the Assistant Secretary General resolved from the
+      canonical organization hierarchy.
     - Creates a warning notification, and also a message in internal 'Messages' inbox.
-    - Stores escalation with step_order and targets for traceability.
+    - Works against runtime steps, so predefined and dynamic routes share the
+      same behavior.
     """
     req = WorkflowRequest.query.get_or_404(request_id)
 
@@ -4925,7 +5028,7 @@ def escalate_request(request_id):
     template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
 
     if not inst or getattr(inst, 'is_completed', False):
-        flash("لا يمكن تصعيد طلب مكتمل أو بدون مسار.", "warning")
+        flash("لا يمكن إرسال تنبيه لطلب مكتمل أو بدون مسار.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
     steps = (
@@ -4937,17 +5040,38 @@ def escalate_request(request_id):
     current_step = next((s for s in steps if s.step_order == inst.current_step_order), None)
 
     if not current_step or current_step.status != "PENDING":
-        flash("لا توجد خطوة حالية قابلة للتصعيد.", "warning")
+        flash("لا توجد خطوة حالية قابلة لإرسال التنبيه.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
-    # Recipients: current step actor(s) + directorate_head
+    # Level 1: current step actor(s) + legacy/canonical directorate head.
     step_recips = _step_actor_user_ids(current_step)
     dir_id = _infer_directorate_id_for_step(req, current_step)
     dir_head_ids = _directorate_head_user_ids(dir_id)
+    hierarchy_dir_head_ids = _hierarchy_manager_user_ids(
+        req,
+        current_step,
+        {"GENERAL_DIRECTOR", "DIRECTORATE"},
+    )
+    first_recipient_ids = sorted({
+        int(rid)
+        for rid in (step_recips + dir_head_ids + hierarchy_dir_head_ids)
+        if rid and int(rid) != int(current_user.id)
+    })
 
-    base_recipient_ids = sorted({int(rid) for rid in (step_recips + dir_head_ids) if rid and int(rid) != int(current_user.id)})
+    # Level 2: the Assistant Secretary General on the relevant hierarchy path.
+    second_recipient_ids = sorted({
+        int(rid)
+        for rid in _hierarchy_manager_user_ids(req, current_step, {"SEC_GEN_ASSIST"})
+        if rid and int(rid) != int(current_user.id)
+    })
+    requested_alert_level = request.form.get("alert_level", type=int) or 1
+    recipient_options = {
+        1: first_recipient_ids,
+        2: second_recipient_ids,
+    }
+    base_recipient_ids = list(recipient_options.get(requested_alert_level, []))
 
-    # Delegation-aware escalation recipients:
+    # Delegation-aware alert recipients:
     # if any primary recipient (الأصيل) has an active delegation now, notify the delegatee too.
     recipient_ids = list(base_recipient_ids)
     delegation_pairs = []  # (from_user_id, to_user_id)
@@ -4983,6 +5107,15 @@ def escalate_request(request_id):
     if recipient_ids:
         recipient_users = User.query.filter(User.id.in_(recipient_ids)).order_by(User.email.asc()).all()
 
+    first_recipient_users = (
+        User.query.filter(User.id.in_(first_recipient_ids)).order_by(User.email.asc()).all()
+        if first_recipient_ids else []
+    )
+    second_recipient_users = (
+        User.query.filter(User.id.in_(second_recipient_ids)).order_by(User.email.asc()).all()
+        if second_recipient_ids else []
+    )
+
     # For display
     users_map = {u.id: u for u in User.query.all()}
     depts_map = {d.id: d for d in Department.query.all()}
@@ -5007,28 +5140,36 @@ def escalate_request(request_id):
         category = (request.form.get("category") or "").strip()
         desc = (request.form.get("description") or "").strip()
 
+        if requested_alert_level not in (1, 2):
+            flash("اختر مستوى تنبيه صحيحًا.", "danger")
+            return redirect(request.url)
+
         if category not in categories:
-            flash("اختر نوع تصعيد صحيح.", "danger")
+            flash("اختر نوع تنبيه صحيحًا.", "danger")
             return redirect(request.url)
 
         if not desc:
-            flash("وصف التصعيد مطلوب.", "danger")
+            flash("وصف التنبيه مطلوب.", "danger")
             return redirect(request.url)
 
         if not recipient_ids:
-            flash("لا يوجد مستلمون للخطوة الحالية لإرسال التصعيد إليهم.", "danger")
+            if requested_alert_level == 2:
+                flash("لم يتم العثور على مساعد أمين عام معيّن على مسار الهيكلية لهذا الطلب.", "danger")
+            else:
+                flash("لا يوجد مستلمون للخطوة الحالية لإرسال التنبيه إليهم.", "danger")
             return redirect(request.url)
 
         primary_to = int((base_recipient_ids[0] if 'base_recipient_ids' in locals() and base_recipient_ids else recipient_ids[0]))
         targets_str = ",".join(str(i) for i in recipient_ids)
 
-        # Record escalation
+        # Record the alert in the legacy escalation table for compatibility.
         esc = RequestEscalation(
             request_id=req.id,
             from_user_id=current_user.id,
             to_user_id=primary_to,
             category=category,
             description=desc,
+            alert_level=requested_alert_level,
             step_order=int(getattr(current_step, 'step_order', 0) or 0),
             targets=targets_str,
         )
@@ -5059,9 +5200,10 @@ def escalate_request(request_id):
         except Exception:
             rec_emails = []
 
-        subject = f"🚨 تصعيد على الطلب #{req.id} (الخطوة {current_step.step_order})"
+        alert_level_label = f"التنبيه {requested_alert_level}"
+        subject = f"🚨 {alert_level_label} على الطلب #{req.id} (الخطوة {current_step.step_order})"
         body_lines = [
-            "تم تسجيل تصعيد على مسار الطلب (Warning).",
+            f"تم تسجيل {alert_level_label} على مسار الطلب.",
             "",
             f"الطلب: #{req.id} — {req.title or ''}",
             f"المسار: {template.name if template else 'ديناميكي حسب الهيكل الإداري'}",
@@ -5069,7 +5211,7 @@ def escalate_request(request_id):
             f"الجهة المسؤولة: {target_label}",
             f"موعد SLA لهذه الخطوة: {due_str}" + (f" (متبقي {remaining_days} يوم)" if remaining_days is not None else ""),
             "",
-            f"سبب/شرح التصعيد (من {current_user.email}):",
+            f"سبب/شرح التنبيه (من {current_user.email}):",
             desc,
             "",
         ]
@@ -5098,9 +5240,10 @@ def escalate_request(request_id):
         ]
         body = "\n".join(body_lines)
 
-        # choose a target_kind/id that fits schema
-        target_kind = "DIRECTORATE" if dir_id else "USER"
-        target_id = int(dir_id) if dir_id else primary_to
+        # Level 2 is addressed directly to the Assistant Secretary General;
+        # do not label that internal message as a directorate broadcast.
+        target_kind = "DIRECTORATE" if requested_alert_level == 1 and dir_id else "USER"
+        target_id = int(dir_id) if target_kind == "DIRECTORATE" else primary_to
 
         msg = Message(
             sender_id=current_user.id,
@@ -5134,7 +5277,7 @@ def escalate_request(request_id):
                 request_id=req.id,
                 user_id=current_user.id,
                 action="REQUEST_ESCALATION",
-                note=f"Escalation step={current_step.step_order} ({category}) targets={targets_str}: {desc[:200]}",
+                note=f"Alert level={requested_alert_level} step={current_step.step_order} ({category}) targets={targets_str}: {desc[:200]}",
                 target_type="WorkflowRequest",
                 target_id=req.id,
                 created_at=datetime.utcnow(),
@@ -5147,7 +5290,7 @@ def escalate_request(request_id):
                 emit_event(
                     actor_id=current_user.id,
                     action="REQUEST_ESCALATION",
-                    message=f"🚨 تصعيد يحتاج انتباه: # {req.id} (الخطوة {current_step.step_order})",
+                    message=f"🚨 {alert_level_label} يحتاج انتباه: #{req.id} (الخطوة {current_step.step_order})",
                     target_type="WorkflowRequest",
                     target_id=req.id,
                     notify_user_id=int(rid),
@@ -5159,11 +5302,11 @@ def escalate_request(request_id):
 
         try:
             db.session.commit()
-            flash("تم إرسال التصعيد بنجاح (Warning).", "warning")
+            flash(f"تم إرسال {alert_level_label} بنجاح.", "warning")
             return redirect(url_for("workflow.view_request", request_id=req.id))
         except Exception as e:
             db.session.rollback()
-            flash(f"تعذر إرسال التصعيد: {e}", "danger")
+            flash(f"تعذر إرسال التنبيه: {e}", "danger")
 
     return render_template(
         "workflow/escalate.html",
@@ -5171,6 +5314,9 @@ def escalate_request(request_id):
         categories=categories,
         recipient_users=recipient_users,
         recipients=recipient_users,
+        first_recipient_users=first_recipient_users,
+        second_recipient_users=second_recipient_users,
+        requested_alert_level=requested_alert_level,
         step_order=(current_step.step_order if current_step else None),
         current_step=current_step,
         target_label=target_label,

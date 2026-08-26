@@ -7,7 +7,8 @@
   <div>
     <h3 class="mb-1">📄 الطلب #{{ req.id }}</h3>
     <small class="text-muted">
-      الحالة: <span class="badge {{ 'bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary') }}">{{ req.status|ui_label }}</span>
+      الحالة: <span class="badge {{ 'bg-secondary' if req.status == 'CLOSED' else ('bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary')) }}">{{ req.status|ui_label }}</span>
+      · الأولوية: <span class="badge {{ 'text-bg-danger' if req.priority == 'URGENT' else ('text-bg-warning' if req.priority == 'HIGH' else 'text-bg-light border') }}">{{ req.priority|ui_label }}</span>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
       {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% elif inst %} · المسار: <strong>ديناميكي حسب الهيكل الإداري</strong>{% endif %}
     </small>
@@ -29,11 +30,28 @@
     {% endif %}
     {% if can_escalate %}
     <a class="btn btn-sm btn-outline-danger" href="{{ url_for('workflow.escalate_request', request_id=req.id) }}">
-      🚨 تصعيد
+      🚨 تنبيه
     </a>
+    {% endif %}
+    {% if can_close %}
+    <form method="post"
+          action="{{ url_for('workflow.close_request', request_id=req.id) }}"
+          onsubmit="return confirm('هل تريد إغلاق الطلب؟ ستصبح حالته النهائية «مغلق».');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit" class="btn btn-sm btn-dark">
+        <i class="bi bi-lock"></i> إغلاق الطلب
+      </button>
+    </form>
     {% endif %}
   </div>
 </div>
+
+{% if req.status == 'CLOSED' %}
+<div class="alert alert-secondary d-flex align-items-center gap-2" role="status">
+  <i class="bi bi-lock-fill"></i>
+  <div><strong>الطلب مغلق:</strong> أغلقه منشئ الطلب بعد انتهاء المسار.</div>
+</div>
+{% endif %}
 
 {% if req.confidentiality == 'SECRET' %}
 <div class="alert alert-danger d-flex align-items-center gap-2" role="alert">
@@ -169,7 +187,7 @@
 
     <div class="card shadow-sm mb-3">
   <div class="card-header bg-white">
-    <strong>🚨 التصعيدات</strong>
+    <strong>🚨 التنبيهات</strong>
         <a class="btn btn-sm btn-outline-danger" target="_blank" href="{{ url_for('workflow.request_escalations', request_id=req.id) }}">عرض</a>
   </div>
   <div class="card-body">
@@ -178,8 +196,11 @@
         {% for e in req.escalations|sort(attribute='created_at', reverse=True) %}
           <li class="list-group-item">
             <div class="d-flex justify-content-between">
-              <strong>{{ e.category|esc_category_ar }}</strong>
-              {% if e.step_order %}<span class="badge bg-danger ms-2">الخطوة {{ e.step_order }}</span>{% endif %}
+              <div>
+                <strong>{{ e.category|esc_category_ar }}</strong>
+                <span class="badge bg-danger-subtle text-danger border ms-2">التنبيه {{ e.alert_level or 1 }}</span>
+                {% if e.step_order %}<span class="badge bg-danger ms-2">الخطوة {{ e.step_order }}</span>{% endif %}
+              </div>
               <span class="small text-muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
             </div>
             <div class="small text-muted mt-1">
@@ -191,7 +212,7 @@
         {% endfor %}
       </ul>
     {% else %}
-      <div class="text-muted">لا يوجد تصعيدات.</div>
+      <div class="text-muted">لا توجد تنبيهات.</div>
     {% endif %}
   </div>
 </div>
@@ -414,7 +435,7 @@
                 {% set ec = (step_escalation_counts.get(s.step_order, 0) if step_escalation_counts else 0) %}
                 {% if ec %}
                   <div class="small">
-                    <a class="text-danger text-decoration-none" target="_blank" href="{{ url_for('workflow.request_escalations', request_id=req.id, step=s.step_order) }}">🚨 تصعيدات هذه الخطوة ({{ ec }})</a>
+                    <a class="text-danger text-decoration-none" target="_blank" href="{{ url_for('workflow.request_escalations', request_id=req.id, step=s.step_order) }}">🚨 تنبيهات هذه الخطوة ({{ ec }})</a>
                   </div>
                 {% endif %}
 

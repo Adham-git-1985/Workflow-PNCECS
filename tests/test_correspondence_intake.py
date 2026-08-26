@@ -451,18 +451,28 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('data-max-bytes="{{ intake_max_bytes }}"', template)
         self.assertIn('route("/new/analyze-attachment"', routes)
         self.assertIn("analyze_workflow_attachment(", routes)
-        self.assertIn("هذه الخطوة اختيارية", template)
+        self.assertIn('id="workflowAnalysisTools"', template)
+        self.assertIn('data-bs-target="#workflowAnalysisTools"', template)
         self.assertIn('name="request_type_name"', template)
+        self.assertIn('name="priority"', template)
         self.assertNotIn('name="request_type_id"', template)
         self.assertLess(
-            template.index("<span class=\"badge text-bg-primary ms-1\">1</span> بناء المسار"),
+            template.index("<span class=\"badge text-bg-primary ms-1\">1</span> اختيار المسار"),
             template.index("<span class=\"badge text-bg-primary ms-1\">2</span> بيانات الطلب"),
+        )
+        self.assertLess(
+            template.index("<span class=\"badge text-bg-primary ms-1\">2</span> بيانات الطلب"),
+            template.index("<span class=\"badge text-bg-primary ms-1\">3</span> إرسال وحفظ"),
         )
         self.assertIn('id="dynamicHierarchySelect"', template)
         self.assertIn(
-            'class="form-select dynamic-contained-select" id="dynamicHierarchySelect"',
+            'class="d-none" id="dynamicHierarchySelect"',
             template,
         )
+        self.assertIn('id="dynamicHierarchyTree"', template)
+        self.assertIn('class="dynamic-tree-node"', template)
+        self.assertIn('id="dynamicPathPreviewPanel"', template)
+        self.assertIn('عرض تحليل وتتبع المسار', template)
         self.assertIn('{{ node.name }}{% if node.total_user_count %}', template)
         self.assertNotIn('{{ node.type_name }}: {{ node.name }}', template)
         self.assertIn('#dynamicRouteBox .dynamic-contained-select', template)
@@ -471,6 +481,25 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertNotIn("dynamic-browser-tab", template)
         self.assertNotIn('id="dynamicTeamFilter"', template)
         self.assertIn("_find_or_create_request_type(request_type_name)", routes)
+
+    def test_workflow_close_action_and_portal_return_button_layout_are_exposed(self):
+        project_root = Path(__file__).resolve().parents[1]
+        request_template = (
+            project_root / "templates" / "workflow" / "view_request.html"
+        ).read_text(encoding="utf-8")
+        portal_layout = (
+            project_root / "templates" / "portal" / "layout.html"
+        ).read_text(encoding="utf-8")
+        routes = (project_root / "workflow" / "routes.py").read_text(encoding="utf-8")
+
+        self.assertIn("{% if can_close %}", request_template)
+        self.assertIn("workflow.close_request", request_template)
+        self.assertIn("إغلاق الطلب", request_template)
+        self.assertIn('def close_request(request_id):', routes)
+        self.assertIn('action="REQUEST_CLOSED"', routes)
+        self.assertIn("portal-utilbar-layout", portal_layout)
+        self.assertIn("grid-template-columns:max-content minmax(0, 1fr)", portal_layout)
+        self.assertIn("portal-masar-return", portal_layout)
 
 
 if __name__ == "__main__":

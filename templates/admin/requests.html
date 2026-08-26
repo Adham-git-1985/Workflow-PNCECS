@@ -46,7 +46,8 @@
                         </td>
                         <td>
                             <span class="badge
-                                {% if req.status == 'APPROVED' %}bg-success
+                                {% if req.status == 'CLOSED' %}bg-dark
+                                {% elif req.status == 'APPROVED' %}bg-success
                                 {% elif req.status == 'REJECTED' %}bg-danger
                                 {% elif req.status == 'DRAFT' %}bg-secondary
                                 {% else %}bg-warning text-dark{% endif %}">
@@ -68,7 +69,7 @@
                             {% elif sla == "BREACHED" %}
                                 <span class="badge bg-warning text-dark">متجاوز المدة</span>
                             {% elif sla == "ESCALATED" %}
-                                <span class="badge bg-danger">مصعّد</span>
+                                <span class="badge bg-danger">بحاجة إلى تنبيه</span>
                             {% else %}
                                 <span class="text-muted">—</span>
                             {% endif %}

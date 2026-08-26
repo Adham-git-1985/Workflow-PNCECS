@@ -24,6 +24,7 @@ from models import (
     OrgUnitManager,
     OrgNode,
     OrgNodeManager,
+    SystemSetting,
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
 
@@ -35,13 +36,40 @@ HIERARCHY_BYPASS_FOLLOWER_ACTION = "HIERARCHY_BYPASS_FOLLOWER"
 # SLA helpers
 # =========================
 def _system_sla_days():
-    # إذا عندك SystemSetting لاحقًا اربطها هنا
+    try:
+        setting = SystemSetting.query.filter_by(key="SLA_DAYS").first()
+        value = int(setting.value) if setting and setting.value is not None else 3
+        return value if value > 0 else 3
+    except (TypeError, ValueError):
+        return 3
+
+
+def _effective_sla_days(template_sla_days=None, step_sla_days=None):
+    """Resolve and freeze a positive SLA duration for a runtime step."""
+    for value in (step_sla_days, template_sla_days, _system_sla_days()):
+        try:
+            days = int(value)
+        except (TypeError, ValueError):
+            continue
+        if days > 0:
+            return days
     return 3
 
 
-def _step_due_at(template_sla_days, step_sla_days):
-    days = step_sla_days or template_sla_days or _system_sla_days()
-    return datetime.utcnow() + timedelta(days=int(days))
+def _step_due_at(template_sla_days=None, step_sla_days=None, started_at=None):
+    days = _effective_sla_days(template_sla_days, step_sla_days)
+    return (started_at or datetime.utcnow()) + timedelta(days=days)
+
+
+def _activate_step_sla(step, started_at=None, reset=True):
+    """Start the SLA clock when a pending step becomes the active step."""
+    if not step or getattr(step, "status", None) != "PENDING":
+        return None
+    days = _effective_sla_days(None, getattr(step, "sla_days", None))
+    step.sla_days = days
+    if reset or not getattr(step, "due_at", None):
+        step.due_at = _step_due_at(None, days, started_at=started_at)
+    return step.due_at
 
 
 # =========================
@@ -1050,6 +1078,10 @@ def start_workflow_for_request(
             elif up == 'COMMITTEE_SECRETARY':
                 _cmode = 'Committee_SECRETARY'
 
+        effective_sla_days = _effective_sla_days(
+            template_sla,
+            step_value(ts, 'sla_days'),
+        )
         step = WorkflowInstanceStep(
             instance_id=inst.id,
             step_order=int(step_value(ts, "step_order", runtime_order) or runtime_order),
@@ -1070,7 +1102,12 @@ def start_workflow_for_request(
             approver_committee_id=step_value(ts, 'approver_committee_id'),
             committee_delivery_mode=_cmode,
             status="PENDING",
-            due_at=_step_due_at(template_sla, step_value(ts, 'sla_days')),
+            sla_days=effective_sla_days,
+            # A waiting step must not consume SLA time before it is active.
+            due_at=(
+                _step_due_at(None, effective_sla_days)
+                if runtime_order == 1 else None
+            ),
         )
         db.session.add(step)
 
@@ -1227,6 +1264,7 @@ def _bypass_parallel_task_legacy(
             )
         else:
             inst.current_step_order = next_order
+            _activate_step_sla(next_step, started_at=now, reset=True)
             if _is_parallel_sync(next_step):
                 _ensure_parallel_tasks(req, inst, next_step)
             else:
@@ -1350,6 +1388,7 @@ def bypass_parallel_task(
             _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
         else:
             inst.current_step_order = next_order
+            _activate_step_sla(next_step, started_at=now, reset=True)
             msg = f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}"
             _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
@@ -1472,6 +1511,7 @@ def bypass_all_parallel_tasks(
             _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
         else:
             inst.current_step_order = next_order
+            _activate_step_sla(next_step, started_at=now, reset=True)
             _notify_users([req.requester_id], message=f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
             if _is_parallel_sync(next_step):
@@ -1638,6 +1678,7 @@ def decide_step(
                 ))
             else:
                 inst.current_step_order = next_order
+                _activate_step_sla(next_step, started_at=now, reset=True)
                 # ensure tasks if the next step is also parallel, otherwise notify approvers
                 if _is_parallel_sync(next_step):
                     _ensure_parallel_tasks(req, inst, next_step)
@@ -1968,6 +2009,7 @@ def decide_step(
         return
 
     inst.current_step_order = next_order
+    _activate_step_sla(next_step, started_at=step.decided_at, reset=True)
     db.session.add(inst)
 
     msg = f"تمت متابعة طلبك #{req.id} (الخطوة {step_order}) بواسطة {actor_display} وتم تحويله للخطوة {next_order}"

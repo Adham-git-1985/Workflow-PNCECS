@@ -1,10 +1,10 @@
 {% extends "layout.html" %}
-{% block title %}تصعيد الطلب{% endblock %}
+{% block title %}تنبيه على الطلب{% endblock %}
 {% block content %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
-    <h3 class="mb-1">🚨 تصعيد الطلب #{{ req.id }}</h3>
+    <h3 class="mb-1">🚨 تنبيه على الطلب #{{ req.id }}</h3>
     <small class="text-muted">{{ req.title }}</small>
   </div>
   <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">رجوع</a>
@@ -13,30 +13,59 @@
 <div class="alert alert-warning">
   <div class="mb-1"><b>الخطوة الحالية:</b> {{ step_order }} | <b>الجهة المسؤولة:</b> {{ target_label }}</div>
   <div class="small text-muted">
-    عند الإرسال، سيتم إنشاء تنبيه <b>تحذير</b> ورسالة في <b>المراسلات</b> للجهة التي عندها الخطوة، بالإضافة إلى <b>مدير عام الإدارة</b>.
+    يعمل التنبيه في المسارات المنشأة مسبقًا والمسارات الديناميكية على الخطوة الحالية نفسها.
+    التنبيه الأول يذهب للجهة الحالية ومديرها العام، والتنبيه الثاني يذهب إلى مساعد الأمين العام المحدد من الهيكلية.
   </div>
 </div>
 
 <div class="card shadow-sm">
   <div class="card-body">
 
-    <div class="mb-3">
-      <label class="form-label">سيتم توجيه التصعيد إلى</label>
-      <div>
-        {% if recipients %}
-          {% for u in recipients %}
-            <span class="badge bg-light text-dark border">{{ u.email }}</span>
-          {% endfor %}
-        {% else %}
-          <span class="text-muted">لا يوجد مستلمون معرفون للخطوة الحالية.</span>
-        {% endif %}
-      </div>
-    </div>
-
     <form method="post" novalidate>
       <div class="row g-3">
+        <div class="col-12">
+          <label class="form-label fw-bold">مستوى التنبيه</label>
+          <div class="row g-2">
+            <div class="col-md-6">
+              <label class="border rounded-3 p-3 d-block h-100">
+                <span class="d-flex align-items-center gap-2 mb-2">
+                  <input class="form-check-input m-0" type="radio" name="alert_level" value="1"
+                         {% if requested_alert_level != 2 %}checked{% endif %}>
+                  <strong>التنبيه الأول</strong>
+                </span>
+                <span class="small text-muted d-block mb-2">الجهة المسؤولة عن الخطوة ومدير عام الإدارة.</span>
+                {% if first_recipient_users %}
+                  {% for u in first_recipient_users %}
+                    <span class="badge bg-light text-dark border">{{ u.full_name }} — {{ u.email }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="small text-danger">لا يوجد مستلمون محددون.</span>
+                {% endif %}
+              </label>
+            </div>
+            <div class="col-md-6">
+              <label class="border rounded-3 p-3 d-block h-100 {% if not second_recipient_users %}bg-light text-muted{% endif %}">
+                <span class="d-flex align-items-center gap-2 mb-2">
+                  <input class="form-check-input m-0" type="radio" name="alert_level" value="2"
+                         {% if requested_alert_level == 2 %}checked{% endif %}
+                         {% if not second_recipient_users %}disabled{% endif %}>
+                  <strong>التنبيه الثاني</strong>
+                </span>
+                <span class="small text-muted d-block mb-2">مساعد الأمين العام على مسار الهيكلية المرتبط بالطلب.</span>
+                {% if second_recipient_users %}
+                  {% for u in second_recipient_users %}
+                    <span class="badge bg-warning-subtle text-dark border">{{ u.full_name }} — {{ u.email }}</span>
+                  {% endfor %}
+                {% else %}
+                  <span class="small text-danger">لا يوجد مساعد أمين عام معيّن على هذا المسار الهيكلي.</span>
+                {% endif %}
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="col-md-4">
-          <label class="form-label">نوع التصعيد</label>
+          <label class="form-label">نوع التنبيه</label>
           <select class="form-select" name="category" required>
             {% for c in categories %}
               {# keep DB value as code, but show Arabic label to users #}
@@ -46,14 +75,14 @@
         </div>
 
         <div class="col-12">
-          <label class="form-label">وصف التصعيد</label>
-          <textarea class="form-control" name="description" rows="4" required placeholder="اكتب سبب/تفاصيل التصعيد"></textarea>
+          <label class="form-label">وصف التنبيه</label>
+          <textarea class="form-control" name="description" rows="4" required placeholder="اكتب سبب/تفاصيل التنبيه"></textarea>
         </div>
       </div>
 
       <hr class="my-4">
 
-      <button class="btn btn-danger" {% if not recipients %}disabled{% endif %}>إرسال التصعيد</button>
+      <button class="btn btn-danger">إرسال التنبيه</button>
       <a class="btn btn-outline-secondary" href="{{ url_for('workflow.view_request', request_id=req.id) }}">إلغاء</a>
     </form>
   </div>

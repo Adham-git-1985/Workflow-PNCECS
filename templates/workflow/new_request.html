@@ -65,6 +65,65 @@
     flex: 1 1 12rem;
   }
 
+  #dynamicRouteBox .dynamic-org-tree {
+    max-height: 420px;
+    overflow: auto;
+    background: #fff;
+  }
+
+  #dynamicRouteBox .dynamic-tree-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  #dynamicRouteBox .dynamic-tree-list .dynamic-tree-list {
+    margin-inline-start: .8rem;
+    padding-inline-start: 1rem;
+    border-inline-start: 2px solid #d8e3ef;
+  }
+
+  #dynamicRouteBox .dynamic-tree-item {
+    position: relative;
+    padding-block: .25rem;
+  }
+
+  #dynamicRouteBox .dynamic-tree-list .dynamic-tree-list > .dynamic-tree-item::before {
+    content: "";
+    position: absolute;
+    inset-inline-start: -1rem;
+    top: 1.55rem;
+    width: 1rem;
+    border-top: 2px solid #d8e3ef;
+  }
+
+  #dynamicRouteBox .dynamic-tree-node {
+    width: 100%;
+    border: 1px solid #dbe4ee;
+    border-radius: .7rem;
+    background: #fff;
+    padding: .65rem .75rem;
+    text-align: start;
+    color: inherit;
+    transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+  }
+
+  #dynamicRouteBox .dynamic-tree-node:hover,
+  #dynamicRouteBox .dynamic-tree-node.active {
+    border-color: var(--bs-primary);
+    background: rgba(var(--bs-primary-rgb), .07);
+    box-shadow: 0 0 0 .15rem rgba(var(--bs-primary-rgb), .08);
+  }
+
+  #dynamicRouteBox .dynamic-tree-manager {
+    color: #40627a;
+    font-size: .82rem;
+  }
+
+  .request-section-heading {
+    scroll-margin-top: 6rem;
+  }
+
   @media (max-width: 575.98px) {
     #dynamicRouteBox .dynamic-route-panel {
       padding: .75rem !important;
@@ -102,10 +161,10 @@
   <div class="card-body">
     <div class="row g-3">
 
-      <div class="col-12">
+      <div class="col-12 request-section-heading">
         <div class="border-bottom pb-2 mb-1">
-          <h5 class="mb-1"><span class="badge text-bg-primary ms-1">1</span> بناء المسار</h5>
-          <div class="small text-muted">اختر أولًا مسارًا منشأ مسبقًا، أو أنشئ مسارًا جديدًا من الهيكلية.</div>
+          <h5 class="mb-1"><span class="badge text-bg-primary ms-1">1</span> اختيار المسار</h5>
+          <div class="small text-muted">اختر مسارًا منشأ مسبقًا، أو أنشئ مسارًا ديناميكيًا من الهيكلية.</div>
         </div>
       </div>
 
@@ -152,6 +211,22 @@
           </div>
           <input type="hidden" name="dynamic_target_refs" id="dynamicTargetRefs" value="">
           <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
+          <div class="row g-2 align-items-end mb-3">
+            <div class="col-12 col-md-4">
+              <label class="form-label fw-bold" for="dynamicSlaDays">SLA لكل خطوة ديناميكية</label>
+              <div class="input-group">
+                <input class="form-control" id="dynamicSlaDays" name="dynamic_sla_days"
+                       type="number" min="1" max="365" required
+                       value="{{ dynamic_sla_days_default|default(3, true) }}">
+                <span class="input-group-text">يوم</span>
+              </div>
+            </div>
+            <div class="col-12 col-md-8">
+              <div class="form-text mb-2">
+                يبدأ العدّ عند وصول الطلب إلى الخطوة فعليًا، وليس عند إنشاء المسار؛ وتُطبّق المدة نفسها على خطوات الذهاب والعودة.
+              </div>
+            </div>
+          </div>
           <script type="application/json" id="dynamicSavedPresetsData">{{ (dynamic_presets|default([], true))|tojson }}</script>
           <script type="application/json" id="dynamicCommitteesData">{{ (dynamic_committees|default([], true))|tojson }}</script>
           <div class="border rounded-3 p-3 bg-light mb-3" id="dynamicSavedPresetsBox">
@@ -219,10 +294,14 @@
 
             {% if (dynamic_choices or dynamic_org_nodes) and requester_org_node_id %}
             <div class="border rounded-3 p-3 bg-light mb-3">
-              <label class="form-label fw-bold" for="dynamicHierarchySelect">
-                <i class="bi bi-diagram-3"></i> الهيكلية
-              </label>
-              <select class="form-select dynamic-contained-select" id="dynamicHierarchySelect">
+              <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+                <div>
+                  <div class="form-label fw-bold mb-1"><i class="bi bi-diagram-3"></i> الهيكلية</div>
+                  <div class="small text-muted">اختر بطاقة الجهة من الشجرة؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.</div>
+                </div>
+                <span class="badge text-bg-light border"><i class="bi bi-hand-index"></i> اختيار مباشر</span>
+              </div>
+              <select class="d-none" id="dynamicHierarchySelect" tabindex="-1" aria-hidden="true">
                 <option value="">— اختر جهة من الهيكلية —</option>
                 {% for node in dynamic_org_nodes %}
                   <option value="{{ node.id }}" title="{{ node.node_label }}">
@@ -230,6 +309,7 @@
                   </option>
                 {% endfor %}
               </select>
+              <div class="dynamic-org-tree border rounded-3 p-2" id="dynamicHierarchyTree" role="tree" aria-label="الهيكلية التنظيمية"></div>
               <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
                 <button type="button" class="btn btn-sm btn-outline-success" id="dynamicAddHierarchyNode" disabled>
                   <i class="bi bi-plus-circle"></i> إضافة الجهة نفسها إلى المسار
@@ -239,56 +319,66 @@
             </div>
 
             <div class="mb-3">
-              <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة المختارة</label>
-              <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، أو البريد..." autocomplete="off">
+              <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
+                      data-bs-target="#dynamicEmployeesPanel" aria-expanded="false" aria-controls="dynamicEmployeesPanel">
+                <i class="bi bi-eye"></i> عرض موظفي الجهة واختيار أشخاص
+              </button>
             </div>
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-              <div class="small text-muted" id="dynamicVisibleScopeHint">اختر جهة من الهيكل لعرض موظفيها المباشرين.</div>
-              <div class="btn-group btn-group-sm">
-                <button type="button" class="btn btn-outline-primary" id="dynamicSelectVisible">
-                  <i class="bi bi-check2-square"></i> تحديد الظاهرين
-                </button>
-                <button type="button" class="btn btn-outline-secondary" id="dynamicClearVisible">
-                  <i class="bi bi-square"></i> إلغاء تحديد الظاهرين
-                </button>
-              </div>
-            </div>
-            <div id="dynamicUserChoices" class="pe-1" style="max-height: 390px; overflow-y: auto;">
-              {% for choice in dynamic_choices %}
-                <div class="dynamic-user-choice border rounded-3 p-3 mb-2 bg-white d-none"
-                     data-node-id="{{ choice.node_id }}"
-                     data-search="{{ (choice.name ~ ' ' ~ choice.job_title ~ ' ' ~ choice.email ~ ' ' ~ choice.node_label)|lower }}">
-                  <div class="d-flex align-items-start gap-3 flex-wrap flex-md-nowrap">
-                    <span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0" aria-label="رقم الشخص">{{ loop.index }}</span>
-                    <div class="flex-grow-1" style="min-width:0;">
-                      <div class="fw-bold text-break">{{ choice.name }}</div>
-                      <div class="text-primary small fw-semibold mt-1 dynamic-wrap-text">
-                        <i class="bi bi-briefcase"></i> {{ choice.job_title or 'لا يوجد مسمى وظيفي مسجل' }}
-                      </div>
-                      {% if choice.email %}<div class="small text-muted mt-1 dynamic-wrap-text" dir="ltr">{{ choice.email }}</div>{% endif %}
-                      <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
-                        <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
-                      </div>
-                      <span class="badge mt-2 dynamic-wrap-badge {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
-                        {{ 'اختيار مباشر ضمن الإدارة' if choice.same_administration else 'عبر التسلسل الإداري' }}
-                      </span>
-                    </div>
-                    <div class="form-check border rounded-3 px-3 py-2 flex-shrink-0 bg-light">
-                      <input type="checkbox"
-                             class="form-check-input dynamic-user-checkbox"
-                             id="dynamicUserChoice{{ choice.id }}"
-                             data-id="{{ choice.id }}"
-                             data-name="{{ choice.name }}"
-                             data-title="{{ choice.job_title }}"
-                             data-node="{{ choice.node_label }}"
-                             data-same-admin="{{ '1' if choice.same_administration else '0' }}">
-                      <label class="form-check-label fw-semibold" for="dynamicUserChoice{{ choice.id }}">اختيار</label>
-                    </div>
+            <div class="collapse" id="dynamicEmployeesPanel">
+              <div class="border rounded-3 p-3 mb-3 bg-white">
+                <div class="mb-3">
+                  <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة المختارة</label>
+                  <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، أو البريد..." autocomplete="off">
+                </div>
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                  <div class="small text-muted" id="dynamicVisibleScopeHint">اختر جهة من الهيكل لعرض موظفيها المباشرين.</div>
+                  <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-outline-primary" id="dynamicSelectVisible">
+                      <i class="bi bi-check2-square"></i> تحديد الظاهرين
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary" id="dynamicClearVisible">
+                      <i class="bi bi-square"></i> إلغاء تحديد الظاهرين
+                    </button>
                   </div>
                 </div>
-              {% endfor %}
+                <div id="dynamicUserChoices" class="pe-1" style="max-height: 390px; overflow-y: auto;">
+                  {% for choice in dynamic_choices %}
+                    <div class="dynamic-user-choice border rounded-3 p-3 mb-2 bg-white d-none"
+                         data-node-id="{{ choice.node_id }}"
+                         data-search="{{ (choice.name ~ ' ' ~ choice.job_title ~ ' ' ~ choice.email ~ ' ' ~ choice.node_label)|lower }}">
+                      <div class="d-flex align-items-start gap-3 flex-wrap flex-md-nowrap">
+                        <span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0" aria-label="رقم الشخص">{{ loop.index }}</span>
+                        <div class="flex-grow-1" style="min-width:0;">
+                          <div class="fw-bold text-break">{{ choice.name }}</div>
+                          <div class="text-primary small fw-semibold mt-1 dynamic-wrap-text">
+                            <i class="bi bi-briefcase"></i> {{ choice.job_title or 'لا يوجد مسمى وظيفي مسجل' }}
+                          </div>
+                          {% if choice.email %}<div class="small text-muted mt-1 dynamic-wrap-text" dir="ltr">{{ choice.email }}</div>{% endif %}
+                          <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
+                            <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
+                          </div>
+                          <span class="badge mt-2 dynamic-wrap-badge {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
+                            {{ 'اختيار مباشر ضمن الإدارة' if choice.same_administration else 'عبر التسلسل الإداري' }}
+                          </span>
+                        </div>
+                        <div class="form-check border rounded-3 px-3 py-2 flex-shrink-0 bg-light">
+                          <input type="checkbox"
+                                 class="form-check-input dynamic-user-checkbox"
+                                 id="dynamicUserChoice{{ choice.id }}"
+                                 data-id="{{ choice.id }}"
+                                 data-name="{{ choice.name }}"
+                                 data-title="{{ choice.job_title }}"
+                                 data-node="{{ choice.node_label }}"
+                                 data-same-admin="{{ '1' if choice.same_administration else '0' }}">
+                          <label class="form-check-label fw-semibold" for="dynamicUserChoice{{ choice.id }}">اختيار</label>
+                        </div>
+                      </div>
+                    </div>
+                  {% endfor %}
+                </div>
+                <div class="alert alert-light border py-2 mb-0" id="dynamicUserSearchEmpty">اختر جهة من الهيكل الإداري لعرض الموظفين.</div>
+              </div>
             </div>
-            <div class="alert alert-light border py-2" id="dynamicUserSearchEmpty">اختر جهة من الهيكل الإداري لعرض الموظفين.</div>
             {% endif %}
           {% endif %}
           {% if not dynamic_choices and not dynamic_org_nodes and not dynamic_committees %}
@@ -296,7 +386,14 @@
           {% endif %}
           <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي جهة أو شخص أو لجنة بعد.</span></div>
           <ol class="list-group mt-3 d-none" id="dynamicSelectedList"></ol>
-          <div class="mt-3 d-none" id="dynamicPathPreview"></div>
+          <button class="btn btn-sm btn-outline-secondary mt-3" type="button" id="dynamicPathPreviewToggle"
+                  data-bs-toggle="collapse" data-bs-target="#dynamicPathPreviewPanel"
+                  aria-expanded="false" aria-controls="dynamicPathPreviewPanel" disabled>
+            <i class="bi bi-eye"></i> عرض تحليل وتتبع المسار
+          </button>
+          <div class="collapse" id="dynamicPathPreviewPanel">
+            <div class="mt-3 d-none" id="dynamicPathPreview"></div>
+          </div>
 
           <div class="border rounded-3 p-3 mt-3 bg-white">
             <div class="fw-bold mb-2"><i class="bi bi-person-check"></i> هل تريد إضافة الأمين العام كآخر خطوة؟</div>
@@ -335,20 +432,20 @@
         </div>
       </div>
 
-      <div class="col-12 mt-4">
+      <div class="col-12 mt-4 request-section-heading">
         <div class="border-bottom pb-2 mb-1">
           <h5 class="mb-1"><span class="badge text-bg-primary ms-1">2</span> بيانات الطلب</h5>
           <div class="small text-muted">اكتب بيانات الطلب بعد الانتهاء من اختيار المسار. نوع الطلب لا يغيّر المسار المختار.</div>
         </div>
       </div>
 
-      <div class="col-md-6">
+      <div class="col-lg-5">
         <label class="form-label fw-bold" for="workflowRequestTitle">عنوان الطلب</label>
         <input class="form-control" id="workflowRequestTitle" name="title" maxlength="200"
                placeholder="مثال: طلب شراء أجهزة" required>
       </div>
 
-      <div class="col-md-6">
+      <div class="col-lg-5">
         <label class="form-label fw-bold" for="requestTypeName">نوع الطلب</label>
         <input class="form-control" id="requestTypeName" name="request_type_name"
                list="requestTypeOptions" maxlength="200"
@@ -362,6 +459,16 @@
         <div class="form-text">يمكنك كتابة نوع جديد مباشرة؛ سيُحفظ للاقتراح لاحقًا دون ربطه بالمسار.</div>
       </div>
 
+      <div class="col-lg-2">
+        <label class="form-label fw-bold" for="workflowRequestPriority">الأولوية <span class="text-muted fw-normal">(اختياري)</span></label>
+        <select class="form-select" id="workflowRequestPriority" name="priority">
+          <option value="NORMAL" selected>عادي</option>
+          <option value="LOW">منخفض</option>
+          <option value="HIGH">مرتفع</option>
+          <option value="URGENT">عاجل</option>
+        </select>
+      </div>
+
       <div class="col-12">
         <label class="form-label fw-bold" for="workflowRequestDescription">الوصف / الملاحظات</label>
         <textarea class="form-control" id="workflowRequestDescription" name="description" rows="4"
@@ -369,49 +476,53 @@
       </div>
 
       <div class="col-12">
-        <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
-          <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-            <div>
-              <div class="fw-bold">
-                📎 مرفق المسار والتفريغ الذكي
-                <span class="badge text-bg-light border text-primary ms-1">غير إجباري</span>
+        <label class="form-label fw-bold" for="workflowRequestFiles">مرفقات الطلب <span class="text-muted fw-normal">(اختياري)</span></label>
+        <input type="file" name="files" class="form-control" id="workflowRequestFiles" multiple>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
+          <div class="form-text mt-0">تُحفظ جميع الملفات المختارة وتُربط بالطلب تلقائيًا.</div>
+          <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
+                  data-bs-target="#workflowAnalysisTools" aria-expanded="false" aria-controls="workflowAnalysisTools">
+            <i class="bi bi-eye"></i> عرض تحليل المرفق الاختياري
+          </button>
+        </div>
+        <div class="collapse mt-3" id="workflowAnalysisTools">
+          <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+              <div class="small text-muted">
+                يحلّل النظام المرفق الأول محليًا بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>، ثم يقترح تعبئة الحقول.
               </div>
-              <div class="small text-muted">هذه الخطوة اختيارية؛ يمكنك إنشاء المسار يدويًا دون مرفق أو تحليل، أو تحليل المرفق وتفريغ مقترحاته على النموذج.</div>
-            </div>
-            <button class="btn btn-primary" type="button" id="analyzeWorkflowAttachment"
-                    data-url="{{ url_for('workflow.analyze_new_request_attachment') }}"
-                    data-max-bytes="{{ intake_max_bytes }}">
-              <i class="bi bi-file-earmark-text"></i> تحليل المرفق
-            </button>
-          </div>
-
-          <label class="form-label fw-bold" for="workflowRequestFiles">مرفقات الطلب (اختياري)</label>
-          <input type="file" name="files" class="form-control" id="workflowRequestFiles" multiple>
-          <div class="form-text">
-            يُحلّل المرفق الأول محليًا بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>،
-            وتُحفظ جميع الملفات المختارة وتُربط بالطلب تلقائيًا.
-          </div>
-
-          <div class="small mt-2 d-none" id="workflowAnalysisStatus" role="status" aria-live="polite"></div>
-          <div class="mt-3 d-none" id="workflowAnalysisResults">
-            <div class="alert alert-info py-2 mb-2" id="workflowAnalysisPrivacy">
-              التحليل وOCR محليان داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.
-            </div>
-            <div id="workflowAnalysisWarnings"></div>
-            <div class="list-group mb-3" id="workflowAnalysisSuggestions"></div>
-            <div class="d-flex align-items-center gap-2 flex-wrap">
-              <button class="btn btn-success" type="button" id="applyWorkflowSuggestions">
-                <i class="bi bi-box-arrow-in-down"></i> تفريغ البيانات على نموذج المسار
+              <button class="btn btn-primary" type="button" id="analyzeWorkflowAttachment"
+                      data-url="{{ url_for('workflow.analyze_new_request_attachment') }}"
+                      data-max-bytes="{{ intake_max_bytes }}">
+                <i class="bi bi-file-earmark-text"></i> تحليل المرفق
               </button>
-              <span class="small text-muted">راجع البيانات والقالب المقترح قبل إنشاء الطلب.</span>
+            </div>
+            <div class="small mt-2 d-none" id="workflowAnalysisStatus" role="status" aria-live="polite"></div>
+            <div class="mt-3 d-none" id="workflowAnalysisResults">
+              <div class="alert alert-info py-2 mb-2" id="workflowAnalysisPrivacy">
+                التحليل وOCR محليان داخل النظام ولا يُرسل محتوى المرفق إلى خدمة خارجية.
+              </div>
+              <div id="workflowAnalysisWarnings"></div>
+              <div class="list-group mb-3" id="workflowAnalysisSuggestions"></div>
+              <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button class="btn btn-success" type="button" id="applyWorkflowSuggestions">
+                  <i class="bi bi-box-arrow-in-down"></i> تفريغ البيانات على نموذج المسار
+                </button>
+                <span class="small text-muted">راجع البيانات والقالب المقترح قبل الإرسال.</span>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-
-      <div class="col-12">
-        <button class="btn btn-primary">🚀 إنشاء الطلب</button>
+      <div class="col-12 mt-4 request-section-heading">
+        <div class="border-top pt-3 d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div>
+            <h5 class="mb-1"><span class="badge text-bg-primary ms-1">3</span> إرسال وحفظ</h5>
+            <div class="small text-muted">سيُحفظ الطلب وتبدأ أول خطوة في المسار المختار.</div>
+          </div>
+          <button class="btn btn-primary px-4" type="submit"><i class="bi bi-send"></i> إرسال وحفظ الطلب</button>
+        </div>
       </div>
 
     </div>
@@ -615,6 +726,7 @@
     const templateSelect = document.getElementById('templateSelect');
     const userSearch = document.getElementById('dynamicUserSearch');
     const hierarchySelect = document.getElementById('dynamicHierarchySelect');
+    const hierarchyTree = document.getElementById('dynamicHierarchyTree');
     const addHierarchyNodeButton = document.getElementById('dynamicAddHierarchyNode');
     const hierarchyHint = document.getElementById('dynamicHierarchyHint');
     const committeeEnabledControl = document.getElementById('dynamicEnableCommittee');
@@ -629,10 +741,12 @@
     const selectVisibleButton = document.getElementById('dynamicSelectVisible');
     const clearVisibleButton = document.getElementById('dynamicClearVisible');
     const targetRefsField = document.getElementById('dynamicTargetRefs');
+    const dynamicSlaDays = document.getElementById('dynamicSlaDays');
     const legacyUserIdsField = document.getElementById('dynamicUserIds');
     const selectedList = document.getElementById('dynamicSelectedList');
     const emptyState = document.getElementById('dynamicSelectedEmpty');
     const previewBox = document.getElementById('dynamicPathPreview');
+    const previewToggle = document.getElementById('dynamicPathPreviewToggle');
     const savedPresetSelect = document.getElementById('dynamicSavedPresetSelect');
     const loadPresetButton = document.getElementById('dynamicLoadPreset');
     const deletePresetButton = document.getElementById('dynamicDeletePreset');
@@ -736,6 +850,58 @@
       const element = document.createElement('div');
       element.textContent = value || '';
       return element.innerHTML;
+    }
+
+    function renderHierarchyTree(){
+      if (!hierarchyTree) return;
+      const childrenByParent = new Map();
+      orgNodes.forEach(function(node){
+        const parentKey = node.parent_id === null || node.parent_id === undefined
+          ? ''
+          : String(node.parent_id);
+        if (!childrenByParent.has(parentKey)) childrenByParent.set(parentKey, []);
+        childrenByParent.get(parentKey).push(node);
+      });
+
+      const roots = orgNodes.filter(function(node){
+        return node.parent_id === null || node.parent_id === undefined ||
+          !orgNodesById.has(String(node.parent_id));
+      });
+      const visited = new Set();
+
+      function branch(nodes){
+        if (!nodes || !nodes.length) return '';
+        let html = '<ul class="dynamic-tree-list" role="group">';
+        nodes.forEach(function(node){
+          const nodeId = String(node.id);
+          if (visited.has(nodeId)) return;
+          visited.add(nodeId);
+          const managerText = node.manager_name
+            ? (node.manager_role || 'المسؤول') + ': ' + node.manager_name
+            : (node.unavailable_reason || 'لا يوجد مسؤول معتمد');
+          const countText = Number(node.total_user_count || 0)
+            ? String(node.total_user_count) + ' موظف'
+            : 'لا يوجد موظفون مرتبطون';
+          html += '<li class="dynamic-tree-item" role="none">' +
+            '<button type="button" class="dynamic-tree-node" role="treeitem" ' +
+              'data-node-id="' + escapeHtml(nodeId) + '" aria-selected="false">' +
+              '<span class="d-flex justify-content-between align-items-start gap-2">' +
+                '<span class="fw-bold text-break">' + escapeHtml(node.name || '') + '</span>' +
+                '<span class="badge text-bg-light border flex-shrink-0">' + escapeHtml(node.type_name || 'جهة') + '</span>' +
+              '</span>' +
+              '<span class="dynamic-tree-manager d-block mt-1"><i class="bi bi-person-badge"></i> ' + escapeHtml(managerText) + '</span>' +
+              '<span class="small text-muted d-block mt-1"><i class="bi bi-people"></i> ' + escapeHtml(countText) + '</span>' +
+            '</button>' +
+            branch(childrenByParent.get(nodeId)) +
+          '</li>';
+        });
+        return html + '</ul>';
+      }
+
+      hierarchyTree.innerHTML = branch(roots);
+      if (!hierarchyTree.innerHTML) {
+        hierarchyTree.innerHTML = '<div class="text-muted small p-2">لا توجد جهات متاحة في الهيكلية.</div>';
+      }
     }
 
     function csrfToken(){
@@ -902,6 +1068,7 @@
       selectedList.innerHTML = '';
       selectedList.classList.toggle('d-none', selected.length === 0);
       emptyState.classList.toggle('d-none', selected.length !== 0);
+      if (previewToggle) previewToggle.disabled = selected.length === 0;
 
       selected.forEach(function(item, index){
         const listItem = document.createElement('li');
@@ -1117,6 +1284,13 @@
         : null;
       if (userSearch) userSearch.value = '';
       const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
+      if (hierarchyTree) {
+        hierarchyTree.querySelectorAll('[data-node-id]').forEach(function(control){
+          const active = String(control.dataset.nodeId) === String(currentOrgNodeId || '');
+          control.classList.toggle('active', active);
+          control.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
       if (hierarchyHint) {
         hierarchyHint.textContent = !currentNode
           ? 'اختر جهة واحدة من هذا الحقل لعرض موظفيها.'
@@ -1167,6 +1341,7 @@
       const payload = new FormData();
       payload.append('dynamic_target_refs', targetRefsField.value);
       payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
+      if (dynamicSlaDays) payload.append('dynamic_sla_days', dynamicSlaDays.value);
       const csrfField = form.querySelector('[name="csrf_token"]');
       if (csrfField) payload.append('csrf_token', csrfField.value);
       try {
@@ -1190,6 +1365,7 @@
               '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
               '<div class="flex-grow-1 dynamic-wrap-text" style="min-width:0"><strong class="d-block text-break">' + escapeHtml(step.label) + '</strong>' +
               '<div class="small text-primary fw-semibold mt-1 dynamic-wrap-text"><i class="bi bi-briefcase"></i> ' + escapeHtml(step.job_title || 'لا يوجد مسمى وظيفي مسجل') + '</div>' +
+              '<div class="small text-muted mt-1"><i class="bi bi-clock"></i> SLA: ' + escapeHtml(step.sla_days || (dynamicSlaDays && dynamicSlaDays.value) || '-') + ' يوم — يبدأ عند تفعيل الخطوة</div>' +
               (step.reason ? '<div class="small text-muted mt-1 dynamic-wrap-text">' + escapeHtml(step.reason) + '</div>' : '') +
               '</div></div>';
           });
@@ -1223,7 +1399,14 @@
     secretaryChoices.forEach(function(control){
       control.addEventListener('change', schedulePreview);
     });
+    if (dynamicSlaDays) dynamicSlaDays.addEventListener('input', schedulePreview);
     if (hierarchySelect) hierarchySelect.addEventListener('change', updateHierarchySelection);
+    if (hierarchyTree) hierarchyTree.addEventListener('click', function(event){
+      const control = event.target.closest('[data-node-id]');
+      if (!control || !hierarchySelect) return;
+      hierarchySelect.value = String(control.dataset.nodeId || '');
+      updateHierarchySelection();
+    });
     if (committeeEnabledControl) committeeEnabledControl.addEventListener('change', function(){
       const enabled = committeeEnabledControl.checked;
       setCommitteeEnabled(enabled);
@@ -1344,6 +1527,7 @@
       }
     });
     renderSavedPresets();
+    renderHierarchyTree();
     if (savePresetButton) savePresetButton.disabled = true;
     setCommitteeEnabled(false);
     updateCommitteeSelection();

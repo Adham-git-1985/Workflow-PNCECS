@@ -7,7 +7,8 @@
   'DRAFT': 'مسودة',
   'IN_PROGRESS': 'قيد المعالجة',
   'APPROVED': 'معتمد',
-  'REJECTED': 'مرفوض'
+  'REJECTED': 'مرفوض',
+  'CLOSED': 'مغلق'
 } %}
 
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
@@ -196,7 +197,7 @@
       </thead>
       <tbody>
         {% for req, inst, tpl in rows %}
-        {% set is_closed = req.status in ['APPROVED','REJECTED'] %}
+        {% set is_closed = req.status == 'CLOSED' %}
         <tr>
           <td class="fw-semibold">{{ req.id }}</td>
           <td>
@@ -223,7 +224,7 @@
             {% endif %}
           </td>
           <td>
-            <span class="badge {% if req.status == 'APPROVED' %}bg-success{% elif req.status == 'REJECTED' %}bg-danger{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
+            <span class="badge {% if req.status == 'CLOSED' %}bg-secondary{% elif req.status == 'APPROVED' %}bg-success{% elif req.status == 'REJECTED' %}bg-danger{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
               {{ req.status|ui_label }}
             </span>
           </td>

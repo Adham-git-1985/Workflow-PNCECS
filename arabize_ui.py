@@ -133,7 +133,7 @@ REPLACEMENTS = {
     "Template": "قالب",
     "Templates": "القوالب",
     "Delegation": "التفويض",
-    "Escalation": "التصعيد",
+    "Escalation": "التنبيه",
     "SLA": "اتفاقية مستوى الخدمة",
     "Audit Log": "سجل التدقيق",
     "Timeline": "الخط الزمني",

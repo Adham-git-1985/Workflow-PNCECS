@@ -25,7 +25,22 @@
     .portal-topnav .portal-user-dd{white-space:nowrap; max-width: 220px; overflow:hidden; text-overflow:ellipsis;}
     .portal-utilbar{background:#072130;border-bottom:1px solid rgba(255,255,255,.10);} 
     .portal-utilbar .btn{white-space:nowrap;}
-    .portal-utilbar .container-fluid{gap:.5rem;}
+    .portal-utilbar .portal-utilbar-layout{
+      display:grid;
+      grid-template-columns:max-content minmax(0, 1fr);
+      align-items:center;
+      gap:.5rem;
+      direction:rtl;
+    }
+    .portal-utilbar .portal-utilbar-actions{
+      min-width:0;
+      display:flex;
+      align-items:center;
+      justify-content:flex-end;
+      gap:.5rem;
+      flex-wrap:wrap;
+    }
+    .portal-utilbar .portal-masar-return{grid-column:1; justify-self:start;}
     .portal-admin-split .portal-admin-toggle{padding-inline:.35rem;}
     .portal-admin-split .nav-link{white-space:nowrap;}
 
@@ -103,7 +118,13 @@
 {% endif %}
 
 <div class="portal-utilbar no-print">
-  <div class="container-fluid d-flex align-items-center justify-content-end gap-2">
+  <div class="container-fluid portal-utilbar-layout">
+
+    <a class="btn btn-outline-light btn-sm portal-masar-return" href="{{ url_for('workflow.work_dashboard') }}" title="العودة لمسار">
+      <i class="bi bi-arrow-return-right"></i><span class="d-none d-md-inline"> العودة لمسار</span>
+    </a>
+
+    <div class="portal-utilbar-actions">
 
     {# Quick guide link depends on current module #}
     {% set _g = None %}
@@ -206,9 +227,7 @@
       </ul>
     </div>
 
-    <a class="btn btn-outline-light btn-sm" href="{{ url_for('index') }}" title="العودة لمسار">
-      <i class="bi bi-arrow-return-right"></i><span class="d-none d-md-inline"> العودة لمسار</span>
-    </a>
+    </div>
 
   </div>
 </div>
@@ -245,13 +264,13 @@
 
 <nav class="navbar navbar-expand-lg navbar-dark portal-topnav" style="background:#0b2b3d;">
   <div class="container-fluid">
-    <a class="navbar-brand" href="{{ home_url }}">
-          <span class="d-inline-flex align-items-center gap-2 me-2">
+    <div class="navbar-brand">
+          <a class="d-inline-flex align-items-center gap-2 me-2 text-decoration-none" href="{{ url_for('workflow.work_dashboard') }}" title="فتح مسار">
             <img src="{{ url_for('static', filename='images/logo.png') }}" class="brand-logo portal-brand-logo" alt="Masar">
             <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" class="brand-logo portal-brand-logo" alt="PNCECS">
-          </span>
-<i class="bi bi-grid-3x3-gap"></i> البوابة الإدارية
-    </a>
+          </a>
+          <a class="text-white text-decoration-none" href="{{ home_url }}"><i class="bi bi-grid-3x3-gap"></i> البوابة الإدارية</a>
+    </div>
 
     <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navPortal">
       <span class="navbar-toggler-icon"></span>

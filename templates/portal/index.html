@@ -20,7 +20,7 @@
               <i class="bi bi-check2-square"></i> موافقات ({{ s.get('approvals_pending', 0) }})
             </a>
           {% endif %}
-          <a class="btn btn-outline-secondary" href="{{ url_for('index') }}">
+          <a class="btn btn-outline-secondary" href="{{ url_for('workflow.work_dashboard') }}">
             <i class="bi bi-arrow-right"></i> العودة لمسار
           </a>
         </div>

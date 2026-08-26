@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from flask import Flask
 from PyPDF2 import PdfReader
+from werkzeug.exceptions import Forbidden
 
 from extensions import db
 from models import (
@@ -16,6 +17,7 @@ from models import (
     OrgNodeManager,
     OrgNodeType,
     OrgUnitAssignment,
+    RequestEscalation,
     RequestType,
     Team,
     TeamMembership,
@@ -27,7 +29,14 @@ from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
 )
-from workflow.routes import _find_or_create_request_type, _user_can_view_request, request_pdf
+from workflow.routes import (
+    _find_or_create_request_type,
+    _hierarchy_manager_user_ids,
+    _user_can_view_request,
+    close_request,
+    escalate_request,
+    request_pdf,
+)
 from workflow.dynamic_paths import (
     DYNAMIC_RETURN_REASON,
     FINAL_SECRETARY_GENERAL_REF,
@@ -160,6 +169,87 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertTrue(created.code.startswith("USR_"))
         self.assertTrue(created.is_active)
         self.assertEqual(RequestType.query.count(), 1)
+
+    def test_workflow_request_priority_defaults_to_normal(self):
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب بأولوية اختيارية",
+            status="DRAFT",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+
+        self.assertEqual(request_row.priority, "NORMAL")
+
+    def test_request_creator_can_close_request_after_final_decision(self):
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب مكتمل بانتظار الإغلاق",
+            status="APPROVED",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        db.session.add(WorkflowInstance(
+            request_id=request_row.id,
+            template_id=None,
+            current_step_order=1,
+            is_completed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(method="POST"):
+            with patch("workflow.routes.current_user", self.requester), patch(
+                "workflow.routes.url_for", return_value=f"/workflow/request/{request_row.id}"
+            ):
+                response = close_request.__wrapped__(request_row.id)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.session.get(WorkflowRequest, request_row.id).status, "CLOSED")
+        audit = AuditLog.query.filter_by(
+            request_id=request_row.id,
+            action="REQUEST_CLOSED",
+        ).one()
+        self.assertEqual(audit.user_id, self.requester.id)
+        self.assertEqual(audit.old_status, "APPROVED")
+        self.assertEqual(audit.new_status, "CLOSED")
+
+    def test_non_creator_cannot_close_request(self):
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب لا يغلقه غير منشئه",
+            status="APPROVED",
+        )
+        db.session.add(request_row)
+        db.session.commit()
+
+        with self.app.test_request_context(method="POST"):
+            with patch("workflow.routes.current_user", self.same_target):
+                with self.assertRaises(Forbidden):
+                    close_request.__wrapped__(request_row.id)
+
+        self.assertEqual(db.session.get(WorkflowRequest, request_row.id).status, "APPROVED")
+
+    def test_creator_cannot_close_request_before_workflow_finishes(self):
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب ما زال قيد التنفيذ",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.commit()
+
+        with self.app.test_request_context(method="POST"):
+            with patch("workflow.routes.current_user", self.requester), patch(
+                "workflow.routes.url_for", return_value=f"/workflow/request/{request_row.id}"
+            ):
+                response = close_request.__wrapped__(request_row.id)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.session.get(WorkflowRequest, request_row.id).status, "IN_PROGRESS")
+        self.assertIsNone(AuditLog.query.filter_by(
+            request_id=request_row.id,
+            action="REQUEST_CLOSED",
+        ).first())
 
     def test_request_pdf_is_a_short_inline_report(self):
         request_type = _find_or_create_request_type("طلب متابعة")
@@ -1066,7 +1156,11 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(len(choice["team_keys"]), 2)
 
     def test_saved_org_node_step_is_copied_and_notified(self):
-        template = WorkflowTemplate(name="مسار هيكلي محفوظ", created_by_id=self.requester.id)
+        template = WorkflowTemplate(
+            name="مسار هيكلي محفوظ",
+            created_by_id=self.requester.id,
+            sla_days_default=6,
+        )
         db.session.add(template)
         db.session.flush()
         db.session.add(WorkflowTemplateStep(
@@ -1092,7 +1186,173 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         step = WorkflowInstanceStep.query.filter_by(instance_id=instance.id).one()
         self.assertEqual(step.approver_kind, "ORG_NODE")
         self.assertEqual(step.approver_org_node_id, self.department_b.id)
+        self.assertEqual(step.sla_days, 6)
+        self.assertIsNotNone(step.due_at)
         self.assertIsNotNone(Notification.query.filter_by(user_id=self.target_manager.id).first())
+
+    def test_dynamic_path_applies_selected_sla_to_every_runtime_step(self):
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"USER:{self.same_target.id}"],
+            sla_days=8,
+        )
+
+        self.assertEqual(result["errors"], [])
+        self.assertTrue(result["steps"])
+        self.assertEqual(
+            {step.get("sla_days") for step in result["steps"]},
+            {8},
+        )
+
+    def test_dynamic_sla_starts_only_when_each_step_becomes_active(self):
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب SLA ديناميكي",
+            status="DRAFT",
+            confidentiality="NORMAL",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+
+        start_workflow_for_request(
+            request_row,
+            None,
+            created_by_user_id=self.requester.id,
+            runtime_steps=[
+                {
+                    "step_order": 1,
+                    "approver_kind": "USER",
+                    "approver_user_id": self.same_target.id,
+                    "sla_days": 4,
+                },
+                {
+                    "step_order": 2,
+                    "approver_kind": "USER",
+                    "approver_user_id": self.cross_target.id,
+                    "sla_days": 4,
+                },
+            ],
+        )
+        db.session.commit()
+
+        instance = WorkflowInstance.query.filter_by(request_id=request_row.id).one()
+        first_step, second_step = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+        ).order_by(WorkflowInstanceStep.step_order.asc()).all()
+        self.assertEqual(first_step.sla_days, 4)
+        self.assertIsNotNone(first_step.due_at)
+        self.assertEqual(second_step.sla_days, 4)
+        self.assertIsNone(second_step.due_at)
+
+        decide_step(
+            request_row.id,
+            first_step.step_order,
+            self.same_target.id,
+            "APPROVED",
+            auto_commit=False,
+        )
+        db.session.flush()
+
+        self.assertEqual(instance.current_step_order, 2)
+        self.assertIsNotNone(second_step.due_at)
+        remaining_seconds = (second_step.due_at - first_step.decided_at).total_seconds()
+        self.assertGreater(remaining_seconds, (4 * 86400) - 2)
+        self.assertLessEqual(remaining_seconds, 4 * 86400)
+
+    def test_alert_levels_resolve_runtime_target_and_assistant_secretary(self):
+        assistant_type = self._node_type("SEC_GEN_ASSIST", "مساعد الأمين العام", 15)
+        assistant_user = self._user("assistant@example.test", "مساعد الأمين العام")
+        assistant_node = self._node("مساعد الأمين العام للاختبار", assistant_type, self.root)
+        directorate_type = OrgNodeType.query.filter_by(code="DIRECTORATE").one()
+        department_type = OrgNodeType.query.filter_by(code="DEPARTMENT").one()
+        child_directorate = self._node("إدارة تابعة للمساعد", directorate_type, assistant_node)
+        child_department = self._node("دائرة تابعة للمساعد", department_type, child_directorate)
+        db.session.add(OrgNodeManager(
+            node_id=assistant_node.id,
+            manager_user_id=assistant_user.id,
+        ))
+        db.session.add_all([
+            OrgNodeManager(
+                node_id=child_directorate.id,
+                manager_user_id=self.target_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=child_department.id,
+                manager_user_id=self.cross_target.id,
+            ),
+        ])
+        self.cross_target.org_node_id = child_department.id
+
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب تنبيه ثانٍ",
+            status="IN_PROGRESS",
+            confidentiality="NORMAL",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            template_id=None,
+            current_step_order=1,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        dynamic_step = WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            approver_kind="ORG_NODE",
+            approver_org_node_id=child_department.id,
+            status="PENDING",
+        )
+        user_step = WorkflowInstanceStep(
+            instance_id=1,
+            step_order=1,
+            approver_kind="USER",
+            approver_user_id=self.cross_target.id,
+            status="PENDING",
+        )
+        db.session.add(dynamic_step)
+        db.session.commit()
+
+        self.assertEqual(
+            _hierarchy_manager_user_ids(request_row, dynamic_step, {"SEC_GEN_ASSIST"}),
+            [assistant_user.id],
+        )
+        self.assertEqual(
+            _hierarchy_manager_user_ids(request_row, user_step, {"SEC_GEN_ASSIST"}),
+            [assistant_user.id],
+        )
+
+        for level in (1, 2):
+            with self.app.test_request_context(
+                method="POST",
+                data={
+                    "alert_level": str(level),
+                    "category": "SLA_RISK",
+                    "description": f"اختبار التنبيه {level}",
+                },
+            ):
+                with patch("workflow.routes.current_user", self.requester), patch(
+                    "workflow.routes._user_can_view_request", return_value=True
+                ), patch(
+                    "workflow.routes.get_effective_user", return_value=self.requester
+                ), patch(
+                    "workflow.routes.url_for",
+                    return_value=f"/workflow/request/{request_row.id}",
+                ), patch("workflow.routes.redirect", return_value="ok"):
+                    self.assertEqual(escalate_request.__wrapped__(request_row.id), "ok")
+
+        alerts = RequestEscalation.query.filter_by(request_id=request_row.id).order_by(
+            RequestEscalation.alert_level.asc(),
+        ).all()
+        self.assertEqual([alert.alert_level for alert in alerts], [1, 2])
+        self.assertEqual(
+            {int(user_id) for user_id in alerts[0].targets.split(",")},
+            {self.cross_target.id, self.target_manager.id},
+        )
+        self.assertEqual(alerts[1].targets, str(assistant_user.id))
 
     def test_structural_route_traverses_common_parent_once(self):
         route = structural_route_nodes(self.department_a1.id, self.department_b.id)

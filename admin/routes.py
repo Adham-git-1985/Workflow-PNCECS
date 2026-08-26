@@ -57,7 +57,7 @@ register_evaluation_routes(admin_bp)
 # =========================
 # Constants
 # =========================
-FINAL_STATUSES = ["APPROVED", "REJECTED"]
+FINAL_STATUSES = ["APPROVED", "REJECTED", "CLOSED"]
 
 DASHBOARD_CACHE = {
     "data": None,
@@ -175,6 +175,7 @@ def dashboard():
         func.count(WorkflowRequest.id),
         func.sum(case((WorkflowRequest.status == "APPROVED", 1), else_=0)),
         func.sum(case((WorkflowRequest.status == "REJECTED", 1), else_=0)),
+        func.sum(case((WorkflowRequest.status == "CLOSED", 1), else_=0)),
         func.sum(case((WorkflowRequest.status == "DRAFT", 1), else_=0)),
         func.sum(
             case(
@@ -184,7 +185,7 @@ def dashboard():
         )
     ).one()
 
-    total, approved, rejected, drafts, in_progress = stats
+    total, approved, rejected, closed, drafts, in_progress = stats
     delegated = 0
 
     SLA_DAYS = get_sla_days()
@@ -210,6 +211,7 @@ def dashboard():
             "total": total,
             "approved": approved,
             "rejected": rejected,
+            "closed": closed,
             "drafts": drafts,
             "in_progress": in_progress,
             "delegated": delegated
@@ -244,6 +246,7 @@ def dashboard_export_excel():
         func.count(WorkflowRequest.id),
         func.sum(case((WorkflowRequest.status == "APPROVED", 1), else_=0)),
         func.sum(case((WorkflowRequest.status == "REJECTED", 1), else_=0)),
+        func.sum(case((WorkflowRequest.status == "CLOSED", 1), else_=0)),
         func.sum(case((WorkflowRequest.status == "DRAFT", 1), else_=0)),
         func.sum(
             case(
@@ -253,7 +256,7 @@ def dashboard_export_excel():
         )
     ).one()
 
-    total, approved, rejected, drafts, in_progress = stats
+    total, approved, rejected, closed, drafts, in_progress = stats
     archive_total = ArchivedFile.query.count()
     archive_active = ArchivedFile.query.filter_by(is_deleted=False).count()
     archive_deleted = ArchivedFile.query.filter_by(is_deleted=True).count()
@@ -297,6 +300,7 @@ def dashboard_export_excel():
         ("إجمالي الطلبات", total),
         ("موافق عليه", approved),
         ("مرفوض", rejected),
+        ("مغلق", closed),
         ("المسودات", drafts),
         ("قيد التنفيذ", in_progress),
         ("أيام SLA", SLA_DAYS),
@@ -519,7 +523,7 @@ def escalations():
 
     # 1) SLA-overdue (legacy definition)
     escalated_requests = WorkflowRequest.query.filter(
-        WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+        WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
         WorkflowRequest.created_at < esc_deadline
     ).order_by(WorkflowRequest.created_at.asc()).all()
 
@@ -542,17 +546,17 @@ def escalations():
 @login_required
 @role_perm_required("VIEW_ESCALATIONS")
 def escalations_export_excel():
-    """Export escalations report to Excel.
+    """Export alerts report to Excel.
 
     Includes two sheets:
-      - Escalation_Log: all recorded escalations (manual + system) from RequestEscalation
+      - Alerts_Log: all recorded alerts (manual + system) from RequestEscalation
       - SLA_Overdue: legacy SLA-overdue requests
     """
     now = datetime.utcnow()
     esc_deadline = now - timedelta(days=get_sla_days() + get_escalation_days())
 
     escalated_requests = WorkflowRequest.query.filter(
-        WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+        WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
         WorkflowRequest.created_at < esc_deadline
     ).order_by(WorkflowRequest.created_at.asc()).all()
 
@@ -566,9 +570,10 @@ def escalations_export_excel():
     )
 
     headers_log = [
-        "Escalation ID",
+        "Alert ID",
         "Request ID",
         "الخطوة",
+        "مستوى التنبيه",
         "Category",
         "Created At",
         "From",
@@ -583,6 +588,7 @@ def escalations_export_excel():
             e.id,
             e.request_id,
             getattr(e, "step_order", "") or "",
+            getattr(e, "alert_level", 1) or 1,
             e.category,
             e.created_at.strftime("%Y-%m-%d %H:%M") if e.created_at else "",
             (e.from_user.email if getattr(e, "from_user", None) else ""),
@@ -614,11 +620,11 @@ def escalations_export_excel():
         ])
 
     data = make_xlsx_bytes_multi([
-        ("Escalation_Log", headers_log, rows_log),
+        ("Alerts_Log", headers_log, rows_log),
         ("SLA_Overdue", headers_overdue, rows_overdue),
     ])
 
-    filename = f"escalations_{now.strftime('%Y%m%d_%H%M')}.xlsx"
+    filename = f"alerts_{now.strftime('%Y%m%d_%H%M')}.xlsx"
     return send_file(
         BytesIO(data),
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

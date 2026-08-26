@@ -521,6 +521,9 @@ class WorkflowRequest(db.Model):
     title = db.Column(db.String(200))
     description = db.Column(db.Text)
     status = db.Column(db.String(50))
+    priority = db.Column(
+        db.String(20), nullable=False, default="NORMAL", index=True
+    )
 
     requester_id = db.Column(db.Integer, db.ForeignKey("users.id"))
     requester = db.relationship("User", backref="requests")
@@ -949,6 +952,12 @@ class RequestEscalation(db.Model):
     category = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=False)
 
+    # User-facing alert tier. Internal table/class names stay unchanged for
+    # backward compatibility with existing reports and audit integrations.
+    # 1: current assignees + directorate/general director
+    # 2: the Assistant Secretary General resolved from the org hierarchy
+    alert_level = db.Column(db.Integer, nullable=False, default=1)
+
     # Which workflow step was escalated (best-effort)
     step_order = db.Column(db.Integer, nullable=True)
 
@@ -1124,6 +1133,10 @@ class WorkflowInstanceStep(db.Model):
     note = db.Column(db.Text, nullable=True)
 
     # SLA
+    # Freeze the effective SLA on the runtime step so dynamic workflows do not
+    # depend on a template after they are created. The countdown (due_at) is
+    # started only when the step becomes active.
+    sla_days = db.Column(db.Integer, nullable=True)
     due_at = db.Column(db.DateTime, nullable=True)
 
     # PARALLEL_SYNC: ensure notifications are sent once when the step becomes active

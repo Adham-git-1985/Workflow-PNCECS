@@ -20,7 +20,7 @@
       <div class="col-md-3">
         <label class="form-label">الحالة</label>
         <select name="status" multiple class="form-select">
-          {% for s in ["DRAFT","IN_PROGRESS","APPROVED","REJECTED"] %}
+          {% for s in ["DRAFT","IN_PROGRESS","APPROVED","REJECTED","CLOSED"] %}
             <option value="{{ s }}"
               {% if s in request.args.getlist("status") %}selected{% endif %}>
               {{ s|ui_label }}
@@ -73,7 +73,7 @@
           </option>
           <option value="ESCALATED"
             {% if request.args.get("sla_state") == "ESCALATED" %}selected{% endif %}>
-            مصعّد
+            بحاجة إلى تنبيه
           </option>
         </select>
       </div>

@@ -817,6 +817,7 @@ def build_dynamic_target_path(
     requester: User,
     selected_target_refs,
     include_secretary_general: bool = False,
+    sla_days: int | None = None,
 ) -> dict:
     """Expand ordered USER/NODE/COMMITTEE targets into sequential runtime steps."""
     target_refs, errors = _normalized_dynamic_target_refs(selected_target_refs)
@@ -1194,8 +1195,17 @@ def build_dynamic_target_path(
         return_step["reason"] = DYNAMIC_RETURN_REASON
         steps.append(return_step)
 
+    try:
+        effective_dynamic_sla = int(sla_days) if sla_days is not None else None
+        if effective_dynamic_sla is not None and effective_dynamic_sla <= 0:
+            effective_dynamic_sla = None
+    except (TypeError, ValueError):
+        effective_dynamic_sla = None
+
     for index, step in enumerate(steps, start=1):
         step["step_order"] = index
+        if effective_dynamic_sla is not None:
+            step["sla_days"] = effective_dynamic_sla
 
     return {
         "steps": steps,

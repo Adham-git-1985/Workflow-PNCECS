@@ -419,7 +419,7 @@ def _ensure_runtime_schema():
                 if not _col_exists("users", _col):
                     _add_column_retry("users", _col, _ctype)
 
-            # request_escalation.step_order + request_escalation.targets
+            # request_escalation runtime metadata
             if not _col_exists("request_escalation", "step_order"):
                 try:
                     db.session.execute(text("ALTER TABLE request_escalation ADD COLUMN step_order INTEGER"))
@@ -433,6 +433,109 @@ def _ensure_runtime_schema():
                     db.session.commit()
                 except Exception:
                     db.session.rollback()
+
+            if not _col_exists("request_escalation", "alert_level"):
+                _add_column_retry(
+                    "request_escalation",
+                    "alert_level",
+                    "INTEGER NOT NULL DEFAULT 1",
+                )
+
+            # Freeze the effective SLA on each runtime step. This lets dynamic
+            # routes start their countdown when a step actually becomes active.
+            if not _col_exists("workflow_instance_steps", "sla_days"):
+                _add_column_retry("workflow_instance_steps", "sla_days", "INTEGER")
+
+            # Optional request priority. Blank values in the creation form are
+            # stored as NORMAL so existing requests and filters stay uniform.
+            if not _col_exists("workflow_request", "priority"):
+                _add_column_retry(
+                    "workflow_request",
+                    "priority",
+                    "TEXT NOT NULL DEFAULT 'NORMAL'",
+                )
+            if _col_exists("workflow_request", "priority"):
+                try:
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_workflow_request_priority "
+                        "ON workflow_request (priority)"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
+            # Backfill requests created before runtime SLA durations existed.
+            # Existing due dates preserve the original duration when there is
+            # no template value, then waiting steps have their clocks stopped.
+            try:
+                setting_row = db.session.execute(text(
+                    "SELECT value FROM system_setting WHERE key = 'SLA_DAYS' LIMIT 1"
+                )).first()
+                try:
+                    runtime_default_sla = int(setting_row[0]) if setting_row else 3
+                    if runtime_default_sla <= 0:
+                        runtime_default_sla = 3
+                except (TypeError, ValueError):
+                    runtime_default_sla = 3
+
+                sla_rows = db.session.execute(text("""
+                    SELECT s.id,
+                           s.due_at,
+                           i.created_at AS instance_created_at,
+                           ts.sla_days AS template_step_sla,
+                           t.sla_days_default AS template_default_sla
+                      FROM workflow_instance_steps AS s
+                      JOIN workflow_instances AS i ON i.id = s.instance_id
+                 LEFT JOIN workflow_template_steps AS ts
+                        ON ts.template_id = i.template_id
+                       AND ts.step_order = s.step_order
+                 LEFT JOIN workflow_templates AS t ON t.id = i.template_id
+                     WHERE s.sla_days IS NULL
+                """)).mappings().all()
+                for sla_row in sla_rows:
+                    effective_sla = None
+                    for candidate in (
+                        sla_row["template_step_sla"],
+                        sla_row["template_default_sla"],
+                    ):
+                        try:
+                            candidate = int(candidate)
+                        except (TypeError, ValueError):
+                            continue
+                        if candidate > 0:
+                            effective_sla = candidate
+                            break
+
+                    if effective_sla is None:
+                        try:
+                            due_at = datetime.fromisoformat(str(sla_row["due_at"]))
+                            created_at = datetime.fromisoformat(str(sla_row["instance_created_at"]))
+                            elapsed_days = (due_at - created_at).total_seconds() / 86400.0
+                            if elapsed_days > 0:
+                                effective_sla = max(1, int(round(elapsed_days)))
+                        except (TypeError, ValueError):
+                            pass
+                    effective_sla = effective_sla or runtime_default_sla
+                    db.session.execute(
+                        text("UPDATE workflow_instance_steps SET sla_days = :days WHERE id = :id"),
+                        {"days": effective_sla, "id": sla_row["id"]},
+                    )
+
+                db.session.execute(text("""
+                    UPDATE workflow_instance_steps
+                       SET due_at = NULL
+                     WHERE status = 'PENDING'
+                       AND EXISTS (
+                           SELECT 1
+                             FROM workflow_instances AS i
+                            WHERE i.id = workflow_instance_steps.instance_id
+                              AND COALESCE(i.is_completed, 0) = 0
+                              AND i.current_step_order != workflow_instance_steps.step_order
+                       )
+                """))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
 
 
@@ -1050,7 +1153,7 @@ NEXT_STATUS_MAP = {
 }
 
 REJECT_STATUS = "REJECTED"
-FINAL_STATUSES = ["APPROVED", "REJECTED"]
+FINAL_STATUSES = ["APPROVED", "REJECTED", "CLOSED"]
 
 
 @app.route("/")
@@ -1318,7 +1421,7 @@ def inbox():
             WorkflowRequest.status == "REJECTED"
         ).count(),
         "in_progress": filtered_query.filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"])
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"])
         ).count(),
     }
 
@@ -1331,18 +1434,18 @@ def inbox():
 
     sla_counters = {
         "on_track": filtered_query.filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
             WorkflowRequest.created_at >= sla_deadline
         ).count(),
 
         "breached": filtered_query.filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
             WorkflowRequest.created_at < sla_deadline,
             WorkflowRequest.created_at >= esc_deadline
         ).count(),
 
         "escalated": filtered_query.filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
             WorkflowRequest.created_at < esc_deadline
         ).count(),
     }
@@ -1363,7 +1466,7 @@ def inbox():
     else:
         escalation_alerts_count = WorkflowRequest.query.filter(
             WorkflowRequest.current_role == effective_user.id,
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"]),
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"]),
             WorkflowRequest.created_at < esc_deadline
         ).count()
 

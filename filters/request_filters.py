@@ -56,7 +56,7 @@ def apply_request_filters(query, args):
 
         # فقط الطلبات غير النهائية
         query = query.filter(
-            WorkflowRequest.status.notin_(["APPROVED", "REJECTED"])
+            WorkflowRequest.status.notin_(["APPROVED", "REJECTED", "CLOSED"])
         )
 
         if args["sla_state"] == "ON_TRACK":
@@ -90,7 +90,7 @@ def get_sla_state(request_obj):
     sla_days = get_sla_days()
     esc_days = get_escalation_days()
 
-    if request_obj.status in ["APPROVED", "REJECTED"]:
+    if request_obj.status in ["APPROVED", "REJECTED", "CLOSED"]:
         return None
 
     now = datetime.utcnow()

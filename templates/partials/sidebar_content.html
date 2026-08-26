@@ -360,7 +360,7 @@
 {% if current_user.has_role('ADMIN') or current_user.has_role_perm('VIEW_ESCALATIONS') %}
         <a href="{{ url_for('admin.escalations') }}"
            class="{% if request.path.startswith('/admin/escalations') %}active{% endif %}">
-            🚨 التصعيدات
+            🚨 التنبيهات
             {% if escalation_alerts_count|default(0) > 0 %}
                 <span class="badge bg-danger ms-2">{{ escalation_alerts_count }}</span>
             {% endif %}

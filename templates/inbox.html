@@ -77,7 +77,7 @@
   <div class="col-md-4">
     <div class="card text-center shadow-sm border-danger">
       <div class="card-body">
-        <small class="text-muted">مصعّد</small>
+        <small class="text-muted">بحاجة إلى تنبيه</small>
         <h3 class="text-danger">{{ sla_counters.escalated }}</h3>
       </div>
     </div>
@@ -102,7 +102,7 @@
       <td>{{ req.id }}</td>
       <td>{{ req.title }}</td>
       <td>
-        <span class="badge {{ 'bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary') }}">{{ req.status|ui_label }}</span>
+        <span class="badge {{ 'bg-secondary' if req.status == 'CLOSED' else ('bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary')) }}">{{ req.status|ui_label }}</span>
       </td>
       <td>
         {% set sla = get_sla_state(req) %}
@@ -111,7 +111,7 @@
         {% elif sla == "BREACHED" %}
           <span class="badge bg-warning text-dark">متجاوز المدة</span>
         {% elif sla == "ESCALATED" %}
-          <span class="badge bg-danger">مصعّد</span>
+          <span class="badge bg-danger">بحاجة إلى تنبيه</span>
         {% else %}
           <span class="text-muted">—</span>
         {% endif %}

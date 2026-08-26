@@ -3,8 +3,8 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h3 class="mb-1">🚨 التصعيدات</h3>
-        <small class="text-muted">سجل جميع التصعيدات (المستخدمة + النظام) + الطلبات المتجاوزة مدة اتفاقية مستوى الخدمة</small>
+        <h3 class="mb-1">🚨 التنبيهات</h3>
+        <small class="text-muted">سجل جميع التنبيهات (اليدوية + النظام) والطلبات المتجاوزة مدة اتفاقية مستوى الخدمة</small>
     </div>
     <div>
         <a class="btn btn-outline-success"
@@ -16,13 +16,13 @@
 </div>
 
 {# ========================= #}
-{# التصعيد Log (manual/system) #}
+{# Alert log (manual/system) #}
 {# ========================= #}
 <div class="card shadow-sm mb-4">
     <div class="card-header bg-light d-flex justify-content-between align-items-center">
         <div>
-            <strong>📌 سجل التصعيدات</strong>
-            <div class="text-muted small">يعرض آخر 500 تصعيد، ويشمل التصدير حتى 10,000 سجل (يمكن تغيير الحد الأقصى).</div>
+            <strong>📌 سجل التنبيهات</strong>
+            <div class="text-muted small">يعرض آخر 500 تنبيه، ويشمل التصدير حتى 10,000 سجل (يمكن تغيير الحد الأقصى).</div>
         </div>
         <div class="text-muted small">عدد المعروض: {{ escalations|length }}</div>
     </div>
@@ -35,6 +35,7 @@
                         <th>#</th>
                         <th>الطلب</th>
                         <th class="text-center">الخطوة</th>
+                        <th class="text-center">المستوى</th>
                         <th>النوع</th>
                         <th>من</th>
                         <th>إلى</th>
@@ -52,11 +53,12 @@
                             </a>
                             <div class="text-muted small">
                                 <a class="text-decoration-none" href="{{ url_for('workflow.request_escalations', request_id=e.request_id, step=e.step_order) }}">
-                                    عرض كل تصعيدات الطلب
+                                    عرض كل تنبيهات الطلب
                                 </a>
                             </div>
                         </td>
                         <td class="text-center">{{ e.step_order or '—' }}</td>
+                        <td class="text-center"><span class="badge bg-danger-subtle text-danger border">التنبيه {{ e.alert_level or 1 }}</span></td>
                         <td><span class="badge bg-warning text-dark">{{ e.category|esc_category_ar }}</span></td>
                         <td>{{ e.from_user.email if e.from_user else 'النظام' }}</td>
                         <td>{{ e.to_user.email if e.to_user else '—' }}</td>
@@ -74,7 +76,7 @@
         </div>
         {% else %}
         <div class="p-4 text-center text-muted">
-            لا توجد تصعيدات مسجلة حالياً
+            لا توجد تنبيهات مسجلة حالياً
         </div>
         {% endif %}
     </div>
@@ -87,7 +89,7 @@
 <div class="card border-danger shadow-sm">
     <div class="card-header bg-light">
         <strong>⏱️ طلبات متجاوزة مدة اتفاقية مستوى الخدمة (النظام السابق)</strong>
-        <div class="text-muted small">الطلبات التي تجاوزت مدة اتفاقية مستوى الخدمة + مدة التصعيد المعرفة في الإعدادات</div>
+        <div class="text-muted small">الطلبات التي تجاوزت مدة اتفاقية مستوى الخدمة + مدة التنبيه المعرفة في الإعدادات</div>
     </div>
     <div class="card-body p-0">
 
@@ -120,7 +122,7 @@
                             {{ req.created_at.strftime("%Y-%m-%d") if req.created_at else '' }}
                         </td>
                         <td class="text-center">
-                            <span class="badge bg-danger">مصعّد</span>
+                            <span class="badge bg-danger">متأخر ويتطلب تنبيهًا</span>
                         </td>
                     </tr>
                 {% endfor %}

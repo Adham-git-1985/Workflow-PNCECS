@@ -61,6 +61,15 @@
         </div>
 
         <div class="col-md-4 col-lg-3">
+            <div class="card border-dark shadow-sm text-center h-100">
+                <div class="card-body">
+                    <small class="text-muted">المغلقة بواسطة المنشئ</small>
+                    <h2 class="text-dark">{{ counters.closed }}</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4 col-lg-3">
             <div class="card border-secondary shadow-sm text-center h-100">
                 <div class="card-body">
                     <small class="text-muted">مسودات</small>
@@ -175,7 +184,7 @@
                             <th>الحالة</th>
                             <th>تاريخ الإنشاء</th>
                             <th>عدد الأيام</th>
-                            <th>مصعّد</th>
+                            <th>تم التنبيه</th>
                             <th>الدور الحالي</th>
                         </tr>
                     </thead>
@@ -186,7 +195,8 @@
                             <td>{{ req.title }}</td>
                             <td>
                                 <span class="badge
-                                    {% if req.status == 'APPROVED' %}bg-success
+                                    {% if req.status == 'CLOSED' %}bg-dark
+                                    {% elif req.status == 'APPROVED' %}bg-success
                                     {% elif req.status == 'REJECTED' %}bg-danger
                                     {% elif req.status == 'DRAFT' %}bg-secondary
                                     {% else %}bg-warning text-dark{% endif %}">
@@ -260,17 +270,19 @@ const ctx = document.getElementById('statusChart');
 new Chart(ctx, {
     type: 'pie',
     data: {
-        labels: ['الموافق عليها', 'المرفوضة', 'قيد المعالجة', 'مسودات'],
+        labels: ['الموافق عليها', 'المرفوضة', 'المغلقة', 'قيد المعالجة', 'مسودات'],
         datasets: [{
             data: [
                 {{ counters.approved }},
                 {{ counters.rejected }},
+                {{ counters.closed }},
                 {{ counters.in_progress }},
                 {{ counters.drafts }}
             ],
             backgroundColor: [
                 '#198754',
                 '#dc3545',
+                '#212529',
                 '#ffc107',
                 '#6c757d'
             ]

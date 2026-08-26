@@ -88,6 +88,7 @@ UI_LABELS_AR = {
     "PORTAL_INTEGRATION_SAVE": "حفظ إعدادات التكامل في البوابة",
     "PORTAL_PERMISSIONS_ROLE_UPDATE": "تحديث صلاحيات دور في البوابة",
     "REQUEST_DELETED": "حذف طلب",
+    "REQUEST_CLOSED": "إغلاق الطلب",
     "STEP_REJECTED": "إعادة أو رفض الخطوة",
     "USER_DELETED": "حذف مستخدم",
     "USER_PROFILE_UPDATED": "تحديث الملف الشخصي للمستخدم",
@@ -160,7 +161,7 @@ UI_LABELS_AR = {
     "PRIVATE": "خاص",
     "PUBLIC": "عام",
     "REQUEST": "طلب",
-    "REQUEST_ESCALATION": "تصعيد الطلب",
+    "REQUEST_ESCALATION": "تنبيه على الطلب",
     "SHARE": "مشاركة",
     "SHARED": "مشارك",
     "SIGNED": "موقّع",
@@ -193,7 +194,7 @@ UI_LABELS_AR = {
     "SUBMITTED": "مرسل",
     "ON_TRACK": "ضمن المدة",
     "BREACHED": "متجاوز المدة",
-    "ESCALATED": "مصعّد",
+    "ESCALATED": "بحاجة إلى تنبيه",
 }
 
 
