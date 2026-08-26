@@ -301,7 +301,7 @@
               <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                 <div>
                   <div class="form-label fw-bold mb-1"><i class="bi bi-diagram-3"></i> الهيكلية</div>
-                  <div class="small text-muted">اختر بطاقة الجهة من الشجرة؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.</div>
+                  <div class="small text-muted">اختر بطاقة الجهة من الشجرة، ثم اضغط «إضافة الجهة نفسها إلى المسار»؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.</div>
                 </div>
                 <span class="badge text-bg-light border"><i class="bi bi-hand-index"></i> اختيار مباشر</span>
               </div>
@@ -388,11 +388,15 @@
           {% if not dynamic_choices and not dynamic_org_nodes and not dynamic_committees %}
             <div class="alert alert-warning py-2 mt-3 mb-0">لا توجد جهات أو موظفون أو لجان متاحة لبناء المسار الديناميكي.</div>
           {% endif %}
-          <div class="mt-3" id="dynamicSelectedEmpty"><span class="text-muted small">لم تختر أي جهة أو شخص أو لجنة بعد.</span></div>
+          <div class="alert alert-light border mt-3 mb-0" id="dynamicSelectedEmpty">
+            <div class="fw-semibold small">لم تُضف أي جهة أو شخص أو لجنة إلى المسار بعد.</div>
+            <div class="text-muted small mt-1">اختر بطاقة من الهيكلية ثم اضغط «إضافة الجهة نفسها إلى المسار»، أو اختر موظفًا أو لجنة.</div>
+          </div>
           <ol class="list-group mt-3 d-none" id="dynamicSelectedList"></ol>
           <button class="btn btn-sm btn-outline-secondary mt-3" type="button" id="dynamicPathPreviewToggle"
                   data-bs-toggle="collapse" data-bs-target="#dynamicPathPreviewPanel"
-                  aria-expanded="false" aria-controls="dynamicPathPreviewPanel" disabled>
+                  aria-expanded="false" aria-controls="dynamicPathPreviewPanel"
+                  title="افتح المعاينة لرؤية المسار أو تعليمات إضافة أول وجهة">
             <i class="bi bi-eye"></i> عرض تحليل وتتبع المسار
           </button>
           <div class="collapse" id="dynamicPathPreviewPanel">
@@ -1072,7 +1076,13 @@
       selectedList.innerHTML = '';
       selectedList.classList.toggle('d-none', selected.length === 0);
       emptyState.classList.toggle('d-none', selected.length !== 0);
-      if (previewToggle) previewToggle.disabled = selected.length === 0;
+      if (previewToggle) {
+        previewToggle.classList.toggle('btn-outline-primary', selected.length > 0);
+        previewToggle.classList.toggle('btn-outline-secondary', selected.length === 0);
+        previewToggle.title = selected.length
+          ? 'عرض المسار الفعلي بعد تطبيق الهيكلية'
+          : 'افتح المعاينة لرؤية خطوات إضافة أول وجهة';
+      }
 
       selected.forEach(function(item, index){
         const listItem = document.createElement('li');
@@ -1336,8 +1346,12 @@
     async function loadPreview(){
       if (!isDynamic()) return;
       if (!selected.length) {
-        previewBox.classList.add('d-none');
-        previewBox.innerHTML = '';
+        previewBox.classList.remove('d-none');
+        previewBox.innerHTML =
+          '<div class="alert alert-info py-2 mb-0">' +
+            '<div class="fw-bold mb-1"><i class="bi bi-info-circle"></i> أضف وجهة أولاً لعرض المسار الفعلي.</div>' +
+            '<div class="small">اختر بطاقة من الهيكلية ثم اضغط «إضافة الجهة نفسها إلى المسار»، أو اختر موظفًا أو لجنة. بعد الإضافة ستظهر خطوات الذهاب والعودة هنا تلقائيًا.</div>' +
+          '</div>';
         return;
       }
       previewBox.classList.remove('d-none');
@@ -1388,6 +1402,7 @@
 
     if (predefinedRadio) predefinedRadio.addEventListener('change', updateMode);
     if (dynamicRadio) dynamicRadio.addEventListener('change', updateMode);
+    if (previewToggle) previewToggle.addEventListener('click', schedulePreview);
     if (savedPresetSelect) savedPresetSelect.addEventListener('change', function(){
       const hasSelection = Boolean(savedPresetSelect.value);
       loadPresetButton.disabled = !hasSelection;
