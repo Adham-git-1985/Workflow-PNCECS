@@ -136,6 +136,47 @@ class ProjectWorkflowSeedTests(unittest.TestCase):
         self.assertEqual(WorkflowRoutingRule.query.count(), 3)
         self.assertEqual(WorkflowTemplateStep.query.count(), 8)
 
+    def test_startup_seed_preserves_admin_template_edits(self):
+        upsert_project_workflows(preserve_existing=True)
+        db.session.commit()
+
+        self.assertEqual(WorkflowTemplate.query.count(), 3)
+
+        template = WorkflowTemplate.query.filter_by(
+            name="مسار المشاريع القائمة"
+        ).one()
+        request_type = RequestType.query.filter_by(code="PROJECT_ACTIVE").one()
+        rule = WorkflowRoutingRule.query.filter_by(
+            request_type_id=request_type.id,
+            template_id=template.id,
+        ).one()
+        first_step = WorkflowTemplateStep.query.filter_by(
+            template_id=template.id,
+            step_order=1,
+        ).one()
+
+        template.sla_days_default = 9
+        template.is_active = False
+        request_type.name_ar = "اسم معدل"
+        request_type.is_active = False
+        rule.priority = 17
+        first_step.sla_days = 11
+        db.session.commit()
+
+        upsert_project_workflows(preserve_existing=True)
+        db.session.commit()
+
+        self.assertEqual(template.sla_days_default, 9)
+        self.assertFalse(template.is_active)
+        self.assertEqual(request_type.name_ar, "اسم معدل")
+        self.assertFalse(request_type.is_active)
+        self.assertEqual(rule.priority, 17)
+        self.assertEqual(first_step.sla_days, 11)
+        self.assertEqual(
+            WorkflowTemplateStep.query.filter_by(template_id=template.id).count(),
+            2,
+        )
+
     def test_seed_requires_approved_project_nodes(self):
         OrgNode.query.filter_by(code="ASST_PROGRAMS").delete(synchronize_session=False)
         db.session.commit()

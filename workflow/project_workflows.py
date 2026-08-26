@@ -89,11 +89,17 @@ def _creator_id() -> int | None:
     return int(creator.id) if creator else None
 
 
-def _upsert_request_type(definition: ProjectWorkflowDefinition) -> RequestType:
+def _upsert_request_type(
+    definition: ProjectWorkflowDefinition,
+    *,
+    preserve_existing: bool = False,
+) -> RequestType:
     request_type = RequestType.query.filter_by(code=definition.request_type_code).first()
     if request_type is None:
         request_type = RequestType(code=definition.request_type_code)
         db.session.add(request_type)
+    elif preserve_existing:
+        return request_type
     request_type.name_ar = definition.request_type_name_ar
     request_type.name_en = definition.request_type_name_en
     request_type.is_active = True
@@ -107,6 +113,7 @@ def _upsert_template(
     projects_node_id: int,
     assistant_node_id: int,
     creator_id: int | None,
+    preserve_existing: bool = False,
 ) -> WorkflowTemplate:
     template = (
         WorkflowTemplate.query
@@ -118,6 +125,8 @@ def _upsert_template(
         template = WorkflowTemplate(name=definition.template_name, created_by_id=creator_id)
         db.session.add(template)
         db.session.flush()
+    elif preserve_existing:
+        return template
 
     template.is_active = True
     template.sla_days_default = 3
@@ -151,17 +160,18 @@ def _upsert_routing_rule(
     request_type: RequestType,
     template: WorkflowTemplate,
     projects_node_id: int,
+    *,
+    preserve_existing: bool = False,
 ) -> WorkflowRoutingRule:
-    rule = (
-        WorkflowRoutingRule.query
-        .filter_by(
-            request_type_id=request_type.id,
-            template_id=template.id,
-            org_node_id=projects_node_id,
-        )
-        .order_by(WorkflowRoutingRule.id.asc())
-        .first()
+    rule_query = WorkflowRoutingRule.query.filter_by(
+        request_type_id=request_type.id,
+        template_id=template.id,
     )
+    if not preserve_existing:
+        rule_query = rule_query.filter_by(org_node_id=projects_node_id)
+    rule = rule_query.order_by(WorkflowRoutingRule.id.asc()).first()
+    if rule is not None and preserve_existing:
+        return rule
     if rule is None:
         rule = WorkflowRoutingRule(
             request_type_id=request_type.id,
@@ -179,11 +189,14 @@ def _upsert_routing_rule(
     return rule
 
 
-def upsert_project_workflows() -> list[dict]:
+def upsert_project_workflows(*, preserve_existing: bool = False) -> list[dict]:
     """Create or refresh the three approved project workflow definitions.
 
     The caller owns the transaction so the helper can be used by a script,
-    tests, or another controlled deployment task.
+    tests, or another controlled deployment task.  ``preserve_existing`` is
+    intended for application startup: it creates missing records while leaving
+    administrator edits to existing templates, steps, request types, and
+    routing rules untouched.
     """
 
     projects_node = _active_node(PROJECTS_DIRECTORATE_NODE_CODE)
@@ -202,20 +215,31 @@ def upsert_project_workflows() -> list[dict]:
     creator_id = _creator_id()
     results = []
     for definition in PROJECT_WORKFLOW_DEFINITIONS:
-        request_type = _upsert_request_type(definition)
+        request_type = _upsert_request_type(
+            definition,
+            preserve_existing=preserve_existing,
+        )
         template = _upsert_template(
             definition,
             projects_node_id=int(projects_node.id),
             assistant_node_id=int(assistant_node.id),
             creator_id=creator_id,
+            preserve_existing=preserve_existing,
         )
-        rule = _upsert_routing_rule(request_type, template, int(projects_node.id))
+        rule = _upsert_routing_rule(
+            request_type,
+            template,
+            int(projects_node.id),
+            preserve_existing=preserve_existing,
+        )
         results.append({
             "request_type_id": int(request_type.id),
             "template_id": int(template.id),
             "routing_rule_id": int(rule.id),
             "template_name": template.name,
             "description": definition.description,
-            "step_count": 3 if definition.include_secretary_general else 2,
+            "step_count": WorkflowTemplateStep.query.filter_by(
+                template_id=template.id
+            ).count(),
         })
     return results
