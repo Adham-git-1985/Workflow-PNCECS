@@ -13,6 +13,9 @@ from models import (
     EmployeeQualification,
     HRLookupItem,
     Organization,
+    OrgNode,
+    OrgNodeManager,
+    OrgNodeType,
     Section,
     User,
 )
@@ -22,7 +25,12 @@ from services.employee_data_import import (
     build_employee_import_plan,
     canonical_payload_hash,
 )
-from portal.routes import _resolve_employee_placement_ids, _timeclock_build_code_to_user
+from portal.routes import (
+    _build_dynamic_employee_row,
+    _dynamic_manager_columns,
+    _resolve_employee_placement_ids,
+    _timeclock_build_code_to_user,
+)
 
 
 def answer(value, occurrence=1):
@@ -193,6 +201,149 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(placement["department_id"], department.id)
         self.assertEqual(placement["section_id"], section.id)
         self.assertEqual(placement["division_id"], division.id)
+
+    def test_questionnaire_placement_maps_labels_to_real_levels_and_parent_path(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة المتخصصة",
+            is_active=True,
+        )
+        other_directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="إدارة عامة أخرى",
+            is_active=True,
+        )
+        db.session.add_all([directorate, other_directorate])
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الثقافة",
+            is_active=True,
+        )
+        other_department = Department(
+            directorate_id=other_directorate.id,
+            name_ar="دائرة أخرى",
+            is_active=True,
+        )
+        db.session.add_all([department, other_department])
+        db.session.flush()
+        section = Section(
+            department_id=department.id,
+            name_ar="قسم حماية التراث",
+            is_active=True,
+        )
+        duplicate_section = Section(
+            department_id=other_department.id,
+            name_ar="قسم حماية التراث",
+            is_active=True,
+        )
+        db.session.add_all([section, duplicate_section])
+        db.session.commit()
+
+        payload = self.payload()
+        payload["fields"].update({
+            "organization_id": answer("الإدارة العامة المتخصصة"),
+            "directorate_id": answer("دائرة الثقافة"),
+            "department_id": answer("قسم حماية التراث"),
+        })
+
+        plan = build_employee_import_plan(payload, self.employee)
+
+        self.assertEqual(plan["unresolved"], [])
+        resolved = {operation["field"]: operation["resolved"] for operation in plan["operations"]}
+        self.assertEqual(resolved["organization_id"], organization.id)
+        self.assertEqual(resolved["directorate_id"], directorate.id)
+        self.assertEqual(resolved["department_id"], department.id)
+        self.assertEqual(resolved["section_id"], section.id)
+
+    def test_manager_resolution_accepts_a_unique_abbreviated_arabic_name(self):
+        manager = self._user("manager@example.test", "خلود احمد يوسف حنتش")
+        db.session.commit()
+        payload = self.payload()
+        payload["fields"]["direct_manager_user_id"] = answer("خلود حنتش")
+
+        plan = build_employee_import_plan(payload, self.employee)
+
+        self.assertEqual(plan["unresolved"], [])
+        operation = next(
+            item for item in plan["operations"]
+            if item["field"] == "direct_manager_user_id"
+        )
+        self.assertEqual(operation["resolved"], manager.id)
+
+    def test_missing_qualification_lookups_can_be_created_during_apply(self):
+        payload = self.payload()
+        payload["tables"]["المؤهلات"][0].update({
+            "qualification.specialization_lookup_id": "علم الآثار",
+            "qualification.grade_lookup_id": "جيد جدا",
+            "qualification.university_lookup_id": "جامعة القدس",
+        })
+
+        preview = build_employee_import_plan(payload, self.employee)
+        self.assertEqual(len(preview["unresolved"]), 3)
+
+        apply_plan = build_employee_import_plan(
+            payload,
+            self.employee,
+            create_missing_lookups=True,
+        )
+        self.assertEqual(apply_plan["unresolved"], [])
+        self.assertEqual(
+            {item["category"] for item in apply_plan["created_lookups"]},
+            {"QUAL_SPECIALIZATION", "QUAL_GRADE", "UNIVERSITY"},
+        )
+
+    def test_manager_chain_uses_dynamic_nodes_and_custom_levels(self):
+        directorate_type = OrgNodeType(
+            code="DIRECTORATE",
+            name_ar="إدارة عامة",
+            sort_order=20,
+            is_active=True,
+        )
+        section_type = OrgNodeType(
+            code="SECTION",
+            name_ar="قسم",
+            sort_order=50,
+            is_active=True,
+        )
+        db.session.add_all([directorate_type, section_type])
+        db.session.flush()
+        directorate = OrgNode(
+            type_id=directorate_type.id,
+            name_ar="الإدارة العامة للبرامج",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        section = OrgNode(
+            type_id=section_type.id,
+            parent_id=directorate.id,
+            name_ar="قسم البرامج",
+            is_active=True,
+        )
+        section_manager = self._user("section-manager@example.test", "مسؤول القسم")
+        directorate_manager = self._user("directorate-manager@example.test", "مسؤول الإدارة")
+        db.session.add(section)
+        db.session.flush()
+        db.session.add_all([
+            OrgNodeManager(node_id=section.id, manager_user_id=section_manager.id),
+            OrgNodeManager(node_id=directorate.id, manager_user_id=directorate_manager.id),
+        ])
+        db.session.commit()
+
+        nodes = {node.id: node for node in OrgNode.query.all()}
+        managers = {row.node_id: row for row in OrgNodeManager.query.all()}
+        row = _build_dynamic_employee_row(self.employee, section, nodes, managers)
+        columns = _dynamic_manager_columns(nodes, managers)
+
+        self.assertEqual(row["assigned_unit"], "قسم: قسم البرامج")
+        self.assertEqual(row["manager_by_type"]["SECTION"], "مسؤول القسم")
+        self.assertEqual(row["manager_by_type"]["DIRECTORATE"], "مسؤول الإدارة")
+        self.assertIn("قسم: مسؤول القسم", row["chain_text"])
+        self.assertEqual([column["code"] for column in columns], ["SECTION", "DIRECTORATE"])
 
     def test_apply_updates_employee_file_and_is_idempotent_for_repeated_rows(self):
         summary = apply_employee_import_payload(

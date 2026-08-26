@@ -20,6 +20,7 @@ from models import (
     EmployeeSecondment,
     HRLookupItem,
     Organization,
+    Section,
     User,
 )
 
@@ -86,6 +87,17 @@ ORG_FIELDS = {
     "division_id": (Division, "الشعبة"),
 }
 
+# The questionnaire uses human-facing levels that start at "الإدارة العامة"
+# while EmployeeFile also stores the institution above it. Keep the incoming
+# keys for backward compatibility with issued forms, but write each value to its
+# real hierarchy field.
+EMPLOYEE_ORG_FIELDS = (
+    ("organization_id", "directorate_id", Directorate, "الإدارة العامة"),
+    ("directorate_id", "department_id", Department, "الدائرة"),
+    ("department_id", "section_id", Section, "القسم"),
+    ("division_id", "division_id", Division, "الشعبة"),
+)
+
 REPEATED_LABELS = {
     "dependents": "التابعون",
     "qualifications": "المؤهلات",
@@ -102,6 +114,17 @@ def _norm(value: Any) -> str:
     text = "".join(ch for ch in text if unicodedata.category(ch) not in {"Mn", "Cf"})
     text = text.replace("ـ", "")
     return "".join(ch for ch in text if ch.isalnum())
+
+
+def _name_tokens(value: Any) -> set[str]:
+    text = unicodedata.normalize("NFKC", _clean(value)).lower()
+    text = "".join(ch for ch in text if unicodedata.category(ch) not in {"Mn", "Cf"})
+    text = text.replace("ـ", "")
+    return {
+        "".join(ch for ch in token if ch.isalnum())
+        for token in re.split(r"\s+", text)
+        if any(ch.isalnum() for ch in token)
+    }
 
 
 def validate_employee_payload(payload: Any) -> dict:
@@ -263,15 +286,22 @@ def _resolve_lookup(
     return None, None
 
 
-def _resolve_named_model(model, value: str | None, context: str, unresolved: list[dict]):
-    if not value:
-        return None, None
+def _named_model_matches(model, value: str | None) -> list:
     wanted = _norm(value)
+    if not wanted:
+        return []
     matches = []
     for row in model.query.all():
         candidates = [_norm(getattr(row, attr, None)) for attr in ("name_ar", "name_en", "code")]
         if wanted and wanted in candidates:
             matches.append(row)
+    return matches
+
+
+def _resolve_named_model(model, value: str | None, context: str, unresolved: list[dict]):
+    if not value:
+        return None, None
+    matches = _named_model_matches(model, value)
     if len(matches) == 1:
         row = matches[0]
         return row.id, getattr(row, "name_ar", None) or getattr(row, "name_en", None) or getattr(row, "code", None)
@@ -280,20 +310,122 @@ def _resolve_named_model(model, value: str | None, context: str, unresolved: lis
     return None, None
 
 
+def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[dict]:
+    """Resolve questionnaire placement fields against their real hierarchy levels."""
+    resolved: dict[str, Any] = {}
+    direct_input: dict[str, tuple[str, str]] = {}
+
+    for source_field, target_field, model, label in EMPLOYEE_ORG_FIELDS:
+        incoming = _first_value(payload, source_field)
+        if incoming is None:
+            continue
+        matches = _named_model_matches(model, incoming)
+
+        # Repeated Arabic labels are valid in different branches. Scope lower
+        # levels to the parent already selected in the same questionnaire.
+        if target_field == "department_id" and resolved.get("directorate_id"):
+            matches = [
+                row for row in matches
+                if int(getattr(row, "directorate_id", 0) or 0) == int(resolved["directorate_id"])
+            ]
+        elif target_field == "section_id":
+            if resolved.get("department_id"):
+                matches = [
+                    row for row in matches
+                    if int(getattr(row, "department_id", 0) or 0) == int(resolved["department_id"])
+                ]
+            elif resolved.get("directorate_id"):
+                matches = [
+                    row for row in matches
+                    if (
+                        int(getattr(row, "directorate_id", 0) or 0) == int(resolved["directorate_id"])
+                        or int(getattr(getattr(row, "department", None), "directorate_id", 0) or 0)
+                        == int(resolved["directorate_id"])
+                    )
+                ]
+        elif target_field == "division_id" and resolved.get("section_id"):
+            matches = [
+                row for row in matches
+                if int(getattr(row, "section_id", 0) or 0) == int(resolved["section_id"])
+            ]
+
+        if len(matches) != 1:
+            reason = "أكثر من قيمة مطابقة ضمن المسار المحدد" if len(matches) > 1 else "غير موجود في الهيكلية ضمن المسار المحدد"
+            unresolved.append({"field": label, "value": incoming, "reason": reason})
+            continue
+
+        row = matches[0]
+        resolved[target_field] = int(row.id)
+        direct_input[target_field] = (incoming, label)
+
+    # Fill ancestors so EmployeeFile remains internally consistent even though
+    # the questionnaire does not ask for the institution/root explicitly.
+    division = db.session.get(Division, resolved["division_id"]) if resolved.get("division_id") else None
+    section = db.session.get(Section, resolved["section_id"]) if resolved.get("section_id") else None
+    department = db.session.get(Department, resolved["department_id"]) if resolved.get("department_id") else None
+    directorate = db.session.get(Directorate, resolved["directorate_id"]) if resolved.get("directorate_id") else None
+
+    if division and not section and getattr(division, "section_id", None):
+        section = db.session.get(Section, int(division.section_id))
+        resolved["section_id"] = int(section.id) if section else None
+    if section and not department and getattr(section, "department_id", None):
+        department = db.session.get(Department, int(section.department_id))
+        resolved["department_id"] = int(department.id) if department else None
+    if department and not directorate and getattr(department, "directorate_id", None):
+        directorate = db.session.get(Directorate, int(department.directorate_id))
+        resolved["directorate_id"] = int(directorate.id) if directorate else None
+    if directorate and getattr(directorate, "organization_id", None):
+        resolved["organization_id"] = int(directorate.organization_id)
+
+    target_meta = {
+        "organization_id": (Organization, "المؤسسة"),
+        "directorate_id": (Directorate, "الإدارة العامة"),
+        "department_id": (Department, "الدائرة"),
+        "section_id": (Section, "القسم"),
+        "division_id": (Division, "الشعبة"),
+    }
+    operations = []
+    for target_field in ("organization_id", "directorate_id", "department_id", "section_id", "division_id"):
+        item_id = resolved.get(target_field)
+        if not item_id:
+            continue
+        model, default_label = target_meta[target_field]
+        incoming, label = direct_input.get(target_field, (_named_label(model, item_id) or "", default_label))
+        operations.append({
+            "field": target_field,
+            "model": model,
+            "label": label,
+            "incoming": incoming,
+            "resolved": item_id,
+            "resolved_label": _named_label(model, item_id),
+        })
+    return operations
+
+
 def _resolve_manager(value: str | None, context: str, unresolved: list[dict]):
     if not value:
         return None, None
     wanted = _norm(value)
-    matches = []
+    exact_matches = []
+    token_matches = []
+    wanted_tokens = _name_tokens(value)
     for user in User.query.all():
         employee_file = getattr(user, "employee_file", None)
-        candidates = {
-            _norm(user.name),
-            _norm(user.email),
-            _norm(getattr(employee_file, "full_name_quad", None)),
-        }
-        if wanted and wanted in candidates:
-            matches.append(user)
+        raw_candidates = (
+            user.name,
+            user.email,
+            getattr(employee_file, "full_name_quad", None),
+        )
+        if wanted and wanted in {_norm(candidate) for candidate in raw_candidates}:
+            exact_matches.append(user)
+            continue
+        if len(wanted_tokens) >= 2 and any(
+            wanted_tokens.issubset(_name_tokens(candidate))
+            for candidate in raw_candidates
+            if candidate
+        ):
+            token_matches.append(user)
+    matches = exact_matches or token_matches
     if len(matches) == 1:
         user = matches[0]
         return user.id, user.name or user.email
@@ -386,15 +518,18 @@ def build_employee_import_plan(
         operations.append(_operation(field, label, incoming, current, resolved, resolved_label))
         operations[-1]["current_label"] = _lookup_label(current)
 
-    for field, (model, label) in ORG_FIELDS.items():
-        incoming = _first_value(payload, field)
-        if incoming is None:
-            continue
-        resolved, resolved_label = _resolve_named_model(model, incoming, label, unresolved)
-        if resolved is None:
-            continue
+    for placement in _resolve_employee_placement(payload, unresolved):
+        field = placement["field"]
+        model = placement["model"]
         current = getattr(employee_file, field, None) if employee_file else None
-        operations.append(_operation(field, label, incoming, current, resolved, resolved_label))
+        operations.append(_operation(
+            field,
+            placement["label"],
+            placement["incoming"],
+            current,
+            placement["resolved"],
+            placement["resolved_label"],
+        ))
         operations[-1]["current_label"] = _named_label(model, current)
 
     manager_incoming = _first_value(payload, "direct_manager_user_id")
@@ -413,7 +548,7 @@ def build_employee_import_plan(
         **TEXT_FIELDS,
         **FLOAT_FIELDS,
         **{field: label for field, (_, label) in LOOKUP_FIELDS.items()},
-        **{field: label for field, (_, label) in ORG_FIELDS.items()},
+        **{source_field: label for source_field, _, _, label in EMPLOYEE_ORG_FIELDS},
         "direct_manager_user_id": "المسؤول المباشر",
     }
     unresolved_labels = {issue["field"] for issue in unresolved}

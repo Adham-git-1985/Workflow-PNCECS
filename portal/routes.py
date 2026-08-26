@@ -15484,6 +15484,116 @@ def _build_employee_row(user: User, assignment: OrgUnitAssignment | None, mgr_ma
     return out
 
 
+def _org_name_key(value) -> str:
+    text_value = unicodedata.normalize("NFKC", str(value or "")).lower()
+    text_value = "".join(
+        char for char in text_value
+        if unicodedata.category(char) not in {"Mn", "Cf"} and char != "ـ"
+    )
+    return "".join(char for char in text_value if char.isalnum())
+
+
+def _build_dynamic_employee_row(
+    user: User,
+    node: OrgNode | None,
+    node_by_id: dict[int, OrgNode],
+    manager_map: dict[int, OrgNodeManager],
+) -> dict:
+    """Build the employee manager chain from the canonical dynamic org tree."""
+    out = {
+        "user": user,
+        "assigned_unit": "—",
+        "manager_by_type": {},
+        "chain_text": "—",
+    }
+    if not node:
+        return out
+
+    node_type = getattr(node, "type", None)
+    type_name = (getattr(node_type, "name_ar", None) or "عنصر").strip()
+    out["assigned_unit"] = f"{type_name}: {node.name_ar}"
+
+    chain_parts = []
+    current = node
+    visited: set[int] = set()
+    while current and int(current.id) not in visited:
+        visited.add(int(current.id))
+        current_type = getattr(current, "type", None)
+        type_code = (getattr(current_type, "code", None) or "NODE").strip().upper()
+        current_type_name = (getattr(current_type, "name_ar", None) or "عنصر").strip()
+        manager_row = manager_map.get(int(current.id))
+        manager_user = getattr(manager_row, "manager_user", None) if manager_row else None
+        manager_name = manager_user.full_name if manager_user else "—"
+        # A valid hierarchy normally contains each type once. Keeping the first
+        # value preserves the closest manager if a custom structure repeats a type.
+        out["manager_by_type"].setdefault(type_code, manager_name)
+        if manager_name != "—":
+            chain_parts.append(f"{current_type_name}: {manager_name}")
+        current = node_by_id.get(int(current.parent_id)) if current.parent_id else None
+
+    if chain_parts:
+        out["chain_text"] = " → ".join(chain_parts)
+    return out
+
+
+def _employee_dynamic_node(
+    user: User,
+    primary_node_by_user: dict[int, int],
+    node_by_id: dict[int, OrgNode],
+    node_ids_by_type_and_name: dict[tuple[str, str], list[int]],
+) -> OrgNode | None:
+    """Resolve an employee node, preferring canonical assignments and pointers."""
+    node_id = primary_node_by_user.get(int(user.id))
+    if node_id in node_by_id:
+        return node_by_id[node_id]
+
+    direct_node_id = int(getattr(user, "org_node_id", 0) or 0)
+    if direct_node_id in node_by_id:
+        return node_by_id[direct_node_id]
+
+    # Employee files predate OrgNodeAssignment. Use their deepest named legacy
+    # placement as a read-only fallback when it maps uniquely to a canonical node.
+    employee_file = getattr(user, "employee_file", None)
+    if not employee_file:
+        return None
+    for field, type_code in (
+        ("division", "DIVISION"),
+        ("section", "SECTION"),
+        ("department", "DEPARTMENT"),
+        ("directorate", "DIRECTORATE"),
+        ("organization", "ORGANIZATION"),
+    ):
+        legacy_row = getattr(employee_file, field, None)
+        name_key = _org_name_key(getattr(legacy_row, "name_ar", None))
+        matches = node_ids_by_type_and_name.get((type_code, name_key), []) if name_key else []
+        if len(matches) == 1 and matches[0] in node_by_id:
+            return node_by_id[matches[0]]
+    return None
+
+
+def _dynamic_manager_columns(
+    node_by_id: dict[int, OrgNode],
+    manager_map: dict[int, OrgNodeManager],
+) -> list[dict]:
+    """Return the configured dynamic hierarchy levels, closest level first."""
+    types_by_id = {
+        int(node.type_id): node.type
+        for node in node_by_id.values()
+        if getattr(node, "type", None)
+        and int(node.id) in manager_map
+        and getattr(manager_map[int(node.id)], "manager_user_id", None)
+    }
+    ordered = sorted(
+        types_by_id.values(),
+        key=lambda item: (int(getattr(item, "sort_order", 0) or 0), int(item.id)),
+        reverse=True,
+    )
+    return [{
+        "code": (item.code or "NODE").strip().upper(),
+        "label": (item.name_ar or item.code or "عنصر").strip(),
+    } for item in ordered]
+
+
 
 def _mgr_pair(mgr_map: dict, unit_type: str, unit_id: int) -> tuple[str, str]:
     row = mgr_map.get((unit_type, unit_id))
@@ -15701,8 +15811,52 @@ def hr_org_structure():
         else:
             raise
 
+    include_people = (request.args.get('include_people') or '').strip().lower() in ('1', 'true', 'yes')
+    # This also ensures the canonical dynamic hierarchy schema/seed exists before
+    # it is queried for employee assignments and manager chains below.
+    org_tree = build_chart_tree(include_people=include_people)
+
+    # Keep the legacy manager map for the legacy editing panels still rendered
+    # on this page; the employee chain below uses the canonical dynamic map.
     mgr_rows = OrgUnitManager.query.all()
-    mgr_map = {(m.unit_type, m.unit_id): m for m in mgr_rows}
+    mgr_map = {(row.unit_type, row.unit_id): row for row in mgr_rows}
+
+    # The visible chart is backed by the canonical OrgNode hierarchy. Manager
+    # chains must use the same source instead of the retired OrgUnit* tables.
+    dynamic_nodes = (
+        OrgNode.query
+        .join(OrgNodeType, OrgNode.type_id == OrgNodeType.id)
+        .filter(OrgNode.is_active.is_(True), OrgNodeType.is_active.is_(True))
+        .all()
+    )
+    dynamic_node_by_id = {int(node.id): node for node in dynamic_nodes}
+    dynamic_manager_map = {
+        int(row.node_id): row
+        for row in OrgNodeManager.query.filter(
+            OrgNodeManager.node_id.in_(list(dynamic_node_by_id))
+        ).all()
+    } if dynamic_node_by_id else {}
+    dynamic_assignments = (
+        OrgNodeAssignment.query
+        .filter(OrgNodeAssignment.node_id.in_(list(dynamic_node_by_id)))
+        .order_by(
+            OrgNodeAssignment.user_id.asc(),
+            OrgNodeAssignment.is_primary.desc(),
+            OrgNodeAssignment.id.desc(),
+        )
+        .all()
+        if dynamic_node_by_id else []
+    )
+    primary_node_by_user: dict[int, int] = {}
+    for assignment in dynamic_assignments:
+        primary_node_by_user.setdefault(int(assignment.user_id), int(assignment.node_id))
+    node_ids_by_type_and_name: dict[tuple[str, str], list[int]] = {}
+    for node in dynamic_nodes:
+        type_code = (getattr(node.type, "code", None) or "NODE").strip().upper()
+        name_key = _org_name_key(node.name_ar)
+        if name_key:
+            node_ids_by_type_and_name.setdefault((type_code, name_key), []).append(int(node.id))
+    manager_columns = _dynamic_manager_columns(dynamic_node_by_id, dynamic_manager_map)
 
     try:
         can_manage_org = bool(current_user.has_perm(HR_ORG_MANAGE) or current_user.has_perm(HR_MASTERDATA_MANAGE))
@@ -15711,15 +15865,22 @@ def hr_org_structure():
 
     users = _all_users_for_select() if can_manage_org else []
 
-    org_assignments = _safe_query_org_assignments()
     employees = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
     employee_rows = []
     for u in employees:
-        a = _primary_assignment_for_user(u.id, org_assignments)
-        employee_rows.append(_build_employee_row(u, a, mgr_map))
+        employee_node = _employee_dynamic_node(
+            u,
+            primary_node_by_user,
+            dynamic_node_by_id,
+            node_ids_by_type_and_name,
+        )
+        employee_rows.append(_build_dynamic_employee_row(
+            u,
+            employee_node,
+            dynamic_node_by_id,
+            dynamic_manager_map,
+        ))
 
-    include_people = (request.args.get('include_people') or '').strip().lower() in ('1', 'true', 'yes')
-    org_tree = build_chart_tree(include_people=include_people)
     independent_teams = [team for team in teams if not getattr(team, 'section_id', None)]
 
     return render_template(
@@ -15735,6 +15896,7 @@ def hr_org_structure():
         assignments=mgr_map,
         users=users,
         employee_rows=employee_rows,
+        manager_columns=manager_columns,
         org_tree=org_tree,
         include_people=include_people,
         can_manage_org=can_manage_org,
