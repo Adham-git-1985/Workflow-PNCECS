@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -33,16 +34,24 @@ REGULAR_FONT = "TransportFormsSakkalMajalla"
 BOLD_FONT = "TransportFormsSakkalMajallaBold"
 FORM_FONT_SIZE = 16
 
+_BIDI_CONTROL_CHARS = {
+    ord(char): None
+    for char in "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
+}
+
 
 def _shape_transport_text(value: str) -> str:
+    raw = unicodedata.normalize("NFC", str(value or "")).translate(_BIDI_CONTROL_CHARS)
     try:
         import arabic_reshaper
         from bidi.algorithm import get_display
 
-        reshaper = arabic_reshaper.ArabicReshaper({"support_ligatures": False})
-        return get_display(reshaper.reshape(value or ""))
+        # Keep Arabic ligatures enabled. Disabling them makes personal names
+        # (notably words containing lam-alef and the Allah ligature) look like
+        # disconnected letters in PDF viewers even with an Arabic font.
+        return get_display(arabic_reshaper.reshape(raw))
     except Exception:
-        return _shape_arabic(value or "")
+        return _shape_arabic(raw)
 
 
 def _register_fonts() -> tuple[str, str]:

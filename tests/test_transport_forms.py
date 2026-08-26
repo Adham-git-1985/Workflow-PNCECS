@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import unicodedata
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 import fitz
 from PIL import Image
 from docx import Document
+from docx.oxml.ns import qn
 from flask import Flask, g
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
@@ -24,6 +26,7 @@ from models import (
     User,
 )
 from portal import portal_bp
+from services.transport_forms import _shape_transport_text
 
 
 class TransportReadyFormsTests(unittest.TestCase):
@@ -182,6 +185,7 @@ class TransportReadyFormsTests(unittest.TestCase):
                 for font in page.get_fonts(full=True)
             }
             self.assertTrue(any("sakkalmajalla" in name for name in font_names), font_names)
+            self.assertTrue(any("sakkalmajalla-bold" in name for name in font_names), font_names)
         finally:
             document.close()
 
@@ -208,6 +212,41 @@ class TransportReadyFormsTests(unittest.TestCase):
             self.assertEqual(run.font.name, "Sakkal Majalla")
             self.assertIsNotNone(run.font.size)
             self.assertAlmostEqual(run.font.size.pt, 16, places=2)
+        arabic_runs = [
+            run
+            for run in runs
+            if any(unicodedata.bidirectional(char) in {"R", "AL"} for char in run.text)
+        ]
+        self.assertTrue(arabic_runs)
+        for run in arabic_runs:
+            self.assertTrue(run.font.rtl, run.text)
+
+    def test_pdf_arabic_names_keep_standard_ligatures(self):
+        shaped = _shape_transport_text("ادهم محمدوصفي عبدالله حنون")
+        self.assertIn("\ufdf2", shaped)
+
+    def test_word_movement_form_isolates_parentheses_and_draws_signature_lines(self):
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            response = client.get(
+                f"/portal/transport/forms/permit/{self.permit.id}.docx"
+            )
+
+        self._assert_sakkal_docx(response)
+        document = Document(BytesIO(response.data))
+        body_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        self.assertIn("\u202a(1)\u202c", body_text)
+        self.assertIn("\u202a(1/2026)\u202c", body_text)
+        self.assertNotIn("_", body_text)
+
+        signature_tables = document.tables[-3:]
+        self.assertEqual(len(signature_tables), 3)
+        for table in signature_tables:
+            borders = table.cell(0, 0)._tc.tcPr.find(qn("w:tcBorders"))
+            self.assertIsNotNone(borders)
+            bottom = borders.find(qn("w:bottom"))
+            self.assertIsNotNone(bottom)
+            self.assertEqual(bottom.get(qn("w:val")), "single")
 
     def test_forms_page_and_three_generated_pdfs(self):
         with self.app.test_client() as client:

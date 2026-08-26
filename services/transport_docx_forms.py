@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import unicodedata
 
 from docx import Document
 from docx.enum.section import WD_ORIENT
@@ -21,6 +22,17 @@ PAGE_HEIGHT_MM = 297
 MARGIN_LEFT_MM = 18
 MARGIN_RIGHT_MM = 18
 CONTENT_WIDTH_MM = PAGE_WIDTH_MM - MARGIN_LEFT_MM - MARGIN_RIGHT_MM
+LTR_EMBED_START = "\u202a"
+LTR_EMBED_END = "\u202c"
+
+
+def _contains_rtl_text(value: str) -> bool:
+    return any(unicodedata.bidirectional(char) in {"R", "AL"} for char in str(value or ""))
+
+
+def _ltr_embed(value) -> str:
+    raw = str(value if value not in (None, "") else "-")
+    return f"{LTR_EMBED_START}{raw}{LTR_EMBED_END}"
 
 
 def _set_run_font(run, *, bold: bool = False) -> None:
@@ -37,12 +49,20 @@ def _set_run_font(run, *, bold: bool = False) -> None:
             size_node = OxmlElement(f"w:{size_tag}")
             r_pr.append(size_node)
         size_node.set(qn("w:val"), "32")
+    rtl_node = r_pr.find(qn("w:rtl"))
+    if rtl_node is None:
+        rtl_node = OxmlElement("w:rtl")
+        r_pr.append(rtl_node)
+    rtl_node.set(qn("w:val"), "1" if _contains_rtl_text(run.text) else "0")
 
 
 def _set_paragraph_rtl(paragraph) -> None:
     p_pr = paragraph._p.get_or_add_pPr()
-    if p_pr.find(qn("w:bidi")) is None:
-        p_pr.append(OxmlElement("w:bidi"))
+    bidi = p_pr.find(qn("w:bidi"))
+    if bidi is None:
+        bidi = OxmlElement("w:bidi")
+        p_pr.append(bidi)
+    bidi.set(qn("w:val"), "1")
 
 
 def _format_paragraph(
@@ -53,9 +73,10 @@ def _format_paragraph(
     after: float = 2,
     keep_with_next: bool = False,
 ) -> None:
-    # In Word, w:bidi mirrors physical left/right alignment. Using LEFT for an
-    # RTL paragraph therefore places Arabic text against the visual right edge.
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT if alignment == WD_ALIGN_PARAGRAPH.RIGHT else alignment
+    # Use the requested physical alignment together with explicit paragraph
+    # and run RTL properties. Mirroring LEFT/RIGHT works in some renderers but
+    # reverses placeholders and punctuation in Microsoft Word.
+    paragraph.alignment = alignment
     paragraph.paragraph_format.space_before = Pt(before)
     paragraph.paragraph_format.space_after = Pt(after)
     paragraph.paragraph_format.line_spacing = 1
@@ -219,6 +240,22 @@ def _remove_table_borders(table) -> None:
         tag.set(qn("w:val"), "nil")
 
 
+def _set_cell_bottom_border(cell, *, size: int = 8, color: str = "000000") -> None:
+    tc_pr = cell._tc.get_or_add_tcPr()
+    borders = tc_pr.first_child_found_in("w:tcBorders")
+    if borders is None:
+        borders = OxmlElement("w:tcBorders")
+        tc_pr.append(borders)
+    bottom = borders.find(qn("w:bottom"))
+    if bottom is None:
+        bottom = OxmlElement("w:bottom")
+        borders.append(bottom)
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), str(size))
+    bottom.set(qn("w:space"), "0")
+    bottom.set(qn("w:color"), color)
+
+
 def _configure_table_geometry(table, widths_mm: list[float], *, with_grid: bool = True) -> None:
     table.alignment = WD_TABLE_ALIGNMENT.RIGHT
     table.autofit = False
@@ -294,6 +331,15 @@ def _add_spacer(document: Document, points: float) -> None:
     paragraph.paragraph_format.space_before = Pt(0)
     paragraph.paragraph_format.space_after = Pt(points)
     paragraph.paragraph_format.line_spacing = Pt(1)
+
+
+def _add_signature_line(document: Document, label: str, *, after: float) -> None:
+    table = document.add_table(rows=1, cols=2)
+    _configure_table_geometry(table, [105, 69], with_grid=False)
+    _fill_cell(table.cell(0, 0), " ", alignment=WD_ALIGN_PARAGRAPH.RIGHT)
+    _set_cell_bottom_border(table.cell(0, 0))
+    _fill_cell(table.cell(0, 1), label, bold=True, alignment=WD_ALIGN_PARAGRAPH.RIGHT)
+    _add_spacer(document, after)
 
 
 def _save_document(document: Document) -> bytes:
@@ -413,16 +459,23 @@ def build_movement_permit_docx(permit, trip=None, letterhead_path: str | None = 
         or getattr(requester, "email", None)
     )
 
-    _add_paragraph(document, "نموذج رقم (1)", bold=True, alignment=WD_ALIGN_PARAGRAPH.CENTER, after=2, keep_with_next=True)
     _add_paragraph(
         document,
-        f"تصريح أمر حركة رقم ({_plain(order_no)})",
+        f"نموذج رقم {_ltr_embed('(1)')}",
+        bold=True,
+        alignment=WD_ALIGN_PARAGRAPH.CENTER,
+        after=2,
+        keep_with_next=True,
+    )
+    _add_paragraph(
+        document,
+        f"تصريح أمر حركة رقم {_ltr_embed(f'({_plain(order_no)})')}",
         bold=True,
         alignment=WD_ALIGN_PARAGRAPH.CENTER,
         after=3,
         keep_with_next=True,
     )
-    _add_paragraph(document, f"\u200fاليوم والتاريخ \u202a{_date_text(depart_at)}\u202c", after=3, keep_with_next=True)
+    _add_paragraph(document, f"اليوم والتاريخ {_ltr_embed(_date_text(depart_at))}", after=3, keep_with_next=True)
     fields = [
         ("اسم السائق", getattr(driver, "name", None)),
         ("رقم السيارة", getattr(vehicle, "plate_no", None)),
@@ -440,7 +493,7 @@ def build_movement_permit_docx(permit, trip=None, letterhead_path: str | None = 
         for run in row.cells[1].paragraphs[0].runs:
             _set_run_font(run, bold=True)
     _add_spacer(document, 9)
-    _add_paragraph(document, "توقيع المكلف بالمهمة: ______________________________", bold=True, after=8)
-    _add_paragraph(document, "توقيع السائق: ______________________________________", bold=True, after=10)
-    _add_paragraph(document, "اعتماد مسؤول الحركة: _______________________________", bold=True)
+    _add_signature_line(document, "توقيع المكلف بالمهمة:", after=8)
+    _add_signature_line(document, "توقيع السائق:", after=10)
+    _add_signature_line(document, "اعتماد مسؤول الحركة:", after=0)
     return _save_document(document)
