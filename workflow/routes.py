@@ -125,6 +125,7 @@ from workflow.dynamic_paths import (
     hierarchy_position_label,
     node_path_label,
 )
+from workflow.project_workflows import PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME
 
 from workflow.engine import (
     start_workflow_for_request,
@@ -2745,6 +2746,7 @@ def new_request():
         "workflow/new_request.html",
         request_types=request_types,
         templates=templates,
+        project_workflow_metadata=PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME,
         selected_request_type_name=selected_request_type_name,
         dynamic_choices=dynamic_choices,
         dynamic_org_nodes=dynamic_org_nodes,
