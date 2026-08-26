@@ -38,6 +38,24 @@
     </div>
 
     <div class="col-md-4">
+      <label class="form-label">رقم الشاصي</label>
+      <input class="form-control" name="chassis_no" value="{{ item.chassis_no if item and item.chassis_no else '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">رقم المحرك</label>
+      <input class="form-control" name="engine_no" value="{{ item.engine_no if item and item.engine_no else '' }}">
+    </div>
+    <div class="col-md-4">
+      <label class="form-label">رقم العداد / الرقم التسلسلي</label>
+      <input class="form-control" name="odometer_no" value="{{ item.odometer_no if item and item.odometer_no else '' }}">
+    </div>
+    <div class="col-md-8">
+      <label class="form-label">المستخدم / الجهة المستخدمة للمركبة</label>
+      <input class="form-control" name="assigned_to" value="{{ item.assigned_to if item and item.assigned_to else '' }}" placeholder="مثال: دائرة الشؤون الإدارية أو اسم الموظف">
+      <div class="form-text">يظهر هذا الحقل في كتاب ترخيص المركبة الحكومية.</div>
+    </div>
+
+    <div class="col-md-4">
       <label class="form-label">الحالة</label>
       <select class="form-select" name="status">
         {% set st = item.status if item else 'ACTIVE' %}

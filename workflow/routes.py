@@ -134,7 +134,9 @@ from workflow.engine import (
     authorize_parallel_step,
     resolve_parallel_candidate_user_ids,
     resolve_dynamic_branch_steps,
+    resolve_hierarchy_bypass_step,
     resolve_step_approver_user_ids,
+    HIERARCHY_BYPASS_FOLLOWER_ACTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -2191,6 +2193,24 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
     except Exception:
         pass
 
+    # A lower-level approver bypassed by a valid higher-level action remains a
+    # read-only follower for the lifetime of the request.
+    try:
+        if (
+            AuditLog.query
+            .filter_by(
+                request_id=req.id,
+                action=HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                target_type="USER",
+                target_id=user.id,
+            )
+            .first()
+            is not None
+        ):
+            return True
+    except Exception:
+        pass
+
     # ✅ PARALLEL_SYNC followers: anyone who has a StepTask (responded/bypassed/pending) can keep viewing
     try:
         if (
@@ -2862,6 +2882,7 @@ def _clean_workflow_note(note: str | None) -> str:
 def inbox():
     """Pending steps for current user (task inbox), including delegated tasks."""
     search = (request.args.get("q") or "").strip()
+    hierarchy_bypass_instance_ids: set[int] = set()
 
     effective_user = get_effective_user()
     delegations = get_active_delegations()
@@ -3009,6 +3030,53 @@ def inbox():
 
     rows = q.order_by(WorkflowRequest.id.desc()).all()
 
+    # Future higher-level approvers in a dynamic hierarchy can act before the
+    # current lower step.  Surface those requests in the same inbox so the
+    # capability is discoverable instead of requiring a crafted direct URL.
+    if not is_super:
+        actor_ids = [
+            int(user.id) for user in actor_users
+            if getattr(user, "id", None)
+        ]
+        existing_instance_ids = {int(inst.id) for _req, inst, _step in rows}
+        dynamic_instances = (
+            WorkflowInstance.query
+            .filter(
+                WorkflowInstance.template_id.is_(None),
+                WorkflowInstance.is_completed.is_(False),
+            )
+            .order_by(WorkflowInstance.id.desc())
+            .all()
+        )
+        for dynamic_instance in dynamic_instances:
+            if int(dynamic_instance.id) in existing_instance_ids:
+                continue
+            if not resolve_hierarchy_bypass_step(dynamic_instance, actor_ids):
+                continue
+            dynamic_request = db.session.get(WorkflowRequest, int(dynamic_instance.request_id))
+            current_dynamic_step = WorkflowInstanceStep.query.filter_by(
+                instance_id=dynamic_instance.id,
+                step_order=dynamic_instance.current_step_order,
+                status="PENDING",
+            ).first()
+            if not dynamic_request or not current_dynamic_step:
+                continue
+            if search:
+                requester = db.session.get(User, int(dynamic_request.requester_id or 0))
+                haystack = " ".join(filter(None, (
+                    str(dynamic_request.id),
+                    dynamic_request.title,
+                    dynamic_request.description,
+                    getattr(requester, "email", None),
+                ))).casefold()
+                if search.casefold() not in haystack:
+                    continue
+            rows.append((dynamic_request, dynamic_instance, current_dynamic_step))
+            existing_instance_ids.add(int(dynamic_instance.id))
+            hierarchy_bypass_instance_ids.add(int(dynamic_instance.id))
+
+        rows.sort(key=lambda row: int(row[0].id), reverse=True)
+
     # Query-level role matching is not enough for confidential correspondence:
     # hide the row (including its title) unless the real logged-in user also
     # passes the source correspondence ACL.
@@ -3101,6 +3169,7 @@ def inbox():
         q=search,
         last_circulars=last_circulars,
         request_summaries=request_summaries,
+        hierarchy_bypass_instance_ids=hierarchy_bypass_instance_ids,
         movement_tasks=movement_tasks,
         supply_tasks=supply_tasks,
     )
@@ -3844,6 +3913,7 @@ def view_request(request_id):
     next_parallel_step = None
     next_parallel_candidates = []
     next_dynamic_branch_steps = []
+    hierarchy_bypass_step = None
     parallel_candidates = []
     parallel_awaiting_authorization = False
     can_authorize_parallel = False
@@ -3858,6 +3928,11 @@ def view_request(request_id):
         current_step = next((s for s in steps if s.step_order == inst.current_step_order), None)
         if current_step and current_step.status == "PENDING":
             can_decide = any(_user_can_act_on_step(u, current_step) for u in actor_users)
+            if not can_decide:
+                hierarchy_bypass_step = resolve_hierarchy_bypass_step(
+                    inst,
+                    [getattr(user, "id", None) for user in actor_users],
+                )
 
         # A sequential approver must select the recipients of an immediately
         # following parallel step as part of the approval transaction.
@@ -4311,6 +4386,7 @@ def view_request(request_id):
         next_parallel_step=next_parallel_step,
         next_parallel_candidates=next_parallel_candidates,
         next_dynamic_branch_steps=next_dynamic_branch_steps,
+        hierarchy_bypass_step=hierarchy_bypass_step,
         mentioned_users=mentioned_users,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,

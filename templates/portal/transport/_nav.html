@@ -2,6 +2,7 @@
   <div class="d-flex flex-wrap gap-2">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_permits') }}">طلبات الحركة</a>
     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_movement_tasks') }}">طلبات بانتظار إجرائي</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_forms') }}"><i class="bi bi-file-earmark-pdf"></i> النماذج الجاهزة</a>
     {% if current_user.has_perm('TRANSPORT_READ') %}
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_home') }}"><i class="bi bi-truck"></i> لوحة الحركة</a>
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_vehicles') }}">السيارات</a>

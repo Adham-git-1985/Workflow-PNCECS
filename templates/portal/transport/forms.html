@@ -1,0 +1,174 @@
+{% extends "portal/layout.html" %}
+{% block title %}نماذج الحركة والنقل{% endblock %}
+{% block content %}
+
+{% include "portal/transport/_nav.html" %}
+
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h5 class="mb-1"><i class="bi bi-files"></i> نماذج الحركة والنقل الجاهزة</h5>
+    <div class="text-muted small">اختر السجل، وسيُنشئ النظام النموذج معبأً تلقائيًا على الترويسة المعتمدة بصيغة PDF أو Word، وبخط Sakkal Majalla بحجم 16.</div>
+  </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header bg-light d-flex flex-wrap align-items-center justify-content-between gap-2">
+    <strong><i class="bi bi-card-image"></i> ترويسة النماذج</strong>
+    {% if letterhead.configured %}
+      <span class="badge text-bg-success">مفعّلة</span>
+    {% else %}
+      <span class="badge text-bg-warning">لم تُرفع بعد</span>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if letterhead.configured %}
+      <div class="alert alert-success py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <span>الترويسة الحالية: <b>{{ letterhead.name }}</b></span>
+        <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.transport_forms_letterhead_view') }}" target="_blank">
+          <i class="bi bi-eye"></i> معاينة الترويسة
+        </a>
+      </div>
+    {% else %}
+      <div class="alert alert-warning py-2">سيستخدم النظام ترويسة نصية مؤقتة إلى أن تُرفع الترويسة الرسمية.</div>
+    {% endif %}
+
+    {% if can_manage_letterhead %}
+      <form method="post" action="{{ url_for('portal.transport_forms_letterhead_upload') }}" enctype="multipart/form-data" class="row g-2 align-items-end">
+        <div class="col-lg-8">
+          <label class="form-label">رفع أو استبدال الترويسة</label>
+          <input class="form-control" type="file" name="letterhead_file" accept="application/pdf,image/png,image/jpeg,.pdf,.png,.jpg,.jpeg" required>
+          <div class="form-text">يمكن رفع صفحة ترويسة كاملة بصيغة PDF، أو صورة رأسية بصيغة PNG/JPG. الحد الأقصى 12 ميغابايت.</div>
+        </div>
+        <div class="col-lg-4">
+          <button class="btn btn-primary w-100" type="submit"><i class="bi bi-upload"></i> حفظ الترويسة</button>
+        </div>
+      </form>
+    {% else %}
+      <div class="text-muted small">رفع الترويسة متاح لمسؤول يمتلك صلاحية تعديل الحركة والنقل.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-body d-flex flex-column">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="fs-3 text-primary"><i class="bi bi-car-front-fill"></i></span>
+          <div>
+            <h6 class="mb-0">كتاب ترخيص مركبة حكومية</h6>
+            <div class="small text-muted">بيانات المركبة والمستخدم وسنة الإنتاج.</div>
+          </div>
+        </div>
+        {% if can_read_fleet %}
+          <form class="transport-ready-form mt-auto" data-download="0">
+            <label class="form-label">المركبة</label>
+            <select class="form-select mb-3 ready-form-url" required>
+              <option value="">اختر المركبة</option>
+              {% for vehicle in vehicles %}
+                <option value="{{ url_for('portal.transport_vehicle_license_pdf', vehicle_id=vehicle.id) }}" data-docx-url="{{ url_for('portal.transport_vehicle_license_docx', vehicle_id=vehicle.id) }}">{{ vehicle.plate_no }}{% if vehicle.label %} - {{ vehicle.label }}{% endif %}</option>
+              {% endfor %}
+            </select>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary flex-grow-1" type="submit"><i class="bi bi-eye"></i> معاينة PDF</button>
+              <button class="btn btn-outline-danger ready-pdf" type="button"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
+              <button class="btn btn-outline-primary ready-docx" type="button"><i class="bi bi-file-earmark-word"></i> Word</button>
+            </div>
+          </form>
+        {% else %}
+          <div class="alert alert-light border mt-auto mb-0">يتطلب عرض بيانات المركبات صلاحية الحركة والنقل.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-body d-flex flex-column">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="fs-3 text-warning"><i class="bi bi-wrench-adjustable-circle-fill"></i></span>
+          <div>
+            <h6 class="mb-0">طلب صيانة مركبة</h6>
+            <div class="small text-muted">بيانات المركبة وبنود الصيانة المسجلة.</div>
+          </div>
+        </div>
+        {% if can_read_fleet %}
+          <form class="transport-ready-form mt-auto">
+            <label class="form-label">سجل الصيانة</label>
+            <select class="form-select mb-3 ready-form-url" required>
+              <option value="">اختر سجل الصيانة</option>
+              {% for maintenance in maintenances %}
+                <option value="{{ url_for('portal.transport_maintenance_form_pdf', maint_id=maintenance.id) }}" data-docx-url="{{ url_for('portal.transport_maintenance_form_docx', maint_id=maintenance.id) }}">#{{ maintenance.id }} - {{ maintenance.vehicle.plate_no }}{% if maintenance.invoice_day %} - {{ maintenance.invoice_day }}{% endif %}</option>
+              {% endfor %}
+            </select>
+            <div class="d-flex gap-2">
+              <button class="btn btn-primary flex-grow-1" type="submit"><i class="bi bi-eye"></i> معاينة PDF</button>
+              <button class="btn btn-outline-danger ready-pdf" type="button"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
+              <button class="btn btn-outline-primary ready-docx" type="button"><i class="bi bi-file-earmark-word"></i> Word</button>
+            </div>
+          </form>
+        {% else %}
+          <div class="alert alert-light border mt-auto mb-0">يتطلب عرض سجلات الصيانة صلاحية الحركة والنقل.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="col-lg-4">
+    <div class="card h-100 shadow-sm">
+      <div class="card-body d-flex flex-column">
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <span class="fs-3 text-success"><i class="bi bi-file-earmark-check-fill"></i></span>
+          <div>
+            <h6 class="mb-0">تصريح أمر حركة</h6>
+            <div class="small text-muted">السائق والمركبة والمسار والأوقات والعداد.</div>
+          </div>
+        </div>
+        <form class="transport-ready-form mt-auto">
+          <label class="form-label">طلب الحركة</label>
+          <select class="form-select mb-3 ready-form-url" required>
+            <option value="">اختر طلب الحركة</option>
+            {% for permit in permits %}
+              <option value="{{ url_for('portal.transport_movement_permit_pdf', permit_id=permit.id) }}" data-docx-url="{{ url_for('portal.transport_movement_permit_docx', permit_id=permit.id) }}">#{{ permit.id }} - {{ permit.purpose }}{% if permit.vehicle %} - {{ permit.vehicle.plate_no }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <div class="d-flex gap-2">
+            <button class="btn btn-primary flex-grow-1" type="submit"><i class="bi bi-eye"></i> معاينة PDF</button>
+            <button class="btn btn-outline-danger ready-pdf" type="button"><i class="bi bi-file-earmark-pdf"></i> PDF</button>
+            <button class="btn btn-outline-primary ready-docx" type="button"><i class="bi bi-file-earmark-word"></i> Word</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  document.querySelectorAll('.transport-ready-form').forEach((form) => {
+    const selector = form.querySelector('.ready-form-url');
+    const selectedUrl = (format, download) => {
+      if (!selector || !selector.value) {
+        selector?.reportValidity();
+        return '';
+      }
+      const option = selector.options[selector.selectedIndex];
+      const target = format === 'docx' ? option.dataset.docxUrl : selector.value;
+      return target + (download && format === 'pdf' ? '?download=1' : '');
+    };
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const target = selectedUrl('pdf', false);
+      if (target) window.open(target, '_blank', 'noopener');
+    });
+    form.querySelector('.ready-pdf')?.addEventListener('click', () => {
+      const target = selectedUrl('pdf', true);
+      if (target) window.location.href = target;
+    });
+    form.querySelector('.ready-docx')?.addEventListener('click', () => {
+      const target = selectedUrl('docx', true);
+      if (target) window.location.href = target;
+    });
+  });
+</script>
+
+{% endblock %}

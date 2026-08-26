@@ -73,8 +73,10 @@
             </td>
             <td>{{ "%.1f"|format(it.current_odometer or 0) }}</td>
             <td class="text-end">
-              <div class="btn-group">
-                {% if can_edit %}
+                <div class="btn-group">
+                  <a class="btn btn-sm btn-outline-danger" href="{{ url_for('portal.transport_vehicle_license_pdf', vehicle_id=it.id) }}" target="_blank" title="كتاب ترخيص مركبة حكومية"><i class="bi bi-file-earmark-pdf"></i></a>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.transport_vehicle_license_docx', vehicle_id=it.id) }}" title="تنزيل كتاب الترخيص Word"><i class="bi bi-file-earmark-word"></i></a>
+                  {% if can_edit %}
                   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.transport_vehicle_edit', vehicle_id=it.id) }}">تعديل</a>
                 {% endif %}
                 {% if can_delete %}

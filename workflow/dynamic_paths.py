@@ -18,6 +18,7 @@ from utils.org_dynamic import resolve_user_org_node_id
 MAX_DYNAMIC_TARGETS = 20
 DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS = 2
 FINAL_SECRETARY_GENERAL_REF = "FINAL_SECRETARY_GENERAL"
+DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 COMMITTEE_DELIVERY_MODES = {
     "ALL": ("Committee_ALL", "كل أعضاء اللجنة"),
     "CHAIR": ("Committee_CHAIR", "رئيس اللجنة"),
@@ -972,6 +973,7 @@ def build_dynamic_target_path(
             "mode": "SEQUENTIAL",
             "approver_kind": "USER",
             "approver_user_id": user_id,
+            "approver_org_node_id": int(node.id) if node else None,
             "sla_days": None,
             "label": user.full_name or user.email or f"مستخدم #{user.id}",
             "job_title": (getattr(user, "job_title", None) or "").strip(),
@@ -1181,6 +1183,16 @@ def build_dynamic_target_path(
                 "node_id": int(secretary_general.id),
                 "node_label": node_path_label(secretary_general),
             })
+
+    # A dynamic route is a round trip.  After the final destination acts, the
+    # request returns through the same approvals in reverse order.  The final
+    # destination itself is not duplicated; completing the last return step
+    # hands the request back to its creator through the normal completion flow.
+    forward_steps = list(steps)
+    for forward_step in reversed(forward_steps[:-1]):
+        return_step = dict(forward_step)
+        return_step["reason"] = DYNAMIC_RETURN_REASON
+        steps.append(return_step)
 
     for index, step in enumerate(steps, start=1):
         step["step_order"] = index

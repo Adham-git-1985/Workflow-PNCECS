@@ -27,6 +27,10 @@ from models import (
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
 
+
+DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
+HIERARCHY_BYPASS_FOLLOWER_ACTION = "HIERARCHY_BYPASS_FOLLOWER"
+
 # =========================
 # SLA helpers
 # =========================
@@ -303,6 +307,163 @@ def resolve_step_approver_user_ids(step: WorkflowInstanceStep) -> list[int]:
     return sorted({int(user_id) for user_id in _resolve_approver_users(step) if user_id})
 
 
+def _step_routing_node_id(step: WorkflowInstanceStep | None) -> int | None:
+    """Resolve the frozen hierarchy node represented by a runtime step."""
+    if not step:
+        return None
+
+    direct_node_id = getattr(step, "approver_org_node_id", None)
+    if direct_node_id:
+        return int(direct_node_id)
+
+    routing_label = (getattr(step, "routing_node_label", None) or "").strip()
+    approver_user_id = getattr(step, "approver_user_id", None)
+    if not routing_label or not approver_user_id:
+        return None
+
+    assignments = (
+        OrgNodeManager.query
+        .filter(
+            (OrgNodeManager.manager_user_id == int(approver_user_id))
+            | (OrgNodeManager.deputy_user_id == int(approver_user_id))
+        )
+        .order_by(OrgNodeManager.node_id.asc())
+        .all()
+    )
+    if not assignments:
+        return None
+
+    try:
+        from workflow.dynamic_paths import node_path_label
+
+        exact = next(
+            (
+                assignment for assignment in assignments
+                if assignment.node and node_path_label(assignment.node) == routing_label
+            ),
+            None,
+        )
+        if exact:
+            return int(exact.node_id)
+    except Exception:
+        pass
+
+    if len(assignments) == 1:
+        return int(assignments[0].node_id)
+    return None
+
+
+def _is_strict_ancestor_node(ancestor_node_id: int, descendant_node_id: int) -> bool:
+    """Return whether *ancestor* is above *descendant* in the saved hierarchy."""
+    ancestor_node_id = int(ancestor_node_id)
+    current_id = int(descendant_node_id)
+    seen: set[int] = set()
+    while current_id and current_id not in seen:
+        seen.add(current_id)
+        node = db.session.get(OrgNode, current_id)
+        if not node or not node.parent_id:
+            return False
+        current_id = int(node.parent_id)
+        if current_id == ancestor_node_id:
+            return True
+    return False
+
+
+def _hierarchy_bypass_steps(
+    inst: WorkflowInstance,
+    target_step: WorkflowInstanceStep,
+) -> list[WorkflowInstanceStep]:
+    """Return lower pending steps that a future higher step may bypass."""
+    current_order = int(getattr(inst, "current_step_order", 0) or 0)
+    target_order = int(getattr(target_step, "step_order", 0) or 0)
+    if current_order <= 0 or target_order <= current_order:
+        return []
+    if getattr(inst, "template_id", None) is not None:
+        return []
+    if (getattr(target_step, "mode", "") or "").strip().upper() != "SEQUENTIAL":
+        return []
+    if (getattr(target_step, "status", "") or "").strip().upper() != "PENDING":
+        return []
+    if (getattr(target_step, "routing_reason", "") or "").strip() == DYNAMIC_RETURN_REASON:
+        return []
+
+    route_steps = (
+        WorkflowInstanceStep.query
+        .filter(
+            WorkflowInstanceStep.instance_id == int(inst.id),
+            WorkflowInstanceStep.step_order >= current_order,
+            WorkflowInstanceStep.step_order <= target_order,
+        )
+        .order_by(WorkflowInstanceStep.step_order.asc())
+        .all()
+    )
+    if not route_steps or int(route_steps[0].step_order) != current_order:
+        return []
+    if int(route_steps[-1].id) != int(target_step.id):
+        return []
+
+    current_node_id = _step_routing_node_id(route_steps[0])
+    target_node_id = _step_routing_node_id(target_step)
+    if not current_node_id or not target_node_id:
+        return []
+    if not _is_strict_ancestor_node(target_node_id, current_node_id):
+        return []
+
+    previous_node_id = current_node_id
+    bypassed: list[WorkflowInstanceStep] = []
+    for index, route_step in enumerate(route_steps):
+        status = (getattr(route_step, "status", "") or "").strip().upper()
+        if status == "SKIPPED":
+            continue
+        if status != "PENDING":
+            return []
+        if (getattr(route_step, "mode", "") or "").strip().upper() != "SEQUENTIAL":
+            return []
+        if (getattr(route_step, "routing_reason", "") or "").strip() == DYNAMIC_RETURN_REASON:
+            return []
+
+        node_id = _step_routing_node_id(route_step)
+        if not node_id:
+            return []
+        if index and node_id != previous_node_id:
+            if not _is_strict_ancestor_node(node_id, previous_node_id):
+                return []
+        previous_node_id = node_id
+        if int(route_step.id) != int(target_step.id):
+            bypassed.append(route_step)
+
+    return bypassed
+
+
+def resolve_hierarchy_bypass_step(
+    inst: WorkflowInstance,
+    actor_user_ids,
+) -> WorkflowInstanceStep | None:
+    """Find the nearest future higher step an actor may execute immediately."""
+    if not inst or getattr(inst, "is_completed", False):
+        return None
+    actor_ids = {int(user_id) for user_id in (actor_user_ids or []) if user_id}
+    if not actor_ids:
+        return None
+
+    candidates = (
+        WorkflowInstanceStep.query
+        .filter(
+            WorkflowInstanceStep.instance_id == int(inst.id),
+            WorkflowInstanceStep.step_order > int(inst.current_step_order or 0),
+            WorkflowInstanceStep.status == "PENDING",
+        )
+        .order_by(WorkflowInstanceStep.step_order.asc())
+        .all()
+    )
+    for candidate in candidates:
+        if not actor_ids.intersection(resolve_step_approver_user_ids(candidate)):
+            continue
+        if _hierarchy_bypass_steps(inst, candidate):
+            return candidate
+    return None
+
+
 def _resolve_parallel_extra_assignees(template_id: int | None, step_order: int) -> list[int]:
     """Extra assignees linked to a PARALLEL_SYNC step number (template step)."""
     try:
@@ -536,6 +697,8 @@ def resolve_dynamic_branch_steps(
     first_step = following_steps[0]
     if int(first_step.step_order) != expected_order:
         return []
+    if (getattr(first_step, "routing_reason", "") or "").strip() == DYNAMIC_RETURN_REASON:
+        return []
     if (getattr(first_step, "approver_kind", "") or "").strip().upper() != "ORG_NODE":
         return []
 
@@ -547,6 +710,8 @@ def resolve_dynamic_branch_steps(
     candidates: list[WorkflowInstanceStep] = []
     for candidate in following_steps:
         if int(candidate.step_order) != expected_order:
+            break
+        if (getattr(candidate, "routing_reason", "") or "").strip() == DYNAMIC_RETURN_REASON:
             break
         if (getattr(candidate, "approver_kind", "") or "").strip().upper() != "ORG_NODE":
             break
@@ -791,7 +956,7 @@ def _parallel_total(inst_id: int, step_order: int) -> int:
 
 
 def _resolve_followers_user_ids(inst_id: int) -> list[int]:
-    """Users who already decided on at least one step in this instance (followers)."""
+    """Users who decided or were retained as followers after a hierarchy bypass."""
     rows = (
         db.session.query(WorkflowInstanceStep.decided_by_id)
         .filter(WorkflowInstanceStep.instance_id == inst_id)
@@ -805,6 +970,25 @@ def _resolve_followers_user_ids(inst_id: int) -> list[int]:
                 ids.add(int(uid))
         except Exception:
             pass
+
+    inst = db.session.get(WorkflowInstance, int(inst_id))
+    if inst:
+        watcher_rows = (
+            db.session.query(AuditLog.target_id)
+            .filter(
+                AuditLog.request_id == int(inst.request_id),
+                AuditLog.action == HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                AuditLog.target_type == "USER",
+                AuditLog.target_id.isnot(None),
+            )
+            .all()
+        )
+        for (uid,) in watcher_rows:
+            try:
+                if uid:
+                    ids.add(int(uid))
+            except Exception:
+                pass
     return sorted(ids)
 
 
@@ -1366,6 +1550,17 @@ def decide_step(
     # For notifications/messages
     actor_display = actor_label if not on_behalf_of_id else f"{actor_label} (مفوّض عن {eff_label})"
 
+    hierarchy_bypassed_steps: list[WorkflowInstanceStep] = []
+    if int(step_order) != int(inst.current_step_order or 0):
+        if decision != "APPROVED":
+            raise ValueError("يمكن للمستوى الأعلى المتابعة والتجاوز فقط، ولا يمكنه رفض خطوة لم تصل إليه بعد.")
+        bypass_target = resolve_hierarchy_bypass_step(inst, [effective_user_id])
+        if not bypass_target or int(bypass_target.id) != int(step.id):
+            raise ValueError("لا يمكن تنفيذ هذه الخطوة قبل دورها لأنها ليست مستوى أعلى ضمن تسلسل الصعود الحالي.")
+        hierarchy_bypassed_steps = _hierarchy_bypass_steps(inst, step)
+        if not hierarchy_bypassed_steps:
+            raise ValueError("لا توجد خطوات أدنى صالحة للتجاوز ضمن التسلسل الحالي.")
+
     # -------------------------------------------------
     # PARALLEL_SYNC: responses are for documentation only
     # -------------------------------------------------
@@ -1523,6 +1718,94 @@ def decide_step(
             if not selected_ids.issubset(candidate_ids):
                 raise ValueError("يمكن توجيه الخطوة المتزامنة فقط إلى المرشحين المحددين في القالب")
 
+    if hierarchy_bypassed_steps:
+        bypassed_at = datetime.utcnow()
+        follower_ids: set[int] = set()
+        for bypassed_step in hierarchy_bypassed_steps:
+            follower_ids.update(resolve_step_approver_user_ids(bypassed_step))
+            bypassed_step.status = "SKIPPED"
+            bypassed_step.decided_by_id = effective_user_id
+            bypassed_step.decided_at = bypassed_at
+            bypassed_step.note = (
+                f"تم تجاوز هذه الخطوة هرمياً بواسطة {actor_display}؛ "
+                "وبقي المسؤول عنها ضمن متابعي الطلب."
+            )
+            db.session.add(bypassed_step)
+            db.session.add(AuditLog(
+                request_id=req.id,
+                user_id=actor_user_id,
+                on_behalf_of_id=on_behalf_of_id,
+                delegation_id=delegation_id,
+                action="HIERARCHY_STEP_BYPASSED",
+                old_status="PENDING",
+                new_status="SKIPPED",
+                note=(
+                    f"تم تجاوز الخطوة {bypassed_step.step_order} بواسطة المستوى الأعلى "
+                    f"في الخطوة {step_order}."
+                ),
+                target_type="WORKFLOW_STEP",
+                target_id=bypassed_step.id,
+            ))
+
+        follower_ids.discard(int(effective_user_id))
+        follower_ids.discard(int(req.requester_id or 0))
+        for follower_id in sorted(follower_ids):
+            existing_follower = (
+                AuditLog.query
+                .filter_by(
+                    request_id=req.id,
+                    action=HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                    target_type="USER",
+                    target_id=follower_id,
+                )
+                .first()
+            )
+            if not existing_follower:
+                db.session.add(AuditLog(
+                    request_id=req.id,
+                    user_id=actor_user_id,
+                    on_behalf_of_id=on_behalf_of_id,
+                    delegation_id=delegation_id,
+                    action=HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                    old_status=None,
+                    new_status=None,
+                    note=(
+                        f"إبقاء المستخدم #{follower_id} ضمن المتابعين بعد تجاوز "
+                        f"الخطوات الأدنى وصولاً إلى الخطوة {step_order}."
+                    ),
+                    target_type="USER",
+                    target_id=follower_id,
+                ))
+
+        if follower_ids:
+            _notify_users(
+                sorted(follower_ids),
+                message=(
+                    f"تمت متابعة الطلب #{req.id} من مستوى إداري أعلى بواسطة {actor_display}. "
+                    "تم تجاوز انتظار خطوتك، وستبقى مطلعاً على جميع التحديثات اللاحقة."
+                ),
+                ntype="WORKFLOW",
+                actor_id=actor_user_id,
+                track_for_actor=True,
+                req=req,
+            )
+
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=actor_user_id,
+            on_behalf_of_id=on_behalf_of_id,
+            delegation_id=delegation_id,
+            action="HIERARCHY_BYPASS_EXECUTED",
+            old_status=None,
+            new_status=None,
+            note=(
+                f"تم الانتقال من الخطوة {inst.current_step_order} إلى المستوى الأعلى "
+                f"في الخطوة {step_order} وتجاوز {len(hierarchy_bypassed_steps)} خطوة/خطوات."
+            ),
+            target_type="WORKFLOW_STEP",
+            target_id=step.id,
+        ))
+
     # Track who executed this step (effective user). This is used as bypass authority
     # when the *next* step is PARALLEL_SYNC.
     inst.last_step_actor_id = effective_user_id
@@ -1580,6 +1863,7 @@ def decide_step(
             int(branch_step.step_order) for branch_step in selected_dynamic_branch_steps
         }
         skipped_labels: list[str] = []
+        skipped_branch_node_ids: set[int] = set()
         for branch_step in dynamic_branch_steps:
             if int(branch_step.step_order) in selected_branch_orders:
                 continue
@@ -1592,7 +1876,34 @@ def decide_step(
             skipped_labels.append(
                 branch_step.routing_label or f"الخطوة {branch_step.step_order}"
             )
+            if branch_step.approver_org_node_id:
+                skipped_branch_node_ids.add(int(branch_step.approver_org_node_id))
             db.session.add(branch_step)
+
+        # The return leg mirrors the selected forward branches.  If a sibling
+        # branch was excluded at the routing point, exclude its mirrored return
+        # step as well so the request cannot re-enter that branch on the way back.
+        if skipped_branch_node_ids:
+            return_steps = (
+                WorkflowInstanceStep.query
+                .filter(
+                    WorkflowInstanceStep.instance_id == inst.id,
+                    WorkflowInstanceStep.step_order > max(
+                        int(branch_step.step_order) for branch_step in dynamic_branch_steps
+                    ),
+                    WorkflowInstanceStep.status == "PENDING",
+                    WorkflowInstanceStep.routing_reason == DYNAMIC_RETURN_REASON,
+                    WorkflowInstanceStep.approver_kind == "ORG_NODE",
+                    WorkflowInstanceStep.approver_org_node_id.in_(skipped_branch_node_ids),
+                )
+                .all()
+            )
+            for return_step in return_steps:
+                return_step.status = "SKIPPED"
+                return_step.decided_by_id = effective_user_id
+                return_step.decided_at = branch_decided_at
+                return_step.note = "تم استبعاد فرع العودة تبعاً لاستبعاد الفرع في مسار الذهاب."
+                db.session.add(return_step)
 
         selected_labels = [
             branch_step.routing_label or f"الخطوة {branch_step.step_order}"

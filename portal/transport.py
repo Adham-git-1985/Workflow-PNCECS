@@ -1,15 +1,30 @@
 from __future__ import annotations
 
+import mimetypes
+import os
+import uuid
 from datetime import datetime, time
+from io import BytesIO
+from pathlib import Path
 from typing import Optional
 
-from flask import render_template, request, redirect, url_for, flash, abort
+from flask import abort, current_app, flash, redirect, render_template, request, send_file, url_for
 from flask_login import login_required, current_user
-from sqlalchemy import or_
+from sqlalchemy import inspect, or_
 
 from . import portal_bp
 from extensions import db
 from utils.perms import perm_required
+from services.transport_forms import (
+    build_maintenance_request_pdf,
+    build_movement_permit_pdf,
+    build_vehicle_license_pdf,
+)
+from services.transport_docx_forms import (
+    build_maintenance_request_docx,
+    build_movement_permit_docx,
+    build_vehicle_license_docx,
+)
 from models import (
     TransportVehicle,
     TransportDriver,
@@ -212,6 +227,134 @@ def _grant_transport_report_access(user_id: int | None) -> None:
         db.session.add(UserPermission(user_id=user_id, key="PORTAL_REPORTS_READ", is_allowed=True))
 
 
+TRANSPORT_FORMS_LETTERHEAD_PATH_KEY = "TRANSPORT_FORMS_LETTERHEAD_PATH"
+TRANSPORT_FORMS_LETTERHEAD_NAME_KEY = "TRANSPORT_FORMS_LETTERHEAD_NAME"
+TRANSPORT_FORMS_LETTERHEAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
+TRANSPORT_FORMS_LETTERHEAD_MAX_BYTES = 12 * 1024 * 1024
+_transport_form_schema_checked = False
+
+
+def _ensure_transport_form_schema() -> None:
+    global _transport_form_schema_checked
+    if _transport_form_schema_checked:
+        return
+    inspector = inspect(db.engine)
+    if "transport_vehicle" not in inspector.get_table_names():
+        return
+    columns = {column["name"] for column in inspector.get_columns("transport_vehicle")}
+    definitions = {
+        "chassis_no": "VARCHAR(120)",
+        "engine_no": "VARCHAR(120)",
+        "odometer_no": "VARCHAR(120)",
+        "assigned_to": "VARCHAR(200)",
+    }
+    for column_name, column_type in definitions.items():
+        if column_name not in columns:
+            try:
+                with db.engine.begin() as connection:
+                    connection.exec_driver_sql(
+                        f"ALTER TABLE transport_vehicle ADD COLUMN {column_name} {column_type}"
+                    )
+            except Exception:
+                refreshed_columns = {
+                    column["name"] for column in inspect(db.engine).get_columns("transport_vehicle")
+                }
+                if column_name not in refreshed_columns:
+                    raise
+    with db.engine.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_transport_vehicle_chassis_no "
+            "ON transport_vehicle (chassis_no)"
+        )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_transport_vehicle_engine_no "
+            "ON transport_vehicle (engine_no)"
+        )
+    _transport_form_schema_checked = True
+
+
+@portal_bp.before_request
+def _ensure_transport_form_schema_before_request():
+    if request.path.startswith("/portal/transport"):
+        _ensure_transport_form_schema()
+
+
+def _transport_forms_letterhead_storage_dir() -> Path:
+    directory = Path(current_app.instance_path) / "uploads" / "transport_forms"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _transport_forms_letterhead_path() -> str | None:
+    raw = (_get_setting(TRANSPORT_FORMS_LETTERHEAD_PATH_KEY) or "").strip()
+    if not raw:
+        return None
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        candidate = Path(current_app.instance_path) / candidate
+    if candidate.is_file() and candidate.suffix.lower() in TRANSPORT_FORMS_LETTERHEAD_EXTENSIONS:
+        return str(candidate)
+    return None
+
+
+def _transport_forms_letterhead_info() -> dict:
+    path = _transport_forms_letterhead_path()
+    configured_name = (_get_setting(TRANSPORT_FORMS_LETTERHEAD_NAME_KEY) or "").strip()
+    return {
+        "configured": bool(path),
+        "name": configured_name or (Path(path).name if path else ""),
+        "path": path,
+    }
+
+
+def _can_manage_transport_form_letterhead() -> bool:
+    return current_user.has_perm("TRANSPORT_UPDATE") or current_user.has_perm("PORTAL_ADMIN_PERMISSIONS_MANAGE")
+
+
+def _validate_transport_letterhead(path: Path) -> None:
+    if path.stat().st_size > TRANSPORT_FORMS_LETTERHEAD_MAX_BYTES:
+        raise ValueError("letterhead_too_large")
+    if path.suffix.lower() == ".pdf":
+        import fitz
+
+        document = fitz.open(str(path))
+        try:
+            if document.page_count < 1:
+                raise ValueError("letterhead_invalid")
+        finally:
+            document.close()
+        return
+
+    from PIL import Image
+
+    with Image.open(path) as image:
+        image.verify()
+
+
+def _save_transport_forms_letterhead(upload) -> tuple[Path, Path | None]:
+    original_name = Path((getattr(upload, "filename", None) or "").strip()).name
+    extension = Path(original_name).suffix.lower()
+    if not original_name or extension not in TRANSPORT_FORMS_LETTERHEAD_EXTENSIONS:
+        raise ValueError("letterhead_type")
+
+    old_path_raw = _transport_forms_letterhead_path()
+    old_path = Path(old_path_raw) if old_path_raw else None
+    saved_path = _transport_forms_letterhead_storage_dir() / f"letterhead_{uuid.uuid4().hex}{extension}"
+    upload.save(str(saved_path))
+    try:
+        _validate_transport_letterhead(saved_path)
+    except Exception as exc:
+        saved_path.unlink(missing_ok=True)
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("letterhead_invalid") from exc
+
+    relative_path = os.path.relpath(saved_path, current_app.instance_path)
+    _set_setting(TRANSPORT_FORMS_LETTERHEAD_PATH_KEY, relative_path)
+    _set_setting(TRANSPORT_FORMS_LETTERHEAD_NAME_KEY, original_name[:250])
+    return saved_path, old_path
+
+
 @portal_bp.route("/admin/transport-approval-settings", methods=["GET", "POST"])
 @login_required
 @perm_required("PORTAL_ADMIN_PERMISSIONS_MANAGE")
@@ -234,6 +377,263 @@ def transport_approval_settings():
         transport_director_user_id=_to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         transport_admin_user_id=_to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     )
+
+
+# -------------------------
+# Ready transport forms
+# -------------------------
+@portal_bp.route("/transport/forms")
+@login_required
+def transport_forms():
+    can_read_fleet = current_user.has_perm("TRANSPORT_READ")
+    vehicles = []
+    maintenances = []
+    if can_read_fleet:
+        vehicles = TransportVehicle.query.order_by(TransportVehicle.plate_no.asc()).all()
+        maintenances = (
+            TransportMaintenance.query
+            .order_by(TransportMaintenance.created_at.desc(), TransportMaintenance.id.desc())
+            .limit(250)
+            .all()
+        )
+
+    permits_query = TransportPermit.query.filter(TransportPermit.is_deleted.is_(False))
+    if not _can_read_movement_requests():
+        permits_query = permits_query.filter(TransportPermit.requester_user_id == current_user.id)
+    permits = permits_query.order_by(TransportPermit.created_at.desc(), TransportPermit.id.desc()).limit(250).all()
+
+    return render_template(
+        "portal/transport/forms.html",
+        vehicles=vehicles,
+        maintenances=maintenances,
+        permits=permits,
+        can_read_fleet=can_read_fleet,
+        can_manage_letterhead=_can_manage_transport_form_letterhead(),
+        letterhead=_transport_forms_letterhead_info(),
+    )
+
+
+@portal_bp.route("/transport/forms/letterhead", methods=["POST"])
+@login_required
+def transport_forms_letterhead_upload():
+    if not _can_manage_transport_form_letterhead():
+        abort(403)
+    upload = request.files.get("letterhead_file")
+    if not upload or not getattr(upload, "filename", ""):
+        flash("يرجى اختيار ملف الترويسة.", "warning")
+        return redirect(url_for("portal.transport_forms"))
+
+    saved_path = None
+    old_path = None
+    try:
+        saved_path, old_path = _save_transport_forms_letterhead(upload)
+        _audit(
+            "TRANSPORT_FORMS_LETTERHEAD_UPDATE",
+            f"تحديث ترويسة نماذج الحركة والنقل: {Path(upload.filename).name}",
+        )
+        db.session.commit()
+        if old_path and old_path != saved_path:
+            old_path.unlink(missing_ok=True)
+        flash("تم حفظ الترويسة وستُستخدم تلقائيًا في النماذج الثلاثة.", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        if saved_path:
+            saved_path.unlink(missing_ok=True)
+        if str(exc) == "letterhead_too_large":
+            flash("حجم الترويسة يتجاوز 12 ميغابايت.", "danger")
+        else:
+            flash("يرجى رفع ترويسة صحيحة بصيغة PDF أو PNG أو JPG.", "danger")
+    except Exception:
+        db.session.rollback()
+        if saved_path:
+            saved_path.unlink(missing_ok=True)
+        current_app.logger.exception("Failed to save transport forms letterhead")
+        flash("تعذر حفظ الترويسة.", "danger")
+    return redirect(url_for("portal.transport_forms"))
+
+
+@portal_bp.route("/transport/forms/letterhead/view")
+@login_required
+def transport_forms_letterhead_view():
+    path = _transport_forms_letterhead_path()
+    if not path:
+        abort(404)
+    mime_type = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    return send_file(
+        path,
+        mimetype=mime_type,
+        as_attachment=False,
+        download_name=_transport_forms_letterhead_info()["name"] or Path(path).name,
+        max_age=0,
+    )
+
+
+def _transport_pdf_response(payload: bytes, filename: str):
+    response = send_file(
+        BytesIO(payload),
+        mimetype="application/pdf",
+        as_attachment=request.args.get("download") == "1",
+        download_name=filename,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+def _transport_docx_response(payload: bytes, filename: str):
+    response = send_file(
+        BytesIO(payload),
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name=filename,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@portal_bp.route("/transport/forms/vehicle-license/<int:vehicle_id>.pdf")
+@login_required
+@perm_required("TRANSPORT_READ")
+def transport_vehicle_license_pdf(vehicle_id: int):
+    vehicle = TransportVehicle.query.get_or_404(vehicle_id)
+    payload = build_vehicle_license_pdf(vehicle, _transport_forms_letterhead_path())
+    _audit(
+        "TRANSPORT_FORM_VEHICLE_LICENSE",
+        f"إنشاء كتاب ترخيص للمركبة: {vehicle.plate_no}",
+        target_type="TRANSPORT_VEHICLE",
+        target_id=vehicle.id,
+    )
+    db.session.commit()
+    return _transport_pdf_response(payload, f"كتاب ترخيص مركبة - {vehicle.plate_no}.pdf")
+
+
+@portal_bp.route("/transport/forms/vehicle-license/<int:vehicle_id>.docx")
+@login_required
+@perm_required("TRANSPORT_READ")
+def transport_vehicle_license_docx(vehicle_id: int):
+    vehicle = TransportVehicle.query.get_or_404(vehicle_id)
+    payload = build_vehicle_license_docx(vehicle, _transport_forms_letterhead_path())
+    _audit(
+        "TRANSPORT_FORM_VEHICLE_LICENSE_WORD",
+        f"إنشاء كتاب ترخيص Word للمركبة: {vehicle.plate_no}",
+        target_type="TRANSPORT_VEHICLE",
+        target_id=vehicle.id,
+    )
+    db.session.commit()
+    return _transport_docx_response(payload, f"كتاب ترخيص مركبة - {vehicle.plate_no}.docx")
+
+
+@portal_bp.route("/transport/forms/maintenance/<int:maint_id>.pdf")
+@login_required
+@perm_required("TRANSPORT_READ")
+def transport_maintenance_form_pdf(maint_id: int):
+    maintenance = TransportMaintenance.query.get_or_404(maint_id)
+    items = (
+        TransportMaintenanceItem.query
+        .filter(TransportMaintenanceItem.maintenance_id == maintenance.id)
+        .order_by(TransportMaintenanceItem.id.asc())
+        .all()
+    )
+    payload = build_maintenance_request_pdf(maintenance, items, _transport_forms_letterhead_path())
+    _audit(
+        "TRANSPORT_FORM_MAINTENANCE",
+        f"إنشاء نموذج صيانة: #{maintenance.id}",
+        target_type="TRANSPORT_MAINT",
+        target_id=maintenance.id,
+    )
+    db.session.commit()
+    return _transport_pdf_response(payload, f"طلب صيانة مركبة - {maintenance.id}.pdf")
+
+
+@portal_bp.route("/transport/forms/maintenance/<int:maint_id>.docx")
+@login_required
+@perm_required("TRANSPORT_READ")
+def transport_maintenance_form_docx(maint_id: int):
+    maintenance = TransportMaintenance.query.get_or_404(maint_id)
+    items = (
+        TransportMaintenanceItem.query
+        .filter(TransportMaintenanceItem.maintenance_id == maintenance.id)
+        .order_by(TransportMaintenanceItem.id.asc())
+        .all()
+    )
+    payload = build_maintenance_request_docx(maintenance, items, _transport_forms_letterhead_path())
+    _audit(
+        "TRANSPORT_FORM_MAINTENANCE_WORD",
+        f"إنشاء نموذج صيانة Word: #{maintenance.id}",
+        target_type="TRANSPORT_MAINT",
+        target_id=maintenance.id,
+    )
+    db.session.commit()
+    return _transport_docx_response(payload, f"طلب صيانة مركبة - {maintenance.id}.docx")
+
+
+@portal_bp.route("/transport/forms/permit/<int:permit_id>.pdf")
+@login_required
+def transport_movement_permit_pdf(permit_id: int):
+    permit = TransportPermit.query.get_or_404(permit_id)
+    if (
+        permit.requester_user_id != current_user.id
+        and not _can_read_movement_requests()
+        and not _can_process_movement(permit)
+        and not _can_edit_movement(permit)
+        and not _can_view_movement(permit)
+    ):
+        abort(403)
+    trip = (
+        TransportTrip.query
+        .filter(
+            TransportTrip.permit_id == permit.id,
+            TransportTrip.is_deleted.is_(False),
+        )
+        .order_by(TransportTrip.started_at.desc(), TransportTrip.id.desc())
+        .first()
+    )
+    payload = build_movement_permit_pdf(permit, trip, _transport_forms_letterhead_path())
+    _audit(
+        "TRANSPORT_FORM_MOVEMENT_PERMIT",
+        f"إنشاء تصريح أمر حركة: #{permit.id}",
+        target_type="TRANSPORT_PERMIT",
+        target_id=permit.id,
+    )
+    db.session.commit()
+    return _transport_pdf_response(payload, f"تصريح أمر حركة - {permit.id}.pdf")
+
+
+@portal_bp.route("/transport/forms/permit/<int:permit_id>.docx")
+@login_required
+def transport_movement_permit_docx(permit_id: int):
+    permit = TransportPermit.query.get_or_404(permit_id)
+    if (
+        permit.requester_user_id != current_user.id
+        and not _can_read_movement_requests()
+        and not _can_process_movement(permit)
+        and not _can_edit_movement(permit)
+        and not _can_view_movement(permit)
+    ):
+        abort(403)
+    trip = (
+        TransportTrip.query
+        .filter(
+            TransportTrip.permit_id == permit.id,
+            TransportTrip.is_deleted.is_(False),
+        )
+        .order_by(TransportTrip.started_at.desc(), TransportTrip.id.desc())
+        .first()
+    )
+    payload = build_movement_permit_docx(permit, trip, _transport_forms_letterhead_path())
+    _audit(
+        "TRANSPORT_FORM_MOVEMENT_PERMIT_WORD",
+        f"إنشاء تصريح أمر حركة Word: #{permit.id}",
+        target_type="TRANSPORT_PERMIT",
+        target_id=permit.id,
+    )
+    db.session.commit()
+    return _transport_docx_response(payload, f"تصريح أمر حركة - {permit.id}.docx")
 
 
 def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message: str) -> None:
@@ -336,6 +736,10 @@ def transport_vehicle_new():
         vehicle_type = (request.form.get("vehicle_type") or "").strip() or None
         model = (request.form.get("model") or "").strip() or None
         year = _to_int(request.form.get("year") or "")
+        chassis_no = (request.form.get("chassis_no") or "").strip() or None
+        engine_no = (request.form.get("engine_no") or "").strip() or None
+        odometer_no = (request.form.get("odometer_no") or "").strip() or None
+        assigned_to = (request.form.get("assigned_to") or "").strip() or None
         status = ((request.form.get("status") or "ACTIVE").strip().upper() or "ACTIVE")
         odom = _to_float(request.form.get("current_odometer") or "") or 0.0
         notes = (request.form.get("notes") or "").strip() or None
@@ -355,6 +759,10 @@ def transport_vehicle_new():
             vehicle_type=vehicle_type,
             model=model,
             year=year,
+            chassis_no=chassis_no,
+            engine_no=engine_no,
+            odometer_no=odometer_no,
+            assigned_to=assigned_to,
             status=status if status in ("ACTIVE", "INACTIVE", "MAINTENANCE") else "ACTIVE",
             current_odometer=odom,
             notes=notes,
@@ -382,6 +790,10 @@ def transport_vehicle_edit(vehicle_id: int):
         vehicle_type = (request.form.get("vehicle_type") or "").strip() or None
         model = (request.form.get("model") or "").strip() or None
         year = _to_int(request.form.get("year") or "")
+        chassis_no = (request.form.get("chassis_no") or "").strip() or None
+        engine_no = (request.form.get("engine_no") or "").strip() or None
+        odometer_no = (request.form.get("odometer_no") or "").strip() or None
+        assigned_to = (request.form.get("assigned_to") or "").strip() or None
         status = ((request.form.get("status") or "ACTIVE").strip().upper() or "ACTIVE")
         odom = _to_float(request.form.get("current_odometer") or "")
         notes = (request.form.get("notes") or "").strip() or None
@@ -400,6 +812,10 @@ def transport_vehicle_edit(vehicle_id: int):
         row.vehicle_type = vehicle_type
         row.model = model
         row.year = year
+        row.chassis_no = chassis_no
+        row.engine_no = engine_no
+        row.odometer_no = odometer_no
+        row.assigned_to = assigned_to
         row.status = status if status in ("ACTIVE", "INACTIVE", "MAINTENANCE") else row.status
         if odom is not None:
             row.current_odometer = odom

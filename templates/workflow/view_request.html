@@ -621,6 +621,33 @@
       </div>
     {% endif %}
 
+    {% if hierarchy_bypass_step and current_step %}
+    <div class="card border-warning shadow-sm mb-3">
+      <div class="card-header bg-warning-subtle">
+        <strong><i class="bi bi-arrow-up-circle"></i> متابعة من مستوى إداري أعلى</strong>
+      </div>
+      <div class="card-body">
+        <p class="mb-2">
+          يمكنك تنفيذ الخطوة {{ hierarchy_bypass_step.step_order }} الآن وتجاوز انتظار
+          الخطوة {{ current_step.step_order }} والخطوات الأدنى الواقعة قبلها في تسلسل الصعود.
+        </p>
+        <div class="alert alert-info py-2 small">
+          المسؤولون الذين سيتم تجاوز انتظارهم سيبقون ضمن متابعي الطلب، وسيصلهم إشعار بهذا
+          الإجراء وبالتحديثات اللاحقة.
+        </div>
+        <form method="post"
+              action="{{ url_for('workflow.decide_request_step', request_id=req.id, step_order=hierarchy_bypass_step.step_order) }}">
+          <input type="hidden" name="decision" value="APPROVED">
+          <label class="form-label">ملاحظة التجاوز الهرمي</label>
+          <textarea class="form-control mb-3" name="note" rows="2" placeholder="ملاحظة اختيارية"></textarea>
+          <button class="btn btn-warning w-100" type="submit">
+            متابعة الطلب من المستوى الأعلى
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
     {% if can_decide and current_step %}
     <div class="card shadow-sm">
       <div class="card-header bg-white">

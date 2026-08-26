@@ -4782,6 +4782,10 @@ class TransportVehicle(db.Model):
     vehicle_type = db.Column(db.String(30), nullable=True)  # CAR / VAN / BUS / ...
     model = db.Column(db.String(120), nullable=True)
     year = db.Column(db.Integer, nullable=True)
+    chassis_no = db.Column(db.String(120), nullable=True, index=True)
+    engine_no = db.Column(db.String(120), nullable=True, index=True)
+    odometer_no = db.Column(db.String(120), nullable=True)
+    assigned_to = db.Column(db.String(200), nullable=True)
 
     status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)  # ACTIVE / INACTIVE / MAINTENANCE
 

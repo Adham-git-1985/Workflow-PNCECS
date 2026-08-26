@@ -27,8 +27,9 @@ from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
 )
-from workflow.routes import _find_or_create_request_type, request_pdf
+from workflow.routes import _find_or_create_request_type, _user_can_view_request, request_pdf
 from workflow.dynamic_paths import (
+    DYNAMIC_RETURN_REASON,
     FINAL_SECRETARY_GENERAL_REF,
     administration_anchor_id,
     build_dynamic_target_path,
@@ -46,6 +47,7 @@ from workflow.dynamic_paths import (
 from workflow.engine import (
     decide_step,
     resolve_dynamic_branch_steps,
+    resolve_hierarchy_bypass_step,
     resolve_step_approver_user_ids,
     start_workflow_for_request,
 )
@@ -443,12 +445,13 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertEqual(
             [step["approver_kind"] for step in result["steps"]],
-            ["ORG_NODE", "ORG_NODE"],
+            ["ORG_NODE", "ORG_NODE", "ORG_NODE"],
         )
         self.assertEqual(
             [step["approver_org_node_id"] for step in result["steps"]],
-            [self.department_a1.id, self.department_a2.id],
+            [self.department_a1.id, self.department_a2.id, self.department_a1.id],
         )
+        self.assertEqual(result["steps"][-1]["reason"], DYNAMIC_RETURN_REASON)
         self.assertEqual(
             [segment["target_kind"] for segment in result["segments"]],
             ["NODE", "NODE"],
@@ -523,6 +526,10 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 source_assistant.id,
                 target_assistant.id,
                 target_department.id,
+                target_assistant.id,
+                source_assistant.id,
+                source_general.id,
+                source_department.id,
             ],
         )
         self.assertEqual(
@@ -531,7 +538,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 for step in result["steps"]
                 if step["approver_kind"] == "USER"
             ].count(target_assistant_manager.id),
-            1,
+            2,
         )
         self.assertNotIn(self.root.id, [step["node_id"] for step in result["steps"]])
         self.assertNotIn(secretary_general.id, [step["node_id"] for step in result["steps"]])
@@ -539,7 +546,11 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             result["segments"][0]["target_ref"],
             f"NODE:{target_department.id}@{target_assistant.id}",
         )
-        self.assertTrue(all(not step["reason"] for step in result["steps"]))
+        self.assertTrue(all(not step["reason"] for step in result["steps"][:5]))
+        self.assertTrue(all(
+            step["reason"] == DYNAMIC_RETURN_REASON
+            for step in result["steps"][5:]
+        ))
 
         with_secretary_general = build_dynamic_target_path(
             self.requester,
@@ -547,9 +558,12 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             include_secretary_general=True,
         )
         self.assertEqual(with_secretary_general["errors"], [])
-        self.assertEqual(with_secretary_general["steps"][-1]["node_id"], secretary_general.id)
-        self.assertEqual(with_secretary_general["steps"][-1]["approver_kind"], "ORG_NODE")
-        self.assertEqual(with_secretary_general["steps"][-1]["reason"], "")
+        secretary_step = with_secretary_general["steps"][len(with_secretary_general["steps"]) // 2]
+        self.assertEqual(secretary_step["node_id"], secretary_general.id)
+        self.assertEqual(secretary_step["approver_kind"], "ORG_NODE")
+        self.assertEqual(secretary_step["reason"], "")
+        self.assertEqual(with_secretary_general["steps"][-1]["node_id"], source_department.id)
+        self.assertEqual(with_secretary_general["steps"][-1]["reason"], DYNAMIC_RETURN_REASON)
 
         sibling_result = build_dynamic_target_path(
             self.requester,
@@ -565,7 +579,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 for step in sibling_result["steps"]
                 if step["approver_kind"] == "ORG_NODE"
             ],
-            [target_department.id, second_target_department.id],
+            [target_department.id, second_target_department.id, target_department.id],
         )
         self.assertEqual(
             [
@@ -573,7 +587,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 for step in sibling_result["steps"]
                 if step["approver_kind"] == "USER"
             ].count(target_assistant_manager.id),
-            1,
+            2,
         )
 
     def test_scoped_node_route_rejects_a_start_within_the_top_two_levels(self):
@@ -726,6 +740,124 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(resolve_step_approver_user_ids(step), [self.same_target.id])
         self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
 
+    def test_higher_dynamic_approver_bypasses_lower_and_keeps_them_following(self):
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"NODE:{self.department_b.id}"],
+        )
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [step["node_id"] for step in result["steps"]],
+            [
+                self.department_a1.id,
+                self.root.id,
+                self.department_b.id,
+                self.root.id,
+                self.department_a1.id,
+            ],
+        )
+
+        request = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب تجاوز هرمي",
+            status="DRAFT",
+            confidentiality="NORMAL",
+        )
+        db.session.add(request)
+        db.session.flush()
+        start_workflow_for_request(
+            request,
+            None,
+            created_by_user_id=self.requester.id,
+            runtime_steps=result["steps"],
+        )
+        db.session.commit()
+
+        instance = WorkflowInstance.query.filter_by(request_id=request.id).one()
+        self.assertIsNone(resolve_hierarchy_bypass_step(instance, [self.target_manager.id]))
+        with self.assertRaisesRegex(ValueError, "ليست مستوى أعلى"):
+            decide_step(
+                request.id,
+                3,
+                self.target_manager.id,
+                "APPROVED",
+                auto_commit=False,
+            )
+        db.session.rollback()
+
+        bypass_step = resolve_hierarchy_bypass_step(instance, [self.root_manager.id])
+        self.assertIsNotNone(bypass_step)
+        self.assertEqual(bypass_step.step_order, 2)
+
+        decide_step(
+            request.id,
+            bypass_step.step_order,
+            self.root_manager.id,
+            "APPROVED",
+            note="متابعة من المستوى الأعلى",
+            auto_commit=False,
+        )
+        db.session.commit()
+
+        lower_step = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+            step_order=1,
+        ).one()
+        self.assertEqual(lower_step.status, "SKIPPED")
+        self.assertEqual(bypass_step.status, "APPROVED")
+        self.assertEqual(instance.current_step_order, 3)
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            request_id=request.id,
+            action="HIERARCHY_BYPASS_FOLLOWER",
+            target_type="USER",
+            target_id=self.source_manager.id,
+        ).first())
+        self.assertTrue(_user_can_view_request(self.source_manager, request))
+        self.assertTrue(any(
+            "ستبقى مطلعاً" in notification.message
+            for notification in Notification.query.filter_by(
+                user_id=self.source_manager.id,
+            ).all()
+        ))
+
+        decide_step(
+            request.id,
+            3,
+            self.target_manager.id,
+            "APPROVED",
+            auto_commit=False,
+        )
+        db.session.commit()
+
+        self.assertEqual(instance.current_step_order, 4)
+        self.assertTrue(any(
+            "تحديث على المسار" in notification.message
+            for notification in Notification.query.filter_by(
+                user_id=self.source_manager.id,
+            ).all()
+        ))
+
+        decide_step(
+            request.id,
+            4,
+            self.root_manager.id,
+            "APPROVED",
+            auto_commit=False,
+        )
+        db.session.flush()
+        self.assertEqual(instance.current_step_order, 5)
+
+        decide_step(
+            request.id,
+            5,
+            self.source_manager.id,
+            "APPROVED",
+            auto_commit=False,
+        )
+        db.session.commit()
+        self.assertTrue(instance.is_completed)
+        self.assertEqual(request.status, "APPROVED")
+
     def test_shared_manager_selects_multiple_sibling_branches_and_others_are_skipped(self):
         shared_manager = self._user("shared-manager@example.test", "مدير الإدارة العامة")
         third_branch_node = self._node(
@@ -788,6 +920,14 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                     "approver_org_node_id": third_branch_node.id,
                     "label": f"دائرة: {third_branch_node.name_ar}",
                 },
+                {
+                    "step_order": 5,
+                    "mode": "SEQUENTIAL",
+                    "approver_kind": "ORG_NODE",
+                    "approver_org_node_id": self.department_a2.id,
+                    "label": f"دائرة: {self.department_a2.name_ar}",
+                    "reason": DYNAMIC_RETURN_REASON,
+                },
             ],
         )
         db.session.flush()
@@ -833,9 +973,14 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             instance_id=instance.id,
             step_order=4,
         ).one()
+        skipped_return_branch = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+            step_order=5,
+        ).one()
         self.assertEqual(first_selected_branch.status, "PENDING")
         self.assertEqual(skipped_branch.status, "SKIPPED")
         self.assertEqual(second_selected_branch.status, "PENDING")
+        self.assertEqual(skipped_return_branch.status, "SKIPPED")
         self.assertEqual(instance.current_step_order, 2)
         self.assertIsNotNone(AuditLog.query.filter_by(
             request_id=request.id,
