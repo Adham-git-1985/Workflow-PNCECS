@@ -37,6 +37,26 @@
   .org-tree .org-members { margin-top: .25rem; padding-right: 1.25rem; }
   .org-tree .org-members li { padding: 2px 0; font-size: .92rem; }
   .org-tree code { font-size: .85em; }
+
+  /* The screen view scrolls inside a fixed-height panel. During printing that
+     panel must grow with its content; otherwise browsers print only the
+     currently visible 620px of the organization tree. */
+  @media print {
+    #orgTreePrint,
+    #orgTreePrint .org-tree-wrap {
+      width: 100% !important;
+      height: auto !important;
+      max-height: none !important;
+      overflow: visible !important;
+    }
+
+    #orgTreePrint summary,
+    #orgTreePrint .org-leaf,
+    #orgTreePrint .org-members > li {
+      break-inside: avoid;
+      page-break-inside: avoid;
+    }
+  }
 </style>
 
 
