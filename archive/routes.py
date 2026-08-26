@@ -1439,9 +1439,10 @@ def share_file(file_id):
 @login_required
 def delete_file(file_id):
     file = ArchivedFile.query.get_or_404(file_id)
+    is_super_admin = _is_super_admin(current_user)
 
     # Only the uploader (owner) or ADMIN can delete
-    if not (current_user.has_role("ADMIN") or file.owner_id == current_user.id):
+    if not (is_super_admin or current_user.has_role("ADMIN") or file.owner_id == current_user.id):
         abort(403)
 
     # Safety rules
@@ -1449,8 +1450,8 @@ def delete_file(file_id):
         flash("الملف محذوف مسبقًا", "warning")
         return redirect(url_for("archive.my_files"))
 
-    # Do not allow deleting signed files
-    if getattr(file, "is_signed", False):
+    # Signed files are protected, except when deleted explicitly by SUPER_ADMIN.
+    if getattr(file, "is_signed", False) and not is_super_admin:
         flash("لا يمكن حذف ملف موقّع.", "danger")
         return redirect(url_for("archive.file_details", file_id=file.id))
 
@@ -1460,9 +1461,9 @@ def delete_file(file_id):
         flash("لا يمكن حذف ملف مرتبط بطلب/مسار عمل. قم بإزالة الربط أولاً.", "danger")
         return redirect(url_for("archive.file_details", file_id=file.id))
 
-    # If file is shared with others, owner must unshare first (admin can override if needed)
+    # If shared, the owner must unshare first; ADMIN/SUPER_ADMIN can override.
     shared_count = FilePermission.query.filter_by(file_id=file.id).count()
-    if shared_count > 0 and not current_user.has_role("ADMIN"):
+    if shared_count > 0 and not (is_super_admin or current_user.has_role("ADMIN")):
         flash("لا يمكن حذف ملف تمت مشاركته. قم بإلغاء المشاركة أولاً.", "danger")
         return redirect(url_for("archive.file_details", file_id=file.id))
 
