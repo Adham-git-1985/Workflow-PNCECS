@@ -517,7 +517,7 @@ def _legacy_manager_candidates_for_assignment(
 
 
 def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
-    """Return every active placement that may provide a direct manager choice."""
+    """Return active staff and managerial placements for manager resolution."""
     requester_id = int(requester.id)
     primary_node_id = resolve_user_org_node_id(requester)
     placements: list[tuple[OrgNode, bool]] = []
@@ -556,6 +556,23 @@ def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
             bool(assignment.is_primary or int(assignment.node_id) == int(primary_node_id or 0)),
         )
 
+    managerial_assignments = (
+        OrgNodeManager.query
+        .join(OrgNode, OrgNodeManager.node_id == OrgNode.id)
+        .filter(
+            OrgNode.is_active.is_(True),
+            (OrgNodeManager.manager_user_id == requester_id)
+            | (OrgNodeManager.deputy_user_id == requester_id),
+        )
+        .order_by(OrgNodeManager.node_id.asc())
+        .all()
+    )
+    for assignment in managerial_assignments:
+        add_node(
+            assignment.node,
+            bool(int(assignment.node_id) == int(primary_node_id or 0)),
+        )
+
     legacy_assignments = (
         OrgUnitAssignment.query
         .filter(
@@ -573,6 +590,22 @@ def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
                 assignment.is_primary
                 or (node and int(node.id) == int(primary_node_id or 0))
             ),
+        )
+
+    legacy_managerial_assignments = (
+        OrgUnitManager.query
+        .filter(
+            (OrgUnitManager.manager_user_id == requester_id)
+            | (OrgUnitManager.deputy_user_id == requester_id),
+        )
+        .order_by(OrgUnitManager.unit_type.asc(), OrgUnitManager.unit_id.asc())
+        .all()
+    )
+    for assignment in legacy_managerial_assignments:
+        node = _legacy_unit_org_node(assignment.unit_type, assignment.unit_id)
+        add_node(
+            node,
+            bool(node and int(node.id) == int(primary_node_id or 0)),
         )
 
     placements.sort(

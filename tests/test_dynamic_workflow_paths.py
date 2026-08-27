@@ -687,6 +687,61 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             {option["user_id"] for option in options},
         )
 
+    def test_requester_managerial_appointments_expand_manager_choices(self):
+        programs_manager = self._user(
+            "programs-manager@example.test",
+            "مدير البرامج",
+        )
+        information_manager = self._user(
+            "information-manager@example.test",
+            "مدير المعلومات",
+        )
+        programs_node = self._node(
+            "إدارة البرامج",
+            self.directorate_a.type,
+            self.root,
+        )
+        requester_programs_node = self._node(
+            "دائرة البرامج",
+            self.department_a1.type,
+            self.directorate_a,
+        )
+        requester_information_node = self._node(
+            "دائرة المعلومات",
+            self.department_a1.type,
+            programs_node,
+        )
+        db.session.add_all((
+            OrgNodeManager(
+                node_id=self.directorate_a.id,
+                manager_user_id=programs_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=programs_node.id,
+                manager_user_id=information_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=requester_programs_node.id,
+                manager_user_id=self.requester.id,
+            ),
+            OrgNodeManager(
+                node_id=requester_information_node.id,
+                deputy_user_id=self.requester.id,
+            ),
+        ))
+        db.session.commit()
+
+        options = requester_dynamic_manager_options(self.requester)
+
+        self.assertEqual(
+            {option["user_id"] for option in options},
+            {
+                self.source_manager.id,
+                programs_manager.id,
+                information_manager.id,
+            },
+        )
+
     def test_node_route_is_automatic_vertical_and_excludes_top_governance_levels(self):
         directorate_type = self.directorate_a.type
         department_type = self.department_a1.type
