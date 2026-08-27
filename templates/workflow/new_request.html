@@ -205,8 +205,81 @@
       flex: 1 1 0;
     }
   }
+
+  .workflow-new-print-summary {
+    display: none;
+  }
+
+  @media print {
+    @page {
+      size: A4;
+      margin: 14mm;
+    }
+
+    .workflow-new-print-summary {
+      display: block !important;
+      direction: rtl;
+      color: #111827;
+      font-size: 12pt;
+    }
+
+    .workflow-new-print-summary__header {
+      border-bottom: 2px solid #17375e;
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+    }
+
+    .workflow-new-print-summary__section {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      break-inside: avoid;
+      margin-bottom: 12px;
+      padding: 12px;
+    }
+
+    .workflow-new-print-summary__grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px 18px;
+    }
+
+    .workflow-new-print-summary__label {
+      color: #64748b;
+      display: block;
+      font-size: 9pt;
+      margin-bottom: 2px;
+    }
+
+    .workflow-new-print-summary__value {
+      font-weight: 700;
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    #workflowPrintDescription,
+    #workflowPrintRouteSteps,
+    #workflowPrintAttachmentNames {
+      overflow-wrap: anywhere;
+      white-space: pre-wrap;
+    }
+
+    #workflowPrintRouteSteps .d-grid {
+      gap: 6px !important;
+    }
+
+    #workflowPrintRouteSteps .border {
+      break-inside: avoid;
+      padding: 8px !important;
+    }
+
+    #workflowPrintRouteSteps .alert {
+      margin-bottom: 6px !important;
+      padding: 6px 8px !important;
+    }
+  }
 </style>
 
+<div class="workflow-new-screen-only no-print">
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
     <h3 class="mb-1">➕ طلب جديد</h3>
@@ -658,6 +731,46 @@
     </div>
   </div>
 </form>
+</div>
+
+<section class="workflow-new-print-summary" id="workflowNewRequestPrintSummary" aria-label="ملخص الطلب للطباعة">
+  <div class="workflow-new-print-summary__header">
+    <h3 class="mb-1">ملخص الطلب</h3>
+    <div class="text-muted">البيانات الأساسية والمسار المختار</div>
+  </div>
+
+  <div class="workflow-new-print-summary__section">
+    <h5 class="mb-3">بيانات الطلب</h5>
+    <div class="workflow-new-print-summary__grid">
+      <div>
+        <span class="workflow-new-print-summary__label">عنوان الطلب</span>
+        <span class="workflow-new-print-summary__value" id="workflowPrintTitle">—</span>
+      </div>
+      <div>
+        <span class="workflow-new-print-summary__label">نوع الطلب</span>
+        <span class="workflow-new-print-summary__value" id="workflowPrintRequestType">—</span>
+      </div>
+      <div>
+        <span class="workflow-new-print-summary__label">الأولوية</span>
+        <span class="workflow-new-print-summary__value" id="workflowPrintPriority">عادي</span>
+      </div>
+    </div>
+    <div class="mt-3">
+      <span class="workflow-new-print-summary__label">الوصف / الملاحظات</span>
+      <div id="workflowPrintDescription">—</div>
+    </div>
+    <div class="mt-3">
+      <span class="workflow-new-print-summary__label">المرفقات المختارة</span>
+      <div id="workflowPrintAttachmentNames">لا توجد مرفقات.</div>
+    </div>
+  </div>
+
+  <div class="workflow-new-print-summary__section">
+    <h5 class="mb-2">المسار المختار</h5>
+    <div class="fw-bold mb-2" id="workflowPrintRouteName">—</div>
+    <div id="workflowPrintRouteSteps">لم يتم تحديد خطوات المسار بعد.</div>
+  </div>
+</section>
 
 <script>
   (function(){
@@ -1878,6 +1991,131 @@
     updateCommitteeSelection();
     updateHierarchySelection();
     updateMode();
+  })();
+</script>
+
+<script>
+  (function(){
+    "use strict";
+
+    const form = document.getElementById('workflowNewRequestForm');
+    const summary = document.getElementById('workflowNewRequestPrintSummary');
+    if (!form || !summary) return;
+
+    const titleInput = document.getElementById('workflowRequestTitle');
+    const requestTypeInput = document.getElementById('requestTypeName');
+    const prioritySelect = document.getElementById('workflowRequestPriority');
+    const descriptionInput = document.getElementById('workflowRequestDescription');
+    const filesInput = document.getElementById('workflowRequestFiles');
+    const predefinedRadio = document.getElementById('routeModePredefined');
+    const templateSelect = document.getElementById('templateSelect');
+    const predefinedSteps = document.getElementById('predefinedRoutePreviewSteps');
+    const dynamicPreview = document.getElementById('dynamicPathPreview');
+    const dynamicSelectedList = document.getElementById('dynamicSelectedList');
+    const dynamicPresetName = document.getElementById('dynamicPresetName');
+
+    function textOrDash(value){
+      const text = String(value || '').trim();
+      return text || '—';
+    }
+
+    function setText(id, value){
+      const element = document.getElementById(id);
+      if (element) element.textContent = textOrDash(value);
+    }
+
+    function selectedOptionText(select){
+      if (!select || !select.value) return '';
+      const option = select.options[select.selectedIndex];
+      return option ? option.textContent.trim() : '';
+    }
+
+    function renderDynamicRouteFallback(container){
+      const items = dynamicSelectedList
+        ? Array.from(dynamicSelectedList.querySelectorAll(':scope > li'))
+        : [];
+      if (!items.length) {
+        container.textContent = 'لم يتم تحديد خطوات المسار بعد.';
+        return;
+      }
+
+      const list = document.createElement('ol');
+      list.className = 'mb-0 pe-4';
+      items.forEach(function(item){
+        const copy = item.cloneNode(true);
+        copy.querySelectorAll('button, .dynamic-selected-actions').forEach(function(control){
+          control.remove();
+        });
+        copy.className = 'mb-2';
+        list.appendChild(copy);
+      });
+      container.replaceChildren(list);
+    }
+
+    function syncPrintSummary(){
+      setText('workflowPrintTitle', titleInput && titleInput.value);
+      setText('workflowPrintRequestType', requestTypeInput && requestTypeInput.value);
+      setText('workflowPrintPriority', selectedOptionText(prioritySelect) || 'عادي');
+      setText('workflowPrintDescription', descriptionInput && descriptionInput.value);
+
+      const fileNames = filesInput && filesInput.files
+        ? Array.from(filesInput.files).map(function(file){ return file.name; })
+        : [];
+      const attachments = document.getElementById('workflowPrintAttachmentNames');
+      if (attachments) {
+        attachments.textContent = fileNames.length ? fileNames.join('، ') : 'لا توجد مرفقات.';
+      }
+
+      const routeName = document.getElementById('workflowPrintRouteName');
+      const routeSteps = document.getElementById('workflowPrintRouteSteps');
+      if (!routeName || !routeSteps) return;
+      routeSteps.replaceChildren();
+
+      const isPredefined = Boolean(predefinedRadio && predefinedRadio.checked);
+      if (isPredefined) {
+        routeName.textContent = textOrDash(selectedOptionText(templateSelect));
+        if (predefinedSteps && predefinedSteps.children.length) {
+          const stepsCopy = predefinedSteps.cloneNode(true);
+          stepsCopy.removeAttribute('id');
+          routeSteps.appendChild(stepsCopy);
+        } else {
+          routeSteps.textContent = 'لم يتم تحديد خطوات المسار بعد.';
+        }
+        return;
+      }
+
+      const presetLabel = dynamicPresetName ? dynamicPresetName.value.trim() : '';
+      routeName.textContent = presetLabel
+        ? 'مسار ديناميكي: ' + presetLabel
+        : 'مسار ديناميكي حسب الهيكل الإداري';
+
+      if (
+        dynamicPreview &&
+        !dynamicPreview.classList.contains('d-none') &&
+        dynamicPreview.querySelector('.d-grid')
+      ) {
+        const previewCopy = dynamicPreview.cloneNode(true);
+        previewCopy.removeAttribute('id');
+        routeSteps.appendChild(previewCopy);
+      } else {
+        renderDynamicRouteFallback(routeSteps);
+      }
+    }
+
+    [
+      titleInput,
+      requestTypeInput,
+      prioritySelect,
+      descriptionInput,
+      filesInput,
+      predefinedRadio,
+      templateSelect,
+      dynamicPresetName
+    ].filter(Boolean).forEach(function(control){
+      control.addEventListener('change', syncPrintSummary);
+    });
+    window.addEventListener('beforeprint', syncPrintSummary);
+    syncPrintSummary();
   })();
 </script>
 
