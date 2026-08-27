@@ -62,7 +62,9 @@
   </div>
 </div>
 
-{% if st == 'SUBMITTED' %}
+{% include "portal/hr/_approval_flow.html" %}
+
+{% if st == 'SUBMITTED' and can_act %}
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="post">
     <div class="mb-2">
@@ -78,6 +80,9 @@
   </form>
 </div>
 {% else %}
+{% if st == 'SUBMITTED' and not can_act %}
+  <div class="alert alert-info">هذا الطلب متاح لك للاطلاع فقط، والقرار حاليًا لدى {{ stage_label(current_step.stage_code) if current_step else 'الجهة المسؤولة' }}.</div>
+{% endif %}
 <div class="mt-3">
   <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
 </div>

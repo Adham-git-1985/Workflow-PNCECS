@@ -172,6 +172,17 @@
             <i class="bi bi-kanban"></i> لوحة عمل مسار
         </a>
 
+        {% if portal_can_view_absence_board|default(false) %}
+        <a href="{{ url_for('portal.hr_employees_on_leave') }}"
+           class="{% if request.path.startswith('/portal/hr/absence-board/leaves') %}active{% endif %}">
+            <i class="bi bi-calendar2-check"></i> الموظفون المجازون
+        </a>
+        <a href="{{ url_for('portal.hr_employees_out') }}"
+           class="{% if request.path.startswith('/portal/hr/absence-board/permissions') %}active{% endif %}">
+            <i class="bi bi-door-open"></i> الموظفون المغادرون
+        </a>
+        {% endif %}
+
         <a href="{{ url_for('workflow.inbox') }}"
            class="{% if request.path.startswith('/workflow/inbox') %}active{% endif %}">
             📥 مهامي

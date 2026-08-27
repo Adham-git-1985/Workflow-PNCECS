@@ -76,6 +76,7 @@
               <ul class="dropdown-menu">
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_permission_request_new') }}">إدخال المغادرات</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_permissions') }}">السجل</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_employees_out') }}">الموظفون المغادرون</a></li>
               </ul>
             </li>
 
@@ -109,6 +110,7 @@
               <ul class="dropdown-menu">
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_leave_request_new') }}">تقديم إجازة</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_leaves') }}">إجازاتي</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_employees_on_leave') }}">الموظفون المجازون</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">أنواع الإجازات</a></li>
               </ul>
             </li>
@@ -243,6 +245,8 @@
             <a class="list-group-item list-group-item-action" data-report-label="تقرير إجازات الإضافي" href="{{ url_for('portal.hr_report_overtime_leaves') }}"><i class="bi bi-clock-history"></i> تقرير إجازات الإضافي</a>
             <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="تقرير الإجازات" href="{{ url_for('portal.hr_leaves_report') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
+            <a class="list-group-item list-group-item-action" data-report-label="الموظفون المجازون" href="{{ url_for('portal.hr_employees_on_leave') }}"><i class="bi bi-calendar2-check"></i> الموظفون المجازون</a>
+            <a class="list-group-item list-group-item-action" data-report-label="الموظفون المغادرون" href="{{ url_for('portal.hr_employees_out') }}"><i class="bi bi-door-open"></i> الموظفون المغادرون</a>
             <a class="list-group-item list-group-item-action" data-report-label="التقرير الشهري للإجازات" href="{{ url_for('portal.hr_monthly_leave_report') }}"><i class="bi bi-calendar2-week"></i> التقرير الشهري للإجازات</a>
             <a class="list-group-item list-group-item-action" data-report-label="أرصدة الإجازات" href="{{ url_for('portal.hr_leave_balances') }}"><i class="bi bi-wallet2"></i> أرصدة الإجازات</a>
           </div>

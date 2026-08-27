@@ -2738,6 +2738,76 @@ class HRPermissionRequest(db.Model):
     )
 
 
+class HRRequestApprovalStep(db.Model):
+    """Runtime approval step for leave and permission requests.
+
+    ``request_kind`` keeps the table independent from the two legacy request
+    tables while the existing status/approver columns remain available for
+    reports and older screens.
+    """
+
+    __tablename__ = "hr_request_approval_step"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_kind = db.Column(db.String(20), nullable=False, index=True)  # LEAVE/PERMISSION
+    request_id = db.Column(db.Integer, nullable=False, index=True)
+    step_order = db.Column(db.Integer, nullable=False)
+    stage_code = db.Column(db.String(40), nullable=False, index=True)
+    approver_scope = db.Column(db.String(30), nullable=False, default="USER")  # USER/HR/SECRETARY_GENERAL
+    approver_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+
+    # WAITING/PENDING/APPROVED/REJECTED/SKIPPED/CANCELLED
+    status = db.Column(db.String(20), nullable=False, default="WAITING", index=True)
+    assigned_at = db.Column(db.DateTime, nullable=True)
+    due_at = db.Column(db.DateTime, nullable=True, index=True)
+    reminder_sent_at = db.Column(db.DateTime, nullable=True)
+    reminder_count = db.Column(db.Integer, nullable=False, default=0)
+
+    decided_at = db.Column(db.DateTime, nullable=True)
+    decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    decision_note = db.Column(db.Text, nullable=True)
+
+    # A delayed manager request may be reassigned to a delegate/deputy or the
+    # next organizational manager. This never represents automatic approval.
+    escalated_at = db.Column(db.DateTime, nullable=True)
+    escalated_from_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    escalation_count = db.Column(db.Integer, nullable=False, default=0)
+    escalation_reason = db.Column(db.String(120), nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    approver_user = db.relationship("User", foreign_keys=[approver_user_id], lazy="joined")
+    decided_by = db.relationship("User", foreign_keys=[decided_by_id], lazy="joined")
+    escalated_from_user = db.relationship("User", foreign_keys=[escalated_from_user_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("request_kind", "request_id", "step_order", name="uq_hr_req_step_kind_request_order"),
+        db.Index("ix_hr_req_step_current", "request_kind", "status", "approver_user_id"),
+    )
+
+
+class HRRequestObserver(db.Model):
+    """Read-only CC recipient recorded after final approval."""
+
+    __tablename__ = "hr_request_observer"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_kind = db.Column(db.String(20), nullable=False, index=True)
+    request_id = db.Column(db.Integer, nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    observer_scope = db.Column(db.String(40), nullable=False)  # HR/GENERAL_DIRECTOR/SECRETARIAT/SECRETARY_GENERAL
+    notified_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("request_kind", "request_id", "user_id", name="uq_hr_req_observer_kind_request_user"),
+        db.Index("ix_hr_req_observer_user_kind", "user_id", "request_kind"),
+    )
+
+
 class HRMonthlyPermissionAllowance(db.Model):
     """Per-employee allowed permission hours per month.
 

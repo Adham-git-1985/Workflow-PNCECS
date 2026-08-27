@@ -36,6 +36,7 @@ def notification_target_path(target_type: str | None, target_id) -> str | None:
         "PORTALMEETING": lambda value: f"/portal/meetings/{value}",
         "HRSSREQUEST": lambda value: f"/portal/hr/self-service/requests/{value}",
         "HRLEAVEREQUEST": lambda value: f"/portal/hr/approvals/leaves/{value}",
+        "HRPERMISSIONREQUEST": lambda value: f"/portal/hr/approvals/permissions/{value}",
         "CORRINBOUND": lambda value: f"/portal/corr/inbound/{value}",
         "CORROUTBOUND": lambda value: f"/portal/corr/outbound/{value}",
         "HRTRAININGPROGRAM": lambda value: f"/portal/hr/training/programs/{value}/info",

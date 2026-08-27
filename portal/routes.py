@@ -122,6 +122,8 @@ from models import (
     HRLeaveRequest,
     HRLeaveAttachment,
     HRLeaveBalance,
+    HRRequestApprovalStep,
+    HRRequestObserver,
     HRMonthlyPermissionAllowance,
     HRLeaveGradeEntitlement,
     AttendanceDailySummary,
@@ -258,6 +260,24 @@ from services.circulars import (
     normalize_circular_scope,
     visible_circulars_query,
 )
+from services.hr_request_workflow import (
+    KIND_LEAVE,
+    KIND_PERMISSION,
+    approval_steps as hr_request_approval_steps,
+    board_visible_user_ids,
+    can_user_act as can_act_on_hr_request_step,
+    can_view_absence_board,
+    can_view_request as can_view_hr_request,
+    cancel_request_flow,
+    current_step as current_hr_request_step,
+    decide_request as decide_hr_request,
+    is_special_leave,
+    process_pending_approvals,
+    request_ids_user_can_act_on,
+    resolve_direct_manager,
+    stage_label as hr_stage_label,
+    start_request_flow,
+)
 
 # -------------------------
 # Permissions (Portal)
@@ -298,6 +318,7 @@ HR_REQUESTS_READ = "HR_REQUESTS_READ"
 HR_REQUESTS_CREATE = "HR_REQUESTS_CREATE"
 HR_REQUESTS_APPROVE = "HR_REQUESTS_APPROVE"
 HR_REQUESTS_VIEW_ALL = "HR_REQUESTS_VIEW_ALL"
+HR_ABSENCE_BOARD_VIEW = "HR_ABSENCE_BOARD_VIEW"
 
 # HR Self-Service (Light Workflow)
 HR_SS_READ = "HR_SS_READ"
@@ -630,6 +651,7 @@ def _portal_flags():
         has(HR_DOCS_READ),
         has(HR_DOCS_MANAGE),
         has(HR_REQUESTS_VIEW_ALL),
+        has(HR_ABSENCE_BOARD_VIEW),
     ])
     can_store_manage = has('STORE_MANAGE')
     can_store = has('STORE_READ') or can_store_manage
@@ -649,7 +671,21 @@ def _portal_flags():
 
     can_meetings_manage = has(PORTAL_MEETINGS_MANAGE)
     can_portal_admin = any(has(k) for k in PORTAL_ADMIN_DASHBOARD_PERMS)
-    can_approve = (has(HR_REQUESTS_APPROVE) or has(HR_REQUESTS_VIEW_ALL) or has(HR_SS_APPROVE) or has(HR_SS_WORKFLOWS_MANAGE))
+    assigned_hr_request = False
+    try:
+        assigned_hr_request = bool(
+            request_ids_user_can_act_on(current_user, KIND_LEAVE)
+            or request_ids_user_can_act_on(current_user, KIND_PERMISSION)
+        )
+    except Exception:
+        pass
+    can_approve = (
+        has(HR_REQUESTS_APPROVE)
+        or has(HR_REQUESTS_VIEW_ALL)
+        or has(HR_SS_APPROVE)
+        or has(HR_SS_WORKFLOWS_MANAGE)
+        or assigned_hr_request
+    )
 
     return {
         'can_corr': can_corr,
@@ -910,8 +946,8 @@ def _inject_portal_context():
                 )
             else:
                 approvals_pending = (
-                    _safe_count(HRLeaveRequest.query.filter(HRLeaveRequest.status == 'SUBMITTED', HRLeaveRequest.approver_user_id == current_user.id))
-                    + _safe_count(HRPermissionRequest.query.filter(HRPermissionRequest.status == 'SUBMITTED', HRPermissionRequest.approver_user_id == current_user.id))
+                    len(request_ids_user_can_act_on(current_user, KIND_LEAVE))
+                    + len(request_ids_user_can_act_on(current_user, KIND_PERMISSION))
                 )
         except Exception:
             approvals_pending = 0
@@ -982,6 +1018,11 @@ def _inject_portal_context():
     # Meetings badges (visible when the user manages meetings or has assigned work)
     meetings_week_count = 0
     meeting_tasks_open = 0
+    absence_board_visible = False
+    try:
+        absence_board_visible = can_view_absence_board(current_user)
+    except Exception:
+        absence_board_visible = False
     try:
         now = datetime.utcnow()
         week_to = now + timedelta(days=7)
@@ -1025,6 +1066,7 @@ def _inject_portal_context():
         'portal_notif_unread': notif_unread,
         'portal_meetings_week_count': meetings_week_count,
         'portal_meeting_tasks_open': meeting_tasks_open,
+        'portal_can_view_absence_board': absence_board_visible,
     }
 
 
@@ -3282,8 +3324,8 @@ def index():
                 )
             else:
                 stats['approvals_pending'] = (
-                    _safe_count(HRLeaveRequest.query.filter(HRLeaveRequest.status == 'SUBMITTED', HRLeaveRequest.approver_user_id == current_user.id))
-                    + _safe_count(HRPermissionRequest.query.filter(HRPermissionRequest.status == 'SUBMITTED', HRPermissionRequest.approver_user_id == current_user.id))
+                    len(request_ids_user_can_act_on(current_user, KIND_LEAVE))
+                    + len(request_ids_user_can_act_on(current_user, KIND_PERMISSION))
                 )
         except Exception:
             pass
@@ -6611,6 +6653,7 @@ def hr_home():
         HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
         HR_ORG_READ, HR_ORG_MANAGE,
         HR_MASTERDATA_MANAGE,
+        HR_ABSENCE_BOARD_VIEW,
     ]
     allowed = False
     try:
@@ -6625,6 +6668,7 @@ def hr_home():
     manage_keys = [
         HR_ATT_CREATE,
         HR_REQUESTS_APPROVE,
+        HR_ABSENCE_BOARD_VIEW,
         HR_SS_APPROVE, HR_SS_WORKFLOWS_MANAGE,
         HR_DISCIPLINE_READ, HR_DISCIPLINE_MANAGE,
         HR_DOCS_MANAGE,
@@ -6713,6 +6757,24 @@ def hr_home():
     add_item(HR_ORG_MANAGE, "مسؤولو الهيكلية الموحدة", "تعيين المسؤول ونائبه المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
+    try:
+        if can_view_absence_board(current_user):
+            _sec_map["الإجازات والمهام"].extend([
+                {
+                    "title": "الموظفون المجازون",
+                    "desc": "عرض الإجازات المعتمدة حسب اليوم والنطاق التنظيمي.",
+                    "icon": "bi-calendar2-check",
+                    "url": url_for("portal.hr_employees_on_leave"),
+                },
+                {
+                    "title": "الموظفون المغادرون",
+                    "desc": "عرض المغادرات المعتمدة لليوم حسب النطاق التنظيمي.",
+                    "icon": "bi-door-open",
+                    "url": url_for("portal.hr_employees_out"),
+                },
+            ])
+    except Exception:
+        pass
     # Reports
     try:
         if current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_perm(HR_REPORTS_VIEW):
@@ -11196,7 +11258,7 @@ def hr_leave_request_new():
                 flash(f"عدد الأيام يتجاوز الحد الأقصى لهذا النوع ({lt.max_days}).", "danger")
                 return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
-        mgr = _find_direct_manager(current_user)
+        mgr = resolve_direct_manager(current_user.id)
 
         status = "SUBMITTED"
         submitted_at = datetime.utcnow()
@@ -11241,6 +11303,7 @@ def hr_leave_request_new():
         )
         db.session.add(req)
         db.session.flush()
+        start_request_flow(KIND_LEAVE, req)
 
         # Save attachments after request id is available
         saved_atts = 0
@@ -11255,7 +11318,7 @@ def hr_leave_request_new():
             flash("تم اعتماد طلب الإجازة تلقائياً.", "success")
         else:
             flash("تم إرسال طلب الإجازة بنجاح.", "success")
-            if not mgr:
+            if not req.approver_user_id:
                 flash("ملاحظة: لم يتم تحديد مدير مباشر في الهيكل التنظيمي. يمكنك متابعة حالة الطلب، أو طلب من HR تحديد المدير.", "warning")
         return redirect(url_for("portal.hr_my_leaves"))
 
@@ -11301,6 +11364,7 @@ def hr_leave_request_cancel(req_id: int):
 
     prev = st or None
     r.status = "CANCELLED"
+    cancel_request_flow(KIND_LEAVE, r.id)
     r.cancelled_from_status = prev
     r.cancelled_at = datetime.utcnow()
     r.cancelled_by_id = current_user.id
@@ -11552,7 +11616,8 @@ def hr_permission_request_new():
 
         # Entry on behalf of an employee is not approval. Every chargeable
         # permission remains pending until the responsible manager approves it.
-        approver_user_id = _hr_find_approver_for_user(target_user_id)
+        manager = resolve_direct_manager(target_user_id)
+        approver_user_id = manager.id if manager else None
 
         req = HRPermissionRequest(
             user_id=target_user_id,
@@ -11569,6 +11634,8 @@ def hr_permission_request_new():
             created_by_id=current_user.id,
         )
         db.session.add(req)
+        db.session.flush()
+        start_request_flow(KIND_PERMISSION, req)
         db.session.commit()
 
         # Optional attachment
@@ -11818,6 +11885,7 @@ def hr_permission_request_cancel(req_id: int):
     prev = (r.status or "").upper() or None
 
     r.status = "CANCELLED"
+    cancel_request_flow(KIND_PERMISSION, r.id)
     r.cancelled_from_status = prev
     r.cancelled_at = datetime.utcnow()
     r.cancelled_by_id = current_user.id
@@ -11850,6 +11918,18 @@ def hr_approvals():
     except Exception:
         pass
 
+    assigned_leave_ids = request_ids_user_can_act_on(current_user, KIND_LEAVE)
+    assigned_permission_ids = request_ids_user_can_act_on(current_user, KIND_PERMISSION)
+    has_request_history = bool(
+        HRRequestApprovalStep.query.filter(or_(
+            HRRequestApprovalStep.approver_user_id == current_user.id,
+            HRRequestApprovalStep.decided_by_id == current_user.id,
+            HRRequestApprovalStep.escalated_from_user_id == current_user.id,
+        )).first()
+        or HRRequestObserver.query.filter_by(user_id=current_user.id).first()
+    )
+    can_approve = bool(can_approve or assigned_leave_ids or assigned_permission_ids or has_request_history)
+
     if not can_approve:
         abort(403)
 
@@ -11858,15 +11938,40 @@ def hr_approvals():
     if status not in allowed_status:
         status = "SUBMITTED"
 
-    def _base(q):
-        if not can_view_all:
-            q = q.filter_by(approver_user_id=current_user.id)
-        if status != "ALL":
-            q = q.filter_by(status=status)
-        return q
+    def _visible_ids(kind: str) -> set[int]:
+        if status == "SUBMITTED":
+            return set(assigned_leave_ids if kind == KIND_LEAVE else assigned_permission_ids)
+        ids = {
+            int(row.request_id)
+            for row in HRRequestApprovalStep.query.filter(
+                HRRequestApprovalStep.request_kind == kind,
+                or_(
+                    HRRequestApprovalStep.approver_user_id == current_user.id,
+                    HRRequestApprovalStep.decided_by_id == current_user.id,
+                ),
+            ).all()
+        }
+        ids.update(
+            int(row.request_id)
+            for row in HRRequestObserver.query.filter_by(request_kind=kind, user_id=current_user.id).all()
+        )
+        return ids
 
-    leave_reqs = _base(HRLeaveRequest.query).order_by(HRLeaveRequest.created_at.desc()).limit(200).all()
-    perm_reqs = _base(HRPermissionRequest.query).order_by(HRPermissionRequest.created_at.desc()).limit(200).all()
+    def _base(query, kind: str):
+        if not can_view_all:
+            ids = _visible_ids(kind)
+            query = query.filter_by(id=-1) if not ids else query.filter(query.column_descriptions[0]["entity"].id.in_(ids))
+        if status != "ALL":
+            query = query.filter_by(status=status)
+        return query
+
+    leave_reqs = _base(HRLeaveRequest.query, KIND_LEAVE).order_by(HRLeaveRequest.created_at.desc()).limit(200).all()
+    perm_reqs = _base(HRPermissionRequest.query, KIND_PERMISSION).order_by(HRPermissionRequest.created_at.desc()).limit(200).all()
+    current_stage_labels = {}
+    for row in list(leave_reqs) + list(perm_reqs):
+        kind = KIND_LEAVE if isinstance(row, HRLeaveRequest) else KIND_PERMISSION
+        step = current_hr_request_step(kind, row.id)
+        current_stage_labels[(kind, row.id)] = hr_stage_label(step.stage_code) if step else "-"
 
     return render_template(
         "portal/hr/approvals.html",
@@ -11874,7 +11979,101 @@ def hr_approvals():
         can_view_all=can_view_all,
         leave_reqs=leave_reqs,
         perm_reqs=perm_reqs,
+        current_stage_labels=current_stage_labels,
     )
+
+
+def _hr_absence_board_rows(kind: str, selected_day: str, visible_user_ids: set[int] | None, search: str = ""):
+    if kind == KIND_LEAVE:
+        query = HRLeaveRequest.query.filter(
+            HRLeaveRequest.status == "APPROVED",
+            HRLeaveRequest.start_date <= selected_day,
+            HRLeaveRequest.end_date >= selected_day,
+        )
+        model = HRLeaveRequest
+    else:
+        query = HRPermissionRequest.query.filter(
+            HRPermissionRequest.status == "APPROVED",
+            HRPermissionRequest.day == selected_day,
+        )
+        model = HRPermissionRequest
+    if visible_user_ids is not None:
+        query = query.filter(model.user_id.in_(visible_user_ids)) if visible_user_ids else query.filter(model.id == -1)
+    if search:
+        pattern = f"%{search}%"
+        query = query.join(User, User.id == model.user_id).filter(or_(User.name.ilike(pattern), User.email.ilike(pattern)))
+    order_column = HRLeaveRequest.start_date if kind == KIND_LEAVE else HRPermissionRequest.from_time
+    return query.order_by(order_column.asc(), model.id.asc()).all()
+
+
+def _hr_absence_board_export(kind: str, rows, selected_day: str):
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "الموظفون المجازون" if kind == KIND_LEAVE else "الموظفون المغادرون"
+    if kind == KIND_LEAVE:
+        sheet.append(["الرقم", "الموظف", "نوع الإجازة", "من", "إلى", "الأيام", "الحالة"])
+        for row in rows:
+            sheet.append([row.id, row.user.full_name if row.user else "-", row.leave_type.name_ar if row.leave_type else "-", row.start_date, row.end_date, row.days, "معتمدة"])
+        filename = f"employees_on_leave_{selected_day}.xlsx"
+    else:
+        sheet.append(["الرقم", "الموظف", "نوع المغادرة", "التاريخ", "من", "إلى", "الحالة"])
+        for row in rows:
+            sheet.append([row.id, row.user.full_name if row.user else "-", row.permission_type.name_ar if row.permission_type else "-", row.day, row.from_time, row.to_time, "معتمدة"])
+        filename = f"employees_out_{selected_day}.xlsx"
+    sheet.freeze_panes = "A2"
+    sheet.sheet_view.rightToLeft = True
+    for column in sheet.columns:
+        letter = column[0].column_letter
+        sheet.column_dimensions[letter].width = min(42, max(12, max(len(str(cell.value or "")) for cell in column) + 2))
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return send_file(output, as_attachment=True, download_name=filename, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+def _hr_absence_board(kind: str):
+    if not can_view_absence_board(current_user):
+        abort(403)
+    selected_day = (request.args.get("day") or date.today().strftime("%Y-%m-%d")).strip()
+    if not _parse_yyyy_mm_dd(selected_day):
+        selected_day = date.today().strftime("%Y-%m-%d")
+    search = (request.args.get("q") or "").strip()
+    rows = _hr_absence_board_rows(kind, selected_day, board_visible_user_ids(current_user), search)
+    can_export = False
+    try:
+        can_export = bool(current_user.has_perm(HR_REPORTS_EXPORT) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_role("ADMIN"))
+    except Exception:
+        pass
+    if (request.args.get("export") or "").lower() == "xlsx":
+        if not can_export:
+            abort(403)
+        return _hr_absence_board_export(kind, rows, selected_day)
+    return render_template(
+        "portal/hr/absence_board.html",
+        kind=kind,
+        rows=rows,
+        selected_day=selected_day,
+        q=search,
+        can_export=can_export,
+        current_date=date.today().strftime("%Y-%m-%d"),
+        now_time=datetime.now().strftime("%H:%M"),
+    )
+
+
+@portal_bp.route("/hr/absence-board/leaves")
+@login_required
+@_perm(PORTAL_READ)
+def hr_employees_on_leave():
+    return _hr_absence_board(KIND_LEAVE)
+
+
+@portal_bp.route("/hr/absence-board/permissions")
+@login_required
+@_perm(PORTAL_READ)
+def hr_employees_out():
+    return _hr_absence_board(KIND_PERMISSION)
 
 
 @portal_bp.route("/hr/approvals/leaves/<int:req_id>", methods=["GET", "POST"])
@@ -11887,62 +12086,50 @@ def hr_approval_leave(req_id: int):
     except Exception:
         abort(403)
 
+    r = HRLeaveRequest.query.get_or_404(req_id)
+    if (r.status or "").upper() == "SUBMITTED" and not hr_request_approval_steps(KIND_LEAVE, r.id):
+        start_request_flow(KIND_LEAVE, r)
+        db.session.commit()
+
     can_view_all = False
-    can_approve = False
     try:
-        can_view_all = current_user.has_perm(HR_REQUESTS_VIEW_ALL)
-        can_approve = current_user.has_perm(HR_REQUESTS_APPROVE) or can_view_all
+        can_view_all = bool(current_user.has_perm(HR_REQUESTS_VIEW_ALL))
     except Exception:
         pass
-    if not can_approve:
+    if not (can_view_all or can_view_hr_request(current_user, KIND_LEAVE, r.id)):
         abort(403)
 
-    r = HRLeaveRequest.query.get_or_404(req_id)
-    if not can_view_all and r.approver_user_id != current_user.id:
-        abort(403)
+    step = current_hr_request_step(KIND_LEAVE, r.id)
+    can_act = can_act_on_hr_request_step(current_user, step)
+    exceptional = is_special_leave(r)
+    note_required = bool(
+        exceptional
+        and r.leave_type
+        and getattr(r.leave_type, "exception_requires_note", False)
+        and step
+        and step.stage_code == "HR"
+    )
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip().upper()
         note = (request.form.get("decision_note") or "").strip()
-        if (r.status or "").upper() != "SUBMITTED":
-            flash("هذا الطلب ليس بانتظار الاعتماد.", "warning")
+        if note_required and action == "APPROVE" and not note:
+            flash("ملاحظة القرار مطلوبة في مرحلة الموارد البشرية لهذه الحالة الاستثنائية.", "danger")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
-
-        if action not in {"APPROVE", "REJECT"}:
-            flash("إجراء غير صحيح.", "danger")
+        try:
+            result = decide_hr_request(KIND_LEAVE, r, current_user, action, note)
+        except PermissionError:
+            abort(403)
+        except ValueError:
+            flash("هذا الطلب ليس بانتظار إجراء صالح منك.", "warning")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
-
-        if action == "APPROVE":
-            lt = HRLeaveType.query.get(r.leave_type_id) if r.leave_type_id else None
-            if lt and lt.max_days and r.days and int(r.days) > int(lt.max_days):
-                ex = getattr(lt, "exception_max_days", None)
-                if not ex or int(r.days) > int(ex):
-                    flash(f"عدد الأيام يتجاوز الحد الأقصى لهذا النوع ({lt.max_days}) ولا يوجد حد استثنائي يسمح بذلك.", "danger")
-                    return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
-
-                # Optional restriction: only HR manager can approve exceptional durations
-                if getattr(lt, "exception_requires_hr", False):
-                    hr_ok = False
-                    try:
-                        hr_ok = current_user.has_perm(HR_EMP_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_role("ADMIN")
-                    except Exception:
-                        hr_ok = False
-                    if not hr_ok:
-                        flash("هذه حالة استثنائية وتحتاج اعتماد مدير الموارد البشرية.", "warning")
-                        return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
-
-                if getattr(lt, "exception_requires_note", False) and not note:
-                    flash("ملاحظة القرار مطلوبة لاعتماد الحالة الاستثنائية.", "danger")
-                    return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
-
-        r.status = "APPROVED" if action == "APPROVE" else "REJECTED"
-        r.decided_at = datetime.utcnow()
-        r.decided_by_id = current_user.id
-        r.decision_note = note or None
-        r.updated_at = datetime.utcnow()
         db.session.commit()
-
-        flash("تم تحديث حالة الطلب.", "success")
+        if result == "NEXT":
+            flash("تمت الموافقة وانتقل الطلب إلى المرحلة التالية.", "success")
+        elif result == "APPROVED":
+            flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
+        else:
+            flash("تم رفض الطلب وإيقاف المسار.", "success")
         return redirect(url_for("portal.hr_approvals"))
 
     today_str = date.today().strftime("%Y-%m-%d")
@@ -11955,7 +12142,21 @@ def hr_approval_leave(req_id: int):
 
     attachments = HRLeaveAttachment.query.filter_by(request_id=r.id).order_by(HRLeaveAttachment.id.desc()).all()
 
-    return render_template("portal/hr/approval_leave.html", r=r, today_str=today_str, started=started, can_hr_cancel=can_hr_cancel, attachments=attachments)
+    return render_template(
+        "portal/hr/approval_leave.html",
+        r=r,
+        today_str=today_str,
+        started=started,
+        can_hr_cancel=can_hr_cancel,
+        attachments=attachments,
+        approval_steps=hr_request_approval_steps(KIND_LEAVE, r.id),
+        current_step=step,
+        can_act=can_act,
+        exceptional=exceptional,
+        requires_hr=exceptional,
+        note_required=note_required,
+        stage_label=hr_stage_label,
+    )
 
 
 @portal_bp.route("/hr/approvals/leaves/<int:req_id>/cancel", methods=["POST"])
@@ -11984,6 +12185,7 @@ def hr_leave_cancel_by_hr(req_id: int):
     prev = st or None
 
     r.status = "CANCELLED"
+    cancel_request_flow(KIND_LEAVE, r.id)
     r.cancelled_from_status = prev
     r.cancelled_at = datetime.utcnow()
     r.cancelled_by_id = current_user.id
@@ -12006,42 +12208,47 @@ def hr_approval_permission(req_id: int):
     except Exception:
         abort(403)
 
+    r = HRPermissionRequest.query.get_or_404(req_id)
+    if (r.status or "").upper() == "SUBMITTED" and not hr_request_approval_steps(KIND_PERMISSION, r.id):
+        start_request_flow(KIND_PERMISSION, r)
+        db.session.commit()
+
     can_view_all = False
-    can_approve = False
     try:
-        can_view_all = current_user.has_perm(HR_REQUESTS_VIEW_ALL)
-        can_approve = current_user.has_perm(HR_REQUESTS_APPROVE) or can_view_all
+        can_view_all = bool(current_user.has_perm(HR_REQUESTS_VIEW_ALL))
     except Exception:
         pass
-    if not can_approve:
+    if not (can_view_all or can_view_hr_request(current_user, KIND_PERMISSION, r.id)):
         abort(403)
 
-    r = HRPermissionRequest.query.get_or_404(req_id)
-    if not can_view_all and r.approver_user_id != current_user.id:
-        abort(403)
+    step = current_hr_request_step(KIND_PERMISSION, r.id)
+    can_act = can_act_on_hr_request_step(current_user, step)
 
     if request.method == "POST":
         action = (request.form.get("action") or "").strip().upper()
         note = (request.form.get("decision_note") or "").strip()
-        if (r.status or "").upper() != "SUBMITTED":
-            flash("هذا الطلب ليس بانتظار الاعتماد.", "warning")
+        try:
+            result = decide_hr_request(KIND_PERMISSION, r, current_user, action, note)
+        except PermissionError:
+            abort(403)
+        except ValueError:
+            flash("هذا الطلب ليس بانتظار إجراء صالح منك.", "warning")
             return redirect(url_for("portal.hr_approval_permission", req_id=req_id))
-
-        if action not in {"APPROVE", "REJECT"}:
-            flash("إجراء غير صحيح.", "danger")
-            return redirect(url_for("portal.hr_approval_permission", req_id=req_id))
-
-        r.status = "APPROVED" if action == "APPROVE" else "REJECTED"
-        r.decided_at = datetime.utcnow()
-        r.decided_by_id = current_user.id
-        r.decision_note = note or None
-        r.updated_at = datetime.utcnow()
         db.session.commit()
-
-        flash("تم تحديث حالة الطلب.", "success")
+        if result == "APPROVED":
+            flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
+        else:
+            flash("تم رفض الطلب وإيقاف المسار.", "success")
         return redirect(url_for("portal.hr_approvals"))
 
-    return render_template("portal/hr/approval_permission.html", r=r)
+    return render_template(
+        "portal/hr/approval_permission.html",
+        r=r,
+        approval_steps=hr_request_approval_steps(KIND_PERMISSION, r.id),
+        current_step=step,
+        can_act=can_act,
+        stage_label=hr_stage_label,
+    )
 
 
 def _ensure_employee_attachment_payslip_schema() -> None:
@@ -18471,79 +18678,31 @@ def _portal_notify(
 
 
 def _check_pending_leave_requests(send_notifications: bool = True) -> dict:
-    """Find leave requests pending longer than configured threshold.
-
-    If send_notifications=True, sends notifications to HR + request approver, but at most once every 24h per request.
-    """
-    days_thr = _setting_get_int('HR_ALERT_PENDING_DAYS', 2)
-    now = datetime.utcnow()
-    cutoff = now - timedelta(days=max(1, days_thr))
-
-    pending = []
-    try:
-        q = (HRLeaveRequest.query
-             .filter(HRLeaveRequest.status == 'SUBMITTED')
-             .filter(HRLeaveRequest.submitted_at.isnot(None))
-             .filter(HRLeaveRequest.submitted_at <= cutoff)
-             .order_by(HRLeaveRequest.submitted_at.asc()))
-        pending = q.all()
-    except Exception:
-        pending = []
-
-    if not send_notifications or not pending:
-        return {'threshold_days': days_thr, 'pending': pending, 'notified': 0}
-
-    hr_ids = _hr_recipients_user_ids()
-    notified = 0
-
-    for r in pending:
+    """Run the unified reminder/escalation policy and keep the old UI shape."""
+    result = process_pending_approvals(send_notifications=send_notifications)
+    days_thr = _setting_get_int('HR_APPROVAL_ESCALATION_WORKDAYS', 2)
+    cutoff = datetime.utcnow() - timedelta(days=max(1, days_thr))
+    pending = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.status == 'SUBMITTED')
+        .filter(HRLeaveRequest.submitted_at.isnot(None))
+        .filter(HRLeaveRequest.submitted_at <= cutoff)
+        .order_by(HRLeaveRequest.submitted_at.asc())
+        .all()
+    )
+    if send_notifications:
         try:
-            # Skip if reminded in last 24h
-            if r.reminder_sent_at:
-                try:
-                    if (now - r.reminder_sent_at) < timedelta(hours=24):
-                        continue
-                except Exception:
-                    pass
-
-            # Build recipients
-            recips = set(hr_ids)
-            if r.approver_user_id:
-                recips.add(int(r.approver_user_id))
-
-            emp_name = None
-            try:
-                emp_name = (r.user.full_name or r.user.name or r.user.email)
-            except Exception:
-                emp_name = None
-
-            submitted = None
-            try:
-                submitted = r.submitted_at.strftime('%Y-%m-%d') if r.submitted_at else None
-            except Exception:
-                pass
-
-            msg = f"تنبيه: طلب إجازة رقم #{r.id} للموظف {emp_name or ''} لم يتم اتخاذ إجراء عليه منذ أكثر من {days_thr} يوم (تقديم: {submitted or '-'})".strip()
-            _portal_notify(
-                list(recips),
-                msg,
-                ntype='HR_ALERT',
-                link_url=notification_target_path("HR_LEAVE_REQUEST", r.id),
-            )
-
-            # Update reminder metadata
-            r.reminder_sent_at = now
-            r.reminder_count = int(r.reminder_count or 0) + 1
-            notified += 1
+            db.session.commit()
         except Exception:
-            continue
-
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
-
-    return {'threshold_days': days_thr, 'pending': pending, 'notified': notified}
+            db.session.rollback()
+    return {
+        'threshold_days': days_thr,
+        'pending_days': days_thr,
+        'pending': pending,
+        'notified': int(result.get('reminded', 0)) + int(result.get('escalated', 0)),
+        'escalated': int(result.get('escalated', 0)),
+        'unresolved': int(result.get('unresolved', 0)),
+    }
 
 
 @portal_bp.route('/hr/leaves/balances', methods=['GET', 'POST'])
@@ -24158,19 +24317,32 @@ def portal_admin_hr_org_structure():
                     row.directorate_id = pid_dir
                     row.unit_id = None
             elif kind == "secs":
-                ptype = (request.form.get("parent_type") or "department").strip().lower()
-                pid_dept = to_int(request.form.get("parent_id_dept"))
-                pid_dir = to_int(request.form.get("parent_id_dir"))
-                pid_unit = to_int(request.form.get("parent_id_unit"))
+                # New UI submits one unambiguous value (for example
+                # ``department:15``). Keep the separate legacy fields as a
+                # fallback for old open pages and integrations.
+                parent_ref = (request.form.get("parent_ref") or "").strip()
+                if ":" in parent_ref:
+                    ptype, raw_parent_id = parent_ref.split(":", 1)
+                    ptype = ptype.strip().lower()
+                    parent_id = to_int(raw_parent_id)
+                    if ptype not in {"department", "directorate", "unit"}:
+                        ptype, parent_id = "", None
+                else:
+                    ptype = (request.form.get("parent_type") or "department").strip().lower()
+                    parent_id = to_int({
+                        "department": request.form.get("parent_id_dept"),
+                        "directorate": request.form.get("parent_id_dir"),
+                        "unit": request.form.get("parent_id_unit"),
+                    }.get(ptype))
                 row.department_id = None
                 row.directorate_id = None
                 row.unit_id = None
-                if ptype == "directorate":
-                    row.directorate_id = pid_dir
-                elif ptype == "unit":
-                    row.unit_id = pid_unit
-                else:
-                    row.department_id = pid_dept
+                if ptype == "department" and parent_id and db.session.get(Department, parent_id):
+                    row.department_id = parent_id
+                elif ptype == "directorate" and parent_id and db.session.get(Directorate, parent_id):
+                    row.directorate_id = parent_id
+                elif ptype == "unit" and parent_id and db.session.get(Unit, parent_id):
+                    row.unit_id = parent_id
 
             # Common fields
             row.code = to_code(request.form.get("code"))
@@ -24190,7 +24362,7 @@ def portal_admin_hr_org_structure():
             if kind == "secs":
                 parents = [row.department_id, row.directorate_id, row.unit_id]
                 if sum(1 for p in parents if p) != 1:
-                    flash("يجب اختيار تبعية واحدة فقط: دائرة أو إدارة أو وحدة.", "warning")
+                    flash("اختر تبعية القسم: دائرة أو إدارة أو وحدة.", "warning")
                     return redirect(url_for("portal.portal_admin_hr_org_structure", tab=kind))
 
             if kind == "divs":
@@ -24723,7 +24895,7 @@ def _portal_perm_presets_defaults():
                 HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
                 HR_ORG_READ, HR_ORG_MANAGE,
                 HR_MASTERDATA_MANAGE,
-                HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE,
+                HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE, HR_ABSENCE_BOARD_VIEW,
                 HR_SS_WORKFLOWS_MANAGE,
                 HR_DOCS_MANAGE,
                 PORTAL_ADMIN_READ, PORTAL_ADMIN_PERMISSIONS_MANAGE,
@@ -24746,6 +24918,7 @@ def _portal_perm_presets_defaults():
                 CORR_READ,
                 HR_REQUESTS_APPROVE,
                 HR_REQUESTS_VIEW_ALL,
+                HR_ABSENCE_BOARD_VIEW,
                 HR_SS_APPROVE,
                 HR_DISCIPLINE_READ,
                 HR_PAYSLIP_VIEW,
@@ -28148,7 +28321,7 @@ def hr_leaves_admin_new():
         except Exception:
             sdef_id = None
 
-        approver = _hr_find_approver_for_user(int(user_id))
+        approver = resolve_direct_manager(int(user_id))
         row = HRLeaveRequest(
             user_id=int(user_id),
             leave_type_id=int(leave_type_id),
@@ -28171,6 +28344,8 @@ def hr_leaves_admin_new():
             approver_user_id=(approver.id if approver else None),
         )
         db.session.add(row)
+        db.session.flush()
+        start_request_flow(KIND_LEAVE, row)
         db.session.commit()
         files = []
         try:

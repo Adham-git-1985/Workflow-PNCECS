@@ -64,6 +64,12 @@ class ApprovedOrgStructureTests(unittest.TestCase):
         self.assertEqual(len(flattened), expected)
         self.assertIn("DIVISION", {node["type"] for node in flattened})
 
+        international_relations = OrgNode.query.filter_by(
+            code="SEC_ICESCO_REL",
+            is_active=True,
+        ).one()
+        self.assertEqual(international_relations.parent.code, "DEP_ALECSO")
+
         second = apply_approved_org_structure()
         db.session.commit()
         self.assertEqual(second["created"], 0)

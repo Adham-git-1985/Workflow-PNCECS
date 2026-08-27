@@ -6,15 +6,17 @@ from flask import Flask
 
 from extensions import db
 from models import (
+    Department,
     Directorate,
     Organization,
     OrgNode,
     OrgNodeAssignment,
     OrgNodeType,
     OrgUnitAssignment,
+    Section,
     User,
 )
-from portal.routes import hr_org_assignments_save
+from portal.routes import hr_org_assignments_save, portal_admin_hr_org_structure
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -155,6 +157,74 @@ class OrgAssignmentEditTests(unittest.TestCase):
             ).first()
         )
         self.assertIsNone(db.session.get(User, employee.id).org_node_id)
+
+    def test_section_parent_can_move_between_departments_with_one_parent_value(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للمنظمات",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        old_department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الأيسيسكو",
+            is_active=True,
+        )
+        new_department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الألكسو",
+            is_active=True,
+        )
+        db.session.add_all([old_department, new_department])
+        db.session.flush()
+        section = Section(
+            department_id=old_department.id,
+            name_ar="قسم العلاقات الدولية",
+            code="INT-REL",
+            is_active=True,
+        )
+        db.session.add(section)
+        db.session.commit()
+
+        form_data = {
+            "op": "save",
+            "kind": "secs",
+            "id": str(section.id),
+            "parent_ref": f"department:{new_department.id}",
+            "code": section.code,
+            "name_ar": section.name_ar,
+            "name_en": "International Relations",
+            "is_active": "on",
+        }
+        save = _unwrapped(portal_admin_hr_org_structure)
+        with self.app.test_request_context(
+            "/portal/admin/hr/org-structure?tab=secs",
+            method="POST",
+            data=form_data,
+        ), patch("portal.routes._legacy_org_locked", return_value=False), patch(
+            "portal.routes.url_for", return_value="/portal/admin/hr/org-structure?tab=secs"
+        ):
+            response = save()
+
+        db.session.expire_all()
+        stored = db.session.get(Section, section.id)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(stored.department_id, new_department.id)
+        self.assertIsNone(stored.directorate_id)
+        self.assertIsNone(stored.unit_id)
+
+    def test_section_form_uses_a_single_explicit_parent_field(self):
+        template = (
+            PROJECT_ROOT / "templates" / "portal" / "admin" / "hr_org_structure.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('name="parent_ref" form="{{ section_form_id }}"', template)
+        self.assertIn('value="department:{{ d.id }}"', template)
+        self.assertIn('form="{{ section_form_id }}"', template)
 
 
 if __name__ == "__main__":

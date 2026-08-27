@@ -17,7 +17,7 @@ from models import (
 )
 
 
-APPROVED_STRUCTURE_VERSION = "2023-05-08:v1"
+APPROVED_STRUCTURE_VERSION = "2023-05-08:v2"
 APPROVED_LEGACY_TYPE = "APPROVED_ORG_2023"
 
 
@@ -387,6 +387,7 @@ APPROVED_ORG_STRUCTURE = _n(
                                                 _n("SEC_ALECSO_FOLLOWUP", "SECTION", "قسم المتابعة والتنسيق"),
                                                 _n("SEC_ARAB_REL", "SECTION", "قسم العلاقات العربية"),
                                                 _n("SEC_ARAB_ORG_ACT", "SECTION", "قسم الأنشطة والمنظمات العربية"),
+                                                _n("SEC_ICESCO_REL", "SECTION", "قسم العلاقات الدولية"),
                                             ),
                                         ),
                                         _n(
@@ -398,7 +399,6 @@ APPROVED_ORG_STRUCTURE = _n(
                                                 "اللجنة الوطنية للتربية وللثقافة والعلوم>الامين العام>مساعد الامين العام للمنظمات والبرامج والمشاريع (الادارات التخصصية)>الادارة العامة للمنظمات العربية والاسلامية والعلاقات الدولية >دائرة الايسيسكو",
                                             ),
                                             children=(
-                                                _n("SEC_ICESCO_REL", "SECTION", "قسم العلاقات الدولية"),
                                                 _n("SEC_ICESCO_FOLLOWUP", "SECTION", "قسم المتابعة والتنسيق"),
                                             ),
                                         ),

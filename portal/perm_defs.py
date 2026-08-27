@@ -58,6 +58,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_REQUESTS_CREATE", "تقديم طلبات", "تقديم طلب إجازة/مغادرة من صفحة الموظف.", module="HR_REQUESTS"),
         PermDef("HR_REQUESTS_APPROVE", "اعتماد الطلبات", "اعتماد/رفض طلبات الموظفين (مدير مباشر/HR).", module="HR_REQUESTS"),
         PermDef("HR_REQUESTS_VIEW_ALL", "عرض جميع الطلبات", "عرض كل طلبات الموظفين (HR Admin).", module="HR_REQUESTS"),
+        PermDef("HR_ABSENCE_BOARD_VIEW", "عرض الموظفين المجازين والمغادرين", "عرض صفحات الاطلاع للإجازات والمغادرات المعتمدة دون منح صلاحية اعتماد.", module="HR_REQUESTS"),
         PermDef("HR_SS_READ", "الطلبات الداخلية (Self-Service)", "الدخول لوحدة الطلبات الداخلية (شهادة/تحديث بيانات/رفع مستندات).", module="HR_SS"),
         PermDef("HR_SS_CREATE", "تقديم طلبات داخلية", "إنشاء وتقديم طلبات داخلية للموظف.", module="HR_SS"),
         PermDef("HR_SS_APPROVE", "اعتماد الطلبات الداخلية", "اعتماد/رفض/إرجاع الطلبات الداخلية حسب الخطوات.", module="HR_SS"),

@@ -40,6 +40,7 @@
                 <th>{{ portal_sort_link('الموظف', 'user') }}</th>
                 <th>{{ portal_sort_link('النوع', 'leave_type') }}</th>
                 <th>{{ portal_sort_link('الفترة', 'start_date') }}</th>
+                <th>المرحلة الحالية</th>
                 <th>الحالة</th>
                 <th></th>
               </tr>
@@ -57,6 +58,7 @@
                   <td class="fw-semibold">{{ r.user.full_name if r.user else '-' }}</td>
                   <td>{{ r.leave_type.name_ar if r.leave_type else '-' }}</td>
                   <td class="small">{{ r.start_date }} → {{ r.end_date }}</td>
+                  <td class="small">{{ current_stage_labels.get(('LEAVE', r.id), '-') }}</td>
                   <td><span class="badge bg-{{ badge }}">{{ st }}</span></td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_approval_leave', req_id=r.id) }}">
@@ -86,6 +88,7 @@
                 <th>{{ portal_sort_link('الموظف', 'user') }}</th>
                 <th>{{ portal_sort_link('النوع', 'permission_type') }}</th>
                 <th>{{ portal_sort_link('التاريخ', 'day') }}</th>
+                <th>المرحلة الحالية</th>
                 <th>الحالة</th>
                 <th></th>
               </tr>
@@ -103,6 +106,7 @@
                   <td class="fw-semibold">{{ r.user.full_name if r.user else '-' }}</td>
                   <td>{{ r.permission_type.name_ar if r.permission_type else '-' }}</td>
                   <td class="small">{{ r.day }}</td>
+                  <td class="small">{{ current_stage_labels.get(('PERMISSION', r.id), '-') }}</td>
                   <td><span class="badge bg-{{ badge }}">{{ st }}</span></td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_approval_permission', req_id=r.id) }}">

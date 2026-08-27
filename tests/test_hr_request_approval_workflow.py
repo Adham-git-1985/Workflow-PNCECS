@@ -1,0 +1,285 @@
+import unittest
+from datetime import datetime, timedelta
+from pathlib import Path
+
+from flask import Flask, g
+from flask_login import LoginManager
+from jinja2 import ChoiceLoader, DictLoader
+
+from extensions import db
+from models import (
+    Delegation,
+    Directorate,
+    EmployeeFile,
+    HRLeaveRequest,
+    HRLeaveType,
+    HRPermissionRequest,
+    HRPermissionType,
+    HRRequestObserver,
+    Notification,
+    Organization,
+    OrgUnitManager,
+    User,
+    UserPermission,
+)
+from portal import portal_bp
+from services.hr_request_workflow import (
+    KIND_LEAVE,
+    KIND_PERMISSION,
+    board_visible_user_ids,
+    can_user_act,
+    current_step,
+    decide_request,
+    process_pending_approvals,
+    start_request_flow,
+)
+
+
+class HRRequestApprovalWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        project_root = Path(__file__).resolve().parents[1]
+        cls.app = Flask(
+            __name__,
+            template_folder=str(project_root / "templates"),
+            static_folder=str(project_root / "static"),
+        )
+        cls.app.config.update(
+            TESTING=True,
+            SECRET_KEY="hr-request-workflow-test",
+            SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
+            SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        )
+        db.init_app(cls.app)
+        login_manager = LoginManager()
+        login_manager.init_app(cls.app)
+
+        @login_manager.user_loader
+        def load_user(user_id):
+            try:
+                return db.session.get(User, int(user_id))
+            except (TypeError, ValueError):
+                return None
+
+        cls.app.register_blueprint(portal_bp)
+        cls.app.jinja_loader = ChoiceLoader([
+            DictLoader({"portal/layout.html": "{% block content %}{% endblock %}"}),
+            cls.app.jinja_loader,
+        ])
+        cls.app.jinja_env.globals["csrf_token"] = lambda: "test-token"
+        cls.context = cls.app.app_context()
+        cls.context.push()
+        db.create_all()
+
+    @classmethod
+    def tearDownClass(cls):
+        db.session.remove()
+        cls.context.pop()
+
+    def setUp(self):
+        db.session.remove()
+        db.drop_all()
+        db.create_all()
+
+        self.employee = User(email="employee@example.test", name="Employee", password_hash="x", role="employee")
+        self.manager = User(email="manager@example.test", name="Manager", password_hash="x", role="dept_head")
+        self.general_director = User(email="director@example.test", name="General Director", password_hash="x", role="directorate_head")
+        self.hr = User(email="hr@example.test", name="HR Manager", password_hash="x", role="HR")
+        self.secretary = User(email="secretary@example.test", name="Secretary General", password_hash="x", role="General_secretary")
+        db.session.add_all((self.employee, self.manager, self.general_director, self.hr, self.secretary))
+        db.session.flush()
+
+        organization = Organization(name_ar="Organization", code="ORG")
+        db.session.add(organization)
+        db.session.flush()
+        self.directorate = Directorate(organization_id=organization.id, name_ar="General Directorate", code="DIR")
+        db.session.add(self.directorate)
+        db.session.flush()
+        self.employee.directorate_id = self.directorate.id
+        db.session.add(EmployeeFile(user_id=self.employee.id, direct_manager_user_id=self.manager.id, directorate_id=self.directorate.id))
+        db.session.add(OrgUnitManager(
+            unit_type="DIRECTORATE",
+            unit_id=self.directorate.id,
+            manager_user_id=self.general_director.id,
+        ))
+
+        self.normal_type = HRLeaveType(code="ANNUAL", name_ar="Annual", requires_approval=True, is_active=True)
+        self.external_type = HRLeaveType(code="EXTERNAL", name_ar="External", requires_approval=True, is_external=True, is_active=True)
+        self.permission_type = HRPermissionType(code="PRIVATE", name_ar="Private", requires_approval=True, is_active=True)
+        db.session.add_all((self.normal_type, self.external_type, self.permission_type))
+        db.session.add_all([
+            UserPermission(user_id=self.general_director.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_ABSENCE_BOARD_VIEW", "HR_REPORTS_EXPORT")
+        ])
+        db.session.add_all([
+            UserPermission(user_id=self.manager.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ")
+        ])
+        db.session.commit()
+
+    def _login(self, client, user_id):
+        g.pop("_login_user", None)
+        with client.session_transaction() as session:
+            session.clear()
+            session["_user_id"] = str(user_id)
+            session["_fresh"] = True
+
+    def _leave(self, leave_type):
+        row = HRLeaveRequest(
+            user_id=self.employee.id,
+            leave_type_id=leave_type.id,
+            start_date="2026-09-01",
+            end_date="2026-09-02",
+            days=2,
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(row)
+        db.session.flush()
+        return row
+
+    def test_normal_leave_is_final_after_direct_manager_and_creates_cc(self):
+        row = self._leave(self.normal_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0].approver_user_id, self.manager.id)
+
+        result = decide_request(KIND_LEAVE, row, self.manager, "APPROVE", "ok")
+        db.session.commit()
+
+        self.assertEqual(result, "APPROVED")
+        self.assertEqual(row.status, "APPROVED")
+        observer_ids = {observer.user_id for observer in HRRequestObserver.query.filter_by(request_kind=KIND_LEAVE, request_id=row.id).all()}
+        self.assertTrue({self.hr.id, self.general_director.id, self.secretary.id}.issubset(observer_ids))
+        cc_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(type="HR_REQUEST_CC").all()
+        }
+        self.assertIn(self.hr.id, cc_ids)
+        self.assertNotIn(self.general_director.id, cc_ids)
+        self.assertNotIn(self.secretary.id, cc_ids)
+
+    def test_external_leave_requires_manager_then_hr_then_secretary_general(self):
+        row = self._leave(self.external_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+        self.assertEqual([step.stage_code for step in steps], ["DIRECT_MANAGER", "HR", "SECRETARY_GENERAL"])
+
+        self.assertEqual(decide_request(KIND_LEAVE, row, self.manager, "APPROVE"), "NEXT")
+        self.assertEqual(row.status, "SUBMITTED")
+        self.assertEqual(current_step(KIND_LEAVE, row.id).stage_code, "HR")
+        self.assertTrue(can_user_act(self.hr, current_step(KIND_LEAVE, row.id)))
+        self.assertFalse(can_user_act(self.secretary, current_step(KIND_LEAVE, row.id)))
+
+        self.assertEqual(decide_request(KIND_LEAVE, row, self.hr, "APPROVE"), "NEXT")
+        self.assertEqual(current_step(KIND_LEAVE, row.id).stage_code, "SECRETARY_GENERAL")
+        self.assertEqual(decide_request(KIND_LEAVE, row, self.secretary, "APPROVE"), "APPROVED")
+        self.assertEqual(row.status, "APPROVED")
+
+    def test_overdue_manager_step_escalates_without_auto_approval(self):
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        step = current_step(KIND_LEAVE, row.id)
+        step.due_at = datetime.utcnow() - timedelta(minutes=1)
+        db.session.flush()
+
+        result = process_pending_approvals(now=datetime.utcnow(), send_notifications=False)
+
+        self.assertEqual(result["escalated"], 1)
+        self.assertEqual(row.status, "SUBMITTED")
+        self.assertEqual(step.status, "PENDING")
+        self.assertEqual(step.approver_user_id, self.general_director.id)
+        self.assertEqual(step.escalation_reason, "GENERAL_DIRECTOR")
+
+    def test_active_delegation_is_used_when_the_request_is_submitted(self):
+        delegate = User(email="delegate@example.test", name="Delegate", password_hash="x", role="employee")
+        db.session.add(delegate)
+        db.session.flush()
+        now = datetime.utcnow()
+        db.session.add(Delegation(
+            from_user_id=self.manager.id,
+            to_user_id=delegate.id,
+            starts_at=now - timedelta(days=1),
+            expires_at=now + timedelta(days=1),
+            is_active=True,
+        ))
+        row = self._leave(self.normal_type)
+        steps = start_request_flow(KIND_LEAVE, row, now=now)
+
+        self.assertEqual(steps[0].approver_user_id, delegate.id)
+        self.assertEqual(steps[0].escalation_reason, "ACTIVE_DELEGATION")
+
+    def test_legacy_submitted_request_gets_a_flow_before_alert_processing(self):
+        row = self._leave(self.normal_type)
+        db.session.commit()
+
+        result = process_pending_approvals(now=datetime.utcnow(), send_notifications=False)
+
+        self.assertEqual(result["initialized"], 1)
+        step = current_step(KIND_LEAVE, row.id)
+        self.assertIsNotNone(step)
+        self.assertEqual(step.approver_user_id, self.manager.id)
+
+    def test_permission_uses_the_same_direct_manager_flow(self):
+        row = HRPermissionRequest(
+            user_id=self.employee.id,
+            permission_type_id=self.permission_type.id,
+            day="2026-09-01",
+            from_time="10:00",
+            to_time="11:00",
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(row)
+        db.session.flush()
+        steps = start_request_flow(KIND_PERMISSION, row)
+
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(steps[0].approver_user_id, self.manager.id)
+        self.assertEqual(decide_request(KIND_PERMISSION, row, self.manager, "APPROVE"), "APPROVED")
+        self.assertEqual(row.status, "APPROVED")
+
+    def test_general_director_board_scope_contains_directorate_employee(self):
+        visible_ids = board_visible_user_ids(self.general_director)
+        self.assertIsNotNone(visible_ids)
+        self.assertIn(self.employee.id, visible_ids)
+
+    def test_absence_board_and_excel_export_show_only_approved_rows(self):
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        decide_request(KIND_LEAVE, row, self.manager, "APPROVE")
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.general_director.id)
+        page = client.get("/portal/hr/absence-board/leaves?day=2026-09-01")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"Employee", page.data)
+
+        export = client.get("/portal/hr/absence-board/leaves?day=2026-09-01&export=xlsx")
+        self.assertEqual(export.status_code, 200)
+        self.assertEqual(export.mimetype, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+    def test_assigned_manager_can_use_inbox_without_a_global_approve_permission(self):
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.manager.id)
+        inbox = client.get("/portal/hr/approvals")
+        self.assertEqual(inbox.status_code, 200)
+        detail = client.get(f"/portal/hr/approvals/leaves/{row.id}")
+        self.assertEqual(detail.status_code, 200)
+        response = client.post(
+            f"/portal/hr/approvals/leaves/{row.id}",
+            data={"action": "APPROVE", "decision_note": "approved"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.session.get(HRLeaveRequest, row.id).status, "APPROVED")
+        history = client.get("/portal/hr/approvals?status=APPROVED")
+        self.assertEqual(history.status_code, 200)
+        self.assertIn(b"Employee", history.data)
+
+
+if __name__ == "__main__":
+    unittest.main()

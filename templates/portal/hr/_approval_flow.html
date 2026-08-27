@@ -1,0 +1,55 @@
+{% if approval_steps %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <div class="fw-semibold mb-3"><i class="bi bi-diagram-3"></i> مسار الاعتماد</div>
+  <div class="d-flex flex-column gap-2">
+    {% for step in approval_steps %}
+      {% set step_status = (step.status or '').upper() %}
+      {% set color = 'secondary' %}
+      {% if step_status == 'PENDING' %}{% set color = 'warning' %}{% endif %}
+      {% if step_status == 'APPROVED' %}{% set color = 'success' %}{% endif %}
+      {% if step_status == 'REJECTED' %}{% set color = 'danger' %}{% endif %}
+      <div class="border rounded-3 p-3 {% if step_status == 'PENDING' %}border-warning bg-warning bg-opacity-10{% endif %}">
+        <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+          <div>
+            <span class="badge bg-{{ color }} ms-2">{{ step.step_order }}</span>
+            <span class="fw-semibold">{{ stage_label(step.stage_code) }}</span>
+            {% if step.approver_user %}
+              <span class="text-muted">— {{ step.approver_user.full_name }}</span>
+            {% elif step.approver_scope == 'HR' %}
+              <span class="text-muted">— فريق الموارد البشرية</span>
+            {% elif step.approver_scope == 'SECRETARY_GENERAL' %}
+              <span class="text-muted">— الأمين العام</span>
+            {% endif %}
+          </div>
+          <span class="badge bg-{{ color }}">
+            {% if step_status == 'WAITING' %}بانتظار المرحلة السابقة
+            {% elif step_status == 'PENDING' %}بانتظار القرار
+            {% elif step_status == 'APPROVED' %}موافق عليه
+            {% elif step_status == 'REJECTED' %}مرفوض
+            {% elif step_status == 'SKIPPED' %}متوقف
+            {% elif step_status == 'CANCELLED' %}ملغى
+            {% else %}{{ step_status }}{% endif %}
+          </span>
+        </div>
+        {% if step.due_at and step_status == 'PENDING' %}
+          <div class="small text-muted mt-2">مهلة الإجراء حتى {{ step.due_at.strftime('%Y-%m-%d %H:%M') }}</div>
+        {% endif %}
+        {% if step.escalated_at %}
+          <div class="small text-danger mt-2">
+            <i class="bi bi-arrow-up-circle"></i>
+            تم التصعيد{% if step.escalated_from_user %} من {{ step.escalated_from_user.full_name }}{% endif %}
+            — لا يُعد التصعيد اعتمادًا تلقائيًا.
+          </div>
+        {% endif %}
+        {% if step.decided_by %}
+          <div class="small text-muted mt-2">
+            القرار بواسطة {{ step.decided_by.full_name }}
+            {% if step.decided_at %}بتاريخ {{ step.decided_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+          </div>
+        {% endif %}
+        {% if step.decision_note %}<div class="small mt-1">{{ step.decision_note }}</div>{% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

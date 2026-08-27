@@ -25,7 +25,10 @@
     <div class="bg-white rounded-3 shadow-sm p-3">
       <div class="d-flex justify-content-between align-items-center mb-2">
         <div class="fw-semibold"><i class="bi bi-calendar-event"></i> طلبات إجازات معلّقة</div>
-        <span class="badge bg-warning text-dark">بعد {{ pending_days }} أيام</span>
+        <div class="d-flex gap-2">
+          {% if pending_info and pending_info.get('escalated') %}<span class="badge bg-danger">تم تصعيد {{ pending_info.get('escalated') }}</span>{% endif %}
+          <span class="badge bg-warning text-dark">التصعيد بعد {{ pending_days }} يومي عمل</span>
+        </div>
       </div>
 
       {% if pending_list and pending_list|length > 0 %}
@@ -63,7 +66,7 @@
             </tbody>
           </table>
         </div>
-        <div class="text-muted small mt-2">ملاحظة: النظام يرسل تذكيرًا تلقائيًا (بحد أقصى مرة كل 24 ساعة لكل طلب) حتى يتم الاعتماد أو الرفض.</div>
+        <div class="text-muted small mt-2">يرسل النظام تذكيرًا بعد يوم عمل، ثم يصعّد إلى المفوّض/النائب أو المسؤول الأعلى بعد يومي عمل. لا يحدث اعتماد تلقائي.</div>
       {% else %}
         <div class="text-muted">لا توجد طلبات متأخرة حاليًا.</div>
       {% endif %}
