@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from werkzeug.exceptions import Forbidden
@@ -63,6 +64,18 @@ class DelegatedPermissionTests(unittest.TestCase):
         ):
             with self.assertRaises(Forbidden):
                 protected_view()
+
+    def test_portal_layout_keeps_logged_in_user_as_permission_subject(self):
+        template_path = (
+            Path(__file__).resolve().parents[1]
+            / "templates"
+            / "portal"
+            / "layout.html"
+        )
+        source = template_path.read_text(encoding="utf-8")
+
+        self.assertIn("{% set au = current_user %}", source)
+        self.assertNotIn("{% set au = g.effective_user %}", source)
 
 
 if __name__ == "__main__":

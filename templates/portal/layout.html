@@ -56,18 +56,10 @@
 <body class="bg-light">
 
 {% set _flags = portal_flags if portal_flags is defined else {} %}
-{# Delegation-aware UI:
-   - When acting as a delegatee: show permissions/navigation for the effective user.
-   - BUT: SUPER_ADMIN/SUPERADMIN must not lose access or hide navigation even if delegation is active.
-#}
+{# Delegation-aware UI: User.has_perm/has_role already combines the logged-in
+   user's access with the delegator's access, so always start from current_user.
+   Replacing it with g.effective_user would hide the delegatee's own services. #}
 {% set au = current_user %}
-{% if g is defined and g.effective_user is defined and g.effective_user %}
-  {% set _role_raw = (current_user.role ~ '')|upper %}
-  {% set _is_super = _role_raw.startswith('SUPER') %}
-  {% if not (_is_super or current_user.has_role('SUPERADMIN') or current_user.has_role('SUPER_ADMIN')) %}
-    {% set au = g.effective_user %}
-  {% endif %}
-{% endif %}
 {% set can_admin = _flags.get('can_portal_admin', (
   au.has_perm('PORTAL_ADMIN_READ')
   or au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE')
