@@ -12,6 +12,7 @@ from models import (
     OrgNodeManager,
     OrgNodeType,
     OrgUnitAssignment,
+    OrgUnitManager,
     Organization,
     Section,
     Team,
@@ -329,8 +330,13 @@ _LEGACY_ORG_MODELS = {
 
 def _legacy_assignment_org_node(assignment: OrgUnitAssignment) -> OrgNode | None:
     """Map a Portal/HR assignment to its active canonical organization node."""
-    unit_type = (assignment.unit_type or "").strip().upper()
-    unit_id = int(assignment.unit_id or 0)
+    return _legacy_unit_org_node(assignment.unit_type, assignment.unit_id)
+
+
+def _legacy_unit_org_node(unit_type, unit_id) -> OrgNode | None:
+    """Map one legacy unit identity to its active canonical organization node."""
+    unit_type = (unit_type or "").strip().upper()
+    unit_id = int(unit_id or 0)
     if not unit_type or not unit_id:
         return None
 
@@ -355,6 +361,93 @@ def _legacy_assignment_org_node(assignment: OrgUnitAssignment) -> OrgNode | None
         getattr(source, "name_ar", None) or getattr(source, "name_en", None),
         unit_type,
     )
+
+
+def _legacy_unit_parent(unit_type: str, unit_id: int) -> tuple[str | None, int | None]:
+    """Resolve the parent identity for every supported legacy hierarchy level."""
+    source_model = _LEGACY_ORG_MODELS.get((unit_type or "").strip().upper())
+    source = db.session.get(source_model, int(unit_id)) if source_model else None
+    if not source:
+        return None, None
+
+    unit_type = (unit_type or "").strip().upper()
+    parent_fields = {
+        "TEAM": (("DIVISION", "division_id"), ("SECTION", "section_id")),
+        "DIVISION": (("SECTION", "section_id"), ("DEPARTMENT", "department_id")),
+        "SECTION": (
+            ("DEPARTMENT", "department_id"),
+            ("UNIT", "unit_id"),
+            ("DIRECTORATE", "directorate_id"),
+        ),
+        "DEPARTMENT": (("UNIT", "unit_id"), ("DIRECTORATE", "directorate_id")),
+        "UNIT": (("ORGANIZATION", "organization_id"),),
+        "DIRECTORATE": (("ORGANIZATION", "organization_id"),),
+    }
+    for parent_type, field_name in parent_fields.get(unit_type, ()):
+        parent_id = getattr(source, field_name, None)
+        if parent_id:
+            return parent_type, int(parent_id)
+    return None, None
+
+
+def _legacy_assignment_chain(assignment: OrgUnitAssignment) -> list[tuple[str, int]]:
+    """Return a bottom-up chain for one Portal/HR organizational assignment."""
+    unit_type = (assignment.unit_type or "").strip().upper()
+    unit_id = int(assignment.unit_id or 0)
+    chain: list[tuple[str, int]] = []
+    seen: set[tuple[str, int]] = set()
+    while unit_type and unit_id and (unit_type, unit_id) not in seen:
+        seen.add((unit_type, unit_id))
+        chain.append((unit_type, unit_id))
+        parent_type, parent_id = _legacy_unit_parent(unit_type, unit_id)
+        unit_type, unit_id = parent_type or "", int(parent_id or 0)
+    return chain
+
+
+def _legacy_unit_label(unit_type: str, unit_id: int) -> str:
+    source_model = _LEGACY_ORG_MODELS.get((unit_type or "").strip().upper())
+    source = db.session.get(source_model, int(unit_id)) if source_model else None
+    return (
+        getattr(source, "name_ar", None)
+        or getattr(source, "name_en", None)
+        or f"{unit_type} #{unit_id}"
+    )
+
+
+def _legacy_manager_for_assignment(
+    requester: User,
+    assignment: OrgUnitAssignment,
+) -> tuple[User | None, str | None, str | None, int | None, str]:
+    """Find the first non-self manager from the assignment's legacy chain."""
+    for unit_type, unit_id in _legacy_assignment_chain(assignment):
+        manager_row = (
+            OrgUnitManager.query
+            .filter(
+                db.func.upper(OrgUnitManager.unit_type) == unit_type,
+                OrgUnitManager.unit_id == unit_id,
+            )
+            .first()
+        )
+        if not manager_row:
+            continue
+        for user_id, role in (
+            (manager_row.manager_user_id, "مسؤول"),
+            (manager_row.deputy_user_id, "نائب المسؤول"),
+        ):
+            if not user_id or int(user_id) == int(requester.id):
+                continue
+            user = db.session.get(User, int(user_id))
+            if not user:
+                continue
+            canonical_node = _legacy_unit_org_node(unit_type, unit_id)
+            return (
+                user,
+                role,
+                _legacy_unit_label(unit_type, unit_id),
+                int(canonical_node.id) if canonical_node else None,
+                node_path_label(canonical_node) if canonical_node else "",
+            )
+    return None, None, None, None, ""
 
 
 def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
@@ -469,6 +562,51 @@ def requester_dynamic_manager_options(requester: User) -> list[dict]:
             "assignment_node_id": int(assignment_node.id),
             "assignment_labels": [assignment_label] if assignment_label else [],
             "is_primary": bool(is_primary),
+        }
+
+    # The approved hierarchy can intentionally be locked against legacy sync.
+    # In that case secondary Portal/HR assignments may have valid managers in
+    # OrgUnitManager without a usable OrgNode mirror. Read every legacy branch
+    # directly as a fallback instead of silently keeping only the primary one.
+    legacy_assignments = (
+        OrgUnitAssignment.query
+        .filter(
+            OrgUnitAssignment.user_id == int(requester.id),
+            db.func.upper(OrgUnitAssignment.unit_type) != "TEAM",
+        )
+        .order_by(OrgUnitAssignment.is_primary.desc(), OrgUnitAssignment.id.asc())
+        .all()
+    )
+    for assignment in legacy_assignments:
+        manager, manager_role, manager_unit_name, manager_node_id, manager_node_label = (
+            _legacy_manager_for_assignment(requester, assignment)
+        )
+        if not manager:
+            continue
+        manager_id = int(manager.id)
+        assignment_node = _legacy_assignment_org_node(assignment)
+        assignment_label = (
+            node_path_label(assignment_node)
+            if assignment_node else
+            _legacy_unit_label(assignment.unit_type, assignment.unit_id)
+        )
+        option = options_by_user_id.get(manager_id)
+        if option:
+            option["is_primary"] = bool(option["is_primary"] or assignment.is_primary)
+            if assignment_label and assignment_label not in option["assignment_labels"]:
+                option["assignment_labels"].append(assignment_label)
+            continue
+        options_by_user_id[manager_id] = {
+            "user_id": manager_id,
+            "name": manager.full_name or manager.email or f"مستخدم #{manager_id}",
+            "job_title": (getattr(manager, "job_title", None) or "").strip(),
+            "manager_role": manager_role or "مسؤول",
+            "manager_node_id": manager_node_id,
+            "manager_node_name": manager_unit_name or "",
+            "manager_node_label": manager_node_label,
+            "assignment_node_id": int(assignment_node.id) if assignment_node else None,
+            "assignment_labels": [assignment_label] if assignment_label else [],
+            "is_primary": bool(assignment.is_primary),
         }
 
     return sorted(
@@ -1191,8 +1329,12 @@ def build_dynamic_target_path(
     for manager_user_id in selected_manager_ids:
         option = manager_options_by_id[manager_user_id]
         manager_user = db.session.get(User, manager_user_id)
-        manager_node = db.session.get(OrgNode, int(option["manager_node_id"]))
-        if not manager_user or not manager_node:
+        manager_node_id = option.get("manager_node_id")
+        manager_node = (
+            db.session.get(OrgNode, int(manager_node_id))
+            if manager_node_id else None
+        )
+        if not manager_user:
             errors.append("تعذر تحميل أحد المديرين المختارين من الهيكل التنظيمي.")
             continue
         assignment_names = [

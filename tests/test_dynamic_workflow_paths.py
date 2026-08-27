@@ -19,6 +19,7 @@ from models import (
     OrgNodeManager,
     OrgNodeType,
     OrgUnitAssignment,
+    OrgUnitManager,
     Organization,
     RequestEscalation,
     RequestType,
@@ -579,17 +580,22 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         db.session.add_all([legacy_department_irene, legacy_department_raed])
         db.session.flush()
 
-        irene_node = self._node("دائرة المعلومات", self.department_a1.type, self.directorate_a)
-        irene_node.legacy_type = "DEPARTMENT"
-        irene_node.legacy_id = legacy_department_irene.id
-        raed_node = self._node("دائرة المشاريع", self.department_a1.type, self.directorate_a)
-        raed_node.legacy_type = "DEPARTMENT"
-        raed_node.legacy_id = legacy_department_raed.id
         irene = self._user("irene@example.test", "إيرين")
         raed = self._user("raed@example.test", "رائد")
         db.session.add_all([
-            OrgNodeManager(node_id=irene_node.id, manager_user_id=irene.id),
-            OrgNodeManager(node_id=raed_node.id, manager_user_id=raed.id),
+            # These managers intentionally exist only in the legacy HR
+            # hierarchy. This mirrors approved/locked databases where
+            # secondary assignments were not copied into OrgNodeManager.
+            OrgUnitManager(
+                unit_type="DEPARTMENT",
+                unit_id=legacy_department_irene.id,
+                manager_user_id=irene.id,
+            ),
+            OrgUnitManager(
+                unit_type="DEPARTMENT",
+                unit_id=legacy_department_raed.id,
+                manager_user_id=raed.id,
+            ),
             OrgUnitAssignment(
                 user_id=self.requester.id,
                 unit_type="DEPARTMENT",
