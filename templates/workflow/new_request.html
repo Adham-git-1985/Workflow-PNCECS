@@ -283,6 +283,43 @@
           </div>
           <input type="hidden" name="dynamic_target_refs" id="dynamicTargetRefs" value="">
           <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
+          <input type="hidden" name="dynamic_manager_user_ids" id="dynamicManagerUserIds"
+                 value="{{ dynamic_manager_options|map(attribute='user_id')|join(',') }}">
+          {% if dynamic_manager_options %}
+            <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10 mb-3" id="dynamicManagerChoicesBox">
+              <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+                <div>
+                  <div class="fw-bold"><i class="bi bi-person-lines-fill"></i> مديرو منشئ الطلب</div>
+                  <div class="small text-muted mt-1">لديك أكثر من تعيين تنظيمي. اختر مديراً واحداً أو أكثر؛ وسيظهر المختارون بالترتيب في بداية المسار.</div>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline-primary" id="dynamicSelectAllManagers">
+                  <i class="bi bi-check2-all"></i> اختيار الكل
+                </button>
+              </div>
+              <div class="row g-2">
+                {% for manager in dynamic_manager_options %}
+                  <div class="col-12 col-lg-4">
+                    <label class="border rounded-3 p-3 bg-white h-100 d-flex align-items-start gap-2 w-100"
+                           for="dynamicManagerChoice{{ manager.user_id }}">
+                      <input class="form-check-input dynamic-manager-checkbox flex-shrink-0" type="checkbox"
+                             id="dynamicManagerChoice{{ manager.user_id }}" value="{{ manager.user_id }}" checked>
+                      <span class="d-block" style="min-width:0;">
+                        <strong class="d-block text-break">{{ manager.name }}</strong>
+                        <span class="d-block small text-primary fw-semibold mt-1">
+                          <i class="bi bi-briefcase"></i> {{ manager.job_title or manager.manager_role }}
+                        </span>
+                        <span class="d-block small text-muted mt-1">
+                          {{ manager.manager_role }} «{{ manager.manager_node_name }}»
+                        </span>
+                        {% if manager.is_primary %}<span class="badge text-bg-primary mt-2">التعيين الأساسي</span>{% endif %}
+                      </span>
+                    </label>
+                  </div>
+                {% endfor %}
+              </div>
+              <div class="small text-danger mt-2 d-none" id="dynamicManagerValidation" role="alert">اختر مديراً واحداً على الأقل لبدء المسار.</div>
+            </div>
+          {% endif %}
           <div class="row g-2 align-items-end mb-3">
             <div class="col-12 col-md-4">
               <label class="form-label fw-bold" for="dynamicSlaDays">SLA لكل خطوة ديناميكية</label>
@@ -840,6 +877,10 @@
     const selectVisibleButton = document.getElementById('dynamicSelectVisible');
     const clearVisibleButton = document.getElementById('dynamicClearVisible');
     const targetRefsField = document.getElementById('dynamicTargetRefs');
+    const managerUserIdsField = document.getElementById('dynamicManagerUserIds');
+    const managerChoices = Array.from(document.querySelectorAll('.dynamic-manager-checkbox'));
+    const selectAllManagersButton = document.getElementById('dynamicSelectAllManagers');
+    const managerValidation = document.getElementById('dynamicManagerValidation');
     const dynamicSlaDays = document.getElementById('dynamicSlaDays');
     const legacyUserIdsField = document.getElementById('dynamicUserIds');
     const selectedList = document.getElementById('dynamicSelectedList');
@@ -964,6 +1005,12 @@
 
     function syncHidden(){
       targetRefsField.value = selected.map(item => item.ref).join(',');
+      if (managerUserIdsField) {
+        managerUserIdsField.value = managerChoices
+          .filter(control => control.checked)
+          .map(control => control.value)
+          .join(',');
+      }
       legacyUserIdsField.value = selected
         .filter(item => item.kind === 'USER')
         .map(item => item.id)
@@ -1197,7 +1244,14 @@
       setCommitteeEnabled(false);
       setIncludeSecretaryGeneral(false);
       const missingRefs = [];
-      (preset.target_refs || []).forEach(function(targetRef){
+      const presetRefs = preset.target_refs || [];
+      const hasSavedManagerSelection = presetRefs.some(function(targetRef){
+        return String(targetRef || '').toUpperCase().startsWith('MANAGER:');
+      });
+      managerChoices.forEach(function(control){
+        control.checked = !hasSavedManagerSelection;
+      });
+      presetRefs.forEach(function(targetRef){
         if (String(targetRef || '').toUpperCase() === finalSecretaryGeneralRef) {
           setIncludeSecretaryGeneral(true);
           return;
@@ -1208,6 +1262,12 @@
         const targetParts = targetSpec.split('@');
         const targetId = targetParts[0] || '';
         const targetSuffix = targetParts[1] || '';
+        if (kind === 'MANAGER') {
+          const managerControl = managerChoices.find(control => String(control.value) === String(targetId));
+          if (managerControl) managerControl.checked = true;
+          else missingRefs.push(targetRef);
+          return;
+        }
         if (kind === 'NODE') {
           const node = orgNodesById.get(String(targetId));
           if (!node || !node.can_select || !addSelectedOrgNode(node)) missingRefs.push(targetRef);
@@ -1232,6 +1292,10 @@
         }
         missingRefs.push(targetRef);
       });
+      syncHidden();
+      if (managerValidation) {
+        managerValidation.classList.toggle('d-none', managerChoices.some(control => control.checked));
+      }
       if (presetNameInput) presetNameInput.value = preset.name || '';
       renderSelected();
       setPresetStatus(
@@ -1258,6 +1322,7 @@
       const payload = new FormData();
       payload.append('name', name);
       payload.append('dynamic_target_refs', targetRefsField.value);
+      if (managerUserIdsField) payload.append('dynamic_manager_user_ids', managerUserIdsField.value);
       payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
       payload.append('csrf_token', csrfToken());
       savePresetButton.disabled = true;
@@ -1578,6 +1643,7 @@
       previewBox.innerHTML = '<div class="text-muted small">جاري بناء التسلسل الإداري…</div>';
       const payload = new FormData();
       payload.append('dynamic_target_refs', targetRefsField.value);
+      if (managerUserIdsField) payload.append('dynamic_manager_user_ids', managerUserIdsField.value);
       payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
       if (dynamicSlaDays) payload.append('dynamic_sla_days', dynamicSlaDays.value);
       const csrfField = form.querySelector('[name="csrf_token"]');
@@ -1647,6 +1713,21 @@
     if (deletePresetButton) deletePresetButton.addEventListener('click', deleteCurrentPreset);
     secretaryChoices.forEach(function(control){
       control.addEventListener('change', schedulePreview);
+    });
+    managerChoices.forEach(function(control){
+      control.addEventListener('change', function(){
+        syncHidden();
+        if (managerValidation) {
+          managerValidation.classList.toggle('d-none', managerChoices.some(item => item.checked));
+        }
+        schedulePreview();
+      });
+    });
+    if (selectAllManagersButton) selectAllManagersButton.addEventListener('click', function(){
+      managerChoices.forEach(control => { control.checked = true; });
+      syncHidden();
+      if (managerValidation) managerValidation.classList.add('d-none');
+      schedulePreview();
     });
     if (dynamicSlaDays) dynamicSlaDays.addEventListener('input', schedulePreview);
     if (hierarchySelect) hierarchySelect.addEventListener('change', updateHierarchySelection);
@@ -1779,6 +1860,12 @@
       renderSelected();
     });
     form.addEventListener('submit', function(event){
+      if (isDynamic() && managerChoices.length && !managerChoices.some(control => control.checked)) {
+        event.preventDefault();
+        if (managerValidation) managerValidation.classList.remove('d-none');
+        window.alert('اختر مديراً واحداً على الأقل لبدء المسار الديناميكي.');
+        return;
+      }
       if (isDynamic() && !selected.length) {
         event.preventDefault();
         window.alert('اختر جهة تنظيمية أو شخصاً أو لجنة واحدة على الأقل للمسار الديناميكي.');

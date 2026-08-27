@@ -4,14 +4,22 @@ from extensions import db
 from models import (
     Committee,
     CommitteeAssignee,
+    Department,
+    Directorate,
+    Division,
     OrgNode,
     OrgNodeAssignment,
     OrgNodeManager,
     OrgNodeType,
+    OrgUnitAssignment,
+    Organization,
+    Section,
     Team,
     TeamMembership,
+    Unit,
     User,
 )
+from utils.approved_org_structure import find_approved_org_node_by_name
 from utils.org_dynamic import resolve_user_org_node_id
 
 
@@ -306,6 +314,171 @@ def _manager_for_node(node: OrgNode) -> tuple[User | None, str | None]:
     user = db.session.get(User, int(user_id))
     role = "مسؤول" if manager.manager_user_id else "نائب المسؤول"
     return user, role
+
+
+_LEGACY_ORG_MODELS = {
+    "ORGANIZATION": Organization,
+    "DIRECTORATE": Directorate,
+    "UNIT": Unit,
+    "DEPARTMENT": Department,
+    "SECTION": Section,
+    "DIVISION": Division,
+    "TEAM": Team,
+}
+
+
+def _legacy_assignment_org_node(assignment: OrgUnitAssignment) -> OrgNode | None:
+    """Map a Portal/HR assignment to its active canonical organization node."""
+    unit_type = (assignment.unit_type or "").strip().upper()
+    unit_id = int(assignment.unit_id or 0)
+    if not unit_type or not unit_id:
+        return None
+
+    direct_node = (
+        OrgNode.query
+        .filter_by(
+            legacy_type=unit_type,
+            legacy_id=unit_id,
+            is_active=True,
+        )
+        .order_by(OrgNode.id.asc())
+        .first()
+    )
+    if direct_node:
+        return direct_node
+
+    source_model = _LEGACY_ORG_MODELS.get(unit_type)
+    source = db.session.get(source_model, unit_id) if source_model else None
+    if not source or not bool(getattr(source, "is_active", True)):
+        return None
+    return find_approved_org_node_by_name(
+        getattr(source, "name_ar", None) or getattr(source, "name_en", None),
+        unit_type,
+    )
+
+
+def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
+    """Return every active placement that may provide a direct manager choice."""
+    requester_id = int(requester.id)
+    primary_node_id = resolve_user_org_node_id(requester)
+    placements: list[tuple[OrgNode, bool]] = []
+    seen_node_ids: set[int] = set()
+
+    def add_node(node: OrgNode | None, is_primary: bool = False) -> None:
+        if not node or not bool(getattr(node, "is_active", False)):
+            return
+        node_id = int(node.id)
+        if node_id in seen_node_ids:
+            if is_primary:
+                for index, (existing_node, existing_primary) in enumerate(placements):
+                    if int(existing_node.id) == node_id and not existing_primary:
+                        placements[index] = (existing_node, True)
+                        break
+            return
+        seen_node_ids.add(node_id)
+        placements.append((node, bool(is_primary)))
+
+    if primary_node_id:
+        add_node(db.session.get(OrgNode, int(primary_node_id)), True)
+
+    assignments = (
+        OrgNodeAssignment.query
+        .join(OrgNode, OrgNodeAssignment.node_id == OrgNode.id)
+        .filter(
+            OrgNodeAssignment.user_id == requester_id,
+            OrgNode.is_active.is_(True),
+        )
+        .order_by(OrgNodeAssignment.is_primary.desc(), OrgNodeAssignment.id.asc())
+        .all()
+    )
+    for assignment in assignments:
+        add_node(
+            assignment.node,
+            bool(assignment.is_primary or int(assignment.node_id) == int(primary_node_id or 0)),
+        )
+
+    legacy_assignments = (
+        OrgUnitAssignment.query
+        .filter(
+            OrgUnitAssignment.user_id == requester_id,
+            db.func.upper(OrgUnitAssignment.unit_type) != "TEAM",
+        )
+        .order_by(OrgUnitAssignment.is_primary.desc(), OrgUnitAssignment.id.asc())
+        .all()
+    )
+    for assignment in legacy_assignments:
+        node = _legacy_assignment_org_node(assignment)
+        add_node(
+            node,
+            bool(
+                assignment.is_primary
+                or (node and int(node.id) == int(primary_node_id or 0))
+            ),
+        )
+
+    placements.sort(
+        key=lambda placement: (
+            0 if placement[1] else 1,
+            (_node_type_name(placement[0]) or ""),
+            placement[0].name_ar or "",
+            int(placement[0].id),
+        )
+    )
+    return placements
+
+
+def requester_dynamic_manager_options(requester: User) -> list[dict]:
+    """Resolve one selectable direct manager from each requester placement.
+
+    A user can be assigned to multiple organizational branches. The first
+    non-self manager on every branch is therefore a valid starting manager for
+    a dynamic route. Duplicate people are collapsed into one choice.
+    """
+    options_by_user_id: dict[int, dict] = {}
+    for assignment_node, is_primary in _requester_assignment_nodes(requester):
+        manager = None
+        manager_role = None
+        manager_node = None
+        for node in reversed(node_chain(assignment_node.id)):
+            candidate, role = _manager_for_node(node)
+            if not candidate or int(candidate.id) == int(requester.id):
+                continue
+            manager = candidate
+            manager_role = role or "مسؤول"
+            manager_node = node
+            break
+        if not manager or not manager_node:
+            continue
+
+        manager_id = int(manager.id)
+        option = options_by_user_id.get(manager_id)
+        assignment_label = node_path_label(assignment_node)
+        if option:
+            option["is_primary"] = bool(option["is_primary"] or is_primary)
+            if assignment_label and assignment_label not in option["assignment_labels"]:
+                option["assignment_labels"].append(assignment_label)
+            continue
+        options_by_user_id[manager_id] = {
+            "user_id": manager_id,
+            "name": manager.full_name or manager.email or f"مستخدم #{manager_id}",
+            "job_title": (getattr(manager, "job_title", None) or "").strip(),
+            "manager_role": manager_role,
+            "manager_node_id": int(manager_node.id),
+            "manager_node_name": manager_node.name_ar or "",
+            "manager_node_label": node_path_label(manager_node),
+            "assignment_node_id": int(assignment_node.id),
+            "assignment_labels": [assignment_label] if assignment_label else [],
+            "is_primary": bool(is_primary),
+        }
+
+    return sorted(
+        options_by_user_id.values(),
+        key=lambda option: (
+            0 if option["is_primary"] else 1,
+            option["name"],
+            option["user_id"],
+        ),
+    )
 
 
 def org_node_approver_names(node_ids=None) -> dict[int, str]:
@@ -797,6 +970,7 @@ def build_dynamic_target_path(
     selected_target_refs,
     include_secretary_general: bool = False,
     sla_days: int | None = None,
+    selected_manager_user_ids=None,
 ) -> dict:
     """Expand ordered USER/NODE/COMMITTEE targets into sequential runtime steps."""
     target_refs, errors = _normalized_dynamic_target_refs(selected_target_refs)
@@ -826,6 +1000,38 @@ def build_dynamic_target_path(
     }
 
     requester_chain = node_chain(resolve_user_org_node_id(requester))
+    manager_options = requester_dynamic_manager_options(requester)
+    manager_options_by_id = {
+        int(option["user_id"]): option
+        for option in manager_options
+    }
+    explicit_manager_selection = selected_manager_user_ids is not None
+    if explicit_manager_selection:
+        normalized_manager_ids: list[int] = []
+        for raw_user_id in selected_manager_user_ids or []:
+            try:
+                user_id = int(raw_user_id)
+            except (TypeError, ValueError):
+                errors.append("قائمة المديرين المختارين تحتوي على قيمة غير صالحة.")
+                continue
+            if user_id not in normalized_manager_ids:
+                normalized_manager_ids.append(user_id)
+        invalid_manager_ids = [
+            user_id for user_id in normalized_manager_ids
+            if user_id not in manager_options_by_id
+        ]
+        if invalid_manager_ids:
+            errors.append("أحد المديرين المختارين لا يرتبط حالياً بأي تعيين لمنشئ الطلب.")
+        selected_manager_ids = [
+            user_id for user_id in normalized_manager_ids
+            if user_id in manager_options_by_id
+        ]
+        if manager_options and not selected_manager_ids:
+            errors.append("اختر مديراً واحداً على الأقل لبدء المسار الديناميكي.")
+    else:
+        # Calls from older integrations keep the established automatic route.
+        # The new-request UI always sends an explicit selection.
+        selected_manager_ids = []
     requires_org_chain = bool(
         include_secretary_general
         or any(kind != "COMMITTEE" for kind, _target_id, _start_id, _mode in target_refs)
@@ -981,8 +1187,32 @@ def build_dynamic_target_path(
             "node_label": "",
         })
 
+    selectable_manager_ids = set(manager_options_by_id) if explicit_manager_selection else set()
+    for manager_user_id in selected_manager_ids:
+        option = manager_options_by_id[manager_user_id]
+        manager_user = db.session.get(User, manager_user_id)
+        manager_node = db.session.get(OrgNode, int(option["manager_node_id"]))
+        if not manager_user or not manager_node:
+            errors.append("تعذر تحميل أحد المديرين المختارين من الهيكل التنظيمي.")
+            continue
+        assignment_names = [
+            label.rsplit("←", 1)[-1].strip()
+            for label in option.get("assignment_labels", [])
+            if label
+        ]
+        assignment_reason = "، ".join(assignment_names)
+        add_user_step(
+            manager_user,
+            (
+                f"{option['manager_role']} مختار من تعيينات منشئ الطلب"
+                + (f" — {assignment_reason}" if assignment_reason else "")
+            ),
+            manager_node,
+        )
+
     current_user = requester
     current_chain = requester_chain
+    first_structural_target = True
     for target in resolved_targets:
         if target["kind"] == "COMMITTEE":
             target_ref = (
@@ -1032,6 +1262,8 @@ def build_dynamic_target_path(
                 skipped_nodes.append(route_node.name_ar)
                 continue
             resolved_manager_count += 1
+            if first_structural_target and int(manager.id) in selectable_manager_ids:
+                continue
             if add_user_step(
                 manager,
                 f"{manager_role} «{route_node.name_ar}» ضمن المسار العمودي",
@@ -1055,6 +1287,7 @@ def build_dynamic_target_path(
         segments.append(segment)
         current_user = target_user
         current_chain = target_chain
+        first_structural_target = False
 
     if include_secretary_general:
         final_chain = next(
@@ -1123,4 +1356,6 @@ def build_dynamic_target_path(
         "warnings": warnings,
         "errors": list(dict.fromkeys(errors)),
         "include_secretary_general": bool(include_secretary_general),
+        "manager_options": manager_options,
+        "selected_manager_user_ids": selected_manager_ids,
     }

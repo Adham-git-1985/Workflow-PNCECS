@@ -11,6 +11,7 @@ from models import (
     AuditLog,
     Committee,
     CommitteeAssignee,
+    Department,
     Directorate,
     Notification,
     OrgNode,
@@ -52,6 +53,7 @@ from workflow.dynamic_paths import (
     hierarchy_position_label,
     node_chain,
     node_path_label,
+    requester_dynamic_manager_options,
     same_administration,
     structural_route_nodes,
 )
@@ -554,6 +556,98 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(
             [segment["target_kind"] for segment in result["segments"]],
             ["NODE", "NODE"],
+        )
+
+    def test_requester_can_choose_managers_from_all_org_assignments(self):
+        legacy_organization = Organization(name_ar="مؤسسة التعيينات", code="ASSIGNMENTS")
+        db.session.add(legacy_organization)
+        db.session.flush()
+        legacy_directorate = Directorate(
+            organization_id=legacy_organization.id,
+            name_ar="إدارة التعيينات الإضافية",
+        )
+        db.session.add(legacy_directorate)
+        db.session.flush()
+        legacy_department_irene = Department(
+            directorate_id=legacy_directorate.id,
+            name_ar="دائرة المعلومات",
+        )
+        legacy_department_raed = Department(
+            directorate_id=legacy_directorate.id,
+            name_ar="دائرة المشاريع",
+        )
+        db.session.add_all([legacy_department_irene, legacy_department_raed])
+        db.session.flush()
+
+        irene_node = self._node("دائرة المعلومات", self.department_a1.type, self.directorate_a)
+        irene_node.legacy_type = "DEPARTMENT"
+        irene_node.legacy_id = legacy_department_irene.id
+        raed_node = self._node("دائرة المشاريع", self.department_a1.type, self.directorate_a)
+        raed_node.legacy_type = "DEPARTMENT"
+        raed_node.legacy_id = legacy_department_raed.id
+        irene = self._user("irene@example.test", "إيرين")
+        raed = self._user("raed@example.test", "رائد")
+        db.session.add_all([
+            OrgNodeManager(node_id=irene_node.id, manager_user_id=irene.id),
+            OrgNodeManager(node_id=raed_node.id, manager_user_id=raed.id),
+            OrgUnitAssignment(
+                user_id=self.requester.id,
+                unit_type="DEPARTMENT",
+                unit_id=legacy_department_irene.id,
+                is_primary=False,
+            ),
+            OrgUnitAssignment(
+                user_id=self.requester.id,
+                unit_type="DEPARTMENT",
+                unit_id=legacy_department_raed.id,
+                is_primary=False,
+            ),
+        ])
+        db.session.commit()
+
+        options = requester_dynamic_manager_options(self.requester)
+        self.assertEqual(options[0]["user_id"], self.source_manager.id)
+        self.assertEqual(
+            {option["user_id"] for option in options},
+            {self.source_manager.id, irene.id, raed.id},
+        )
+
+        selected_result = build_dynamic_target_path(
+            self.requester,
+            [f"NODE:{self.department_b.id}"],
+            selected_manager_user_ids=[irene.id],
+        )
+        self.assertEqual(selected_result["errors"], [])
+        self.assertEqual(selected_result["steps"][0]["approver_user_id"], irene.id)
+        self.assertEqual(
+            selected_result["steps"][1]["approver_org_node_id"],
+            self.department_b.id,
+        )
+        self.assertEqual(selected_result["steps"][2]["approver_user_id"], irene.id)
+        self.assertNotIn(
+            self.source_manager.id,
+            [step.get("approver_user_id") for step in selected_result["steps"]],
+        )
+
+        all_result = build_dynamic_target_path(
+            self.requester,
+            [f"NODE:{self.department_b.id}"],
+            selected_manager_user_ids=[self.source_manager.id, irene.id, raed.id],
+        )
+        self.assertEqual(all_result["errors"], [])
+        self.assertEqual(
+            [step.get("approver_user_id") for step in all_result["steps"][:3]],
+            [self.source_manager.id, irene.id, raed.id],
+        )
+
+        empty_result = build_dynamic_target_path(
+            self.requester,
+            [f"NODE:{self.department_b.id}"],
+            selected_manager_user_ids=[],
+        )
+        self.assertIn(
+            "اختر مديراً واحداً على الأقل لبدء المسار الديناميكي.",
+            empty_result["errors"],
         )
 
     def test_node_route_is_automatic_vertical_and_excludes_top_governance_levels(self):

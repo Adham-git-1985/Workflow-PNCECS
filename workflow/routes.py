@@ -124,6 +124,7 @@ from workflow.dynamic_paths import (
     hierarchy_position_label,
     node_path_label,
     org_node_approver_names,
+    requester_dynamic_manager_options,
 )
 from workflow.project_workflows import PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME
 
@@ -2626,6 +2627,17 @@ def _requested_dynamic_sla_days(default=None) -> int | None:
     return value if 1 <= value <= 365 else None
 
 
+def _requested_dynamic_manager_user_ids() -> list[str] | None:
+    """Keep an omitted field distinct from an explicit empty selection."""
+    if "dynamic_manager_user_ids" not in request.form:
+        return None
+    return [
+        value.strip()
+        for value in (request.form.get("dynamic_manager_user_ids") or "").split(",")
+        if value.strip()
+    ]
+
+
 @workflow_bp.route("/new/dynamic-path/preview", methods=["POST"])
 @login_required
 def preview_dynamic_request_path():
@@ -2643,6 +2655,7 @@ def preview_dynamic_request_path():
         selected_values,
         include_secretary_general=_dynamic_secretary_general_requested(),
         sla_days=_requested_dynamic_sla_days(default=get_sla_days()),
+        selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
     )
     return jsonify({
         "ok": not result["errors"],
@@ -2673,11 +2686,15 @@ def save_dynamic_path_preset():
         current_user,
         selected_values,
         include_secretary_general=include_secretary_general,
+        selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
     )
     if result["errors"]:
         return jsonify({"ok": False, "errors": result["errors"]}), 400
 
     normalized_refs = [
+        f"MANAGER:{user_id}"
+        for user_id in result.get("selected_manager_user_ids", [])
+    ] + [
         segment.get("target_ref")
         or f"{segment['target_kind']}:{segment['target_id']}"
         for segment in result["segments"]
@@ -2763,6 +2780,7 @@ def new_request():
     dynamic_choices = dynamic_user_choices(current_user)
     dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, current_user)
     dynamic_committees = dynamic_committee_choices()
+    dynamic_manager_options = requester_dynamic_manager_options(current_user)
     dynamic_presets = (
         UserDynamicWorkflowPreset.query
         .filter_by(user_id=current_user.id)
@@ -2820,6 +2838,7 @@ def new_request():
                 selected_values,
                 include_secretary_general=_dynamic_secretary_general_requested(),
                 sla_days=dynamic_sla_days,
+                selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
             )
             if dynamic_path["errors"]:
                 for error in dynamic_path["errors"]:
@@ -2937,6 +2956,7 @@ def new_request():
         dynamic_choices=dynamic_choices,
         dynamic_org_nodes=dynamic_org_nodes,
         dynamic_committees=dynamic_committees,
+        dynamic_manager_options=dynamic_manager_options,
         dynamic_presets=[preset.as_dict() for preset in dynamic_presets],
         requester_org_node_id=requester_org_node_id,
         dynamic_route_available=dynamic_route_available,
