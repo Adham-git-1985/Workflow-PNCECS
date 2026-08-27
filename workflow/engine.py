@@ -304,6 +304,40 @@ def _resolve_users_by_kind(kind: str, user_id=None, role=None, dept_id=None, dir
         ids = _resolve_org_manager_ids('DEPARTMENT', dept_id)
         if ids:
             return ids
+
+        # Approved organization charts use OrgNodeManager, while older saved
+        # workflow templates still point at Department ids.  Resolve the
+        # legacy department to its dynamic/canonical node before falling back
+        # to the old role-based lookup.  This also honors approved aliases
+        # such as "دائرة التربية" -> "دائرة التربية والتعليم العالي".
+        try:
+            department_id = int(dept_id)
+            node = OrgNode.query.filter_by(
+                legacy_type='DEPARTMENT',
+                legacy_id=department_id,
+                is_active=True,
+            ).first()
+            if node is not None:
+                ids = _resolve_org_manager_ids('ORG_NODE', node.id)
+                if ids:
+                    return ids
+
+            # A legacy sync node may exist without a configured manager while
+            # the approved canonical node holds the real manager/deputy.
+            department = db.session.get(Department, department_id)
+            if department is not None:
+                from utils.approved_org_structure import find_approved_org_node_by_name
+                approved_node = find_approved_org_node_by_name(
+                    getattr(department, 'name_ar', None),
+                    'DEPARTMENT',
+                )
+                if approved_node is not None:
+                    ids = _resolve_org_manager_ids('ORG_NODE', approved_node.id)
+                    if ids:
+                        return ids
+        except Exception:
+            pass
+
         # Fallback: role-based (legacy)
         users = User.query.filter(User.department_id == int(dept_id), User.role.ilike('dept_head')).all()
         return [int(u.id) for u in users]

@@ -450,6 +450,103 @@ def flatten_approved_structure():
     return rows
 
 
+def find_approved_org_node_by_name(
+    name: str | None,
+    type_code: str | None = None,
+) -> OrgNode | None:
+    """Resolve a legacy label or alias to its canonical approved OrgNode.
+
+    Legacy workflow templates still reference the old master-data tables.  An
+    approved node can have a newer canonical name (for example, the legacy
+    ``دائرة التربية`` became ``دائرة التربية والتعليم العالي``).  Matching
+    against the approved aliases keeps those saved templates connected to the
+    manager/deputy configured on the canonical organization chart.
+
+    Ambiguous labels return ``None`` unless exactly one matching node is the
+    operational node with a configured manager or deputy.
+    """
+    normalized_name = _normalize(name)
+    if not normalized_name:
+        return None
+
+    wanted_type = (type_code or "").strip().upper()
+    matched_keys: set[str] = set()
+    for spec in flatten_approved_structure():
+        if wanted_type and (spec.get("type") or "").strip().upper() != wanted_type:
+            continue
+        labels = (spec.get("name_ar"), *(spec.get("aliases") or ()))
+        if normalized_name in {_normalize(label) for label in labels if label}:
+            matched_keys.add(spec["key"])
+
+    if len(matched_keys) != 1:
+        return None
+
+    key = next(iter(matched_keys))
+    matched_spec = next(spec for spec in flatten_approved_structure() if spec["key"] == key)
+    node = OrgNode.query.filter_by(code=key, is_active=True).first()
+    if node is not None:
+        return node
+
+    node = OrgNode.query.filter_by(
+        legacy_type=APPROVED_LEGACY_TYPE,
+        legacy_id=_marker_id(key),
+        is_active=True,
+    ).first()
+    if node is not None:
+        return node
+
+    # Some databases contain the approved hierarchy from an earlier importer
+    # that did not stamp ``code``/``legacy_type``.  Match its canonical label
+    # in Python so SQLite collation and Arabic normalization cannot hide it.
+    canonical_labels = {
+        _normalize(label)
+        for label in (
+            matched_spec.get("name_ar"),
+            *(matched_spec.get("aliases") or ()),
+        )
+        if label
+    }
+    candidates = (
+        OrgNode.query
+        .join(OrgNodeType, OrgNode.type_id == OrgNodeType.id)
+        .filter(
+            OrgNode.is_active.is_(True),
+            OrgNodeType.code == matched_spec["type"],
+        )
+        .all()
+    )
+    candidates = [
+        candidate
+        for candidate in candidates
+        if _normalize(candidate.name_ar) in canonical_labels
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # Legacy synchronization can leave multiple active aliases in the dynamic
+    # tree.  When exactly one of them is the node on which management was
+    # actually configured, that node is the unambiguous operational target.
+    if candidates:
+        candidate_ids = [candidate.id for candidate in candidates]
+        managed_node_ids = {
+            row.node_id
+            for row in OrgNodeManager.query.filter(
+                OrgNodeManager.node_id.in_(candidate_ids),
+                (
+                    OrgNodeManager.manager_user_id.isnot(None)
+                    | OrgNodeManager.deputy_user_id.isnot(None)
+                ),
+            ).all()
+        }
+        managed_candidates = [
+            candidate for candidate in candidates if candidate.id in managed_node_ids
+        ]
+        if len(managed_candidates) == 1:
+            return managed_candidates[0]
+
+    return None
+
+
 def _setting_set(key: str, value: str):
     row = SystemSetting.query.filter_by(key=key).first()
     if row is None:

@@ -25,6 +25,8 @@ def perm_required(*keys):
     - SUPERADMIN always allowed.
     - Workflow ADMIN allowed by default for non-portal keys.
     - Portal/HR/Correspondence/Store keys require explicit grant.
+    - An active delegation extends the logged-in user's permissions; it never
+      removes permissions already granted to that account.
     """
     def deco(f):
         @wraps(f)
@@ -50,25 +52,49 @@ def perm_required(*keys):
             if hasattr(base_user, "has_role") and (base_user.has_role("SUPERADMIN") or base_user.has_role("SUPER_ADMIN")):
                 return f(*args, **kwargs)
 
-            # If Delegation is enabled, permission checks should apply to the
-            # effective user (delegator) rather than the delegatee.
-            user = base_user
+            # A delegatee may act with both their own permissions and the
+            # delegator's permissions.  Keep both identities in the check so
+            # enabling a delegation cannot unexpectedly lock the delegatee
+            # out of pages they could already access.
+            effective_user = base_user
             try:
                 if callable(get_effective_user):
-                    user = get_effective_user() or base_user
+                    effective_user = get_effective_user() or base_user
             except Exception:
-                user = base_user
+                effective_user = base_user
+
+            candidates = [base_user]
+            try:
+                if (
+                    effective_user is not None
+                    and getattr(effective_user, "id", None) != getattr(base_user, "id", None)
+                ):
+                    candidates.append(effective_user)
+            except Exception:
+                candidates = [base_user]
 
             # Workflow ADMIN: allow only if all keys are NOT portal-like
-            if hasattr(user, "has_role") and user.has_role("ADMIN"):
-                if keys and all(not _is_portal_key(k) for k in keys):
-                    return f(*args, **kwargs)
+            if keys and all(not _is_portal_key(k) for k in keys):
+                for candidate in candidates:
+                    try:
+                        if candidate.has_role("ADMIN"):
+                            return f(*args, **kwargs)
+                    except Exception:
+                        continue
 
-            has_perm = getattr(user, "has_perm", None)
-            if not callable(has_perm):
-                abort(403)
+            def _candidate_has(permission_key: str) -> bool:
+                for candidate in candidates:
+                    has_perm = getattr(candidate, "has_perm", None)
+                    if not callable(has_perm):
+                        continue
+                    try:
+                        if has_perm(permission_key):
+                            return True
+                    except Exception:
+                        continue
+                return False
 
-            if not all(has_perm(k) for k in keys):
+            if not all(_candidate_has(k) for k in keys):
                 abort(403)
 
             return f(*args, **kwargs)
