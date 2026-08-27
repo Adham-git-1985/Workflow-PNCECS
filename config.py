@@ -57,8 +57,17 @@ class BaseConfig:
     # Any unknown value is treated as LOCAL_ONLY by the service.
     ASSISTANT_AI_PRIVACY_MODE = os.getenv("ASSISTANT_AI_PRIVACY_MODE", "PUBLIC_ONLY")
     ASSISTANT_AI_PUBLIC_MAX_CHARS = int(os.getenv("ASSISTANT_AI_PUBLIC_MAX_CHARS", "600"))
+    # Public current-events questions can use the hosted web-search tool.  The
+    # privacy gate still prevents system, government, or personal data from
+    # leaving this server.
+    ASSISTANT_AI_WEB_SEARCH_ENABLED = os.getenv("ASSISTANT_AI_WEB_SEARCH_ENABLED", "1")
     ASSISTANT_AI_CONTEXT_CHARS = int(os.getenv("ASSISTANT_AI_CONTEXT_CHARS", "16000"))
     ASSISTANT_AI_MAX_OUTPUT_TOKENS = int(os.getenv("ASSISTANT_AI_MAX_OUTPUT_TOKENS", "1100"))
+    ASSISTANT_LOCAL_AI_ENABLED = os.getenv("ASSISTANT_LOCAL_AI_ENABLED", "1")
+    ASSISTANT_LOCAL_AI_URL = os.getenv("ASSISTANT_LOCAL_AI_URL", "http://127.0.0.1:11434/api/chat")
+    ASSISTANT_LOCAL_AI_MODEL = os.getenv("ASSISTANT_LOCAL_AI_MODEL", "")
+    ASSISTANT_LOCAL_AI_TIMEOUT = float(os.getenv("ASSISTANT_LOCAL_AI_TIMEOUT", "60"))
+    ASSISTANT_LOCAL_AI_CONTEXT_CHARS = int(os.getenv("ASSISTANT_LOCAL_AI_CONTEXT_CHARS", "12000"))
     ASSISTANT_MAX_MESSAGE_CHARS = int(os.getenv("ASSISTANT_MAX_MESSAGE_CHARS", "2000"))
     ASSISTANT_RATE_LIMIT = int(os.getenv("ASSISTANT_RATE_LIMIT", "20"))
     ASSISTANT_RATE_WINDOW_SECONDS = int(os.getenv("ASSISTANT_RATE_WINDOW_SECONDS", "60"))

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import unicodedata
 import hashlib
+from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import ProxyHandler, Request, build_opener
 
 from flask import current_app, url_for
 
@@ -253,6 +257,24 @@ _CONTEXTUAL_FOLLOW_UP_MARKERS = (
     "هذا الموضوع", "ذلك الموضوع", "الموضوع السابق", "نفس الموضوع",
     "ردك السابق", "كلامك السابق", "ما ذكرته", "الذي ذكرته",
     "ما قلته", "الذي قلته", "الرد السابق",
+)
+
+_WEB_SEARCH_REQUEST_MARKERS = (
+    "news",
+    "headlines",
+    "breaking news",
+    "latest news",
+    "today's news",
+    "الاخبار",
+    "اخر الاخبار",
+    "اخر الأخبار",
+    "آخر الأخبار",
+    "اخبار اليوم",
+    "أخبار اليوم",
+    "الاخبار العاجلة",
+    "أخبار عاجلة",
+    "عاجل",
+    "مستجدات اليوم",
 )
 
 _HOW_TO_GUIDES = (
@@ -586,6 +608,36 @@ def _external_ai_privacy_mode() -> str:
     return mode if mode in {"LOCAL_ONLY", "PUBLIC_ONLY"} else "LOCAL_ONLY"
 
 
+def _web_search_requested(message: str) -> bool:
+    enabled = str(
+        current_app.config.get("ASSISTANT_AI_WEB_SEARCH_ENABLED", "1")
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return False
+    normalized = normalize_text(message)
+    return any(normalize_text(marker) in normalized for marker in _WEB_SEARCH_REQUEST_MARKERS)
+
+
+def _local_ai_settings() -> tuple[str, str, float, int] | None:
+    enabled = str(current_app.config.get("ASSISTANT_LOCAL_AI_ENABLED", "1")).strip().lower()
+    model = str(current_app.config.get("ASSISTANT_LOCAL_AI_MODEL") or "").strip()
+    url = str(current_app.config.get("ASSISTANT_LOCAL_AI_URL") or "").strip()
+    parsed = urlparse(url)
+    if (
+        enabled not in {"1", "true", "yes", "on"}
+        or not model
+        or parsed.scheme not in {"http", "https"}
+        or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+    ):
+        return None
+    return (
+        url,
+        model,
+        max(1.0, float(current_app.config.get("ASSISTANT_LOCAL_AI_TIMEOUT", 60))),
+        max(1200, int(current_app.config.get("ASSISTANT_LOCAL_AI_CONTEXT_CHARS", 12000))),
+    )
+
+
 def _knowledge_contains_internal_data(knowledge: dict[str, Any]) -> bool:
     return any(
         knowledge.get(key)
@@ -701,6 +753,122 @@ def _openai_http_client(timeout: float):
     import httpx
 
     return httpx.Client(verify=_windows_trust_context(), timeout=timeout)
+
+
+def _response_value(item: Any, name: str, default=None):
+    if isinstance(item, Mapping):
+        return item.get(name, default)
+    return getattr(item, name, default)
+
+
+def _web_sources_from_response(response: Any) -> list[dict[str, str]]:
+    """Return safe, clickable citations from an OpenAI web-search response."""
+
+    sources: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    def append_source(item: Any) -> bool:
+        url = str(_response_value(item, "url") or "").strip()
+        parsed = urlparse(url)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or url in seen_urls
+        ):
+            return False
+        seen_urls.add(url)
+        title = _compact(_response_value(item, "title"), 180)
+        sources.append(
+            {
+                "type": "web",
+                "label": title or parsed.netloc,
+                "url": url,
+            }
+        )
+        return len(sources) >= 10
+
+    for output_item in _response_value(response, "output", []) or []:
+        if _response_value(output_item, "type") == "web_search_call":
+            action = _response_value(output_item, "action", {}) or {}
+            for source in _response_value(action, "sources", []) or []:
+                if append_source(source):
+                    return sources
+        if _response_value(output_item, "type") != "message":
+            continue
+        for content in _response_value(output_item, "content", []) or []:
+            for annotation in _response_value(content, "annotations", []) or []:
+                if _response_value(annotation, "type") != "url_citation":
+                    continue
+                if append_source(annotation):
+                    return sources
+    return sources
+
+
+def _local_ai_messages(
+    message: str,
+    history: list[dict[str, str]],
+    context: dict[str, Any],
+    knowledge: dict[str, Any],
+    context_limit: int,
+) -> list[dict[str, str]]:
+    knowledge_text = str(knowledge.get("reply") or "").strip()
+    if not knowledge_text:
+        knowledge_text = "\n".join(str(item) for item in (knowledge.get("facts") or []) if item)
+    knowledge_text = _compact(knowledge_text, context_limit)
+    page_title = _compact(context.get("title"), 160)
+    system_prompt = (
+        "أنت «عارف»، مساعد عربي يعمل محليًا داخل النظام. أجب اعتمادًا على المعرفة المصرح بها "
+        "الواردة أدناه فقط عند السؤال عن النظام أو بياناته. لا تخمّن معلومات غير موجودة، ولا تكشف "
+        "بيانات لا تظهر في السياق، ولا تنفذ أي إجراء نيابةً عن المستخدم. اشرح بوضوح وباختصار، "
+        "وإذا لم تكفِ المعرفة المتاحة فقل ذلك واقترح الشاشة أو المعلومة المطلوبة."
+    )
+    if page_title:
+        system_prompt += f"\nالصفحة الحالية: {page_title}"
+    if knowledge_text:
+        system_prompt += f"\n\nالمعرفة المسموح بها لهذا المستخدم:\n{knowledge_text}"
+    else:
+        system_prompt += "\n\nلا توجد معرفة مسترجعة خاصة بهذا السؤال."
+
+    messages = [{"role": "system", "content": system_prompt}]
+    for item in history[-6:]:
+        role = str(item.get("role") or "")
+        content = _compact(item.get("content"), 1200)
+        if role in {"user", "assistant"} and content:
+            messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": _compact(message, 2000)})
+    return messages
+
+
+def _try_local_ai(
+    message: str,
+    history: list[dict[str, str]],
+    context: dict[str, Any],
+    knowledge: dict[str, Any],
+) -> str | None:
+    settings = _local_ai_settings()
+    if settings is None:
+        return None
+    url, model, timeout, context_limit = settings
+    payload = {
+        "model": model,
+        "stream": False,
+        "messages": _local_ai_messages(message, history, context, knowledge, context_limit),
+        "options": {"temperature": 0.2},
+    }
+    request = Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    try:
+        opener = build_opener(ProxyHandler({}))
+        with opener.open(request, timeout=timeout) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        current_app.logger.info("Local assistant unavailable; using retrieval fallback")
+        return None
+    return _compact((result.get("message") or {}).get("content"), 6000) or None
 
 
 def _direct_navigation_results(message: str) -> list[dict[str, str]]:
@@ -856,6 +1024,7 @@ def _try_external_ai(
     context: dict[str, Any],
     results: list[dict[str, str]],
     knowledge: dict[str, Any],
+    external_sources: list[dict[str, str]] | None = None,
 ) -> str | None:
     enabled = str(
         current_app.config.get("ASSISTANT_AI_ENABLED")
@@ -904,18 +1073,27 @@ def _try_external_ai(
         client = OpenAI(
             **client_options,
         )
-        try:
-            response = client.responses.create(
-                model=str(model),
-                instructions=instructions,
-                input=input_messages,
-                max_output_tokens=int(current_app.config.get("ASSISTANT_AI_MAX_OUTPUT_TOKENS", 1100)),
-                safety_identifier=_privacy_safe_user_identifier(user),
-                store=False,
+        request_options: dict[str, Any] = {
+            "model": str(model),
+            "instructions": instructions,
+            "input": input_messages,
+            "max_output_tokens": int(current_app.config.get("ASSISTANT_AI_MAX_OUTPUT_TOKENS", 1100)),
+            "safety_identifier": _privacy_safe_user_identifier(user),
+            "store": False,
+        }
+        if _web_search_requested(message):
+            request_options.update(
+                tools=[{"type": "web_search"}],
+                tool_choice="required",
+                include=["web_search_call.action.sources"],
             )
+        try:
+            response = client.responses.create(**request_options)
         finally:
             client.close()
         reply = _compact(getattr(response, "output_text", ""), 6000)
+        if reply and external_sources is not None:
+            external_sources.extend(_web_sources_from_response(response))
         return reply or None
     except Exception:
         current_app.logger.exception("External assistant failed; using local fallback")
@@ -934,9 +1112,35 @@ def answer(
     navigation = navigation_results(user, message, context)
     results = _merge_links(knowledge.get("links") or [], navigation)
     local = build_local_reply(message, results, context, knowledge, history)
-    ai_reply = _try_external_ai(user, message, history, context, results, knowledge)
-    if ai_reply:
-        local["reply"] = ai_reply
-        local["mode"] = "ai"
+    local_ai_reply = None
+    local_ai_tried = False
+    if not _web_search_requested(message):
+        local_ai_reply = _try_local_ai(message, history, context, knowledge)
+        local_ai_tried = True
+
+    if local_ai_reply:
+        local["reply"] = local_ai_reply
+        local["mode"] = "local_ai"
+
+    external_sources: list[dict[str, str]] = []
+    if not local_ai_reply:
+        ai_reply = _try_external_ai(
+            user,
+            message,
+            history,
+            context,
+            results,
+            knowledge,
+            external_sources,
+        )
+        if ai_reply:
+            local["reply"] = ai_reply
+            local["mode"] = "ai"
+            local["sources"] = [*local["sources"], *external_sources][:10]
+        elif not local_ai_tried:
+            local_ai_reply = _try_local_ai(message, history, context, knowledge)
+            if local_ai_reply:
+                local["reply"] = local_ai_reply
+                local["mode"] = "local_ai"
     local["intents"] = knowledge.get("intents") or []
     return local

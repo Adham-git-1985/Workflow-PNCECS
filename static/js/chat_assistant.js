@@ -20,6 +20,7 @@
   const maxMessageChars = Number.parseInt(root.dataset.maxMessageChars || "2000", 10) || 2000;
   const internalKnowledgeEnabled = root.dataset.internalKnowledge === "1";
   const aiReady = root.dataset.aiReady === "1";
+  const localAiReady = root.dataset.localAiReady === "1";
   const storageKey = `aref-assistant:v4:${root.dataset.userId || "user"}`;
   const defaultInputPlaceholder = "اكتب كما تتكلم، مثل: مرحبًا أو أريد مساعدتك...";
   const defaultSuggestions = [
@@ -175,6 +176,15 @@
     return typeof value === "string" && value.startsWith("/") && !value.startsWith("//") ? value : null;
   }
 
+  function safeExternalHref(value) {
+    try {
+      const url = new URL(String(value || ""));
+      return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
   function appendMessage(role, content, links, extraClass, sources) {
     const bubble = document.createElement("div");
     bubble.className = `masar-assistant__message masar-assistant__message--${role}`;
@@ -219,9 +229,15 @@
       sourceList.className = "masar-assistant__source-list";
       sources.slice(0, 10).forEach((item) => {
         if (!item || typeof item.label !== "string") return;
-        const source = document.createElement("code");
+        const href = safeExternalHref(item.url);
+        const source = document.createElement(href ? "a" : "code");
         source.className = "masar-assistant__source";
         source.textContent = item.label;
+        if (href) {
+          source.href = href;
+          source.target = "_blank";
+          source.rel = "noopener noreferrer";
+        }
         sourceList.appendChild(source);
       });
       if (sourceList.childElementCount) {
@@ -328,8 +344,10 @@
     if (!history.length) {
       appendMessage(
         "assistant",
-        aiReady
-          ? "أهلًا بك! الذكاء الخارجي متاح للأسئلة العامة النظيفة فقط، وتبقى بيانات النظام والعمل الحكومي داخل الخادم المحلي."
+        localAiReady
+          ? "أهلًا بك! الذكاء المحلي يقرأ المعرفة المسموح بها داخل الخادم ويشرحها لك من دون إرسالها إلى الإنترنت."
+          : aiReady
+            ? "أهلًا بك! الذكاء الخارجي متاح للأسئلة العامة النظيفة فقط، وتبقى بيانات النظام والعمل الحكومي داخل الخادم المحلي."
           : internalKnowledgeEnabled
             ? "أهلًا بك! يمكنك التحدث معي بكلام عادي أو اختيار مساعدة جاهزة. أشرح الشاشات والخطوات والبيانات والمشكلات، بينما تحتاج المحادثة العامة المفتوحة إلى تفعيل الوضع الذكي."
             : "أهلًا بك! تكلّم معي بكلام عادي أو اختر نوع المساعدة من القائمة. أستطيع الحوار اليومي البسيط ومساعدتك داخل النظام، بينما تحتاج المحادثة العامة المفتوحة إلى تفعيل الوضع الذكي من الإدارة."
@@ -414,6 +432,8 @@
       const knowledgeLabel = data.index_stats ? " — معرفة المشروع" : "";
       modeLabel.textContent = data.mode === "ai"
         ? `محادثة ذكية — ${accessLabel}${knowledgeLabel}`
+        : data.mode === "local_ai"
+          ? `مساعد ذكي محلي — ${accessLabel}${knowledgeLabel}`
         : `محادثة محلية — ${accessLabel}${knowledgeLabel}`;
     } catch (error) {
       typing.remove();
@@ -439,8 +459,10 @@
     history = [];
     saveHistory();
     input.placeholder = defaultInputPlaceholder;
-    modeLabel.textContent = aiReady
-      ? "وضع تلقائي آمن — ذكي عند الاتصال ومحلي عند الحماية أو الانقطاع"
+    modeLabel.textContent = localAiReady
+      ? "ذكاء محلي آمن — المعرفة لا تغادر الخادم"
+      : aiReady
+        ? "وضع تلقائي آمن — ذكي عند الاتصال ومحلي عند الحماية أو الانقطاع"
       : "محادثة محلية ومساعدة داخل النظام";
     renderConversation();
     input.focus();

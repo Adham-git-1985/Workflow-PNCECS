@@ -1,6 +1,8 @@
 {% set assistant_ai_flag = config.get('ASSISTANT_AI_ENABLED', '1')|string|lower %}
 {% set assistant_privacy_mode = config.get('ASSISTANT_AI_PRIVACY_MODE', 'PUBLIC_ONLY')|string|upper %}
 {% set assistant_ai_ready = assistant_privacy_mode == 'PUBLIC_ONLY' and assistant_ai_flag in ['1', 'true', 'yes', 'on'] and config.get('ASSISTANT_OPENAI_API_KEY') and config.get('ASSISTANT_OPENAI_MODEL') %}
+{% set assistant_local_ai_flag = config.get('ASSISTANT_LOCAL_AI_ENABLED', '1')|string|lower %}
+{% set assistant_local_ai_ready = assistant_local_ai_flag in ['1', 'true', 'yes', 'on'] and config.get('ASSISTANT_LOCAL_AI_MODEL') %}
 {% if current_user.is_authenticated and not hide_shell|default(false) %}
 <div id="masarAssistant"
      class="masar-assistant no-print"
@@ -10,6 +12,7 @@
      data-max-message-chars="{{ config.get('ASSISTANT_MAX_MESSAGE_CHARS', 2000) }}"
      data-internal-knowledge="{{ '1' if current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') else '0' }}"
      data-ai-ready="{{ '1' if assistant_ai_ready else '0' }}"
+     data-local-ai-ready="{{ '1' if assistant_local_ai_ready else '0' }}"
      data-context-path="{{ request.path }}">
   <button type="button"
           class="masar-assistant__launcher"
@@ -35,7 +38,7 @@
         <span class="masar-assistant__avatar" aria-hidden="true"><i class="bi bi-stars"></i></span>
         <div>
           <strong class="d-block">عارف معك</strong>
-          <small data-assistant-mode>{{ 'وضع تلقائي آمن — ذكي عند الاتصال ومحلي عند الحماية أو الانقطاع' if assistant_ai_ready else 'محادثة محلية ومساعدة داخل النظام' }}</small>
+          <small data-assistant-mode>{{ 'ذكاء محلي آمن — يقرأ المعرفة المسموح بها داخل الخادم' if assistant_local_ai_ready else ('وضع تلقائي آمن — ذكي عند الاتصال ومحلي عند الحماية أو الانقطاع' if assistant_ai_ready else 'محادثة محلية ومساعدة داخل النظام') }}</small>
         </div>
       </div>
       <div class="d-flex align-items-center gap-1">

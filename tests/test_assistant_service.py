@@ -9,7 +9,7 @@ from assistant.knowledge import (
     _correspondence_matches,
     assistant_access_profile,
 )
-from assistant.service import _try_external_ai, answer, build_local_reply, normalize_text
+from assistant.service import _try_external_ai, _try_local_ai, answer, build_local_reply, normalize_text
 
 
 class _FakeUser:
@@ -158,6 +158,134 @@ class AssistantServiceTests(unittest.TestCase):
         self.assertNotIn("/internal", serialized)
         self.assertNotIn("أحب الكتب", serialized)
         self.assertIn("للمحادثة العامة فقط", payload["instructions"])
+
+    def test_news_question_requires_web_search_and_exposes_citations(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="test-secret",
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+            ASSISTANT_AI_WEB_SEARCH_ENABLED="1",
+        )
+        client = unittest.mock.MagicMock()
+        client.responses.create.return_value = SimpleNamespace(
+            output_text="Latest news summary.",
+            output=[
+                SimpleNamespace(
+                    type="web_search_call",
+                    action=SimpleNamespace(
+                        sources=[
+                            SimpleNamespace(url="https://example.com/search-result")
+                        ]
+                    ),
+                ),
+                SimpleNamespace(
+                    type="message",
+                    content=[
+                        SimpleNamespace(
+                            type="output_text",
+                            annotations=[
+                                SimpleNamespace(
+                                    type="url_citation",
+                                    title="Example News",
+                                    url="https://example.com/latest-news",
+                                )
+                            ],
+                        )
+                    ],
+                )
+            ],
+        )
+        sources = []
+        with app.app_context(), patch("openai.OpenAI", return_value=client):
+            reply = _try_external_ai(
+                _FakeUser("EMPLOYEE"),
+                "latest world news today",
+                [],
+                {},
+                [],
+                {},
+                sources,
+            )
+
+        self.assertEqual(reply, "Latest news summary.")
+        payload = client.responses.create.call_args.kwargs
+        self.assertEqual(payload["tools"], [{"type": "web_search"}])
+        self.assertEqual(payload["tool_choice"], "required")
+        self.assertEqual(payload["include"], ["web_search_call.action.sources"])
+        self.assertEqual(
+            sources,
+            [
+                {
+                    "type": "web",
+                    "label": "example.com",
+                    "url": "https://example.com/search-result",
+                },
+                {
+                    "type": "web",
+                    "label": "Example News",
+                    "url": "https://example.com/latest-news",
+                },
+            ],
+        )
+
+    def test_local_ai_answers_with_permission_scoped_knowledge(self):
+        app = Flask(__name__)
+        app.config.update(
+            ASSISTANT_LOCAL_AI_ENABLED="1",
+            ASSISTANT_LOCAL_AI_MODEL="qwen2.5:3b",
+            ASSISTANT_LOCAL_AI_URL="http://127.0.0.1:11434/api/chat",
+            ASSISTANT_LOCAL_AI_TIMEOUT=10,
+            ASSISTANT_LOCAL_AI_CONTEXT_CHARS=4000,
+            ASSISTANT_AI_ENABLED="1",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+        )
+        opener = unittest.mock.MagicMock()
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = b'{"message":{"content":"Local smart answer."}}'
+        opener.open.return_value = response
+        knowledge = {
+            "reply": "Private workflow status: waiting for review.",
+            "facts": ["Private workflow status: waiting for review."],
+            "links": [],
+            "sources": [],
+            "evidence": [],
+            "intents": ["workflow"],
+            "access_level": "employee",
+            "access_label": "User scope",
+        }
+        with (
+            app.app_context(),
+            patch("assistant.service.collect_knowledge", return_value=knowledge),
+            patch("assistant.service.navigation_results", return_value=[]),
+            patch("assistant.service.build_opener", return_value=opener),
+            patch("openai.OpenAI") as openai_client,
+        ):
+            result = answer(_FakeUser("EMPLOYEE"), "Explain my workflow status")
+
+        self.assertEqual(result["mode"], "local_ai")
+        self.assertEqual(result["reply"], "Local smart answer.")
+        request = opener.open.call_args.args[0]
+        self.assertIn(b"Private workflow status", request.data)
+        openai_client.assert_not_called()
+
+    def test_local_ai_refuses_non_loopback_endpoint(self):
+        app = Flask(__name__)
+        app.config.update(
+            ASSISTANT_LOCAL_AI_ENABLED="1",
+            ASSISTANT_LOCAL_AI_MODEL="qwen2.5:3b",
+            ASSISTANT_LOCAL_AI_URL="https://external.example/api/chat",
+        )
+        with app.app_context(), patch("assistant.service.build_opener") as opener:
+            reply = _try_local_ai("Explain this", [], {}, {"reply": "Private fact."})
+
+        self.assertIsNone(reply)
+        opener.assert_not_called()
 
     def test_external_failure_falls_back_to_local_answer(self):
         app = Flask(__name__)
