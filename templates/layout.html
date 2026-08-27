@@ -24,7 +24,7 @@
 {% set hide_shell = hide_shell|default(false) %}
 
 {% if current_user.is_authenticated and not hide_shell %}
-  {% set unread = get_unread_count(current_user.id) %}
+  {% set unread = get_unread_count(current_user.id, 'all') %}
   {% set unread_msgs = get_unread_messages_count(current_user.id) %}
 {% endif %}
 
@@ -72,7 +72,7 @@
                     data-stream-url="{{ url_for('workflow.event_stream') }}"
                     data-poll-url="{{ url_for('workflow.poll_notifications') }}"
                     data-badge-id="notif-badge"
-                    data-badge-scope="workflow"
+                    data-badge-scope="all"
                     data-user-id="{{ current_user.id }}"
                     title="تفعيل صوت التنبيهات"
                     aria-label="تفعيل صوت التنبيهات"
@@ -266,7 +266,7 @@
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}?v=20260816-bounded1"></script>
 
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
-<script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260713r4"></script>
+    <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260827-unified1"></script>
 <script src="{{ url_for('static', filename='js/chat_assistant.js') }}?v=20260809r3"></script>
 {% if current_user.is_authenticated and not hide_shell %}
 <script src="{{ url_for('static', filename='js/user_presence.js') }}?v=20260827r1"

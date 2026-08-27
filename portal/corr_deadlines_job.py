@@ -9,6 +9,7 @@ from sqlalchemy import inspect
 
 from extensions import db
 from models import CorrConfidentialAccess, InboundMail, Notification, OutboundMail, SystemSetting
+from utils.notification_links import notification_target_path
 
 
 _STARTED = False
@@ -92,6 +93,7 @@ def check_correspondence_deadlines(today: date | None = None) -> int:
             overdue = (item.due_date or "") < today_iso
             timing = "تجاوز موعده النهائي" if overdue else "يستحق الإجراء اليوم"
             message = f"تنبيه موعد: {kind_label} رقم {item.ref_no or item.id} {timing}: {item.subject[:150]}"
+            target_type = "CORR_INBOUND" if isinstance(item, InboundMail) else "CORR_OUTBOUND"
             for user_id in _recipient_ids(item):
                 db.session.add(Notification(
                     user_id=user_id,
@@ -101,6 +103,7 @@ def check_correspondence_deadlines(today: date | None = None) -> int:
                     is_read=False,
                     is_mirror=False,
                     created_at=datetime.utcnow(),
+                    link_url=notification_target_path(target_type, item.id),
                 ))
             item.deadline_notified_on = today_iso
             sent += 1

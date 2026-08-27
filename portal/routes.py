@@ -84,6 +84,7 @@ from services.employee_data_word_form import build_employee_word_form, parse_emp
 require_permissions = perm_required
 
 from utils.events import emit_event
+from utils.notification_links import notification_target_path, safe_local_notification_url
 from utils.org_dynamic import build_chart_tree, build_org_node_picker_tree, sync_legacy_now
 from workflow.dynamic_paths import node_path_label
 from models import (
@@ -2837,6 +2838,7 @@ def _meeting_notify_users(
     subject: str | None = None,
     body: str | None = None,
     sender_id: int | None = None,
+    link_url: str | None = None,
 ) -> int:
     clean_ids = []
     seen = set()
@@ -2857,6 +2859,7 @@ def _meeting_notify_users(
     if len(msg) > 255:
         msg = msg[:252] + "..."
     now = datetime.utcnow()
+    safe_link = safe_local_notification_url(link_url)
     db.session.add_all([
         Notification(
             user_id=uid,
@@ -2866,6 +2869,7 @@ def _meeting_notify_users(
             created_at=now,
             is_read=False,
             is_mirror=False,
+            link_url=safe_link,
         )
         for uid in clean_ids
     ])
@@ -3173,6 +3177,7 @@ def _send_due_meeting_reminders() -> int:
                 subject=f"تذكير اجتماع: {row.title}",
                 body=_meeting_message_body(row, "هذا تذكير بموعد اجتماعك القادم."),
                 sender_id=getattr(row, "created_by_user_id", None),
+                link_url=notification_target_path("PORTAL_MEETING", row.id),
             )
             row.reminder_sent_at = now
             touched += 1
@@ -3768,6 +3773,7 @@ def access_request_new():
                     source='portal',
                     is_read=False,
                     created_at=datetime.utcnow(),
+                    link_url=url_for("portal.admin_access_request_view", req_id=req_row.id),
                 ))
                 notified.add(int(assigned_to_user_id))
 
@@ -3784,6 +3790,7 @@ def access_request_new():
                     source='portal',
                     is_read=False,
                     created_at=datetime.utcnow(),
+                    link_url=url_for("portal.admin_access_request_view", req_id=req_row.id),
                 ))
         except Exception:
             pass
@@ -3985,6 +3992,7 @@ def trouble_ticket_new():
                             source="portal",
                             is_read=False,
                             created_at=datetime.utcnow(),
+                            link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
                         ))
             except ValueError as exc:
                 db.session.rollback()
@@ -4053,6 +4061,25 @@ def trouble_ticket_view(ticket_id: int):
                 ticket.updated_at = datetime.utcnow()
                 if ticket.status == "WAITING" and ticket.requester_id == current_user.id:
                     ticket.status = "IN_PROGRESS"
+                recipient_ids: set[int] = set()
+                if int(current_user.id) == int(ticket.requester_id):
+                    if ticket.assigned_to_id:
+                        recipient_ids.add(int(ticket.assigned_to_id))
+                    else:
+                        recipient_ids.update(int(uid) for uid in _portal_admin_user_ids() if uid)
+                else:
+                    recipient_ids.add(int(ticket.requester_id))
+                recipient_ids.discard(int(current_user.id))
+                for recipient_id in sorted(recipient_ids):
+                    db.session.add(Notification(
+                        user_id=recipient_id,
+                        message=f"تعليق جديد على تذكرة الدعم #{ticket.id}: {ticket.subject}",
+                        type="PORTAL",
+                        source="portal",
+                        link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
+                        is_read=False,
+                        created_at=datetime.utcnow(),
+                    ))
                 db.session.commit()
                 flash("تمت إضافة التعليق.", "success")
             return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
@@ -4081,6 +4108,7 @@ def trouble_ticket_view(ticket_id: int):
                     source="portal",
                     is_read=False,
                     created_at=datetime.utcnow(),
+                    link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
                 ))
                 db.session.commit()
                 flash("تم تحديث التذكرة.", "success")
@@ -4701,6 +4729,21 @@ def circular_view(circular_id: int):
     row = PortalCircular.query.get_or_404(circular_id)
     if not can_user_view_circular(row, current_user):
         abort(404)
+    circular_link = notification_target_path("PORTAL_CIRCULAR", row.id)
+    Notification.query.filter(
+        Notification.user_id == current_user.id,
+        Notification.source == "portal",
+        Notification.is_mirror.is_(False),
+        Notification.is_read.is_(False),
+        or_(
+            Notification.link_url == circular_link,
+            and_(
+                Notification.link_url.is_(None),
+                Notification.message == f"تعميم جديد: {row.title}"[:250],
+            ),
+        ),
+    ).update({"is_read": True}, synchronize_session=False)
+    db.session.commit()
     return render_template("portal/circular_view.html", row=row)
 
 
@@ -4929,6 +4972,7 @@ def circular_new():
             user_ids = circular_recipient_user_ids(circ)
 
             now = datetime.utcnow()
+            circular_link = url_for("portal.circular_view", circular_id=circ.id)
             notifs = [
                 Notification(
                     user_id=uid,
@@ -4938,6 +4982,7 @@ def circular_new():
                     created_at=now,
                     is_read=False,
                     is_mirror=False,
+                    link_url=circular_link,
                 )
                 for uid in user_ids
             ]
@@ -5267,6 +5312,7 @@ def meeting_new():
                 subject=f"دعوة اجتماع: {row.title}",
                 body=_meeting_message_body(row, "تمت دعوتك لحضور الاجتماع التالي."),
                 sender_id=getattr(current_user, "id", None),
+                link_url=notification_target_path("PORTAL_MEETING", row.id),
             )
             db.session.commit()
             flash("تم إنشاء الاجتماع وإرسال الدعوات.", "success")
@@ -5465,6 +5511,7 @@ def meeting_invitation_response(meeting_id: int):
             subject=f"رد على دعوة اجتماع: {row.title}",
             body="\n".join(body_lines),
             sender_id=getattr(current_user, "id", None),
+            link_url=notification_target_path("PORTAL_MEETING", row.id),
         )
 
     db.session.commit()
@@ -5490,6 +5537,7 @@ def meeting_update_status(meeting_id: int):
             subject=f"إلغاء اجتماع: {row.title}",
             body=_meeting_message_body(row, "تم إلغاء الاجتماع التالي."),
             sender_id=getattr(current_user, "id", None),
+            link_url=notification_target_path("PORTAL_MEETING", row.id),
         )
     db.session.commit()
     flash("تم تحديث حالة الاجتماع.", "success")
@@ -5520,6 +5568,7 @@ def meeting_update_minutes(meeting_id: int):
                 subject=f"محضر اجتماع: {row.title}",
                 body=_meeting_message_body(row, "تم تحديث محضر الاجتماع والقرارات."),
                 sender_id=getattr(current_user, "id", None),
+                link_url=notification_target_path("PORTAL_MEETING", row.id),
             )
         _portal_audit(
             "MEETING_MINUTES_UPDATE",
@@ -5655,6 +5704,7 @@ def meeting_update_participants(meeting_id: int):
         subject=f"دعوة اجتماع: {row.title}",
         body=_meeting_message_body(row, "تمت إضافتك إلى الاجتماع التالي."),
         sender_id=getattr(current_user, "id", None),
+        link_url=notification_target_path("PORTAL_MEETING", row.id),
     )
     db.session.commit()
     flash("تم تحديث المشاركين.", "success")
@@ -5782,6 +5832,7 @@ def meeting_add_task(meeting_id: int):
             subject=f"مهمة متابعة: {task.title}",
             body=task_body,
             sender_id=getattr(current_user, "id", None),
+            link_url=notification_target_path("PORTAL_MEETING", row.id),
         )
     db.session.commit()
     flash("تمت إضافة مهمة المتابعة.", "success")
@@ -5819,6 +5870,7 @@ def meeting_send_reminder(meeting_id: int):
         subject=f"تذكير اجتماع: {row.title}",
         body=_meeting_message_body(row, "هذا تذكير بموعد اجتماعك القادم."),
         sender_id=getattr(current_user, "id", None),
+        link_url=notification_target_path("PORTAL_MEETING", row.id),
     )
     db.session.commit()
     flash(f"تم إرسال التذكير إلى {count} مشارك.", "success")
@@ -6050,6 +6102,7 @@ def admin_access_request_view(req_id: int):
                     source='portal',
                     is_read=False,
                     created_at=datetime.utcnow(),
+                    link_url=url_for("portal.my_access_requests"),
                 ))
             except Exception:
                 pass
@@ -6087,6 +6140,7 @@ def admin_access_request_view(req_id: int):
                     source='portal',
                     is_read=False,
                     created_at=datetime.utcnow(),
+                    link_url=url_for("portal.my_access_requests"),
                 ))
             except Exception:
                 pass
@@ -12448,6 +12502,8 @@ def hr_payslips_send():
                 target_id=int(att.id),
                 notify_user_id=int(att.user_id),
                 level="INFO",
+                source="portal",
+                link_url=url_for("portal.hr_my_payslip_view", att_id=att.id),
                 auto_commit=False,
             )
 
@@ -12834,6 +12890,7 @@ def store_file_share(file_id: int):
                 sorted(recipient_user_ids),
                 f"{action_label} ملف مستودع معك: {row.original_name[:150]} - بواسطة {sharer_label}",
                 level="STORE_SHARE",
+                link_url=notification_target_path("STORE_FILE", row.id),
             )
 
         db.session.commit()
@@ -18386,11 +18443,18 @@ def _hr_recipients_user_ids() -> list[int]:
     return sorted(ids)
 
 
-def _portal_notify(user_ids: list[int], message: str, ntype: str = 'HR_ALERT'):
+def _portal_notify(
+    user_ids: list[int],
+    message: str,
+    ntype: str = 'HR_ALERT',
+    *,
+    link_url: str | None = None,
+):
     """Create portal notifications (source='portal') for multiple users."""
     if not user_ids:
         return
     now = datetime.utcnow()
+    safe_link = safe_local_notification_url(link_url)
     for uid in sorted(set([int(x) for x in user_ids if x])):
         try:
             db.session.add(Notification(
@@ -18400,6 +18464,7 @@ def _portal_notify(user_ids: list[int], message: str, ntype: str = 'HR_ALERT'):
                 created_at=now,
                 is_read=False,
                 source='portal',
+                link_url=safe_link,
             ))
         except Exception:
             continue
@@ -18459,7 +18524,12 @@ def _check_pending_leave_requests(send_notifications: bool = True) -> dict:
                 pass
 
             msg = f"تنبيه: طلب إجازة رقم #{r.id} للموظف {emp_name or ''} لم يتم اتخاذ إجراء عليه منذ أكثر من {days_thr} يوم (تقديم: {submitted or '-'})".strip()
-            _portal_notify(list(recips), msg, ntype='HR_ALERT')
+            _portal_notify(
+                list(recips),
+                msg,
+                ntype='HR_ALERT',
+                link_url=notification_target_path("HR_LEAVE_REQUEST", r.id),
+            )
 
             # Update reminder metadata
             r.reminder_sent_at = now
@@ -20552,6 +20622,10 @@ def _corr_notify_new_authorizations(item, before: set[int], after: set[int]) -> 
         sorted(new_user_ids),
         f"تم منحك صلاحية الاطلاع على مراسلة سرية رقم {ref}: {(item.subject or '')[:150]}",
         level="CORR_CONFIDENTIAL_ACCESS",
+        link_url=notification_target_path(
+            "CORR_INBOUND" if isinstance(item, InboundMail) else "CORR_OUTBOUND",
+            item.id,
+        ),
     )
 
 
@@ -21116,6 +21190,10 @@ def corr_procedure_action(kind: str, item_id: int):
             sorted(recipient_ids),
             f"{CORR_ACTION_LABELS.get(action, action)}: {item.subject[:170]}",
             level="CORR_ACTION",
+            link_url=notification_target_path(
+                "CORR_INBOUND" if normalized_kind == "IN" else "CORR_OUTBOUND",
+                item.id,
+            ),
         )
 
     db.session.add(AuditLog(
@@ -21653,6 +21731,7 @@ def inbound_new():
                 sorted(affected_user_ids),
                 notification_message,
                 level="CORR_INBOUND",
+                link_url=notification_target_path("CORR_INBOUND", item.id),
             )
 
         db.session.commit()
@@ -21983,6 +22062,7 @@ def outbound_new():
                 sorted(affected_user_ids),
                 notification_message,
                 level="CORR_OUTBOUND",
+                link_url=notification_target_path("CORR_OUTBOUND", item.id),
             )
 
         db.session.commit()
@@ -25837,9 +25917,16 @@ def _can_view_ss_request(r: HRSSRequest) -> bool:
     return False
 
 
-def _notify_users(user_ids: list[int], message: str, level: str = "INFO") -> None:
+def _notify_users(
+    user_ids: list[int],
+    message: str,
+    level: str = "INFO",
+    *,
+    link_url: str | None = None,
+) -> None:
     clean_ids = sorted({int(uid) for uid in (user_ids or []) if uid})
     safe_message = (message or "وصل تنبيه جديد")[:255]
+    safe_link = safe_local_notification_url(link_url)
     for uid in clean_ids:
         db.session.add(Notification(
             user_id=uid,
@@ -25848,23 +25935,31 @@ def _notify_users(user_ids: list[int], message: str, level: str = "INFO") -> Non
             source='portal',
             is_read=False,
             is_mirror=False,
+            link_url=safe_link,
         ))
 
 
-def _notify_role(role: str, message: str, level: str = "INFO") -> None:
+def _notify_role(
+    role: str,
+    message: str,
+    level: str = "INFO",
+    *,
+    link_url: str | None = None,
+) -> None:
     role = (role or "").strip()
     if not role:
         return
     users = User.query.filter(func.upper(User.role) == role.upper()).all()
-    _notify_users([u.id for u in users], message, level=level)
+    _notify_users([u.id for u in users], message, level=level, link_url=link_url)
 
 
 def _notify_for_step(approval: HRSSRequestApproval, r: HRSSRequest) -> None:
     msg = f"طلب HR Self-Service #{r.id} ({r.type_code}) بانتظار اعتمادك (الخطوة {approval.step_no})."
+    link_url = url_for("portal.hr_ss_approval_view", req_id=r.id)
     if approval.approver_user_id:
-        _notify_users([approval.approver_user_id], msg)
+        _notify_users([approval.approver_user_id], msg, link_url=link_url)
     elif approval.approver_role:
-        _notify_role(approval.approver_role, msg)
+        _notify_role(approval.approver_role, msg, link_url=link_url)
 
 
 @portal_bp.route("/hr/self-service")
@@ -26235,7 +26330,12 @@ def hr_ss_approval_view(req_id: int):
                 r.closed_at = datetime.utcnow()
                 r.current_step_no = None
                 r.updated_at = datetime.utcnow()
-                _notify_users([r.requester_id], f"تم اعتماد طلبك HR Self-Service #{r.id}.", level="SUCCESS")
+                _notify_users(
+                    [r.requester_id],
+                    f"تم اعتماد طلبك HR Self-Service #{r.id}.",
+                    level="SUCCESS",
+                    link_url=notification_target_path("HR_SS_REQUEST", r.id),
+                )
                 flash("تمت الموافقة النهائية.", "success")
 
         elif action == "reject":
@@ -26244,7 +26344,12 @@ def hr_ss_approval_view(req_id: int):
             r.closed_at = datetime.utcnow()
             r.current_step_no = None
             r.updated_at = datetime.utcnow()
-            _notify_users([r.requester_id], f"تم رفض طلبك HR Self-Service #{r.id}.", level="DANGER")
+            _notify_users(
+                [r.requester_id],
+                f"تم رفض طلبك HR Self-Service #{r.id}.",
+                level="DANGER",
+                link_url=notification_target_path("HR_SS_REQUEST", r.id),
+            )
             flash("تم رفض الطلب.", "danger")
 
         elif action == "return":
@@ -26252,7 +26357,12 @@ def hr_ss_approval_view(req_id: int):
             r.status = "RETURNED"
             r.current_step_no = None
             r.updated_at = datetime.utcnow()
-            _notify_users([r.requester_id], f"تم إرجاع طلبك HR Self-Service #{r.id} للتعديل.", level="WARNING")
+            _notify_users(
+                [r.requester_id],
+                f"تم إرجاع طلبك HR Self-Service #{r.id} للتعديل.",
+                level="WARNING",
+                link_url=notification_target_path("HR_SS_REQUEST", r.id),
+            )
             flash("تم إرجاع الطلب للموظف.", "warning")
 
         else:
@@ -31748,6 +31858,7 @@ def _training_notify_published(p: HRTrainingProgram, actor_id: int | None = None
                 actor_id=(int(actor_id) if actor_id else None),
                 event_key=event_key,
                 is_mirror=False,
+                link_url=notification_target_path("HR_TRAINING_PROGRAM", p.id),
             )
             for uid in user_ids
         ]

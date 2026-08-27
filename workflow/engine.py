@@ -6,6 +6,7 @@ import uuid
 from sqlalchemy.exc import IntegrityError
 
 from extensions import db
+from utils.notification_links import notification_target_path
 from utils.ui_labels import ui_label
 from models import (
     AuditLog,
@@ -621,6 +622,7 @@ def _notify_users(
     now = datetime.utcnow()
     event_key = uuid.uuid4().hex
     unique_ids = set(int(uid) for uid in user_ids if uid)
+    link_url = notification_target_path("WorkflowRequest", req.id) if req is not None else None
     if req is not None:
         unique_ids = filter_confidential_workflow_user_ids(req, unique_ids)
 
@@ -637,6 +639,8 @@ def _notify_users(
                 actor_id=actor_id,
                 event_key=event_key,
                 is_mirror=False,
+                source="workflow",
+                link_url=link_url,
             )
         )
 
@@ -653,6 +657,8 @@ def _notify_users(
                 actor_id=int(actor_id),
                 event_key=event_key,
                 is_mirror=True,
+                source="workflow",
+                link_url=link_url,
             )
         )
 

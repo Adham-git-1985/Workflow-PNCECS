@@ -45,6 +45,8 @@
             <select name="type" class="form-select">
                 <option value="">الكل</option>
                 <option value="INFO" {% if filters.type == "INFO" %}selected{% endif %}>معلومة</option>
+                <option value="PORTAL" {% if filters.type == "PORTAL" %}selected{% endif %}>البوابة الإدارية</option>
+                <option value="URGENT" {% if filters.type == "URGENT" %}selected{% endif %}>تعميم مستعجل</option>
                 <option value="WARNING" {% if filters.type == "WARNING" %}selected{% endif %}>تحذير</option>
                 <option value="CRITICAL" {% if filters.type == "CRITICAL" %}selected{% endif %}>حرج</option>
             </select>
@@ -126,7 +128,17 @@
     <div class="me-3">
 
         <div class="mb-1">
-            <strong>{{ notification_messages.get(n.id, n.message) }}</strong>
+            <strong>
+                {% if notification_links.get(n.id) %}
+                    <a class="text-decoration-none" href="{{ notification_links[n.id] }}">{{ n.message }}</a>
+                {% else %}
+                    {{ n.message }}
+                {% endif %}
+            </strong>
+
+            {% if (n.source or 'workflow') == 'portal' %}
+                <span class="badge bg-primary ms-2">البوابة الإدارية</span>
+            {% endif %}
 
             {% if n.type == "CRITICAL" %}
                 <span class="badge bg-danger ms-2">حرج</span>

@@ -2,6 +2,7 @@ from datetime import datetime
 import uuid
 from extensions import db
 from models import Notification, User
+from utils.notification_links import notification_target_path, safe_local_notification_url
 
 
 def emit_event(
@@ -44,6 +45,12 @@ def emit_event(
         return
 
     notifications = []
+    source = str(kwargs.get("source") or "workflow").strip().lower()
+    if source not in {"workflow", "portal"}:
+        source = "workflow"
+    link_url = safe_local_notification_url(kwargs.get("link_url"))
+    if not link_url:
+        link_url = notification_target_path(target_type, target_id)
 
     # Recipient notifications
     for uid in user_ids:
@@ -57,6 +64,8 @@ def emit_event(
                 actor_id=actor_id,
                 event_key=event_key,
                 is_mirror=False,
+                link_url=link_url,
+                source=source,
             )
         )
 
@@ -72,6 +81,8 @@ def emit_event(
                 actor_id=int(actor_id),
                 event_key=event_key,
                 is_mirror=True,
+                link_url=link_url,
+                source=source,
             )
         )
 

@@ -162,6 +162,7 @@
   }
 
   function notificationUrl(detail) {
+    if (detail && detail.link_url) return detail.link_url;
     return (detail && detail.source === "portal")
       ? portalNotificationsUrl
       : workflowNotificationsUrl;
@@ -208,7 +209,7 @@
       const link = document.createElement("a");
       link.href = notificationUrl(data);
       link.className = "btn btn-sm btn-primary mt-2";
-      link.textContent = "عرض التنبيهات";
+      link.textContent = data.link_url ? "فتح الطلب" : "عرض التنبيهات";
       body.appendChild(link);
     }
 
@@ -270,6 +271,12 @@
 
     badge.textContent = unread > 0 ? String(unread) : "";
     badge.style.display = unread > 0 ? "inline-block" : "none";
+
+    const portalUnread = Number(data.portal_unread || 0);
+    document.querySelectorAll(".portal-unread-badge").forEach(function (portalBadge) {
+      portalBadge.textContent = portalUnread > 0 ? String(portalUnread) : "";
+      portalBadge.style.display = portalUnread > 0 ? "inline-block" : "none";
+    });
   }
 
   function claimNotification(notificationId) {
@@ -294,6 +301,7 @@
           message: data.message || "وصل تنبيه جديد إلى نظام مسار",
           type: data.type || "INFO",
           source: data.source || "workflow",
+          link_url: data.link_url || "",
         },
       }));
     }

@@ -18,8 +18,6 @@ from flask import (
     flash, jsonify, Response, stream_with_context, current_app
 )
 from flask_login import login_required, current_user
-from markupsafe import Markup, escape
-
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph,
     Spacer, Table, TableStyle
@@ -41,6 +39,7 @@ from utils.perms import perm_required
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
 from utils.audit_helpers import delegation_audit_fields
 from utils.events import emit_event
+from utils.notification_links import notification_target_path, safe_local_notification_url
 from utils.file_uploads import (
     is_allowed_attachment,
     is_safe_inline_mimetype,
@@ -1787,21 +1786,39 @@ def preview_workflow_attachment(file_id):
 # Notifications
 # =========================
 _NOTIFICATION_REQUEST_NUMBER_RE = re.compile(r"#\s*(\d+)")
+_NOTIFICATION_TICKET_NUMBER_RE = re.compile(r"تذكرة(?:\s+دعم)?[^#]{0,80}#\s*(\d+)", re.IGNORECASE)
 
 
-def _notification_message_with_request_links(message: str | None) -> Markup:
-    """Link request references in notification text without trusting notification HTML."""
-    text = str(message or "وصل تنبيه جديد")
+def _notification_target_url(notification: Notification) -> str | None:
+    """Resolve a safe destination for new and legacy notification rows."""
+    direct_url = safe_local_notification_url(getattr(notification, "link_url", None))
+    if direct_url:
+        return direct_url
 
-    def replace(match):
-        request_id = int(match.group(1))
-        workflow_request = WorkflowRequest.query.get(request_id)
-        if not workflow_request or not _user_can_view_request(current_user, workflow_request):
-            return f"#{request_id}"
-        url = url_for("workflow.view_request", request_id=request_id)
-        return f'<a class="link-primary text-decoration-underline" href="{escape(url)}">#{request_id}</a>'
+    message = str(getattr(notification, "message", "") or "")
+    ticket_match = _NOTIFICATION_TICKET_NUMBER_RE.search(message)
+    if ticket_match:
+        return notification_target_path("TROUBLE_TICKET", ticket_match.group(1))
 
-    return Markup(_NOTIFICATION_REQUEST_NUMBER_RE.sub(replace, str(escape(text))))
+    # A bare #number in a portal message can refer to many unrelated tables.
+    # Only apply the legacy workflow fallback to workflow-origin notifications.
+    source = (getattr(notification, "source", None) or "workflow").strip().lower()
+    if source != "workflow":
+        return None
+    request_match = _NOTIFICATION_REQUEST_NUMBER_RE.search(message)
+    if not request_match:
+        return None
+    request_id = int(request_match.group(1))
+    workflow_request = db.session.get(WorkflowRequest, request_id)
+    if not workflow_request or not _user_can_view_request(current_user, workflow_request):
+        return None
+    return notification_target_path("WorkflowRequest", request_id)
+
+
+def _notification_open_url(notification: Notification) -> str | None:
+    if not _notification_target_url(notification):
+        return None
+    return url_for("workflow.open_notification", notif_id=notification.id)
 
 
 @workflow_bp.route("/notifications")
@@ -1825,8 +1842,9 @@ def notifications():
         Notification.query
         .filter(Notification.user_id == current_user.id)
         .filter(Notification.is_mirror.is_(scope == "sent"))
-        .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
     )
+    if scope == "sent":
+        query = query.filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
 
     if notif_type:
         query = query.filter(Notification.type == notif_type)
@@ -1855,7 +1873,6 @@ def notifications():
     unread_count = (
         Notification.query
         .filter_by(user_id=current_user.id, is_mirror=False, is_read=False)
-        .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
         .count()
     )
     pending_sent_count = (
@@ -1864,8 +1881,8 @@ def notifications():
         .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
         .count()
     )
-    notification_messages = {
-        notification.id: _notification_message_with_request_links(notification.message)
+    notification_links = {
+        notification.id: _notification_open_url(notification)
         for notification in pagination.items
     }
 
@@ -1875,7 +1892,7 @@ def notifications():
         pagination=pagination,
         unread_count=unread_count,
         pending_sent_count=pending_sent_count,
-        notification_messages=notification_messages,
+        notification_links=notification_links,
         scope=scope,
         filters={
             "type": notif_type,
@@ -1895,8 +1912,7 @@ def unread_notifications_count():
         user_id=current_user.id,
         is_mirror=False,
         is_read=False
-    ).filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
-     .count())
+    ).count())
     return jsonify({"count": count})
 
 
@@ -1942,7 +1958,6 @@ def mark_all_notifications_read():
                     Notification.user_id == current_user.id,
                     Notification.is_mirror.is_(False),
                     Notification.is_read.is_(False),
-                    or_(Notification.source.is_(None), Notification.source == "workflow"),
                     Notification.event_key.isnot(None)
                 )
                 .distinct()
@@ -1958,7 +1973,6 @@ def mark_all_notifications_read():
                     Notification.user_id == current_user.id,
                     Notification.is_mirror.is_(False),
                     Notification.is_read.is_(False),
-                    or_(Notification.source.is_(None), Notification.source == "workflow")
                 )
                 .values(is_read=True)
             )
@@ -1991,7 +2005,6 @@ def mark_notification_read(notif_id):
     n = (Notification.query
          .filter(Notification.id == notif_id)
          .filter(Notification.user_id == current_user.id)
-         .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
          .first_or_404())
 
     # Mirror (sent-tracking) notifications are read-only (auto-updated)
@@ -2007,24 +2020,45 @@ def mark_notification_read(notif_id):
     return "", 204
 
 
+@workflow_bp.route("/notifications/<int:notif_id>/open")
+@login_required
+def open_notification(notif_id):
+    notification = (
+        Notification.query
+        .filter(Notification.id == notif_id)
+        .filter(Notification.user_id == current_user.id)
+        .first_or_404()
+    )
+    target_url = _notification_target_url(notification)
+    if not target_url:
+        return redirect(url_for("workflow.notifications"))
+
+    if not getattr(notification, "is_mirror", False) and not notification.is_read:
+        notification.is_read = True
+        if getattr(notification, "event_key", None):
+            _sync_mirror_for_event(notification.event_key)
+        db.session.commit()
+    return redirect(target_url)
+
+
 def _notification_state_for_user(user_id: int) -> dict:
     """Return unified unread counts and the latest notification id."""
-    unread_by_source = {
-        (source or "workflow").strip().lower(): int(count or 0)
-        for source, count in (
-            db.session.query(
-                Notification.source,
-                func.count(Notification.id),
-            )
-            .filter(
-                Notification.user_id == int(user_id),
-                Notification.is_mirror.is_(False),
-                Notification.is_read.is_(False),
-            )
-            .group_by(Notification.source)
-            .all()
+    unread_by_source: dict[str, int] = {}
+    for source, count in (
+        db.session.query(
+            Notification.source,
+            func.count(Notification.id),
         )
-    }
+        .filter(
+            Notification.user_id == int(user_id),
+            Notification.is_mirror.is_(False),
+            Notification.is_read.is_(False),
+        )
+        .group_by(Notification.source)
+        .all()
+    ):
+        key = (source or "workflow").strip().lower()
+        unread_by_source[key] = unread_by_source.get(key, 0) + int(count or 0)
 
     workflow_unread = unread_by_source.get("workflow", 0)
     portal_unread = unread_by_source.get("portal", 0)
@@ -2046,6 +2080,7 @@ def _notification_state_for_user(user_id: int) -> dict:
 
 
 def _notification_payload(notification: Notification, state: dict) -> dict:
+    open_url = _notification_open_url(notification)
     return {
         **state,
         "has_new": True,
@@ -2053,6 +2088,7 @@ def _notification_payload(notification: Notification, state: dict) -> dict:
         "message": notification.message or "وصل تنبيه جديد",
         "type": notification.type or "INFO",
         "source": (notification.source or "workflow").strip().lower(),
+        "link_url": open_url,
     }
 
 

@@ -171,7 +171,7 @@ app.jinja_env.filters["ui_text"] = ui_text
 def get_unread_count(user_id, source="workflow"):
     """Count unread notifications for a user within a given source scope.
 
-    source: 'workflow' or 'portal'
+    source: 'workflow', 'portal', or 'all'
     """
     now = datetime.utcnow()
     cache_key = (int(user_id), (source or 'workflow').lower())
@@ -183,20 +183,20 @@ def get_unread_count(user_id, source="workflow"):
     src = (source or 'workflow').lower()
     if src == 'portal':
         src_filter = (Notification.source == 'portal')
+    elif src in {'all', 'unified'}:
+        src_filter = None
     else:
         # Treat NULL as legacy workflow
         src_filter = (Notification.source.is_(None) | (Notification.source == 'workflow'))
 
-    count = (
-        db.session.query(func.count(Notification.id))
-        .filter(
-            Notification.user_id == user_id,
-            Notification.is_mirror.is_(False),
-            Notification.is_read.is_(False),
-            src_filter
-        )
-        .scalar()
+    query = db.session.query(func.count(Notification.id)).filter(
+        Notification.user_id == user_id,
+        Notification.is_mirror.is_(False),
+        Notification.is_read.is_(False),
     )
+    if src_filter is not None:
+        query = query.filter(src_filter)
+    count = query.scalar()
 
     UNREAD_CACHE[cache_key] = {'value': int(count or 0), 'ts': now}
     return int(count or 0)

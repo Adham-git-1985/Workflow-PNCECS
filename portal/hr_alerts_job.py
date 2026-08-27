@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from extensions import db
 from models import HRLeaveRequest, User, UserPermission, Notification
 from portal.routes import _setting_get  # reuse SystemSetting helper (SystemSetting table)
+from utils.notification_links import notification_target_path
 
 _HR_ALERTS_STARTED = False
 
@@ -27,10 +28,17 @@ def _hr_admin_user_ids():
     return sorted(ids)
 
 
-def _notify(user_ids, msg, ntype="HR_ALERT"):
+def _notify(user_ids, msg, ntype="HR_ALERT", *, link_url=None):
     now = datetime.utcnow()
     for uid in set(int(x) for x in user_ids if x):
-        db.session.add(Notification(user_id=uid, type=ntype, message=msg, source="portal", created_at=now))
+        db.session.add(Notification(
+            user_id=uid,
+            type=ntype,
+            message=msg,
+            source="portal",
+            link_url=link_url,
+            created_at=now,
+        ))
 
 
 def _check_pending_leave_requests():
@@ -68,7 +76,11 @@ def _check_pending_leave_requests():
         if r.approver_user_id:
             recipients.add(r.approver_user_id)
 
-        _notify(recipients, msg)
+        _notify(
+            recipients,
+            msg,
+            link_url=notification_target_path("HR_LEAVE_REQUEST", r.id),
+        )
         r.reminder_sent_at = datetime.utcnow()
         r.reminder_count = int(r.reminder_count or 0) + 1
         sent += 1

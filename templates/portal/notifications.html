@@ -47,8 +47,14 @@
               {% endif %}
               <span class="text-muted small">{{ (n.created_at or "") }}</span>
             </div>
-            <div class="mt-2">{{ n.message }}</div>
-            {% if n.link_url %}<a class="btn btn-sm btn-primary mt-2" href="{{ n.link_url }}">فتح الطلب</a>{% endif %}
+            <div class="mt-2">
+              {% if n.link_url %}
+                <a class="text-decoration-none" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">{{ n.message }}</a>
+              {% else %}
+                {{ n.message }}
+              {% endif %}
+            </div>
+            {% if n.link_url %}<a class="btn btn-sm btn-primary mt-2" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">فتح الطلب</a>{% endif %}
           </div>
           <div class="text-end">
             {% if not n.is_read %}

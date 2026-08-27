@@ -34,9 +34,12 @@
             ⚙️ ملفي الشخصي
         </a>
 
+        {% set portal_unread = get_unread_count(current_user.id, 'portal') %}
         <a href="{{ url_for('portal.portal_entry') }}"
            class="{% if request.path.startswith('/portal') %}active{% endif %}">
             🧩 البوابة الإدارية
+            <span class="badge bg-danger ms-2 portal-unread-badge"
+                  {% if not portal_unread %}style="display:none"{% endif %}>{{ portal_unread or '' }}</span>
         </a>
 
         <a href="{{ url_for('portal.trouble_tickets') }}"
