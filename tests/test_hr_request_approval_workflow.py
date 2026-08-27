@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -18,6 +19,10 @@ from models import (
     HRRequestObserver,
     Notification,
     Organization,
+    OrgNode,
+    OrgNodeAssignment,
+    OrgNodeManager,
+    OrgNodeType,
     OrgUnitManager,
     User,
     UserPermission,
@@ -62,6 +67,11 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
                 return None
 
         cls.app.register_blueprint(portal_bp)
+        cls.app.add_url_rule(
+            "/help/leaves-guide",
+            endpoint="users.help_leaves_guide",
+            view_func=lambda: "",
+        )
         cls.app.jinja_loader = ChoiceLoader([
             DictLoader({"portal/layout.html": "{% block content %}{% endblock %}"}),
             cls.app.jinja_loader,
@@ -158,6 +168,78 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIn(self.hr.id, cc_ids)
         self.assertNotIn(self.general_director.id, cc_ids)
         self.assertNotIn(self.secretary.id, cc_ids)
+
+    def test_leave_goes_to_all_hierarchy_managers_and_one_approval_is_enough(self):
+        self.manager.name = "خلود"
+        irene = User(email="irene@example.test", name="إيرين", password_hash="x", role="dept_head")
+        raed = User(email="raed@example.test", name="رائد", password_hash="x", role="dept_head")
+        node_type = OrgNodeType(code="LEAVE_BRANCH", name_ar="فرع الإجازة", sort_order=1)
+        db.session.add_all((irene, raed, node_type))
+        db.session.flush()
+
+        nodes = [
+            OrgNode(type_id=node_type.id, name_ar=name, is_active=True)
+            for name in ("الفرع الأول", "الفرع الثاني", "الفرع الثالث")
+        ]
+        db.session.add_all(nodes)
+        db.session.flush()
+        self.employee.org_node_id = nodes[0].id
+        db.session.add_all([
+            OrgNodeAssignment(user_id=self.employee.id, node_id=nodes[0].id, is_primary=True),
+            OrgNodeAssignment(user_id=self.employee.id, node_id=nodes[1].id, is_primary=False),
+            OrgNodeAssignment(user_id=self.employee.id, node_id=nodes[2].id, is_primary=False),
+            OrgNodeManager(node_id=nodes[0].id, manager_user_id=self.manager.id),
+            OrgNodeManager(node_id=nodes[1].id, manager_user_id=irene.id),
+            OrgNodeManager(node_id=nodes[2].id, manager_user_id=raed.id),
+        ])
+        for user in (self.employee, irene, raed):
+            db.session.add_all([
+                UserPermission(user_id=user.id, key="PORTAL_READ", is_allowed=True),
+                UserPermission(user_id=user.id, key="HR_READ", is_allowed=True),
+            ])
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="HR_REQUESTS_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        row = self._leave(self.normal_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+        db.session.commit()
+
+        expected_ids = [self.manager.id, irene.id, raed.id]
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(json.loads(steps[0].approver_user_ids), expected_ids)
+        self.assertEqual(steps[0].approver_user_id, self.manager.id)
+        self.assertTrue(all(can_user_act(user, steps[0]) for user in (self.manager, irene, raed)))
+        notified_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="HR_APPROVAL",
+                link_url=f"/portal/hr/approvals/leaves/{row.id}",
+            ).all()
+        }
+        self.assertEqual(notified_ids, set(expected_ids))
+
+        self.assertEqual(decide_request(KIND_LEAVE, row, irene, "APPROVE"), "APPROVED")
+        db.session.commit()
+        self.assertEqual(row.status, "APPROVED")
+        self.assertEqual(steps[0].decided_by_id, irene.id)
+        self.assertFalse(can_user_act(self.manager, steps[0]))
+        self.assertFalse(can_user_act(raed, steps[0]))
+
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+        my_leaves = client.get("/portal/hr/me/leaves")
+        self.assertEqual(my_leaves.status_code, 200)
+        for name in ("خلود", "إيرين", "رائد"):
+            self.assertIn(name.encode("utf-8"), my_leaves.data)
+
+        self._login(client, raed.id)
+        history = client.get("/portal/hr/approvals?status=APPROVED")
+        self.assertEqual(history.status_code, 200)
+        self.assertIn(b"Employee", history.data)
 
     def test_external_leave_requires_manager_then_hr_then_secretary_general(self):
         row = self._leave(self.external_type)

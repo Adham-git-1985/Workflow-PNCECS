@@ -11,9 +11,12 @@
       <div class="border rounded-3 p-3 {% if step_status == 'PENDING' %}border-warning bg-warning bg-opacity-10{% endif %}">
         <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
           <div>
+            {% set candidate_names = (approval_candidate_names|default({})).get(step.id, []) %}
             <span class="badge bg-{{ color }} ms-2">{{ step.step_order }}</span>
             <span class="fw-semibold">{{ stage_label(step.stage_code) }}</span>
-            {% if step.approver_user %}
+            {% if candidate_names %}
+              <span class="text-muted">— {{ candidate_names|join('، ') }}</span>
+            {% elif step.approver_user %}
               <span class="text-muted">— {{ step.approver_user.full_name }}</span>
             {% elif step.approver_scope == 'HR' %}
               <span class="text-muted">— فريق الموارد البشرية</span>
@@ -31,6 +34,9 @@
             {% else %}{{ step_status }}{% endif %}
           </span>
         </div>
+        {% if candidate_names|length > 1 and step_status == 'PENDING' %}
+          <div class="small text-muted mt-2">موافقة أحد المسؤولين تكفي لإكمال هذه المرحلة.</div>
+        {% endif %}
         {% if step.due_at and step_status == 'PENDING' %}
           <div class="small text-muted mt-2">مهلة الإجراء حتى {{ step.due_at.strftime('%Y-%m-%d %H:%M') }}</div>
         {% endif %}

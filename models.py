@@ -2755,6 +2755,9 @@ class HRRequestApprovalStep(db.Model):
     stage_code = db.Column(db.String(40), nullable=False, index=True)
     approver_scope = db.Column(db.String(30), nullable=False, default="USER")  # USER/HR/SECRETARY_GENERAL
     approver_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    # JSON snapshot of parallel user approvers. ``approver_user_id`` remains
+    # the first approver for compatibility with legacy reports/screens.
+    approver_user_ids = db.Column(db.Text, nullable=True)
 
     # WAITING/PENDING/APPROVED/REJECTED/SKIPPED/CANCELLED
     status = db.Column(db.String(20), nullable=False, default="WAITING", index=True)

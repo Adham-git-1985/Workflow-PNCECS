@@ -39,7 +39,7 @@
               <th>{{ portal_sort_link('أيام', 'days') }}</th>
               <th>الحالة</th>
               <th style="width:110px">مرفقات</th>
-              <th>{{ portal_sort_link('المدير', 'approver_user') }}</th>
+              <th>المسؤولون على الهيكلية</th>
               <th style="width: 120px;">إجراءات</th>
             </tr>
           </thead>
@@ -69,7 +69,10 @@
                 </td>
 
                 <td class="text-muted small">
-                  {% if r.approver_user %}
+                  {% set approver_names = (leave_approver_names|default({})).get(r.id, []) %}
+                  {% if approver_names %}
+                    {{ approver_names|join('، ') }}
+                  {% elif r.approver_user %}
                     {{ r.approver_user.full_name }}
                   {% else %}
                     -

@@ -127,7 +127,6 @@ from models import (
     HRLeaveRequest,
     HRLeaveAttachment,
     HRLeaveBalance,
-    HRRequestApprovalStep,
     HRRequestObserver,
     HRMonthlyPermissionAllowance,
     HRLeaveGradeEntitlement,
@@ -268,6 +267,7 @@ from services.circulars import (
 from services.hr_request_workflow import (
     KIND_LEAVE,
     KIND_PERMISSION,
+    approval_candidate_names_map,
     approval_steps as hr_request_approval_steps,
     board_visible_user_ids,
     can_user_act as can_act_on_hr_request_step,
@@ -276,9 +276,11 @@ from services.hr_request_workflow import (
     cancel_request_flow,
     current_step as current_hr_request_step,
     decide_request as decide_hr_request,
+    direct_approver_names_for_requests,
     is_special_leave,
     process_pending_approvals,
     request_ids_user_can_act_on,
+    request_ids_user_participated_in,
     resolve_direct_manager,
     stage_label as hr_stage_label,
     start_request_flow,
@@ -10970,6 +10972,11 @@ def hr_my_leaves():
             .all()
         )
 
+    leave_approver_names = direct_approver_names_for_requests(
+        KIND_LEAVE,
+        [row.id for row in reqs],
+    )
+
 
     # Attachments per request
     atts_map = {}
@@ -10992,6 +10999,7 @@ def hr_my_leaves():
         can_requests=can_requests,
         today_str=today_str,
         atts_map=atts_map,
+        leave_approver_names=leave_approver_names,
     )
 
 
@@ -11172,7 +11180,8 @@ def hr_leave_request_new():
 
     Simplicity rules:
     - One form, one submit.
-    - Approval goes to direct manager if configured, otherwise stays pending.
+    - Approval goes in parallel to all responsible hierarchy managers.
+    - One manager decision is sufficient to complete the stage.
     """
     try:
         if not current_user.has_perm(HR_READ):
@@ -11925,12 +11934,11 @@ def hr_approvals():
 
     assigned_leave_ids = request_ids_user_can_act_on(current_user, KIND_LEAVE)
     assigned_permission_ids = request_ids_user_can_act_on(current_user, KIND_PERMISSION)
+    participated_leave_ids = set(request_ids_user_participated_in(current_user, KIND_LEAVE))
+    participated_permission_ids = set(request_ids_user_participated_in(current_user, KIND_PERMISSION))
     has_request_history = bool(
-        HRRequestApprovalStep.query.filter(or_(
-            HRRequestApprovalStep.approver_user_id == current_user.id,
-            HRRequestApprovalStep.decided_by_id == current_user.id,
-            HRRequestApprovalStep.escalated_from_user_id == current_user.id,
-        )).first()
+        participated_leave_ids
+        or participated_permission_ids
         or HRRequestObserver.query.filter_by(user_id=current_user.id).first()
     )
     can_approve = bool(can_approve or assigned_leave_ids or assigned_permission_ids or has_request_history)
@@ -11946,16 +11954,7 @@ def hr_approvals():
     def _visible_ids(kind: str) -> set[int]:
         if status == "SUBMITTED":
             return set(assigned_leave_ids if kind == KIND_LEAVE else assigned_permission_ids)
-        ids = {
-            int(row.request_id)
-            for row in HRRequestApprovalStep.query.filter(
-                HRRequestApprovalStep.request_kind == kind,
-                or_(
-                    HRRequestApprovalStep.approver_user_id == current_user.id,
-                    HRRequestApprovalStep.decided_by_id == current_user.id,
-                ),
-            ).all()
-        }
+        ids = set(participated_leave_ids if kind == KIND_LEAVE else participated_permission_ids)
         ids.update(
             int(row.request_id)
             for row in HRRequestObserver.query.filter_by(request_kind=kind, user_id=current_user.id).all()
@@ -12147,6 +12146,7 @@ def hr_approval_leave(req_id: int):
 
     attachments = HRLeaveAttachment.query.filter_by(request_id=r.id).order_by(HRLeaveAttachment.id.desc()).all()
 
+    approval_rows = hr_request_approval_steps(KIND_LEAVE, r.id)
     return render_template(
         "portal/hr/approval_leave.html",
         r=r,
@@ -12154,7 +12154,8 @@ def hr_approval_leave(req_id: int):
         started=started,
         can_hr_cancel=can_hr_cancel,
         attachments=attachments,
-        approval_steps=hr_request_approval_steps(KIND_LEAVE, r.id),
+        approval_steps=approval_rows,
+        approval_candidate_names=approval_candidate_names_map(approval_rows),
         current_step=step,
         can_act=can_act,
         exceptional=exceptional,
@@ -12246,10 +12247,12 @@ def hr_approval_permission(req_id: int):
             flash("تم رفض الطلب وإيقاف المسار.", "success")
         return redirect(url_for("portal.hr_approvals"))
 
+    approval_rows = hr_request_approval_steps(KIND_PERMISSION, r.id)
     return render_template(
         "portal/hr/approval_permission.html",
         r=r,
-        approval_steps=hr_request_approval_steps(KIND_PERMISSION, r.id),
+        approval_steps=approval_rows,
+        approval_candidate_names=approval_candidate_names_map(approval_rows),
         current_step=step,
         can_act=can_act,
         stage_label=hr_stage_label,

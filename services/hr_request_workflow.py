@@ -7,6 +7,7 @@ Approval and read-only CC recipients are deliberately separate concepts.
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 from typing import Iterable
 
@@ -250,6 +251,122 @@ def resolve_direct_manager(user_id: int) -> User | None:
     return None
 
 
+def resolve_responsible_managers(user_id: int) -> list[User]:
+    """Resolve one responsible manager from every active org placement.
+
+    Leave approvals use all returned managers in parallel. Older employee data
+    that has no dynamic placement continues to use the existing direct-manager
+    resolution as a fallback.
+    """
+    user = db.session.get(User, int(user_id))
+    manager_ids: list[int] = []
+    if user:
+        try:
+            from workflow.dynamic_paths import requester_dynamic_manager_options
+
+            manager_ids = [
+                int(option["user_id"])
+                for option in requester_dynamic_manager_options(user)
+                if option.get("user_id") and int(option["user_id"]) != int(user_id)
+            ]
+        except Exception:
+            manager_ids = []
+
+    if not manager_ids:
+        manager = resolve_direct_manager(user_id)
+        if manager:
+            manager_ids = [int(manager.id)]
+
+    seen: set[int] = set()
+    managers: list[User] = []
+    for manager_id in manager_ids:
+        if manager_id in seen:
+            continue
+        manager = db.session.get(User, manager_id)
+        if manager:
+            seen.add(manager_id)
+            managers.append(manager)
+    return managers
+
+
+def _serialize_approver_ids(user_ids: Iterable[int]) -> str | None:
+    normalized: list[int] = []
+    seen: set[int] = set()
+    for value in user_ids:
+        if not value:
+            continue
+        user_id = int(value)
+        if user_id not in seen:
+            seen.add(user_id)
+            normalized.append(user_id)
+    return json.dumps(normalized, separators=(",", ":")) if normalized else None
+
+
+def _step_approver_ids(step: HRRequestApprovalStep | None) -> list[int]:
+    if not step:
+        return []
+    values: list[int] = []
+    raw = (getattr(step, "approver_user_ids", None) or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            parsed_values = parsed if isinstance(parsed, list) else [parsed]
+            values.extend(int(value) for value in parsed_values if value)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values.extend(int(value.strip()) for value in raw.split(",") if value.strip().isdigit())
+    if not values and step.approver_user_id:
+        values.append(int(step.approver_user_id))
+    return list(dict.fromkeys(values))
+
+
+def approval_candidate_names_map(steps: Iterable[HRRequestApprovalStep]) -> dict[int, list[str]]:
+    """Return ordered parallel-approver names keyed by approval-step id."""
+    step_rows = [step for step in steps if step and step.id]
+    ids_by_step = {int(step.id): _step_approver_ids(step) for step in step_rows}
+    all_ids = {user_id for user_ids in ids_by_step.values() for user_id in user_ids}
+    users_by_id = {
+        int(user.id): user
+        for user in User.query.filter(User.id.in_(all_ids)).all()
+    } if all_ids else {}
+    return {
+        step_id: [
+            users_by_id[user_id].full_name or users_by_id[user_id].email or f"#{user_id}"
+            for user_id in user_ids
+            if user_id in users_by_id
+        ]
+        for step_id, user_ids in ids_by_step.items()
+    }
+
+
+def direct_approver_names_for_requests(kind: str, request_ids: Iterable[int]) -> dict[int, list[str]]:
+    """Return the original direct-stage approver names for request lists."""
+    normalized_ids = {int(request_id) for request_id in request_ids if request_id}
+    if not normalized_ids:
+        return {}
+    steps = HRRequestApprovalStep.query.filter(
+        HRRequestApprovalStep.request_kind == (kind or "").upper(),
+        HRRequestApprovalStep.request_id.in_(normalized_ids),
+        HRRequestApprovalStep.stage_code == STAGE_DIRECT_MANAGER,
+    ).all()
+    names_by_step = approval_candidate_names_map(steps)
+    return {int(step.request_id): names_by_step.get(int(step.id), []) for step in steps}
+
+
+def request_ids_user_participated_in(user: User, kind: str) -> list[int]:
+    """Requests the user can still act on or previously received/decided."""
+    if not user:
+        return []
+    request_ids: set[int] = set()
+    for step in HRRequestApprovalStep.query.filter_by(request_kind=(kind or "").upper()).all():
+        if (
+            int(user.id) in _step_approver_ids(step)
+            or step.decided_by_id == user.id
+            or step.escalated_from_user_id == user.id
+        ):
+            request_ids.add(int(step.request_id))
+    return sorted(request_ids)
+
+
 def _deputy_for_manager(manager_user_id: int, employee_user_id: int) -> User | None:
     for row in OrgNodeManager.query.filter_by(manager_user_id=int(manager_user_id)).all():
         if row.deputy_user_id and int(row.deputy_user_id) not in {int(manager_user_id), int(employee_user_id)}:
@@ -367,7 +484,7 @@ def _step_specs(kind: str, row) -> list[tuple[str, str]]:
 
 
 def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[HRRequestApprovalStep]:
-    """Create approval steps and notify the first approver.
+    """Create approval steps and notify the first approval stage.
 
     The function is idempotent so legacy/admin routes can safely call it after
     flushing a request.
@@ -383,25 +500,43 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
     if existing:
         return existing
 
-    manager = resolve_direct_manager(int(row.user_id))
-    original_manager_id = manager.id if manager else None
-    delegation = _active_delegation_for(manager.id, now) if manager else None
-    first_approver = delegation.to_user if delegation else manager
-    initial_escalation_reason = "ACTIVE_DELEGATION" if delegation else None
+    managers = (
+        resolve_responsible_managers(int(row.user_id))
+        if kind == KIND_LEAVE
+        else [manager] if (manager := resolve_direct_manager(int(row.user_id))) else []
+    )
+    original_manager_id = managers[0].id if managers else None
+    first_manager_was_delegated = False
+    effective_approver_ids: list[int] = []
+    for index, manager in enumerate(managers):
+        delegation = _active_delegation_for(manager.id, now)
+        effective_id = int(delegation.to_user_id) if delegation else int(manager.id)
+        if index == 0 and delegation:
+            first_manager_was_delegated = True
+        if effective_id not in effective_approver_ids:
+            effective_approver_ids.append(effective_id)
+    initial_escalation_reason = "ACTIVE_DELEGATION" if first_manager_was_delegated else None
 
-    if not first_approver:
+    if not effective_approver_ids:
         first_approver = resolve_general_director(int(row.user_id))
+        if first_approver:
+            effective_approver_ids = [int(first_approver.id)]
         initial_escalation_reason = "NO_DIRECT_MANAGER" if first_approver else None
-    if not first_approver:
+    if not effective_approver_ids:
         secretary_ids = secretary_general_user_ids()
-        first_approver = db.session.get(User, secretary_ids[0]) if secretary_ids else None
-        initial_escalation_reason = "NO_ORG_MANAGER" if first_approver else None
+        if secretary_ids:
+            effective_approver_ids = [int(secretary_ids[0])]
+        initial_escalation_reason = "NO_ORG_MANAGER" if effective_approver_ids else None
+
+    first_approver_id = effective_approver_ids[0] if effective_approver_ids else None
 
     steps: list[HRRequestApprovalStep] = []
     for order, (stage_code, approver_scope) in enumerate(_step_specs(kind, row), start=1):
         approver_user_id = None
+        approver_user_ids = None
         if stage_code == STAGE_DIRECT_MANAGER:
-            approver_user_id = first_approver.id if first_approver else None
+            approver_user_id = first_approver_id
+            approver_user_ids = _serialize_approver_ids(effective_approver_ids)
         elif stage_code == STAGE_SECRETARY_GENERAL:
             secretary_ids = secretary_general_user_ids()
             approver_user_id = secretary_ids[0] if len(secretary_ids) == 1 else None
@@ -414,11 +549,12 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
             stage_code=stage_code,
             approver_scope=approver_scope,
             approver_user_id=approver_user_id,
+            approver_user_ids=approver_user_ids,
             status="PENDING" if active else "WAITING",
             assigned_at=now if active else None,
             due_at=_stage_due_at(kind, stage_code, now) if active else None,
             escalated_at=now if active and initial_escalation_reason else None,
-            escalated_from_user_id=original_manager_id if delegation else None,
+            escalated_from_user_id=original_manager_id if first_manager_was_delegated else None,
             escalation_count=1 if active and initial_escalation_reason else 0,
             escalation_reason=initial_escalation_reason,
         )
@@ -426,12 +562,12 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
         steps.append(step)
 
     row.status = "SUBMITTED"
-    row.approver_user_id = first_approver.id if first_approver else None
+    row.approver_user_id = first_approver_id
     row.updated_at = now
 
-    if first_approver:
+    if effective_approver_ids:
         _notify(
-            [first_approver.id],
+            effective_approver_ids,
             f"طلب {_request_label(kind)} رقم #{row.id} للموظف {_request_employee_name(row)} بانتظار اعتمادك.",
             kind=kind,
             request_id=row.id,
@@ -478,17 +614,19 @@ def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetim
         return _is_hr_approver(user)
     if scope == SCOPE_SECRETARY_GENERAL:
         return _is_secretary_general(user)
-    if step.approver_user_id == user.id:
-        return True
-    if step.approver_user_id:
-        delegation = _active_delegation_for(step.approver_user_id, now)
-        return bool(delegation and delegation.to_user_id == user.id)
+    for approver_user_id in _step_approver_ids(step):
+        if approver_user_id == user.id:
+            return True
+        delegation = _active_delegation_for(approver_user_id, now)
+        if delegation and delegation.to_user_id == user.id:
+            return True
     return False
 
 
 def _scope_approver_ids(step: HRRequestApprovalStep) -> list[int]:
-    if step.approver_user_id:
-        return [int(step.approver_user_id)]
+    candidate_ids = _step_approver_ids(step)
+    if candidate_ids:
+        return candidate_ids
     if step.approver_scope == SCOPE_HR:
         return hr_observer_user_ids()
     if step.approver_scope == SCOPE_SECRETARY_GENERAL:
@@ -535,7 +673,7 @@ def _activate_next_step(kind: str, row, step: HRRequestApprovalStep, now: dateti
 
 def stage_label(stage_code: str | None) -> str:
     return {
-        STAGE_DIRECT_MANAGER: "المدير المباشر",
+        STAGE_DIRECT_MANAGER: "المسؤولون على الهيكلية",
         STAGE_HR: "الموارد البشرية",
         STAGE_SECRETARY_GENERAL: "الأمين العام",
     }.get((stage_code or "").upper(), stage_code or "-")
@@ -764,18 +902,33 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
         if step.stage_code != STAGE_DIRECT_MANAGER or not step.due_at or now < step.due_at:
             continue
 
+        candidate_ids = _step_approver_ids(step)
+        previous_candidate_ids = list(candidate_ids)
         target, reason = _escalation_target(step, row, now)
-        if target and target.id != step.approver_user_id:
+        if len(candidate_ids) > 1 and (not target or target.id in candidate_ids):
+            # The request is already available to every configured hierarchy
+            # manager. Keep the shared stage open instead of collapsing it to
+            # one person or reporting a routing error.
+            step.due_at = add_working_days(now, 1)
+            continue
+        if target and target.id not in candidate_ids:
             old_id = step.approver_user_id
+            if len(candidate_ids) > 1:
+                # Parallel hierarchy approvers remain eligible; escalation
+                # only adds another responsible person to the same stage.
+                candidate_ids.append(int(target.id))
+                step.approver_user_ids = _serialize_approver_ids(candidate_ids)
+            else:
+                step.approver_user_id = target.id
+                step.approver_user_ids = _serialize_approver_ids([target.id])
+                row.approver_user_id = target.id
             step.escalated_from_user_id = old_id
-            step.approver_user_id = target.id
             step.escalated_at = now
             step.escalation_count = int(step.escalation_count or 0) + 1
             step.escalation_reason = reason
             step.assigned_at = now
             step.due_at = _stage_due_at(step.request_kind, step.stage_code, now)
             step.reminder_sent_at = None
-            row.approver_user_id = target.id
             row.updated_at = now
             if send_notifications:
                 _notify(
@@ -786,7 +939,7 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
                     ntype="HR_APPROVAL_ESCALATED",
                 )
                 _notify(
-                    [old_id] if old_id else [],
+                    previous_candidate_ids,
                     f"تم تصعيد طلب {_request_label(step.request_kind)} رقم #{row.id} بعد انتهاء مهلة الاعتماد.",
                     kind=step.request_kind,
                     request_id=row.id,
@@ -828,16 +981,13 @@ def can_view_request(user: User, kind: str, request_id: int) -> bool:
             return True
     if HRRequestObserver.query.filter_by(request_kind=kind, request_id=request_id, user_id=user.id).first():
         return True
-    if HRRequestApprovalStep.query.filter(
-        HRRequestApprovalStep.request_kind == kind,
-        HRRequestApprovalStep.request_id == int(request_id),
-        or_(
-            HRRequestApprovalStep.approver_user_id == user.id,
-            HRRequestApprovalStep.decided_by_id == user.id,
-            HRRequestApprovalStep.escalated_from_user_id == user.id,
-        ),
-    ).first():
-        return True
+    for step in approval_steps(kind, request_id):
+        if (
+            int(user.id) in _step_approver_ids(step)
+            or step.decided_by_id == user.id
+            or step.escalated_from_user_id == user.id
+        ):
+            return True
     try:
         return bool(user.has_perm("HR_REQUESTS_VIEW_ALL") or user.has_role("SUPER_ADMIN"))
     except Exception:
