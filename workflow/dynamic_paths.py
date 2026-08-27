@@ -16,7 +16,6 @@ from utils.org_dynamic import resolve_user_org_node_id
 
 
 MAX_DYNAMIC_TARGETS = 20
-DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS = 2
 FINAL_SECRETARY_GENERAL_REF = "FINAL_SECRETARY_GENERAL"
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 COMMITTEE_DELIVERY_MODES = {
@@ -253,81 +252,38 @@ def structural_route_nodes(source_node_id: int, target_node_id: int) -> list[Org
     return route
 
 
-def dynamic_route_start_nodes(target_chain: list[OrgNode]) -> list[OrgNode]:
-    """Return selectable route starts after the two excluded top hierarchy levels."""
-    return list(target_chain[DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:])
-
-
-def recommended_route_start_node(
+def vertical_structural_route_nodes(
     source_chain: list[OrgNode],
     target_chain: list[OrgNode],
-) -> OrgNode | None:
-    """Choose the structural level that preserves the administrative crossing.
+) -> list[OrgNode]:
+    """Return the automatic vertical route from source to destination.
 
-    The route scope is a structural choice, not an approver choice.  Requiring a
-    manager on the scope node made the UI silently fall through to a lower level
-    (often the destination itself), which removed valid managers below the real
-    common ancestor from the generated route.
+    Dynamic routes must always climb from the requester's placement and then
+    descend to the destination.  Top governance levels are never inserted
+    implicitly; the secretary general remains available through its dedicated
+    final-step option.
     """
-    if not target_chain:
-        return None
-
-    common_length = 0
-    for source_node, target_node in zip(source_chain, target_chain):
-        if int(source_node.id) != int(target_node.id):
-            break
-        common_length += 1
-
-    start_index = max(
-        DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS,
-        common_length - 1 if common_length else DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS,
-    )
-    for node in target_chain[start_index:]:
-        if _is_secretary_general_node(node):
-            continue
-        if _node_allows_approval(node):
-            return node
-    return None
+    excluded_type_codes = {"ORGANIZATION", "CHAIRPERSON", "SECRETARY_GENERAL"}
+    return [
+        node
+        for node in structural_route_nodes(
+            int(source_chain[-1].id),
+            int(target_chain[-1].id),
+        )
+        if _node_type_code(node) not in excluded_type_codes
+        and not _is_secretary_general_node(node)
+    ]
 
 
-def scoped_structural_route_nodes(
-    source_chain: list[OrgNode],
-    target_chain: list[OrgNode],
-    route_start_node_id: int,
-) -> tuple[list[tuple[OrgNode, str]], str | None]:
-    """Build source ascent and target descent without traversing excluded ancestors."""
-    target_start_index = next(
-        (
-            index
-            for index, node in enumerate(target_chain)
-            if int(node.id) == int(route_start_node_id)
-        ),
-        None,
-    )
-    if target_start_index is None or target_start_index < DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:
-        return [], "نقطة بدء التسلسل لا تنتمي إلى الجزء المسموح من مسار الجهة المختارة."
-
-    source_start_index = next(
-        (
-            index
-            for index, node in enumerate(source_chain)
-            if int(node.id) == int(route_start_node_id)
-        ),
-        None,
-    )
-    if source_start_index is None:
-        source_start_index = target_start_index
-    if source_start_index >= len(source_chain):
-        return [], "تعذر تحديد مستوى أفقي موازٍ لنقطة بدء التسلسل ضمن هيكل منشئ الطلب."
-
-    route: list[tuple[OrgNode, str]] = []
-    for node in reversed(source_chain[source_start_index:]):
-        route.append((node, "SOURCE_ASCENT"))
-    for node in target_chain[target_start_index:]:
-        if route and int(route[-1][0].id) == int(node.id):
-            continue
-        route.append((node, "TARGET_DESCENT"))
-    return route, None
+def route_origin(user: User, chain: list[OrgNode] | None = None) -> dict:
+    """Describe the requester as the non-approval starting point of a route."""
+    effective_chain = chain if chain is not None else node_chain(resolve_user_org_node_id(user))
+    return {
+        "user_id": int(user.id),
+        "label": user.full_name or user.email or f"مستخدم #{user.id}",
+        "job_title": (getattr(user, "job_title", None) or "").strip(),
+        "node_label": node_path_label(effective_chain[-1]) if effective_chain else "",
+    }
 
 
 def _node_allows_approval(node: OrgNode) -> bool:
@@ -601,48 +557,11 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
         node_id = int(node.id)
         employee_count = selectable_count(node_id)
         manager, manager_role = manager_context[node_id]
-        chain = node_chain(node_id)
-        recommended_start = recommended_route_start_node(requester_chain, chain)
-        route_start_options = []
-        for chain_index, start_node in enumerate(chain):
-            if chain_index < DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:
-                continue
-            start_manager, start_manager_role = manager_context.get(
-                int(start_node.id),
-                (None, None),
-            )
-            is_secretary_general = _is_secretary_general_node(start_node)
-            can_start = bool(
-                _node_allows_approval(start_node)
-                and not is_secretary_general
-            )
-            route_start_options.append({
-                "id": int(start_node.id),
-                "position": chain_index + 1,
-                "name": start_node.name_ar,
-                "type_name": _node_type_name(start_node) or _node_type_code(start_node),
-                "can_start": can_start,
-                "is_recommended": bool(
-                    recommended_start
-                    and int(recommended_start.id) == int(start_node.id)
-                ),
-                "is_secretary_general": is_secretary_general,
-                "will_skip_without_manager": bool(can_start and not start_manager),
-                "unavailable_reason": (
-                    "يُضاف الأمين العام فقط من خيار الإضافة المستقل في نهاية المسار."
-                    if is_secretary_general else
-                    "هذا المستوى غير مفعّل ضمن خطوات الاعتماد."
-                    if not _node_allows_approval(start_node) else
-                    ""
-                ),
-                "manager_name": (
-                    start_manager.full_name or start_manager.email or f"مستخدم #{start_manager.id}"
-                    if start_manager else ""
-                ),
-                "manager_role": start_manager_role or "",
-            })
-        has_route_start = any(option["can_start"] for option in route_start_options)
         has_manager = bool(manager and _node_allows_approval(node))
+        is_implicit_only_level = bool(
+            _node_type_code(node) in {"ORGANIZATION", "CHAIRPERSON", "SECRETARY_GENERAL"}
+            or _is_secretary_general_node(node)
+        )
         result.append({
             "id": node_id,
             "parent_id": int(node.parent_id) if node.parent_id in nodes_by_id else None,
@@ -651,17 +570,11 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
             "node_label": node_path_label(node),
             "direct_user_count": direct_counts.get(node_id, 0),
             "total_user_count": employee_count,
-            "can_select": bool(has_manager and has_route_start),
+            "can_select": bool(has_manager and not is_implicit_only_level),
             "has_manager": has_manager,
-            "route_start_options": route_start_options,
-            "recommended_route_start_id": (
-                int(recommended_start.id) if recommended_start else None
-            ),
             "unavailable_reason": (
-                "هذه الجهة ضمن أول مستويين المستبعدين من المسار الديناميكي."
-                if not route_start_options else
-                "لا توجد نقطة بدء متاحة بمسؤول معتمد ضمن مسار هذه الجهة."
-                if not has_route_start else
+                "يُضاف هذا المستوى القيادي فقط من خياره المستقل."
+                if is_implicit_only_level else
                 "لا يوجد مسؤول أو نائب مسؤول معتمد لهذه الجهة."
                 if not has_manager else
                 ""
@@ -721,17 +634,17 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
     steps: list[dict] = []
     warnings: list[str] = []
     segments: list[dict] = []
+    seen_approver_user_ids: set[int] = {int(requester.id)}
 
     def add_user_step(user: User, reason: str, node: OrgNode | None = None) -> bool:
-        if int(user.id) == int(requester.id) and not steps:
-            return False
-        if steps and int(steps[-1]["approver_user_id"]) == int(user.id):
+        user_id = int(user.id)
+        if user_id in seen_approver_user_ids:
             return False
         steps.append({
             "step_order": len(steps) + 1,
             "mode": "SEQUENTIAL",
             "approver_kind": "USER",
-            "approver_user_id": int(user.id),
+            "approver_user_id": user_id,
             "sla_days": None,
             "label": user.full_name or user.email or f"مستخدم #{user.id}",
             "job_title": (getattr(user, "job_title", None) or "").strip(),
@@ -739,6 +652,7 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
             "node_id": int(node.id) if node else None,
             "node_label": node_path_label(node) if node else "",
         })
+        seen_approver_user_ids.add(user_id)
         return True
 
     current_user = requester
@@ -765,48 +679,41 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
             "intermediate_manager_count": 0,
         }
 
-        if direct:
-            add_user_step(
-                target_user,
-                "اختيار مباشر ضمن الإدارة نفسها (أفقي أو عمودي)",
-                target_chain[-1],
-            )
-        else:
-            route_nodes = structural_route_nodes(int(current_chain[-1].id), int(target_chain[-1].id))
-            resolved_manager_count = 0
-            skipped_nodes = []
-            for node in route_nodes:
-                if not _node_allows_approval(node):
-                    continue
-                manager, manager_role = _manager_for_node(node)
-                if not manager:
-                    skipped_nodes.append(node.name_ar)
-                    continue
-                resolved_manager_count += 1
-                if add_user_step(
-                    manager,
-                    f"{manager_role} «{node.name_ar}» ضمن التسلسل الإداري",
-                    node,
-                ):
-                    segment["intermediate_manager_count"] += 1
+        route_nodes = vertical_structural_route_nodes(current_chain, target_chain)
+        resolved_manager_count = 0
+        skipped_nodes = []
+        for node in route_nodes:
+            if not _node_allows_approval(node):
+                continue
+            manager, manager_role = _manager_for_node(node)
+            if not manager:
+                skipped_nodes.append(node.name_ar)
+                continue
+            resolved_manager_count += 1
+            if add_user_step(
+                manager,
+                f"{manager_role} «{node.name_ar}» ضمن المسار العمودي",
+                node,
+            ):
+                segment["intermediate_manager_count"] += 1
 
-            if not resolved_manager_count:
-                errors.append(
-                    f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target_user.full_name}»: "
-                    "لم يتم تعيين مسؤول أو نائب مسؤول على التسلسل الإداري بينهما."
-                )
-            elif skipped_nodes:
-                warnings.append(
-                    "تم تجاوز عناصر بلا مسؤول معيّن بين "
-                    f"«{current_user.full_name}» و«{target_user.full_name}»: "
-                    + "، ".join(skipped_nodes[:6])
-                )
-
-            add_user_step(
-                target_user,
-                "المستلم المختار بعد المرور بالتسلسل الإداري",
-                target_chain[-1],
+        if not resolved_manager_count and not direct:
+            errors.append(
+                f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target_user.full_name}»: "
+                "لم يتم تعيين مسؤول أو نائب مسؤول على المسار العمودي بينهما."
             )
+        elif skipped_nodes:
+            warnings.append(
+                "تم تجاوز عناصر بلا مسؤول معيّن بين "
+                f"«{current_user.full_name}» و«{target_user.full_name}»: "
+                + "، ".join(skipped_nodes[:8])
+            )
+
+        add_user_step(
+            target_user,
+            "المستلم المختار بعد المرور بالمسار الإداري العمودي",
+            target_chain[-1],
+        )
 
         segments.append(segment)
         current_user = target_user
@@ -816,6 +723,7 @@ def build_dynamic_user_path(requester: User, selected_user_ids) -> dict:
         step["step_order"] = index
 
     return {
+        "origin": route_origin(requester, requester_chain),
         "steps": steps,
         "segments": segments,
         "warnings": warnings,
@@ -926,7 +834,7 @@ def build_dynamic_target_path(
         errors.append("يجب ربط منشئ الطلب بعنصر أساسي في الهيكل التنظيمي أولاً.")
 
     resolved_targets: list[dict] = []
-    for kind, target_id, route_start_id, committee_delivery_mode in target_refs:
+    for kind, target_id, _route_start_id, committee_delivery_mode in target_refs:
         if kind == "COMMITTEE":
             committee = committees_map.get(target_id)
             if not committee or not bool(getattr(committee, "is_active", False)):
@@ -995,29 +903,6 @@ def build_dynamic_target_path(
         if not target_chain:
             errors.append(f"تعذر تحديد موقع الجهة «{target_node.name_ar}» في الهيكل التنظيمي.")
             continue
-        route_start_node = None
-        if route_start_id is not None:
-            allowed_start_nodes = {
-                int(start_node.id): start_node
-                for start_node in dynamic_route_start_nodes(target_chain)
-            }
-            route_start_node = allowed_start_nodes.get(int(route_start_id))
-            if not route_start_node:
-                errors.append(
-                    f"نقطة بدء التسلسل المحددة لا تقع ضمن الجزء المسموح من مسار الجهة «{target_node.name_ar}»."
-                )
-                continue
-            if _is_secretary_general_node(route_start_node):
-                errors.append(
-                    "لا يمكن استخدام الأمين العام كنقطة بدء ضمنية؛ "
-                    "أضفه من خيار «هل تريد إضافة الأمين العام كآخر خطوة؟»."
-                )
-                continue
-            if not _node_allows_approval(route_start_node):
-                errors.append(
-                    f"لا يمكن بدء التسلسل من «{route_start_node.name_ar}» لأن هذا المستوى غير مفعّل ضمن الاعتماد."
-                )
-                continue
         resolved_targets.append({
             "kind": "NODE",
             "id": target_id,
@@ -1025,8 +910,6 @@ def build_dynamic_target_path(
             "node": target_node,
             "chain": target_chain,
             "manager_role": manager_role or "مسؤول",
-            "route_start_node": route_start_node,
-            "route_start_node_id": int(route_start_node.id) if route_start_node else None,
             "label": f"{_node_type_name(target_node) or _node_type_code(target_node)}: {target_node.name_ar}",
         })
 
@@ -1055,15 +938,13 @@ def build_dynamic_target_path(
         seen_approver_user_ids.add(user_id)
         return True
 
-    def add_target_step(target: dict, direct: bool) -> bool:
+    def add_target_step(target: dict) -> bool:
         target_user = target["user"]
         target_node = target["node"]
         if target["kind"] == "USER":
             return add_user_step(
                 target_user,
-                "اختيار مباشر ضمن الإدارة نفسها (أفقي أو عمودي)"
-                if direct else
-                "المستلم المختار بعد المرور بالتسلسل الإداري",
+                "المستلم المختار بعد المرور بالمسار الإداري العمودي",
                 target_node,
             )
         target_user_id = int(target_user.id)
@@ -1075,9 +956,9 @@ def build_dynamic_target_path(
             "approver_kind": "ORG_NODE",
             "approver_org_node_id": int(target_node.id),
             "sla_days": None,
-            "label": target["label"],
+            "label": target_user.full_name or target_user.email or target["label"],
             "job_title": (getattr(target_user, "job_title", None) or "").strip(),
-            "reason": "",
+            "reason": f"مسؤول الجهة الهدف «{target['label']}» ضمن المسار العمودي",
             "node_id": int(target_node.id),
             "node_label": node_path_label(target_node),
         })
@@ -1125,93 +1006,51 @@ def build_dynamic_target_path(
         target_node = target["node"]
         target_chain = target["chain"]
         direct = same_administration(current_chain, target_chain)
-        route_start_node = target.get("route_start_node")
         target_ref = f"{target['kind']}:{int(target['id'])}"
-        if route_start_node:
-            target_ref += f"@{int(route_start_node.id)}"
         segment = {
             "from_user_id": int(current_user.id),
             "to_user_id": int(target_user.id),
             "target_kind": target["kind"],
             "target_id": int(target["id"]),
             "target_ref": target_ref,
-            "route_start_node_id": int(route_start_node.id) if route_start_node else None,
-            "route_start_label": node_path_label(route_start_node) if route_start_node else "",
+            "route_start_node_id": None,
+            "route_start_label": "",
             "same_administration": direct,
             "intermediate_manager_count": 0,
         }
 
-        if route_start_node:
-            scoped_route, route_error = scoped_structural_route_nodes(
-                current_chain,
-                target_chain,
-                int(route_start_node.id),
-            )
-            if route_error:
-                errors.append(
-                    f"لا يمكن بناء المسار من «{current_user.full_name}» إلى «{target['label']}»: {route_error}"
-                )
-                segments.append(segment)
+        route_nodes = vertical_structural_route_nodes(current_chain, target_chain)
+        resolved_manager_count = 0
+        skipped_nodes = []
+        for route_node in route_nodes:
+            if target["kind"] == "NODE" and int(route_node.id) == int(target_node.id):
                 continue
+            if not _node_allows_approval(route_node):
+                continue
+            manager, manager_role = _manager_for_node(route_node)
+            if not manager:
+                skipped_nodes.append(route_node.name_ar)
+                continue
+            resolved_manager_count += 1
+            if add_user_step(
+                manager,
+                f"{manager_role} «{route_node.name_ar}» ضمن المسار العمودي",
+                route_node,
+            ):
+                segment["intermediate_manager_count"] += 1
 
-            skipped_nodes = []
-            for route_node, _route_phase in scoped_route:
-                if _is_secretary_general_node(route_node):
-                    continue
-                if int(route_node.id) == int(target_node.id):
-                    continue
-                if not _node_allows_approval(route_node):
-                    continue
-                manager, _manager_role = _manager_for_node(route_node)
-                if not manager:
-                    skipped_nodes.append(route_node.name_ar)
-                    continue
-                if add_user_step(manager, "", route_node):
-                    segment["intermediate_manager_count"] += 1
-
-            if skipped_nodes:
-                warnings.append(
-                    f"تم تجاوز عناصر بلا مسؤول معيّن ضمن التسلسل المحدد من «{route_start_node.name_ar}»: "
-                    + "، ".join(skipped_nodes[:8])
-                )
-            add_target_step(target, False)
-        elif direct:
-            add_target_step(target, True)
-        else:
-            route_nodes = structural_route_nodes(int(current_chain[-1].id), int(target_chain[-1].id))
-            resolved_manager_count = 0
-            skipped_nodes = []
-            for route_node in route_nodes:
-                if _is_secretary_general_node(route_node):
-                    continue
-                if target["kind"] == "NODE" and int(route_node.id) == int(target_node.id):
-                    continue
-                if not _node_allows_approval(route_node):
-                    continue
-                manager, manager_role = _manager_for_node(route_node)
-                if not manager:
-                    skipped_nodes.append(route_node.name_ar)
-                    continue
-                resolved_manager_count += 1
-                if add_user_step(
-                    manager,
-                    f"{manager_role} «{route_node.name_ar}» ضمن التسلسل الإداري",
-                    route_node,
-                ):
-                    segment["intermediate_manager_count"] += 1
-
-            if not resolved_manager_count:
-                errors.append(
-                    f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target['label']}»: "
-                    "لم يتم تعيين مسؤول أو نائب مسؤول على التسلسل الإداري بينهما."
-                )
-            elif skipped_nodes:
-                warnings.append(
-                    "تم تجاوز عناصر بلا مسؤول معيّن بين "
-                    f"«{current_user.full_name}» و«{target['label']}»: "
-                    + "، ".join(skipped_nodes[:6])
-                )
-            add_target_step(target, False)
+        if not resolved_manager_count and not direct:
+            errors.append(
+                f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target['label']}»: "
+                "لم يتم تعيين مسؤول أو نائب مسؤول على المسار العمودي بينهما."
+            )
+        elif skipped_nodes:
+            warnings.append(
+                "تم تجاوز عناصر بلا مسؤول معيّن بين "
+                f"«{current_user.full_name}» و«{target['label']}»: "
+                + "، ".join(skipped_nodes[:8])
+            )
+        add_target_step(target)
 
         segments.append(segment)
         current_user = target_user
@@ -1278,6 +1117,7 @@ def build_dynamic_target_path(
             step["sla_days"] = effective_dynamic_sla
 
     return {
+        "origin": route_origin(requester, requester_chain),
         "steps": steps,
         "segments": segments,
         "warnings": warnings,

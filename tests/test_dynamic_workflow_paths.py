@@ -155,12 +155,16 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         db.session.flush()
         return node
 
-    def test_same_administration_user_is_selected_directly(self):
+    def test_same_administration_user_still_follows_the_vertical_manager_route(self):
         result = build_dynamic_user_path(self.requester, [self.same_target.id])
 
         self.assertEqual(result["errors"], [])
-        self.assertEqual([step["approver_user_id"] for step in result["steps"]], [self.same_target.id])
-        self.assertIn("اختيار مباشر", result["steps"][0]["reason"])
+        self.assertEqual(
+            [step["approver_user_id"] for step in result["steps"]],
+            [self.source_manager.id, self.same_target.id],
+        )
+        self.assertEqual(result["origin"]["user_id"], self.requester.id)
+        self.assertTrue(all("عمودي" in step["reason"] for step in result["steps"]))
 
     def test_user_entered_request_type_is_created_and_reused_by_label(self):
         created = _find_or_create_request_type("  طلب   متابعة خاص  ")
@@ -314,10 +318,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             nodes_by_id[self.department_a1.id]["manager_user_id"],
             self.source_manager.id,
         )
-        self.assertEqual(
-            [option["id"] for option in nodes_by_id[self.department_a1.id]["route_start_options"]],
-            [self.department_a1.id],
-        )
+        self.assertNotIn("route_start_options", nodes_by_id[self.department_a1.id])
         self.assertFalse(nodes_by_id[empty_department.id]["can_select"])
         self.assertGreaterEqual(
             nodes_by_id[self.directorate_a.id]["total_user_count"],
@@ -555,7 +556,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             ["NODE", "NODE"],
         )
 
-    def test_scoped_node_route_excludes_top_two_levels_and_crosses_horizontally(self):
+    def test_node_route_is_automatic_vertical_and_excludes_top_governance_levels(self):
         directorate_type = self.directorate_a.type
         department_type = self.department_a1.type
         chairperson = self._node("رئيس اللجنة", directorate_type, self.root)
@@ -595,28 +596,20 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         target_browser = next(
             node for node in browser_nodes if node["id"] == target_department.id
         )
-        start_options = {
-            option["id"]: option
-            for option in target_browser["route_start_options"]
-        }
-        self.assertFalse(start_options[secretary_general.id]["can_start"])
-        self.assertIn("خيار الإضافة المستقل", start_options[secretary_general.id]["unavailable_reason"])
-        self.assertEqual(
-            next(option["id"] for option in target_browser["route_start_options"] if option["can_start"]),
-            target_assistant.id,
-        )
-        self.assertEqual(
-            target_browser["recommended_route_start_id"],
-            target_assistant.id,
-        )
+        self.assertTrue(target_browser["can_select"])
+        self.assertNotIn("route_start_options", target_browser)
 
-        implicit_secretary = build_dynamic_target_path(self.requester, [
+        legacy_ref_result = build_dynamic_target_path(self.requester, [
             f"NODE:{target_department.id}@{secretary_general.id}",
         ])
-        self.assertIn("لا يمكن استخدام الأمين العام", " ".join(implicit_secretary["errors"]))
+        self.assertEqual(legacy_ref_result["errors"], [])
+        self.assertEqual(
+            legacy_ref_result["segments"][0]["target_ref"],
+            f"NODE:{target_department.id}",
+        )
 
         result = build_dynamic_target_path(self.requester, [
-            f"NODE:{target_department.id}@{target_assistant.id}",
+            f"NODE:{target_department.id}",
         ])
 
         self.assertEqual(result["errors"], [])
@@ -646,9 +639,10 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertNotIn(secretary_general.id, [step["node_id"] for step in result["steps"]])
         self.assertEqual(
             result["segments"][0]["target_ref"],
-            f"NODE:{target_department.id}@{target_assistant.id}",
+            f"NODE:{target_department.id}",
         )
-        self.assertTrue(all(not step["reason"] for step in result["steps"][:5]))
+        self.assertTrue(all("عمودي" in step["reason"] for step in result["steps"][:4]))
+        self.assertEqual(result["origin"]["user_id"], self.requester.id)
         self.assertTrue(all(
             step["reason"] == DYNAMIC_RETURN_REASON
             for step in result["steps"][5:]
@@ -656,7 +650,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
 
         with_secretary_general = build_dynamic_target_path(
             self.requester,
-            [f"NODE:{target_department.id}@{target_assistant.id}"],
+            [f"NODE:{target_department.id}"],
             include_secretary_general=True,
         )
         self.assertEqual(with_secretary_general["errors"], [])
@@ -715,19 +709,23 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         source_department = self._node("دائرة الثقافة", department_type, source_general)
         target_department = self._node("دائرة البرامج", department_type, target_general)
 
+        kholoud = self._user("kholoud-route@example.test", "خلود")
+        irene = self._user("irene-route@example.test", "إيرين")
+        adham = self._user("adham-route@example.test", "أدهم")
+        self.requester.name = "أيمن"
         self.requester.org_node_id = source_department.id
         db.session.add_all([
             OrgNodeManager(
                 node_id=source_general.id,
-                manager_user_id=self.source_manager.id,
+                manager_user_id=kholoud.id,
             ),
             OrgNodeManager(
                 node_id=target_general.id,
-                manager_user_id=self.root_manager.id,
+                manager_user_id=irene.id,
             ),
             OrgNodeManager(
                 node_id=target_department.id,
-                manager_user_id=self.target_manager.id,
+                manager_user_id=adham.id,
             ),
         ])
         db.session.commit()
@@ -739,24 +737,22 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         target_browser = next(
             node for node in browser_nodes if node["id"] == target_department.id
         )
-        assistant_option = next(
-            option
-            for option in target_browser["route_start_options"]
-            if option["id"] == shared_assistant.id
-        )
-
-        self.assertEqual(
-            target_browser["recommended_route_start_id"],
-            shared_assistant.id,
-        )
-        self.assertTrue(assistant_option["can_start"])
-        self.assertTrue(assistant_option["will_skip_without_manager"])
+        self.assertTrue(target_browser["can_select"])
+        self.assertNotIn("route_start_options", target_browser)
 
         result = build_dynamic_target_path(self.requester, [
-            f"NODE:{target_department.id}@{shared_assistant.id}",
+            f"NODE:{target_department.id}",
         ])
 
         self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [result["origin"]["label"]] + [step["label"] for step in result["steps"][:3]],
+            ["أيمن", "خلود", "إيرين", "أدهم"],
+        )
+        self.assertEqual(
+            [step.get("approver_user_id") for step in result["steps"][:3]],
+            [kholoud.id, irene.id, None],
+        )
         self.assertEqual(
             [step["node_id"] for step in result["steps"]],
             [
@@ -769,13 +765,16 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         )
         self.assertIn(shared_assistant.name_ar, " ".join(result["warnings"]))
 
-    def test_scoped_node_route_rejects_a_start_within_the_top_two_levels(self):
+    def test_legacy_node_route_start_suffix_is_ignored_and_normalized(self):
         result = build_dynamic_target_path(self.requester, [
             f"NODE:{self.department_b.id}@{self.root.id}",
         ])
 
-        self.assertTrue(result["errors"])
-        self.assertIn("الجزء المسموح", " ".join(result["errors"]))
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            result["segments"][0]["target_ref"],
+            f"NODE:{self.department_b.id}",
+        )
 
     def test_saved_dynamic_paths_are_scoped_to_their_owner(self):
         requester_preset = UserDynamicWorkflowPreset(
@@ -863,7 +862,6 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         user_ids = [step["approver_user_id"] for step in result["steps"]]
         self.assertEqual(user_ids, [
             self.source_manager.id,
-            self.root_manager.id,
             self.target_manager.id,
             self.cross_target.id,
         ])
@@ -909,17 +907,26 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         db.session.commit()
 
         instance = WorkflowInstance.query.filter_by(request_id=request.id).one()
-        step = WorkflowInstanceStep.query.filter_by(instance_id=instance.id).one()
+        steps = WorkflowInstanceStep.query.filter_by(
+            instance_id=instance.id,
+        ).order_by(WorkflowInstanceStep.step_order.asc()).all()
         self.assertIsNone(instance.template_id)
-        self.assertEqual(step.approver_kind, "USER")
-        self.assertEqual(step.approver_user_id, self.same_target.id)
-        self.assertEqual(step.routing_label, self.same_target.full_name)
-        self.assertEqual(step.routing_node_label, result["steps"][0]["node_label"])
-        self.assertEqual(step.routing_reason, result["steps"][0]["reason"])
-        self.assertEqual(resolve_step_approver_user_ids(step), [self.same_target.id])
-        self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
+        self.assertEqual(
+            [step.approver_user_id for step in steps],
+            [self.source_manager.id, self.same_target.id],
+        )
+        self.assertEqual(steps[0].routing_label, self.source_manager.full_name)
+        self.assertEqual(steps[0].routing_node_label, result["steps"][0]["node_label"])
+        self.assertEqual(steps[0].routing_reason, result["steps"][0]["reason"])
+        self.assertEqual(resolve_step_approver_user_ids(steps[0]), [self.source_manager.id])
+        self.assertIsNotNone(Notification.query.filter_by(user_id=self.source_manager.id).first())
 
     def test_higher_dynamic_approver_bypasses_lower_and_keeps_them_following(self):
+        db.session.add(OrgNodeManager(
+            node_id=self.directorate_a.id,
+            manager_user_id=self.root_manager.id,
+        ))
+        db.session.commit()
         result = build_dynamic_target_path(
             self.requester,
             [f"NODE:{self.department_b.id}"],
@@ -929,9 +936,9 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             [step["node_id"] for step in result["steps"]],
             [
                 self.department_a1.id,
-                self.root.id,
+                self.directorate_a.id,
                 self.department_b.id,
-                self.root.id,
+                self.directorate_a.id,
                 self.department_a1.id,
             ],
         )

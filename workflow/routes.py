@@ -2646,6 +2646,7 @@ def preview_dynamic_request_path():
     )
     return jsonify({
         "ok": not result["errors"],
+        "origin": result.get("origin"),
         "steps": result["steps"],
         "segments": result["segments"],
         "warnings": result["warnings"],

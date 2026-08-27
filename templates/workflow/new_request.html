@@ -248,7 +248,7 @@
         {% elif not requester_org_node_id %}
           <div class="form-text">يمكنك إنشاء مسار إلى لجنة نشطة. لاختيار جهات أو أشخاص، يجب ربط حسابك بالهيكل التنظيمي أولاً.</div>
         {% else %}
-          <div class="form-text">داخل الإدارة نفسها يكون الاختيار مباشراً؛ وخارجها يضيف النظام التسلسل الإداري المعتمد تلقائياً.</div>
+          <div class="form-text">يبني النظام مساراً عمودياً تلقائياً من منشئ الطلب عبر مديريه، ثم عبر مديري الجهة الهدف حتى المستلم.</div>
         {% endif %}
       </div>
 
@@ -371,7 +371,7 @@
                   <div class="form-label fw-bold mb-1"><i class="bi bi-diagram-3"></i> الهيكلية</div>
                   <div class="small text-muted">اختر بطاقة الجهة من الشجرة، ثم اضغط «إضافة الجهة نفسها إلى المسار»؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.</div>
                 </div>
-                <span class="badge text-bg-light border"><i class="bi bi-hand-index"></i> اختيار مباشر</span>
+                <span class="badge text-bg-light border"><i class="bi bi-diagram-3"></i> مسار عمودي تلقائي</span>
               </div>
               <select class="d-none" id="dynamicHierarchySelect" data-searchable="0" tabindex="-1" aria-hidden="true">
                 <option value="">— اختر جهة من الهيكلية —</option>
@@ -448,9 +448,7 @@
                           <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
                             <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
                           </div>
-                          <span class="badge mt-2 dynamic-wrap-badge {{ 'text-bg-success' if choice.same_administration else 'text-bg-warning' }}">
-                            {{ 'اختيار مباشر ضمن الإدارة' if choice.same_administration else 'عبر التسلسل الإداري' }}
-                          </span>
+                          <span class="badge mt-2 dynamic-wrap-badge text-bg-primary">عبر المسار الإداري العمودي</span>
                         </div>
                         <div class="form-check border rounded-3 px-3 py-2 flex-shrink-0 bg-light">
                           <input type="checkbox"
@@ -897,9 +895,8 @@
     const orgNodesById = new Map(orgNodes.map(node => [String(node.id), node]));
     const committeesById = new Map(committees.map(committee => [String(committee.id), committee]));
 
-    function nodeTargetRef(nodeId, routeStartId){
-      const base = 'NODE:' + String(nodeId);
-      return routeStartId ? base + '@' + String(routeStartId) : base;
+    function nodeTargetRef(nodeId){
+      return 'NODE:' + String(nodeId);
     }
 
     function committeeTargetRef(committeeId, modeKey){
@@ -929,12 +926,6 @@
     function insertBeforeCommittee(item){
       const committeeIndex = selectedCommitteeIndex();
       selected.splice(committeeIndex >= 0 ? committeeIndex : selected.length, 0, item);
-    }
-
-    function selectableRouteStarts(node){
-      return Array.isArray(node && node.route_start_options)
-        ? node.route_start_options.filter(option => option && option.can_start)
-        : [];
     }
 
     function isDynamic(){
@@ -1216,10 +1207,10 @@
         const targetSpec = parts[1] || '';
         const targetParts = targetSpec.split('@');
         const targetId = targetParts[0] || '';
-        const routeStartId = targetParts[1] || '';
+        const targetSuffix = targetParts[1] || '';
         if (kind === 'NODE') {
           const node = orgNodesById.get(String(targetId));
-          if (!node || !node.can_select || !addSelectedOrgNode(node, routeStartId)) missingRefs.push(targetRef);
+          if (!node || !node.can_select || !addSelectedOrgNode(node)) missingRefs.push(targetRef);
           return;
         }
         if (kind === 'USER') {
@@ -1232,7 +1223,7 @@
           setCommitteeEnabled(true);
           if (committeeSelect) committeeSelect.value = String(targetId);
           updateCommitteeSelection();
-          if (!committee || !committee.can_select || !addSelectedCommittee(committee, routeStartId || 'ALL')) {
+          if (!committee || !committee.can_select || !addSelectedCommittee(committee, targetSuffix || 'ALL')) {
             missingRefs.push(targetRef);
           } else {
             updateCommitteeSelection();
@@ -1335,36 +1326,12 @@
         const listItem = document.createElement('li');
         const isNode = item.kind === 'NODE';
         const isCommittee = item.kind === 'COMMITTEE';
-        let routeStartControl = '';
-        if (isNode) {
-          const startOptions = (item.routeStartOptions || []).map(function(option){
-            const optionLabel = String(option.position || '') + ' — ' +
-              (option.type_name ? option.type_name + ': ' : '') + (option.name || '') +
-              (option.can_start
-                ? (option.will_skip_without_manager ? ' — بلا مسؤول مباشر (يبقى نطاقاً للمسار)' : '')
-                : ' — ' + (option.unavailable_reason || 'غير متاح')) +
-              (option.is_recommended ? ' — موصى به' : '');
-            return '<option value="' + String(option.id) + '" ' +
-              (String(option.id) === String(item.routeStartId) ? 'selected ' : '') +
-              (option.can_start ? '' : 'disabled ') + '>' + escapeHtml(optionLabel) + '</option>';
-          }).join('');
-          routeStartControl =
-            '<div class="border rounded-3 p-2 mt-2 bg-light">' +
-              '<label class="form-label small fw-bold mb-1" for="dynamicRouteStart' + index + '">' +
-                '<i class="bi bi-signpost-split"></i> التسلسل الإداري يبدأ من' +
-              '</label>' +
-              '<select class="form-select form-select-sm dynamic-route-start dynamic-contained-select" id="dynamicRouteStart' + index + '" data-index="' + index + '">' +
-                startOptions +
-              '</select>' +
-              '<div class="form-text">يُختار تلقائياً مستوى الالتقاء الذي يحافظ على التسلسل؛ والمستوى بلا مسؤول يبقى نطاقاً ويُتجاوز كخطوة اعتماد فقط.</div>' +
-            '</div>';
-        }
         const iconClass = isCommittee ? 'bi-people-fill' : (isNode ? 'bi-building' : 'bi-briefcase');
         const fallbackTitle = isCommittee ? 'لجنة' : (isNode ? 'جهة تنظيمية' : 'لا يوجد مسمى وظيفي مسجل');
         const badgeClass = isCommittee ? 'text-bg-info' : (isNode ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning'));
         const badgeText = isCommittee
           ? 'آخر وجهة — ' + (item.modeLabel || 'كل أعضاء اللجنة')
-          : (isNode ? 'يبدأ من: ' + (item.routeStartName || '') : (item.sameAdmin ? 'اختيار مباشر ضمن الإدارة' : 'عبر التسلسل الإداري'));
+          : 'مسار إداري عمودي تلقائي';
         const disableUp = isCommittee || index === 0;
         const disableDown = isCommittee || index === selected.length - 1 || (selected[index + 1] && selected[index + 1].kind === 'COMMITTEE');
         listItem.className = 'list-group-item border border-primary rounded-3 mb-2 d-flex justify-content-between align-items-start gap-3 flex-wrap flex-md-nowrap';
@@ -1374,7 +1341,6 @@
             '<div class="flex-grow-1" style="min-width:0">' +
               '<div class="fw-bold text-break">' + escapeHtml(item.name) + '</div>' +
               '<div class="small text-primary fw-semibold mt-1"><i class="bi ' + iconClass + '"></i> ' + escapeHtml(item.title || fallbackTitle) + '</div>' +
-            routeStartControl +
             '<span class="badge mt-1 dynamic-wrap-badge ' + badgeClass + '">' +
               escapeHtml(badgeText) +
             '</span>' +
@@ -1415,30 +1381,18 @@
       return true;
     }
 
-    function addSelectedOrgNode(node, preferredRouteStartId){
+    function addSelectedOrgNode(node){
       if (!node || !node.can_select) return true;
       if (selectedNodeIndex(node.id) >= 0) return true;
       if (selected.length >= 20) return false;
-      const availableStarts = selectableRouteStarts(node);
-      if (!availableStarts.length) return false;
-      const recommendedStart = availableStarts.find(option =>
-        String(option.id) === String(node.recommended_route_start_id || '')
-      );
-      const routeStart = preferredRouteStartId
-        ? availableStarts.find(option => String(option.id) === String(preferredRouteStartId))
-        : (recommendedStart || availableStarts[0]);
-      if (!routeStart) return false;
       insertBeforeCommittee({
-        ref: nodeTargetRef(node.id, routeStart.id),
+        ref: nodeTargetRef(node.id),
         kind: 'NODE',
         id: String(node.id),
         name: (node.type_name ? node.type_name + ': ' : '') + (node.name || ''),
         title: (node.manager_role || 'مسؤول') + ': ' + (node.manager_name || ''),
         node: node.node_label || node.name || '',
-        sameAdmin: Boolean(node.same_administration),
-        routeStartId: String(routeStart.id),
-        routeStartName: (routeStart.type_name ? routeStart.type_name + ': ' : '') + (routeStart.name || ''),
-        routeStartOptions: Array.isArray(node.route_start_options) ? node.route_start_options : []
+        sameAdmin: Boolean(node.same_administration)
       });
       return true;
     }
@@ -1642,8 +1596,17 @@
         (result.warnings || []).forEach(message => {
           html += '<div class="alert alert-warning py-2 mb-2">' + escapeHtml(message) + '</div>';
         });
-        if ((result.steps || []).length) {
+        const origin = result.origin || null;
+        if (origin || (result.steps || []).length) {
           html += '<div class="d-grid gap-2">';
+          if (origin) {
+            html += '<div class="border border-secondary rounded-3 p-3 bg-light d-flex align-items-start gap-3">' +
+              '<span class="badge rounded-pill text-bg-secondary fs-6 flex-shrink-0">بداية</span>' +
+              '<div class="flex-grow-1 dynamic-wrap-text" style="min-width:0"><strong class="d-block text-break">' + escapeHtml(origin.label) + '</strong>' +
+              '<div class="small text-primary fw-semibold mt-1 dynamic-wrap-text"><i class="bi bi-person"></i> منشئ الطلب — نقطة انطلاق المسار العمودي</div>' +
+              (origin.job_title ? '<div class="small text-muted mt-1 dynamic-wrap-text">' + escapeHtml(origin.job_title) + '</div>' : '') +
+              '</div></div>';
+          }
           result.steps.forEach((step, index) => {
             html += '<div class="border rounded-3 p-3 bg-white d-flex align-items-start gap-3">' +
               '<span class="badge rounded-pill text-bg-primary fs-6 flex-shrink-0">' + String(index + 1) + '</span>' +
@@ -1793,22 +1756,6 @@
         removeSelectedTarget('USER:' + checkbox.dataset.id);
         checkbox.checked = false;
       });
-      renderSelected();
-    });
-    if (selectedList) selectedList.addEventListener('change', function(event){
-      const control = event.target.closest('.dynamic-route-start');
-      if (!control) return;
-      const index = Number(control.dataset.index);
-      if (!Number.isInteger(index) || index < 0 || index >= selected.length) return;
-      const item = selected[index];
-      if (!item || item.kind !== 'NODE') return;
-      const routeStart = (item.routeStartOptions || []).find(
-        option => option.can_start && String(option.id) === String(control.value)
-      );
-      if (!routeStart) return;
-      item.routeStartId = String(routeStart.id);
-      item.routeStartName = (routeStart.type_name ? routeStart.type_name + ': ' : '') + (routeStart.name || '');
-      item.ref = nodeTargetRef(item.id, item.routeStartId);
       renderSelected();
     });
     if (selectedList) selectedList.addEventListener('click', function(event){
