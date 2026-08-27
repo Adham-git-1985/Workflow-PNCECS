@@ -45,7 +45,7 @@ from utils.file_uploads import (
     is_safe_inline_mimetype,
     random_storage_name,
 )
-from utils.ui_labels import ui_label, ui_text
+from utils.ui_labels import ui_label, ui_text, workflow_status_label
 from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
     is_confidential_workflow,
@@ -542,7 +542,7 @@ def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str |
         f"قام {actor_label} بإضافتك إلى متابعة مسار الطلب #{req.id} عبر المنشن.",
         "",
         f"العنوان: {req.title or '-'}",
-        f"الحالة: {ui_label(req.status) or req.status or '-'}",
+        f"الحالة: {workflow_status_label(req.status) or req.status or '-'}",
     ]
     if step_order:
         body_lines.append(f"الخطوة الحالية: {step_order}")
@@ -1543,7 +1543,7 @@ def request_pdf(request_id):
 
     elements = []
     elements.append(p(f"تفاصيل الطلب رقم {req.id}", title_style))
-    elements.append(p(f"الحالة: {ui_label(req.status) or req.status or '—'}"))
+    elements.append(p(f"الحالة: {workflow_status_label(req.status) or req.status or '—'}"))
     elements.append(p(
         "تاريخ الإنشاء: " + (
             req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else "—"
@@ -1572,7 +1572,7 @@ def request_pdf(request_id):
             content = [
                 p(f"الخطوة {step.step_order}: عند {target}", step_title_style),
                 p(f"المطلوب: {action}"),
-                p(f"الحالة: {ui_label(step.status) or step.status or '—'}"),
+                p(f"الحالة: {workflow_status_label(step.status) or step.status or '—'}"),
             ]
             if step.note:
                 content.append(p(f"التعليق: {step.note}", note_style))
@@ -3107,7 +3107,7 @@ def _workflow_user_summary(req, step):
 def _clean_workflow_note(note: str | None) -> str:
     """Remove audit-instrumentation metadata from comments shown to users."""
     cleaned = (note or "").split("\nمصدر العملية:", 1)[0].strip()
-    return cleaned.replace("موافق عليه", "متابعة").replace("مرفوض", "تعليق")
+    return cleaned.replace("موافق عليه", "تم الاطلاع والمتابعة").replace("مرفوض", "تعليق")
 
 
 @workflow_bp.route("/inbox")
@@ -4278,10 +4278,18 @@ def view_request(request_id):
         if (log.action or "").upper() in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}
         and _clean_workflow_note(log.note)
     ]
-    technical_actions = {"PAGE_VIEW", "VIEW_PAGE", "REQUEST_VIEWED", "USER_ACTION"}
+    technical_actions = {
+        "PAGE_VIEW",
+        "VIEW_PAGE",
+        "REQUEST_VIEWED",
+        "USER_ACTION",
+        "USER_ACTION_FAILED",
+    }
+    note_actions = {"WORKFLOW_COMMENT", "WORKFLOW_REPLY", "DYNAMIC_BRANCH_SELECTED"}
     action_labels = {
         "WORKFLOW_STARTED": "تم بدء المسار",
-        "STEP_APPROVED": "تمت المتابعة",
+        "WORKFLOW_COMPLETED": "اكتمل المسار",
+        "STEP_APPROVED": "تم الاطلاع والمتابعة",
         "STEP_REJECTED": "تمت إضافة تعليق",
         "WORKFLOW_COMMENT": "تمت إضافة تعليق",
         "WORKFLOW_REPLY": "تمت إضافة رد",
@@ -4290,16 +4298,17 @@ def view_request(request_id):
         "PARALLEL_SYNC_RESPONDED": "تمت متابعة الخطوة المتزامنة",
         "WORKFLOW_ATTACHMENT_UPLOADED": "تمت إضافة مرفق",
     }
-    user_audit = [
-        {
-            "action": action_labels.get((log.action or "").upper(), ui_label(log.action)),
+    user_audit = []
+    for log in reversed(audit):
+        action = (log.action or "").upper()
+        if action in technical_actions:
+            continue
+        user_audit.append({
+            "action": action_labels.get(action, ui_label(log.action)),
             "author": log.user.full_name if log.user else "النظام",
             "created_at": log.created_at,
-            "note": _clean_workflow_note(log.note),
-        }
-        for log in reversed(audit)
-        if (log.action or "").upper() not in technical_actions
-    ]
+            "note": _clean_workflow_note(log.note) if action in note_actions else "",
+        })
     if not audit:
         decided_steps = [row for row in steps if getattr(row, "decided_at", None)]
         if decided_steps:
@@ -4612,7 +4621,9 @@ def view_request(request_id):
         simple_audit=simple_audit,
         simple_comments=simple_comments,
         user_audit=user_audit,
-        show_detailed_audit=current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"),
+        show_detailed_audit=bool(template) and (
+            current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN")
+        ),
         users_map=users_map,
         user_org_path_map=user_org_path_map,
         depts_map=depts_map,

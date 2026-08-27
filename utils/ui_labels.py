@@ -240,6 +240,18 @@ def ui_label(value):
     return text
 
 
+def workflow_status_label(value):
+    """Return workflow wording without changing approval labels in other modules."""
+    if value is None:
+        return ""
+    text = str(value).strip()
+    normalized = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", text)
+    key = re.sub(r"[\s\-]+", "_", normalized.upper())
+    if key == "APPROVED":
+        return "تم الاطلاع والمتابعة"
+    return ui_label(value)
+
+
 def ui_text(value):
     if value is None:
         return ""

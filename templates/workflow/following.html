@@ -50,7 +50,7 @@
         <select class="form-select" name="status">
           <option value="">الكل</option>
           {% for st in status_options %}
-            <option value="{{ st }}" {% if filters.status == st %}selected{% endif %}>{{ st|ui_label }}</option>
+            <option value="{{ st }}" {% if filters.status == st %}selected{% endif %}>{{ st|workflow_status_label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -225,7 +225,7 @@
           </td>
           <td>
             <span class="badge {% if req.status == 'CLOSED' %}bg-secondary{% elif req.status == 'APPROVED' %}bg-success{% elif req.status == 'REJECTED' %}bg-danger{% elif req.status == 'IN_PROGRESS' %}bg-primary{% else %}bg-info{% endif %}">
-              {{ req.status|ui_label }}
+              {{ req.status|workflow_status_label }}
             </span>
           </td>
           <td>

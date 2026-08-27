@@ -7,7 +7,7 @@
   <div>
     <h3 class="mb-1">📄 الطلب #{{ req.id }}</h3>
     <small class="text-muted">
-      الحالة: <span class="badge {{ 'bg-secondary' if req.status == 'CLOSED' else ('bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary')) }}">{{ req.status|ui_label }}</span>
+      الحالة: <span class="badge {{ 'bg-secondary' if req.status == 'CLOSED' else ('bg-success' if req.status == 'APPROVED' else ('bg-danger' if req.status == 'REJECTED' else 'bg-primary')) }}">{{ req.status|workflow_status_label }}</span>
       · الأولوية: <span class="badge {{ 'text-bg-danger' if req.priority == 'URGENT' else ('text-bg-warning' if req.priority == 'HIGH' else 'text-bg-light border') }}">{{ req.priority|ui_label }}</span>
       {% if inst %} · الخطوة الحالية: <strong>{{ inst.current_step_order }}</strong>{% endif %}
       {% if template %} · المسار: <strong>{{ template.name }} (#{{ template.id }})</strong>{% elif inst %} · المسار: <strong>ديناميكي حسب الهيكل الإداري</strong>{% endif %}
@@ -395,7 +395,7 @@
                     {% elif s.status == 'APPROVED' %}bg-success
                     {% elif s.status == 'REJECTED' %}bg-danger
                     {% else %}bg-secondary{% endif %}">
-                    {{ s.status|ui_label }}
+                    {{ s.status|workflow_status_label }}
                   </span>
                 </div>
                 {% if s.due_at %}
@@ -550,7 +550,7 @@
                       </td>
                       <td>
                         {% if (t.response or '') == 'APPROVED' %}
-                          <span class="badge bg-success">متابعة</span>
+                          <span class="badge bg-success">تم الاطلاع والمتابعة</span>
                         {% elif (t.response or '') == 'REJECTED' %}
                           <span class="badge bg-danger">تعليق</span>
                         {% else %}

@@ -531,6 +531,22 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn("grid-template-columns:max-content minmax(0, 1fr)", portal_layout)
         self.assertIn("portal-masar-return", portal_layout)
 
+    def test_dynamic_workflow_uses_compact_audit_and_follow_up_status_wording(self):
+        project_root = Path(__file__).resolve().parents[1]
+        request_template = (
+            project_root / "templates" / "workflow" / "view_request.html"
+        ).read_text(encoding="utf-8")
+        routes = (project_root / "workflow" / "routes.py").read_text(encoding="utf-8")
+
+        self.assertIn("req.status|workflow_status_label", request_template)
+        self.assertIn("s.status|workflow_status_label", request_template)
+        self.assertIn("show_detailed_audit=bool(template)", routes)
+        self.assertIn('"PAGE_VIEW",', routes)
+        self.assertIn('"USER_ACTION",', routes)
+        self.assertIn('"USER_ACTION_FAILED",', routes)
+        self.assertIn('"STEP_APPROVED": "تم الاطلاع والمتابعة"', routes)
+        self.assertIn('if action in note_actions else ""', routes)
+
 
 if __name__ == "__main__":
     unittest.main()

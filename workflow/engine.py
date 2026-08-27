@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 
 from extensions import db
 from utils.notification_links import notification_target_path
-from utils.ui_labels import ui_label
+from utils.ui_labels import workflow_status_label
 from models import (
     AuditLog,
     Notification,
@@ -1674,7 +1674,7 @@ def decide_step(
             action="PARALLEL_SYNC_RESPONDED",
             old_status=None,
             new_status=None,
-            note=f"الخطوة {step.step_order}: {ui_label(task.response)}. {note}".strip(),
+            note=f"الخطوة {step.step_order}: {workflow_status_label(task.response)}. {note}".strip(),
             target_type="PARALLEL_TASK",
             target_id=task.id,
         ))
