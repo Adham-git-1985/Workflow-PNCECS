@@ -656,6 +656,37 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             empty_result["errors"],
         )
 
+    def test_requester_includes_every_non_governance_hierarchy_manager(self):
+        directorate_manager = self._user(
+            "directorate-manager@example.test",
+            "مدير الإدارة",
+        )
+        directorate_deputy = self._user(
+            "directorate-deputy@example.test",
+            "نائب مدير الإدارة",
+        )
+        db.session.add(OrgNodeManager(
+            node_id=self.directorate_a.id,
+            manager_user_id=directorate_manager.id,
+            deputy_user_id=directorate_deputy.id,
+        ))
+        db.session.commit()
+
+        options = requester_dynamic_manager_options(self.requester)
+
+        self.assertEqual(
+            {option["user_id"] for option in options},
+            {
+                self.source_manager.id,
+                directorate_manager.id,
+                directorate_deputy.id,
+            },
+        )
+        self.assertNotIn(
+            self.root_manager.id,
+            {option["user_id"] for option in options},
+        )
+
     def test_node_route_is_automatic_vertical_and_excludes_top_governance_levels(self):
         directorate_type = self.directorate_a.type
         department_type = self.department_a1.type

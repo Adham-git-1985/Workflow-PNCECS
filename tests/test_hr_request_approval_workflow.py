@@ -12,6 +12,7 @@ from models import (
     Delegation,
     Directorate,
     EmployeeFile,
+    EmployeeSecondment,
     HRLeaveRequest,
     HRLeaveType,
     HRPermissionRequest,
@@ -240,6 +241,49 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         history = client.get("/portal/hr/approvals?status=APPROVED")
         self.assertEqual(history.status_code, 200)
         self.assertIn(b"Employee", history.data)
+
+    def test_leave_includes_active_secondment_manager_only(self):
+        active_manager = User(
+            email="active-secondment@example.test",
+            name="Active Secondment Manager",
+            password_hash="x",
+            role="dept_head",
+        )
+        expired_manager = User(
+            email="expired-secondment@example.test",
+            name="Expired Secondment Manager",
+            password_hash="x",
+            role="dept_head",
+        )
+        db.session.add_all((active_manager, expired_manager))
+        db.session.flush()
+        db.session.add_all((
+            EmployeeSecondment(
+                user_id=self.employee.id,
+                date_from="2026-01-01",
+                date_to="2026-12-31",
+                direct_manager_user_id=active_manager.id,
+            ),
+            EmployeeSecondment(
+                user_id=self.employee.id,
+                date_from="2025-01-01",
+                date_to="2025-12-31",
+                direct_manager_user_id=expired_manager.id,
+            ),
+        ))
+        db.session.commit()
+
+        row = self._leave(self.normal_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+
+        self.assertEqual(len(steps), 1)
+        self.assertEqual(
+            json.loads(steps[0].approver_user_ids),
+            [self.manager.id, active_manager.id],
+        )
+        self.assertTrue(can_user_act(self.manager, steps[0]))
+        self.assertTrue(can_user_act(active_manager, steps[0]))
+        self.assertFalse(can_user_act(expired_manager, steps[0]))
 
     def test_external_leave_requires_manager_then_hr_then_secretary_general(self):
         row = self._leave(self.external_type)

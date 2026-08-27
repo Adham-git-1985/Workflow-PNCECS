@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import date
+
 from extensions import db
 from models import (
     Committee,
@@ -7,6 +9,8 @@ from models import (
     Department,
     Directorate,
     Division,
+    EmployeeFile,
+    EmployeeSecondment,
     OrgNode,
     OrgNodeAssignment,
     OrgNodeManager,
@@ -317,6 +321,27 @@ def _manager_for_node(node: OrgNode) -> tuple[User | None, str | None]:
     return user, role
 
 
+def _manager_candidates_for_node(node: OrgNode) -> list[tuple[User, str]]:
+    """Return every configured manager/deputy for a node in display order."""
+    manager = OrgNodeManager.query.filter_by(node_id=int(node.id)).first()
+    if not manager:
+        return []
+
+    candidates: list[tuple[User, str]] = []
+    seen_user_ids: set[int] = set()
+    for user_id, role in (
+        (manager.manager_user_id, "المسؤول"),
+        (manager.deputy_user_id, "نائب المسؤول"),
+    ):
+        if not user_id or int(user_id) in seen_user_ids:
+            continue
+        user = db.session.get(User, int(user_id))
+        if user:
+            seen_user_ids.add(int(user_id))
+            candidates.append((user, role))
+    return candidates
+
+
 _LEGACY_ORG_MODELS = {
     "ORGANIZATION": Organization,
     "DIRECTORATE": Directorate,
@@ -450,6 +475,47 @@ def _legacy_manager_for_assignment(
     return None, None, None, None, ""
 
 
+def _legacy_manager_candidates_for_assignment(
+    requester: User,
+    assignment: OrgUnitAssignment,
+) -> list[tuple[User, str, str, int | None, str]]:
+    """Return every non-self manager/deputy in a legacy assignment path."""
+    candidates: list[tuple[User, str, str, int | None, str]] = []
+    seen_user_ids: set[int] = set()
+    for unit_type, unit_id in _legacy_assignment_chain(assignment):
+        if unit_type == "ORGANIZATION":
+            continue
+        manager_row = (
+            OrgUnitManager.query
+            .filter(
+                db.func.upper(OrgUnitManager.unit_type) == unit_type,
+                OrgUnitManager.unit_id == unit_id,
+            )
+            .first()
+        )
+        if not manager_row:
+            continue
+        canonical_node = _legacy_unit_org_node(unit_type, unit_id)
+        for user_id, role in (
+            (manager_row.manager_user_id, "المسؤول"),
+            (manager_row.deputy_user_id, "نائب المسؤول"),
+        ):
+            if not user_id or int(user_id) in seen_user_ids or int(user_id) == int(requester.id):
+                continue
+            user = db.session.get(User, int(user_id))
+            if not user:
+                continue
+            seen_user_ids.add(int(user_id))
+            candidates.append((
+                user,
+                role,
+                _legacy_unit_label(unit_type, unit_id),
+                int(canonical_node.id) if canonical_node else None,
+                node_path_label(canonical_node) if canonical_node else "",
+            ))
+    return candidates
+
+
 def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
     """Return every active placement that may provide a direct manager choice."""
     requester_id = int(requester.id)
@@ -520,14 +586,94 @@ def _requester_assignment_nodes(requester: User) -> list[tuple[OrgNode, bool]]:
     return placements
 
 
-def requester_dynamic_manager_options(requester: User) -> list[dict]:
-    """Resolve one selectable direct manager from each requester placement.
+def _add_requester_manager_option(
+    options_by_user_id: dict[int, dict],
+    manager: User,
+    *,
+    manager_role: str,
+    manager_node_id: int | None,
+    manager_node_name: str,
+    manager_node_label: str,
+    assignment_node_id: int | None,
+    assignment_label: str,
+    is_primary: bool,
+) -> None:
+    """Merge one manager source into the requester-facing option list."""
+    manager_id = int(manager.id)
+    option = options_by_user_id.get(manager_id)
+    if option:
+        option["is_primary"] = bool(option["is_primary"] or is_primary)
+        if assignment_label and assignment_label not in option["assignment_labels"]:
+            option["assignment_labels"].append(assignment_label)
+        return
 
-    A user can be assigned to multiple organizational branches. The first
-    non-self manager on every branch is therefore a valid starting manager for
-    a dynamic route. Duplicate people are collapsed into one choice.
+    options_by_user_id[manager_id] = {
+        "user_id": manager_id,
+        "name": manager.full_name or manager.email or f"مستخدم #{manager_id}",
+        "job_title": (getattr(manager, "job_title", None) or "").strip(),
+        "manager_role": manager_role,
+        "manager_node_id": manager_node_id,
+        "manager_node_name": manager_node_name,
+        "manager_node_label": manager_node_label,
+        "assignment_node_id": assignment_node_id,
+        "assignment_labels": [assignment_label] if assignment_label else [],
+        "is_primary": bool(is_primary),
+    }
+
+
+def requester_dynamic_manager_options(requester: User) -> list[dict]:
+    """Resolve every active responsible manager for a requester.
+
+    The result combines the employee-file manager, active secondments, and
+    manager/deputy assignments across all organizational placements. Duplicate
+    people are collapsed into one deterministic choice.
     """
     options_by_user_id: dict[int, dict] = {}
+
+    employee_file = db.session.get(EmployeeFile, int(requester.id))
+    if employee_file and employee_file.direct_manager_user_id:
+        manager = db.session.get(User, int(employee_file.direct_manager_user_id))
+        if manager and int(manager.id) != int(requester.id):
+            _add_requester_manager_option(
+                options_by_user_id,
+                manager,
+                manager_role="المسؤول المباشر",
+                manager_node_id=None,
+                manager_node_name="ملف الموظف",
+                manager_node_label="",
+                assignment_node_id=None,
+                assignment_label="بيانات الموظف",
+                is_primary=True,
+            )
+
+    today = date.today().isoformat()
+    secondments = (
+        EmployeeSecondment.query
+        .filter_by(user_id=int(requester.id))
+        .order_by(EmployeeSecondment.date_from.desc(), EmployeeSecondment.id.asc())
+        .all()
+    )
+    for secondment in secondments:
+        if (secondment.date_from and secondment.date_from > today) or (
+            secondment.date_to and secondment.date_to < today
+        ):
+            continue
+        if not secondment.direct_manager_user_id:
+            continue
+        manager = db.session.get(User, int(secondment.direct_manager_user_id))
+        if not manager or int(manager.id) == int(requester.id):
+            continue
+        _add_requester_manager_option(
+            options_by_user_id,
+            manager,
+            manager_role="مسؤول التكليف",
+            manager_node_id=None,
+            manager_node_name="تكليف",
+            manager_node_label="",
+            assignment_node_id=None,
+            assignment_label="تكليف ساري",
+            is_primary=False,
+        )
     for assignment_node, is_primary in _requester_assignment_nodes(requester):
         manager = None
         manager_role = None
@@ -563,6 +709,28 @@ def requester_dynamic_manager_options(requester: User) -> list[dict]:
             "assignment_labels": [assignment_label] if assignment_label else [],
             "is_primary": bool(is_primary),
         }
+
+    for assignment_node, is_primary in _requester_assignment_nodes(requester):
+        assignment_label = node_path_label(assignment_node)
+        for node in reversed(node_chain(assignment_node.id)):
+            if _node_type_code(node) in {"ORGANIZATION", "CHAIRPERSON", "SECRETARY_GENERAL"}:
+                continue
+            if _is_secretary_general_node(node):
+                continue
+            for manager, manager_role in _manager_candidates_for_node(node):
+                if int(manager.id) == int(requester.id):
+                    continue
+                _add_requester_manager_option(
+                    options_by_user_id,
+                    manager,
+                    manager_role=manager_role,
+                    manager_node_id=int(node.id),
+                    manager_node_name=node.name_ar or "",
+                    manager_node_label=node_path_label(node),
+                    assignment_node_id=int(assignment_node.id),
+                    assignment_label=assignment_label,
+                    is_primary=is_primary,
+                )
 
     # The approved hierarchy can intentionally be locked against legacy sync.
     # In that case secondary Portal/HR assignments may have valid managers in
@@ -608,6 +776,28 @@ def requester_dynamic_manager_options(requester: User) -> list[dict]:
             "assignment_labels": [assignment_label] if assignment_label else [],
             "is_primary": bool(assignment.is_primary),
         }
+
+    for assignment in legacy_assignments:
+        assignment_node = _legacy_assignment_org_node(assignment)
+        assignment_label = (
+            node_path_label(assignment_node)
+            if assignment_node else
+            _legacy_unit_label(assignment.unit_type, assignment.unit_id)
+        )
+        for manager, manager_role, manager_unit_name, manager_node_id, manager_node_label in (
+            _legacy_manager_candidates_for_assignment(requester, assignment)
+        ):
+            _add_requester_manager_option(
+                options_by_user_id,
+                manager,
+                manager_role=manager_role,
+                manager_node_id=manager_node_id,
+                manager_node_name=manager_unit_name or "",
+                manager_node_label=manager_node_label,
+                assignment_node_id=int(assignment_node.id) if assignment_node else None,
+                assignment_label=assignment_label,
+                is_primary=bool(assignment.is_primary),
+            )
 
     return sorted(
         options_by_user_id.values(),
