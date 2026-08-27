@@ -258,6 +258,38 @@ def dynamic_route_start_nodes(target_chain: list[OrgNode]) -> list[OrgNode]:
     return list(target_chain[DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:])
 
 
+def recommended_route_start_node(
+    source_chain: list[OrgNode],
+    target_chain: list[OrgNode],
+) -> OrgNode | None:
+    """Choose the structural level that preserves the administrative crossing.
+
+    The route scope is a structural choice, not an approver choice.  Requiring a
+    manager on the scope node made the UI silently fall through to a lower level
+    (often the destination itself), which removed valid managers below the real
+    common ancestor from the generated route.
+    """
+    if not target_chain:
+        return None
+
+    common_length = 0
+    for source_node, target_node in zip(source_chain, target_chain):
+        if int(source_node.id) != int(target_node.id):
+            break
+        common_length += 1
+
+    start_index = max(
+        DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS,
+        common_length - 1 if common_length else DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS,
+    )
+    for node in target_chain[start_index:]:
+        if _is_secretary_general_node(node):
+            continue
+        if _node_allows_approval(node):
+            return node
+    return None
+
+
 def scoped_structural_route_nodes(
     source_chain: list[OrgNode],
     target_chain: list[OrgNode],
@@ -570,6 +602,7 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
         employee_count = selectable_count(node_id)
         manager, manager_role = manager_context[node_id]
         chain = node_chain(node_id)
+        recommended_start = recommended_route_start_node(requester_chain, chain)
         route_start_options = []
         for chain_index, start_node in enumerate(chain):
             if chain_index < DYNAMIC_ROUTE_EXCLUDED_TOP_LEVELS:
@@ -580,22 +613,26 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
             )
             is_secretary_general = _is_secretary_general_node(start_node)
             can_start = bool(
-                start_manager
-                and _node_allows_approval(start_node)
+                _node_allows_approval(start_node)
                 and not is_secretary_general
             )
             route_start_options.append({
                 "id": int(start_node.id),
-                "position": chain_index + 2,
+                "position": chain_index + 1,
                 "name": start_node.name_ar,
                 "type_name": _node_type_name(start_node) or _node_type_code(start_node),
                 "can_start": can_start,
+                "is_recommended": bool(
+                    recommended_start
+                    and int(recommended_start.id) == int(start_node.id)
+                ),
                 "is_secretary_general": is_secretary_general,
+                "will_skip_without_manager": bool(can_start and not start_manager),
                 "unavailable_reason": (
                     "يُضاف الأمين العام فقط من خيار الإضافة المستقل في نهاية المسار."
                     if is_secretary_general else
-                    "لا يوجد مسؤول معتمد لهذا المستوى."
-                    if not can_start else
+                    "هذا المستوى غير مفعّل ضمن خطوات الاعتماد."
+                    if not _node_allows_approval(start_node) else
                     ""
                 ),
                 "manager_name": (
@@ -617,6 +654,9 @@ def dynamic_org_browser_nodes(choices: list[dict], requester: User | None = None
             "can_select": bool(has_manager and has_route_start),
             "has_manager": has_manager,
             "route_start_options": route_start_options,
+            "recommended_route_start_id": (
+                int(recommended_start.id) if recommended_start else None
+            ),
             "unavailable_reason": (
                 "هذه الجهة ضمن أول مستويين المستبعدين من المسار الديناميكي."
                 if not route_start_options else
@@ -973,10 +1013,9 @@ def build_dynamic_target_path(
                     "أضفه من خيار «هل تريد إضافة الأمين العام كآخر خطوة؟»."
                 )
                 continue
-            route_start_manager, _route_start_role = _manager_for_node(route_start_node)
-            if not route_start_manager or not _node_allows_approval(route_start_node):
+            if not _node_allows_approval(route_start_node):
                 errors.append(
-                    f"لا يمكن بدء التسلسل من «{route_start_node.name_ar}» لعدم وجود مسؤول معتمد عليها."
+                    f"لا يمكن بدء التسلسل من «{route_start_node.name_ar}» لأن هذا المستوى غير مفعّل ضمن الاعتماد."
                 )
                 continue
         resolved_targets.append({

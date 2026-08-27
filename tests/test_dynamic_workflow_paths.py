@@ -605,6 +605,10 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             next(option["id"] for option in target_browser["route_start_options"] if option["can_start"]),
             target_assistant.id,
         )
+        self.assertEqual(
+            target_browser["recommended_route_start_id"],
+            target_assistant.id,
+        )
 
         implicit_secretary = build_dynamic_target_path(self.requester, [
             f"NODE:{target_department.id}@{secretary_general.id}",
@@ -687,6 +691,83 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             ].count(target_assistant_manager.id),
             2,
         )
+
+    def test_managerless_common_level_still_preserves_the_full_administrative_route(self):
+        directorate_type = self.directorate_a.type
+        department_type = self.department_a1.type
+        chairperson = self._node("رئيس اللجنة للمسار", directorate_type, self.root)
+        secretary_general = self._node("الأمين العام", directorate_type, chairperson)
+        shared_assistant = self._node(
+            "مساعد الأمين العام للثقافة والبرامج",
+            directorate_type,
+            secretary_general,
+        )
+        source_general = self._node(
+            "الإدارة العامة للثقافة",
+            directorate_type,
+            shared_assistant,
+        )
+        target_general = self._node(
+            "الإدارة العامة للبرامج والمشاريع",
+            directorate_type,
+            shared_assistant,
+        )
+        source_department = self._node("دائرة الثقافة", department_type, source_general)
+        target_department = self._node("دائرة البرامج", department_type, target_general)
+
+        self.requester.org_node_id = source_department.id
+        db.session.add_all([
+            OrgNodeManager(
+                node_id=source_general.id,
+                manager_user_id=self.source_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=target_general.id,
+                manager_user_id=self.root_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=target_department.id,
+                manager_user_id=self.target_manager.id,
+            ),
+        ])
+        db.session.commit()
+
+        browser_nodes = dynamic_org_browser_nodes(
+            dynamic_user_choices(self.requester),
+            self.requester,
+        )
+        target_browser = next(
+            node for node in browser_nodes if node["id"] == target_department.id
+        )
+        assistant_option = next(
+            option
+            for option in target_browser["route_start_options"]
+            if option["id"] == shared_assistant.id
+        )
+
+        self.assertEqual(
+            target_browser["recommended_route_start_id"],
+            shared_assistant.id,
+        )
+        self.assertTrue(assistant_option["can_start"])
+        self.assertTrue(assistant_option["will_skip_without_manager"])
+
+        result = build_dynamic_target_path(self.requester, [
+            f"NODE:{target_department.id}@{shared_assistant.id}",
+        ])
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [step["node_id"] for step in result["steps"]],
+            [
+                source_general.id,
+                target_general.id,
+                target_department.id,
+                target_general.id,
+                source_general.id,
+            ],
+        )
+        self.assertIn(shared_assistant.name_ar, " ".join(result["warnings"]))
 
     def test_scoped_node_route_rejects_a_start_within_the_top_two_levels(self):
         result = build_dynamic_target_path(self.requester, [

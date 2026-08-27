@@ -500,6 +500,8 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('{{ node.name }}{% if node.total_user_count %}', template)
         self.assertNotIn('{{ node.type_name }}: {{ node.name }}', template)
         self.assertIn('#dynamicRouteBox .dynamic-contained-select', template)
+        self.assertIn('node.recommended_route_start_id', template)
+        self.assertIn('بلا مسؤول مباشر (يبقى نطاقاً للمسار)', template)
         self.assertIn('overflow-wrap: anywhere', template)
         self.assertIn('dynamic-selected-actions', template)
         self.assertNotIn("dynamic-browser-tab", template)
