@@ -21,6 +21,14 @@
             </div>
         </div>
 
+        {% if current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') %}
+        <a href="{{ url_for('users.active_users_now') }}"
+           class="{% if request.path.startswith('/users/active-now') %}active{% endif %}">
+            <i class="bi bi-people-fill"></i> المستخدمون النشطون الآن
+            <span class="badge bg-success ms-2">مباشر</span>
+        </a>
+        {% endif %}
+
         <a href="{{ url_for('users.profile') }}"
            class="{% if request.path.startswith('/users/profile') %}active{% endif %}">
             ⚙️ ملفي الشخصي
@@ -339,7 +347,7 @@
 
 {% if current_user.has_role('ADMIN') %}
         <a href="{{ url_for('users.list_users') }}"
-           class="{% if request.path.startswith('/users') %}active{% endif %}">
+           class="{% if request.path.startswith('/users') and not request.path.startswith('/users/active-now') %}active{% endif %}">
             👤 المستخدمون
         </a>
 {% endif %}

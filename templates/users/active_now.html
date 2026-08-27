@@ -1,0 +1,118 @@
+{% extends "layout.html" %}
+
+{% block title %}المستخدمون النشطون الآن{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-2">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+      <h3 class="mb-1"><i class="bi bi-people-fill text-success"></i> المستخدمون النشطون الآن</h3>
+      <div class="text-muted">
+        يظهر المستخدم متصلًا إذا وصل آخر نبض من متصفحه خلال {{ online_window_minutes }} دقائق.
+      </div>
+    </div>
+    <a class="btn btn-outline-primary" href="{{ url_for('users.active_users_now') }}">
+      <i class="bi bi-arrow-clockwise"></i> تحديث القائمة
+    </a>
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-md-4">
+      <div class="card border-success h-100">
+        <div class="card-body d-flex justify-content-between align-items-center">
+          <div>
+            <div class="text-muted small">المتصلون الآن</div>
+            <div class="display-6 fw-bold text-success">{{ active_count }}</div>
+          </div>
+          <i class="bi bi-person-check-fill text-success display-5"></i>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-8">
+      <div class="alert alert-info h-100 mb-0 d-flex align-items-center">
+        <div>
+          <i class="bi bi-info-circle"></i>
+          أُجري الفحص في {{ checked_at.strftime('%H:%M:%S') }}. قد يبقى المستخدم ظاهرًا لمدة تصل إلى
+          {{ online_window_minutes }} دقائق بعد إغلاق المتصفح أو انقطاع الاتصال.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card shadow-sm mb-4">
+    <div class="card-header bg-white fw-bold">
+      <i class="bi bi-broadcast-pin text-warning"></i> تنبيه المستخدمين قبل إعادة تشغيل الخادم
+    </div>
+    <div class="card-body">
+      <form method="post"
+            action="{{ url_for('users.notify_active_users') }}"
+            onsubmit="return confirm('هل تريد إرسال هذا التنبيه إلى جميع المستخدمين النشطين الآن؟');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="form-label" for="maintenanceMessage">نص التنبيه</label>
+        <textarea class="form-control mb-3"
+                  id="maintenanceMessage"
+                  name="message"
+                  rows="3"
+                  maxlength="220"
+                  required>يرجى حفظ عملكم والتوقف عن استخدام النظام مؤقتًا؛ سيتم إعادة تشغيل الخادم بعد قليل.</textarea>
+        <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <small class="text-muted">سيصل التنبيه عبر جرس الإشعارات إلى {{ notifiable_count }} مستخدم نشط، باستثنائك.</small>
+          <button class="btn btn-warning" type="submit" {% if notifiable_count == 0 %}disabled{% endif %}>
+            <i class="bi bi-megaphone-fill"></i> إرسال تنبيه التوقف
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <span class="fw-bold"><i class="bi bi-list-check"></i> قائمة المتصلين</span>
+      <span class="badge bg-success">{{ active_count }}</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>المستخدم</th>
+            <th>المسمى الوظيفي</th>
+            <th>الدائرة</th>
+            <th>الدور</th>
+            <th>آخر نشاط</th>
+            <th>الصفحة الحالية</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in active_users %}
+          <tr {% if item.is_current %}class="table-primary"{% endif %}>
+            <td>
+              <div class="fw-bold">
+                <span class="text-success" title="متصل الآن">●</span>
+                {{ item.user.full_name }}
+                {% if item.is_current %}<span class="badge text-bg-primary">أنت</span>{% endif %}
+              </div>
+              <div class="small text-muted" dir="ltr">{{ item.user.email }}</div>
+            </td>
+            <td>{{ item.user.job_title or '—' }}</td>
+            <td>{{ item.department.name_ar if item.department else '—' }}</td>
+            <td>{{ item.user.role|ui_label }}</td>
+            <td>
+              <span class="fw-semibold text-success">{{ item.idle_label }}</span>
+              <div class="small text-muted">{{ item.last_seen_local.strftime('%H:%M:%S') }}</div>
+            </td>
+            <td><code dir="ltr">{{ item.last_path }}</code></td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="text-center text-muted py-5">
+              <i class="bi bi-person-x display-6 d-block mb-2"></i>
+              لا يوجد مستخدمون نشطون حاليًا.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

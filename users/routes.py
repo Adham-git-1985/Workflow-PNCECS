@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 from . import users_bp
 from extensions import db
 from permissions import roles_required
-from models import User, AuditLog, Department, Directorate, Unit, Section, Division, Organization, Role, EmployeeFile, EmployeeAttachment
+from models import User, UserPresence, Notification, AuditLog, Department, Directorate, Unit, Section, Division, Organization, Role, EmployeeFile, EmployeeAttachment
 from utils.events import emit_event
 
 from utils import system_search
@@ -21,7 +21,8 @@ from utils.excel import make_xlsx_bytes
 
 import os
 import time
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 
 AVATAR_ALLOWED_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
 
@@ -407,6 +408,155 @@ def _audit(action: str, target_user: User, note: str):
         target_id=target_user.id,
         note=note
     ))
+
+
+PRESENCE_ONLINE_SECONDS = 180
+
+
+def _presence_cutoff(now: datetime | None = None) -> datetime:
+    return (now or datetime.utcnow()) - timedelta(seconds=PRESENCE_ONLINE_SECONDS)
+
+
+def _presence_idle_label(idle_seconds: int) -> str:
+    idle_seconds = max(0, int(idle_seconds or 0))
+    if idle_seconds < 15:
+        return "الآن"
+    if idle_seconds < 60:
+        return f"قبل {idle_seconds} ثانية"
+    idle_minutes = max(1, idle_seconds // 60)
+    if idle_minutes == 1:
+        return "قبل دقيقة"
+    return f"قبل {idle_minutes} دقائق"
+
+
+@users_bp.route("/presence/heartbeat", methods=["POST"])
+@login_required
+def presence_heartbeat():
+    """Record a lightweight browser heartbeat for the authenticated account."""
+    payload = request.get_json(silent=True) or {}
+    last_path = str(payload.get("path") or "").strip()
+    if not last_path.startswith("/"):
+        last_path = ""
+
+    now = datetime.utcnow()
+    presence = db.session.get(UserPresence, int(current_user.id))
+    if presence is None:
+        presence = UserPresence(user_id=int(current_user.id))
+        db.session.add(presence)
+
+    presence.last_seen_at = now
+    presence.last_path = last_path[:500] or None
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception(
+            "Unable to update user presence user_id=%s",
+            current_user.id,
+        )
+        return jsonify({"ok": False}), 503
+
+    return "", 204
+
+
+@users_bp.route("/active-now", methods=["GET"])
+@login_required
+@roles_required("ADMIN")
+def active_users_now():
+    """Admin-only view of accounts with a recent browser heartbeat."""
+    now = datetime.utcnow()
+    rows = (
+        db.session.query(User, UserPresence, Department)
+        .join(UserPresence, UserPresence.user_id == User.id)
+        .outerjoin(Department, Department.id == User.department_id)
+        .filter(UserPresence.last_seen_at >= _presence_cutoff(now))
+        .order_by(UserPresence.last_seen_at.desc(), User.name.asc(), User.email.asc())
+        .all()
+    )
+
+    active_users = []
+    for user, presence, department in rows:
+        idle_seconds = max(0, int((now - presence.last_seen_at).total_seconds()))
+        active_users.append({
+            "user": user,
+            "department": department,
+            "last_path": presence.last_path or "—",
+            "last_seen_local": datetime.now() - timedelta(seconds=idle_seconds),
+            "idle_seconds": idle_seconds,
+            "idle_label": _presence_idle_label(idle_seconds),
+            "is_current": int(user.id) == int(current_user.id),
+        })
+
+    return render_template(
+        "users/active_now.html",
+        active_users=active_users,
+        active_count=len(active_users),
+        notifiable_count=sum(1 for item in active_users if not item["is_current"]),
+        online_window_minutes=PRESENCE_ONLINE_SECONDS // 60,
+        checked_at=datetime.now(),
+    )
+
+
+@users_bp.route("/active-now/notify", methods=["POST"])
+@login_required
+@roles_required("ADMIN")
+def notify_active_users():
+    """Send a maintenance warning to every other account that is online now."""
+    message = " ".join((request.form.get("message") or "").split()).strip()
+    if not message:
+        flash("يرجى كتابة نص التنبيه قبل الإرسال.", "warning")
+        return redirect(url_for("users.active_users_now"))
+
+    recipient_ids = [
+        int(user_id)
+        for (user_id,) in (
+            db.session.query(UserPresence.user_id)
+            .filter(
+                UserPresence.last_seen_at >= _presence_cutoff(),
+                UserPresence.user_id != int(current_user.id),
+            )
+            .distinct()
+            .all()
+        )
+    ]
+    if not recipient_ids:
+        flash("لا يوجد مستخدمون نشطون آخرون لإرسال التنبيه إليهم.", "info")
+        return redirect(url_for("users.active_users_now"))
+
+    now = datetime.utcnow()
+    event_key = uuid.uuid4().hex
+    notification_text = f"تنبيه إداري قبل صيانة الخادم: {message}"[:255]
+    db.session.add_all([
+        Notification(
+            user_id=user_id,
+            message=notification_text,
+            type="WARNING",
+            source="workflow",
+            created_at=now,
+            actor_id=int(current_user.id),
+            event_key=event_key,
+            is_mirror=False,
+        )
+        for user_id in recipient_ids
+    ])
+    db.session.add(AuditLog(
+        action="ACTIVE_USERS_MAINTENANCE_NOTICE",
+        user_id=int(current_user.id),
+        target_type="UserPresence",
+        note=f"Sent maintenance notice to {len(recipient_ids)} active user(s): {message[:500]}",
+    ))
+
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Unable to send maintenance notice to active users")
+        flash("تعذر إرسال التنبيه. يرجى المحاولة مرة أخرى.", "danger")
+        return redirect(url_for("users.active_users_now"))
+
+    flash(f"تم إرسال التنبيه إلى {len(recipient_ids)} مستخدم نشط.", "success")
+    return redirect(url_for("users.active_users_now"))
 
 
 @users_bp.route("/")

@@ -268,6 +268,11 @@
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
 <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260713r4"></script>
 <script src="{{ url_for('static', filename='js/chat_assistant.js') }}?v=20260809r3"></script>
+{% if current_user.is_authenticated and not hide_shell %}
+<script src="{{ url_for('static', filename='js/user_presence.js') }}?v=20260827r1"
+        data-presence-url="{{ url_for('users.presence_heartbeat') }}"
+        data-user-id="{{ current_user.id }}"></script>
+{% endif %}
 
 {% block extra_js %}{% endblock %}
 

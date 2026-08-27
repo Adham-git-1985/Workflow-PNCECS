@@ -469,6 +469,25 @@ class User(db.Model, UserMixin):
         ).count()
 
 
+class UserPresence(db.Model):
+    """Latest browser heartbeat for determining who is currently online."""
+
+    __tablename__ = "user_presence"
+
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_seen_at = db.Column(
+        db.DateTime,
+        default=datetime.utcnow,
+        nullable=False,
+        index=True,
+    )
+    last_path = db.Column(db.String(500), nullable=True)
+
+
 # ======================
 # Workflow Core
 # ======================

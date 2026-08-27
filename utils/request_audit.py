@@ -23,6 +23,7 @@ AUTOMATED_ENDPOINTS = {
     "assistant.chat",
     "workflow.event_stream",
     "workflow.unread_notifications_count",
+    "users.presence_heartbeat",
 }
 
 AUTOMATED_PATH_PREFIXES = (
