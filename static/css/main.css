@@ -67,6 +67,8 @@ body.has-fixed-header{
     justify-content: space-between;
     align-items: center;
     gap: 12px;
+    max-width: none;
+    padding-inline: clamp(1rem, 3vw, 3.5rem);
 }
 
 
