@@ -200,6 +200,12 @@ class OrgAssignmentEditTests(unittest.TestCase):
             "name_en": "International Relations",
             "is_active": "on",
         }
+        section_id = section.id
+        new_department_id = new_department.id
+        # Match a real HTTP request: the target parent is not already present
+        # in the session identity map, so resolving it would normally trigger
+        # autoflush.
+        db.session.expunge_all()
         save = _unwrapped(portal_admin_hr_org_structure)
         with self.app.test_request_context(
             "/portal/admin/hr/org-structure?tab=secs",
@@ -211,9 +217,9 @@ class OrgAssignmentEditTests(unittest.TestCase):
             response = save()
 
         db.session.expire_all()
-        stored = db.session.get(Section, section.id)
+        stored = db.session.get(Section, section_id)
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(stored.department_id, new_department.id)
+        self.assertEqual(stored.department_id, new_department_id)
         self.assertIsNone(stored.directorate_id)
         self.assertIsNone(stored.unit_id)
 

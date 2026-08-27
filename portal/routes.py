@@ -24334,14 +24334,35 @@ def portal_admin_hr_org_structure():
                         "directorate": request.form.get("parent_id_dir"),
                         "unit": request.form.get("parent_id_unit"),
                     }.get(ptype))
+
+                # Resolve and validate the new parent before touching the
+                # existing row. Querying after temporarily clearing all three
+                # columns can trigger SQLAlchemy autoflush and violate the
+                # database XOR check constraint.
+                parent_models = {
+                    "department": Department,
+                    "directorate": Directorate,
+                    "unit": Unit,
+                }
+                parent_model = parent_models.get(ptype)
+                with db.session.no_autoflush:
+                    parent_exists = bool(
+                        parent_model
+                        and parent_id
+                        and db.session.get(parent_model, parent_id)
+                    )
+                if not parent_exists:
+                    flash("اختر تبعية القسم: دائرة أو إدارة أو وحدة.", "warning")
+                    return redirect(url_for("portal.portal_admin_hr_org_structure", tab=kind))
+
                 row.department_id = None
                 row.directorate_id = None
                 row.unit_id = None
-                if ptype == "department" and parent_id and db.session.get(Department, parent_id):
+                if ptype == "department":
                     row.department_id = parent_id
-                elif ptype == "directorate" and parent_id and db.session.get(Directorate, parent_id):
+                elif ptype == "directorate":
                     row.directorate_id = parent_id
-                elif ptype == "unit" and parent_id and db.session.get(Unit, parent_id):
+                else:
                     row.unit_id = parent_id
 
             # Common fields
