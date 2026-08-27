@@ -956,26 +956,6 @@ def _ensure_runtime_schema():
                 except Exception:
                     pass
 
-            # Keep the approved project workflows available on legacy SQLite
-            # installations that do not run Alembic migrations.  Existing
-            # templates are deliberately preserved so administrators can edit
-            # their steps from the workflow-templates screen without startup
-            # restoring the original definition.
-            try:
-                from workflow.project_workflows import upsert_project_workflows
-
-                upsert_project_workflows(preserve_existing=True)
-                db.session.commit()
-            except Exception as exc:
-                try:
-                    db.session.rollback()
-                except Exception:
-                    pass
-                app.logger.warning(
-                    "Project workflow startup seed was skipped: %s",
-                    exc,
-                )
-
             # -------------------------
             # Seed "basic" permissions (RolePermission)
             # -------------------------
