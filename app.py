@@ -820,6 +820,21 @@ def _ensure_runtime_schema():
                 if not _col_exists("hr_permission_request", col):
                     _add_column_retry("hr_permission_request", col, ctype)
 
+            # Parallel hierarchy approvers for leave requests. Production
+            # SQLite deployments use this runtime sync in addition to Alembic.
+            if not _col_exists("hr_request_approval_step", "approver_user_ids"):
+                _add_column_retry("hr_request_approval_step", "approver_user_ids", "TEXT")
+            if _col_exists("hr_request_approval_step", "approver_user_ids"):
+                try:
+                    db.session.execute(text(
+                        "UPDATE hr_request_approval_step "
+                        "SET approver_user_ids='[' || CAST(approver_user_id AS TEXT) || ']' "
+                        "WHERE approver_user_ids IS NULL AND approver_user_id IS NOT NULL"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
 
 
             # Transport (Fleet) columns
