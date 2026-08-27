@@ -886,6 +886,75 @@ def _directorate_head_user_ids(directorate_id: int | None) -> list[int]:
     return sorted({int(u.id) for u in users if u and getattr(u, 'id', None)})
 
 
+def _normalized_org_lookup_text(value: str | None) -> str:
+    text = (value or "").strip().lower()
+    for source, replacement in (
+        ("أ", "ا"), ("إ", "ا"), ("آ", "ا"),
+        ("ى", "ي"), ("ة", "ه"), ("ؤ", "و"), ("ئ", "ي"),
+    ):
+        text = text.replace(source, replacement)
+    return "".join(character for character in text if character.isalnum())
+
+
+def _canonical_node_for_legacy_target(kind: str, legacy_id: int | None) -> OrgNode | None:
+    """Match a legacy workflow target to the approved hierarchy by identity or name."""
+    if not legacy_id:
+        return None
+
+    mapped = (
+        OrgNode.query
+        .filter_by(legacy_type=kind, legacy_id=int(legacy_id), is_active=True)
+        .order_by(OrgNode.id.asc())
+        .first()
+    )
+    if mapped:
+        return mapped
+
+    # Approved hierarchy imports use their own stable legacy identifiers, so
+    # older predefined workflow steps cannot always match by legacy_id.  Use a
+    # unique normalized name match as a safe bridge for those existing steps.
+    legacy_models = {
+        "DIRECTORATE": Directorate,
+        "DEPARTMENT": Department,
+        "UNIT": Unit,
+        "SECTION": Section,
+        "DIVISION": Division,
+    }
+    legacy_model = legacy_models.get(kind)
+    legacy_row = db.session.get(legacy_model, int(legacy_id)) if legacy_model else None
+    if not legacy_row:
+        return None
+
+    legacy_names = {
+        _normalized_org_lookup_text(value)
+        for value in (
+            getattr(legacy_row, "name_ar", None),
+            getattr(legacy_row, "name_en", None),
+            getattr(legacy_row, "code", None),
+        )
+        if _normalized_org_lookup_text(value)
+    }
+    if not legacy_names:
+        return None
+
+    candidates = (
+        OrgNode.query
+        .filter(OrgNode.is_active.is_(True), OrgNode.type.has(code=kind))
+        .order_by(OrgNode.id.asc())
+        .all()
+    )
+    matches = [
+        node
+        for node in candidates
+        if legacy_names.intersection({
+            _normalized_org_lookup_text(getattr(node, "name_ar", None)),
+            _normalized_org_lookup_text(getattr(node, "name_en", None)),
+            _normalized_org_lookup_text(getattr(node, "code", None)),
+        })
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def _step_context_org_node_ids(req, step) -> list[int]:
     """Resolve hierarchy starting points for predefined and dynamic routes."""
     node_ids: list[int] = []
@@ -913,12 +982,7 @@ def _step_context_org_node_ids(req, step) -> list[int]:
     legacy_field = legacy_fields.get(kind)
     legacy_id = getattr(step, legacy_field, None) if legacy_field else None
     if legacy_id:
-        mapped = (
-            OrgNode.query
-            .filter_by(legacy_type=kind, legacy_id=int(legacy_id), is_active=True)
-            .order_by(OrgNode.id.asc())
-            .first()
-        )
+        mapped = _canonical_node_for_legacy_target(kind, legacy_id)
         if mapped:
             add_node_id(mapped.id)
 

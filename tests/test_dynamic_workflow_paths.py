@@ -11,12 +11,14 @@ from models import (
     AuditLog,
     Committee,
     CommitteeAssignee,
+    Directorate,
     Notification,
     OrgNode,
     OrgNodeAssignment,
     OrgNodeManager,
     OrgNodeType,
     OrgUnitAssignment,
+    Organization,
     RequestEscalation,
     RequestType,
     Team,
@@ -1359,6 +1361,57 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             {self.cross_target.id, self.target_manager.id},
         )
         self.assertEqual(alerts[1].targets, str(assistant_user.id))
+
+    def test_legacy_directorate_alert_matches_approved_hierarchy_by_name(self):
+        assistant_type = self._node_type("SEC_GEN_ASSIST", "مساعد الأمين العام", 15)
+        assistant_user = self._user("kholoud@example.test", "خلود")
+        assistant_node = self._node(
+            "مساعد الأمين العام للمنظمات والبرامج والمشاريع والإدارات التخصصية",
+            assistant_type,
+            self.root,
+        )
+        approved_programs_node = self._node(
+            "الإدارة العامة للبرامج والمشاريع",
+            self.directorate_a.type,
+            assistant_node,
+        )
+        db.session.add(OrgNodeManager(
+            node_id=assistant_node.id,
+            manager_user_id=assistant_user.id,
+        ))
+
+        legacy_organization = Organization(name_ar="الأمانة العامة", is_active=True)
+        db.session.add(legacy_organization)
+        db.session.flush()
+        legacy_directorate = Directorate(
+            organization_id=legacy_organization.id,
+            name_ar=approved_programs_node.name_ar,
+            is_active=True,
+        )
+        db.session.add(legacy_directorate)
+        db.session.flush()
+
+        request_row = WorkflowRequest(
+            requester_id=self.requester.id,
+            title="طلب قديم على إدارة البرامج والمشاريع",
+            status="IN_PROGRESS",
+            confidentiality="NORMAL",
+        )
+        legacy_step = WorkflowInstanceStep(
+            instance_id=1,
+            step_order=1,
+            approver_kind="DIRECTORATE",
+            approver_directorate_id=legacy_directorate.id,
+            approver_role="directorate_head",
+            status="PENDING",
+        )
+        db.session.add(request_row)
+        db.session.commit()
+
+        self.assertEqual(
+            _hierarchy_manager_user_ids(request_row, legacy_step, {"SEC_GEN_ASSIST"}),
+            [assistant_user.id],
+        )
 
     def test_structural_route_traverses_common_parent_once(self):
         route = structural_route_nodes(self.department_a1.id, self.department_b.id)
