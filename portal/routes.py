@@ -85,7 +85,12 @@ require_permissions = perm_required
 
 from utils.events import emit_event
 from utils.notification_links import notification_target_path, safe_local_notification_url
-from utils.org_dynamic import build_chart_tree, build_org_node_picker_tree, sync_legacy_now
+from utils.org_dynamic import (
+    build_chart_tree,
+    build_org_node_picker_tree,
+    sync_existing_legacy_node,
+    sync_legacy_now,
+)
 from workflow.dynamic_paths import node_path_label
 from models import (
     User,
@@ -24394,6 +24399,18 @@ def portal_admin_hr_org_structure():
 
             try:
                 db.session.add(row)
+                db.session.flush()
+                legacy_type = {
+                    "orgs": "ORGANIZATION",
+                    "dirs": "DIRECTORATE",
+                    "units": "UNIT",
+                    "depts": "DEPARTMENT",
+                    "secs": "SECTION",
+                    "divs": "DIVISION",
+                    "teams": "TEAM",
+                }.get(kind)
+                if legacy_type:
+                    sync_existing_legacy_node(legacy_type, row.id)
                 db.session.commit()
                 if kind == "teams":
                     sync_legacy_now()

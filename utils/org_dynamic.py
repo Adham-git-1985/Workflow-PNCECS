@@ -157,6 +157,102 @@ def sync_legacy_now(*, raise_errors: bool = False) -> bool:
         return False
 
 
+def sync_existing_legacy_node(legacy_type: str, legacy_id: int) -> bool:
+    """Refresh one existing legacy-backed OrgNode in the current transaction.
+
+    Unlike ``sync_legacy_now``, this helper remains safe when the approved
+    structure is enabled: it never creates legacy nodes and never touches an
+    approved canonical node.  It only keeps an already-visible legacy mirror
+    aligned after its source master-data row is edited.
+    """
+    legacy_type = (legacy_type or "").strip().upper()
+    try:
+        legacy_id = int(legacy_id)
+    except (TypeError, ValueError):
+        return False
+
+    model_by_type = {
+        "ORGANIZATION": Organization,
+        "DIRECTORATE": Directorate,
+        "UNIT": Unit,
+        "DEPARTMENT": Department,
+        "SECTION": Section,
+        "DIVISION": Division,
+        "TEAM": Team,
+    }
+    model = model_by_type.get(legacy_type)
+    if model is None:
+        return False
+
+    source = db.session.get(model, legacy_id)
+    node = (
+        OrgNode.query
+        .filter_by(
+            legacy_type=legacy_type,
+            legacy_id=legacy_id,
+            is_active=True,
+        )
+        .order_by(OrgNode.id.asc())
+        .first()
+    )
+    if source is None or node is None:
+        return False
+
+    parent_identity: tuple[str, int] | None = None
+    if legacy_type in {"DIRECTORATE", "UNIT"}:
+        parent_id = getattr(source, "organization_id", None)
+        if parent_id:
+            parent_identity = ("ORGANIZATION", int(parent_id))
+    elif legacy_type == "DEPARTMENT":
+        if getattr(source, "unit_id", None):
+            parent_identity = ("UNIT", int(source.unit_id))
+        elif getattr(source, "directorate_id", None):
+            parent_identity = ("DIRECTORATE", int(source.directorate_id))
+    elif legacy_type == "SECTION":
+        if getattr(source, "department_id", None):
+            parent_identity = ("DEPARTMENT", int(source.department_id))
+        elif getattr(source, "unit_id", None):
+            parent_identity = ("UNIT", int(source.unit_id))
+        elif getattr(source, "directorate_id", None):
+            parent_identity = ("DIRECTORATE", int(source.directorate_id))
+    elif legacy_type == "DIVISION":
+        if getattr(source, "section_id", None):
+            parent_identity = ("SECTION", int(source.section_id))
+        elif getattr(source, "department_id", None):
+            parent_identity = ("DEPARTMENT", int(source.department_id))
+    elif legacy_type == "TEAM":
+        if getattr(source, "division_id", None):
+            parent_identity = ("DIVISION", int(source.division_id))
+        elif getattr(source, "section_id", None):
+            parent_identity = ("SECTION", int(source.section_id))
+
+    parent_node = None
+    if parent_identity:
+        parent_node = (
+            OrgNode.query
+            .filter_by(
+                legacy_type=parent_identity[0],
+                legacy_id=parent_identity[1],
+                is_active=True,
+            )
+            .order_by(OrgNode.id.asc())
+            .first()
+        )
+        if parent_node is None:
+            return False
+    elif legacy_type != "ORGANIZATION":
+        return False
+
+    node.parent_id = parent_node.id if parent_node else None
+    node.name_ar = getattr(source, "name_ar", None) or node.name_ar
+    node.name_en = getattr(source, "name_en", None) or node.name_en
+    node.code = getattr(source, "code", None) or node.code
+    node.is_active = bool(getattr(source, "is_active", True))
+    node.updated_at = datetime.utcnow()
+    db.session.flush()
+    return True
+
+
 def get_node_ancestor_ids(node_id: int) -> set[int]:
     """Return {node_id, parent_id, ...} up to root."""
     ids: set[int] = set()

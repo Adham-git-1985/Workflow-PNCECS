@@ -14,6 +14,7 @@ from models import (
     OrgNodeType,
     OrgUnitAssignment,
     Section,
+    SystemSetting,
     User,
 )
 from portal.routes import hr_org_assignments_save, portal_admin_hr_org_structure
@@ -188,6 +189,50 @@ class OrgAssignmentEditTests(unittest.TestCase):
             is_active=True,
         )
         db.session.add(section)
+        department_type = OrgNodeType(
+            code="DEPARTMENT",
+            name_ar="دائرة",
+            is_active=True,
+        )
+        section_type = OrgNodeType(
+            code="SECTION",
+            name_ar="قسم",
+            is_active=True,
+        )
+        db.session.add_all([department_type, section_type])
+        db.session.flush()
+        old_department_node = OrgNode(
+            type_id=department_type.id,
+            name_ar=old_department.name_ar,
+            legacy_type="DEPARTMENT",
+            legacy_id=old_department.id,
+            is_active=True,
+        )
+        new_department_node = OrgNode(
+            type_id=department_type.id,
+            name_ar=new_department.name_ar,
+            legacy_type="DEPARTMENT",
+            legacy_id=new_department.id,
+            is_active=True,
+        )
+        db.session.add_all([old_department_node, new_department_node])
+        db.session.flush()
+        section_node = OrgNode(
+            type_id=section_type.id,
+            parent_id=old_department_node.id,
+            name_ar=section.name_ar,
+            code=section.code,
+            legacy_type="SECTION",
+            legacy_id=section.id,
+            is_active=True,
+        )
+        db.session.add_all([
+            section_node,
+            SystemSetting(
+                key="ORG_APPROVED_STRUCTURE_VERSION",
+                value="2023-05-08:v2",
+            ),
+        ])
         db.session.commit()
 
         form_data = {
@@ -202,6 +247,8 @@ class OrgAssignmentEditTests(unittest.TestCase):
         }
         section_id = section.id
         new_department_id = new_department.id
+        section_node_id = section_node.id
+        new_department_node_id = new_department_node.id
         # Match a real HTTP request: the target parent is not already present
         # in the session identity map, so resolving it would normally trigger
         # autoflush.
@@ -222,6 +269,10 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertEqual(stored.department_id, new_department_id)
         self.assertIsNone(stored.directorate_id)
         self.assertIsNone(stored.unit_id)
+        self.assertEqual(
+            db.session.get(OrgNode, section_node_id).parent_id,
+            new_department_node_id,
+        )
 
     def test_section_form_uses_a_single_explicit_parent_field(self):
         template = (
