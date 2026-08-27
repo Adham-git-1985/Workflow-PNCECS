@@ -71,6 +71,13 @@
     background: #fff;
   }
 
+  #dynamicRouteBox .dynamic-tree-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: #f8f9fa;
+  }
+
   #dynamicRouteBox .dynamic-tree-list {
     list-style: none;
     margin: 0;
@@ -88,6 +95,13 @@
     padding-block: .25rem;
   }
 
+  #dynamicRouteBox .dynamic-tree-row {
+    display: flex;
+    align-items: stretch;
+    gap: .4rem;
+    min-width: 0;
+  }
+
   #dynamicRouteBox .dynamic-tree-list .dynamic-tree-list > .dynamic-tree-item::before {
     content: "";
     position: absolute;
@@ -98,14 +112,49 @@
   }
 
   #dynamicRouteBox .dynamic-tree-node {
-    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
     border: 1px solid #dbe4ee;
     border-radius: .7rem;
     background: #fff;
     padding: .65rem .75rem;
     text-align: start;
-    color: inherit;
+    color: #1f2937;
     transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+  }
+
+  #dynamicRouteBox .dynamic-tree-toggle,
+  #dynamicRouteBox .dynamic-tree-toggle-placeholder {
+    flex: 0 0 2.35rem;
+    width: 2.35rem;
+  }
+
+  #dynamicRouteBox .dynamic-tree-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: stretch;
+    border: 1px solid #cbd8e6;
+    border-radius: .6rem;
+    background: #f8fafc;
+    color: #174b75;
+    padding: .35rem;
+  }
+
+  #dynamicRouteBox .dynamic-tree-toggle:hover,
+  #dynamicRouteBox .dynamic-tree-toggle:focus-visible {
+    border-color: var(--bs-primary);
+    background: rgba(var(--bs-primary-rgb), .08);
+    color: var(--bs-primary);
+  }
+
+  #dynamicRouteBox .dynamic-tree-item.dynamic-tree-match > .dynamic-tree-row > .dynamic-tree-node {
+    border-color: #e0a800;
+    background: #fff9db;
+  }
+
+  #dynamicRouteBox .dynamic-tree-children[hidden] {
+    display: none !important;
   }
 
   #dynamicRouteBox .dynamic-tree-node:hover,
@@ -324,7 +373,7 @@
                 </div>
                 <span class="badge text-bg-light border"><i class="bi bi-hand-index"></i> اختيار مباشر</span>
               </div>
-              <select class="d-none" id="dynamicHierarchySelect" tabindex="-1" aria-hidden="true">
+              <select class="d-none" id="dynamicHierarchySelect" data-searchable="0" tabindex="-1" aria-hidden="true">
                 <option value="">— اختر جهة من الهيكلية —</option>
                 {% for node in dynamic_org_nodes %}
                   <option value="{{ node.id }}" title="{{ node.node_label }}">
@@ -332,6 +381,25 @@
                   </option>
                 {% endfor %}
               </select>
+              <div class="dynamic-tree-toolbar border rounded-3 p-2 mb-2">
+                <div class="d-flex flex-column flex-lg-row gap-2 align-items-lg-center">
+                  <div class="input-group input-group-sm flex-grow-1">
+                    <span class="input-group-text"><i class="bi bi-search"></i></span>
+                    <input class="form-control" id="dynamicHierarchySearch" type="search"
+                           placeholder="ابحث باسم الجهة، نوعها، أو المسؤول..." autocomplete="off"
+                           aria-label="البحث داخل شجرة الهيكلية">
+                  </div>
+                  <div class="btn-group btn-group-sm flex-shrink-0" role="group" aria-label="أدوات عرض الشجرة">
+                    <button class="btn btn-outline-primary" type="button" id="dynamicTreeExpandAll">
+                      <i class="bi bi-arrows-expand"></i> توسيع الكل
+                    </button>
+                    <button class="btn btn-outline-secondary" type="button" id="dynamicTreeCollapseAll">
+                      <i class="bi bi-arrows-collapse"></i> طي الكل
+                    </button>
+                  </div>
+                </div>
+                <div class="small text-muted mt-2" id="dynamicHierarchySearchStatus" role="status" aria-live="polite"></div>
+              </div>
               <div class="dynamic-org-tree border rounded-3 p-2" id="dynamicHierarchyTree" role="tree" aria-label="الهيكلية التنظيمية"></div>
               <div class="d-flex align-items-center gap-2 flex-wrap mt-2">
                 <button type="button" class="btn btn-sm btn-outline-success" id="dynamicAddHierarchyNode" disabled>
@@ -350,7 +418,7 @@
             <div class="collapse" id="dynamicEmployeesPanel">
               <div class="border rounded-3 p-3 mb-3 bg-white">
                 <div class="mb-3">
-                  <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة المختارة</label>
+                  <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة المختارة وفروعها</label>
                   <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، أو البريد..." autocomplete="off">
                 </div>
                 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -756,6 +824,10 @@
     const userSearch = document.getElementById('dynamicUserSearch');
     const hierarchySelect = document.getElementById('dynamicHierarchySelect');
     const hierarchyTree = document.getElementById('dynamicHierarchyTree');
+    const hierarchySearch = document.getElementById('dynamicHierarchySearch');
+    const hierarchySearchStatus = document.getElementById('dynamicHierarchySearchStatus');
+    const hierarchyExpandAll = document.getElementById('dynamicTreeExpandAll');
+    const hierarchyCollapseAll = document.getElementById('dynamicTreeCollapseAll');
     const addHierarchyNodeButton = document.getElementById('dynamicAddHierarchyNode');
     const hierarchyHint = document.getElementById('dynamicHierarchyHint');
     const committeeEnabledControl = document.getElementById('dynamicEnableCommittee');
@@ -792,6 +864,8 @@
     let savedPresets = [];
     let previewTimer = null;
     let predefinedTemplateSteps = {};
+    let hierarchySearchActive = false;
+    let hierarchyExpansionBeforeSearch = new Map();
 
     try {
       const predefinedStepsElement = document.getElementById('predefinedTemplateStepsData');
@@ -911,6 +985,106 @@
       return element.innerHTML;
     }
 
+    function normalizeHierarchySearch(value){
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u064b-\u065f\u0670]/g, '')
+        .replace(/[إأآٱ]/g, 'ا')
+        .replace(/ى/g, 'ي')
+        .replace(/ة/g, 'ه')
+        .replace(/\s+/g, ' ');
+    }
+
+    function hierarchyNodeName(node){
+      const explicitName = String((node && (node.name || node.name_ar)) || '').trim();
+      if (explicitName) return explicitName;
+      const pathParts = String((node && node.node_label) || '').split('←');
+      const pathName = String(pathParts[pathParts.length - 1] || '').trim();
+      return pathName || ('جهة رقم ' + String((node && node.id) || '—'));
+    }
+
+    function setHierarchyBranchExpanded(toggle, expanded){
+      if (!toggle) return;
+      const groupId = toggle.getAttribute('aria-controls');
+      const group = groupId ? document.getElementById(groupId) : null;
+      const item = toggle.closest('.dynamic-tree-item');
+      const icon = toggle.querySelector('i');
+      toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      toggle.setAttribute('aria-label', expanded ? 'طي الفرع' : 'توسيع الفرع');
+      if (item) item.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      if (group) group.hidden = !expanded;
+      if (icon) icon.className = expanded ? 'bi bi-chevron-down' : 'bi bi-chevron-left';
+    }
+
+    function setAllHierarchyBranches(expanded){
+      if (!hierarchyTree) return;
+      hierarchyTree.querySelectorAll('[data-tree-toggle]').forEach(function(toggle){
+        setHierarchyBranchExpanded(toggle, expanded);
+      });
+    }
+
+    function updateHierarchySearchStatus(visibleCount, totalCount, hasQuery){
+      if (!hierarchySearchStatus) return;
+      hierarchySearchStatus.textContent = hasQuery
+        ? (visibleCount
+          ? 'تم العثور على ' + String(visibleCount) + ' جهة مطابقة.'
+          : 'لا توجد جهة مطابقة لعبارة البحث.')
+        : 'إجمالي الجهات: ' + String(totalCount) + '. انقر السهم لطي الفرع أو توسيعه.';
+    }
+
+    function filterHierarchyTree(){
+      if (!hierarchyTree) return;
+      const items = Array.from(hierarchyTree.querySelectorAll('.dynamic-tree-item'));
+      const toggles = Array.from(hierarchyTree.querySelectorAll('[data-tree-toggle]'));
+      const query = normalizeHierarchySearch(hierarchySearch && hierarchySearch.value);
+
+      if (!query) {
+        items.forEach(function(item){
+          item.classList.remove('d-none', 'dynamic-tree-match');
+        });
+        if (hierarchySearchActive) {
+          toggles.forEach(function(toggle){
+            const nodeId = String(toggle.dataset.treeToggle || '');
+            setHierarchyBranchExpanded(toggle, hierarchyExpansionBeforeSearch.get(nodeId) === true);
+          });
+        }
+        hierarchySearchActive = false;
+        hierarchyExpansionBeforeSearch = new Map();
+        updateHierarchySearchStatus(items.length, items.length, false);
+        return;
+      }
+
+      if (!hierarchySearchActive) {
+        hierarchyExpansionBeforeSearch = new Map(toggles.map(function(toggle){
+          return [String(toggle.dataset.treeToggle || ''), toggle.getAttribute('aria-expanded') === 'true'];
+        }));
+        hierarchySearchActive = true;
+      }
+
+      items.forEach(function(item){
+        item.classList.add('d-none');
+        item.classList.remove('dynamic-tree-match');
+      });
+      const matches = items.filter(function(item){
+        return normalizeHierarchySearch(item.dataset.treeSearch).includes(query);
+      });
+      matches.forEach(function(item){
+        item.classList.remove('d-none');
+        item.classList.add('dynamic-tree-match');
+        let ancestor = item.parentElement && item.parentElement.closest('.dynamic-tree-item');
+        while (ancestor) {
+          ancestor.classList.remove('d-none');
+          const row = ancestor.querySelector(':scope > .dynamic-tree-row');
+          const toggle = row && row.querySelector('[data-tree-toggle]');
+          if (toggle) setHierarchyBranchExpanded(toggle, true);
+          ancestor = ancestor.parentElement && ancestor.parentElement.closest('.dynamic-tree-item');
+        }
+      });
+      updateHierarchySearchStatus(matches.length, items.length, true);
+    }
+
     function renderHierarchyTree(){
       if (!hierarchyTree) return;
       const childrenByParent = new Map();
@@ -928,39 +1102,61 @@
       });
       const visited = new Set();
 
-      function branch(nodes){
+      function branch(nodes, level){
         if (!nodes || !nodes.length) return '';
         let html = '<ul class="dynamic-tree-list" role="group">';
         nodes.forEach(function(node){
           const nodeId = String(node.id);
           if (visited.has(nodeId)) return;
           visited.add(nodeId);
+          const nodeName = hierarchyNodeName(node);
+          const childNodes = childrenByParent.get(nodeId) || [];
+          const hasChildren = childNodes.length > 0;
+          const expanded = Number(level || 0) < 1;
+          const branchId = 'dynamicTreeChildren' + nodeId;
           const managerText = node.manager_name
             ? (node.manager_role || 'المسؤول') + ': ' + node.manager_name
             : (node.unavailable_reason || 'لا يوجد مسؤول معتمد');
           const countText = Number(node.total_user_count || 0)
             ? String(node.total_user_count) + ' موظف'
             : 'لا يوجد موظفون مرتبطون';
-          html += '<li class="dynamic-tree-item" role="none">' +
-            '<button type="button" class="dynamic-tree-node" role="treeitem" ' +
+          const searchText = [nodeName, node.type_name, node.node_label, managerText].join(' ');
+          html += '<li class="dynamic-tree-item" role="treeitem" aria-level="' + String(Number(level || 0) + 1) + '" ' +
+            'data-tree-search="' + escapeHtml(searchText) + '" ' +
+            (hasChildren ? 'aria-expanded="' + (expanded ? 'true' : 'false') + '"' : '') + '>' +
+            '<div class="dynamic-tree-row">' +
+              (hasChildren
+                ? '<button type="button" class="dynamic-tree-toggle" data-tree-toggle="' + escapeHtml(nodeId) + '" ' +
+                    'aria-controls="' + escapeHtml(branchId) + '" aria-expanded="' + (expanded ? 'true' : 'false') + '" ' +
+                    'aria-label="' + (expanded ? 'طي الفرع' : 'توسيع الفرع') + '">' +
+                    '<i class="bi ' + (expanded ? 'bi-chevron-down' : 'bi-chevron-left') + '"></i></button>'
+                : '<span class="dynamic-tree-toggle-placeholder" aria-hidden="true"></span>') +
+            '<button type="button" class="dynamic-tree-node" ' +
               'data-node-id="' + escapeHtml(nodeId) + '" aria-selected="false">' +
               '<span class="d-flex justify-content-between align-items-start gap-2">' +
-                '<span class="fw-bold text-break">' + escapeHtml(node.name || '') + '</span>' +
+                '<span class="fw-bold text-break">' + escapeHtml(nodeName) + '</span>' +
                 '<span class="badge text-bg-light border flex-shrink-0">' + escapeHtml(node.type_name || 'جهة') + '</span>' +
               '</span>' +
               '<span class="dynamic-tree-manager d-block mt-1"><i class="bi bi-person-badge"></i> ' + escapeHtml(managerText) + '</span>' +
               '<span class="small text-muted d-block mt-1"><i class="bi bi-people"></i> ' + escapeHtml(countText) + '</span>' +
-            '</button>' +
-            branch(childrenByParent.get(nodeId)) +
+            '</button></div>' +
+            (hasChildren
+              ? '<div class="dynamic-tree-children" id="' + escapeHtml(branchId) + '"' + (expanded ? '' : ' hidden') + '>' + branch(childNodes, Number(level || 0) + 1) + '</div>'
+              : '') +
           '</li>';
         });
         return html + '</ul>';
       }
 
-      hierarchyTree.innerHTML = branch(roots);
+      hierarchyTree.innerHTML = branch(roots, 0);
       if (!hierarchyTree.innerHTML) {
         hierarchyTree.innerHTML = '<div class="text-muted small p-2">لا توجد جهات متاحة في الهيكلية.</div>';
+      } else if (hierarchySelect) {
+        hierarchySelect.dataset.searchable = '0';
+        hierarchySelect.classList.add('d-none');
+        hierarchySelect.setAttribute('aria-hidden', 'true');
       }
+      filterHierarchyTree();
     }
 
     function csrfToken(){
@@ -1368,12 +1564,25 @@
     }
 
     function filterChoices(){
-      const query = (userSearch && userSearch.value || '').trim().toLowerCase();
+      const query = normalizeHierarchySearch(userSearch && userSearch.value);
       let visibleCount = 0;
       const scopeReady = Boolean(currentOrgNodeId);
       document.querySelectorAll('.dynamic-user-choice').forEach(function(card){
-        const matchesSearch = !query || (card.dataset.search || '').includes(query);
-        const matchesScope = String(card.dataset.nodeId || '') === String(currentOrgNodeId || '');
+        const matchesSearch = !query || normalizeHierarchySearch(card.dataset.search).includes(query);
+        let candidateNodeId = String(card.dataset.nodeId || '');
+        let matchesScope = false;
+        const visitedNodeIds = new Set();
+        while (scopeReady && candidateNodeId && !visitedNodeIds.has(candidateNodeId)) {
+          if (candidateNodeId === String(currentOrgNodeId)) {
+            matchesScope = true;
+            break;
+          }
+          visitedNodeIds.add(candidateNodeId);
+          const candidateNode = orgNodesById.get(candidateNodeId);
+          candidateNodeId = candidateNode && candidateNode.parent_id !== null && candidateNode.parent_id !== undefined
+            ? String(candidateNode.parent_id)
+            : '';
+        }
         const visible = scopeReady && matchesSearch && matchesScope;
         card.classList.toggle('d-none', !visible);
         if (visible) visibleCount += 1;
@@ -1381,14 +1590,14 @@
       if (visibleScopeHint) {
         const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
         visibleScopeHint.textContent = currentNode
-          ? 'الموظفون المرتبطون مباشرة بجهة «' + currentNode.name + '».'
-          : 'اختر جهة من الهيكل لعرض موظفيها المباشرين.';
+          ? 'الموظفون في جهة «' + hierarchyNodeName(currentNode) + '» والجهات التابعة لها.'
+          : 'اختر جهة من الهيكل لعرض موظفيها وموظفي الفروع التابعة لها.';
       }
       if (searchEmpty) {
         searchEmpty.classList.toggle('d-none', visibleCount !== 0);
         searchEmpty.textContent = !scopeReady
           ? 'اختر جهة من الهيكل الإداري لعرض الموظفين.'
-          : (query ? 'لا توجد أسماء مطابقة للبحث ضمن الاختيار الحالي.' : 'لا يوجد موظفون مرتبطون مباشرة بهذا الاختيار.');
+          : (query ? 'لا توجد أسماء مطابقة للبحث ضمن الجهة المختارة وفروعها.' : 'لا يوجد موظفون مرتبطون بهذه الجهة أو فروعها.');
       }
       if (selectVisibleButton) selectVisibleButton.disabled = visibleCount === 0;
       if (clearVisibleButton) clearVisibleButton.disabled = visibleCount === 0;
@@ -1473,10 +1682,35 @@
     if (dynamicSlaDays) dynamicSlaDays.addEventListener('input', schedulePreview);
     if (hierarchySelect) hierarchySelect.addEventListener('change', updateHierarchySelection);
     if (hierarchyTree) hierarchyTree.addEventListener('click', function(event){
-      const control = event.target.closest('[data-node-id]');
+      const toggle = event.target.closest('[data-tree-toggle]');
+      if (toggle) {
+        setHierarchyBranchExpanded(toggle, toggle.getAttribute('aria-expanded') !== 'true');
+        return;
+      }
+      const control = event.target.closest('.dynamic-tree-node[data-node-id]');
       if (!control || !hierarchySelect) return;
       hierarchySelect.value = String(control.dataset.nodeId || '');
       updateHierarchySelection();
+    });
+    if (hierarchySearch) hierarchySearch.addEventListener('input', filterHierarchyTree);
+    if (hierarchySearch) hierarchySearch.addEventListener('keydown', function(event){
+      if (event.key !== 'Escape') return;
+      hierarchySearch.value = '';
+      filterHierarchyTree();
+    });
+    if (hierarchyExpandAll) hierarchyExpandAll.addEventListener('click', function(){
+      if (hierarchySearch && hierarchySearch.value) {
+        hierarchySearch.value = '';
+        filterHierarchyTree();
+      }
+      setAllHierarchyBranches(true);
+    });
+    if (hierarchyCollapseAll) hierarchyCollapseAll.addEventListener('click', function(){
+      if (hierarchySearch && hierarchySearch.value) {
+        hierarchySearch.value = '';
+        filterHierarchyTree();
+      }
+      setAllHierarchyBranches(false);
     });
     if (committeeEnabledControl) committeeEnabledControl.addEventListener('change', function(){
       const enabled = committeeEnabledControl.checked;

@@ -443,6 +443,9 @@ class CorrespondenceIntakeTests(unittest.TestCase):
             project_root / "templates" / "workflow" / "new_request.html"
         ).read_text(encoding="utf-8")
         routes = (project_root / "workflow" / "routes.py").read_text(encoding="utf-8")
+        searchable_select = (
+            project_root / "static" / "js" / "searchable_select.js"
+        ).read_text(encoding="utf-8")
 
         self.assertIn('id="analyzeWorkflowAttachment"', template)
         self.assertIn('id="applyWorkflowSuggestions"', template)
@@ -471,6 +474,19 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         )
         self.assertIn('id="dynamicHierarchyTree"', template)
         self.assertIn('class="dynamic-tree-node"', template)
+        self.assertIn('id="dynamicHierarchySearch"', template)
+        self.assertIn('id="dynamicTreeExpandAll"', template)
+        self.assertIn('id="dynamicTreeCollapseAll"', template)
+        self.assertIn('data-tree-toggle=', template)
+        self.assertIn('role="treeitem" aria-level=', template)
+        self.assertIn("function filterHierarchyTree()", template)
+        self.assertIn("candidateNode.parent_id", template)
+        self.assertIn("normalizeHierarchySearch(card.dataset.search)", template)
+        self.assertIn("الجهة المختارة وفروعها", template)
+        self.assertIn('data-searchable="0"', template)
+        self.assertIn('selectEl.classList.contains("d-none")', searchable_select)
+        self.assertIn('selectEl.getAttribute("aria-hidden") === "true"', searchable_select)
+        self.assertIn('e.key !== "Enter"', searchable_select)
         self.assertIn('id="dynamicPathPreviewPanel"', template)
         self.assertIn('id="predefinedRoutePreview"', template)
         self.assertIn('id="predefinedTemplateStepsData"', template)

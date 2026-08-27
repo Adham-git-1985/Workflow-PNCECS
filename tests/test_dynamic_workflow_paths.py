@@ -296,6 +296,12 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         nodes = dynamic_org_browser_nodes(dynamic_user_choices(self.requester), self.requester)
         nodes_by_id = {node["id"]: node for node in nodes}
 
+        self.assertTrue(nodes)
+        self.assertTrue(all((node.get("name") or "").strip() for node in nodes))
+        self.assertTrue(all(
+            node.get("parent_id") is None or node["parent_id"] in nodes_by_id
+            for node in nodes
+        ))
         self.assertIn(self.root.id, nodes_by_id)
         self.assertIn(self.directorate_a.id, nodes_by_id)
         self.assertIn(self.department_a2.id, nodes_by_id)

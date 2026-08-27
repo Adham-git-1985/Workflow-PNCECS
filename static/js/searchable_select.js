@@ -35,6 +35,14 @@
   function shouldEnhance(selectEl) {
     if (!selectEl) return false;
     if (selectEl.dataset && (selectEl.dataset.noSearch === "1" || selectEl.dataset.searchable === "0")) return false;
+    // Some pages keep a native select only as a backing value for a richer
+    // picker.  Enhancing that hidden select creates a visible search box while
+    // the actual option list remains hidden, which looks like an empty picker.
+    if (
+      selectEl.hidden ||
+      selectEl.classList.contains("d-none") ||
+      selectEl.getAttribute("aria-hidden") === "true"
+    ) return false;
     if (selectEl.multiple) return false;
     if (selectEl.disabled) return false;
     if (selectEl.classList.contains("ss-enhanced")) return false;
@@ -246,7 +254,7 @@
 
     // Enter = select first visible option
     input.addEventListener("keydown", function (e) {
-      if (e.key !== "أدخل") return;
+      if (e.key !== "Enter") return;
       const first = filterOptions(selectEl, input.value);
       if (first) {
         selectEl.value = first.value;
