@@ -169,6 +169,79 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(result["origin"]["user_id"], self.requester.id)
         self.assertTrue(all("عمودي" in step["reason"] for step in result["steps"]))
 
+    def test_non_managerial_peers_are_not_repeated_on_return(self):
+        directorate_manager = self._user("directorate-manager@example.test", "مدير الإدارة")
+        first_peer = self._user("first-peer@example.test", "دعاء")
+        second_peer = self._user("second-peer@example.test", "مرح")
+        directorate_manager.org_node_id = self.directorate_a.id
+        first_peer.org_node_id = self.department_a2.id
+        second_peer.org_node_id = self.department_a2.id
+        db.session.add(OrgNodeManager(
+            node_id=self.directorate_a.id,
+            manager_user_id=directorate_manager.id,
+        ))
+        db.session.commit()
+
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"USER:{first_peer.id}", f"USER:{second_peer.id}"],
+        )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [step.get("approver_user_id") for step in result["steps"]],
+            [
+                self.source_manager.id,
+                directorate_manager.id,
+                first_peer.id,
+                second_peer.id,
+                directorate_manager.id,
+                self.source_manager.id,
+            ],
+        )
+        self.assertEqual(
+            [step["reason"] for step in result["steps"][-2:]],
+            [DYNAMIC_RETURN_REASON, DYNAMIC_RETURN_REASON],
+        )
+
+    def test_manager_is_repeated_on_return_even_at_the_same_level(self):
+        directorate_manager = self._user("directorate-manager@example.test", "مدير الإدارة")
+        manager = self._user("peer-manager@example.test", "دعاء")
+        employee = self._user("peer-employee@example.test", "مرح")
+        directorate_manager.org_node_id = self.directorate_a.id
+        manager.org_node_id = self.department_a2.id
+        employee.org_node_id = self.department_a2.id
+        db.session.add_all((
+            OrgNodeManager(
+                node_id=self.directorate_a.id,
+                manager_user_id=directorate_manager.id,
+            ),
+            OrgNodeManager(
+                node_id=self.department_a2.id,
+                manager_user_id=manager.id,
+            ),
+        ))
+        db.session.commit()
+
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"USER:{manager.id}", f"USER:{employee.id}"],
+        )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [step.get("approver_user_id") for step in result["steps"]],
+            [
+                self.source_manager.id,
+                directorate_manager.id,
+                manager.id,
+                employee.id,
+                manager.id,
+                directorate_manager.id,
+                self.source_manager.id,
+            ],
+        )
+
     def test_user_entered_request_type_is_created_and_reused_by_label(self):
         created = _find_or_create_request_type("  طلب   متابعة خاص  ")
         reused = _find_or_create_request_type("طلب متابعة خاص")
@@ -547,13 +620,12 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(result["errors"], [])
         self.assertEqual(
             [step["approver_kind"] for step in result["steps"]],
-            ["ORG_NODE", "ORG_NODE", "ORG_NODE"],
+            ["ORG_NODE", "ORG_NODE"],
         )
         self.assertEqual(
             [step["approver_org_node_id"] for step in result["steps"]],
-            [self.department_a1.id, self.department_a2.id, self.department_a1.id],
+            [self.department_a1.id, self.department_a2.id],
         )
-        self.assertEqual(result["steps"][-1]["reason"], DYNAMIC_RETURN_REASON)
         self.assertEqual(
             [segment["target_kind"] for segment in result["segments"]],
             ["NODE", "NODE"],
@@ -808,7 +880,6 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 target_assistant.id,
                 target_department.id,
                 target_assistant.id,
-                source_assistant.id,
                 source_general.id,
                 source_department.id,
             ],
@@ -861,7 +932,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 for step in sibling_result["steps"]
                 if step["approver_kind"] == "ORG_NODE"
             ],
-            [target_department.id, second_target_department.id, target_department.id],
+            [target_department.id, second_target_department.id],
         )
         self.assertEqual(
             [
@@ -872,7 +943,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             2,
         )
 
-    def test_managerless_common_level_still_preserves_the_full_administrative_route(self):
+    def test_managerless_common_level_is_not_repeated_on_return(self):
         directorate_type = self.directorate_a.type
         department_type = self.department_a1.type
         chairperson = self._node("رئيس اللجنة للمسار", directorate_type, self.root)
@@ -946,7 +1017,6 @@ class DynamicWorkflowPathTests(unittest.TestCase):
                 target_general.id,
                 target_department.id,
                 target_general.id,
-                source_general.id,
             ],
         )
         self.assertIn(shared_assistant.name_ar, " ".join(result["warnings"]))

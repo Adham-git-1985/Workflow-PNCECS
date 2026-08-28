@@ -342,6 +342,81 @@ def _manager_candidates_for_node(node: OrgNode) -> list[tuple[User, str]]:
     return candidates
 
 
+def _step_node(step: dict) -> OrgNode | None:
+    node_id = step.get("node_id") or step.get("approver_org_node_id")
+    try:
+        return db.session.get(OrgNode, int(node_id)) if node_id else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _step_user_id(step: dict) -> int | None:
+    user_id = step.get("approver_user_id")
+    if user_id:
+        return int(user_id)
+    node = _step_node(step)
+    user, _role = _manager_for_node(node) if node else (None, None)
+    return int(user.id) if user else None
+
+
+def _user_manages_node(user_id: int | None, node: OrgNode | None) -> bool:
+    if not user_id or not node:
+        return False
+    for current_node in node_chain(node.id):
+        manager = OrgNodeManager.query.filter_by(node_id=int(current_node.id)).first()
+        if not manager:
+            continue
+        if int(manager.manager_user_id or 0) == int(user_id):
+            return True
+        if int(manager.deputy_user_id or 0) == int(user_id):
+            return True
+    return False
+
+
+def _user_is_direct_manager_of(manager_id: int | None, user_id: int | None) -> bool:
+    if not manager_id or not user_id or int(manager_id) == int(user_id):
+        return False
+    employee_file = db.session.get(EmployeeFile, int(user_id))
+    if employee_file and int(employee_file.direct_manager_user_id or 0) == int(manager_id):
+        return True
+
+    today = date.today().isoformat()
+    return EmployeeSecondment.query.filter(
+        EmployeeSecondment.user_id == int(user_id),
+        EmployeeSecondment.direct_manager_user_id == int(manager_id),
+        (EmployeeSecondment.date_from.is_(None) | (EmployeeSecondment.date_from <= today)),
+        (EmployeeSecondment.date_to.is_(None) | (EmployeeSecondment.date_to >= today)),
+    ).first() is not None
+
+
+def _steps_are_non_managerial_peers(first_step: dict, second_step: dict) -> bool:
+    first_node = _step_node(first_step)
+    second_node = _step_node(second_step)
+    if not first_node or not second_node:
+        return False
+
+    first_chain = node_chain(first_node.id)
+    second_chain = node_chain(second_node.id)
+    if not first_chain or not second_chain:
+        return False
+    if len(first_chain) != len(second_chain):
+        return False
+    if _node_type_code(first_node) != _node_type_code(second_node):
+        return False
+
+    first_user_id = _step_user_id(first_step)
+    second_user_id = _step_user_id(second_step)
+    if _user_is_direct_manager_of(first_user_id, second_user_id):
+        return False
+    if _user_is_direct_manager_of(second_user_id, first_user_id):
+        return False
+    if _user_manages_node(first_user_id, second_node):
+        return False
+    if _user_manages_node(second_user_id, first_node):
+        return False
+    return True
+
+
 _LEGACY_ORG_MODELS = {
     "ORGANIZATION": Organization,
     "DIRECTORATE": Directorate,
@@ -1697,7 +1772,11 @@ def build_dynamic_target_path(
     # destination itself is not duplicated; completing the last return step
     # hands the request back to its creator through the normal completion flow.
     forward_steps = list(steps)
-    for forward_step in reversed(forward_steps[:-1]):
+    for index in range(len(forward_steps) - 2, -1, -1):
+        forward_step = forward_steps[index]
+        following_step = forward_steps[index + 1]
+        if _steps_are_non_managerial_peers(forward_step, following_step):
+            continue
         return_step = dict(forward_step)
         return_step["reason"] = DYNAMIC_RETURN_REASON
         steps.append(return_step)
