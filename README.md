@@ -141,7 +141,7 @@ AUTO_BACKUP_DIR=
   اللغة العربية والإنجليزية. عند غياب المحرك تعرض الشاشة تنبيهًا وتسمح بإكمال
   البيانات يدويًا دون تعطيل تسجيل الوارد أو الصادر.
 - عند اختيار عدة مرفقات يُحلّل المرفق الأول، بينما تُحفظ جميع المرفقات مع المعاملة.
-- الحد الافتراضي لحجم المرفق الذي يُحلل هو **25 ميجابايت** (`26214400` بايت). يحد
+- الحد الافتراضي لحجم المرفق الذي يُحلل هو **50 ميجابايت** (`52428800` بايت). يحد
   ذلك من استهلاك الذاكرة وفك ضغط ملفات Office وتحويل صفحات PDF للـOCR. هذا حد
   للتحليل فقط؛ يمكن حفظ الملف الأكبر مع الوارد دون تحليله، ويمكن تغييره من
   `CORR_INTAKE_MAX_BYTES` حسب موارد الخادم.
@@ -149,7 +149,7 @@ AUTO_BACKUP_DIR=
 يمكن ضبط حدود التحليل المحلي عبر متغيرات البيئة:
 
 ```text
-CORR_INTAKE_MAX_BYTES=26214400
+CORR_INTAKE_MAX_BYTES=52428800
 CORR_INTAKE_MAX_TEXT_CHARS=20000
 CORR_INTAKE_MAX_PDF_PAGES=40
 CORR_INTAKE_OCR_ENABLED=1
@@ -159,6 +159,9 @@ CORR_INTAKE_OCR_MAX_PAGES=10
 CORR_INTAKE_OCR_DPI=200
 CORR_INTAKE_OCR_TIMEOUT_SECONDS=45
 CORR_INTAKE_OCR_MAX_IMAGE_PIXELS=40000000
+CORR_EMAIL_MAX_ATTACHMENTS=50
+CORR_EMAIL_MAX_TOTAL_BYTES=52428800
+CORR_EMAIL_MAX_ATTACHMENT_BYTES=52428800
 CORR_INTAKE_LIBREOFFICE_CMD=
 ```
 

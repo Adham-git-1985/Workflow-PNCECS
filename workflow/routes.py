@@ -68,6 +68,7 @@ from services.correspondence_intake import (
     CorrespondenceIntakeError,
     OcrConfig,
     analyze_workflow_attachment,
+    extract_eml_attachments,
     read_limited_upload,
 )
 from filters.request_filters import get_sla_days
@@ -1167,6 +1168,104 @@ def _save_upload_to_archive(file_storage, *, owner_id: int, visibility: str = "w
     return archived, saved_path
 
 
+def _save_bytes_to_archive(
+    payload: bytes,
+    filename: str,
+    *,
+    owner_id: int,
+    visibility: str = "workflow",
+    description: str | None = None,
+    mimetype: str | None = None,
+):
+    """Save generated or embedded attachment bytes using archive upload rules."""
+    original_name = _sanitize_original_name(filename)
+    if not original_name or not allowed_file(original_name):
+        raise ValueError("Invalid file name")
+
+    stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+    os.makedirs(BASE_STORAGE, exist_ok=True)
+    saved_path = os.path.join(BASE_STORAGE, stored_name)
+    with open(saved_path, "wb") as attachment_file:
+        attachment_file.write(payload)
+
+    archived = ArchivedFile(
+        original_name=original_name,
+        stored_name=stored_name,
+        description=description,
+        file_path=saved_path,
+        mime_type=mimetype or mimetypes.guess_type(original_name)[0],
+        file_size=len(payload),
+        owner_id=owner_id,
+        visibility=visibility,
+    )
+    return archived, saved_path
+
+
+def _workflow_email_attachment_limits() -> tuple[int, int, int]:
+    def configured_limit(name: str, default: int) -> int:
+        try:
+            return max(1, int(current_app.config.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    return (
+        configured_limit("CORR_EMAIL_MAX_ATTACHMENTS", 50),
+        configured_limit("CORR_EMAIL_MAX_TOTAL_BYTES", 50 * 1024 * 1024),
+        configured_limit("CORR_EMAIL_MAX_ATTACHMENT_BYTES", 50 * 1024 * 1024),
+    )
+
+
+def _save_upload_with_embedded_email_attachments(
+    file_storage,
+    *,
+    owner_id: int,
+    visibility: str = "workflow",
+    description: str | None = None,
+) -> list[tuple[ArchivedFile, str]]:
+    """Keep an uploaded EML and add its bounded embedded attachments."""
+    archived, saved_path = _save_upload_to_archive(
+        file_storage,
+        owner_id=owner_id,
+        visibility=visibility,
+        description=description,
+    )
+    saved_uploads = [(archived, saved_path)]
+    if os.path.splitext(archived.original_name)[1].lower() != ".eml":
+        return saved_uploads
+
+    max_attachments, max_total_bytes, max_attachment_bytes = _workflow_email_attachment_limits()
+    try:
+        with open(saved_path, "rb") as email_file:
+            extraction = extract_eml_attachments(
+                email_file.read(),
+                max_attachments=max_attachments,
+                max_total_bytes=max_total_bytes,
+                max_attachment_bytes=max_attachment_bytes,
+            )
+    except CorrespondenceIntakeError as exc:
+        current_app.logger.warning("Could not extract workflow EML attachments: %s", exc.code)
+        return saved_uploads
+    except OSError:
+        current_app.logger.exception("Could not read saved workflow EML for attachment extraction")
+        return saved_uploads
+
+    for warning in extraction.warnings:
+        current_app.logger.warning("Workflow EML attachment extraction: %s", warning)
+
+    for embedded in extraction.attachments:
+        saved_uploads.append(
+            _save_bytes_to_archive(
+                embedded.payload,
+                embedded.filename,
+                owner_id=owner_id,
+                visibility=visibility,
+                description=description,
+                mimetype=embedded.mimetype,
+            )
+        )
+    return saved_uploads
+
+
 def _parse_attachment_meta(note: str | None):
     """Parse meta from AuditLog.note, expecting tokens like 'step=3' and 'source=COMMENT'."""
     step = None
@@ -1708,27 +1807,26 @@ def upload_attachment(request_id):
     saved_paths = []
     try:
         for fs in files:
-            archived, saved_path = _save_upload_to_archive(
+            for archived, saved_path in _save_upload_with_embedded_email_attachments(
                 fs, owner_id=current_user.id, visibility="workflow", description=description
-            )
-            if hasattr(archived, "workflow_request_id"):
-                setattr(archived, "workflow_request_id", req.id)
+            ):
+                if hasattr(archived, "workflow_request_id"):
+                    setattr(archived, "workflow_request_id", req.id)
 
-            db.session.add(archived)
-            db.session.flush()
-            saved_paths.append(saved_path)
+                db.session.add(archived)
+                db.session.flush()
+                saved_paths.append(saved_path)
 
-            # Preferred linkage table
-            db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
+                db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
 
-            _audit_attachment(
-                req_id=req.id,
-                file_id=archived.id,
-                step_order=step_order,
-                source="MANUAL_UPLOAD",
-                original_name=archived.original_name,
-                uploaded_by_id=current_user.id,
-            )
+                _audit_attachment(
+                    req_id=req.id,
+                    file_id=archived.id,
+                    step_order=step_order,
+                    source="MANUAL_UPLOAD",
+                    original_name=archived.original_name,
+                    uploaded_by_id=current_user.id,
+                )
 
         # optional admin notification
         try:
@@ -2954,27 +3052,25 @@ def new_request():
         saved_paths = []
         try:
             for fs in uploaded_files:
-                archived, saved_path = _save_upload_to_archive(
+                for archived, saved_path in _save_upload_with_embedded_email_attachments(
                     fs, owner_id=current_user.id, visibility="workflow", description=None
-                )
+                ):
+                    if hasattr(archived, "workflow_request_id"):
+                        setattr(archived, "workflow_request_id", req.id)
 
-                # Optional legacy linkage if exists
-                if hasattr(archived, "workflow_request_id"):
-                    setattr(archived, "workflow_request_id", req.id)
+                    db.session.add(archived)
+                    db.session.flush()
+                    saved_paths.append(saved_path)
 
-                db.session.add(archived)
-                db.session.flush()
-                saved_paths.append(saved_path)
-
-                db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
-                _audit_attachment(
-                    req_id=req.id,
-                    file_id=archived.id,
-                    step_order=0,
-                    source="CREATE",
-                    original_name=archived.original_name,
-                    uploaded_by_id=current_user.id,
-                )
+                    db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
+                    _audit_attachment(
+                        req_id=req.id,
+                        file_id=archived.id,
+                        step_order=0,
+                        source="CREATE",
+                        original_name=archived.original_name,
+                        uploaded_by_id=current_user.id,
+                    )
         except Exception as e:
             db.session.rollback()
             for sp in saved_paths:
@@ -5698,25 +5794,25 @@ def decide_request_step(request_id, step_order):
         # Attach files uploaded with the decision (multiple)
         uploaded_files = _uploaded_files_from_request("files", "scanned_files")
         for fs in uploaded_files:
-            archived, saved_path = _save_upload_to_archive(
+            for archived, saved_path in _save_upload_with_embedded_email_attachments(
                 fs, owner_id=current_user.id, visibility="workflow", description=None
-            )
-            if hasattr(archived, "workflow_request_id"):
-                setattr(archived, "workflow_request_id", req.id)
+            ):
+                if hasattr(archived, "workflow_request_id"):
+                    setattr(archived, "workflow_request_id", req.id)
 
-            db.session.add(archived)
-            db.session.flush()
-            saved_paths.append(saved_path)
+                db.session.add(archived)
+                db.session.flush()
+                saved_paths.append(saved_path)
 
-            db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
-            _audit_attachment(
-                req_id=req.id,
-                file_id=archived.id,
-                step_order=step_order,
-                source="STEP_DECISION",
-                original_name=archived.original_name,
-                uploaded_by_id=current_user.id,
-            )
+                db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
+                _audit_attachment(
+                    req_id=req.id,
+                    file_id=archived.id,
+                    step_order=step_order,
+                    source="STEP_DECISION",
+                    original_name=archived.original_name,
+                    uploaded_by_id=current_user.id,
+                )
 
         db.session.commit()
         flash("تم حفظ الإجراء بنجاح.", "success")
@@ -6006,26 +6102,26 @@ def add_request_note(request_id):
         # 2) Save attachments (if any)
         attached_count = 0
         for fs in uploaded_files:
-            archived, saved_path = _save_upload_to_archive(
+            for archived, saved_path in _save_upload_with_embedded_email_attachments(
                 fs, owner_id=current_user.id, visibility="workflow", description=None
-            )
-            if hasattr(archived, "workflow_request_id"):
-                setattr(archived, "workflow_request_id", req.id)
+            ):
+                if hasattr(archived, "workflow_request_id"):
+                    setattr(archived, "workflow_request_id", req.id)
 
-            db.session.add(archived)
-            db.session.flush()
-            saved_paths.append(saved_path)
+                db.session.add(archived)
+                db.session.flush()
+                saved_paths.append(saved_path)
 
-            db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
-            _audit_attachment(
-                req_id=req.id,
-                file_id=archived.id,
-                step_order=step_order,
-                source=f"NOTE_{kind}",
-                original_name=archived.original_name,
-                uploaded_by_id=current_user.id,
-            )
-            attached_count += 1
+                db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
+                _audit_attachment(
+                    req_id=req.id,
+                    file_id=archived.id,
+                    step_order=step_order,
+                    source=f"NOTE_{kind}",
+                    original_name=archived.original_name,
+                    uploaded_by_id=current_user.id,
+                )
+                attached_count += 1
 
         # 3) Mentions: grant access + notify mentioned users/roles.
         mentioned_users, unresolved_mentions = _grant_mention_access(

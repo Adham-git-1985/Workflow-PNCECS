@@ -68,6 +68,7 @@ from services.correspondence_intake import (
     CorrespondenceIntakeError,
     OcrConfig,
     analyze_correspondence_attachment,
+    extract_eml_attachments,
     read_limited_upload,
 )
 from services.employee_data_import import (
@@ -1674,6 +1675,92 @@ def _start_corr_workflow(
     return req
 
 
+def _corr_email_attachment_limits() -> tuple[int, int, int]:
+    def configured_limit(name: str, default: int) -> int:
+        try:
+            return max(1, int(current_app.config.get(name, default)))
+        except (TypeError, ValueError):
+            return default
+
+    return (
+        configured_limit("CORR_EMAIL_MAX_ATTACHMENTS", 50),
+        configured_limit("CORR_EMAIL_MAX_TOTAL_BYTES", 50 * 1024 * 1024),
+        configured_limit("CORR_EMAIL_MAX_ATTACHMENT_BYTES", 50 * 1024 * 1024),
+    )
+
+
+def _save_corr_embedded_email_attachments(
+    email_path: str,
+    *,
+    inbound_id: int | None,
+    outbound_id: int | None,
+    stamp_options: CorrStampOptions | None,
+    movement_id: int | None,
+) -> int:
+    """Save attachments embedded in an EML file beside its retained original."""
+    max_attachments, max_total_bytes, max_attachment_bytes = _corr_email_attachment_limits()
+    try:
+        with open(email_path, "rb") as email_file:
+            extraction = extract_eml_attachments(
+                email_file.read(),
+                max_attachments=max_attachments,
+                max_total_bytes=max_total_bytes,
+                max_attachment_bytes=max_attachment_bytes,
+            )
+    except CorrespondenceIntakeError as exc:
+        current_app.logger.warning("Could not extract EML attachments: %s", exc.code)
+        return 0
+    except OSError:
+        current_app.logger.exception("Could not read saved EML for attachment extraction")
+        return 0
+
+    for warning in extraction.warnings:
+        current_app.logger.warning("EML attachment extraction: %s", warning)
+
+    saved = 0
+    storage = _corr_storage_dir()
+    prefix = "IN" if inbound_id else "OUT"
+    record_id = inbound_id or outbound_id
+    for embedded in extraction.attachments:
+        original_name = clean_original_filename(embedded.filename)
+        if not original_name or not _allowed_file(original_name):
+            current_app.logger.warning("Skipped EML attachment with invalid filename")
+            continue
+
+        extension = _clean_suffix(original_name)
+        stored_name = f"{prefix}_{record_id}_{uuid.uuid4().hex}{extension}"
+        file_path = os.path.join(storage, stored_name)
+        with open(file_path, "wb") as attachment_file:
+            attachment_file.write(embedded.payload)
+
+        stamp_applied = False
+        if stamp_options and stamp_options.enabled and is_stampable_file(stored_name):
+            stamp_applied = apply_corr_stamp(file_path, stamp_options)
+
+        attachment = CorrAttachment(
+            inbound_id=inbound_id,
+            outbound_id=outbound_id,
+            original_name=original_name,
+            stored_name=stored_name,
+            uploaded_by_id=current_user.id,
+            uploaded_at=datetime.utcnow(),
+            stamp_applied=stamp_applied,
+            stamp_kind=stamp_options.kind if stamp_applied and stamp_options else None,
+            stamp_ref_no=stamp_options.ref_no if stamp_applied and stamp_options else None,
+            stamp_date=stamp_options.stamp_date if stamp_applied and stamp_options else None,
+            movement_id=movement_id,
+        )
+        db.session.add(attachment)
+        db.session.flush()
+        _ensure_corr_attachment_archived(
+            attachment,
+            file_path=file_path,
+            auto_commit=False,
+        )
+        saved += 1
+    return saved
+
+
 def _save_corr_files(
     files,
     inbound_id: int | None = None,
@@ -1720,6 +1807,14 @@ def _save_corr_files(
         db.session.flush()
         _ensure_corr_attachment_archived(att, file_path=file_path, auto_commit=False)
         saved += 1
+        if Path(original_name).suffix.lower() == ".eml":
+            saved += _save_corr_embedded_email_attachments(
+                file_path,
+                inbound_id=inbound_id,
+                outbound_id=outbound_id,
+                stamp_options=stamp_options,
+                movement_id=movement_id,
+            )
     return saved
 
 # --- Leave Attachments ---

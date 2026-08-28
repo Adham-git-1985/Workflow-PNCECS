@@ -1,4 +1,5 @@
 import unittest
+from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -11,6 +12,7 @@ from services.correspondence_intake import (
     OcrConfig,
     analyze_correspondence_attachment,
     analyze_workflow_attachment,
+    extract_eml_attachments,
     extract_attachment_text,
     read_limited_upload,
 )
@@ -147,6 +149,62 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertEqual(result["suggestions"]["subject"]["value"], "Follow-up request")
         self.assertEqual(result["suggestions"]["sender"]["select_value"], "Ministry Example")
         self.assertNotIn("SHOULD_NOT_BE_EXTRACTED", result["suggestions"]["body"]["value"])
+
+    def test_eml_embedded_attachments_are_extracted_with_safe_names(self):
+        message = EmailMessage()
+        message["From"] = "office@example.test"
+        message["To"] = "intake@example.test"
+        message["Subject"] = "Attachment extraction"
+        message.set_content("Email body")
+        message.add_attachment(
+            b"PDF data",
+            maintype="application",
+            subtype="pdf",
+            filename=r"documents\\report.pdf",
+        )
+        message.add_attachment(
+            b"",
+            maintype="text",
+            subtype="plain",
+            filename="empty.txt",
+        )
+
+        result = extract_eml_attachments(message.as_bytes())
+
+        self.assertEqual([attachment.filename for attachment in result.attachments], [
+            "report.pdf",
+            "empty.txt",
+        ])
+        self.assertEqual([attachment.payload for attachment in result.attachments], [
+            b"PDF data",
+            b"",
+        ])
+        self.assertEqual(result.attachments[0].mimetype, "application/pdf")
+        self.assertEqual(result.warnings, ())
+
+    def test_eml_embedded_attachments_respect_total_size_limit(self):
+        message = EmailMessage()
+        message.set_content("Email body")
+        message.add_attachment(
+            b"first",
+            maintype="text",
+            subtype="plain",
+            filename="first.txt",
+        )
+        message.add_attachment(
+            b"second",
+            maintype="text",
+            subtype="plain",
+            filename="second.txt",
+        )
+
+        result = extract_eml_attachments(
+            message.as_bytes(),
+            max_total_bytes=6,
+        )
+
+        self.assertEqual([attachment.filename for attachment in result.attachments], ["first.txt"])
+        self.assertTrue(any("الحجم الإجمالي" in warning for warning in result.warnings))
 
     def test_image_returns_manual_ocr_warning_and_filename_subject(self):
         result = analyze_correspondence_attachment(b"not-a-real-image", "scan.jpg")

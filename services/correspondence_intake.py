@@ -16,6 +16,7 @@ from email.utils import getaddresses, parseaddr
 from io import BytesIO
 from pathlib import Path
 import html
+import mimetypes
 import os
 import re
 import shutil
@@ -95,6 +96,23 @@ class OcrConfig:
     dpi: int = 200
     timeout_seconds: float = 45.0
     max_image_pixels: int = 40_000_000
+
+
+@dataclass(frozen=True)
+class ExtractedEmailAttachment:
+    """One attachment extracted from an uploaded EML message."""
+
+    filename: str
+    payload: bytes
+    mimetype: str | None
+
+
+@dataclass(frozen=True)
+class EmailAttachmentExtraction:
+    """Bounded EML attachment extraction result, including safe warnings."""
+
+    attachments: tuple[ExtractedEmailAttachment, ...]
+    warnings: tuple[str, ...]
 
 
 class _OcrRuntimeError(RuntimeError):
@@ -1065,14 +1083,97 @@ def _extract_pptx(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]
     return _clean_text("\n".join(parts), max_chars), [], {}
 
 
-def _extract_eml(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]:
+def _parse_eml_message(payload: bytes):
     try:
-        message = BytesParser(policy=policy.default).parsebytes(payload)
+        return BytesParser(policy=policy.default).parsebytes(payload)
     except Exception as exc:
         raise CorrespondenceIntakeError(
             "تعذر قراءة ملف البريد الإلكتروني.", code="INVALID_EML", status_code=422
         ) from exc
 
+
+def _email_attachment_filename(part, ordinal: int) -> str:
+    filename = str(part.get_filename() or "").strip()
+    filename = filename.replace("\x00", "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    if filename:
+        return filename
+
+    mimetype = str(part.get_content_type() or "").strip().lower()
+    suffix = mimetypes.guess_extension(mimetype) or ""
+    return f"مرفق البريد {ordinal}{suffix}"
+
+
+def extract_eml_attachments(
+    payload: bytes,
+    *,
+    max_attachments: int = 50,
+    max_total_bytes: int = 25 * 1024 * 1024,
+    max_attachment_bytes: int = 25 * 1024 * 1024,
+) -> EmailAttachmentExtraction:
+    """Extract EML file attachments with bounded count and payload size.
+
+    Named inline parts are included because mail clients frequently use those
+    for documents and images shown in the message. The parent EML itself is
+    deliberately not included; callers keep it as the original upload.
+    """
+    message = _parse_eml_message(payload)
+    max_attachments = max(1, min(int(max_attachments or 1), 200))
+    max_total_bytes = max(1, int(max_total_bytes or 1))
+    max_attachment_bytes = max(1, int(max_attachment_bytes or 1))
+
+    attachments: list[ExtractedEmailAttachment] = []
+    warnings: list[str] = []
+    total_bytes = 0
+
+    for part in message.walk() if message.is_multipart() else [message]:
+        disposition = (part.get_content_disposition() or "").lower()
+        has_filename = bool(part.get_filename())
+        if disposition != "attachment" and not has_filename:
+            continue
+
+        ordinal = len(attachments) + 1
+        filename = _email_attachment_filename(part, ordinal)
+        try:
+            if part.is_multipart():
+                attachment_payload = part.as_bytes(policy=policy.default)
+            else:
+                attachment_payload = part.get_payload(decode=True)
+        except Exception:
+            attachment_payload = None
+
+        if attachment_payload is None:
+            warnings.append(f"تعذر استخراج مرفق البريد: {filename}.")
+            continue
+        if len(attachment_payload) > max_attachment_bytes:
+            warnings.append(
+                f"لم يُستخرج المرفق {filename} لأنه يتجاوز الحد المسموح لكل مرفق."
+            )
+            continue
+        if total_bytes + len(attachment_payload) > max_total_bytes:
+            warnings.append(
+                "لم تُستخرج بقية مرفقات البريد لأنها تجاوزت الحجم الإجمالي المسموح."
+            )
+            break
+        if len(attachments) >= max_attachments:
+            warnings.append(
+                "لم تُستخرج بقية مرفقات البريد لأنها تجاوزت العدد المسموح."
+            )
+            break
+
+        attachments.append(
+            ExtractedEmailAttachment(
+                filename=filename,
+                payload=attachment_payload,
+                mimetype=str(part.get_content_type() or "").strip() or None,
+            )
+        )
+        total_bytes += len(attachment_payload)
+
+    return EmailAttachmentExtraction(tuple(attachments), tuple(warnings))
+
+
+def _extract_eml(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]:
+    message = _parse_eml_message(payload)
     parts: list[str] = []
     for part in message.walk() if message.is_multipart() else [message]:
         if part.get_content_disposition() == "attachment":

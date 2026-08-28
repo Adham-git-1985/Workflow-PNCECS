@@ -26,7 +26,7 @@ class BaseConfig:
 
     # Local smart intake for manually uploaded inbound correspondence.
     # The attachment is analyzed in memory and is never sent to an external AI.
-    CORR_INTAKE_MAX_BYTES = int(os.getenv("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024))
+    CORR_INTAKE_MAX_BYTES = int(os.getenv("CORR_INTAKE_MAX_BYTES", 50 * 1024 * 1024))
     CORR_INTAKE_MAX_TEXT_CHARS = int(os.getenv("CORR_INTAKE_MAX_TEXT_CHARS", 20_000))
     CORR_INTAKE_MAX_PDF_PAGES = int(os.getenv("CORR_INTAKE_MAX_PDF_PAGES", 40))
     CORR_INTAKE_OCR_ENABLED = os.getenv("CORR_INTAKE_OCR_ENABLED", "1").strip().lower() in {
@@ -41,6 +41,13 @@ class BaseConfig:
     )
     CORR_INTAKE_OCR_MAX_IMAGE_PIXELS = int(
         os.getenv("CORR_INTAKE_OCR_MAX_IMAGE_PIXELS", 40_000_000)
+    )
+    CORR_EMAIL_MAX_ATTACHMENTS = int(os.getenv("CORR_EMAIL_MAX_ATTACHMENTS", 50))
+    CORR_EMAIL_MAX_TOTAL_BYTES = int(
+        os.getenv("CORR_EMAIL_MAX_TOTAL_BYTES", 50 * 1024 * 1024)
+    )
+    CORR_EMAIL_MAX_ATTACHMENT_BYTES = int(
+        os.getenv("CORR_EMAIL_MAX_ATTACHMENT_BYTES", 50 * 1024 * 1024)
     )
 
     # The assistant is always available.  Safe public questions may use the
