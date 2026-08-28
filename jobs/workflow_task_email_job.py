@@ -5,6 +5,7 @@ import threading
 import time
 
 from services.workflow_task_email import run_workflow_task_email_cycle
+from services.notification_email import send_pending_notification_emails
 
 
 _STARTED = False
@@ -24,6 +25,7 @@ def _worker(app) -> None:
         try:
             with app.app_context():
                 run_workflow_task_email_cycle()
+                send_pending_notification_emails()
         except Exception:
             app.logger.exception("Workflow task email job iteration failed")
             try:

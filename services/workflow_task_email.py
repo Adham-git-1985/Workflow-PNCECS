@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from email.message import EmailMessage
 from email.utils import formataddr
 from html import escape
@@ -11,6 +11,7 @@ import re
 import smtplib
 import ssl
 from urllib.parse import urljoin, urlsplit
+from zoneinfo import ZoneInfo
 
 from flask import current_app, has_request_context, request
 from sqlalchemy import or_
@@ -47,6 +48,8 @@ PENDING = "PENDING"
 SENT = "SENT"
 FAILED = "FAILED"
 MAX_ATTEMPTS = 5
+DAILY_REMINDER_TIME = time(hour=8, minute=30)
+DAILY_REMINDER_TIMEZONE = "Asia/Jerusalem"
 
 
 def _setting(key: str, default: str = "") -> str:
@@ -104,12 +107,13 @@ def _mail_config() -> dict:
     }
 
 
-def _task_url(request_id: int, link_url: str | None = None) -> str:
-    path = link_url or notification_target_path("WorkflowRequest", request_id) or ""
+def _portal_url(link_url: str | None = None) -> str:
+    """Return an absolute portal URL using the configured public address."""
+    path = str(link_url or "/").strip() or "/"
     parsed = urlsplit(path)
     absolute_url = path if parsed.scheme in {"http", "https"} and parsed.netloc else ""
     if absolute_url:
-        path = parsed.path or notification_target_path("WorkflowRequest", request_id) or ""
+        path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
 
@@ -123,6 +127,10 @@ def _task_url(request_id: int, link_url: str | None = None) -> str:
     if not base_url:
         return absolute_url or path
     return urljoin(f"{base_url}/", path.lstrip("/"))
+
+
+def _task_url(request_id: int, link_url: str | None = None) -> str:
+    return _portal_url(link_url or notification_target_path("WorkflowRequest", request_id))
 
 
 def enqueue_task_assignment_emails(
@@ -188,17 +196,33 @@ def _is_task_still_pending(delivery: WorkflowTaskEmailDelivery) -> bool:
     if int(delivery.user_id) not in allowed_ids:
         return False
 
+    explicit_task = WorkflowStepTask.query.filter_by(
+        instance_id=delivery.instance_id,
+        step_order=delivery.step_order,
+        assignee_user_id=delivery.user_id,
+        status="PENDING",
+    ).first()
+    if explicit_task:
+        return True
+
     if (step.mode or "SEQUENTIAL").upper() == "PARALLEL_SYNC":
-        return WorkflowStepTask.query.filter_by(
-            instance_id=delivery.instance_id,
-            step_order=delivery.step_order,
-            assignee_user_id=delivery.user_id,
-            status="PENDING",
-        ).first() is not None
+        return False
 
     from workflow.engine import resolve_step_approver_user_ids
 
     return int(delivery.user_id) in resolve_step_approver_user_ids(step)
+
+
+def _pending_step_task_user_ids(workflow_instance: WorkflowInstance, step: WorkflowInstanceStep) -> set[int]:
+    return {
+        int(user_id)
+        for (user_id,) in db.session.query(WorkflowStepTask.assignee_user_id).filter_by(
+            instance_id=workflow_instance.id,
+            step_order=step.step_order,
+            status="PENDING",
+        ).all()
+        if user_id
+    }
 
 
 def _email_content(user: User, workflow_request: WorkflowRequest, delivery: WorkflowTaskEmailDelivery) -> tuple[str, str, str]:
@@ -291,20 +315,11 @@ def enqueue_daily_task_reminders(today: date | None = None) -> int:
         if not step or not workflow_request:
             continue
 
-        if (step.mode or "SEQUENTIAL").upper() == "PARALLEL_SYNC":
-            user_ids = {
-                int(user_id)
-                for (user_id,) in db.session.query(WorkflowStepTask.assignee_user_id).filter_by(
-                    instance_id=workflow_instance.id,
-                    step_order=step.step_order,
-                    status="PENDING",
-                ).all()
-                if user_id
-            }
-        else:
+        user_ids = _pending_step_task_user_ids(workflow_instance, step)
+        if (step.mode or "SEQUENTIAL").upper() != "PARALLEL_SYNC":
             from workflow.engine import resolve_step_approver_user_ids
 
-            user_ids = set(resolve_step_approver_user_ids(step))
+            user_ids.update(resolve_step_approver_user_ids(step))
 
         user_ids = set(filter_confidential_workflow_user_ids(workflow_request, user_ids))
         for user_id in user_ids:
@@ -412,9 +427,21 @@ def send_pending_task_emails(limit: int = 50, now: datetime | None = None) -> in
     return sent
 
 
-def run_workflow_task_email_cycle() -> dict[str, int]:
-    """Queue daily reminders, then deliver pending assignment/reminder emails."""
-    queued = enqueue_daily_task_reminders()
+def _reminder_now(now: datetime | None = None) -> datetime:
+    if now is not None:
+        return now
+    try:
+        return datetime.now(ZoneInfo(DAILY_REMINDER_TIMEZONE))
+    except Exception:
+        return datetime.now()
+
+
+def run_workflow_task_email_cycle(now: datetime | None = None) -> dict[str, int]:
+    """Deliver pending task mail and queue the daily reminder from 08:30 onward."""
+    reminder_now = _reminder_now(now)
+    queued = 0
+    if reminder_now.time() >= DAILY_REMINDER_TIME:
+        queued = enqueue_daily_task_reminders(reminder_now.date())
     if queued:
         db.session.commit()
     sent = send_pending_task_emails()

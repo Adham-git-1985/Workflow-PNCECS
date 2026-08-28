@@ -678,6 +678,7 @@ def _notify_users(
                 is_mirror=False,
                 source="workflow",
                 link_url=link_url,
+                email_delivery_mode="TASK_ASSIGNMENT" if task_assignment else "GENERAL",
             )
         )
 

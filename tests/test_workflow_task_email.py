@@ -1,5 +1,5 @@
 import unittest
-from datetime import date
+from datetime import date, datetime
 from unittest.mock import patch
 
 from flask import Flask
@@ -11,6 +11,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowStepTask,
     WorkflowTaskEmailDelivery,
 )
 from services.workflow_task_email import (
@@ -19,6 +20,7 @@ from services.workflow_task_email import (
     SENT,
     enqueue_daily_task_reminders,
     enqueue_task_assignment_emails,
+    run_workflow_task_email_cycle,
     send_pending_task_emails,
 )
 
@@ -146,6 +148,46 @@ class WorkflowTaskEmailTests(unittest.TestCase):
 
         messages = [call.args[0] for call in smtp_class.return_value.send_message.call_args_list]
         self.assertTrue(any("تذكير يومي" in message["Subject"] for message in messages))
+
+
+    def test_daily_reminder_includes_pending_mentioned_user(self):
+        mentioned = User(
+            email="mentioned@example.test",
+            name="Mentioned User",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        db.session.add(mentioned)
+        db.session.flush()
+        db.session.add(WorkflowStepTask(
+            instance_id=self.instance.id,
+            request_id=self.request.id,
+            step_order=1,
+            assignee_user_id=mentioned.id,
+            status="PENDING",
+            response="NONE",
+            note="MENTION_TASK",
+        ))
+        db.session.commit()
+
+        self.assertEqual(enqueue_daily_task_reminders(date(2026, 8, 28)), 2)
+        db.session.commit()
+        recipient_ids = {
+            row.user_id
+            for row in WorkflowTaskEmailDelivery.query.filter_by(
+                delivery_kind=DAILY_REMINDER,
+                delivery_date="2026-08-28",
+            ).all()
+        }
+        self.assertEqual(recipient_ids, {self.assignee.id, mentioned.id})
+
+    def test_daily_reminder_starts_at_0830(self):
+        with patch("services.workflow_task_email.send_pending_task_emails", return_value=0):
+            before_time = run_workflow_task_email_cycle(datetime(2026, 8, 28, 8, 29))
+            at_time = run_workflow_task_email_cycle(datetime(2026, 8, 28, 8, 30))
+
+        self.assertEqual(before_time["queued_reminders"], 0)
+        self.assertEqual(at_time["queued_reminders"], 1)
 
 
 if __name__ == "__main__":

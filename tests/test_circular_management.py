@@ -1,13 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import PortalCircular, PortalCircularAttachment, User, UserPermission
+from models import PortalCircular, PortalCircularAttachment, SystemSetting, User, UserPermission
 from portal import portal_bp
 from workflow import workflow_bp
 
@@ -145,6 +146,35 @@ class CircularManagementRouteTests(unittest.TestCase):
         self.assertIsNone(db.session.get(PortalCircularAttachment, self.attachment_id))
         self.assertFalse(self.attachment_path.exists())
         self.assertFalse(self.attachment_path.parent.exists())
+
+    def test_active_circular_sends_email_automatically_when_mail_is_ready(self):
+        db.session.add_all((
+            SystemSetting(key="EMAIL_CIRCULAR_ENABLED", value="1"),
+            SystemSetting(key="EMAIL_CIRCULAR_SMTP_HOST", value="smtp.example.test"),
+            SystemSetting(key="EMAIL_CIRCULAR_SMTP_PORT", value="25"),
+            SystemSetting(key="EMAIL_CIRCULAR_SECURITY", value="none"),
+            SystemSetting(key="EMAIL_CIRCULAR_FROM_EMAIL", value="masar.pncecs@gmail.com"),
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+            with patch(
+                "portal.routes._send_circular_to_email",
+                return_value=("success", "sent"),
+            ) as send_email:
+                response = client.post(
+                    "/portal/circulars/new",
+                    data={
+                        "title": "Automatic email circular",
+                        "body": "Circular body",
+                        "is_active": "1",
+                        "target_scope": "ALL",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 302)
+        send_email.assert_called_once()
 
 
 if __name__ == "__main__":

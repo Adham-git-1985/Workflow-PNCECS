@@ -4936,7 +4936,7 @@ def circular_new():
         is_urgent = (request.form.get("is_urgent") or "").strip() in ("1", "on", "true", "True")
         is_active = (request.form.get("is_active") or "").strip() in ("1", "on", "true", "True")
         send_whatsapp = (request.form.get("send_whatsapp") or "").strip() in ("1", "on", "true", "True")
-        send_email = (request.form.get("send_email") or "").strip() in ("1", "on", "true", "True")
+        send_email = bool(is_active and email_config.get("ready"))
         if not is_active:
             send_whatsapp = False
             send_email = False
@@ -5037,6 +5037,7 @@ def circular_new():
                     is_read=False,
                     is_mirror=False,
                     link_url=circular_link,
+                    email_delivery_mode="DIRECT_EMAIL",
                 )
                 for uid in user_ids
             ]

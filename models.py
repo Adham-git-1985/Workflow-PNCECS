@@ -5,7 +5,7 @@ import unicodedata
 from extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
-from sqlalchemy import func
+from sqlalchemy import event, func
 
 
 # ======================
@@ -825,6 +825,7 @@ class Notification(db.Model):
     # source of notification: 'workflow' or 'portal' (helps UI separation)
     source = db.Column(db.String(20), default="workflow", nullable=True)
     link_url = db.Column(db.String(500), nullable=True)
+    email_delivery_mode = db.Column(db.String(30), default="GENERAL", nullable=False)
 
     # ===== Read-receipts / tracking =====
     # event_key groups notifications that belong to the same emitted event.
@@ -1255,6 +1256,56 @@ class WorkflowTaskEmailDelivery(db.Model):
             "next_attempt_at",
             "created_at",
         ),
+    )
+
+
+class NotificationEmailDelivery(db.Model):
+    """Durable outgoing emails for new non-task portal/workflow notifications."""
+
+    __tablename__ = "notification_email_deliveries"
+
+    id = db.Column(db.Integer, primary_key=True)
+    notification_id = db.Column(db.Integer, db.ForeignKey("notification.id"), nullable=False, unique=True, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    next_attempt_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_error = db.Column(db.String(500), nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    notification = db.relationship("Notification", foreign_keys=[notification_id], lazy="joined")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+
+    __table_args__ = (
+        db.Index(
+            "ix_notification_email_delivery_pending",
+            "status",
+            "next_attempt_at",
+            "created_at",
+        ),
+    )
+
+
+@event.listens_for(Notification, "after_insert")
+def _queue_notification_email_delivery(mapper, connection, target):
+    """Queue every recipient notification except dedicated task-assignment mail."""
+    if bool(getattr(target, "is_mirror", False)):
+        return
+    if (getattr(target, "email_delivery_mode", "GENERAL") or "GENERAL").upper() in {
+        "TASK_ASSIGNMENT",
+        "DIRECT_EMAIL",
+    }:
+        return
+
+    connection.execute(
+        NotificationEmailDelivery.__table__.insert().values(
+            notification_id=target.id,
+            user_id=target.user_id,
+            status="PENDING",
+            attempt_count=0,
+            created_at=datetime.utcnow(),
+        )
     )
 
 

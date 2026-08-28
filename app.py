@@ -873,6 +873,13 @@ def _ensure_runtime_schema():
             if not _col_exists("notification", "link_url"):
                 _add_column_retry("notification", "link_url", "TEXT")
 
+            if not _col_exists("notification", "email_delivery_mode"):
+                _add_column_retry(
+                    "notification",
+                    "email_delivery_mode",
+                    "TEXT NOT NULL DEFAULT 'GENERAL'",
+                )
+
             if not _col_exists("inv_item", "variant"):
                 _add_column_retry("inv_item", "variant", "TEXT")
 
