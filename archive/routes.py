@@ -966,10 +966,14 @@ def start_file_workflow(file_id):
 def upload_file():
     if request.method == "POST":
 
-        # Support multiple file uploads (name="files") while keeping backward compatibility (name="file")
+        # Accept standard archive uploads and documents selected after scanning.
+        # Keep the legacy single-file field for older archive clients.
         files = []
         if request.files:
-            files = request.files.getlist("files") or []
+            files = (
+                (request.files.getlist("files") or [])
+                + (request.files.getlist("scanned_files") or [])
+            )
             if not files:
                 single = request.files.get("file")
                 if single:

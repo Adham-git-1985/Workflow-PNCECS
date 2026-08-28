@@ -13,10 +13,21 @@
 
         <form method="POST" enctype="multipart/form-data">
 
-            <div class="mb-3">
-                <label class="form-label">📄 الملفات</label>
-                <input type="file" name="files" class="form-control" multiple required>
-                <div class="form-text">يمكنك اختيار أكثر من ملف.</div>
+            <div class="row g-3 mb-3">
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveFiles">📄 الملفات</label>
+                    <input id="archiveFiles" type="file" name="files" class="form-control" multiple>
+                    <div class="form-text">يمكنك اختيار ملف واحد أو أكثر من جهازك.</div>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label" for="archiveScannedFiles">📠 المسح من السكانر أو الكاميرا</label>
+                    <input id="archiveScannedFiles" type="file" name="scanned_files" class="form-control"
+                           accept="application/pdf,image/*" capture="environment" multiple>
+                    <div class="form-text">للسكانر المكتبي: احفظ المسح من برنامج الجهاز ثم اختر ملف PDF أو الصورة هنا. قد يفتح الالتقاط المباشر على الأجهزة الداعمة.</div>
+                </div>
+                <div class="col-12">
+                    <div class="form-text">اختر ملفًا واحدًا على الأقل من أحد الحقلين.</div>
+                </div>
             </div>
 
             <div class="mb-4">

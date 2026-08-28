@@ -1,10 +1,15 @@
+import io
+import os
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask, g
 from flask_login import LoginManager
 
 from archive import archive_bp
+from archive import routes as archive_routes
 from extensions import db
 from models import ArchivedFile, AuditLog, FilePermission, User
 
@@ -144,6 +149,37 @@ class ArchiveDeletionRouteTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertFalse(db.session.get(ArchivedFile, file_id).is_deleted)
+
+    def test_scanned_file_is_saved_as_an_archive_upload(self):
+        with tempfile.TemporaryDirectory() as storage_dir:
+            with self.app.test_client() as client:
+                self._login(client, self.owner.id)
+                with patch.object(archive_routes, "BASE_STORAGE", storage_dir):
+                    response = client.post(
+                        "/archive/upload",
+                        data={
+                            "description": "وثيقة ممسوحة",
+                            "scanned_files": (io.BytesIO(b"scanned document"), "scan.pdf"),
+                        },
+                        content_type="multipart/form-data",
+                    )
+
+            self.assertEqual(response.status_code, 302)
+            uploaded = ArchivedFile.query.one()
+            self.assertEqual(uploaded.original_name, "scan.pdf")
+            self.assertEqual(uploaded.description, "وثيقة ممسوحة")
+            self.assertTrue(os.path.isfile(uploaded.file_path))
+
+    def test_archive_upload_page_offers_a_scanner_field(self):
+        template = (
+            Path(__file__).resolve().parents[1]
+            / "templates"
+            / "archive"
+            / "upload.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('name="scanned_files"', template)
+        self.assertIn('accept="application/pdf,image/*"', template)
 
 
 if __name__ == "__main__":
