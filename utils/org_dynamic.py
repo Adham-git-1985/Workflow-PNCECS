@@ -321,6 +321,63 @@ def resolve_user_org_node_id(user) -> int | None:
     return None
 
 
+def get_user_org_hierarchy_level(user) -> int | None:
+    """Return the user's highest active administrative level.
+
+    The root node is level 0; each child level increases by one. A user may
+    have more than one organizational position, including a manager or deputy
+    assignment. Their highest position is authoritative for actions that flow
+    down the administrative hierarchy.
+    """
+    try:
+        user_id = int(getattr(user, "id", 0) or 0)
+    except (TypeError, ValueError):
+        return None
+    if not user_id:
+        return None
+
+    node_ids: set[int] = set()
+    try:
+        assignments = (
+            db.session.query(OrgNodeAssignment.node_id)
+            .join(OrgNode, OrgNodeAssignment.node_id == OrgNode.id)
+            .filter(
+                OrgNodeAssignment.user_id == user_id,
+                OrgNode.is_active.is_(True),
+            )
+            .all()
+        )
+        node_ids.update(int(node_id) for (node_id,) in assignments if node_id)
+    except Exception:
+        pass
+
+    try:
+        managed_nodes = (
+            db.session.query(OrgNodeManager.node_id)
+            .join(OrgNode, OrgNodeManager.node_id == OrgNode.id)
+            .filter(
+                (OrgNodeManager.manager_user_id == user_id)
+                | (OrgNodeManager.deputy_user_id == user_id),
+                OrgNode.is_active.is_(True),
+            )
+            .all()
+        )
+        node_ids.update(int(node_id) for (node_id,) in managed_nodes if node_id)
+    except Exception:
+        pass
+
+    resolved_node_id = resolve_user_org_node_id(user)
+    if resolved_node_id:
+        node_ids.add(int(resolved_node_id))
+
+    levels = []
+    for node_id in node_ids:
+        ancestor_ids = get_node_ancestor_ids(node_id)
+        if ancestor_ids:
+            levels.append(len(ancestor_ids) - 1)
+    return min(levels) if levels else None
+
+
 def build_chart_tree(include_people: bool = False) -> list[dict]:
     """Build nested dict tree for UI/exports.
 

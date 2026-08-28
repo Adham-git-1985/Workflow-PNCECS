@@ -114,7 +114,11 @@ from models import (
 
 )
 
-from utils.org_dynamic import resolve_user_org_node_id, get_node_ancestor_ids
+from utils.org_dynamic import (
+    get_node_ancestor_ids,
+    get_user_org_hierarchy_level,
+    resolve_user_org_node_id,
+)
 from workflow.dynamic_paths import (
     FINAL_SECRETARY_GENERAL_REF,
     build_dynamic_target_path,
@@ -279,6 +283,42 @@ def _role_variants(role: str | None) -> list[str]:
 
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
 MENTION_TASK_NOTE = "تمت الإضافة عبر المنشن"
+MENTION_HIERARCHY_DENIED = "لا تسمح صلاحية المنشن بالتوجيه إلى مستوى إداري أعلى"
+
+
+def _can_mention_user_by_hierarchy(actor: User, target: User) -> bool:
+    """Allow mentions only to the same or a lower administrative level."""
+    try:
+        if int(actor.id) == int(target.id):
+            return True
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    actor_level = get_user_org_hierarchy_level(actor)
+    target_level = get_user_org_hierarchy_level(target)
+    return (
+        actor_level is not None
+        and target_level is not None
+        and actor_level <= target_level
+    )
+
+
+def _filter_mention_users_by_hierarchy(actor: User, users: list[User]) -> tuple[list[User], list[User]]:
+    """Return permitted and blocked mention targets for an actor."""
+    allowed: list[User] = []
+    blocked: list[User] = []
+    actor_id = int(getattr(actor, "id", 0) or 0)
+
+    for user in users or []:
+        if not user or not getattr(user, "id", None):
+            continue
+        if int(user.id) == actor_id:
+            continue
+        if _can_mention_user_by_hierarchy(actor, user):
+            allowed.append(user)
+        else:
+            blocked.append(user)
+    return allowed, blocked
 
 
 def _mention_tokens(text: str | None) -> list[str]:
@@ -468,8 +508,9 @@ def mention_search():
                 User.role.ilike(like),
                 User.job_title.ilike(like),
             ))
-        users = user_query.order_by(User.name.asc(), User.email.asc()).limit(limit).all()
-        for u in users:
+        users = user_query.order_by(User.name.asc(), User.email.asc()).limit(limit * 10).all()
+        allowed_users, _blocked_users = _filter_mention_users_by_hierarchy(current_user, users)
+        for u in allowed_users[:limit]:
             email = (u.email or "").strip()
             label = (u.full_name or email or f"User #{u.id}").strip()
             results.append({
@@ -495,11 +536,17 @@ def mention_search():
             code = (r.code or "").strip()
             if not code:
                 continue
+            allowed_users, _blocked_users = _filter_mention_users_by_hierarchy(
+                current_user,
+                _resolve_role_mention_users(code),
+            )
+            if not allowed_users:
+                continue
             label = (r.name_ar or r.name_en or code).strip()
             results.append({
                 "type": "role",
                 "label": label,
-                "detail": code,
+                "detail": f"{code} · {len(allowed_users)} مستخدم مسموح",
                 "insert": f"@role:{code} ",
             })
     except Exception:
@@ -580,6 +627,16 @@ def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, n
     current step so the request appears in "مهامي".
     """
     mentioned_users, unresolved = _resolve_workflow_mentions(note)
+    if not mentioned_users:
+        return [], unresolved
+
+    mentioned_users, blocked_users = _filter_mention_users_by_hierarchy(
+        current_user,
+        mentioned_users,
+    )
+    for user in blocked_users:
+        label = user.full_name or user.email or f"مستخدم #{user.id}"
+        unresolved.append(f"{label} ({MENTION_HIERARCHY_DENIED})")
     if not mentioned_users:
         return [], unresolved
 
