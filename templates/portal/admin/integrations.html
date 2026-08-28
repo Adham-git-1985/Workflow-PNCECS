@@ -181,15 +181,16 @@
       </div>
 
       <div class="p-3 border rounded-3 mb-3">
-        <h6 class="mb-3"><i class="bi bi-envelope-at"></i> البريد الإلكتروني للتعميمات</h6>
+        <h6 class="mb-3"><i class="bi bi-envelope-at"></i> البريد الإلكتروني للتعاميم وإشعارات المهام</h6>
         <form method="post" class="row g-2">
           <input type="hidden" name="action" value="email_circulars">
 
           <div class="col-12">
             <div class="form-check form-switch">
               <input class="form-check-input" type="checkbox" role="switch" id="email_enabled" name="email_enabled" value="1" {% if mail_cfg.enabled %}checked{% endif %}>
-              <label class="form-check-label" for="email_enabled">تفعيل إرسال التعميمات بالبريد الإلكتروني</label>
+              <label class="form-check-label" for="email_enabled">تفعيل إرسال التعميمات وإشعارات المهام بالبريد الإلكتروني</label>
             </div>
+            <div class="form-text">تصل رسالة عند إسناد مهمة، ثم تذكير يومي ما دامت المهمة بانتظار الإجراء.</div>
           </div>
 
           <div class="col-md-8">
@@ -240,6 +241,11 @@
           <div class="col-12">
             <label class="form-label">عنوان الرد</label>
             <input class="form-control" name="email_reply_to" value="{{ mail_cfg.reply_to or '' }}" placeholder="اختياري" dir="ltr">
+          </div>
+          <div class="col-12">
+            <label class="form-label">رابط النظام العام في رسائل المهام</label>
+            <input class="form-control" name="email_public_url" value="{{ mail_cfg.public_url or '' }}" placeholder="http://10.10.10.204:5000" dir="ltr">
+            <div class="form-text">اكتب الرابط الذي يصل إليه الموظفون؛ يُستخدم لإنشاء رابط مباشر للمهمة في البريد.</div>
           </div>
 
           <div class="col-12">

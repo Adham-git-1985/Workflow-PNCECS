@@ -645,6 +645,9 @@ def _notify_users(
     actor_id=None,
     track_for_actor=False,
     req: WorkflowRequest | None = None,
+    task_assignment: bool = False,
+    step_order: int | None = None,
+    instance_id: int | None = None,
 ):
     """
     Your Notification model has: message, type, role, is_read, created_at
@@ -676,6 +679,17 @@ def _notify_users(
                 source="workflow",
                 link_url=link_url,
             )
+        )
+
+    if task_assignment and req is not None and step_order:
+        from services.workflow_task_email import enqueue_task_assignment_emails
+
+        enqueue_task_assignment_emails(
+            req,
+            unique_ids,
+            step_order=int(step_order),
+            instance_id=instance_id,
+            link_url=link_url,
         )
 
     # Sender mirror notification (tracks recipients' read)
@@ -912,6 +926,9 @@ def _ensure_parallel_tasks(
             f"مهمة متزامنة للطلب #{req.id}: يرجى الرد (للتوثيق فقط).",
             ntype="WORKFLOW",
             req=req,
+            task_assignment=True,
+            step_order=step.step_order,
+            instance_id=inst.id,
         )
         if not getattr(step, "parallel_notified_at", None):
             step.parallel_notified_at = now
@@ -1202,6 +1219,9 @@ def start_workflow_for_request(
                 actor_id=req.requester_id,
                 track_for_actor=True,
                 req=req,
+                task_assignment=True,
+                step_order=first.step_order,
+                instance_id=inst.id,
             )
 
     if auto_commit:
@@ -1317,6 +1337,9 @@ def _bypass_parallel_task_legacy(
                     actor_id=req.requester_id,
                     track_for_actor=True,
                     req=req,
+                    task_assignment=True,
+                    step_order=next_step.step_order,
+                    instance_id=inst.id,
                 )
 
             _notify_users(
@@ -1444,6 +1467,9 @@ def bypass_parallel_task(
                     actor_id=req.requester_id,
                     track_for_actor=True,
                     req=req,
+                    task_assignment=True,
+                    step_order=next_step.step_order,
+                    instance_id=inst.id,
                 )
 
     if auto_commit:
@@ -1566,6 +1592,9 @@ def bypass_all_parallel_tasks(
                     actor_id=req.requester_id,
                     track_for_actor=True,
                     req=req,
+                    task_assignment=True,
+                    step_order=next_step.step_order,
+                    instance_id=inst.id,
                 )
 
     if auto_commit:
@@ -1732,6 +1761,9 @@ def decide_step(
                         actor_id=actor_user_id,
                         track_for_actor=True,
                         req=req,
+                        task_assignment=True,
+                        step_order=next_step.step_order,
+                        instance_id=inst.id,
                     )
 
         if auto_commit:
@@ -2079,6 +2111,9 @@ def decide_step(
             actor_id=req.requester_id,
             track_for_actor=True,
             req=req,
+            task_assignment=True,
+            step_order=next_step.step_order,
+            instance_id=inst.id,
         )
 
     # ✅ Notify followers (previous approvers)

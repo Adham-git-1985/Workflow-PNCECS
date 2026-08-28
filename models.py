@@ -1210,6 +1210,54 @@ class WorkflowStepTask(db.Model):
     # (No SLA fields yet for PARALLEL_SYNC tasks)
 
 
+class WorkflowTaskEmailDelivery(db.Model):
+    """Durable outgoing emails for workflow task assignments and reminders."""
+
+    __tablename__ = "workflow_task_email_deliveries"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"), nullable=False, index=True)
+    instance_id = db.Column(db.Integer, db.ForeignKey("workflow_instances.id"), nullable=False, index=True)
+    step_order = db.Column(db.Integer, nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+
+    # ASSIGNMENT is sent once when a task reaches the user. DAILY_REMINDER is
+    # uniquely scoped to its ISO calendar date.
+    delivery_kind = db.Column(db.String(20), nullable=False, default="ASSIGNMENT")
+    delivery_date = db.Column(db.String(10), nullable=False, default="")
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+
+    link_url = db.Column(db.String(500), nullable=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    next_attempt_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_error = db.Column(db.String(500), nullable=True)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    request = db.relationship("WorkflowRequest", foreign_keys=[request_id], lazy="joined")
+    instance = db.relationship("WorkflowInstance", foreign_keys=[instance_id], lazy="joined")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "request_id",
+            "instance_id",
+            "step_order",
+            "user_id",
+            "delivery_kind",
+            "delivery_date",
+            name="uq_workflow_task_email_delivery",
+        ),
+        db.Index(
+            "ix_workflow_task_email_delivery_pending",
+            "status",
+            "next_attempt_at",
+            "created_at",
+        ),
+    )
+
+
 # ======================
 # Attachments: link workflow requests to archived files
 # ======================

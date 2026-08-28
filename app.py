@@ -1078,6 +1078,7 @@ try:
     from portal.hr_alerts_job import start_hr_alerts_job
     from portal.corr_deadlines_job import start_correspondence_deadline_job
     from jobs.backup_job import start_automatic_backup_job
+    from jobs.workflow_task_email_job import start_workflow_task_email_job
 
     _jobs_started = False
 
@@ -1100,6 +1101,7 @@ try:
             start_timeclock_auto_sync(app)
             start_hr_alerts_job(app)
             start_correspondence_deadline_job(app)
+            start_workflow_task_email_job(app)
         except Exception:
             # Keep serving even if job fails
             app.logger.exception("Failed to start a background job")
@@ -1624,7 +1626,9 @@ if __name__ == "__main__":
     # Start before the web server begins accepting requests so a missed 15:00
     # backup is recovered immediately after the application process starts.
     from jobs.backup_job import start_automatic_backup_job
+    from jobs.workflow_task_email_job import start_workflow_task_email_job
     start_automatic_backup_job(app)
+    start_workflow_task_email_job(app)
 
     if _app_environment == "development":
         app.run(

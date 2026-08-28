@@ -4224,6 +4224,7 @@ EMAIL_CIRCULAR_REPLY_TO = "EMAIL_CIRCULAR_REPLY_TO"
 EMAIL_CIRCULAR_BATCH_SIZE = "EMAIL_CIRCULAR_BATCH_SIZE"
 EMAIL_CIRCULAR_LAST_STATUS = "EMAIL_CIRCULAR_LAST_STATUS"
 EMAIL_CIRCULAR_LAST_SENT_AT = "EMAIL_CIRCULAR_LAST_SENT_AT"
+EMAIL_CIRCULAR_PUBLIC_URL = "EMAIL_CIRCULAR_PUBLIC_URL"
 EMAIL_CIRCULAR_PASSWORD_ENV = "PORTAL_EMAIL_PASSWORD"
 
 CIRCULAR_ATTACHMENT_MAX_FILES = 10
@@ -4437,6 +4438,9 @@ def _email_circular_settings(*, include_secrets: bool = False) -> dict:
         batch_size = max(1, min(int(_setting_get(EMAIL_CIRCULAR_BATCH_SIZE, "50") or "50"), 200))
     except Exception:
         batch_size = 50
+    public_url = (_setting_get(EMAIL_CIRCULAR_PUBLIC_URL, "") or "").strip().rstrip("/")
+    if public_url and not re.match(r"^https?://[^/]+(?:/.*)?$", public_url, flags=re.IGNORECASE):
+        public_url = ""
 
     ready = enabled and bool(host and port and from_email and (not username or password))
     cfg = {
@@ -4450,6 +4454,7 @@ def _email_circular_settings(*, include_secrets: bool = False) -> dict:
         "from_email": from_email,
         "from_name": from_name,
         "reply_to": reply_to,
+        "public_url": public_url,
         "batch_size": batch_size,
         "last_status": _setting_get(EMAIL_CIRCULAR_LAST_STATUS, "") or "",
         "last_sent_at": _setting_get(EMAIL_CIRCULAR_LAST_SENT_AT, "") or "",
@@ -19573,6 +19578,10 @@ def portal_admin_integrations():
             from_email = _valid_email_address(request.form.get('email_from_email')) or username
             from_name = (request.form.get('email_from_name') or 'البوابة الإدارية').strip()
             reply_to = _valid_email_address(request.form.get('email_reply_to')) or ''
+            public_url = (request.form.get('email_public_url') or '').strip().rstrip('/')
+            if public_url and not re.match(r'^https?://[^/]+(?:/.*)?$', public_url, flags=re.IGNORECASE):
+                public_url = ''
+                flash('رابط النظام العام يجب أن يبدأ بـ http:// أو https://', 'warning')
             batch_size_raw = (request.form.get('email_batch_size') or '50').strip()
             try:
                 batch_size = max(1, min(int(batch_size_raw), 200))
@@ -19590,6 +19599,7 @@ def portal_admin_integrations():
             _setting_set(EMAIL_CIRCULAR_FROM_EMAIL, from_email)
             _setting_set(EMAIL_CIRCULAR_FROM_NAME, from_name[:255])
             _setting_set(EMAIL_CIRCULAR_REPLY_TO, reply_to)
+            _setting_set(EMAIL_CIRCULAR_PUBLIC_URL, public_url)
             _setting_set(EMAIL_CIRCULAR_BATCH_SIZE, str(batch_size))
             if password or clear_password:
                 _setting_set(EMAIL_CIRCULAR_PASSWORD, password)
@@ -19601,7 +19611,7 @@ def portal_admin_integrations():
                 target_id=0,
             )
             db.session.commit()
-            flash('تم حفظ إعدادات البريد الإلكتروني للتعميمات.', 'success')
+            flash('تم حفظ إعدادات البريد الإلكتروني للتعاميم وإشعارات المهام.', 'success')
             return redirect(url_for('portal.portal_admin_integrations'))
 
         file_path = (request.form.get('timeclock_file_path') or '').strip()
