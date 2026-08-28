@@ -224,6 +224,35 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertIn(f"#{ticket.id}", notification.message)
         self.assertEqual(notification.link_url, f"/portal/trouble-tickets/{ticket.id}")
 
+    def test_support_ticket_search_matches_requester_email(self):
+        matching_ticket = TroubleTicket(
+            requester_id=self.other_user.id,
+            subject="Printer connection issue",
+            description="The office printer is unavailable.",
+            category="HARDWARE",
+            priority="NORMAL",
+            status="OPEN",
+        )
+        non_matching_ticket = TroubleTicket(
+            requester_id=self.user.id,
+            subject="Network access issue",
+            description="The network connection is slow.",
+            category="NETWORK",
+            priority="NORMAL",
+            status="OPEN",
+        )
+        db.session.add_all((matching_ticket, non_matching_ticket))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.get("/portal/trouble-tickets?scope=all&q=other-notifications%40example.test")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("Printer connection issue", body)
+        self.assertNotIn("Network access issue", body)
+
     def test_workflow_events_store_the_request_destination(self):
         emit_event(
             actor_id=self.user.id,

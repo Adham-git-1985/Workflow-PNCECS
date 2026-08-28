@@ -3974,6 +3974,7 @@ def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
 @login_required
 def trouble_tickets():
     status = (request.args.get("status") or "").strip().upper()
+    search_query = (request.args.get("q") or "").strip()[:160]
     is_manager = _can_manage_trouble_tickets()
     scope = (request.args.get("scope") or ("all" if is_manager else "mine")).strip().lower()
     if not is_manager:
@@ -3988,6 +3989,23 @@ def trouble_tickets():
         scope = "all"
     if status in TROUBLE_TICKET_STATUSES:
         query = query.filter(TroubleTicket.status == status)
+    if search_query:
+        for term in (part for part in re.split(r"\s+", search_query) if part):
+            matching_fields = [
+                TroubleTicket.subject.ilike(f"%{term}%"),
+                TroubleTicket.description.ilike(f"%{term}%"),
+                TroubleTicket.requester.has(or_(
+                    User.name.ilike(f"%{term}%"),
+                    User.email.ilike(f"%{term}%"),
+                )),
+                TroubleTicket.assigned_to.has(or_(
+                    User.name.ilike(f"%{term}%"),
+                    User.email.ilike(f"%{term}%"),
+                )),
+            ]
+            if term.isdigit():
+                matching_fields.append(TroubleTicket.id == int(term))
+            query = query.filter(or_(*matching_fields))
     rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
     return render_template(
         "portal/trouble_tickets/list.html",
@@ -3997,6 +4015,7 @@ def trouble_tickets():
         is_manager=is_manager,
         active_scope=scope,
         show_requester=is_manager and scope != "mine",
+        search_query=search_query,
     )
 
 

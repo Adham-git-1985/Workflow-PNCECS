@@ -18,20 +18,33 @@
   {% if is_manager %}
   <div class="d-flex flex-wrap gap-2 mt-4">
     <a class="btn btn-sm {{ 'btn-primary' if active_scope == 'all' else 'btn-outline-primary' }}"
-       href="{{ url_for('portal.trouble_tickets', scope='all', status=active_status) }}">جميع التذاكر</a>
+       href="{{ url_for('portal.trouble_tickets', scope='all', status=active_status, q=search_query) }}">جميع التذاكر</a>
     <a class="btn btn-sm {{ 'btn-primary' if active_scope == 'assigned' else 'btn-outline-primary' }}"
-       href="{{ url_for('portal.trouble_tickets', scope='assigned', status=active_status) }}">المسندة إليّ</a>
+       href="{{ url_for('portal.trouble_tickets', scope='assigned', status=active_status, q=search_query) }}">المسندة إليّ</a>
     <a class="btn btn-sm {{ 'btn-primary' if active_scope == 'mine' else 'btn-outline-primary' }}"
-       href="{{ url_for('portal.trouble_tickets', scope='mine', status=active_status) }}">تذاكري التي أرسلتها</a>
+       href="{{ url_for('portal.trouble_tickets', scope='mine', status=active_status, q=search_query) }}">تذاكري التي أرسلتها</a>
   </div>
   {% endif %}
 
+  <form method="get" class="row g-2 mt-4">
+    <input type="hidden" name="scope" value="{{ active_scope }}">
+    {% if active_status %}<input type="hidden" name="status" value="{{ active_status }}">{% endif %}
+    <div class="col-md-9">
+      <label class="visually-hidden" for="trouble-ticket-search">بحث</label>
+      <input class="form-control" id="trouble-ticket-search" type="search" name="q" value="{{ search_query or '' }}" placeholder="بحث برقم التذكرة، الموضوع، الوصف، الموظف أو البريد">
+    </div>
+    <div class="col-md-3 d-flex gap-2">
+      <button class="btn btn-primary flex-grow-1" type="submit"><i class="bi bi-search"></i> بحث</button>
+      {% if search_query %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.trouble_tickets', scope=active_scope, status=active_status) }}">إزالة</a>{% endif %}
+    </div>
+  </form>
+
   <div class="d-flex flex-wrap gap-2 my-4">
     <a class="btn btn-sm {{ 'btn-dark' if not active_status else 'btn-outline-secondary' }}"
-       href="{{ url_for('portal.trouble_tickets', scope=active_scope) }}">كل الحالات</a>
+       href="{{ url_for('portal.trouble_tickets', scope=active_scope, q=search_query) }}">كل الحالات</a>
     {% for code, label in statuses.items() %}
       <a class="btn btn-sm {{ 'btn-dark' if active_status == code else 'btn-outline-secondary' }}"
-         href="{{ url_for('portal.trouble_tickets', scope=active_scope, status=code) }}">{{ label }}</a>
+         href="{{ url_for('portal.trouble_tickets', scope=active_scope, status=code, q=search_query) }}">{{ label }}</a>
     {% endfor %}
   </div>
 

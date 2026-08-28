@@ -63,7 +63,7 @@ def build_employee_word_form() -> bytes:
     normal = doc.styles["Normal"]
     normal.font.name = "Arial"; normal._element.rPr.rFonts.set(qn("w:ascii"), "Arial"); normal.font.size = Pt(10)
     title = doc.add_paragraph(); title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    title.add_run("استبيان استكمال ملف الموظف — نموذج Word تفاعلي").bold = True
+    title.add_run("تحديث بيانات الموظف — نموذج Word تفاعلي").bold = True
     doc.add_paragraph(f"{WORD_SCHEMA} | اكتب داخل الحقول فقط، ولا تغيّر عناوين الحقول. بعد الحفظ بصيغة DOCX سلّم الملف للموارد البشرية.")
     for title_text, fields in SECTIONS:
         doc.add_heading(title_text, level=1)

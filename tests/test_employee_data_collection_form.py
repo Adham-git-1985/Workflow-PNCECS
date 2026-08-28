@@ -31,6 +31,15 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
         self.assertIn("@login_required", route_block)
         self.assertNotIn("@_perm(HR_EMP_READ)", route_block)
 
+    def test_form_and_print_link_use_employee_data_update_label(self):
+        employees = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "employees.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("تحديث بيانات الموظف", self.template)
+        self.assertIn("طباعة نموذج تحديث بيانات الموظف", employees)
+        self.assertNotIn("استبيان استكمال ملف الموظف", self.template)
+
     def test_form_is_a_six_page_a4_print_document(self):
         self.assertIn("@page", self.template)
         self.assertIn("size: A4 portrait", self.template)
