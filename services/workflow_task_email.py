@@ -107,16 +107,21 @@ def _mail_config() -> dict:
 def _task_url(request_id: int, link_url: str | None = None) -> str:
     path = link_url or notification_target_path("WorkflowRequest", request_id) or ""
     parsed = urlsplit(path)
-    if parsed.scheme in {"http", "https"} and parsed.netloc:
-        return path
+    absolute_url = path if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+    if absolute_url:
+        path = parsed.path or notification_target_path("WorkflowRequest", request_id) or ""
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
 
+    # A configured public URL takes priority over the address used by the
+    # browser that happened to create the task (for example, 127.0.0.1).
     base_url = _valid_public_url(_setting(PUBLIC_URL_SETTING))
     if not base_url and has_request_context():
         base_url = _valid_public_url(request.url_root)
     if not base_url:
         base_url = _valid_public_url(current_app.config.get("PUBLIC_APP_URL"))
     if not base_url:
-        return path
+        return absolute_url or path
     return urljoin(f"{base_url}/", path.lstrip("/"))
 
 

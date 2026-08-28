@@ -103,6 +103,7 @@ class WorkflowTaskEmailTests(unittest.TestCase):
             [self.assignee.id],
             step_order=1,
             instance_id=self.instance.id,
+            link_url=f"http://127.0.0.1:5000/workflow/request/{self.request.id}",
         )
         db.session.commit()
         self.assertEqual(queued, 1)
