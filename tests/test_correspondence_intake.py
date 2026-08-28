@@ -442,6 +442,9 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         template = (
             project_root / "templates" / "workflow" / "new_request.html"
         ).read_text(encoding="utf-8")
+        request_view = (
+            project_root / "templates" / "workflow" / "view_request.html"
+        ).read_text(encoding="utf-8")
         routes = (project_root / "workflow" / "routes.py").read_text(encoding="utf-8")
         searchable_select = (
             project_root / "static" / "js" / "searchable_select.js"
@@ -451,9 +454,16 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn('id="applyWorkflowSuggestions"', template)
         self.assertIn("تفريغ البيانات على نموذج المسار", template)
         self.assertIn('name="files"', template)
+        self.assertIn('id="workflowScannedFiles"', template)
+        self.assertIn('name="scanned_files"', template)
+        self.assertIn('accept="application/pdf,image/*"', template)
+        self.assertIn("selectedAttachmentForAnalysis()", template)
+        self.assertIn("المسار منشأً مسبقًا أو ديناميكيًا", template)
         self.assertIn('data-max-bytes="{{ intake_max_bytes }}"', template)
         self.assertIn('route("/new/analyze-attachment"', routes)
         self.assertIn("analyze_workflow_attachment(", routes)
+        self.assertIn('_uploaded_files_from_request("files", "scanned_files")', routes)
+        self.assertGreaterEqual(request_view.count('name="scanned_files"'), 2)
         self.assertIn('id="workflowAnalysisTools"', template)
         self.assertIn('data-bs-target="#workflowAnalysisTools"', template)
         self.assertIn('name="request_type_name"', template)

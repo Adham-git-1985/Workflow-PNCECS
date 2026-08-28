@@ -3970,6 +3970,29 @@ def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
     return mapping.get((value or "").upper(), value or "-")
 
 
+def _filter_trouble_ticket_search(query, search_query: str):
+    if not search_query:
+        return query
+
+    for term in (part for part in re.split(r"\s+", search_query) if part):
+        matching_fields = [
+            TroubleTicket.subject.ilike(f"%{term}%"),
+            TroubleTicket.description.ilike(f"%{term}%"),
+            TroubleTicket.requester.has(or_(
+                User.name.ilike(f"%{term}%"),
+                User.email.ilike(f"%{term}%"),
+            )),
+            TroubleTicket.assigned_to.has(or_(
+                User.name.ilike(f"%{term}%"),
+                User.email.ilike(f"%{term}%"),
+            )),
+        ]
+        if term.isdigit():
+            matching_fields.append(TroubleTicket.id == int(term))
+        query = query.filter(or_(*matching_fields))
+    return query
+
+
 @portal_bp.route("/trouble-tickets")
 @login_required
 def trouble_tickets():
@@ -3989,23 +4012,7 @@ def trouble_tickets():
         scope = "all"
     if status in TROUBLE_TICKET_STATUSES:
         query = query.filter(TroubleTicket.status == status)
-    if search_query:
-        for term in (part for part in re.split(r"\s+", search_query) if part):
-            matching_fields = [
-                TroubleTicket.subject.ilike(f"%{term}%"),
-                TroubleTicket.description.ilike(f"%{term}%"),
-                TroubleTicket.requester.has(or_(
-                    User.name.ilike(f"%{term}%"),
-                    User.email.ilike(f"%{term}%"),
-                )),
-                TroubleTicket.assigned_to.has(or_(
-                    User.name.ilike(f"%{term}%"),
-                    User.email.ilike(f"%{term}%"),
-                )),
-            ]
-            if term.isdigit():
-                matching_fields.append(TroubleTicket.id == int(term))
-            query = query.filter(or_(*matching_fields))
+    query = _filter_trouble_ticket_search(query, search_query)
     rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
     return render_template(
         "portal/trouble_tickets/list.html",
@@ -4202,11 +4209,19 @@ def trouble_tickets_manage():
     if not _can_manage_trouble_tickets():
         abort(403)
     status = (request.args.get("status") or "").strip().upper()
+    search_query = (request.args.get("q") or "").strip()[:160]
     query = TroubleTicket.query
     if status in TROUBLE_TICKET_STATUSES:
         query = query.filter(TroubleTicket.status == status)
+    query = _filter_trouble_ticket_search(query, search_query)
     rows = query.order_by(TroubleTicket.updated_at.desc(), TroubleTicket.id.desc()).all()
-    return render_template("portal/trouble_tickets/manage.html", rows=rows, statuses=TROUBLE_TICKET_STATUSES, active_status=status)
+    return render_template(
+        "portal/trouble_tickets/manage.html",
+        rows=rows,
+        statuses=TROUBLE_TICKET_STATUSES,
+        active_status=status,
+        search_query=search_query,
+    )
 
 
 # -------------------------

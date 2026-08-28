@@ -746,8 +746,17 @@
 
           <div class="mb-3">
             <label class="form-label">📎 مرفقات (اختياري)</label>
-            <input type="file" name="files" multiple class="form-control">
-            <div class="form-text">يمكنك رفع أكثر من ملف مع الإجراء.</div>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <div class="form-text mt-0 mb-1">رفع من الجهاز</div>
+                <input type="file" name="files" multiple class="form-control" aria-label="رفع مرفقات من الجهاز">
+              </div>
+              <div class="col-md-6">
+                <div class="form-text mt-0 mb-1">المسح من السكانر أو الكاميرا</div>
+                <input type="file" name="scanned_files" multiple class="form-control" accept="application/pdf,image/*" capture="environment" aria-label="مسح مرفقات من السكانر أو الكاميرا">
+              </div>
+            </div>
+            <div class="form-text">يمكنك رفع ملفات أو اختيار PDF/صورة ممسوحة من السكانر مع الإجراء.</div>
           </div>
 
           <div class="d-flex gap-2">
@@ -793,8 +802,17 @@
 
           <div class="mb-3">
             <label class="form-label">📎 مرفقات (اختياري)</label>
-            <input type="file" name="files" multiple class="form-control">
-            <div class="form-text">يمكنك رفع أكثر من ملف مع التعليق/الرد.</div>
+            <div class="row g-2">
+              <div class="col-md-6">
+                <div class="form-text mt-0 mb-1">رفع من الجهاز</div>
+                <input type="file" name="files" multiple class="form-control" aria-label="رفع مرفقات من الجهاز">
+              </div>
+              <div class="col-md-6">
+                <div class="form-text mt-0 mb-1">المسح من السكانر أو الكاميرا</div>
+                <input type="file" name="scanned_files" multiple class="form-control" accept="application/pdf,image/*" capture="environment" aria-label="مسح مرفقات من السكانر أو الكاميرا">
+              </div>
+            </div>
+            <div class="form-text">يمكنك رفع ملفات أو اختيار PDF/صورة ممسوحة من السكانر مع التعليق/الرد.</div>
           </div>
 
           {% if current_user.id == req.requester_id %}

@@ -253,6 +253,35 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertIn("Printer connection issue", body)
         self.assertNotIn("Network access issue", body)
 
+    def test_support_ticket_management_search_preserves_status_filter(self):
+        matching_ticket = TroubleTicket(
+            requester_id=self.other_user.id,
+            subject="Scanner attachment is unavailable",
+            description="The scanner cannot upload a PDF.",
+            category="HARDWARE",
+            priority="HIGH",
+            status="OPEN",
+        )
+        non_matching_ticket = TroubleTicket(
+            requester_id=self.other_user.id,
+            subject="Scanner attachment is unavailable",
+            description="The scanner cannot upload a PDF.",
+            category="HARDWARE",
+            priority="HIGH",
+            status="CLOSED",
+        )
+        db.session.add_all((matching_ticket, non_matching_ticket))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.get("/portal/trouble-tickets/manage?status=OPEN&q=scanner")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn(f"#{matching_ticket.id}", body)
+        self.assertNotIn(f"#{non_matching_ticket.id}", body)
+
     def test_workflow_events_store_the_request_destination(self):
         emit_event(
             actor_id=self.user.id,

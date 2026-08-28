@@ -679,10 +679,21 @@
       </div>
 
       <div class="col-12">
-        <label class="form-label fw-bold" for="workflowRequestFiles">مرفقات الطلب <span class="text-muted fw-normal">(اختياري)</span></label>
-        <input type="file" name="files" class="form-control" id="workflowRequestFiles" multiple>
+        <div class="row g-3">
+          <div class="col-md-6">
+            <label class="form-label fw-bold" for="workflowRequestFiles">مرفقات الطلب <span class="text-muted fw-normal">(اختياري)</span></label>
+            <input type="file" name="files" class="form-control" id="workflowRequestFiles" multiple>
+            <div class="form-text">اختر ملفات محفوظة على جهازك.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-bold" for="workflowScannedFiles">المسح من السكانر أو الكاميرا <span class="text-muted fw-normal">(اختياري)</span></label>
+            <input type="file" name="scanned_files" class="form-control" id="workflowScannedFiles"
+                   accept="application/pdf,image/*" capture="environment" multiple>
+            <div class="form-text">للسكانر المكتبي: احفظ المسح من برنامج الجهاز ثم اختر ملف PDF أو الصورة هنا.</div>
+          </div>
+        </div>
         <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mt-2">
-          <div class="form-text mt-0">تُحفظ جميع الملفات المختارة وتُربط بالطلب تلقائيًا.</div>
+          <div class="form-text mt-0">تُحفظ جميع الملفات المختارة من الحقلين وتُربط بالطلب تلقائيًا، سواء كان المسار منشأً مسبقًا أو ديناميكيًا.</div>
           <button class="btn btn-sm btn-outline-primary" type="button" data-bs-toggle="collapse"
                   data-bs-target="#workflowAnalysisTools" aria-expanded="false" aria-controls="workflowAnalysisTools">
             <i class="bi bi-eye"></i> عرض تحليل المرفق الاختياري
@@ -692,7 +703,7 @@
           <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10">
             <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
               <div class="small text-muted">
-                يحلّل النظام المرفق الأول محليًا بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>، ثم يقترح تعبئة الحقول.
+                يحلّل النظام أول مرفق مختار من الرفع أو السكانر محليًا بحد أقصى <strong>{{ intake_max_megabytes }} ميجابايت</strong>، ثم يقترح تعبئة الحقول.
               </div>
               <button class="btn btn-primary" type="button" id="analyzeWorkflowAttachment"
                       data-url="{{ url_for('workflow.analyze_new_request_attachment') }}"
@@ -778,6 +789,7 @@
 
     var form = document.getElementById("workflowNewRequestForm");
     var fileInput = document.getElementById("workflowRequestFiles");
+    var scannedFileInput = document.getElementById("workflowScannedFiles");
     var analyzeButton = document.getElementById("analyzeWorkflowAttachment");
     var applyButton = document.getElementById("applyWorkflowSuggestions");
     var statusBox = document.getElementById("workflowAnalysisStatus");
@@ -905,12 +917,22 @@
       if (title) title.focus();
     }
 
+    function selectedAttachmentForAnalysis() {
+      var inputs = [scannedFileInput, fileInput];
+      for (var index = 0; index < inputs.length; index += 1) {
+        if (inputs[index] && inputs[index].files && inputs[index].files.length) {
+          return inputs[index].files[0];
+        }
+      }
+      return null;
+    }
+
     async function analyzeAttachment() {
-      if (!fileInput.files || !fileInput.files.length) {
+      var selectedFile = selectedAttachmentForAnalysis();
+      if (!selectedFile) {
         setStatus("اختر مرفقًا أولًا.", "warning");
         return;
       }
-      var selectedFile = fileInput.files[0];
       var maxBytes = Number(analyzeButton.dataset.maxBytes || 0);
       if (maxBytes > 0 && selectedFile.size > maxBytes) {
         setStatus(
@@ -2007,6 +2029,7 @@
     const prioritySelect = document.getElementById('workflowRequestPriority');
     const descriptionInput = document.getElementById('workflowRequestDescription');
     const filesInput = document.getElementById('workflowRequestFiles');
+    const scannedFilesInput = document.getElementById('workflowScannedFiles');
     const predefinedRadio = document.getElementById('routeModePredefined');
     const templateSelect = document.getElementById('templateSelect');
     const predefinedSteps = document.getElementById('predefinedRoutePreviewSteps');
@@ -2058,9 +2081,10 @@
       setText('workflowPrintPriority', selectedOptionText(prioritySelect) || 'عادي');
       setText('workflowPrintDescription', descriptionInput && descriptionInput.value);
 
-      const fileNames = filesInput && filesInput.files
-        ? Array.from(filesInput.files).map(function(file){ return file.name; })
-        : [];
+      const fileNames = [filesInput, scannedFilesInput]
+        .filter(function(input){ return input && input.files; })
+        .flatMap(function(input){ return Array.from(input.files); })
+        .map(function(file){ return file.name; });
       const attachments = document.getElementById('workflowPrintAttachmentNames');
       if (attachments) {
         attachments.textContent = fileNames.length ? fileNames.join('، ') : 'لا توجد مرفقات.';
@@ -2108,6 +2132,7 @@
       prioritySelect,
       descriptionInput,
       filesInput,
+      scannedFilesInput,
       predefinedRadio,
       templateSelect,
       dynamicPresetName

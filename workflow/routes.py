@@ -1107,6 +1107,23 @@ def allowed_file(filename: str) -> bool:
     return is_allowed_attachment(filename)
 
 
+def _uploaded_files_from_request(*field_names: str) -> list:
+    """Collect standard and scanner-selected attachments from the current request."""
+    if not request.files:
+        return []
+
+    files = []
+    for field_name in field_names:
+        files.extend(request.files.getlist(field_name) or [])
+
+    if not files:
+        legacy_file = request.files.get("file")
+        if legacy_file:
+            files = [legacy_file]
+
+    return [file for file in files if file and getattr(file, "filename", "")]
+
+
 # =========================
 # Helpers
 # =========================
@@ -1675,15 +1692,7 @@ def upload_attachment(request_id):
 
     description = request.form.get("description")
 
-    files = []
-    if request.files:
-        files = request.files.getlist("files") or []
-        if not files:
-            single = request.files.get("file")
-            if single:
-                files = [single]
-
-    files = [f for f in (files or []) if f and getattr(f, "filename", "")]
+    files = _uploaded_files_from_request("files", "scanned_files")
     if not files:
         abort(400)
 
@@ -2940,8 +2949,7 @@ def new_request():
 
 
         # ✅ Attach files (multiple) with the request creation
-        uploaded_files = request.files.getlist("files") if request.files else []
-        uploaded_files = [f for f in (uploaded_files or []) if f and getattr(f, "filename", "")]
+        uploaded_files = _uploaded_files_from_request("files", "scanned_files")
 
         saved_paths = []
         try:
@@ -5688,8 +5696,7 @@ def decide_request_step(request_id, step_order):
         )
 
         # Attach files uploaded with the decision (multiple)
-        uploaded_files = request.files.getlist("files") if request.files else []
-        uploaded_files = [f for f in (uploaded_files or []) if f and getattr(f, "filename", "")]
+        uploaded_files = _uploaded_files_from_request("files", "scanned_files")
         for fs in uploaded_files:
             archived, saved_path = _save_upload_to_archive(
                 fs, owner_id=current_user.id, visibility="workflow", description=None
@@ -5966,8 +5973,7 @@ def add_request_note(request_id):
     note = (request.form.get("note") or "").strip()
     kind = (request.form.get("kind") or "COMMENT").strip().upper()
 
-    uploaded_files = request.files.getlist("files") if request.files else []
-    uploaded_files = [f for f in (uploaded_files or []) if f and getattr(f, "filename", "")]
+    uploaded_files = _uploaded_files_from_request("files", "scanned_files")
 
     if not note and not uploaded_files:
         flash("يرجى كتابة نص أو إرفاق ملف/ملفات.", "warning")
