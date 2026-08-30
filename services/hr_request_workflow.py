@@ -500,11 +500,7 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
     if existing:
         return existing
 
-    managers = (
-        resolve_responsible_managers(int(row.user_id))
-        if kind == KIND_LEAVE
-        else [manager] if (manager := resolve_direct_manager(int(row.user_id))) else []
-    )
+    managers = resolve_responsible_managers(int(row.user_id))
     original_manager_id = managers[0].id if managers else None
     first_manager_was_delegated = False
     effective_approver_ids: list[int] = []

@@ -149,6 +149,20 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         db.session.flush()
         return row
 
+    def _permission(self, user=None):
+        row = HRPermissionRequest(
+            user_id=(user or self.employee).id,
+            permission_type_id=self.permission_type.id,
+            day="2026-09-01",
+            from_time="10:00",
+            to_time="11:00",
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(row)
+        db.session.flush()
+        return row
+
     def test_normal_leave_is_final_after_direct_manager_and_creates_cc(self):
         row = self._leave(self.normal_type)
         steps = start_request_flow(KIND_LEAVE, row)
@@ -345,24 +359,115 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(step)
         self.assertEqual(step.approver_user_id, self.manager.id)
 
-    def test_permission_uses_the_same_direct_manager_flow(self):
-        row = HRPermissionRequest(
-            user_id=self.employee.id,
-            permission_type_id=self.permission_type.id,
-            day="2026-09-01",
-            from_time="10:00",
-            to_time="11:00",
-            status="SUBMITTED",
-            submitted_at=datetime.utcnow(),
+    def test_permission_goes_to_all_hierarchy_managers_and_one_approval_is_enough(self):
+        requester = User(
+            email="permission-requester@example.test",
+            name="Permission Requester",
+            password_hash="x",
+            role="employee",
         )
-        db.session.add(row)
+        irene = User(email="permission-irene@example.test", name="Irene", password_hash="x", role="dept_head")
+        raed = User(email="permission-raed@example.test", name="Raed", password_hash="x", role="dept_head")
+        node_type = OrgNodeType(code="PERMISSION_BRANCH", name_ar="Permission branch", sort_order=1)
+        db.session.add_all((requester, irene, raed, node_type))
         db.session.flush()
-        steps = start_request_flow(KIND_PERMISSION, row)
 
+        nodes = [
+            OrgNode(type_id=node_type.id, name_ar=name, is_active=True)
+            for name in ("Permission branch one", "Permission branch two", "Permission branch three")
+        ]
+        db.session.add_all(nodes)
+        db.session.flush()
+        requester.org_node_id = nodes[0].id
+        db.session.add_all([
+            OrgNodeAssignment(user_id=requester.id, node_id=nodes[0].id, is_primary=True),
+            OrgNodeAssignment(user_id=requester.id, node_id=nodes[1].id, is_primary=False),
+            OrgNodeAssignment(user_id=requester.id, node_id=nodes[2].id, is_primary=False),
+            OrgNodeManager(node_id=nodes[0].id, manager_user_id=self.manager.id),
+            OrgNodeManager(node_id=nodes[1].id, manager_user_id=irene.id),
+            OrgNodeManager(node_id=nodes[2].id, manager_user_id=raed.id),
+        ])
+        db.session.add_all([
+            UserPermission(user_id=requester.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
+        ])
+        db.session.commit()
+
+        row = self._permission(requester)
+        steps = start_request_flow(KIND_PERMISSION, row)
+        db.session.commit()
+
+        expected_ids = [self.manager.id, irene.id, raed.id]
         self.assertEqual(len(steps), 1)
         self.assertEqual(steps[0].approver_user_id, self.manager.id)
-        self.assertEqual(decide_request(KIND_PERMISSION, row, self.manager, "APPROVE"), "APPROVED")
+        self.assertEqual(json.loads(steps[0].approver_user_ids), expected_ids)
+        self.assertTrue(all(can_user_act(user, steps[0]) for user in (self.manager, irene, raed)))
+        notified_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="HR_APPROVAL",
+                link_url=f"/portal/hr/approvals/permissions/{row.id}",
+            ).all()
+        }
+        self.assertEqual(notified_ids, set(expected_ids))
+
+        self.assertEqual(decide_request(KIND_PERMISSION, row, raed, "APPROVE"), "APPROVED")
         self.assertEqual(row.status, "APPROVED")
+        self.assertEqual(steps[0].decided_by_id, raed.id)
+
+        client = self.app.test_client()
+        self._login(client, requester.id)
+        my_permissions = client.get("/portal/hr/me/permissions")
+        self.assertEqual(my_permissions.status_code, 200)
+        for name in ("Manager", "Irene", "Raed"):
+            self.assertIn(name.encode("utf-8"), my_permissions.data)
+
+    def test_employee_can_edit_a_submitted_permission(self):
+        requester = User(
+            email="editable-permission-requester@example.test",
+            name="Editable Permission Requester",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add(requester)
+        db.session.flush()
+        db.session.add(EmployeeFile(
+            user_id=requester.id,
+            direct_manager_user_id=self.manager.id,
+        ))
+        db.session.add_all([
+            UserPermission(user_id=requester.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
+        ])
+        row = self._permission(requester)
+        start_request_flow(KIND_PERMISSION, row)
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, requester.id)
+        listing = client.get("/portal/hr/me/permissions")
+        self.assertEqual(listing.status_code, 200)
+        self.assertIn(f"/portal/hr/permissions/{row.id}/edit".encode("utf-8"), listing.data)
+
+        edit_page = client.get(f"/portal/hr/permissions/{row.id}/edit")
+        self.assertEqual(edit_page.status_code, 200)
+        response = client.post(
+            f"/portal/hr/permissions/{row.id}/edit",
+            data={
+                "permission_type_id": self.permission_type.id,
+                "day": "2026-09-02",
+                "from_time": "11:00",
+                "to_time": "12:30",
+                "note": "Updated departure",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        updated = db.session.get(HRPermissionRequest, row.id)
+        self.assertEqual(updated.day, "2026-09-02")
+        self.assertEqual(updated.from_time, "11:00")
+        self.assertEqual(updated.to_time, "12:30")
+        self.assertEqual(updated.note, "Updated departure")
+        self.assertEqual(updated.status, "SUBMITTED")
 
     def test_general_director_board_scope_contains_directorate_employee(self):
         visible_ids = board_visible_user_ids(self.general_director)

@@ -11294,12 +11294,18 @@ def hr_my_permissions():
             .all()
         )
 
+    permission_approver_names = direct_approver_names_for_requests(
+        KIND_PERMISSION,
+        [row.id for row in reqs],
+    )
+
     return render_template(
         "portal/hr/my_permissions.html",
         types=types,
         reqs=reqs,
         can_create=can_create,
         can_requests=can_requests,
+        permission_approver_names=permission_approver_names,
     )
 
 

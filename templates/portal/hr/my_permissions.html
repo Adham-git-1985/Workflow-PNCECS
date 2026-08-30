@@ -32,7 +32,7 @@
               <th>{{ portal_sort_link('إلى', 'to_time') }}</th>
               <th>{{ portal_sort_link('ساعات', 'hours') }}</th>
               <th>الحالة</th>
-              <th>{{ portal_sort_link('المدير', 'approver_user') }}</th>
+              <th>المسؤولون على الهيكلية</th>
               <th style="width: 120px;">إجراءات</th>
             </tr>
           </thead>
@@ -54,7 +54,10 @@
                 <td>{{ r.hours or '-' }}</td>
                 <td><span class="badge bg-{{ badge }}">{{ st }}</span></td>
                 <td class="text-muted small">
-                  {% if r.approver_user %}
+                  {% set approver_names = (permission_approver_names|default({})).get(r.id, []) %}
+                  {% if approver_names %}
+                    {{ approver_names|join('، ') }}
+                  {% elif r.approver_user %}
                     {{ r.approver_user.full_name }}
                   {% else %}
                     -
@@ -62,11 +65,16 @@
                 </td>
                 <td>
                   {% if st in ['SUBMITTED', 'DRAFT'] %}
-                    <form method="post" action="{{ url_for('portal.hr_permission_request_cancel', req_id=r.id) }}" onsubmit="return confirm('هل تريد إلغاء الطلب؟');">
-                      <button class="btn btn-sm btn-outline-danger" type="submit">
-                        <i class="bi bi-x-circle"></i> إلغاء
-                      </button>
-                    </form>
+                    <div class="d-flex gap-1">
+                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_permission_request_edit', req_id=r.id) }}">
+                        <i class="bi bi-pencil"></i> تعديل
+                      </a>
+                      <form method="post" action="{{ url_for('portal.hr_permission_request_cancel', req_id=r.id) }}" onsubmit="return confirm('هل تريد إلغاء الطلب؟');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">
+                          <i class="bi bi-x-circle"></i> إلغاء
+                        </button>
+                      </form>
+                    </div>
                   {% else %}
                     <span class="text-muted">—</span>
                   {% endif %}
