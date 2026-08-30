@@ -206,15 +206,14 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
             return [configured_manager]
         if configured_director:
             return [configured_director]
-        permission = "TRANSPORT_MANAGER_APPROVE" if _has_transport_manager() else "TRANSPORT_DIRECTOR_APPROVE"
+        return []
     elif row.approval_stage == "ADMIN":
         configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
         if configured_admin:
             return [configured_admin]
-        permission = "TRANSPORT_ADMIN_APPROVE"
+        return []
     else:
         return []
-    return [user.id for user in User.query.all() if user.has_perm(permission)]
 
 
 def _grant_transport_report_access(user_id: int | None) -> None:
