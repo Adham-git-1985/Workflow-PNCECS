@@ -22,6 +22,7 @@ from models import (
 )
 from services.employee_data_import import (
     EmployeeDataImportError,
+    apply_employee_payload_corrections,
     apply_employee_import_payload,
     build_employee_import_plan,
     canonical_payload_hash,
@@ -318,6 +319,63 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(employee_file.organization_id, organization.id)
         self.assertIsNone(employee_file.directorate_id)
         self.assertEqual(employee_file.department_id, selected_department.id)
+
+    def test_correction_fields_include_repeated_records_and_secondments(self):
+        payload = self.payload()
+        payload["tables"]["التابعون"][0]["dependent.relation_lookup_id"] = "ابنة"
+        qualification = payload["tables"]["المؤهلات"][0]
+        qualification.update({
+            "qualification.specialization_lookup_id": "خدمة اجتماعية",
+            "qualification.university_lookup_id": "جامعة القدس المفتوحة",
+            "qualification.country_lookup_id": "فلسطين",
+            "qualification.qualification_date": "2010",
+        })
+        payload["fields"].update({
+            "secondment.organization_id": answer("الموارد البشرية والمالية"),
+            "secondment.directorate_id": answer("الموارد البشرية"),
+            "secondment.work_governorate_lookup_id": answer("رام الله"),
+            "secondment.work_location_lookup_id": answer("البيرة"),
+        })
+
+        plan = build_employee_import_plan(payload, self.employee)
+        labels = {item["label"] for item in plan["correction_fields"]}
+        expected_labels = {
+            "التابع 1: صلة القرابة",
+            "المؤهل 1: التخصص",
+            "المؤهل 1: الجامعة",
+            "المؤهل 1: الدولة",
+            "المؤهل 1: تاريخ المؤهل",
+            "التكليف 1: الإدارة العامة",
+            "التكليف 1: الدائرة",
+            "التكليف 1: محافظة العمل",
+            "التكليف 1: موقع العمل",
+        }
+        self.assertTrue(expected_labels.issubset(labels))
+
+        replacements = {
+            "التابع 1: صلة القرابة": "ابن",
+            "المؤهل 1: التخصص": "علم الاجتماع",
+            "المؤهل 1: الجامعة": "جامعة النجاح",
+            "المؤهل 1: الدولة": "دولة فلسطين",
+            "المؤهل 1: تاريخ المؤهل": "2010-01-01",
+            "التكليف 1: الإدارة العامة": "إدارة الموارد البشرية",
+            "التكليف 1: الدائرة": "دائرة شؤون الموظفين",
+            "التكليف 1: محافظة العمل": "رام الله والبيرة",
+            "التكليف 1: موقع العمل": "المقر الرئيسي",
+        }
+        form_values = {
+            f"correction_{index}": replacements.get(correction["label"], correction["value"])
+            for index, correction in enumerate(plan["correction_fields"])
+        }
+
+        changed = apply_employee_payload_corrections(payload, plan["correction_fields"], form_values)
+
+        self.assertEqual(changed, len(replacements))
+        self.assertEqual(payload["tables"]["التابعون"][0]["dependent.relation_lookup_id"], "ابن")
+        self.assertEqual(qualification["qualification.specialization_lookup_id"], "علم الاجتماع")
+        self.assertEqual(qualification["qualification.qualification_date"], "2010-01-01")
+        self.assertEqual(payload["fields"]["secondment.organization_id"][0]["value"], "إدارة الموارد البشرية")
+        self.assertEqual(payload["fields"]["secondment.work_location_lookup_id"][0]["value"], "المقر الرئيسي")
 
     def test_manager_resolution_accepts_a_unique_abbreviated_arabic_name(self):
         manager = self._user("manager@example.test", "خلود احمد يوسف حنتش")

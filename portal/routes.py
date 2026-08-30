@@ -73,6 +73,7 @@ from services.correspondence_intake import (
 )
 from services.employee_data_import import (
     EmployeeDataImportError,
+    apply_employee_payload_corrections,
     apply_employee_import_payload,
     build_employee_import_plan,
     canonical_payload_hash,
@@ -13975,23 +13976,16 @@ def hr_employee_data_submission_correct(submission_id: int):
         return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
 
     payload = row.payload()
-    fields = payload.setdefault("fields", {})
-    changed = 0
-    for key, value in request.form.items():
-        if not key.startswith("correction_"):
-            continue
-        field = key.removeprefix("correction_")
-        cleaned = (value or "").strip()
-        current_raw = fields.get(field) or []
-        if not isinstance(current_raw, list):
-            current_raw = [current_raw]
-        first_value = current_raw[0] if current_raw else ""
-        current = (first_value.get("value") if isinstance(first_value, dict) else first_value) or ""
-        current = str(current).strip()
-        if cleaned == current:
-            continue
-        fields[field] = [{"value": cleaned, "entry_id": field, "occurrence": 1}]
-        changed += 1
+    try:
+        plan = build_employee_import_plan(payload, row.employee)
+        changed = apply_employee_payload_corrections(
+            payload,
+            plan.get("correction_fields", []),
+            request.form,
+        )
+    except EmployeeDataImportError as exc:
+        flash(f"تعذر تجهيز حقول التصحيح: {exc}", "danger")
+        return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
 
     if not changed:
         flash("لم يتم تغيير أي قيمة.", "info")

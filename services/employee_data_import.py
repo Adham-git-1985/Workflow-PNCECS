@@ -199,15 +199,191 @@ def _record_value(record: dict, key: str) -> str | None:
     return value or None
 
 
-def _records_with_prefix(payload: dict, prefix: str) -> list[dict]:
-    records: list[dict] = []
-    for table_rows in (payload.get("tables") or {}).values():
+def _table_records_with_prefix(payload: dict, prefix: str) -> list[tuple[str, int, dict]]:
+    records: list[tuple[str, int, dict]] = []
+    for table_name, table_rows in (payload.get("tables") or {}).items():
         if not isinstance(table_rows, list):
             continue
-        for record in table_rows:
+        for row_index, record in enumerate(table_rows):
             if isinstance(record, dict) and any(str(key).startswith(prefix) for key in record):
-                records.append(record)
+                records.append((str(table_name), row_index, record))
     return records
+
+
+def _records_with_prefix(payload: dict, prefix: str) -> list[dict]:
+    return [record for _, _, record in _table_records_with_prefix(payload, prefix)]
+
+
+def _build_correction_fields(payload: dict, unresolved: list[dict], field_labels: dict[str, str]) -> list[dict]:
+    unresolved_labels = {issue["field"] for issue in unresolved}
+    corrections: list[dict] = []
+    seen_targets: set[str] = set()
+
+    def add(label: str, value: str | None, target: dict) -> None:
+        if label not in unresolved_labels:
+            return
+        target_key = json.dumps(target, ensure_ascii=False, sort_keys=True)
+        if target_key in seen_targets:
+            return
+        seen_targets.add(target_key)
+        corrections.append({
+            "label": label,
+            "value": value or "",
+            "target": target,
+        })
+
+    for field, label in field_labels.items():
+        add(label, _first_value(payload, field), {"kind": "field", "field": field})
+
+    for prefix, row_label, mapping in (
+        (
+            "dependent.",
+            "التابع",
+            {
+                "relation_lookup_id": "صلة القرابة",
+                "gender_lookup_id": "الجنس",
+                "birth_date": "تاريخ الميلاد",
+                "allowance": "العلاوة",
+            },
+        ),
+        (
+            "qualification.",
+            "المؤهل",
+            {
+                "degree_lookup_id": "الدرجة العلمية",
+                "specialization_lookup_id": "التخصص",
+                "grade_lookup_id": "التقدير",
+                "qualification_date": "تاريخ المؤهل",
+                "university_lookup_id": "الجامعة",
+                "country_lookup_id": "الدولة",
+            },
+        ),
+    ):
+        for row_number, (table_name, row_index, record) in enumerate(
+            _table_records_with_prefix(payload, prefix),
+            start=1,
+        ):
+            for field, label in mapping.items():
+                target_field = f"{prefix}{field}"
+                add(
+                    f"{row_label} {row_number}: {label}",
+                    _record_value(record, target_field),
+                    {
+                        "kind": "table",
+                        "table": table_name,
+                        "row_index": row_index,
+                        "field": target_field,
+                    },
+                )
+
+    secondment_labels = {
+        "date_from": "من تاريخ",
+        "date_to": "إلى تاريخ",
+        "organization_id": "الإدارة العامة",
+        "directorate_id": "الدائرة",
+        "department_id": "القسم",
+        "division_id": "الشعبة",
+        "direct_manager_user_id": "المسؤول المباشر",
+        "work_governorate_lookup_id": "محافظة العمل",
+        "work_location_lookup_id": "موقع العمل",
+        "admin_title_lookup_id": "المسمى الإداري",
+    }
+    indexed = {
+        field: {item["occurrence"]: item["value"] for item in _field_items(payload, f"secondment.{field}")}
+        for field in secondment_labels
+    }
+    occurrences = sorted({occurrence for values in indexed.values() for occurrence in values})
+    for row_number, occurrence in enumerate(occurrences, start=1):
+        for field, label in secondment_labels.items():
+            add(
+                f"التكليف {row_number}: {label}",
+                indexed[field].get(occurrence),
+                {
+                    "kind": "field_occurrence",
+                    "field": f"secondment.{field}",
+                    "occurrence": occurrence,
+                },
+            )
+
+    return corrections
+
+
+def _entry_occurrence(item: Any, index: int) -> int:
+    occurrence = item.get("occurrence") if isinstance(item, dict) else None
+    if occurrence is None and isinstance(item, dict):
+        match = re.search(r"#(\d+)$", _clean(item.get("entry_id")))
+        occurrence = int(match.group(1)) if match else None
+    try:
+        return int(occurrence) if occurrence is not None else index
+    except (TypeError, ValueError):
+        return index
+
+
+def apply_employee_payload_corrections(payload: dict, corrections: list[dict], values) -> int:
+    """Apply reviewed corrections to the staged payload using server-generated targets."""
+    fields = payload.setdefault("fields", {})
+    tables = payload.setdefault("tables", {})
+    changed = 0
+
+    for index, correction in enumerate(corrections):
+        submitted = values.get(f"correction_{index}")
+        if submitted is None:
+            continue
+        cleaned = _clean(submitted)
+        if cleaned == _clean(correction.get("value")):
+            continue
+
+        target = correction.get("target") or {}
+        kind = target.get("kind")
+        if kind == "field":
+            field = target.get("field")
+            if not field:
+                continue
+            fields[field] = [{"value": cleaned, "entry_id": field, "occurrence": 1}]
+        elif kind == "field_occurrence":
+            field = target.get("field")
+            occurrence = target.get("occurrence")
+            if not field or occurrence is None:
+                continue
+            raw_items = fields.get(field) or []
+            if not isinstance(raw_items, list):
+                raw_items = [raw_items]
+            replaced = False
+            for item_index, item in enumerate(raw_items, start=1):
+                if _entry_occurrence(item, item_index) != int(occurrence):
+                    continue
+                if isinstance(item, dict):
+                    item["value"] = cleaned
+                else:
+                    raw_items[item_index - 1] = {
+                        "value": cleaned,
+                        "entry_id": f"{field}#{occurrence}",
+                        "occurrence": occurrence,
+                    }
+                replaced = True
+                break
+            if not replaced:
+                raw_items.append({
+                    "value": cleaned,
+                    "entry_id": f"{field}#{occurrence}",
+                    "occurrence": occurrence,
+                })
+            fields[field] = raw_items
+        elif kind == "table":
+            table_name = target.get("table")
+            row_index = target.get("row_index")
+            field = target.get("field")
+            rows = tables.get(table_name)
+            if not isinstance(rows, list) or not isinstance(row_index, int) or not field:
+                continue
+            if row_index < 0 or row_index >= len(rows) or not isinstance(rows[row_index], dict):
+                continue
+            rows[row_index][field] = cleaned
+        else:
+            continue
+        changed += 1
+
+    return changed
 
 
 def _parse_date(value: str, context: str, unresolved: list[dict]) -> str | None:
@@ -631,12 +807,7 @@ def build_employee_import_plan(
         **{source_field: label for source_field, _, _, label in EMPLOYEE_ORG_FIELDS},
         "direct_manager_user_id": "المسؤول المباشر",
     }
-    unresolved_labels = {issue["field"] for issue in unresolved}
-    correction_fields = [
-        {"field": field, "label": label, "value": _first_value(payload, field) or ""}
-        for field, label in field_labels.items()
-        if label in unresolved_labels
-    ]
+    correction_fields = _build_correction_fields(payload, unresolved, field_labels)
 
     return {
         "employee_id": employee.id,
