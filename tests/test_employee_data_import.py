@@ -262,6 +262,30 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(resolved["department_id"], department.id)
         self.assertEqual(resolved["section_id"], section.id)
 
+    def test_questionnaire_placement_matches_directorate_without_alef_hamza(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للمعلوماتية والمطبوعات",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.commit()
+
+        payload = self.payload()
+        payload["fields"]["organization_id"] = answer(
+            "الادارة العامة للمعلوماتية والمطبوعات"
+        )
+
+        plan = build_employee_import_plan(payload, self.employee)
+        resolved = {operation["field"]: operation["resolved"] for operation in plan["operations"]}
+
+        self.assertEqual(plan["unresolved"], [])
+        self.assertEqual(resolved["directorate_id"], directorate.id)
+        self.assertEqual(resolved["organization_id"], organization.id)
+
     def test_missing_division_is_created_under_selected_section(self):
         organization = Organization(name_ar="المؤسسة", is_active=True)
         db.session.add(organization)

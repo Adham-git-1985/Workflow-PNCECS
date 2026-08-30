@@ -28,6 +28,18 @@ from models import (
 
 FORM_SCHEMA_PREFIX = "EMP-DATA-FORM/"
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
+ARABIC_NAME_TRANSLATION = str.maketrans({
+    "أ": "ا",
+    "إ": "ا",
+    "آ": "ا",
+    "ٱ": "ا",
+    "ى": "ي",
+    "ؤ": "و",
+    "ئ": "ي",
+    "ة": "ه",
+    "ک": "ك",
+    "ی": "ي",
+})
 
 
 class EmployeeDataImportError(ValueError):
@@ -106,14 +118,14 @@ def _clean(value: Any) -> str:
 def _norm(value: Any) -> str:
     text = unicodedata.normalize("NFKC", _clean(value)).lower()
     text = "".join(ch for ch in text if unicodedata.category(ch) not in {"Mn", "Cf"})
-    text = text.replace("ـ", "")
+    text = text.replace("ـ", "").translate(ARABIC_NAME_TRANSLATION)
     return "".join(ch for ch in text if ch.isalnum())
 
 
 def _name_tokens(value: Any) -> set[str]:
     text = unicodedata.normalize("NFKC", _clean(value)).lower()
     text = "".join(ch for ch in text if unicodedata.category(ch) not in {"Mn", "Cf"})
-    text = text.replace("ـ", "")
+    text = text.replace("ـ", "").translate(ARABIC_NAME_TRANSLATION)
     return {
         "".join(ch for ch in token if ch.isalnum())
         for token in re.split(r"\s+", text)
