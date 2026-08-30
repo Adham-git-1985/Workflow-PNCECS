@@ -400,35 +400,33 @@
           <thead><tr><th>التبعية</th><th>Code</th><th>الاسم (AR)</th><th>الاسم (EN)</th><th>نشط</th><th></th></tr></thead>
           <tbody>
             {% for d in divisions %}
+              {% set division_form_id = 'division-save-' ~ d.id %}
               <tr>
-                <form method="post">
-                  <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="divs"><input type="hidden" name="id" value="{{ d.id }}">
                   <td style="min-width:320px">
-                    <div class="d-flex gap-2">
-                      <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="div" required>
-                        <option value="section" {% if d.section_id %}selected{% endif %}>قسم</option>
-                        <option value="department" {% if d.department_id %}selected{% endif %}>دائرة</option>
-                      </select>
-                      <select class="form-select form-select-sm parent-select parent-select-sec" name="parent_id_sec" data-target="div">
-                        <option value="">-- اختر القسم --</option>
+                    <form id="{{ division_form_id }}" method="post">
+                      <input type="hidden" name="op" value="save">
+                      <input type="hidden" name="kind" value="divs">
+                      <input type="hidden" name="id" value="{{ d.id }}">
+                    </form>
+                    <select class="form-select form-select-sm" name="parent_ref" form="{{ division_form_id }}" required>
+                      <option value="">-- اختر التبعية --</option>
+                      <optgroup label="الأقسام">
                         {% for s in sections %}
-                          <option value="{{ s.id }}" {% if d.section_id==s.id %}selected{% endif %}>{{ s.name_ar }}{% if s.department %} ({{ s.department.name_ar }}){% endif %}</option>
+                          <option value="section:{{ s.id }}" {% if d.section_id==s.id %}selected{% endif %}>{{ s.name_ar }}{% if s.department %} ({{ s.department.name_ar }}){% endif %}</option>
                         {% endfor %}
-                      </select>
-                      <select class="form-select form-select-sm parent-select parent-select-dept" name="parent_id_dept" data-target="div">
-                        <option value="">-- اختر الدائرة --</option>
+                      </optgroup>
+                      <optgroup label="الدوائر">
                         {% for dep in departments %}
-                          <option value="{{ dep.id }}" {% if d.department_id==dep.id %}selected{% endif %}>{{ dep.name_ar }}</option>
+                          <option value="department:{{ dep.id }}" {% if d.department_id==dep.id %}selected{% endif %}>{{ dep.name_ar }}</option>
                         {% endfor %}
-                      </select>
-                    </div>
+                      </optgroup>
+                    </select>
                   </td>
-                  <td style="width:120px"><input class="form-control form-control-sm" name="code" value="{{ d.code or '' }}"></td>
-                  <td><input class="form-control form-control-sm" name="name_ar" value="{{ d.name_ar or '' }}"></td>
-                  <td><input class="form-control form-control-sm" name="name_en" value="{{ d.name_en or '' }}"></td>
-                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" {% if d.is_active %}checked{% endif %}></td>
-                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit">حفظ</button></td>
-                </form>
+                  <td style="width:120px"><input class="form-control form-control-sm" name="code" form="{{ division_form_id }}" value="{{ d.code or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_ar" form="{{ division_form_id }}" value="{{ d.name_ar or '' }}"></td>
+                  <td><input class="form-control form-control-sm" name="name_en" form="{{ division_form_id }}" value="{{ d.name_en or '' }}"></td>
+                  <td style="width:90px" class="text-center"><input class="form-check-input" type="checkbox" name="is_active" form="{{ division_form_id }}" {% if d.is_active %}checked{% endif %}></td>
+                  <td class="text-nowrap"><button class="btn btn-sm btn-primary" type="submit" form="{{ division_form_id }}">حفظ</button></td>
                 <td>
                   <form method="post" onsubmit="return confirm('حذف الشعبة؟');">
                     <input type="hidden" name="op" value="delete"><input type="hidden" name="kind" value="divs"><input type="hidden" name="id" value="{{ d.id }}">
@@ -440,30 +438,26 @@
               <tr><td colspan="7" class="text-muted">لا توجد شُعب.</td></tr>
             {% endfor %}
             <tr class="table-light">
-              <form method="post">
-                <input type="hidden" name="op" value="save"><input type="hidden" name="kind" value="divs">
                 <td>
-                  <div class="d-flex gap-2">
-                    <select class="form-select form-select-sm parent-type-select" name="parent_type" data-target="div" required>
-                      <option value="section" selected>قسم</option>
-                      <option value="department">دائرة</option>
-                    </select>
-                    <select class="form-select form-select-sm parent-select parent-select-sec" name="parent_id_sec" data-target="div">
-                      <option value="">-- اختر القسم --</option>
-                      {% for s in sections %}<option value="{{ s.id }}">{{ s.name_ar }}{% if s.department %} ({{ s.department.name_ar }}){% endif %}</option>{% endfor %}
-                    </select>
-                    <select class="form-select form-select-sm parent-select parent-select-dept" name="parent_id_dept" data-target="div">
-                      <option value="">-- اختر الدائرة --</option>
-                      {% for dep in departments %}<option value="{{ dep.id }}">{{ dep.name_ar }}</option>{% endfor %}
-                    </select>
-                  </div>
+                  <form id="division-add" method="post">
+                    <input type="hidden" name="op" value="save">
+                    <input type="hidden" name="kind" value="divs">
+                  </form>
+                  <select class="form-select form-select-sm" name="parent_ref" form="division-add" required>
+                    <option value="">-- اختر التبعية --</option>
+                    <optgroup label="الأقسام">
+                      {% for s in sections %}<option value="section:{{ s.id }}">{{ s.name_ar }}{% if s.department %} ({{ s.department.name_ar }}){% endif %}</option>{% endfor %}
+                    </optgroup>
+                    <optgroup label="الدوائر">
+                      {% for dep in departments %}<option value="department:{{ dep.id }}">{{ dep.name_ar }}</option>{% endfor %}
+                    </optgroup>
+                  </select>
                 </td>
-                <td><input class="form-control form-control-sm" name="code" placeholder="Code"></td>
-                <td><input class="form-control form-control-sm" name="name_ar" placeholder="الاسم (AR)"></td>
-                <td><input class="form-control form-control-sm" name="name_en" placeholder="الاسم (EN)"></td>
-                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" checked></td>
-                <td colspan="2"><button class="btn btn-sm btn-success" type="submit"><i class="bi bi-plus"></i> إضافة</button></td>
-              </form>
+                <td><input class="form-control form-control-sm" name="code" form="division-add" placeholder="Code"></td>
+                <td><input class="form-control form-control-sm" name="name_ar" form="division-add" placeholder="الاسم (AR)"></td>
+                <td><input class="form-control form-control-sm" name="name_en" form="division-add" placeholder="الاسم (EN)"></td>
+                <td class="text-center"><input class="form-check-input" type="checkbox" name="is_active" form="division-add" checked></td>
+                <td colspan="2"><button class="btn btn-sm btn-success" type="submit" form="division-add"><i class="bi bi-plus"></i> إضافة</button></td>
             </tr>
           </tbody>
         </table>

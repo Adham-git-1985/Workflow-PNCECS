@@ -8,6 +8,7 @@ from extensions import db
 from models import (
     Department,
     Directorate,
+    Division,
     Organization,
     OrgNode,
     OrgNodeAssignment,
@@ -282,6 +283,63 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertIn('name="parent_ref" form="{{ section_form_id }}"', template)
         self.assertIn('value="department:{{ d.id }}"', template)
         self.assertIn('form="{{ section_form_id }}"', template)
+
+    def test_division_can_be_created_under_a_section_with_one_parent_value(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للشؤون الإدارية",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الشؤون الإدارية",
+            is_active=True,
+        )
+        db.session.add(department)
+        db.session.flush()
+        section = Section(
+            department_id=department.id,
+            name_ar="قسم الصادر والوارد",
+            is_active=True,
+        )
+        db.session.add(section)
+        db.session.commit()
+
+        save = _unwrapped(portal_admin_hr_org_structure)
+        with self.app.test_request_context(
+            "/portal/admin/hr/org-structure?tab=divs",
+            method="POST",
+            data={
+                "op": "save",
+                "kind": "divs",
+                "parent_ref": f"section:{section.id}",
+                "name_ar": "شعبة الصادر والوارد",
+                "is_active": "on",
+            },
+        ), patch("portal.routes._legacy_org_locked", return_value=False), patch(
+            "portal.routes.url_for", return_value="/portal/admin/hr/org-structure?tab=divs"
+        ):
+            response = save()
+
+        db.session.expire_all()
+        division = Division.query.filter_by(name_ar="شعبة الصادر والوارد").one()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(division.section_id, section.id)
+        self.assertIsNone(division.department_id)
+
+    def test_division_form_uses_a_single_explicit_parent_field(self):
+        template = (
+            PROJECT_ROOT / "templates" / "portal" / "admin" / "hr_org_structure.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('name="parent_ref" form="{{ division_form_id }}"', template)
+        self.assertIn('value="section:{{ s.id }}"', template)
+        self.assertIn('form="division-add"', template)
 
 
 if __name__ == "__main__":

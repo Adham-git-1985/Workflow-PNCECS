@@ -24471,15 +24471,37 @@ def portal_admin_hr_org_structure():
                 row.section_id = pid
                 row.division_id = None
             elif kind == "divs":
-                ptype = (request.form.get("parent_type") or "section").strip().lower()
-                pid_sec = to_int(request.form.get("parent_id_sec"))
-                pid_dept = to_int(request.form.get("parent_id_dept"))
+                parent_ref = (request.form.get("parent_ref") or "").strip()
+                if ":" in parent_ref:
+                    ptype, raw_parent_id = parent_ref.split(":", 1)
+                    ptype = ptype.strip().lower()
+                    parent_id = to_int(raw_parent_id)
+                    if ptype not in {"section", "department"}:
+                        ptype, parent_id = "", None
+                else:
+                    ptype = (request.form.get("parent_type") or "section").strip().lower()
+                    parent_id = to_int({
+                        "section": request.form.get("parent_id_sec"),
+                        "department": request.form.get("parent_id_dept"),
+                    }.get(ptype))
+
+                parent_model = {"section": Section, "department": Department}.get(ptype)
+                with db.session.no_autoflush:
+                    parent_exists = bool(
+                        parent_model
+                        and parent_id
+                        and db.session.get(parent_model, parent_id)
+                    )
+                if not parent_exists:
+                    flash("اختر تبعية الشعبة: قسم أو دائرة.", "warning")
+                    return redirect(url_for("portal.portal_admin_hr_org_structure", tab=kind))
+
                 row.section_id = None
                 row.department_id = None
                 if ptype == "department":
-                    row.department_id = pid_dept
+                    row.department_id = parent_id
                 else:
-                    row.section_id = pid_sec
+                    row.section_id = parent_id
             elif kind == "depts":
                 ptype = (request.form.get("parent_type") or "directorate").strip().lower()
                 pid_dir = to_int(request.form.get("parent_id_dir"))
