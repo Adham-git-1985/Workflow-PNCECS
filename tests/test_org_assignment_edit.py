@@ -288,6 +288,49 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertIn('value="department:{{ d.id }}"', template)
         self.assertIn('form="{{ section_form_id }}"', template)
 
+    def test_department_can_be_created_under_a_directorate_with_one_parent_value(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للشؤون الإدارية",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.commit()
+
+        save = _unwrapped(portal_admin_hr_org_structure)
+        with self.app.test_request_context(
+            "/portal/admin/hr/org-structure?tab=depts",
+            method="POST",
+            data={
+                "op": "save",
+                "kind": "depts",
+                "parent_ref": f"directorate:{directorate.id}",
+                "name_ar": "دائرة الموارد البشرية",
+                "is_active": "on",
+            },
+        ), patch("portal.routes._legacy_org_locked", return_value=False), patch(
+            "portal.routes.url_for", return_value="/portal/admin/hr/org-structure?tab=depts"
+        ):
+            response = save()
+
+        db.session.expire_all()
+        department = Department.query.filter_by(name_ar="دائرة الموارد البشرية").one()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(department.directorate_id, directorate.id)
+        self.assertIsNone(department.unit_id)
+
+    def test_department_form_uses_a_single_explicit_parent_field(self):
+        template = (
+            PROJECT_ROOT / "templates" / "portal" / "admin" / "hr_org_structure.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('name="parent_ref" form="department-add"', template)
+        self.assertIn('value="directorate:{{ di.id }}"', template)
+        self.assertIn('value="unit:{{ u.id }}"', template)
+
     def test_division_can_be_created_under_a_section_with_one_parent_value(self):
         organization = Organization(name_ar="المؤسسة", is_active=True)
         db.session.add(organization)

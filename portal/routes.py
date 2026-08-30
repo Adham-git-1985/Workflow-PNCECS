@@ -24508,15 +24508,37 @@ def portal_admin_hr_org_structure():
                 else:
                     row.section_id = parent_id
             elif kind == "depts":
-                ptype = (request.form.get("parent_type") or "directorate").strip().lower()
-                pid_dir = to_int(request.form.get("parent_id_dir"))
-                pid_unit = to_int(request.form.get("parent_id_unit"))
-                if ptype == "unit":
-                    row.unit_id = pid_unit
-                    row.directorate_id = None
+                parent_ref = (request.form.get("parent_ref") or "").strip()
+                if ":" in parent_ref:
+                    ptype, raw_parent_id = parent_ref.split(":", 1)
+                    ptype = ptype.strip().lower()
+                    parent_id = to_int(raw_parent_id)
+                    if ptype not in {"directorate", "unit"}:
+                        ptype, parent_id = "", None
                 else:
-                    row.directorate_id = pid_dir
-                    row.unit_id = None
+                    ptype = (request.form.get("parent_type") or "directorate").strip().lower()
+                    parent_id = to_int({
+                        "directorate": request.form.get("parent_id_dir"),
+                        "unit": request.form.get("parent_id_unit"),
+                    }.get(ptype))
+
+                parent_model = {"directorate": Directorate, "unit": Unit}.get(ptype)
+                with db.session.no_autoflush:
+                    parent_exists = bool(
+                        parent_model
+                        and parent_id
+                        and db.session.get(parent_model, parent_id)
+                    )
+                if not parent_exists:
+                    flash("اختر تبعية الدائرة: إدارة أو وحدة.", "warning")
+                    return redirect(url_for("portal.portal_admin_hr_org_structure", tab=kind))
+
+                row.directorate_id = None
+                row.unit_id = None
+                if ptype == "unit":
+                    row.unit_id = parent_id
+                else:
+                    row.directorate_id = parent_id
             elif kind == "secs":
                 # New UI submits one unambiguous value (for example
                 # ``department:15``). Keep the separate legacy fields as a
