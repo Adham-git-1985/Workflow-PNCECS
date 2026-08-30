@@ -37,6 +37,18 @@
     <li class="nav-item" role="presentation"><button class="nav-link {% if tab=='teams' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-teams" type="button" onclick="location.href='{{ url_for('portal.portal_admin_hr_org_structure', tab='teams') }}'">الفرق</button></li>
   </ul>
 
+  <div class="d-flex align-items-end flex-wrap gap-2 pt-3 no-print">
+    <div class="flex-grow-1" style="max-width: 420px;">
+      <label class="form-label small text-muted mb-1" for="orgStructureSearch">بحث في التبويب الحالي</label>
+      <div class="input-group input-group-sm">
+        <span class="input-group-text"><i class="bi bi-search"></i></span>
+        <input id="orgStructureSearch" class="form-control" type="search" placeholder="ابحث بالاسم أو الرمز أو التبعية..." autocomplete="off">
+        <button id="orgStructureSearchClear" class="btn btn-outline-secondary" type="button" disabled>مسح</button>
+      </div>
+    </div>
+    <div id="orgStructureSearchResult" class="small text-muted pb-1" aria-live="polite"></div>
+  </div>
+
   <div class="tab-content pt-3">
 
     {# -------------------- ORGS -------------------- #}
@@ -588,6 +600,59 @@
     document.querySelectorAll('#tab-depts tbody tr').forEach(function(tr){ toggle(tr, 'dept'); });
     document.querySelectorAll('#tab-secs tbody tr').forEach(function(tr){ toggle(tr, 'sec'); });
     document.querySelectorAll('#tab-divs tbody tr').forEach(function(tr){ toggle(tr, 'div'); });
+    setupSearch();
+  }
+
+  function setupSearch(){
+    var input = document.getElementById('orgStructureSearch');
+    var clearButton = document.getElementById('orgStructureSearchClear');
+    var result = document.getElementById('orgStructureSearchResult');
+    if(!input || !clearButton || !result) return;
+
+    function normalize(value){
+      return String(value || '').toLocaleLowerCase('ar').trim();
+    }
+
+    function rowText(row){
+      var values = [];
+      row.querySelectorAll('input:not([type="hidden"])').forEach(function(control){
+        if(control.type !== 'checkbox' && control.type !== 'radio') values.push(control.value);
+      });
+      row.querySelectorAll('select').forEach(function(control){
+        var selected = control.options[control.selectedIndex];
+        if(selected) values.push(selected.value, selected.textContent);
+      });
+      return normalize(values.join(' '));
+    }
+
+    function applySearch(){
+      var query = normalize(input.value);
+      var activeTab = document.querySelector('.tab-pane.show.active') || document.querySelector('.tab-pane.active');
+      var total = 0;
+      var visible = 0;
+      if(activeTab){
+        activeTab.querySelectorAll('tbody > tr').forEach(function(row){
+          var isExistingRow = Boolean(row.querySelector('input[name="id"]'));
+          if(!isExistingRow){
+            row.hidden = false;
+            return;
+          }
+          total += 1;
+          var matches = !query || rowText(row).includes(query);
+          row.hidden = !matches;
+          if(matches) visible += 1;
+        });
+      }
+      clearButton.disabled = !input.value;
+      result.textContent = query ? ('عرض ' + visible + ' من ' + total) : '';
+    }
+
+    input.addEventListener('input', applySearch);
+    clearButton.addEventListener('click', function(){
+      input.value = '';
+      input.focus();
+      applySearch();
+    });
   }
 
   if(document.readyState === 'loading'){

@@ -331,6 +331,16 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertIn('value="directorate:{{ di.id }}"', template)
         self.assertIn('value="unit:{{ u.id }}"', template)
 
+    def test_org_structure_page_has_live_search(self):
+        template = (
+            PROJECT_ROOT / "templates" / "portal" / "admin" / "hr_org_structure.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn('id="orgStructureSearch"', template)
+        self.assertIn('id="orgStructureSearchClear"', template)
+        self.assertIn('function setupSearch()', template)
+        self.assertIn("activeTab.querySelectorAll('tbody > tr')", template)
+
     def test_division_can_be_created_under_a_section_with_one_parent_value(self):
         organization = Organization(name_ar="المؤسسة", is_active=True)
         db.session.add(organization)
