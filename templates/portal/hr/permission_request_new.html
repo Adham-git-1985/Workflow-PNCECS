@@ -44,7 +44,7 @@
         <select class="form-select" name="permission_type_id" required>
           <option value="">-- اختر --</option>
           {% for t in types %}
-            <option value="{{ t.id }}" {% if r and r.permission_type_id==t.id %}selected{% endif %}>{{ t.name }}</option>
+            <option value="{{ t.id }}" {% if r and r.permission_type_id==t.id %}selected{% endif %}>{{ t.name_ar or t.name_en or t.code }}</option>
           {% endfor %}
         </select>
       </div>
