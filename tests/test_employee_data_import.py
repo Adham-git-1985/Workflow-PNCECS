@@ -414,6 +414,30 @@ class EmployeeDataImportTests(unittest.TestCase):
             {"QUAL_SPECIALIZATION", "QUAL_GRADE", "UNIVERSITY"},
         )
 
+    def test_missing_lookup_values_can_be_created_before_other_errors_are_fixed(self):
+        payload = self.payload()
+        payload["fields"].update({
+            "secondment.date_from": answer("2010"),
+            "secondment.work_governorate_lookup_id": answer("رام الله"),
+            "secondment.work_location_lookup_id": answer("البيرة"),
+        })
+
+        plan = build_employee_import_plan(
+            payload,
+            self.employee,
+            create_missing_lookups=True,
+        )
+
+        self.assertTrue(any(issue["field"] == "التكليف 1: من تاريخ" for issue in plan["unresolved"]))
+        self.assertEqual(
+            {item["category"] for item in plan["created_lookups"]},
+            {"WORK_GOV", "WORK_LOCATION"},
+        )
+
+        db.session.commit()
+        self.assertIsNotNone(HRLookupItem.query.filter_by(category="WORK_GOV", name_ar="رام الله").first())
+        self.assertIsNotNone(HRLookupItem.query.filter_by(category="WORK_LOCATION", name_ar="البيرة").first())
+
     def test_manager_chain_uses_dynamic_nodes_and_custom_levels(self):
         directorate_type = OrgNodeType(
             code="DIRECTORATE",

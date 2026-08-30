@@ -14019,6 +14019,25 @@ def hr_employee_data_submission_apply(submission_id: int):
         return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
     create_missing = (request.form.get("create_missing_lookups") or "") == "1"
     try:
+        if create_missing:
+            lookup_plan = build_employee_import_plan(
+                row.payload(),
+                row.employee,
+                create_missing_lookups=True,
+            )
+            if lookup_plan["unresolved"]:
+                created_count = len(lookup_plan["created_lookups"])
+                if created_count:
+                    db.session.commit()
+                    flash(
+                        f"تم إنشاء {created_count} قيمة مرجعية جديدة. صحّح القيم المتبقية ثم أعد الاعتماد.",
+                        "success",
+                    )
+                else:
+                    db.session.rollback()
+                    flash("لم يتم إنشاء قيم مرجعية لأن الأخطاء المتبقية ليست قوائم مرجعية.", "warning")
+                return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
+
         summary = apply_employee_import_payload(
             row.payload(),
             row.employee,
