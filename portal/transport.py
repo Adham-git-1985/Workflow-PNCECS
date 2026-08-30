@@ -3,7 +3,7 @@ from __future__ import annotations
 import mimetypes
 import os
 import uuid
-from datetime import datetime, time
+from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -61,6 +61,17 @@ def _parse_dt(val: str) -> Optional[datetime]:
         # supports "YYYY-MM-DDTHH:MM"
         return datetime.fromisoformat(s)
     except Exception:
+        return None
+
+
+def _parse_iso_day(val: str) -> str | None:
+    """Return a normalised YYYY-MM-DD date, or None for an empty/invalid value."""
+    raw = (val or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date().isoformat()
+    except ValueError:
         return None
 
 
@@ -226,6 +237,25 @@ def _grant_transport_report_access(user_id: int | None) -> None:
         db.session.add(UserPermission(user_id=user_id, key="PORTAL_REPORTS_READ", is_allowed=True))
 
 
+def _license_expiry_window(today: date | None = None) -> tuple[str, str]:
+    current_day = today or date.today()
+    return current_day.isoformat(), (current_day + timedelta(days=14)).isoformat()
+
+
+def _apply_license_state_filter(query, column, state: str, today_iso: str, alert_until_iso: str):
+    if state == "EXPIRING":
+        return query.filter(
+            column.isnot(None),
+            column >= today_iso,
+            column <= alert_until_iso,
+        )
+    if state == "EXPIRED":
+        return query.filter(column.isnot(None), column < today_iso)
+    if state == "MISSING":
+        return query.filter(or_(column.is_(None), column == ""))
+    return query
+
+
 TRANSPORT_FORMS_LETTERHEAD_PATH_KEY = "TRANSPORT_FORMS_LETTERHEAD_PATH"
 TRANSPORT_FORMS_LETTERHEAD_NAME_KEY = "TRANSPORT_FORMS_LETTERHEAD_NAME"
 TRANSPORT_FORMS_LETTERHEAD_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg"}
@@ -238,7 +268,8 @@ def _ensure_transport_form_schema() -> None:
     if _transport_form_schema_checked:
         return
     inspector = inspect(db.engine)
-    if "transport_vehicle" not in inspector.get_table_names():
+    table_names = set(inspector.get_table_names())
+    if "transport_vehicle" not in table_names:
         return
     columns = {column["name"] for column in inspector.get_columns("transport_vehicle")}
     definitions = {
@@ -246,6 +277,8 @@ def _ensure_transport_form_schema() -> None:
         "engine_no": "VARCHAR(120)",
         "odometer_no": "VARCHAR(120)",
         "assigned_to": "VARCHAR(200)",
+        "license_end_day": "VARCHAR(10)",
+        "license_alert_sent_for": "VARCHAR(10)",
     }
     for column_name, column_type in definitions.items():
         if column_name not in columns:
@@ -260,6 +293,26 @@ def _ensure_transport_form_schema() -> None:
                 }
                 if column_name not in refreshed_columns:
                     raise
+
+    if "transport_driver" in table_names:
+        driver_columns = {column["name"] for column in inspector.get_columns("transport_driver")}
+        driver_definitions = {
+            "license_end_day": "VARCHAR(10)",
+            "license_alert_sent_for": "VARCHAR(10)",
+        }
+        for column_name, column_type in driver_definitions.items():
+            if column_name not in driver_columns:
+                try:
+                    with db.engine.begin() as connection:
+                        connection.exec_driver_sql(
+                            f"ALTER TABLE transport_driver ADD COLUMN {column_name} {column_type}"
+                        )
+                except Exception:
+                    refreshed_columns = {
+                        column["name"] for column in inspect(db.engine).get_columns("transport_driver")
+                    }
+                    if column_name not in refreshed_columns:
+                        raise
     with db.engine.begin() as connection:
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_transport_vehicle_chassis_no "
@@ -269,6 +322,15 @@ def _ensure_transport_form_schema() -> None:
             "CREATE INDEX IF NOT EXISTS ix_transport_vehicle_engine_no "
             "ON transport_vehicle (engine_no)"
         )
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_transport_vehicle_license_end_day "
+            "ON transport_vehicle (license_end_day)"
+        )
+        if "transport_driver" in table_names:
+            connection.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_transport_driver_license_end_day "
+                "ON transport_driver (license_end_day)"
+            )
     _transport_form_schema_checked = True
 
 
@@ -681,11 +743,27 @@ def transport_home():
         "permits_pending": 0,
         "trips_month": 0,
         "tasks_open": 0,
+        "vehicle_licenses_expiring": 0,
+        "driver_licenses_expiring": 0,
     }
     try:
         stats["vehicles"] = TransportVehicle.query.count()
         stats["drivers"] = TransportDriver.query.count()
         stats["permits_pending"] = TransportPermit.query.filter(TransportPermit.status == "SUBMITTED").count()
+
+        today_iso, alert_until_iso = _license_expiry_window()
+        stats["vehicle_licenses_expiring"] = TransportVehicle.query.filter(
+            TransportVehicle.status.in_(("ACTIVE", "MAINTENANCE")),
+            TransportVehicle.license_end_day.isnot(None),
+            TransportVehicle.license_end_day >= today_iso,
+            TransportVehicle.license_end_day <= alert_until_iso,
+        ).count()
+        stats["driver_licenses_expiring"] = TransportDriver.query.filter(
+            TransportDriver.status == "ACTIVE",
+            TransportDriver.license_end_day.isnot(None),
+            TransportDriver.license_end_day >= today_iso,
+            TransportDriver.license_end_day <= alert_until_iso,
+        ).count()
 
         now = datetime.now()
         month_start = datetime(now.year, now.month, 1)
@@ -711,6 +789,10 @@ def transport_home():
 def transport_vehicles():
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
+    license_state = (request.args.get("license_state") or "").strip().upper()
+    if license_state not in {"EXPIRING", "EXPIRED", "MISSING"}:
+        license_state = ""
+    today_iso, alert_until_iso = _license_expiry_window()
 
     query = TransportVehicle.query
     if status in ("ACTIVE", "INACTIVE", "MAINTENANCE"):
@@ -718,11 +800,28 @@ def transport_vehicles():
     if q:
         like = f"%{q}%"
         query = query.filter((TransportVehicle.plate_no.ilike(like)) | (TransportVehicle.label.ilike(like)))
+    query = _apply_license_state_filter(
+        query,
+        TransportVehicle.license_end_day,
+        license_state,
+        today_iso,
+        alert_until_iso,
+    )
 
     items = query.order_by(TransportVehicle.status.asc(), TransportVehicle.plate_no.asc()).all()
     can_edit = current_user.has_perm("TRANSPORT_UPDATE") or current_user.has_perm("TRANSPORT_CREATE")
     can_delete = current_user.has_perm("TRANSPORT_DELETE")
-    return render_template("portal/transport/vehicles_list.html", items=items, q=q, status=status, can_edit=can_edit, can_delete=can_delete)
+    return render_template(
+        "portal/transport/vehicles_list.html",
+        items=items,
+        q=q,
+        status=status,
+        license_state=license_state,
+        today_iso=today_iso,
+        alert_until_iso=alert_until_iso,
+        can_edit=can_edit,
+        can_delete=can_delete,
+    )
 
 
 @portal_bp.route("/transport/vehicles/new", methods=["GET", "POST"])
@@ -739,12 +838,17 @@ def transport_vehicle_new():
         engine_no = (request.form.get("engine_no") or "").strip() or None
         odometer_no = (request.form.get("odometer_no") or "").strip() or None
         assigned_to = (request.form.get("assigned_to") or "").strip() or None
+        license_end_day_raw = (request.form.get("license_end_day") or "").strip()
+        license_end_day = _parse_iso_day(license_end_day_raw)
         status = ((request.form.get("status") or "ACTIVE").strip().upper() or "ACTIVE")
         odom = _to_float(request.form.get("current_odometer") or "") or 0.0
         notes = (request.form.get("notes") or "").strip() or None
 
         if not plate_no:
             flash("رقم اللوحة مطلوب.", "danger")
+            return redirect(url_for("portal.transport_vehicle_new"))
+        if license_end_day_raw and not license_end_day:
+            flash("تاريخ انتهاء رخصة المركبة غير صحيح.", "danger")
             return redirect(url_for("portal.transport_vehicle_new"))
 
         exists = TransportVehicle.query.filter_by(plate_no=plate_no).first()
@@ -762,6 +866,7 @@ def transport_vehicle_new():
             engine_no=engine_no,
             odometer_no=odometer_no,
             assigned_to=assigned_to,
+            license_end_day=license_end_day,
             status=status if status in ("ACTIVE", "INACTIVE", "MAINTENANCE") else "ACTIVE",
             current_odometer=odom,
             notes=notes,
@@ -793,12 +898,17 @@ def transport_vehicle_edit(vehicle_id: int):
         engine_no = (request.form.get("engine_no") or "").strip() or None
         odometer_no = (request.form.get("odometer_no") or "").strip() or None
         assigned_to = (request.form.get("assigned_to") or "").strip() or None
+        license_end_day_raw = (request.form.get("license_end_day") or "").strip()
+        license_end_day = _parse_iso_day(license_end_day_raw)
         status = ((request.form.get("status") or "ACTIVE").strip().upper() or "ACTIVE")
         odom = _to_float(request.form.get("current_odometer") or "")
         notes = (request.form.get("notes") or "").strip() or None
 
         if not plate_no:
             flash("رقم اللوحة مطلوب.", "danger")
+            return redirect(url_for("portal.transport_vehicle_edit", vehicle_id=vehicle_id))
+        if license_end_day_raw and not license_end_day:
+            flash("تاريخ انتهاء رخصة المركبة غير صحيح.", "danger")
             return redirect(url_for("portal.transport_vehicle_edit", vehicle_id=vehicle_id))
 
         other = TransportVehicle.query.filter(TransportVehicle.plate_no == plate_no, TransportVehicle.id != row.id).first()
@@ -815,6 +925,9 @@ def transport_vehicle_edit(vehicle_id: int):
         row.engine_no = engine_no
         row.odometer_no = odometer_no
         row.assigned_to = assigned_to
+        if row.license_end_day != license_end_day:
+            row.license_alert_sent_for = None
+        row.license_end_day = license_end_day
         row.status = status if status in ("ACTIVE", "INACTIVE", "MAINTENANCE") else row.status
         if odom is not None:
             row.current_odometer = odom
@@ -850,6 +963,10 @@ def transport_vehicle_delete(vehicle_id: int):
 def transport_drivers():
     q = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
+    license_state = (request.args.get("license_state") or "").strip().upper()
+    if license_state not in {"EXPIRING", "EXPIRED", "MISSING"}:
+        license_state = ""
+    today_iso, alert_until_iso = _license_expiry_window()
 
     query = TransportDriver.query
     if status in ("ACTIVE", "INACTIVE"):
@@ -857,11 +974,28 @@ def transport_drivers():
     if q:
         like = f"%{q}%"
         query = query.filter((TransportDriver.name.ilike(like)) | (TransportDriver.phone.ilike(like)) | (TransportDriver.license_no.ilike(like)))
+    query = _apply_license_state_filter(
+        query,
+        TransportDriver.license_end_day,
+        license_state,
+        today_iso,
+        alert_until_iso,
+    )
 
     items = query.order_by(TransportDriver.status.asc(), TransportDriver.name.asc()).all()
     can_edit = current_user.has_perm("TRANSPORT_UPDATE") or current_user.has_perm("TRANSPORT_CREATE")
     can_delete = current_user.has_perm("TRANSPORT_DELETE")
-    return render_template("portal/transport/drivers_list.html", items=items, q=q, status=status, can_edit=can_edit, can_delete=can_delete)
+    return render_template(
+        "portal/transport/drivers_list.html",
+        items=items,
+        q=q,
+        status=status,
+        license_state=license_state,
+        today_iso=today_iso,
+        alert_until_iso=alert_until_iso,
+        can_edit=can_edit,
+        can_delete=can_delete,
+    )
 
 
 @portal_bp.route("/transport/drivers/new", methods=["GET", "POST"])
@@ -872,17 +1006,23 @@ def transport_driver_new():
         name = (request.form.get("name") or "").strip()
         phone = (request.form.get("phone") or "").strip() or None
         license_no = (request.form.get("license_no") or "").strip() or None
+        license_end_day_raw = (request.form.get("license_end_day") or "").strip()
+        license_end_day = _parse_iso_day(license_end_day_raw)
         status = ((request.form.get("status") or "ACTIVE").strip().upper() or "ACTIVE")
         notes = (request.form.get("notes") or "").strip() or None
 
         if not name:
             flash("اسم السائق مطلوب.", "danger")
             return redirect(url_for("portal.transport_driver_new"))
+        if license_end_day_raw and not license_end_day:
+            flash("تاريخ انتهاء رخصة السائق غير صحيح.", "danger")
+            return redirect(url_for("portal.transport_driver_new"))
 
         row = TransportDriver(
             name=name,
             phone=phone,
             license_no=license_no,
+            license_end_day=license_end_day,
             status=status if status in ("ACTIVE", "INACTIVE") else "ACTIVE",
             notes=notes,
             created_by_id=current_user.id,
@@ -907,16 +1047,24 @@ def transport_driver_edit(driver_id: int):
         name = (request.form.get("name") or "").strip()
         phone = (request.form.get("phone") or "").strip() or None
         license_no = (request.form.get("license_no") or "").strip() or None
+        license_end_day_raw = (request.form.get("license_end_day") or "").strip()
+        license_end_day = _parse_iso_day(license_end_day_raw)
         status = ((request.form.get("status") or "ACTIVE").strip().upper() or "ACTIVE")
         notes = (request.form.get("notes") or "").strip() or None
 
         if not name:
             flash("اسم السائق مطلوب.", "danger")
             return redirect(url_for("portal.transport_driver_edit", driver_id=driver_id))
+        if license_end_day_raw and not license_end_day:
+            flash("تاريخ انتهاء رخصة السائق غير صحيح.", "danger")
+            return redirect(url_for("portal.transport_driver_edit", driver_id=driver_id))
 
         row.name = name
         row.phone = phone
         row.license_no = license_no
+        if row.license_end_day != license_end_day:
+            row.license_alert_sent_for = None
+        row.license_end_day = license_end_day
         row.status = status if status in ("ACTIVE", "INACTIVE") else row.status
         row.notes = notes
 

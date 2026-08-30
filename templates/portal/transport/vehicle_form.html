@@ -56,6 +56,12 @@
     </div>
 
     <div class="col-md-4">
+      <label class="form-label">صالحة رخصة المركبة لغاية</label>
+      <input class="form-control" type="date" name="license_end_day" value="{{ item.license_end_day if item and item.license_end_day else '' }}">
+      <div class="form-text">يرسل النظام تنبيهًا وبريدًا إلكترونيًا قبل أسبوعين من الانتهاء.</div>
+    </div>
+
+    <div class="col-md-4">
       <label class="form-label">الحالة</label>
       <select class="form-select" name="status">
         {% set st = item.status if item else 'ACTIVE' %}

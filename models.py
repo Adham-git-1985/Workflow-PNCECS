@@ -5003,6 +5003,9 @@ class TransportVehicle(db.Model):
     fuel_type_lookup_id = db.Column(db.Integer, db.ForeignKey('hr_lookup_item.id'), nullable=True, index=True)
     service_start_day = db.Column(db.String(10), nullable=True, index=True)
     license_end_day = db.Column(db.String(10), nullable=True, index=True)
+    # Stores the end date for which the pre-expiry reminder was emitted.
+    # Clearing/updating the expiry date makes the next reminder eligible again.
+    license_alert_sent_for = db.Column(db.String(10), nullable=True)
     insurance_end_day = db.Column(db.String(10), nullable=True, index=True)
     work_location_lookup_id = db.Column(db.Integer, db.ForeignKey('hr_lookup_item.id'), nullable=True, index=True)
 
@@ -5036,6 +5039,8 @@ class TransportDriver(db.Model):
     name = db.Column(db.String(200), nullable=False, index=True)
     phone = db.Column(db.String(50), nullable=True)
     license_no = db.Column(db.String(100), nullable=True)
+    license_end_day = db.Column(db.String(10), nullable=True, index=True)  # YYYY-MM-DD
+    license_alert_sent_for = db.Column(db.String(10), nullable=True)
 
     status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)  # ACTIVE / INACTIVE
 

@@ -366,6 +366,26 @@ class TransportReadyFormsTests(unittest.TestCase):
             )
             self.assertEqual(forbidden_docx.status_code, 403)
 
+    def test_vehicle_and_driver_license_expiry_fields_are_shown(self):
+        with self.app.test_client() as client:
+            self._login(client, self.admin.id)
+
+            vehicle_form = client.get(f"/portal/transport/vehicles/{self.vehicle.id}/edit")
+            self.assertEqual(vehicle_form.status_code, 200)
+            self.assertIn('name="license_end_day"', vehicle_form.get_data(as_text=True))
+
+            vehicle_list = client.get("/portal/transport/vehicles?license_state=EXPIRING")
+            self.assertEqual(vehicle_list.status_code, 200)
+            self.assertIn("رخصة المركبة", vehicle_list.get_data(as_text=True))
+
+            driver_form = client.get(f"/portal/transport/drivers/{self.driver.id}/edit")
+            self.assertEqual(driver_form.status_code, 200)
+            self.assertIn('name="license_end_day"', driver_form.get_data(as_text=True))
+
+            driver_list = client.get("/portal/transport/drivers?license_state=EXPIRING")
+            self.assertEqual(driver_list.status_code, 200)
+            self.assertIn("حالة الرخصة", driver_list.get_data(as_text=True))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,6 +24,11 @@
       <label class="form-label">رقم الرخصة</label>
       <input class="form-control" name="license_no" value="{{ item.license_no if item else '' }}">
     </div>
+    <div class="col-md-3">
+      <label class="form-label">صالحة الرخصة لغاية</label>
+      <input class="form-control" type="date" name="license_end_day" value="{{ item.license_end_day if item and item.license_end_day else '' }}">
+      <div class="form-text">تنبيه وبريد إلكتروني قبل أسبوعين من الانتهاء.</div>
+    </div>
 
     <div class="col-md-4">
       <label class="form-label">الحالة</label>

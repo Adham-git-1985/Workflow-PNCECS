@@ -16,17 +16,26 @@
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="get" class="row g-2 align-items-end">
-    <div class="col-md-6">
+    <div class="col-md-4">
       <label class="form-label">بحث</label>
       <input class="form-control" name="q" value="{{ q or '' }}" placeholder="لوحة / اسم / وصف...">
     </div>
-    <div class="col-md-3">
+    <div class="col-md-2">
       <label class="form-label">الحالة</label>
       <select class="form-select" name="status">
         <option value="" {% if not status %}selected{% endif %}>الكل</option>
         <option value="ACTIVE" {% if status=='ACTIVE' %}selected{% endif %}>فعّالة</option>
         <option value="MAINTENANCE" {% if status=='MAINTENANCE' %}selected{% endif %}>صيانة</option>
         <option value="INACTIVE" {% if status=='INACTIVE' %}selected{% endif %}>غير فعّالة</option>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <label class="form-label">حالة الرخصة</label>
+      <select class="form-select" name="license_state">
+        <option value="" {% if not license_state %}selected{% endif %}>الكل</option>
+        <option value="EXPIRING" {% if license_state=='EXPIRING' %}selected{% endif %}>تنتهي خلال أسبوعين</option>
+        <option value="EXPIRED" {% if license_state=='EXPIRED' %}selected{% endif %}>منتهية</option>
+        <option value="MISSING" {% if license_state=='MISSING' %}selected{% endif %}>بدون تاريخ</option>
       </select>
     </div>
     <div class="col-md-3 d-flex gap-2">
@@ -44,6 +53,7 @@
           <th>اللوحة</th>
           <th>الوصف</th>
           <th>النوع/الموديل</th>
+          <th>رخصة المركبة</th>
           <th>الحالة</th>
           <th>عداد (كم)</th>
           <th class="text-end">إجراءات</th>
@@ -58,6 +68,20 @@
               <span class="text-muted">{{ it.vehicle_type or '' }}</span>
               {% if it.model %} — {{ it.model }}{% endif %}
               {% if it.year %} ({{ it.year }}){% endif %}
+            </td>
+            <td>
+              {% if it.license_end_day %}
+                <div>{{ it.license_end_day }}</div>
+                {% if it.license_end_day < today_iso %}
+                  <span class="badge text-bg-danger">منتهية</span>
+                {% elif it.license_end_day <= alert_until_iso %}
+                  <span class="badge text-bg-warning">تنتهي خلال أسبوعين</span>
+                {% else %}
+                  <span class="badge text-bg-success">سارية</span>
+                {% endif %}
+              {% else %}
+                <span class="text-muted">غير مدخلة</span>
+              {% endif %}
             </td>
             <td>
               {% if it.status == 'ACTIVE' %}
@@ -88,7 +112,7 @@
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+          <tr><td colspan="7" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -844,6 +844,7 @@ def _ensure_runtime_schema():
                 ("fuel_type_lookup_id", "INTEGER"),
                 ("service_start_day", "TEXT"),
                 ("license_end_day", "TEXT"),
+                ("license_alert_sent_for", "TEXT"),
                 ("insurance_end_day", "TEXT"),
                 ("work_location_lookup_id", "INTEGER"),
                 ("consumption_rate", "REAL"),
@@ -851,6 +852,13 @@ def _ensure_runtime_schema():
             ]:
                 if not _col_exists("transport_vehicle", col):
                     _add_column_retry("transport_vehicle", col, ctype)
+
+            for col, ctype in [
+                ("license_end_day", "TEXT"),
+                ("license_alert_sent_for", "TEXT"),
+            ]:
+                if not _col_exists("transport_driver", col):
+                    _add_column_retry("transport_driver", col, ctype)
 
             # Transport soft delete + trip extra fields
             for col, ctype in [
@@ -1084,6 +1092,7 @@ try:
     from portal.timeclock_auto import start_timeclock_auto_sync
     from portal.hr_alerts_job import start_hr_alerts_job
     from portal.corr_deadlines_job import start_correspondence_deadline_job
+    from portal.transport_license_alerts_job import start_transport_license_alerts_job
     from jobs.backup_job import start_automatic_backup_job
     from jobs.workflow_task_email_job import start_workflow_task_email_job
 
@@ -1108,6 +1117,7 @@ try:
             start_timeclock_auto_sync(app)
             start_hr_alerts_job(app)
             start_correspondence_deadline_job(app)
+            start_transport_license_alerts_job(app)
             start_workflow_task_email_job(app)
         except Exception:
             # Keep serving even if job fails
