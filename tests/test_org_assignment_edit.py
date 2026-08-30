@@ -18,7 +18,11 @@ from models import (
     SystemSetting,
     User,
 )
-from portal.routes import hr_org_assignments_save, portal_admin_hr_org_structure
+from portal.routes import (
+    hr_org_assignments_save,
+    hr_org_node_managers,
+    portal_admin_hr_org_structure,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -331,6 +335,17 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(division.section_id, section.id)
         self.assertIsNone(division.department_id)
+        division_node = OrgNode.query.filter_by(
+            legacy_type="DIVISION",
+            legacy_id=division.id,
+            is_active=True,
+        ).one()
+        section_node = OrgNode.query.filter_by(
+            legacy_type="SECTION",
+            legacy_id=section.id,
+            is_active=True,
+        ).one()
+        self.assertEqual(division_node.parent_id, section_node.id)
 
     def test_division_form_uses_a_single_explicit_parent_field(self):
         template = (
@@ -340,6 +355,58 @@ class OrgAssignmentEditTests(unittest.TestCase):
         self.assertIn('name="parent_ref" form="{{ division_form_id }}"', template)
         self.assertIn('value="section:{{ s.id }}"', template)
         self.assertIn('form="division-add"', template)
+
+    def test_manager_list_syncs_an_existing_unmirrored_division(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للشؤون الإدارية",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الشؤون الإدارية",
+            is_active=True,
+        )
+        db.session.add(department)
+        db.session.flush()
+        section = Section(
+            department_id=department.id,
+            name_ar="قسم الصادر والوارد",
+            is_active=True,
+        )
+        db.session.add(section)
+        db.session.flush()
+        division = Division(
+            section_id=section.id,
+            name_ar="شعبة الصادر والوارد",
+            is_active=True,
+        )
+        db.session.add(division)
+        db.session.commit()
+
+        show_managers = _unwrapped(hr_org_node_managers)
+        with self.app.test_request_context("/portal/hr/org-nodes/managers?q=الصادر"), patch(
+            "portal.routes.render_template", return_value="rendered"
+        ):
+            response = show_managers()
+
+        self.assertEqual(response, "rendered")
+        division_node = OrgNode.query.filter_by(
+            legacy_type="DIVISION",
+            legacy_id=division.id,
+            is_active=True,
+        ).one()
+        section_node = OrgNode.query.filter_by(
+            legacy_type="SECTION",
+            legacy_id=section.id,
+            is_active=True,
+        ).one()
+        self.assertEqual(division_node.parent_id, section_node.id)
 
 
 if __name__ == "__main__":
