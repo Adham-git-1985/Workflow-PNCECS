@@ -19,6 +19,7 @@ from models import (
 
 APPROVED_STRUCTURE_VERSION = "2023-05-08:v2"
 APPROVED_LEGACY_TYPE = "APPROVED_ORG_2023"
+CUSTOM_DIVISION_LEGACY_TYPE = "CUSTOM_DIVISION"
 
 
 def _n(key: str, type_code: str, name_ar: str, children=(), aliases=()):
@@ -821,6 +822,8 @@ def apply_approved_org_structure(*, deactivate_unlisted: bool = True, lock_legac
     deactivated = 0
     for node in list(existing_nodes):
         if node.id in claimed_ids or not node.is_active:
+            continue
+        if node.legacy_type == CUSTOM_DIVISION_LEGACY_TYPE:
             continue
         target_keys = alias_targets.get(_normalize(node.name_ar), set())
         if len(target_keys) == 1:

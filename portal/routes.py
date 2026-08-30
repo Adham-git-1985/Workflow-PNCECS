@@ -90,6 +90,7 @@ from utils.notification_links import notification_target_path, safe_local_notifi
 from utils.org_dynamic import (
     build_chart_tree,
     build_org_node_picker_tree,
+    sync_approved_division_extensions,
     sync_existing_legacy_node,
     sync_legacy_now,
 )
@@ -16263,7 +16264,8 @@ def hr_org_structure():
         else:
             raise
 
-    sync_legacy_now()
+    if not sync_legacy_now():
+        sync_approved_division_extensions()
     include_people = (request.args.get('include_people') or '').strip().lower() in ('1', 'true', 'yes')
     # This also ensures the canonical dynamic hierarchy schema/seed exists before
     # it is queried for employee assignments and manager chains below.
@@ -16410,7 +16412,8 @@ def hr_org_node_assignments():
 @login_required
 @_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
 def hr_org_node_managers():
-    sync_legacy_now()
+    if not sync_legacy_now():
+        sync_approved_division_extensions()
     q = (request.args.get("q") or "").strip()
     query = OrgNode.query.filter(OrgNode.is_active.is_(True))
     if q:
@@ -24605,7 +24608,8 @@ def portal_admin_hr_org_structure():
                 if legacy_type:
                     sync_existing_legacy_node(legacy_type, row.id)
                 db.session.commit()
-                sync_legacy_now()
+                if not sync_legacy_now():
+                    sync_approved_division_extensions()
                 flash("تم الحفظ.", "success")
             except Exception:
                 db.session.rollback()

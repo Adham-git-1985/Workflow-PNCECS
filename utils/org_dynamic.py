@@ -157,6 +157,81 @@ def sync_legacy_now(*, raise_errors: bool = False) -> bool:
         return False
 
 
+def sync_approved_division_extensions(*, raise_errors: bool = False) -> int:
+    try:
+        if not (_get_setting("ORG_APPROVED_STRUCTURE_VERSION") or "").strip():
+            return 0
+
+        ensure_dynamic_org_seed()
+        division_type = OrgNodeType.query.filter_by(code="DIVISION", is_active=True).first()
+        if division_type is None:
+            return 0
+
+        from utils.approved_org_structure import find_approved_org_node_by_name
+
+        synced = 0
+        for division in Division.query.filter_by(is_active=True).order_by(Division.id.asc()).all():
+            parent_node = None
+            if division.section_id:
+                section = db.session.get(Section, int(division.section_id))
+                if section:
+                    parent_node = OrgNode.query.filter_by(
+                        legacy_type="SECTION",
+                        legacy_id=int(section.id),
+                        is_active=True,
+                    ).first()
+                    if parent_node is None:
+                        parent_node = find_approved_org_node_by_name(section.name_ar, "SECTION")
+            elif division.department_id:
+                department = db.session.get(Department, int(division.department_id))
+                if department:
+                    parent_node = OrgNode.query.filter_by(
+                        legacy_type="DEPARTMENT",
+                        legacy_id=int(department.id),
+                        is_active=True,
+                    ).first()
+                    if parent_node is None:
+                        parent_node = find_approved_org_node_by_name(department.name_ar, "DEPARTMENT")
+            if parent_node is None:
+                continue
+
+            node = (
+                OrgNode.query
+                .filter(
+                    OrgNode.legacy_id == int(division.id),
+                    OrgNode.legacy_type.in_(("DIVISION", "CUSTOM_DIVISION")),
+                )
+                .order_by(OrgNode.id.asc())
+                .first()
+            )
+            if node is None:
+                node = OrgNode(
+                    type_id=division_type.id,
+                    legacy_type="CUSTOM_DIVISION",
+                    legacy_id=int(division.id),
+                )
+                db.session.add(node)
+            node.type_id = division_type.id
+            node.parent_id = parent_node.id
+            node.name_ar = division.name_ar
+            node.name_en = division.name_en
+            node.code = division.code or f"CUSTOM_DIV_{division.id}"
+            node.is_active = True
+            node.updated_at = datetime.utcnow()
+            synced += 1
+
+        db.session.commit()
+        return synced
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        if raise_errors:
+            raise
+        return 0
+
+
 def sync_existing_legacy_node(legacy_type: str, legacy_id: int) -> bool:
     """Refresh one existing legacy-backed OrgNode in the current transaction.
 

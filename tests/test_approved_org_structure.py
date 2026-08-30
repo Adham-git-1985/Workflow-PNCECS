@@ -3,13 +3,28 @@ import unittest
 from flask import Flask
 
 from extensions import db
-from models import Organization, OrgNode, OrgNodeAssignment, OrgNodeManager, OrgNodeType, User
+from models import (
+    Department,
+    Directorate,
+    Division,
+    Organization,
+    OrgNode,
+    OrgNodeAssignment,
+    OrgNodeManager,
+    OrgNodeType,
+    Section,
+    User,
+)
 from utils.approved_org_structure import (
     APPROVED_LEGACY_TYPE,
     apply_approved_org_structure,
     flatten_approved_structure,
 )
-from utils.org_dynamic import build_chart_tree, sync_legacy_now
+from utils.org_dynamic import (
+    build_chart_tree,
+    sync_approved_division_extensions,
+    sync_legacy_now,
+)
 
 
 class ApprovedOrgStructureTests(unittest.TestCase):
@@ -156,6 +171,54 @@ class ApprovedOrgStructureTests(unittest.TestCase):
         manager = OrgNodeManager.query.filter_by(node_id=canonical.id).one()
         self.assertEqual(manager.manager_user_id, user.id)
         self.assertEqual(manager.deputy_user_id, duplicate_manager.id)
+
+    def test_approved_structure_preserves_custom_division_extensions(self):
+        apply_approved_org_structure()
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="إدارة المراسلات",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة المراسلات",
+            is_active=True,
+        )
+        db.session.add(department)
+        db.session.flush()
+        section = Section(
+            department_id=department.id,
+            name_ar="قسم الصادر والوارد",
+            is_active=True,
+        )
+        db.session.add(section)
+        db.session.flush()
+        division = Division(
+            section_id=section.id,
+            name_ar="شعبة الصادر والوارد",
+            is_active=True,
+        )
+        db.session.add(division)
+        db.session.commit()
+
+        self.assertFalse(sync_legacy_now(raise_errors=True))
+        self.assertEqual(sync_approved_division_extensions(raise_errors=True), 1)
+        division_node = OrgNode.query.filter_by(
+            legacy_type="CUSTOM_DIVISION",
+            legacy_id=division.id,
+            is_active=True,
+        ).one()
+        self.assertEqual(division_node.parent.code, "SEC_IN_OUT")
+
+        apply_approved_org_structure()
+        db.session.commit()
+        self.assertTrue(db.session.get(OrgNode, division_node.id).is_active)
+        self.assertEqual(db.session.get(OrgNode, division_node.id).parent.code, "SEC_IN_OUT")
 
 
 if __name__ == "__main__":
