@@ -25047,6 +25047,7 @@ def _portal_perm_presets_defaults():
     """Default shortcuts shown on the portal permissions page."""
     base_employee_keys = [
         PORTAL_READ,
+        "WORKFLOW_DASHBOARD_READ",
         HR_READ,
         HR_ATT_READ,
         HR_REQUESTS_READ,
@@ -25087,6 +25088,7 @@ def _portal_perm_presets_defaults():
             "keys": _normalize_keys([
                 PORTAL_READ,
                 PORTAL_ADMIN_READ,
+                "WORKFLOW_DASHBOARD_READ",
                 HR_READ,
                 HR_ATT_READ,
                 HR_REQUESTS_READ,
@@ -25140,6 +25142,7 @@ def _portal_perm_presets_defaults():
         "MASAR_OVERSIGHT": {
             "label": "متابعة مسار",
             "keys": _normalize_keys([
+                "WORKFLOW_DASHBOARD_READ",
                 "AUDIT_DASHBOARD_READ",
                 "AUDIT_TIMELINE_READ",
                 "WORKFLOW_NOTIFICATIONS_DASHBOARD_READ",

@@ -29,6 +29,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("PORTAL_ADMIN_PERMISSIONS_MANAGE", "إدارة صلاحيات البوابة", "تعديل صلاحيات الأدوار الخاصة بالبوابة (RolePermission).", module="PORTAL_ADMIN_PERMISSIONS"),
     ],
     "مسار العمل ولوحات المتابعة": [
+        PermDef("WORKFLOW_DASHBOARD_READ", "عرض لوحة عمل مسار", "الوصول إلى لوحة عمل مسار لمتابعة المهام والطلبات والمسارات.", module="WORKFLOW"),
         PermDef("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ", "عرض لوحة إشعارات مسار", "عرض إحصاءات وإجماليات إشعارات نظام مسار.", module="WORKFLOW_NOTIFICATIONS"),
     ],
     "التعميمات": [

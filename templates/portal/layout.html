@@ -78,6 +78,7 @@
 )) %}
 {% set can_enter_portal = (au.has_perm('PORTAL_READ') or au.has_perm('PORTAL_VIEW')) %}
 {% set home_url = (url_for('portal.index') if can_enter_portal else (url_for('portal.portal_admin_dashboard') if can_admin else url_for('portal.portal_entry'))) %}
+{% set masar_home_url = (url_for('workflow.work_dashboard') if au.has_perm('WORKFLOW_DASHBOARD_READ') else url_for('workflow.inbox')) %}
 {% set can_corr = _flags.get('can_corr', au.has_perm('CORR_READ')) %}
 {% set can_att  = _flags.get('can_att', au.has_perm('HR_ATTENDANCE_READ')) %}
 {% set can_hr   = _flags.get('can_hr', (
@@ -112,7 +113,7 @@
 <div class="portal-utilbar no-print">
   <div class="container-fluid portal-utilbar-layout">
 
-    <a class="btn btn-outline-light btn-sm portal-masar-return" href="{{ url_for('workflow.work_dashboard') }}" title="العودة لمسار">
+    <a class="btn btn-outline-light btn-sm portal-masar-return" href="{{ masar_home_url }}" title="العودة لمسار">
       <i class="bi bi-arrow-return-right"></i><span class="d-none d-md-inline"> العودة لمسار</span>
     </a>
 
@@ -257,7 +258,7 @@
 <nav class="navbar navbar-expand-lg navbar-dark portal-topnav" style="background:#0b2b3d;">
   <div class="container-fluid">
     <div class="navbar-brand">
-          <a class="d-inline-flex align-items-center gap-2 me-2 text-decoration-none" href="{{ url_for('workflow.work_dashboard') }}" title="فتح مسار">
+          <a class="d-inline-flex align-items-center gap-2 me-2 text-decoration-none" href="{{ masar_home_url }}" title="فتح مسار">
             <img src="{{ url_for('static', filename='images/logo.png') }}" class="brand-logo portal-brand-logo" alt="Masar">
             <img src="{{ url_for('static', filename='images/pncecs_logo.png') }}" class="brand-logo portal-brand-logo" alt="PNCECS">
           </a>

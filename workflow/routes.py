@@ -3603,6 +3603,7 @@ _WORKFLOW_DASHBOARD_QUEUES = {
 
 @workflow_bp.route("/work")
 @login_required
+@perm_required("WORKFLOW_DASHBOARD_READ")
 def work_dashboard():
     """Procedural Workflow dashboard for tasks, tracking, and correspondence."""
     selected_queue = (request.args.get("queue") or "my_action").strip().lower()
