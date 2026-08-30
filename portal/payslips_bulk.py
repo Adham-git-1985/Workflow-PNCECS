@@ -176,7 +176,7 @@ def _register_or_replace_payslip(
     original_name: str,
     year: int,
     month: int,
-    page_number: int,
+    page_label: str,
     identity_number: str,
 ) -> EmployeeAttachment:
     user_id = int(emp.user_id)
@@ -201,7 +201,7 @@ def _register_or_replace_payslip(
             pass
         att.original_name = original_name
         att.stored_name = stored_name
-        att.note = f"قسيمة راتب مستخرجة من ملف جماعي - صفحة {page_number} - رقم الهوية {identity_number}"
+        att.note = f"قسيمة راتب مستخرجة من ملف جماعي - الصفحات {page_label} - رقم الهوية {identity_number}"
         att.uploaded_by_id = current_user.id
         att.uploaded_at = datetime.utcnow()
     else:
@@ -210,7 +210,7 @@ def _register_or_replace_payslip(
             attachment_type="PAYSLIP",
             original_name=original_name,
             stored_name=stored_name,
-            note=f"قسيمة راتب مستخرجة من ملف جماعي - صفحة {page_number} - رقم الهوية {identity_number}",
+            note=f"قسيمة راتب مستخرجة من ملف جماعي - الصفحات {page_label} - رقم الهوية {identity_number}",
             payslip_year=year,
             payslip_month=month,
             uploaded_by_id=current_user.id,
@@ -236,7 +236,7 @@ def _split_and_register_payslip_pdf(
     year: int,
     month: int,
 ) -> tuple[list[dict], list[str], dict]:
-    """Split the combined PDF, save each matched slip as a draft attachment, and keep downloadable split PDFs."""
+    """Group pages by identity, then save each grouped payslip as one draft attachment."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
     doc = fitz.open(str(input_pdf_path))
@@ -244,29 +244,57 @@ def _split_and_register_payslip_pdf(
     warnings: list[str] = []
     counters = {"saved": 0, "skipped": 0, "pages": 0}
 
+    page_groups: list[dict] = []
+    groups_by_identity: dict[str, dict] = {}
+
     try:
         for page_index in range(doc.page_count):
             page_number = page_index + 1
             counters["pages"] += 1
 
-            page = doc.load_page(page_index)
-            page_text = page.get_text("text")
+            page_text = doc.load_page(page_index).get_text("text")
             identity_number = _extract_identity_number(page_text)
 
-            if not identity_number:
+            if identity_number:
+                group = groups_by_identity.get(identity_number)
+                if group is None:
+                    group = {
+                        "identity_number": identity_number,
+                        "has_identity": True,
+                        "page_indexes": [],
+                    }
+                    groups_by_identity[identity_number] = group
+                    page_groups.append(group)
+            else:
                 identity_number = f"page_{page_number:03d}_NO_ID"
                 warnings.append(f"لم يتم العثور على رقم الهوية في الصفحة رقم {page_number}.")
+                group = {
+                    "identity_number": identity_number,
+                    "has_identity": False,
+                    "page_indexes": [],
+                }
+                page_groups.append(group)
+
+            group["page_indexes"].append(page_index)
+
+        for group in page_groups:
+            identity_number = group["identity_number"]
+            page_indexes = group["page_indexes"]
+            page_numbers = [page_index + 1 for page_index in page_indexes]
+            page_label = "، ".join(str(page_number) for page_number in page_numbers)
 
             split_pdf_path = _unique_pdf_path(output_dir, identity_number)
-            single_page_pdf = fitz.open()
+            grouped_pdf = fitz.open()
             try:
-                single_page_pdf.insert_pdf(doc, from_page=page_index, to_page=page_index)
-                single_page_pdf.save(str(split_pdf_path), garbage=4, deflate=True)
+                for page_index in page_indexes:
+                    grouped_pdf.insert_pdf(doc, from_page=page_index, to_page=page_index)
+                grouped_pdf.save(str(split_pdf_path), garbage=4, deflate=True)
             finally:
-                single_page_pdf.close()
+                grouped_pdf.close()
 
             row = {
-                "page": page_number,
+                "page": page_label,
+                "page_numbers": page_numbers,
                 "identity_number": identity_number,
                 "filename": split_pdf_path.name,
                 "employee_no": "",
@@ -277,11 +305,11 @@ def _split_and_register_payslip_pdf(
                 "message": "",
             }
 
-            emp = None if "NO_ID" in identity_number else _find_employee_by_identity(identity_number)
+            emp = _find_employee_by_identity(identity_number) if group["has_identity"] else None
             if not emp:
                 counters["skipped"] += 1
                 row["message"] = f"لم يتم العثور على موظف يحمل رقم الهوية {identity_number} في ملف الموظفين."
-                warnings.append(f"الصفحة {page_number}: {row['message']}")
+                warnings.append(f"الصفحات {page_label}: {row['message']}")
                 rows.append(row)
                 continue
 
@@ -298,7 +326,7 @@ def _split_and_register_payslip_pdf(
                     original_name=split_pdf_path.name,
                     year=year,
                     month=month,
-                    page_number=page_number,
+                    page_label=page_label,
                     identity_number=identity_number,
                 )
                 db.session.flush()
@@ -310,12 +338,12 @@ def _split_and_register_payslip_pdf(
                     "user_id": int(emp.user_id),
                     "attachment_id": getattr(att, "id", None),
                     "status": "saved",
-                    "message": "تم حفظها كمسودة وستظهر في صفحة إرسال قسائم الرواتب.",
+                    "message": f"تم حفظ قسيمة من {len(page_numbers)} صفحة كمسودة وستظهر في صفحة إرسال قسائم الرواتب.",
                 })
             except Exception as exc:
                 counters["skipped"] += 1
                 row["message"] = f"تعذر حفظ القسيمة في ملف الموظف: {exc}"
-                warnings.append(f"الصفحة {page_number}: {row['message']}")
+                warnings.append(f"الصفحات {page_label}: {row['message']}")
 
             rows.append(row)
     finally:

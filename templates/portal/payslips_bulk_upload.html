@@ -12,7 +12,7 @@
         رفع قسائم الراتب
       </h3>
       <div class="text-muted">
-        ارفع ملف PDF واحد، وسيتم تقسيم كل صفحة حسب رقم الهوية، ثم حفظ القسائم كمسودات للشهر المختار.
+        ارفع ملف PDF واحد، وسيتم جمع الصفحات ذات رقم الهوية نفسه في قسيمة واحدة، ثم حفظ القسائم كمسودات للشهر المختار.
       </div>
     </div>
     <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=year, month=month) }}">
@@ -53,7 +53,7 @@
             <label class="form-label">ملف PDF الجماعي</label>
             <input type="file" name="pdf_file" class="form-control" accept="application/pdf" required>
             <div class="form-text">
-              يجب أن يحتوي كل صفحة على حقل رقم الهوية. سيتم مطابقة رقم الهوية مع ملف الموظف ثم حفظ القسيمة كمسودة.
+              يجب أن يحتوي كل صفحة على حقل رقم الهوية. ستُدمج الصفحات ذات الهوية نفسها بترتيبها، ثم تُطابق مع ملف الموظف وتحفظ كقسيمة واحدة مسودة.
             </div>
           </div>
         </div>
@@ -86,7 +86,7 @@
         </a>
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_payslips_bulk_download_zip', batch_id=batch_id) }}">
           <i class="bi bi-download"></i>
-          تحميل ZIP للملفات المقسمة
+          تحميل ZIP للقسائم المجمعة
         </a>
       </div>
     </div>
@@ -112,7 +112,7 @@
         <table class="table table-bordered table-striped align-middle text-center">
           <thead class="table-light">
             <tr>
-              <th style="width:90px">الصفحة</th>
+              <th style="width:120px">الصفحة/الصفحات</th>
               <th style="width:150px">رقم الهوية</th>
               <th style="width:130px">الرقم الوظيفي</th>
               <th>الموظف</th>
