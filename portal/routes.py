@@ -13902,7 +13902,52 @@ def hr_employee_data_submissions():
         users=users,
         selected_status=status,
         counts=counts,
+        can_delete_submissions=_can_delete_employee_data_submissions(),
     )
+
+
+def _can_delete_employee_data_submissions() -> bool:
+    try:
+        return bool(current_user.has_role("ADMIN") or _is_super_admin())
+    except Exception:
+        return False
+
+
+@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/delete", methods=["POST"])
+@login_required
+def hr_employee_data_submission_delete(submission_id: int):
+    if not _can_delete_employee_data_submissions():
+        abort(403)
+
+    _employee_submission_require_csrf()
+    row = EmployeeDataSubmission.query.get_or_404(submission_id)
+    return_status = (request.form.get("return_status") or "PENDING").strip().upper()
+    if return_status not in {"PENDING", "APPLIED", "REJECTED", "ALL"}:
+        return_status = "PENDING"
+
+    was_applied = row.status == "APPLIED"
+    employee_email = row.employee.email if row.employee else str(row.employee_user_id)
+    try:
+        _portal_audit(
+            action="HR_EMPLOYEE_DATA_DELETE",
+            note=(
+                f"حذف طلب بيانات الموظف #{row.id} "
+                f"للموظف: {employee_email}؛ الحالة السابقة: {row.status}"
+            ),
+            target_type="EMPLOYEE_DATA_SUBMISSION",
+            target_id=row.id,
+        )
+        db.session.delete(row)
+        db.session.commit()
+        if was_applied:
+            flash("تم حذف الطلب. لا يتم التراجع عن البيانات التي رُحّلت سابقًا إلى ملف الموظف.", "success")
+        else:
+            flash("تم حذف الطلب.", "success")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Employee data submission deletion failed")
+        flash("تعذر حذف الطلب.", "danger")
+    return redirect(url_for("portal.hr_employee_data_submissions", status=return_status))
 
 
 @portal_bp.route("/hr/employee-data-submissions/upload", methods=["POST"])

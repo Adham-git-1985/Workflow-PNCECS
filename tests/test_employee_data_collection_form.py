@@ -165,6 +165,21 @@ class EmployeeDataCollectionFormTests(unittest.TestCase):
         self.assertIn("اعتماد وترحيل إلى ملف الموظف", review)
         self.assertIn("رفض دون ترحيل", review)
 
+    def test_only_admins_receive_the_submission_delete_action(self):
+        routes = (PROJECT_ROOT / "portal" / "routes.py").read_text(encoding="utf-8")
+        inbox = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "employee_data_submissions.html"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '@portal_bp.route("/hr/employee-data-submissions/<int:submission_id>/delete", methods=["POST"])',
+            routes,
+        )
+        self.assertIn("def _can_delete_employee_data_submissions()", routes)
+        self.assertIn("_employee_submission_require_csrf()", routes)
+        self.assertIn("can_delete_submissions", inbox)
+        self.assertIn("portal.hr_employee_data_submission_delete", inbox)
+
     def test_offline_download_embeds_images_and_removes_server_actions(self):
         self.assertIn("offline_pncecs_logo", self.template)
         self.assertIn("offline_masar_logo", self.template)

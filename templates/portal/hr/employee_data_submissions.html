@@ -87,7 +87,16 @@
             {% elif item.status == 'APPLIED' %}<span class="badge bg-success">تم الاعتماد</span>
             {% else %}<span class="badge bg-danger">مرفوض</span>{% endif %}
           </td>
-          <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_data_submission_view', submission_id=item.id) }}">مراجعة</a></td>
+          <td class="text-nowrap">
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_employee_data_submission_view', submission_id=item.id) }}">مراجعة</a>
+            {% if can_delete_submissions %}
+            <form method="post" action="{{ url_for('portal.hr_employee_data_submission_delete', submission_id=item.id) }}" class="d-inline" onsubmit="return confirm('سيُحذف الطلب نهائيًا. هل تريد المتابعة؟')">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="return_status" value="{{ selected_status }}">
+              <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i> حذف</button>
+            </form>
+            {% endif %}
+          </td>
         </tr>
         {% else %}
         <tr><td colspan="7" class="text-center text-muted py-5">لا توجد طلبات ضمن هذا التصنيف.</td></tr>

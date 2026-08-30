@@ -3,12 +3,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from flask import Flask
+from werkzeug.exceptions import Forbidden
 
 from extensions import db
 from models import (
     Department,
     Directorate,
     Division,
+    EmployeeDataSubmission,
     Organization,
     OrgNode,
     OrgNodeAssignment,
@@ -20,6 +22,7 @@ from models import (
 )
 from portal.routes import (
     hr_org_assignments_save,
+    hr_employee_data_submission_delete,
     hr_org_node_managers,
     portal_admin_hr_org_structure,
 )
@@ -460,6 +463,57 @@ class OrgAssignmentEditTests(unittest.TestCase):
             is_active=True,
         ).one()
         self.assertEqual(division_node.parent_id, section_node.id)
+
+    def test_only_admin_can_delete_employee_data_submission(self):
+        admin = self._user("admin@example.test", "مدير النظام")
+        employee = User(
+            email="employee@example.test",
+            name="موظف تجريبي",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        db.session.add(employee)
+        db.session.flush()
+        submission = EmployeeDataSubmission(
+            employee_user_id=employee.id,
+            submitted_by_id=employee.id,
+            source="ONLINE",
+            status="PENDING",
+            payload_json="{}",
+            payload_sha256="a" * 64,
+        )
+        db.session.add(submission)
+        db.session.commit()
+
+        delete = _unwrapped(hr_employee_data_submission_delete)
+        with self.app.test_request_context(
+            f"/portal/hr/employee-data-submissions/{submission.id}/delete",
+            method="POST",
+            data={"return_status": "PENDING"},
+        ), patch("portal.routes.current_user", admin), patch(
+            "portal.routes._employee_submission_require_csrf"
+        ), patch(
+            "portal.routes.url_for", return_value="/portal/hr/employee-data-submissions?status=PENDING"
+        ):
+            response = delete(submission.id)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(db.session.get(EmployeeDataSubmission, submission.id))
+
+        regular_user = User(
+            email="regular@example.test",
+            name="مستخدم عادي",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        db.session.add(regular_user)
+        db.session.commit()
+        with self.app.test_request_context(
+            "/portal/hr/employee-data-submissions/1/delete",
+            method="POST",
+        ), patch("portal.routes.current_user", regular_user):
+            with self.assertRaises(Forbidden):
+                delete(1)
 
 
 if __name__ == "__main__":
