@@ -17,6 +17,7 @@ from models import (
     OrgNodeManager,
     OrgNodeType,
     Section,
+    Unit,
     User,
 )
 from services.employee_data_import import (
@@ -258,6 +259,65 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(resolved["directorate_id"], directorate.id)
         self.assertEqual(resolved["department_id"], department.id)
         self.assertEqual(resolved["section_id"], section.id)
+
+    def test_questionnaire_placement_accepts_a_unit_and_its_departments(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        old_directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="إدارة سابقة",
+            is_active=True,
+        )
+        selected_unit = Unit(
+            organization_id=organization.id,
+            name_ar="وحدة البرامج",
+            is_active=True,
+        )
+        other_unit = Unit(
+            organization_id=organization.id,
+            name_ar="وحدة الخدمات",
+            is_active=True,
+        )
+        db.session.add_all((old_directorate, selected_unit, other_unit))
+        db.session.flush()
+        selected_department = Department(
+            unit_id=selected_unit.id,
+            name_ar="دائرة الدعم",
+            is_active=True,
+        )
+        other_department = Department(
+            unit_id=other_unit.id,
+            name_ar="دائرة الدعم",
+            is_active=True,
+        )
+        db.session.add_all((selected_department, other_department))
+        db.session.add(EmployeeFile(
+            user_id=self.employee.id,
+            directorate_id=old_directorate.id,
+        ))
+        db.session.commit()
+
+        payload = self.payload()
+        payload["fields"].update({
+            "organization_id": answer("وحدة البرامج"),
+            "directorate_id": answer("دائرة الدعم"),
+        })
+
+        plan = build_employee_import_plan(payload, self.employee)
+        resolved = {operation["field"]: operation["resolved"] for operation in plan["operations"]}
+
+        self.assertEqual(plan["unresolved"], [])
+        self.assertEqual(resolved["unit_id"], selected_unit.id)
+        self.assertEqual(resolved["organization_id"], organization.id)
+        self.assertIsNone(resolved["directorate_id"])
+        self.assertEqual(resolved["department_id"], selected_department.id)
+
+        apply_employee_import_payload(payload, self.employee, self.reviewer.id)
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        self.assertEqual(employee_file.organization_id, organization.id)
+        self.assertIsNone(employee_file.directorate_id)
+        self.assertEqual(employee_file.department_id, selected_department.id)
 
     def test_manager_resolution_accepts_a_unique_abbreviated_arabic_name(self):
         manager = self._user("manager@example.test", "خلود احمد يوسف حنتش")

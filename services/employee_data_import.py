@@ -21,6 +21,7 @@ from models import (
     HRLookupItem,
     Organization,
     Section,
+    Unit,
     User,
 )
 
@@ -92,7 +93,7 @@ ORG_FIELDS = {
 # keys for backward compatibility with issued forms, but write each value to its
 # real hierarchy field.
 EMPLOYEE_ORG_FIELDS = (
-    ("organization_id", "directorate_id", Directorate, "الإدارة العامة"),
+    ("organization_id", "directorate_id", Directorate, "الإدارة العامة / الوحدة"),
     ("directorate_id", "department_id", Department, "الدائرة"),
     ("department_id", "section_id", Section, "القسم"),
     ("division_id", "division_id", Division, "الشعبة"),
@@ -314,8 +315,29 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
     """Resolve questionnaire placement fields against their real hierarchy levels."""
     resolved: dict[str, Any] = {}
     direct_input: dict[str, tuple[str, str]] = {}
+    selected_unit: Unit | None = None
 
-    for source_field, target_field, model, label in EMPLOYEE_ORG_FIELDS:
+    top_level = _first_value(payload, "organization_id")
+    if top_level is not None:
+        matches = [
+            ("directorate", row)
+            for row in _named_model_matches(Directorate, top_level)
+        ] + [
+            ("unit", row)
+            for row in _named_model_matches(Unit, top_level)
+        ]
+        if len(matches) != 1:
+            reason = "أكثر من قيمة مطابقة ضمن المسار المحدد" if len(matches) > 1 else "غير موجود في الهيكلية ضمن المسار المحدد"
+            unresolved.append({"field": "الإدارة العامة / الوحدة", "value": top_level, "reason": reason})
+        elif matches[0][0] == "directorate":
+            directorate = matches[0][1]
+            resolved["directorate_id"] = int(directorate.id)
+            direct_input["directorate_id"] = (top_level, "الإدارة العامة")
+        else:
+            selected_unit = matches[0][1]
+            direct_input["unit_id"] = (top_level, "الوحدة")
+
+    for source_field, target_field, model, label in EMPLOYEE_ORG_FIELDS[1:]:
         incoming = _first_value(payload, source_field)
         if incoming is None:
             continue
@@ -327,6 +349,11 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
             matches = [
                 row for row in matches
                 if int(getattr(row, "directorate_id", 0) or 0) == int(resolved["directorate_id"])
+            ]
+        elif target_field == "department_id" and selected_unit:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "unit_id", 0) or 0) == int(selected_unit.id)
             ]
         elif target_field == "section_id":
             if resolved.get("department_id"):
@@ -342,6 +369,11 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
                         or int(getattr(getattr(row, "department", None), "directorate_id", 0) or 0)
                         == int(resolved["directorate_id"])
                     )
+                ]
+            elif selected_unit:
+                matches = [
+                    row for row in matches
+                    if int(getattr(row, "unit_id", 0) or 0) == int(selected_unit.id)
                 ]
         elif target_field == "division_id" and resolved.get("section_id"):
             matches = [
@@ -371,11 +403,22 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
     if section and not department and getattr(section, "department_id", None):
         department = db.session.get(Department, int(section.department_id))
         resolved["department_id"] = int(department.id) if department else None
-    if department and not directorate and getattr(department, "directorate_id", None):
+    if section and not department and getattr(section, "unit_id", None):
+        selected_unit = db.session.get(Unit, int(section.unit_id))
+        directorate = None
+        resolved.pop("directorate_id", None)
+    if department and getattr(department, "directorate_id", None):
         directorate = db.session.get(Directorate, int(department.directorate_id))
+        selected_unit = None
         resolved["directorate_id"] = int(directorate.id) if directorate else None
+    elif department and getattr(department, "unit_id", None):
+        selected_unit = db.session.get(Unit, int(department.unit_id))
+        directorate = None
+        resolved.pop("directorate_id", None)
     if directorate and getattr(directorate, "organization_id", None):
         resolved["organization_id"] = int(directorate.organization_id)
+    elif selected_unit and getattr(selected_unit, "organization_id", None):
+        resolved["organization_id"] = int(selected_unit.organization_id)
 
     target_meta = {
         "organization_id": (Organization, "المؤسسة"),
@@ -385,8 +428,36 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
         "division_id": (Division, "الشعبة"),
     }
     operations = []
+    if selected_unit:
+        incoming, label = direct_input.get(
+            "unit_id",
+            (_named_label(Unit, selected_unit.id) or "", "الوحدة"),
+        )
+        operations.append({
+            "field": "unit_id",
+            "model": Unit,
+            "label": label,
+            "incoming": incoming,
+            "resolved": int(selected_unit.id),
+            "resolved_label": _named_label(Unit, selected_unit.id),
+            "target": "display",
+        })
     for target_field in ("organization_id", "directorate_id", "department_id", "section_id", "division_id"):
         item_id = resolved.get(target_field)
+        if target_field == "directorate_id" and selected_unit:
+            incoming, _ = direct_input.get(
+                "unit_id",
+                (_named_label(Unit, selected_unit.id) or "", "الوحدة"),
+            )
+            operations.append({
+                "field": "directorate_id",
+                "model": Directorate,
+                "label": "الإدارة العامة (إزالة الإدارة السابقة)",
+                "incoming": incoming,
+                "resolved": None,
+                "resolved_label": None,
+            })
+            continue
         if not item_id:
             continue
         model, default_label = target_meta[target_field]
@@ -521,16 +592,25 @@ def build_employee_import_plan(
     for placement in _resolve_employee_placement(payload, unresolved):
         field = placement["field"]
         model = placement["model"]
-        current = getattr(employee_file, field, None) if employee_file else None
-        operations.append(_operation(
+        if placement.get("target") == "display":
+            current = None
+            if employee_file and employee_file.department_id:
+                current_department = db.session.get(Department, employee_file.department_id)
+                current = getattr(current_department, "unit_id", None) if current_department else None
+        else:
+            current = getattr(employee_file, field, None) if employee_file else None
+        operation = _operation(
             field,
             placement["label"],
             placement["incoming"],
             current,
             placement["resolved"],
             placement["resolved_label"],
-        ))
-        operations[-1]["current_label"] = _named_label(model, current)
+        )
+        if placement.get("target"):
+            operation["target"] = placement["target"]
+        operation["current_label"] = _named_label(model, current)
+        operations.append(operation)
 
     manager_incoming = _first_value(payload, "direct_manager_user_id")
     if manager_incoming:
@@ -760,6 +840,8 @@ def apply_employee_import_payload(
 
     updated_fields = []
     for operation in plan["operations"]:
+        if operation.get("target") == "display":
+            continue
         if not operation["changed"]:
             continue
         setattr(employee_file, operation["field"], operation["resolved"])
