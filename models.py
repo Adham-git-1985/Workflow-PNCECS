@@ -372,9 +372,6 @@ class User(db.Model, UserMixin):
             if ('مدير' in raw_clean and 'نظام' in raw_clean) and (('أعلى' in raw_clean) or ('اعلى' in raw_clean) or ('عليا' in raw_clean) or ('الاعلى' in raw_clean) or ('الأعلى' in raw_clean)):
                 mine = 'SUPER_ADMIN'
 
-            # Ultimate safe fallback: first user (id=1) is treated as SUPER_ADMIN
-            if getattr(self, 'id', None) == 1:
-                mine = 'SUPER_ADMIN'
         except Exception:
             pass
 
