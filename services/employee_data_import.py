@@ -81,13 +81,6 @@ LOOKUP_FIELDS = {
     "bank_lookup_id": ("BANK", "البنك"),
 }
 
-ORG_FIELDS = {
-    "organization_id": (Organization, "الإدارة العامة"),
-    "directorate_id": (Directorate, "الدائرة"),
-    "department_id": (Department, "القسم"),
-    "division_id": (Division, "الشعبة"),
-}
-
 # The questionnaire uses human-facing levels that start at "الإدارة العامة"
 # while EmployeeFile also stores the institution above it. Keep the incoming
 # keys for backward compatibility with issued forms, but write each value to its
@@ -923,6 +916,130 @@ def _build_qualifications(payload, user_id, unresolved, create_missing, created_
     return rows
 
 
+def _resolve_secondment_placement(raw: dict, row_number: int, unresolved: list[dict]) -> tuple[dict, dict, set[str]]:
+    """Resolve a secondment's questionnaire hierarchy to the stored hierarchy fields."""
+    directorate = None
+    department = None
+    section = None
+    division = None
+    selected_unit = None
+
+    def one_match(matches: list, label: str, value: str | None):
+        if not value:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+        reason = "أكثر من قيمة مطابقة ضمن المسار المحدد" if len(matches) > 1 else "غير موجود في الهيكلية ضمن المسار المحدد"
+        unresolved.append({"field": f"التكليف {row_number}: {label}", "value": value, "reason": reason})
+        return None
+
+    top_level = raw.get("organization_id")
+    if top_level:
+        matches = [
+            ("directorate", row)
+            for row in _named_model_matches(Directorate, top_level)
+        ] + [
+            ("unit", row)
+            for row in _named_model_matches(Unit, top_level)
+        ]
+        top_match = one_match(matches, "الإدارة العامة", top_level)
+        if top_match:
+            if top_match[0] == "directorate":
+                directorate = top_match[1]
+            else:
+                selected_unit = top_match[1]
+
+    circle_value = raw.get("directorate_id")
+    if circle_value:
+        matches = _named_model_matches(Department, circle_value)
+        if directorate:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "directorate_id", 0) or 0) == int(directorate.id)
+            ]
+        elif selected_unit:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "unit_id", 0) or 0) == int(selected_unit.id)
+            ]
+        department = one_match(matches, "الدائرة", circle_value)
+
+    section_value = raw.get("department_id")
+    if section_value:
+        matches = _named_model_matches(Section, section_value)
+        if department:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "department_id", 0) or 0) == int(department.id)
+            ]
+        elif directorate:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "directorate_id", 0) or 0) == int(directorate.id)
+            ]
+        elif selected_unit:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "unit_id", 0) or 0) == int(selected_unit.id)
+            ]
+        section = one_match(matches, "القسم", section_value)
+
+    division_value = raw.get("division_id")
+    if division_value:
+        matches = _named_model_matches(Division, division_value)
+        if section:
+            matches = [
+                row for row in matches
+                if int(getattr(row, "section_id", 0) or 0) == int(section.id)
+            ]
+        elif department:
+            matches = [
+                row for row in matches
+                if (
+                    int(getattr(row, "department_id", 0) or 0) == int(department.id)
+                    or int(getattr(getattr(row, "section", None), "department_id", 0) or 0)
+                    == int(department.id)
+                )
+            ]
+        division = one_match(matches, "الشعبة", division_value)
+
+    if division:
+        if not section and getattr(division, "section_id", None):
+            section = db.session.get(Section, int(division.section_id))
+        elif not department and getattr(division, "department_id", None):
+            department = db.session.get(Department, int(division.department_id))
+    if section:
+        if not department and getattr(section, "department_id", None):
+            department = db.session.get(Department, int(section.department_id))
+        elif not directorate and getattr(section, "directorate_id", None):
+            directorate = db.session.get(Directorate, int(section.directorate_id))
+        elif not selected_unit and getattr(section, "unit_id", None):
+            selected_unit = db.session.get(Unit, int(section.unit_id))
+    if department:
+        if getattr(department, "directorate_id", None):
+            directorate = db.session.get(Directorate, int(department.directorate_id))
+            selected_unit = None
+        elif getattr(department, "unit_id", None):
+            selected_unit = db.session.get(Unit, int(department.unit_id))
+            directorate = None
+
+    organization = directorate.organization if directorate else (selected_unit.organization if selected_unit else None)
+    resolved = {
+        "organization_id": int(organization.id) if organization else None,
+        "directorate_id": int(directorate.id) if directorate else None,
+        "department_id": int(department.id) if department else None,
+        "division_id": int(division.id) if division else None,
+    }
+    labels = {
+        "organization_id": _named_label(Organization, resolved["organization_id"]),
+        "directorate_id": _named_label(Directorate, resolved["directorate_id"]),
+        "department_id": _named_label(Department, resolved["department_id"]),
+        "division_id": _named_label(Division, resolved["division_id"]),
+    }
+    clear_fields = {"directorate_id"} if selected_unit else set()
+    return resolved, labels, clear_fields
+
+
 def _build_secondments(payload, user_id, unresolved, create_missing, created_lookups):
     field_names = [
         "date_from", "date_to", "organization_id", "directorate_id", "department_id", "division_id",
@@ -943,12 +1060,7 @@ def _build_secondments(payload, user_id, unresolved, create_missing, created_loo
             continue
         date_from = _parse_date(raw["date_from"], f"التكليف {row_number}: من تاريخ", unresolved) if raw["date_from"] else None
         date_to = _parse_date(raw["date_to"], f"التكليف {row_number}: إلى تاريخ", unresolved) if raw["date_to"] else None
-        resolved = {}
-        labels = {}
-        for field, (model, label) in ORG_FIELDS.items():
-            value, resolved_label = _resolve_named_model(model, raw[field], f"التكليف {row_number}: {label}", unresolved)
-            resolved[field] = value
-            labels[field] = resolved_label
+        resolved, labels, clear_fields = _resolve_secondment_placement(raw, row_number, unresolved)
         manager_id, manager_label = _resolve_manager(raw["direct_manager_user_id"], f"التكليف {row_number}: المسؤول المباشر", unresolved)
         resolved["direct_manager_user_id"] = manager_id
         labels["direct_manager_user_id"] = manager_label
@@ -980,6 +1092,7 @@ def _build_secondments(payload, user_id, unresolved, create_missing, created_loo
             "date_to": date_to,
             **resolved,
             "labels": labels,
+            "clear_fields": clear_fields,
             "details": raw["details"],
         })
     return rows
@@ -1066,6 +1179,9 @@ def apply_employee_import_payload(
             "direct_manager_user_id", "work_governorate_lookup_id", "work_location_lookup_id",
             "admin_title_lookup_id", "details",
         ):
+            if field in row.get("clear_fields", set()):
+                setattr(item, field, None)
+                continue
             if row.get(field) is not None:
                 setattr(item, field, row[field])
         item.updated_at = datetime.utcnow()

@@ -11,6 +11,7 @@ from models import (
     EmployeeDependent,
     EmployeeFile,
     EmployeeQualification,
+    EmployeeSecondment,
     HRLookupItem,
     Organization,
     OrgNode,
@@ -319,6 +320,45 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(employee_file.organization_id, organization.id)
         self.assertIsNone(employee_file.directorate_id)
         self.assertEqual(employee_file.department_id, selected_department.id)
+
+    def test_secondment_placement_matches_general_administration_and_circle(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للشؤون الإدارية والمالية",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الموارد البشرية",
+            is_active=True,
+        )
+        db.session.add(department)
+        db.session.commit()
+
+        payload = self.payload()
+        payload["fields"].update({
+            "secondment.organization_id": answer("الإدارة العامة للشؤون الإدارية والمالية"),
+            "secondment.directorate_id": answer("دائرة الموارد البشرية"),
+        })
+
+        plan = build_employee_import_plan(payload, self.employee)
+
+        self.assertEqual(plan["unresolved"], [])
+        secondment_plan = plan["secondments"][0]
+        self.assertEqual(secondment_plan["organization_id"], organization.id)
+        self.assertEqual(secondment_plan["directorate_id"], directorate.id)
+        self.assertEqual(secondment_plan["department_id"], department.id)
+
+        apply_employee_import_payload(payload, self.employee, self.reviewer.id)
+        secondment = EmployeeSecondment.query.filter_by(user_id=self.employee.id).one()
+        self.assertEqual(secondment.organization_id, organization.id)
+        self.assertEqual(secondment.directorate_id, directorate.id)
+        self.assertEqual(secondment.department_id, department.id)
 
     def test_correction_fields_include_repeated_records_and_secondments(self):
         payload = self.payload()
