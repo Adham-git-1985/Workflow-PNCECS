@@ -14026,16 +14026,23 @@ def hr_employee_data_submission_apply(submission_id: int):
                 create_missing_lookups=True,
             )
             if lookup_plan["unresolved"]:
-                created_count = len(lookup_plan["created_lookups"])
+                created_lookup_count = len(lookup_plan["created_lookups"])
+                created_division_count = len(lookup_plan.get("created_structure_items", []))
+                created_count = created_lookup_count + created_division_count
                 if created_count:
                     db.session.commit()
+                    created_parts = []
+                    if created_lookup_count:
+                        created_parts.append(f"{created_lookup_count} قيمة مرجعية")
+                    if created_division_count:
+                        created_parts.append(f"{created_division_count} شعبة")
                     flash(
-                        f"تم إنشاء {created_count} قيمة مرجعية جديدة. صحّح القيم المتبقية ثم أعد الاعتماد.",
+                        f"تم إنشاء {' و'.join(created_parts)} جديدة. صحّح القيم المتبقية ثم أعد الاعتماد.",
                         "success",
                     )
                 else:
                     db.session.rollback()
-                    flash("لم يتم إنشاء قيم مرجعية لأن الأخطاء المتبقية ليست قوائم مرجعية.", "warning")
+                    flash("لم يتم إنشاء قيم لأن الأخطاء المتبقية ليست قوائم مرجعية أو شُعبًا قابلة للإنشاء.", "warning")
                 return redirect(url_for("portal.hr_employee_data_submission_view", submission_id=row.id))
 
         summary = apply_employee_import_payload(

@@ -480,11 +480,78 @@ def _resolve_named_model(model, value: str | None, context: str, unresolved: lis
     return None, None
 
 
-def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[dict]:
+def _resolve_division(
+    value: str | None,
+    *,
+    section: Section | None,
+    department: Department | None,
+    context: str,
+    unresolved: list[dict],
+    create_missing: bool,
+    created_structure_items: list[dict],
+) -> Division | None:
+    if not value:
+        return None
+
+    matches = _named_model_matches(Division, value)
+    if section:
+        matches = [
+            row for row in matches
+            if int(getattr(row, "section_id", 0) or 0) == int(section.id)
+        ]
+    elif department:
+        matches = [
+            row for row in matches
+            if (
+                int(getattr(row, "department_id", 0) or 0) == int(department.id)
+                or int(getattr(getattr(row, "section", None), "department_id", 0) or 0)
+                == int(department.id)
+            )
+        ]
+
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        unresolved.append({"field": context, "value": value, "reason": "أكثر من قيمة مطابقة ضمن المسار المحدد"})
+        return None
+
+    if create_missing and (section or department):
+        division = Division(
+            section_id=section.id if section else None,
+            department_id=department.id if department and not section else None,
+            name_ar=value,
+            is_active=True,
+        )
+        db.session.add(division)
+        db.session.flush()
+        parent = section or department
+        created_structure_items.append({
+            "type": "DIVISION",
+            "label": "الشعبة",
+            "value": value,
+            "id": division.id,
+            "parent_type": "SECTION" if section else "DEPARTMENT",
+            "parent_id": parent.id,
+        })
+        return division
+
+    reason = "يجب تحديد القسم أو الدائرة الأب قبل إنشاء الشعبة" if create_missing else "غير موجود في الهيكلية ضمن المسار المحدد"
+    unresolved.append({"field": context, "value": value, "reason": reason})
+    return None
+
+
+def _resolve_employee_placement(
+    payload: dict,
+    unresolved: list[dict],
+    *,
+    create_missing_divisions: bool = False,
+    created_structure_items: list[dict] | None = None,
+) -> list[dict]:
     """Resolve questionnaire placement fields against their real hierarchy levels."""
     resolved: dict[str, Any] = {}
     direct_input: dict[str, tuple[str, str]] = {}
     selected_unit: Unit | None = None
+    created_structure_items = created_structure_items if created_structure_items is not None else []
 
     top_level = _first_value(payload, "organization_id")
     if top_level is not None:
@@ -510,6 +577,24 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
         incoming = _first_value(payload, source_field)
         if incoming is None:
             continue
+
+        if target_field == "division_id":
+            section = db.session.get(Section, resolved["section_id"]) if resolved.get("section_id") else None
+            department = db.session.get(Department, resolved["department_id"]) if resolved.get("department_id") else None
+            division = _resolve_division(
+                incoming,
+                section=section,
+                department=department,
+                context=label,
+                unresolved=unresolved,
+                create_missing=create_missing_divisions,
+                created_structure_items=created_structure_items,
+            )
+            if division:
+                resolved[target_field] = int(division.id)
+                direct_input[target_field] = (incoming, label)
+            continue
+
         matches = _named_model_matches(model, incoming)
 
         # Repeated Arabic labels are valid in different branches. Scope lower
@@ -544,12 +629,6 @@ def _resolve_employee_placement(payload: dict, unresolved: list[dict]) -> list[d
                     row for row in matches
                     if int(getattr(row, "unit_id", 0) or 0) == int(selected_unit.id)
                 ]
-        elif target_field == "division_id" and resolved.get("section_id"):
-            matches = [
-                row for row in matches
-                if int(getattr(row, "section_id", 0) or 0) == int(resolved["section_id"])
-            ]
-
         if len(matches) != 1:
             reason = "أكثر من قيمة مطابقة ضمن المسار المحدد" if len(matches) > 1 else "غير موجود في الهيكلية ضمن المسار المحدد"
             unresolved.append({"field": label, "value": incoming, "reason": reason})
@@ -713,6 +792,7 @@ def build_employee_import_plan(
     employee_file = EmployeeFile.query.filter_by(user_id=employee.id).first()
     unresolved: list[dict] = []
     created_lookups: list[dict] = []
+    created_structure_items: list[dict] = []
     operations: list[dict] = []
 
     for field, label in TEXT_FIELDS.items():
@@ -758,7 +838,12 @@ def build_employee_import_plan(
         operations.append(_operation(field, label, incoming, current, resolved, resolved_label))
         operations[-1]["current_label"] = _lookup_label(current)
 
-    for placement in _resolve_employee_placement(payload, unresolved):
+    for placement in _resolve_employee_placement(
+        payload,
+        unresolved,
+        create_missing_divisions=create_missing_lookups,
+        created_structure_items=created_structure_items,
+    ):
         field = placement["field"]
         model = placement["model"]
         if placement.get("target") == "display":
@@ -791,7 +876,14 @@ def build_employee_import_plan(
 
     dependent_rows = _build_dependents(payload, employee.id, unresolved, create_missing_lookups, created_lookups)
     qualification_rows = _build_qualifications(payload, employee.id, unresolved, create_missing_lookups, created_lookups)
-    secondment_rows = _build_secondments(payload, employee.id, unresolved, create_missing_lookups, created_lookups)
+    secondment_rows = _build_secondments(
+        payload,
+        employee.id,
+        unresolved,
+        create_missing_lookups,
+        created_lookups,
+        created_structure_items,
+    )
 
     field_labels = {
         **TEXT_FIELDS,
@@ -810,6 +902,7 @@ def build_employee_import_plan(
         "unresolved": unresolved,
         "correction_fields": correction_fields,
         "created_lookups": created_lookups,
+        "created_structure_items": created_structure_items,
         "dependents": dependent_rows,
         "qualifications": qualification_rows,
         "secondments": secondment_rows,
@@ -916,13 +1009,21 @@ def _build_qualifications(payload, user_id, unresolved, create_missing, created_
     return rows
 
 
-def _resolve_secondment_placement(raw: dict, row_number: int, unresolved: list[dict]) -> tuple[dict, dict, set[str]]:
+def _resolve_secondment_placement(
+    raw: dict,
+    row_number: int,
+    unresolved: list[dict],
+    *,
+    create_missing_divisions: bool = False,
+    created_structure_items: list[dict] | None = None,
+) -> tuple[dict, dict, set[str]]:
     """Resolve a secondment's questionnaire hierarchy to the stored hierarchy fields."""
     directorate = None
     department = None
     section = None
     division = None
     selected_unit = None
+    created_structure_items = created_structure_items if created_structure_items is not None else []
 
     def one_match(matches: list, label: str, value: str | None):
         if not value:
@@ -986,22 +1087,15 @@ def _resolve_secondment_placement(raw: dict, row_number: int, unresolved: list[d
 
     division_value = raw.get("division_id")
     if division_value:
-        matches = _named_model_matches(Division, division_value)
-        if section:
-            matches = [
-                row for row in matches
-                if int(getattr(row, "section_id", 0) or 0) == int(section.id)
-            ]
-        elif department:
-            matches = [
-                row for row in matches
-                if (
-                    int(getattr(row, "department_id", 0) or 0) == int(department.id)
-                    or int(getattr(getattr(row, "section", None), "department_id", 0) or 0)
-                    == int(department.id)
-                )
-            ]
-        division = one_match(matches, "الشعبة", division_value)
+        division = _resolve_division(
+            division_value,
+            section=section,
+            department=department,
+            context=f"التكليف {row_number}: الشعبة",
+            unresolved=unresolved,
+            create_missing=create_missing_divisions,
+            created_structure_items=created_structure_items,
+        )
 
     if division:
         if not section and getattr(division, "section_id", None):
@@ -1040,7 +1134,7 @@ def _resolve_secondment_placement(raw: dict, row_number: int, unresolved: list[d
     return resolved, labels, clear_fields
 
 
-def _build_secondments(payload, user_id, unresolved, create_missing, created_lookups):
+def _build_secondments(payload, user_id, unresolved, create_missing, created_lookups, created_structure_items):
     field_names = [
         "date_from", "date_to", "organization_id", "directorate_id", "department_id", "division_id",
         "direct_manager_user_id", "work_governorate_lookup_id", "work_location_lookup_id",
@@ -1060,7 +1154,13 @@ def _build_secondments(payload, user_id, unresolved, create_missing, created_loo
             continue
         date_from = _parse_date(raw["date_from"], f"التكليف {row_number}: من تاريخ", unresolved) if raw["date_from"] else None
         date_to = _parse_date(raw["date_to"], f"التكليف {row_number}: إلى تاريخ", unresolved) if raw["date_to"] else None
-        resolved, labels, clear_fields = _resolve_secondment_placement(raw, row_number, unresolved)
+        resolved, labels, clear_fields = _resolve_secondment_placement(
+            raw,
+            row_number,
+            unresolved,
+            create_missing_divisions=create_missing,
+            created_structure_items=created_structure_items,
+        )
         manager_id, manager_label = _resolve_manager(raw["direct_manager_user_id"], f"التكليف {row_number}: المسؤول المباشر", unresolved)
         resolved["direct_manager_user_id"] = manager_id
         labels["direct_manager_user_id"] = manager_label
@@ -1140,6 +1240,7 @@ def apply_employee_import_payload(
         "employee_file_created": created_employee_file,
         "updated_fields": updated_fields,
         "created_lookups": plan["created_lookups"],
+        "created_structure_items": plan["created_structure_items"],
         "dependents": {"created": 0, "updated": 0},
         "qualifications": {"created": 0, "updated": 0},
         "secondments": {"created": 0, "updated": 0},

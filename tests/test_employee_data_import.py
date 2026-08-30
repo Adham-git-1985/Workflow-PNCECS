@@ -262,6 +262,62 @@ class EmployeeDataImportTests(unittest.TestCase):
         self.assertEqual(resolved["department_id"], department.id)
         self.assertEqual(resolved["section_id"], section.id)
 
+    def test_missing_division_is_created_under_selected_section(self):
+        organization = Organization(name_ar="المؤسسة", is_active=True)
+        db.session.add(organization)
+        db.session.flush()
+        directorate = Directorate(
+            organization_id=organization.id,
+            name_ar="الإدارة العامة للشؤون الإدارية والمالية",
+            is_active=True,
+        )
+        db.session.add(directorate)
+        db.session.flush()
+        department = Department(
+            directorate_id=directorate.id,
+            name_ar="دائرة الشؤون الإدارية",
+            is_active=True,
+        )
+        db.session.add(department)
+        db.session.flush()
+        section = Section(
+            department_id=department.id,
+            name_ar="قسم الخدمات الإدارية",
+            is_active=True,
+        )
+        db.session.add(section)
+        db.session.commit()
+
+        payload = self.payload()
+        payload["fields"].update({
+            "organization_id": answer("الإدارة العامة للشؤون الإدارية والمالية"),
+            "directorate_id": answer("دائرة الشؤون الإدارية"),
+            "department_id": answer("قسم الخدمات الإدارية"),
+            "division_id": answer("شعبة الصادر والوارد"),
+        })
+
+        plan = build_employee_import_plan(payload, self.employee, create_missing_lookups=True)
+
+        self.assertEqual(plan["unresolved"], [])
+        self.assertEqual(len(plan["created_structure_items"]), 1)
+        created_division = plan["created_structure_items"][0]
+        self.assertEqual(created_division["type"], "DIVISION")
+        self.assertEqual(created_division["value"], "شعبة الصادر والوارد")
+        self.assertEqual(created_division["parent_type"], "SECTION")
+        self.assertEqual(created_division["parent_id"], section.id)
+        division = Division.query.filter_by(name_ar="شعبة الصادر والوارد").one()
+        self.assertEqual(division.section_id, section.id)
+        self.assertIsNone(division.department_id)
+
+        apply_employee_import_payload(
+            payload,
+            self.employee,
+            self.reviewer.id,
+            create_missing_lookups=True,
+        )
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        self.assertEqual(employee_file.division_id, division.id)
+
     def test_questionnaire_placement_accepts_a_unit_and_its_departments(self):
         organization = Organization(name_ar="المؤسسة", is_active=True)
         db.session.add(organization)
