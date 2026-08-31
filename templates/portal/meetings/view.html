@@ -11,6 +11,7 @@
       {% if row.end_at %} - {{ row.end_at.strftime('%H:%M') if row.end_at.date() == row.start_at.date() else row.end_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
       {% if row.location %}<span class="mx-1">|</span><i class="bi bi-geo-alt"></i> {{ row.location }}{% endif %}
     </div>
+    <div class="text-muted small mt-1"><i class="bi bi-person-fill"></i> الداعي: {{ row.created_by.name if row.created_by and row.created_by.name else (row.created_by.email if row.created_by else '-') }}</div>
   </div>
   <div class="d-flex gap-2 flex-wrap">
     <span class="badge text-bg-secondary align-self-center">{{ status_labels.get(row.status, row.status) }}</span>
@@ -464,7 +465,7 @@
           <input class="form-control" type="text" name="task_title" maxlength="255" placeholder="عنوان المهمة">
           <select class="form-select" name="task_assignee_user_id">
             <option value="">بدون مسؤول</option>
-            {% for u in users %}
+            {% for u in task_assignees %}
               <option value="{{ u.id }}">{{ u.name or u.email }}</option>
             {% endfor %}
           </select>

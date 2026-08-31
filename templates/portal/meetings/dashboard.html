@@ -97,6 +97,7 @@
               <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
                 <div>
                   <div class="fw-bold">{{ m.title }}</div>
+                  <div class="text-muted small"><i class="bi bi-person-fill"></i> الداعي: {{ m.created_by.name if m.created_by and m.created_by.name else (m.created_by.email if m.created_by else '-') }}</div>
                   <div class="text-muted small">
                     <i class="bi bi-clock"></i>
                     {{ m.start_at.strftime('%Y-%m-%d %H:%M') if m.start_at else '' }}

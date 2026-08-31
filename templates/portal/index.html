@@ -114,6 +114,7 @@
             {% if next_meeting %}
               <a class="text-decoration-none text-dark" href="{{ url_for('portal.meeting_view', meeting_id=next_meeting.id) }}">
                 <div class="fw-bold fs-6 mb-1">{{ next_meeting.title }}</div>
+                <div class="small text-muted mb-1"><i class="bi bi-person-fill"></i> الداعي: {{ next_meeting.created_by.name if next_meeting.created_by and next_meeting.created_by.name else (next_meeting.created_by.email if next_meeting.created_by else '-') }}</div>
                 <div class="small text-muted">
                   <i class="bi bi-clock"></i>
                   {{ next_meeting.start_at.strftime('%Y-%m-%d %H:%M') if next_meeting.start_at else '' }}
@@ -167,6 +168,7 @@
                        href="{{ url_for('portal.meeting_view', meeting_id=m.id) }}">
                       <div class="min-w-0">
                         <div class="fw-semibold">{{ m.title }}</div>
+                        <div class="small text-muted"><i class="bi bi-person-fill"></i> الداعي: {{ m.created_by.name if m.created_by and m.created_by.name else (m.created_by.email if m.created_by else '-') }}</div>
                         <div class="small text-muted">
                           {{ m.start_at.strftime('%a %Y-%m-%d %H:%M') if m.start_at else '' }}
                           {% if m.location %}<span class="mx-1">|</span>{{ m.location }}{% endif %}
