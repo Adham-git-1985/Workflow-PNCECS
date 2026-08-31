@@ -4818,8 +4818,9 @@ class CorrCounter(db.Model):
     """Reference number counter for correspondence.
 
     New references use the reserved SYSTEM category, producing one sequence
-    per kind (IN/OUT) and year across every user and correspondence category.
-    Historical category rows are retained for backward compatibility.
+    per kind (IN/OUT) across every user and correspondence category.  The
+    global sequence uses year ``0``; historical yearly rows are retained for
+    backward compatibility.
     """
 
     __tablename__ = "corr_counter"
@@ -4827,7 +4828,7 @@ class CorrCounter(db.Model):
     id = db.Column(db.Integer, primary_key=True)
 
     kind = db.Column(db.String(5), nullable=False, index=True)  # IN / OUT
-    year = db.Column(db.Integer, nullable=False, index=True)
+    year = db.Column(db.Integer, nullable=False, index=True)  # 0 for the global sequence
     category = db.Column(db.String(50), nullable=False, index=True)  # SYSTEM for global numbering
 
     last_no = db.Column(db.Integer, default=0, nullable=False)

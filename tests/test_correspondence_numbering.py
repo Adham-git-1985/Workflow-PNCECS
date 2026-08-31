@@ -32,10 +32,11 @@ class CorrespondenceNumberingTests(unittest.TestCase):
         db.session.commit()
 
     def test_reference_format_is_explicit_and_readable(self):
-        self.assertEqual(_corr_format_ref("IN", "2026-08-16", 1), "وارد-1608-2026-000001")
-        self.assertEqual(_corr_format_ref("OUT", "2026-12-03", 42), "صادر-0312-2026-000042")
+        self.assertEqual(_corr_format_ref("IN", "2026-08-16", 1), "وارد-000001")
+        self.assertEqual(_corr_format_ref("OUT", "2026-12-03", 42), "صادر-000042")
 
     def test_serial_reader_supports_new_and_legacy_references(self):
+        self.assertEqual(_corr_ref_serial("وارد-000116", "IN", 2026), 116)
         self.assertEqual(_corr_ref_serial("وارد-2026-000117", "IN", 2026), 117)
         self.assertEqual(_corr_ref_serial("وارد-16082026-000118", "IN", 2026), 118)
         self.assertEqual(_corr_ref_serial("وارد-1608-2026-000119", "IN", 2026), 119)
@@ -67,10 +68,10 @@ class CorrespondenceNumberingTests(unittest.TestCase):
         first = _corr_next_ref("IN", "2026-03-01", "GENERAL")
         second = _corr_next_ref("IN", "2026-03-02", "FINANCE")
 
-        self.assertEqual(first, "وارد-0103-2026-000003")
-        self.assertEqual(second, "وارد-0203-2026-000004")
+        self.assertEqual(first, "وارد-000003")
+        self.assertEqual(second, "وارد-000004")
         system_counter = CorrCounter.query.filter_by(
-            kind="IN", year=2026, category="SYSTEM"
+            kind="IN", year=0, category="SYSTEM"
         ).one()
         self.assertEqual(system_counter.last_no, 4)
 
@@ -78,8 +79,12 @@ class CorrespondenceNumberingTests(unittest.TestCase):
         inbound_ref = _corr_next_ref("IN", "2027-01-01")
         outbound_ref = _corr_next_ref("OUT", "2027-01-01")
 
-        self.assertEqual(inbound_ref, "وارد-0101-2027-000001")
-        self.assertEqual(outbound_ref, "صادر-0101-2027-000001")
+        self.assertEqual(inbound_ref, "وارد-000001")
+        self.assertEqual(outbound_ref, "صادر-000001")
+
+    def test_sequence_continues_across_years(self):
+        self.assertEqual(_corr_next_ref("IN", "2026-12-31"), "وارد-000001")
+        self.assertEqual(_corr_next_ref("IN", "2027-01-01"), "وارد-000002")
 
 
 if __name__ == "__main__":

@@ -1860,15 +1860,8 @@ def _save_leave_files(files, req_id: int, doc_type: str | None = None) -> int:
         saved += 1
     return saved
 
-def _corr_year_from_date(date_s: str) -> int:
-    """Extract year from YYYY-MM-DD; fallback to current year."""
-    try:
-        return int((date_s or "")[:4])
-    except Exception:
-        return datetime.utcnow().year
-
-
 _CORR_COUNTER_SCOPE = "SYSTEM"
+_CORR_COUNTER_YEAR = 0
 _CORR_REF_PREFIXES = {"IN": "وارد", "OUT": "صادر"}
 
 
@@ -1877,22 +1870,13 @@ def _corr_normalize_kind(kind: str | None) -> str:
     return k if k in _CORR_REF_PREFIXES else "IN"
 
 
-def _corr_date_token(date_s: str) -> str:
-    """Format an ISO correspondence date as DDMMYYYY for its reference."""
-    try:
-        parsed = datetime.strptime((date_s or "").strip()[:10], "%Y-%m-%d")
-    except (TypeError, ValueError):
-        parsed = datetime.utcnow()
-    return parsed.strftime("%d%m-%Y")
-
-
 def _corr_format_ref(kind: str, date_s: str, serial: int) -> str:
-    """Return a human-readable official correspondence reference."""
+    """Return the date-free official correspondence reference."""
     k = _corr_normalize_kind(kind)
-    return f"{_CORR_REF_PREFIXES[k]}-{_corr_date_token(date_s)}-{int(serial):06d}"
+    return f"{_CORR_REF_PREFIXES[k]}-{int(serial):06d}"
 
 
-def _corr_ref_serial(ref_no: str | None, kind: str, year: int) -> int:
+def _corr_ref_serial(ref_no: str | None, kind: str, year: int | None = None) -> int:
     """Read the serial from current and legacy generated references."""
     value = (ref_no or "").strip()
     if not value:
@@ -1900,35 +1884,33 @@ def _corr_ref_serial(ref_no: str | None, kind: str, year: int) -> int:
 
     k = _corr_normalize_kind(kind)
     prefixes = (re.escape(_CORR_REF_PREFIXES[k]), k, "INBOUND" if k == "IN" else "OUTBOUND")
-    # Accept the new DDMMYYYY token and the former YYYY token so deployment
-    # continues safely from historical counters and references.
-    date_token = rf"(?:\d{{4}}[-/]?{int(year):04d}|{int(year):04d})"
-    match = re.fullmatch(
-        rf"(?:{'|'.join(prefixes)})[-/]{date_token}[-/](\d+)",
-        value,
-        flags=re.IGNORECASE,
-    )
+    prefix_pattern = rf"(?:{'|'.join(prefixes)})"
+    # The current date-free format is accepted along with date-bearing legacy
+    # formats so the new global sequence cannot reuse an old serial.
+    match = re.fullmatch(rf"{prefix_pattern}[-/](\d+)", value, flags=re.IGNORECASE)
+    if not match:
+        match = re.fullmatch(
+            rf"{prefix_pattern}[-/](?:\d{{4}}[-/]?\d{{4}}|\d{{4}})[-/](\d+)",
+            value,
+            flags=re.IGNORECASE,
+        )
     return int(match.group(1)) if match else 0
 
 
-def _corr_counter_baseline(kind: str, year: int) -> int:
-    """Find a safe starting point when switching from category counters."""
+def _corr_counter_baseline(kind: str) -> int:
+    """Find a safe starting point for the global correspondence counter."""
     k = _corr_normalize_kind(kind)
     model = InboundMail if k == "IN" else OutboundMail
-    date_column = model.received_date if k == "IN" else model.sent_date
 
-    dated_query = db.session.query(model.ref_no).filter(
-        date_column.like(f"{int(year):04d}-%")
-    )
-    refs = [row[0] for row in dated_query.all()]
+    refs = [row[0] for row in db.session.query(model.ref_no).all()]
     record_count = len(refs)
     highest_reference = max(
-        (_corr_ref_serial(ref_no, k, year) for ref_no in refs),
+        (_corr_ref_serial(ref_no, k) for ref_no in refs),
         default=0,
     )
     highest_legacy_counter = (
         db.session.query(func.max(CorrCounter.last_no))
-        .filter(CorrCounter.kind == k, CorrCounter.year == int(year))
+        .filter(CorrCounter.kind == k)
         .scalar()
         or 0
     )
@@ -1939,11 +1921,10 @@ def _corr_next_ref(kind: str, date_s: str, category: str | None = None) -> str:
     """Reserve the next system-wide reference for inbound or outbound mail.
 
     The legacy ``category`` argument is intentionally ignored.  One atomic
-    counter is shared by all users and categories for each kind and year.
+    counter is shared by all users and categories for each kind.
     """
     k = _corr_normalize_kind(kind)
-    year = _corr_year_from_date(date_s)
-    baseline = _corr_counter_baseline(k, year)
+    baseline = _corr_counter_baseline(k)
 
     # SQLite executes this UPSERT as one write statement, so two users saving
     # at the same moment cannot receive the same sequence number.
@@ -1962,7 +1943,7 @@ def _corr_next_ref(kind: str, date_s: str, category: str | None = None) -> str:
         ),
         {
             "kind": k,
-            "year": year,
+            "year": _CORR_COUNTER_YEAR,
             "scope": _CORR_COUNTER_SCOPE,
             "baseline": baseline,
             "next_no": baseline + 1,
