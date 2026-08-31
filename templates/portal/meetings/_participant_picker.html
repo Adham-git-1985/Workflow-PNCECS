@@ -1,0 +1,73 @@
+{% set picker_id = participant_picker_id|default('meetingParticipantPicker') %}
+<div class="meeting-participant-picker" id="{{ picker_id }}" data-participant-picker>
+  <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+    <label class="form-label mb-0" for="{{ picker_id }}Search">المشاركون</label>
+    <span class="badge text-bg-light border" data-participant-count>0 محدد</span>
+  </div>
+  <div class="input-group mb-2">
+    <span class="input-group-text"><i class="bi bi-search"></i></span>
+    <input class="form-control" id="{{ picker_id }}Search" type="search" autocomplete="off"
+           placeholder="ابحث بالاسم أو البريد الإلكتروني" data-participant-search>
+    <button class="btn btn-outline-secondary" type="button" data-participant-clear>إلغاء التحديد</button>
+  </div>
+  <div class="border rounded-3 overflow-auto bg-white" style="max-height: 19rem;" data-participant-options>
+    {% for u in users %}
+      {% set option_label = u.name or u.email or ('مستخدم #' ~ u.id) %}
+      {% set option_search = (option_label ~ ' ' ~ (u.email or ''))|lower %}
+      {% set option_id = u.id|string %}
+      <label class="d-flex align-items-center gap-2 p-2 border-bottom cursor-pointer mb-0" data-participant-option data-search-text="{{ option_search }}">
+        <input class="form-check-input flex-shrink-0 m-0" type="checkbox" name="participant_ids" value="{{ u.id }}"
+               {% if option_id in participant_selected_ids or u.id in participant_selected_ids %}checked{% endif %}>
+        <span class="min-w-0">
+          <span class="d-block fw-semibold text-truncate">{{ option_label }}</span>
+          {% if u.name and u.email %}<span class="d-block text-muted small text-truncate">{{ u.email }}</span>{% endif %}
+        </span>
+      </label>
+    {% else %}
+      <div class="p-3 text-muted text-center">لا يوجد مستخدمون متاحون.</div>
+    {% endfor %}
+    <div class="p-3 text-muted text-center d-none" data-participant-no-results>لا توجد نتائج مطابقة للبحث.</div>
+  </div>
+  <div class="form-text">يمكن اختيار مشارك واحد أو أكثر.</div>
+</div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('[data-participant-picker]').forEach(function (picker) {
+      var search = picker.querySelector('[data-participant-search]');
+      var clear = picker.querySelector('[data-participant-clear]');
+      var count = picker.querySelector('[data-participant-count]');
+      var noResults = picker.querySelector('[data-participant-no-results]');
+      var options = Array.prototype.slice.call(picker.querySelectorAll('[data-participant-option]'));
+      var checkboxes = Array.prototype.slice.call(picker.querySelectorAll('input[type="checkbox"][name="participant_ids"]'));
+
+      function normalize(value) {
+        return (value || '').toLocaleLowerCase().trim();
+      }
+
+      function updateCount() {
+        var selected = checkboxes.filter(function (checkbox) { return checkbox.checked; }).length;
+        count.textContent = selected + ' محدد';
+      }
+
+      function filterOptions() {
+        var needle = normalize(search.value);
+        var visible = 0;
+        options.forEach(function (option) {
+          var match = !needle || normalize(option.getAttribute('data-search-text')).indexOf(needle) !== -1;
+          option.classList.toggle('d-none', !match);
+          if (match) visible += 1;
+        });
+        noResults.classList.toggle('d-none', visible !== 0);
+      }
+
+      search.addEventListener('input', filterOptions);
+      checkboxes.forEach(function (checkbox) { checkbox.addEventListener('change', updateCount); });
+      clear.addEventListener('click', function () {
+        checkboxes.forEach(function (checkbox) { checkbox.checked = false; });
+        updateCount();
+      });
+      updateCount();
+    });
+  });
+</script>

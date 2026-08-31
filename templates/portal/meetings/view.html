@@ -379,11 +379,9 @@
       {% endif %}
       {% if can_manage %}
         <form method="post" action="{{ url_for('portal.meeting_update_participants', meeting_id=row.id) }}" class="mb-3">
-          <select class="form-select" name="participant_ids" multiple size="9">
-            {% for u in users %}
-              <option value="{{ u.id }}" {% if u.id in participant_ids %}selected{% endif %}>{{ u.name or u.email }}</option>
-            {% endfor %}
-          </select>
+          {% set participant_picker_id = 'editMeetingParticipantPicker' %}
+          {% set participant_selected_ids = participant_ids %}
+          {% include 'portal/meetings/_participant_picker.html' %}
           <div class="d-grid mt-2">
             <button class="btn btn-sm btn-outline-primary" type="submit">تحديث المشاركين</button>
           </div>

@@ -151,6 +151,20 @@ class MeetingVisibilityTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(PortalMeetingTask.query.filter_by(meeting_id=self.meeting.id).count(), 1)
 
+    def test_participant_picker_uses_searchable_checkboxes(self):
+        client = self.app.test_client()
+        self._login(client, self.organizer.id)
+
+        new_form = client.get("/portal/meetings/new")
+        self.assertEqual(new_form.status_code, 200)
+        self.assertIn(b"newMeetingParticipantPickerSearch", new_form.data)
+        self.assertIn(b'type="checkbox" name="participant_ids"', new_form.data)
+
+        edit_view = client.get(f"/portal/meetings/{self.meeting.id}")
+        self.assertEqual(edit_view.status_code, 200)
+        self.assertIn(b"editMeetingParticipantPickerSearch", edit_view.data)
+        self.assertIn(b"data-participant-search", edit_view.data)
+
 
 if __name__ == "__main__":
     unittest.main()
