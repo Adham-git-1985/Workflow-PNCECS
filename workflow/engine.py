@@ -32,6 +32,21 @@ from services.workflow_confidentiality import filter_confidential_workflow_user_
 
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 HIERARCHY_BYPASS_FOLLOWER_ACTION = "HIERARCHY_BYPASS_FOLLOWER"
+# A mention task is intentionally allowed to add someone outside the original
+# parallel-step candidate list. Keep the legacy Arabic marker so tasks created
+# before this marker was standardized are not incorrectly bypassed on reload.
+MENTION_TASK_MARKERS = frozenset({
+    "MENTION_TASK",
+    "تمت الإضافة عبر المنشن",
+})
+
+
+def is_mention_task(task: WorkflowStepTask | None) -> bool:
+    """Return whether a runtime task was created by a workflow mention."""
+    return bool(
+        task
+        and (getattr(task, "note", None) or "").strip() in MENTION_TASK_MARKERS
+    )
 
 # =========================
 # SLA helpers
@@ -832,13 +847,20 @@ def _ensure_parallel_tasks(
     now = datetime.utcnow()
     candidate_ids = set(resolve_parallel_candidate_user_ids(req, inst, step))
 
+    existing_tasks = (
+        WorkflowStepTask.query
+        .filter_by(instance_id=inst.id, step_order=step.step_order)
+        .all()
+    )
     existing_ids = {
-        int(uid) for (uid,) in (
-            db.session.query(WorkflowStepTask.assignee_user_id)
-            .filter_by(instance_id=inst.id, step_order=step.step_order)
-            .all()
-        )
-        if uid
+        int(task.assignee_user_id)
+        for task in existing_tasks
+        if getattr(task, "assignee_user_id", None)
+    }
+    mention_task_ids = {
+        int(task.assignee_user_id)
+        for task in existing_tasks
+        if getattr(task, "assignee_user_id", None) and is_mention_task(task)
     }
 
     if authorized_user_ids is None:
@@ -856,6 +878,12 @@ def _ensure_parallel_tasks(
             raise ValueError("تتضمن قائمة التوجيه مستخدمين غير مرشحين للخطوة المتزامنة")
         if not desired_ids:
             raise ValueError("يجب اختيار شخص واحد على الأقل للخطوة المتزامنة")
+
+    # A comment mention is an explicit, audit-backed addition to the active
+    # workflow. It is not constrained to the template candidate list, so it
+    # must never be interpreted as an unauthorized task and marked BYPASSED
+    # when this page is rendered or the workflow is reloaded.
+    desired_ids.update(mention_task_ids)
 
     # Legacy secret workflows may already contain pending tasks for users who
     # are outside the ACL.  Hide-and-leave would deadlock a parallel step, so
@@ -915,8 +943,9 @@ def _ensure_parallel_tasks(
             }
 
     notify_ids: list[int] = []
-    if existing_ids and not getattr(step, "parallel_notified_at", None):
-        notify_ids = sorted(existing_ids)
+    regular_existing_ids = existing_ids.difference(mention_task_ids)
+    if regular_existing_ids and not getattr(step, "parallel_notified_at", None):
+        notify_ids = sorted(regular_existing_ids)
     elif created_ids:
         notify_ids = created_ids
 

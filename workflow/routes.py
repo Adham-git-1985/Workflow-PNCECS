@@ -283,8 +283,45 @@ def _role_variants(role: str | None) -> list[str]:
 
 
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
-MENTION_TASK_NOTE = "تمت الإضافة عبر المنشن"
+# Store a stable marker on the runtime task. The task is kept separate from
+# the template's candidate list, while the user-facing label is rendered by
+# the UI as "بالمنشن".
+MENTION_TASK_NOTE = "MENTION_TASK"
+MENTION_TASK_NOTES = (MENTION_TASK_NOTE, "تمت الإضافة عبر المنشن")
 MENTION_HIERARCHY_DENIED = "لا تسمح صلاحية المنشن بالتوجيه إلى مستوى إداري أعلى"
+
+
+def _is_mention_task(task: WorkflowStepTask | None) -> bool:
+    return bool(
+        task
+        and (getattr(task, "note", None) or "").strip() in MENTION_TASK_NOTES
+    )
+
+
+def _mention_task_user_ids(
+    instance_id: int | None,
+    *,
+    step_order: int | None = None,
+    pending_only: bool = False,
+) -> set[int]:
+    """Return users added to an instance step through a comment mention."""
+    if not instance_id:
+        return set()
+
+    query = WorkflowStepTask.query.filter(
+        WorkflowStepTask.instance_id == int(instance_id),
+        WorkflowStepTask.note.in_(MENTION_TASK_NOTES),
+    )
+    if step_order is not None:
+        query = query.filter(WorkflowStepTask.step_order == int(step_order))
+    if pending_only:
+        query = query.filter(WorkflowStepTask.status == "PENDING")
+
+    return {
+        int(user_id)
+        for (user_id,) in query.with_entities(WorkflowStepTask.assignee_user_id).all()
+        if user_id
+    }
 
 
 def _can_mention_user_by_hierarchy(actor: User, target: User) -> bool:
@@ -3309,6 +3346,7 @@ def inbox():
                 actor_users.append(d.from_user)
         except Exception:
             pass
+    actor_ids = {int(user.id) for user in actor_users if getattr(user, "id", None)}
 
     # SUPER_ADMIN sees all pending current steps
     q = (
@@ -3529,7 +3567,16 @@ def inbox():
             rows = filtered
 
     corr_tasks = _correspondence_inbox_tasks(actor_users, search)
-    request_summaries = {req.id: _workflow_user_summary(req, step) for req, _inst, step in rows}
+    request_summaries = {}
+    for req, inst, step in rows:
+        summary = _workflow_user_summary(req, step)
+        if _mention_task_user_ids(
+            inst.id,
+            step_order=step.step_order,
+            pending_only=True,
+        ).intersection(actor_ids):
+            summary["waiting_for"] = "بانتظار متابعتك عبر المنشن"
+        request_summaries[req.id] = summary
 
     movement_tasks = []
     try:
@@ -3645,11 +3692,19 @@ def work_dashboard():
             ).first()
             template = db.session.get(WorkflowTemplate, inst.template_id) if inst.template_id else None
 
+        mentioned_task_user_ids = _mention_task_user_ids(
+            getattr(inst, "id", None),
+            step_order=(getattr(current_step, "step_order", None) if current_step else None),
+            pending_only=True,
+        )
+        mentioned_task_for_actor = bool(actor_ids.intersection(mentioned_task_user_ids))
+
         needs_action = bool(
             current_step
             and current_step.status == "PENDING"
             and any(_user_can_act_on_step(user, current_step) for user in actor_users)
         )
+        needs_action = needs_action or mentioned_task_for_actor
         if current_step and (current_step.mode or "").upper() == "PARALLEL_SYNC" and inst:
             needs_action = (
                 WorkflowStepTask.query
@@ -3681,6 +3736,10 @@ def work_dashboard():
                 ]
             else:
                 step_assignee_ids = resolve_step_approver_user_ids(current_step)
+            step_assignee_ids = list(dict.fromkeys([
+                *step_assignee_ids,
+                *sorted(mentioned_task_user_ids),
+            ]))
         step_assignee_map = {
             int(user.id): user
             for user in (
@@ -3701,6 +3760,7 @@ def work_dashboard():
                     routing_node_label=current_step.routing_node_label,
                     org_node_id=current_step.approver_org_node_id,
                 ),
+                "via_mention": int(assignee.id) in mentioned_task_user_ids,
             }
             for assignee in step_assignees
         ] if current_step else []
@@ -3721,6 +3781,7 @@ def work_dashboard():
             "template": template,
             "requester": db.session.get(User, req.requester_id),
             "needs_action": needs_action,
+            "mentioned_task_for_actor": mentioned_task_for_actor,
             "created": int(req.requester_id or 0) == int(current_user.id),
             "following": bool(actor_ids.intersection(follower_ids)),
             "in_progress": (req.status or "").upper() == "IN_PROGRESS",
@@ -4576,14 +4637,30 @@ def view_request(request_id):
     org_node_approver_names_map = org_node_approver_names(org_nodes_map.keys())
     committees_map = {c.id: c for c in Committee.query.all()}
     mentioned_users = []
+    mentioned_task_statuses = {}
     try:
         mentioned_users = [
             users_map[uid]
             for uid in sorted(_mentioned_user_ids_for_request(req.id))
             if uid in users_map
         ]
+        if inst:
+            mention_tasks = (
+                WorkflowStepTask.query
+                .filter(
+                    WorkflowStepTask.instance_id == inst.id,
+                    WorkflowStepTask.note.in_(MENTION_TASK_NOTES),
+                )
+                .order_by(WorkflowStepTask.step_order.desc(), WorkflowStepTask.id.desc())
+                .all()
+            )
+            for mention_task in mention_tasks:
+                user_id = int(mention_task.assignee_user_id or 0)
+                if user_id and user_id not in mentioned_task_statuses:
+                    mentioned_task_statuses[user_id] = mention_task.status
     except Exception:
         mentioned_users = []
+        mentioned_task_statuses = {}
 
     def _human_size(num_bytes):
         try:
@@ -4837,6 +4914,7 @@ def view_request(request_id):
         next_dynamic_branch_steps=next_dynamic_branch_steps,
         hierarchy_bypass_step=hierarchy_bypass_step,
         mentioned_users=mentioned_users,
+        mentioned_task_statuses=mentioned_task_statuses,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,

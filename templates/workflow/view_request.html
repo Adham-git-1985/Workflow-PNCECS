@@ -829,7 +829,10 @@
           <div class="small text-muted mt-2">
             <span class="fw-semibold">المضافون بالمنشن:</span>
             {% for u in mentioned_users %}
-              <span class="badge bg-light text-dark border">{{ u.full_name or u.email }}</span>
+              {% set mention_status = mentioned_task_statuses.get(u.id) if mentioned_task_statuses else None %}
+              <span class="badge {% if mention_status == 'PENDING' %}bg-warning text-dark{% elif mention_status == 'RESPONDED' %}bg-success{% elif mention_status == 'BYPASSED' %}bg-secondary{% else %}bg-light text-dark border{% endif %}">
+                {{ u.full_name or u.email }}{% if mention_status %} — {{ mention_status|ui_label }}{% endif %}
+              </span>
             {% endfor %}
           </div>
         {% endif %}

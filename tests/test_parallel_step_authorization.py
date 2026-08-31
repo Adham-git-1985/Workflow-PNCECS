@@ -141,6 +141,31 @@ class ParallelStepAuthorizationTests(unittest.TestCase):
         self.assertFalse(_user_can_view_request(self.selected, self.request))
         self.assertFalse(_user_can_view_request(self.excluded, self.request))
 
+    def test_mentioned_user_task_is_not_bypassed_when_not_a_template_candidate(self):
+        self.instance.current_step_order = 2
+        db.session.add(WorkflowStepTask(
+            instance_id=self.instance.id,
+            request_id=self.request.id,
+            step_order=2,
+            assignee_user_id=self.outsider.id,
+            status="PENDING",
+            response="NONE",
+            # Existing mention tasks used the Arabic label before the stable
+            # marker was introduced, so both forms must remain pending.
+            note="تمت الإضافة عبر المنشن",
+        ))
+        db.session.commit()
+
+        ensure_parallel_tasks(self.request, self.instance, self.step_2)
+        db.session.commit()
+
+        task = WorkflowStepTask.query.filter_by(
+            instance_id=self.instance.id,
+            step_order=2,
+            assignee_user_id=self.outsider.id,
+        ).one()
+        self.assertEqual(task.status, "PENDING")
+
     def test_only_selected_candidates_receive_access_and_notification(self):
         self.instance.current_step_order = 2
         db.session.commit()

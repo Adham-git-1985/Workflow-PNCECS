@@ -66,7 +66,11 @@
               {% if row.step %}
                 <div class="fw-semibold">
                   الخطوة {{ row.step.step_order }}
-                  {% if row.needs_action %}<span class="badge text-bg-warning">إجراءك مطلوب</span>{% endif %}
+                  {% if row.needs_action %}
+                    <span class="badge {{ 'text-bg-info' if row.mentioned_task_for_actor else 'text-bg-warning' }}">
+                      {{ 'بالمنشن — بانتظار المتابعة' if row.mentioned_task_for_actor else 'إجراءك مطلوب' }}
+                    </span>
+                  {% endif %}
                 </div>
                 {% if row.step_assignee_details %}
                   {% for assignee_detail in row.step_assignee_details %}
@@ -80,6 +84,9 @@
                         <span class="text-muted">— {{ assignee.job_title }}</span>
                       {% elif row.step.routing_job_title %}
                         <span class="text-muted">— {{ row.step.routing_job_title }}</span>
+                      {% endif %}
+                      {% if assignee_detail.via_mention %}
+                        <span class="badge text-bg-warning ms-1">بالمنشن — قيد الانتظار</span>
                       {% endif %}
                     </div>
                   {% endfor %}
