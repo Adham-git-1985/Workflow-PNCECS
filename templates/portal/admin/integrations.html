@@ -89,7 +89,22 @@
           <button class="btn btn-success w-100" type="submit">
             <i class="bi bi-arrow-repeat"></i> مزامنة الآن
           </button>
-          <div class="form-text mt-2">يمكنك لاحقًا تشغيل مهمة مجدولة على الخادم لاستدعاء برنامج المزامنة دورياً.</div>
+          <div class="form-text mt-2">تقرأ المزامنة الآن والمزامنة التلقائية أحدث ملف فقط.</div>
+        </form>
+
+        <form method="post" action="{{ url_for('portal.hr_attendance_import_historical') }}" class="border rounded p-3 mt-3 bg-light">
+          <label class="form-label" for="timeclock-history-from">قراءة الملفات القديمة منذ</label>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-6">
+              <input class="form-control" id="timeclock-history-from" name="from_day" type="date" required>
+            </div>
+            <div class="col-md-6">
+              <button class="btn btn-outline-primary w-100" type="submit" onclick="return confirm('سيتم استيراد الملفات القديمة فقط ابتداءً من التاريخ المختار. أحدث ملف سيبقى للمزامنة العادية والتلقائية. هل تريد المتابعة؟');">
+                <i class="bi bi-clock-history"></i> قراءة الملفات القديمة
+              </button>
+            </div>
+          </div>
+          <div class="form-text mt-2">يستثني هذا الإجراء أحدث ملف ولا يغيّر مؤشرات المزامنة الحالية. السجلات المكررة تُتجاهل تلقائيًا.</div>
         </form>
 
       </div>
