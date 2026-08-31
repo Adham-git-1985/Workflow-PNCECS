@@ -31,6 +31,13 @@
         </button>
       </form>
     {% endif %}
+    {% if can_delete %}
+      <form method="post" action="{{ url_for('portal.meeting_delete', meeting_id=row.id) }}" onsubmit="return confirm('هل تريد حذف الاجتماع نهائياً؟');">
+        <button class="btn btn-outline-danger" type="submit">
+          <i class="bi bi-trash"></i> حذف الاجتماع
+        </button>
+      </form>
+    {% endif %}
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.meetings_dashboard') }}">
       <i class="bi bi-arrow-right"></i> رجوع
     </a>

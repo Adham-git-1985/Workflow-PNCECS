@@ -2914,6 +2914,14 @@ def _meeting_manage_allowed() -> bool:
         return False
 
 
+def _meeting_admin_view_allowed() -> bool:
+    """System administrators may audit every meeting without being invited."""
+    try:
+        return bool(_is_super_admin() or current_user.has_role("ADMIN"))
+    except Exception:
+        return False
+
+
 def _meeting_access_condition(user_id: int):
     participant_meeting_ids = (
         db.session.query(PortalMeetingParticipant.meeting_id)
@@ -2927,6 +2935,8 @@ def _meeting_access_condition(user_id: int):
 
 def _meeting_visible_query(query, user_id: int | None = None):
     """Restrict meetings to their organizer and explicitly invited users."""
+    if user_id is None and _meeting_admin_view_allowed():
+        return query
     uid = user_id if user_id is not None else getattr(current_user, "id", None)
     if not uid:
         return query.filter(PortalMeeting.id == -1)
@@ -2934,6 +2944,8 @@ def _meeting_visible_query(query, user_id: int | None = None):
 
 
 def _meeting_can_access(row: PortalMeeting) -> bool:
+    if _meeting_admin_view_allowed():
+        return True
     uid = getattr(current_user, "id", None)
     if not uid:
         return False
@@ -5528,6 +5540,7 @@ def meeting_view(meeting_id: int):
         users=_meeting_user_options(),
         task_assignees=_meeting_audience_users(row),
         can_manage=_meeting_can_manage(row),
+        can_delete=_is_super_admin(),
         current_participant=current_participant,
         status_labels=MEETING_STATUS_LABELS,
         task_status_labels=MEETING_TASK_STATUS_LABELS,
@@ -5538,6 +5551,40 @@ def meeting_view(meeting_id: int):
         attendance_labels=MEETING_ATTENDANCE_LABELS,
         recorded_attendance_labels=RECORDED_ATTENDANCE_LABELS,
     )
+
+
+@portal_bp.route("/meetings/<int:meeting_id>/delete", methods=["POST"])
+@login_required
+def meeting_delete(meeting_id: int):
+    if not _is_super_admin():
+        abort(403)
+
+    row = PortalMeeting.query.get_or_404(meeting_id)
+    attachment_dir = _meeting_minutes_attachment_dir(row.id)
+    title = row.title
+    db.session.delete(row)
+    _portal_audit(
+        "MEETING_DELETE",
+        note=f"meeting_id={meeting_id} title={title}",
+        target_type="PORTAL_MEETING",
+        target_id=meeting_id,
+    )
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete meeting %s", meeting_id)
+        flash("تعذر حذف الاجتماع.", "danger")
+        return redirect(url_for("portal.meeting_view", meeting_id=meeting_id))
+
+    try:
+        if attachment_dir.is_dir():
+            shutil.rmtree(attachment_dir)
+    except OSError:
+        current_app.logger.warning("Could not remove meeting attachment directory: %s", attachment_dir)
+
+    flash("تم حذف الاجتماع.", "success")
+    return redirect(url_for("portal.meetings_dashboard"))
 
 
 @portal_bp.route("/meetings/letterhead", methods=["POST"])

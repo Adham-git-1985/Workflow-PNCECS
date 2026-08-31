@@ -61,11 +61,27 @@ class MeetingVisibilityTests(unittest.TestCase):
         self.invitee = User(email="invitee@example.test", name="Invitee", password_hash="x")
         self.outsider = User(email="outsider@example.test", name="Outsider", password_hash="x")
         self.meetings_admin = User(email="meetings-admin@example.test", name="Meetings Admin", password_hash="x")
-        db.session.add_all((self.organizer, self.invitee, self.outsider, self.meetings_admin))
+        self.admin = User(email="admin@example.test", name="Admin", password_hash="x", role="ADMIN")
+        self.super_admin = User(email="super-admin@example.test", name="Super Admin", password_hash="x", role="SUPER_ADMIN")
+        db.session.add_all((
+            self.organizer,
+            self.invitee,
+            self.outsider,
+            self.meetings_admin,
+            self.admin,
+            self.super_admin,
+        ))
         db.session.flush()
         db.session.add_all([
             UserPermission(user_id=user.id, key="PORTAL_READ", is_allowed=True)
-            for user in (self.organizer, self.invitee, self.outsider, self.meetings_admin)
+            for user in (
+                self.organizer,
+                self.invitee,
+                self.outsider,
+                self.meetings_admin,
+                self.admin,
+                self.super_admin,
+            )
         ])
         db.session.add(UserPermission(
             user_id=self.organizer.id,
@@ -128,6 +144,14 @@ class MeetingVisibilityTests(unittest.TestCase):
                 self.assertEqual(dashboard.status_code, 200)
                 self.assertNotIn(self.meeting.title.encode("utf-8"), dashboard.data)
 
+        for user in (self.admin, self.super_admin):
+            with self.subTest(administrator=user.email):
+                self._login(client, user.id)
+                self.assertEqual(client.get(f"/portal/meetings/{self.meeting.id}").status_code, 200)
+                dashboard = client.get("/portal/meetings")
+                self.assertEqual(dashboard.status_code, 200)
+                self.assertIn(self.meeting.title.encode("utf-8"), dashboard.data)
+
     def test_tasks_do_not_grant_access_or_notify_uninvited_users(self):
         client = self.app.test_client()
 
@@ -150,6 +174,20 @@ class MeetingVisibilityTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(PortalMeetingTask.query.filter_by(meeting_id=self.meeting.id).count(), 1)
+
+    def test_only_super_admin_can_delete_a_meeting(self):
+        client = self.app.test_client()
+        delete_url = f"/portal/meetings/{self.meeting.id}/delete"
+
+        self._login(client, self.admin.id)
+        self.assertEqual(client.post(delete_url).status_code, 403)
+        self.assertIsNotNone(db.session.get(PortalMeeting, self.meeting.id))
+
+        self._login(client, self.super_admin.id)
+        view = client.get(f"/portal/meetings/{self.meeting.id}")
+        self.assertIn(delete_url.encode("utf-8"), view.data)
+        self.assertEqual(client.post(delete_url).status_code, 302)
+        self.assertIsNone(db.session.get(PortalMeeting, self.meeting.id))
 
     def test_participant_picker_uses_searchable_checkboxes(self):
         client = self.app.test_client()
