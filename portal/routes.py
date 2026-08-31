@@ -19578,16 +19578,16 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
         return None
 
     p = Path(src)
-    if p.exists() and p.is_file():
-        return str(p)
+    try:
+        if p.exists() and p.is_file():
+            return str(p)
 
-    if p.exists() and p.is_dir():
-        # Prefer date-stamped files: 20260215.CSV / 20260215.TXT
-        supported_suffixes = {'.csv', '.txt'}
-        pat = re.compile(r"^(\d{8})\.(csv|txt)$", re.IGNORECASE)
-        dated = []
-        other = []
-        try:
+        if p.exists() and p.is_dir():
+            # Prefer date-stamped files: 20260215.CSV / 20260215.TXT
+            supported_suffixes = {'.csv', '.txt'}
+            pat = re.compile(r"^(\d{8})\.(csv|txt)$", re.IGNORECASE)
+            dated = []
+            other = []
             for child in p.iterdir():
                 if not child.is_file():
                     continue
@@ -19596,29 +19596,20 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
                     dated.append(child)
                 elif child.suffix.lower() in supported_suffixes:
                     other.append(child)
-        except Exception:
-            return None
 
-        if dated:
-            # max by filename (YYYYMMDD)
-            dated.sort(key=lambda x: x.name)
-            return str(dated[-1])
+            if dated:
+                # max by filename (YYYYMMDD)
+                dated.sort(key=lambda x: x.name)
+                return str(dated[-1])
 
-        if other:
-            other.sort(key=lambda x: x.stat().st_mtime)
-            return str(other[-1])
-
+            if other:
+                other.sort(key=lambda x: x.stat().st_mtime)
+                return str(other[-1])
+    except OSError:
+        # A network share can disappear between clicks. Treat it exactly like
+        # an unavailable source so the manual sync route can show a useful
+        # message instead of returning a 500 error.
         return None
-
-    # Not found (could be a UNC path or a file that does not exist yet)
-    # Try treating it as a directory anyway (common when admin pastes UNC without pre-check)
-    try:
-        if src.endswith('\\') or src.endswith('/'):
-            dp = Path(src)
-            if dp.exists() and dp.is_dir():
-                return _timeclock_resolve_source_file(str(dp))
-    except Exception:
-        pass
 
     return None
 
@@ -19692,21 +19683,24 @@ def _timeclock_build_code_to_user(match_by: str) -> dict:
 
 def _timeclock_read_incremental(file_path: str, last_size: int | None, append_only: bool):
     p = Path(file_path)
-    if not p.exists() or not p.is_file():
-        raise FileNotFoundError(str(p))
+    try:
+        if not p.exists() or not p.is_file():
+            raise FileNotFoundError(str(p))
 
-    size = p.stat().st_size
-    if append_only and last_size is not None and last_size >= 0 and size >= last_size:
-        # read appended bytes
+        size = p.stat().st_size
+        if append_only and last_size is not None and last_size >= 0 and size >= last_size:
+            # read appended bytes
+            with p.open('rb') as f:
+                f.seek(last_size)
+                data = f.read()
+            return data, size
+
+        # fallback full
         with p.open('rb') as f:
-            f.seek(last_size)
             data = f.read()
         return data, size
-
-    # fallback full
-    with p.open('rb') as f:
-        data = f.read()
-    return data, size
+    except OSError as exc:
+        raise FileNotFoundError(str(p)) from exc
 
 
 def _timeclock_sync(file_path: str, imported_by_id: int, append_only: bool = True):
@@ -19985,7 +19979,10 @@ def hr_attendance_sync_now():
         return redirect(url_for('portal.portal_admin_integrations'))
 
     # If a folder is configured, we will pick the latest daily file automatically.
-    resolved = _timeclock_resolve_source_file(file_path)
+    try:
+        resolved = _timeclock_resolve_source_file(file_path)
+    except OSError:
+        resolved = None
     if not resolved:
         flash('تعذر العثور على ملف ساعة الدوام داخل المسار المحدد. تأكد من مشاركة المجلد وصلاحيات القراءة.', 'danger')
         return redirect(url_for('portal.portal_admin_integrations'))
@@ -20002,8 +19999,11 @@ def hr_attendance_sync_now():
         )
         flash(f'تمت المزامنة: {inserted} سجل، {skipped} تم تجاهله.', 'success')
     except FileNotFoundError:
+        db.session.rollback()
         flash('الملف غير موجود على المسار المحدد.', 'danger')
-    except Exception as e:
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception('Manual timeclock synchronization failed.')
         flash('تعذر تنفيذ المزامنة.', 'danger')
 
     return redirect(url_for('portal.hr_attendance_batches'))
