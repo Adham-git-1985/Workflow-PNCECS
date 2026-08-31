@@ -38,6 +38,30 @@
           <div class="fw-bold">{{ msg.subject or 'بدون موضوع' }}</div>
         </div>
 
+        {% if msg.attachments %}
+        <div class="col-12">
+          <div class="text-muted small mb-2">📎 المرفقات</div>
+          <div class="list-group">
+            {% for attachment in msg.attachments %}
+              <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3"
+                 href="{{ url_for('messages.download_attachment', attachment_id=attachment.id) }}">
+                <span class="text-truncate"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</span>
+                <small class="text-muted text-nowrap">
+                  {% if attachment.file_size < 1024 %}
+                    {{ attachment.file_size }} B
+                  {% elif attachment.file_size < 1048576 %}
+                    {{ '%.1f'|format(attachment.file_size / 1024) }} KB
+                  {% else %}
+                    {{ '%.1f'|format(attachment.file_size / 1048576) }} MB
+                  {% endif %}
+                  <i class="bi bi-download ms-1"></i>
+                </small>
+              </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
         {% if payslip_url and rec %}
         <div class="col-12">
           <div class="alert alert-info d-flex justify-content-between align-items-center flex-wrap mb-0">

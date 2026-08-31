@@ -36,7 +36,7 @@
           <strong>الرد</strong>
         </div>
         <div class="card-body">
-          <form method="post">
+          <form method="post" enctype="multipart/form-data">
             <div class="mb-3">
               <label class="form-label">الموضوع</label>
               <input type="text" name="subject" class="form-control" value="{{ default_subject }}">
@@ -45,6 +45,12 @@
             <div class="mb-3">
               <label class="form-label">نص الرد</label>
               <textarea name="body" class="form-control" rows="8" placeholder="اكتب ردك هنا..."></textarea>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label" for="replyAttachments">📎 مرفقات (اختياري)</label>
+              <input class="form-control" id="replyAttachments" name="attachments" type="file" multiple>
+              <div class="form-text">حتى 10 ملفات، بإجمالي 50 م.ب. يمكن إرسال مرفق دون كتابة نص.</div>
             </div>
 
             <div class="d-flex gap-2">

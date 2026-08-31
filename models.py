@@ -863,6 +863,13 @@ class Message(db.Model):
     sender_deleted_at = db.Column(db.DateTime, nullable=True)
 
     sender = db.relationship("User", lazy="joined")
+    attachments = db.relationship(
+        "MessageAttachment",
+        back_populates="message",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="MessageAttachment.uploaded_at",
+    )
 
 
 class MessageRecipient(db.Model):
@@ -886,6 +893,28 @@ class MessageRecipient(db.Model):
 
     message = db.relationship("Message", backref=db.backref("recipients", lazy="selectin"))
     recipient = db.relationship("User", lazy="joined")
+
+
+class MessageAttachment(db.Model):
+    """A file attached to an internal message or one of its replies."""
+
+    __tablename__ = "message_attachments"
+
+    __table_args__ = (
+        db.Index("ix_message_attachments_message_uploaded", "message_id", "uploaded_at"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    message_id = db.Column(db.Integer, db.ForeignKey("messages.id"), nullable=False, index=True)
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=False, default=0)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    message = db.relationship("Message", back_populates="attachments", lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
 
 
 # ======================
@@ -2026,6 +2055,16 @@ class EmployeeAttachment(db.Model):
     stored_name = db.Column(db.String(255), nullable=False)
     note = db.Column(db.String(255), nullable=True)
 
+    # Every employee-file attachment has a private archive copy owned by the
+    # employee.  Keeping the link lets replacement and deletion stay in sync
+    # without relying on a filename or description match.
+    archived_file_id = db.Column(
+        db.Integer,
+        db.ForeignKey("archived_file.id"),
+        nullable=True,
+        index=True,
+    )
+
     # Payslip period (month/year) - optional for backwards compatibility.
     # Used when attachment_type == 'PAYSLIP'.
     payslip_year = db.Column(db.Integer, nullable=True, index=True)
@@ -2044,6 +2083,7 @@ class EmployeeAttachment(db.Model):
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
     uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
     published_by = db.relationship("User", foreign_keys=[published_by_id], lazy="joined")
+    archived_file = db.relationship("ArchivedFile", foreign_keys=[archived_file_id], lazy="joined")
 
     attachment_type_lookup = db.relationship("HRLookupItem", foreign_keys=[attachment_type_lookup_id], lazy="joined")
 

@@ -1,18 +1,116 @@
 from datetime import datetime, timedelta
+import mimetypes
 import re
+from pathlib import Path
+import uuid
 
 from sqlalchemy import or_
 
-from flask import render_template, request, redirect, url_for, flash, abort
+from flask import current_app, render_template, request, redirect, url_for, flash, abort, send_from_directory
 from flask_login import login_required, current_user
 
 from extensions import db
 from utils.events import emit_event
+from utils.file_uploads import clean_original_filename, is_allowed_attachment, random_storage_name
 from . import messages_bp
 from models import (
     User, Department, Directorate,
-    Message, MessageRecipient, AuditLog
+    Message, MessageAttachment, MessageRecipient, AuditLog
 )
+
+
+MESSAGE_ATTACHMENT_MAX_FILES = 10
+MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024
+MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+MESSAGE_ATTACHMENT_MAX_REQUEST_BYTES = MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES + (2 * 1024 * 1024)
+
+
+def _message_attachment_dir(message_id: int) -> Path:
+    directory = Path(current_app.instance_path) / "uploads" / "messages" / str(int(message_id))
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _message_uploads() -> list:
+    return [
+        upload
+        for upload in (request.files.getlist("attachments") or [])
+        if upload and getattr(upload, "filename", "")
+    ]
+
+
+def _save_message_attachments(message: Message, uploads) -> tuple[int, list[Path]]:
+    """Persist message documents under the instance folder with bounded size."""
+    candidates = []
+    for upload in uploads or []:
+        original_name = clean_original_filename(getattr(upload, "filename", None))
+        if not original_name or not is_allowed_attachment(original_name):
+            raise ValueError("اسم أحد المرفقات غير صالح.")
+        candidates.append((upload, original_name))
+
+    if len(candidates) > MESSAGE_ATTACHMENT_MAX_FILES:
+        raise ValueError(f"يمكن إرفاق {MESSAGE_ATTACHMENT_MAX_FILES} ملفات كحد أقصى.")
+
+    saved_paths: list[Path] = []
+    total_size = 0
+    try:
+        for upload, original_name in candidates:
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            saved_path = _message_attachment_dir(message.id) / stored_name
+            upload.save(str(saved_path))
+            saved_paths.append(saved_path)
+
+            file_size = saved_path.stat().st_size
+            if file_size > MESSAGE_ATTACHMENT_MAX_FILE_BYTES:
+                raise ValueError(f"حجم الملف «{original_name}» يتجاوز الحد المسموح (25 م.ب).")
+            total_size += file_size
+            if total_size > MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES:
+                raise ValueError("إجمالي حجم مرفقات الرسالة يتجاوز الحد المسموح (50 م.ب).")
+
+            mime_type = (getattr(upload, "mimetype", None) or "").strip()
+            if not mime_type:
+                mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+            db.session.add(MessageAttachment(
+                message=message,
+                original_name=original_name[:255],
+                stored_name=stored_name,
+                mime_type=mime_type[:120],
+                file_size=file_size,
+                uploaded_by_id=int(current_user.id),
+                uploaded_at=datetime.utcnow(),
+            ))
+    except Exception:
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+    return len(candidates), saved_paths
+
+
+def _remove_message_attachment_files(paths) -> None:
+    for saved_path in paths or []:
+        try:
+            Path(saved_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _can_access_message(message: Message, user: User) -> bool:
+    if int(getattr(message, "sender_id", 0) or 0) == int(getattr(user, "id", 0) or 0):
+        return not bool(getattr(message, "sender_deleted", False))
+    return (
+        MessageRecipient.query
+        .filter(
+            MessageRecipient.message_id == message.id,
+            MessageRecipient.recipient_user_id == user.id,
+            MessageRecipient.is_deleted.is_(False),
+        )
+        .first()
+        is not None
+    )
 
 
 def _audit_message(action, msg, note_extra=None, recipients=None):
@@ -147,10 +245,18 @@ def compose():
     directorates = Directorate.query.order_by(Directorate.name_ar.asc()).all()
 
     if request.method == "POST":
+        if (
+            request.content_length is not None
+            and request.content_length > MESSAGE_ATTACHMENT_MAX_REQUEST_BYTES
+        ):
+            flash("حجم طلب الرسالة يتجاوز الحد المسموح للمرفقات (50 م.ب إجمالاً).", "danger")
+            return redirect(url_for("messages.compose"))
+
         target_kind = (request.form.get("target_kind") or "").strip().upper()
         target_id = request.form.get("target_id")
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
+        uploads = _message_uploads()
 
         if target_kind not in {"USER", "DEPARTMENT", "DIRECTORATE"}:
             flash("يرجى اختيار جهة صحيحة", "danger")
@@ -162,8 +268,8 @@ def compose():
             flash("يرجى اختيار جهة صحيحة", "danger")
             return redirect(url_for("messages.compose"))
 
-        if not body:
-            flash("يرجى كتابة نص الرسالة", "danger")
+        if not body and not uploads:
+            flash("يرجى كتابة نص الرسالة أو إرفاق مستند.", "danger")
             return redirect(url_for("messages.compose"))
 
         # Resolve recipients
@@ -218,7 +324,10 @@ def compose():
             flash("لا يوجد مستخدمون ضمن الجهة المختارة", "warning")
             return redirect(url_for("messages.compose"))
 
-        duplicate = _find_recent_duplicate_message(
+        # File-only messages can legitimately share the same subject/body in
+        # quick succession. The compose form already prevents double submits,
+        # so keep the legacy text-only duplicate guard out of their way.
+        duplicate = None if uploads else _find_recent_duplicate_message(
             sender_id=current_user.id,
             target_kind=target_kind,
             target_id=target_id_int,
@@ -241,6 +350,19 @@ def compose():
         db.session.add(msg)
         db.session.flush()
 
+        saved_paths = []
+        try:
+            attachment_count, saved_paths = _save_message_attachments(msg, uploads)
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(url_for("messages.compose"))
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to save internal message attachments")
+            flash("تعذر حفظ مرفقات الرسالة.", "danger")
+            return redirect(url_for("messages.compose"))
+
         # Recipients rows
         rec_rows = [
             MessageRecipient(
@@ -259,6 +381,7 @@ def compose():
         _audit_message(
             action="MESSAGE_SENT",
             msg=msg,
+            note_extra=f"attachments={attachment_count}",
             recipients=",".join(map(str, recipient_ids))
         )
 
@@ -277,8 +400,19 @@ def compose():
                 auto_commit=False
             )
 
-        db.session.commit()
-        flash("تم إرسال الرسالة", "success")
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            _remove_message_attachment_files(saved_paths)
+            current_app.logger.exception("Failed to send internal message")
+            flash("تعذر إرسال الرسالة.", "danger")
+            return redirect(url_for("messages.compose"))
+        flash(
+            "تم إرسال الرسالة"
+            + (f" مع {attachment_count} مرفق/مرفقات." if attachment_count else "."),
+            "success",
+        )
         return redirect(url_for("messages.sent"))
 
     return render_template(
@@ -310,10 +444,18 @@ def reply(message_id):
         return redirect(url_for("messages.inbox"))
 
     if request.method == "POST":
+        if (
+            request.content_length is not None
+            and request.content_length > MESSAGE_ATTACHMENT_MAX_REQUEST_BYTES
+        ):
+            flash("حجم طلب الرد يتجاوز الحد المسموح للمرفقات (50 م.ب إجمالاً).", "danger")
+            return redirect(url_for("messages.reply", message_id=message_id))
+
         subject = (request.form.get("subject") or "").strip()
         body = (request.form.get("body") or "").strip()
-        if not body:
-            flash("يرجى كتابة نص الرد", "danger")
+        uploads = _message_uploads()
+        if not body and not uploads:
+            flash("يرجى كتابة نص الرد أو إرفاق مستند.", "danger")
             return redirect(url_for("messages.reply", message_id=message_id))
 
         # send to original sender
@@ -333,6 +475,19 @@ def reply(message_id):
         db.session.add(reply_msg)
         db.session.flush()
 
+        saved_paths = []
+        try:
+            attachment_count, saved_paths = _save_message_attachments(reply_msg, uploads)
+        except ValueError as exc:
+            db.session.rollback()
+            flash(str(exc), "danger")
+            return redirect(url_for("messages.reply", message_id=message_id))
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception("Failed to save internal message reply attachments")
+            flash("تعذر حفظ مرفقات الرد.", "danger")
+            return redirect(url_for("messages.reply", message_id=message_id))
+
         db.session.add(
             MessageRecipient(
                 message_id=reply_msg.id,
@@ -347,7 +502,7 @@ def reply(message_id):
         _audit_message(
             action="MESSAGE_REPLY_SENT",
             msg=reply_msg,
-            note_extra=f"reply_to={original.id}",
+            note_extra=f"reply_to={original.id} | attachments={attachment_count}",
             recipients=str(original.sender_id)
         )
 
@@ -362,8 +517,19 @@ def reply(message_id):
             auto_commit=False
         )
 
-        db.session.commit()
-        flash("تم إرسال الرد", "success")
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            _remove_message_attachment_files(saved_paths)
+            current_app.logger.exception("Failed to send internal message reply")
+            flash("تعذر إرسال الرد.", "danger")
+            return redirect(url_for("messages.reply", message_id=message_id))
+        flash(
+            "تم إرسال الرد"
+            + (f" مع {attachment_count} مرفق/مرفقات." if attachment_count else "."),
+            "success",
+        )
         return redirect(url_for("messages.sent"))
 
     default_subject = f"RE: {(original.subject or '').strip() or '(بدون موضوع)'}"
@@ -371,6 +537,31 @@ def reply(message_id):
         "messages/reply.html",
         original=original,
         default_subject=default_subject
+    )
+
+
+@messages_bp.route("/attachment/<int:attachment_id>/download")
+@login_required
+def download_attachment(attachment_id: int):
+    attachment = MessageAttachment.query.get_or_404(attachment_id)
+    message = Message.query.get_or_404(attachment.message_id)
+
+    if not _can_access_message(message, current_user):
+        abort(403)
+
+    stored_name = Path(attachment.stored_name or "").name
+    if not stored_name or stored_name != (attachment.stored_name or ""):
+        abort(404)
+    directory = Path(current_app.instance_path) / "uploads" / "messages" / str(int(message.id))
+    if not (directory / stored_name).is_file():
+        abort(404)
+
+    return send_from_directory(
+        str(directory),
+        stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=True,
+        download_name=attachment.original_name,
     )
 
 

@@ -50,6 +50,9 @@
                   <td>
                     <a href="{{ url_for('messages.view_message', message_id=m.id) }}" class="text-decoration-none">
                       <strong>{{ m.subject or 'بدون موضوع' }}</strong>
+                      {% if m.attachments %}
+                        <span class="badge text-bg-light border ms-1"><i class="bi bi-paperclip"></i> {{ m.attachments|length }}</span>
+                      {% endif %}
                       <div class="text-muted small text-truncate" style="max-width:720px">{{ m.body }}</div>
                     </a>
                   </td>

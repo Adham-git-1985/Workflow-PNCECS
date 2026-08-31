@@ -15,7 +15,7 @@
 
   <div class="card shadow-sm">
     <div class="card-body">
-      <form method="POST" id="messageComposeForm" novalidate>
+      <form method="POST" id="messageComposeForm" enctype="multipart/form-data" novalidate>
         <div class="row g-3">
           <div class="col-md-4">
             <label class="form-label">الجهة</label>
@@ -55,7 +55,13 @@
 
           <div class="col-12">
             <label class="form-label">نص الرسالة</label>
-            <textarea class="form-control" name="body" rows="6" required placeholder="اكتب رسالتك هنا..."></textarea>
+            <textarea class="form-control" name="body" rows="6" placeholder="اكتب رسالتك هنا..."></textarea>
+          </div>
+
+          <div class="col-12">
+            <label class="form-label" for="messageAttachments">📎 مرفقات (اختياري)</label>
+            <input class="form-control" id="messageAttachments" name="attachments" type="file" multiple>
+            <div class="form-text">يمكن إرفاق حتى 10 ملفات، بإجمالي 50 م.ب. يمكنك إرسال مرفق دون كتابة نص.</div>
           </div>
 
           <div class="col-12">
