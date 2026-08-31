@@ -6903,20 +6903,12 @@ def hr_home():
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
     try:
         if can_view_absence_board(current_user):
-            _sec_map["الإجازات والمهام"].extend([
-                {
-                    "title": "الموظفون المجازون",
-                    "desc": "عرض الإجازات المعتمدة حسب اليوم والنطاق التنظيمي.",
-                    "icon": "bi-calendar2-check",
-                    "url": url_for("portal.hr_employees_on_leave"),
-                },
-                {
-                    "title": "الموظفون المغادرون",
-                    "desc": "عرض المغادرات المعتمدة لليوم حسب النطاق التنظيمي.",
-                    "icon": "bi-door-open",
-                    "url": url_for("portal.hr_employees_out"),
-                },
-            ])
+            _sec_map["الإجازات والمهام"].append({
+                "title": "لوحة المجازين والمغادرين",
+                "desc": "عرض الإجازات والمغادرات المعتمدة حسب اليوم والنطاق التنظيمي.",
+                "icon": "bi-grid-1x2-fill",
+                "url": url_for("portal.hr_absence_board"),
+            })
     except Exception:
         pass
     # Reports
@@ -12130,7 +12122,7 @@ def hr_approvals():
     )
 
 
-def _hr_absence_board_rows(kind: str, selected_day: str, visible_user_ids: set[int] | None, search: str = ""):
+def _hr_absence_board_query(kind: str, selected_day: str, visible_user_ids: set[int] | None, search: str = ""):
     if kind == KIND_LEAVE:
         query = HRLeaveRequest.query.filter(
             HRLeaveRequest.status == "APPROVED",
@@ -12149,6 +12141,11 @@ def _hr_absence_board_rows(kind: str, selected_day: str, visible_user_ids: set[i
     if search:
         pattern = f"%{search}%"
         query = query.join(User, User.id == model.user_id).filter(or_(User.name.ilike(pattern), User.email.ilike(pattern)))
+    return query, model
+
+
+def _hr_absence_board_rows(kind: str, selected_day: str, visible_user_ids: set[int] | None, search: str = ""):
+    query, model = _hr_absence_board_query(kind, selected_day, visible_user_ids, search)
     order_column = HRLeaveRequest.start_date if kind == KIND_LEAVE else HRPermissionRequest.from_time
     return query.order_by(order_column.asc(), model.id.asc()).all()
 
@@ -12180,14 +12177,26 @@ def _hr_absence_board_export(kind: str, rows, selected_day: str):
     return send_file(output, as_attachment=True, download_name=filename, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
-def _hr_absence_board(kind: str):
+def _hr_absence_board(default_kind: str = KIND_LEAVE):
     if not can_view_absence_board(current_user):
         abort(403)
     selected_day = (request.args.get("day") or date.today().strftime("%Y-%m-%d")).strip()
     if not _parse_yyyy_mm_dd(selected_day):
         selected_day = date.today().strftime("%Y-%m-%d")
     search = (request.args.get("q") or "").strip()
-    rows = _hr_absence_board_rows(kind, selected_day, board_visible_user_ids(current_user), search)
+    requested_view = (request.args.get("view") or "").strip().lower()
+    kind = {
+        "leaves": KIND_LEAVE,
+        "leave": KIND_LEAVE,
+        "permissions": KIND_PERMISSION,
+        "permission": KIND_PERMISSION,
+    }.get(requested_view, default_kind)
+    active_view = "leaves" if kind == KIND_LEAVE else "permissions"
+
+    visible_user_ids = board_visible_user_ids(current_user)
+    rows = _hr_absence_board_rows(kind, selected_day, visible_user_ids, search)
+    leave_count = _hr_absence_board_query(KIND_LEAVE, selected_day, visible_user_ids, search)[0].count()
+    permission_count = _hr_absence_board_query(KIND_PERMISSION, selected_day, visible_user_ids, search)[0].count()
     can_export = False
     try:
         can_export = bool(current_user.has_perm(HR_REPORTS_EXPORT) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_role("ADMIN"))
@@ -12200,7 +12209,10 @@ def _hr_absence_board(kind: str):
     return render_template(
         "portal/hr/absence_board.html",
         kind=kind,
+        active_view=active_view,
         rows=rows,
+        leave_count=leave_count,
+        permission_count=permission_count,
         selected_day=selected_day,
         q=search,
         can_export=can_export,
@@ -12209,10 +12221,18 @@ def _hr_absence_board(kind: str):
     )
 
 
+@portal_bp.route("/hr/absence-board")
+@login_required
+@_perm(PORTAL_READ)
+def hr_absence_board():
+    return _hr_absence_board()
+
+
 @portal_bp.route("/hr/absence-board/leaves")
 @login_required
 @_perm(PORTAL_READ)
 def hr_employees_on_leave():
+    # Keep the legacy URL available for existing bookmarks and exports.
     return _hr_absence_board(KIND_LEAVE)
 
 
@@ -12220,6 +12240,7 @@ def hr_employees_on_leave():
 @login_required
 @_perm(PORTAL_READ)
 def hr_employees_out():
+    # Keep the legacy URL available for existing bookmarks and exports.
     return _hr_absence_board(KIND_PERMISSION)
 
 

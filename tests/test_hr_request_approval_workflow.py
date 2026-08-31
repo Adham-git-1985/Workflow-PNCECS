@@ -482,6 +482,15 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
 
         client = self.app.test_client()
         self._login(client, self.general_director.id)
+        dashboard = client.get("/portal/hr/absence-board?day=2026-09-01")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn("لوحة الموظفين المجازين والمغادرين".encode("utf-8"), dashboard.data)
+        self.assertIn(b"view=permissions", dashboard.data)
+
+        departures = client.get("/portal/hr/absence-board?day=2026-09-01&view=permissions")
+        self.assertEqual(departures.status_code, 200)
+        self.assertIn("الموظفون المغادرون".encode("utf-8"), departures.data)
+
         page = client.get("/portal/hr/absence-board/leaves?day=2026-09-01")
         self.assertEqual(page.status_code, 200)
         self.assertIn(b"Employee", page.data)
