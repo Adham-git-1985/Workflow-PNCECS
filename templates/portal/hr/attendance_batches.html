@@ -11,6 +11,13 @@
             <i class="bi bi-arrow-repeat"></i> مزامنة الآن
           </button>
         </form>
+        <form method="post" action="{{ url_for('portal.hr_attendance_import_historical') }}" class="d-flex align-items-center gap-2 flex-wrap">
+          <label class="small text-muted mb-0" for="timeclock-history-from">قراءة الملفات القديمة منذ</label>
+          <input class="form-control form-control-sm" id="timeclock-history-from" name="from_day" type="date" required {% if not timeclock_file_path %}disabled{% endif %}>
+          <button class="btn btn-outline-primary btn-sm" type="submit" {% if not timeclock_file_path %}disabled{% endif %} onclick="return confirm('سيتم استيراد الملفات القديمة فقط ابتداءً من التاريخ المختار. أحدث ملف سيبقى للمزامنة العادية والتلقائية. هل تريد المتابعة؟');">
+            <i class="bi bi-clock-history"></i> قراءة الملفات القديمة
+          </button>
+        </form>
       {% endif %}
       <a class="btn btn-primary btn-sm" href="{{ url_for('portal.hr_attendance_import') }}">استيراد جديد</a>
     </div>
@@ -26,6 +33,13 @@
       {% if last_error %}
         <span class="mx-2">|</span> <span class="text-danger">آخر خطأ: {{ last_error }}</span>
       {% endif %}
+    </div>
+  {% endif %}
+
+  {% if can_sync_now %}
+    <div class="alert alert-light border small py-2 mb-3">
+      <i class="bi bi-info-circle"></i>
+      «مزامنة الآن» والمزامنة التلقائية تقرآن أحدث ملف فقط. خيار «قراءة الملفات القديمة» يستثني أحدث ملف ولا يغيّر مؤشر المزامنة الحالي.
     </div>
   {% endif %}
 

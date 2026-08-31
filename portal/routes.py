@@ -19623,6 +19623,51 @@ def _timeclock_resolve_source_file(source_path: str) -> str | None:
     return None
 
 
+def _timeclock_list_historical_files(source_path: str, from_day: date) -> list[str]:
+    """List date-stamped attendance files before the newest source file.
+
+    The normal sync intentionally follows only the newest file in the configured
+    folder.  This helper is exclusively for an operator-requested backfill, so
+    it returns older daily files in chronological order and never includes the
+    newest one.
+    """
+    src = (source_path or '').strip()
+    if not src:
+        raise FileNotFoundError('TIMECLK_SOURCE_FILE')
+
+    folder = Path(src)
+    try:
+        if not folder.exists() or not folder.is_dir():
+            raise FileNotFoundError(str(folder))
+
+        pattern = re.compile(r"^(\d{8})\.(csv|txt)$", re.IGNORECASE)
+        dated_files: list[tuple[date, Path]] = []
+        for child in folder.iterdir():
+            if not child.is_file():
+                continue
+            match = pattern.match(child.name)
+            if not match:
+                continue
+            try:
+                file_day = datetime.strptime(match.group(1), "%Y%m%d").date()
+            except ValueError:
+                continue
+            dated_files.append((file_day, child))
+    except OSError as exc:
+        raise FileNotFoundError(str(folder)) from exc
+
+    dated_files.sort(key=lambda item: (item[0], item[1].name.lower()))
+    if len(dated_files) < 2:
+        return []
+
+    # The last file is the one used by normal and automatic synchronization.
+    return [
+        str(child)
+        for file_day, child in dated_files[:-1]
+        if file_day >= from_day
+    ]
+
+
 def _timeclock_get_match_by() -> str:
     v = (_setting_get('TIMECLK_MATCH_BY') or '').strip().upper()
     # Allowed values:
@@ -20018,7 +20063,85 @@ def hr_attendance_sync_now():
     return redirect(url_for('portal.hr_attendance_batches'))
 
 
-def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: bool = True, force_full_read: bool = False):
+@portal_bp.route('/hr/attendance/import-historical', methods=['POST'])
+@login_required
+@_perm(HR_ATT_CREATE)
+def hr_attendance_import_historical():
+    """Backfill older daily timeclock files without moving the live sync cursor."""
+    if not current_user.has_perm(PORTAL_INTEGRATIONS_MANAGE) and not current_user.has_role('ADMIN'):
+        abort(403)
+
+    from_day_raw = (request.form.get('from_day') or '').strip()
+    try:
+        from_day = date.fromisoformat(from_day_raw)
+    except ValueError:
+        flash('يرجى اختيار تاريخ بداية صحيح لقراءة الملفات القديمة.', 'danger')
+        return redirect(url_for('portal.hr_attendance_batches'))
+
+    source_path = (_setting_get('TIMECLK_SOURCE_FILE') or '').strip()
+    try:
+        historical_files = _timeclock_list_historical_files(source_path, from_day)
+    except FileNotFoundError:
+        flash('تعذر الوصول إلى مجلد ساعة الدوام. تأكد من المسار وصلاحيات القراءة.', 'danger')
+        return redirect(url_for('portal.hr_attendance_batches'))
+
+    if not historical_files:
+        flash('لا توجد ملفات قديمة مؤهلة للقراءة ضمن الفترة المحددة. أحدث ملف مستثنى من هذه العملية.', 'info')
+        return redirect(url_for('portal.hr_attendance_batches'))
+
+    total_inserted = 0
+    total_skipped = 0
+    failed_files: list[str] = []
+    for historical_file in historical_files:
+        try:
+            inserted, skipped, _errors = _timeclock_sync_simple(
+                historical_file,
+                current_user.id,
+                append_only=False,
+                force_full_read=True,
+                update_sync_cursor=False,
+            )
+            total_inserted += inserted
+            total_skipped += skipped
+        except Exception:
+            db.session.rollback()
+            failed_files.append(Path(historical_file).name)
+            current_app.logger.exception('Historical timeclock import failed for %s', historical_file)
+
+    _portal_audit(
+        'TIMECLK_HISTORICAL_IMPORT',
+        (
+            f'TIMECLK historical import from={from_day.isoformat()} '
+            f'files={len(historical_files)} inserted={total_inserted} '
+            f'skipped={total_skipped} failed={len(failed_files)}'
+        ),
+        target_type='ATTENDANCE_IMPORT',
+        user_id=current_user.id,
+    )
+    db.session.commit()
+
+    if failed_files:
+        flash(
+            f'تمت قراءة الملفات القديمة: {total_inserted} سجل مضاف، {total_skipped} متجاهل. '
+            f'تعذر قراءة {len(failed_files)} ملف: {", ".join(failed_files[:5])}.',
+            'warning',
+        )
+    else:
+        flash(
+            f'تمت قراءة {len(historical_files)} ملف قديم: {total_inserted} سجل مضاف، {total_skipped} متجاهل. '
+            'لم يتم تغيير ملف المزامنة التلقائية الحالي.',
+            'success',
+        )
+    return redirect(url_for('portal.hr_attendance_batches'))
+
+
+def _timeclock_sync_simple(
+    file_path: str,
+    imported_by_id: int,
+    append_only: bool = True,
+    force_full_read: bool = False,
+    update_sync_cursor: bool = True,
+):
     # Same as _timeclock_sync but avoids flush/rollback inside loop.
     # Support directory input (daily files like YYYYMMDD.CSV)
     resolved = _timeclock_resolve_source_file(file_path)
@@ -20049,9 +20172,10 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
     # If there is no new data (common in append-only polling), avoid creating empty batches,
     # but still advance pointers & update the "last sync" stamp for visibility.
     if not lines:
-        _setting_set('TIMECLK_LAST_FILE', str(resolved))
-        _setting_set('TIMECLK_LAST_SIZE', str(new_size))
-        _setting_set('TIMECLK_LAST_SYNC_AT', datetime.utcnow().isoformat(timespec='seconds'))
+        if update_sync_cursor:
+            _setting_set('TIMECLK_LAST_FILE', str(resolved))
+            _setting_set('TIMECLK_LAST_SIZE', str(new_size))
+            _setting_set('TIMECLK_LAST_SYNC_AT', datetime.utcnow().isoformat(timespec='seconds'))
         db.session.commit()
         return 0, 0, 0
 
@@ -20121,9 +20245,10 @@ def _timeclock_sync_simple(file_path: str, imported_by_id: int, append_only: boo
     if errors:
         batch.errors = "\n".join(errors[:200])
 
-    _setting_set('TIMECLK_LAST_FILE', str(resolved))
-    _setting_set('TIMECLK_LAST_SIZE', str(new_size))
-    _setting_set('TIMECLK_LAST_SYNC_AT', datetime.utcnow().isoformat(timespec='seconds'))
+    if update_sync_cursor:
+        _setting_set('TIMECLK_LAST_FILE', str(resolved))
+        _setting_set('TIMECLK_LAST_SIZE', str(new_size))
+        _setting_set('TIMECLK_LAST_SYNC_AT', datetime.utcnow().isoformat(timespec='seconds'))
     recomputed = _attendance_recompute_summaries_for_keys(summary_keys)
 
     _portal_audit(
