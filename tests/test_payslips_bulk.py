@@ -21,6 +21,7 @@ class PayslipsBulkTests(unittest.TestCase):
             SECRET_KEY="payslips-bulk-test",
             SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            ARCHIVE_STORAGE_DIR=str(Path(cls.temp_dir.name) / "archive"),
         )
         db.init_app(cls.app)
         login_manager = LoginManager()

@@ -26,6 +26,7 @@ from . import portal_bp
 from extensions import db
 from models import EmployeeAttachment, EmployeeFile, User
 from utils.perms import perm_required
+from services.employee_attachment_archive import sync_employee_attachment_to_archive
 
 # Reuse the existing HR payslip/storage helpers from portal.routes so the new page
 # stays connected to the old send/publish workflow.
@@ -225,6 +226,8 @@ def _register_or_replace_payslip(
         att.published_by_id = None
     except Exception:
         pass
+
+    sync_employee_attachment_to_archive(att, source_path=stored_path)
 
     return att
 

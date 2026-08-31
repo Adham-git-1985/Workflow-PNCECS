@@ -709,10 +709,12 @@ def _ensure_runtime_schema():
                         db.session.commit()
                     except Exception:
                         db.session.rollback()
-            # employee_attachment: payslip period (month/year)
+            # employee_attachment: payslip period (month/year) and private
+            # archive link used to show employee-file attachments in Archive.
             for col, ctype in [
                 ("payslip_year", "INTEGER"),
                 ("payslip_month", "INTEGER"),
+                ("archived_file_id", "INTEGER"),
             ]:
                 if not _col_exists("employee_attachment", col):
                     _add_column_retry("employee_attachment", col, ctype)

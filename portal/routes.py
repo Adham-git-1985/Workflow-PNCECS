@@ -80,6 +80,10 @@ from services.employee_data_import import (
     validate_employee_payload,
 )
 from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
+from services.employee_attachment_archive import (
+    archive_employee_attachment_deletion,
+    sync_employee_attachment_to_archive,
+)
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -15269,6 +15273,7 @@ def hr_employee_attachments_upload(user_id: int):
                 existing.is_published = False
                 existing.published_at = None
                 existing.published_by_id = None
+                sync_employee_attachment_to_archive(existing)
                 saved += 1
                 continue
 
@@ -15286,6 +15291,7 @@ def hr_employee_attachments_upload(user_id: int):
             uploaded_by_id=current_user.id,
         )
         db.session.add(att)
+        sync_employee_attachment_to_archive(att)
         saved += 1
 
     _portal_audit(
@@ -15338,6 +15344,7 @@ def hr_employee_attachment_edit(user_id: int, att_id: int):
         a.attachment_type_lookup_id = _i(request.form.get("attachment_type_lookup_id"))
         a.note = _s(request.form.get("note"))
         a.updated_by_id = current_user.id
+        sync_employee_attachment_to_archive(a)
         db.session.commit()
         flash("تم تحديث المرفق.", "success")
         return redirect(url_for("portal.hr_employee_attachments", user_id=user_id))
@@ -15357,6 +15364,7 @@ def hr_employee_attachment_edit(user_id: int, att_id: int):
 @_perm(HR_EMP_ATTACH)
 def hr_employee_attachment_delete(user_id: int, att_id: int):
     att = EmployeeAttachment.query.filter_by(id=att_id, user_id=user_id).first_or_404()
+    attachment_type = (att.attachment_type or '').upper()
 
     dirp = _employee_upload_dir(user_id)
     try:
@@ -15366,6 +15374,7 @@ def hr_employee_attachment_delete(user_id: int, att_id: int):
     except Exception:
         pass
 
+    archive_employee_attachment_deletion(att, deleted_by_id=current_user.id)
     db.session.delete(att)
     _portal_audit(
         action="HR_EMPLOYEE_ATTACHMENT_DELETE",
@@ -15382,7 +15391,7 @@ def hr_employee_attachment_delete(user_id: int, att_id: int):
         flash("تعذر حذف المرفق.", "danger")
 
     # redirect based on type
-    if (att.attachment_type or '').upper() == 'PAYSLIP':
+    if attachment_type == 'PAYSLIP':
         return redirect(url_for("portal.hr_employee_payslips", user_id=user_id))
     return redirect(url_for("portal.hr_employee_attachments", user_id=user_id))
 

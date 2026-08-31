@@ -60,6 +60,7 @@ from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
     filter_confidential_workflow_user_ids,
 )
+from services.employee_attachment_archive import sync_pending_employee_attachments_for_user
 
 from archive import archive_bp
 
@@ -732,6 +733,9 @@ def sign_pdf(file_id):
 @archive_bp.route("/files")
 @login_required
 def archive_files():
+    # Import legacy employee-file attachments lazily for their owner, so old
+    # documents become visible the first time an employee opens Archive.
+    sync_pending_employee_attachments_for_user(current_user.id)
     filters = _archive_filters_from_request()
     q = filters["q"]
     page = request.args.get("page", 1, type=int)
@@ -1124,6 +1128,7 @@ def upload_file():
 @archive_bp.route("/my-files")
 @login_required
 def my_files():
+    sync_pending_employee_attachments_for_user(current_user.id)
     filters = _archive_filters_from_request()
     q = filters["q"]
     page = request.args.get("page", 1, type=int)
