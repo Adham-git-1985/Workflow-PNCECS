@@ -777,7 +777,7 @@
 
     <div class="card shadow-sm mt-3">
       <div class="card-header bg-white">
-        <strong>💬 تعليق / رد</strong>
+        <strong>💬 تعليق</strong>
       </div>
       <div class="card-body">
         <form method="post" enctype="multipart/form-data" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
@@ -787,7 +787,7 @@
               <textarea class="form-control"
                         name="note"
                         rows="3"
-                        placeholder="اكتب التعليق أو الرد هنا"
+                        placeholder="اكتب تعليقك هنا"
                         autocomplete="off"
                         data-mention-input
                         data-mention-url="{{ url_for('workflow.mention_search') }}"></textarea>
@@ -812,17 +812,12 @@
                 <input type="file" name="scanned_files" multiple class="form-control" accept="application/pdf,image/*" capture="environment" aria-label="مسح مرفقات من السكانر أو الكاميرا">
               </div>
             </div>
-            <div class="form-text">يمكنك رفع ملفات أو اختيار PDF/صورة ممسوحة من السكانر مع التعليق/الرد.</div>
+            <div class="form-text">يمكنك رفع ملفات أو اختيار PDF/صورة ممسوحة من السكانر مع التعليق.</div>
           </div>
 
-          {% if current_user.id == req.requester_id %}
-            <button class="btn btn-primary w-100" name="kind" value="REPLY">إرسال رد للمراجع</button>
-          {% else %}
-            <div class="d-flex gap-2">
-              <button class="btn btn-outline-primary w-100" name="kind" value="COMMENT">إرسال تعليق</button>
-              <button class="btn btn-primary w-100" name="kind" value="REPLY">إرسال رد</button>
-            </div>
-          {% endif %}
+          <button class="btn btn-primary w-100" name="kind" value="COMMENT">
+            <i class="bi bi-send"></i> إرسال تعليق
+          </button>
         </form>
         <div class="small text-muted mt-2">سيصل تنبيه تلقائي للطرف الآخر.</div>
         {% if mentioned_users %}

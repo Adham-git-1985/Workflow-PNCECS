@@ -6155,16 +6155,15 @@ def add_request_note(request_id):
         abort(403)
 
     note = (request.form.get("note") or "").strip()
-    kind = (request.form.get("kind") or "COMMENT").strip().upper()
+    # A note never changes the workflow state. Keep one unified action for
+    # all users; legacy WORKFLOW_REPLY audit entries remain readable.
+    kind = "COMMENT"
 
     uploaded_files = _uploaded_files_from_request("files", "scanned_files")
 
     if not note and not uploaded_files:
         flash("يرجى كتابة نص أو إرفاق ملف/ملفات.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
-
-    if kind not in ("COMMENT", "REPLY"):
-        kind = "COMMENT"
 
     # determine current step order (best-effort)
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
@@ -6269,7 +6268,7 @@ def add_request_note(request_id):
 
         else:
             # Reviewer -> notify requester
-            label = "تعليق" if kind == "COMMENT" else "رد"
+            label = "تعليق"
             notified_user_ids.add(int(req.requester_id))
             emit_event(
                 actor_id=current_user.id,
