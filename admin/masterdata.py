@@ -26,6 +26,7 @@ PERM_MODULES = [
 ]
 
 PERM_EXTRA_KEYS = [
+    ("WORKFLOW_TEMPORARY_DELETE", "حذف المسارات والطلبات لمدة ساعة من إنشائها"),
     ("VIEW_DASHBOARD", "رؤية لوحة Dashboard"),
     ("VIEW_ESCALATIONS", "رؤية صفحة 🚨 Escalations"),
     ("AUDIT_DASHBOARD_READ", "عرض لوحة سجل التدقيق"),

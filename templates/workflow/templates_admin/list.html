@@ -93,14 +93,16 @@
                   ✏️ تعديل
                 </a>
 
-                <form method="post"
-                      action="{{ url_for('workflow.templates_delete', template_id=t.id) }}"
-                      class="d-inline"
-                      onsubmit="return confirm('حذف المسار؟');">
-                  <button class="btn btn-sm btn-outline-danger">
-                    🗑️ حذف
-                  </button>
-                </form>
+                {% if t.id in can_delete_template_ids %}
+                  <form method="post"
+                        action="{{ url_for('workflow.templates_delete', template_id=t.id) }}"
+                        class="d-inline"
+                        onsubmit="return confirm('حذف المسار؟');">
+                    <button class="btn btn-sm btn-outline-danger">
+                      🗑️ حذف
+                    </button>
+                  </form>
+                {% endif %}
 
               </td>
             </tr>

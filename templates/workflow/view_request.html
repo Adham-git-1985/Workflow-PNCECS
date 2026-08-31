@@ -19,7 +19,7 @@
       <i class="bi bi-printer"></i> طباعة الطلب
     </a>
 
-    {% if current_user.has_role('SUPER_ADMIN') %}
+    {% if can_delete_request %}
     <form method="post"
           action="{{ url_for('workflow.delete_request', request_id=req.id) }}"
           onsubmit="return confirm('هل أنت متأكد من حذف الطلب نهائياً؟ سيتم تسجيل ذلك في سجل التدقيق.');">

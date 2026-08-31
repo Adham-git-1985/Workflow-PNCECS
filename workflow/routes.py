@@ -34,7 +34,6 @@ from sqlalchemy.orm import joinedload
 
 from . import workflow_bp
 from extensions import db
-from permissions import roles_required
 from utils.perms import perm_required
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
 from utils.audit_helpers import delegation_audit_fields
@@ -132,6 +131,7 @@ from workflow.dynamic_paths import (
     requester_dynamic_manager_options,
 )
 from workflow.project_workflows import PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME
+from workflow.temporary_delete import can_delete_workflow_request, is_super_admin
 
 from workflow.engine import (
     start_workflow_for_request,
@@ -4390,6 +4390,7 @@ def view_request(request_id):
         int(getattr(current_user, "id", 0) or 0) == int(req.requester_id or 0)
         and (req.status or "").strip().upper() in {"APPROVED", "REJECTED"}
     )
+    can_delete_request = can_delete_workflow_request(current_user, req)
 
     # =========================
     # SLA helpers for UI (step SLA value + remaining days)
@@ -4797,6 +4798,7 @@ def view_request(request_id):
         can_decide=can_decide,
         can_escalate=can_escalate,
         can_close=can_close,
+        can_delete_request=can_delete_request,
         attachments=atts,
         files_map=files_map,
         audit=audit,
@@ -5131,17 +5133,21 @@ def request_escalations(request_id):
 
 
 # =========================
-# Delete Request (SUPER_ADMIN only)
+# Delete Request (SUPER_ADMIN or temporary owner revoke)
 # =========================
 @workflow_bp.route("/request/<int:request_id>/delete", methods=["POST"])
 @login_required
-@roles_required("SUPER_ADMIN")
 def delete_request(request_id):
-    """Hard-delete a request (Super Admin only) while preserving audit trail."""
+    """Hard-delete a request while preserving its audit trail."""
     req = WorkflowRequest.query.get_or_404(request_id)
+
+    if not can_delete_workflow_request(current_user, req):
+        flash("انتهت مهلة الحذف أو لا تملك صلاحية حذف هذا الطلب.", "danger")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
 
     rid = req.id
     requester_id = req.requester_id
+    deletion_mode = "SUPER_ADMIN" if is_super_admin(current_user) else "TEMPORARY_REVOKE"
 
     # Collect recipients who have received/handled the request so far (steps + commenters)
     recipients_user_ids = set()
@@ -5322,7 +5328,10 @@ def delete_request(request_id):
             user_id=current_user.id,
             target_type="WorkflowRequest",
             target_id=rid,
-            note=(f"Request #{rid} deleted by {current_user.email}\n" + (f"SNAPSHOT_JSON:{json.dumps(snapshot, ensure_ascii=False)}" if snapshot else ""))
+            note=(
+                f"Request #{rid} deleted by {current_user.email} ({deletion_mode})\n"
+                + (f"SNAPSHOT_JSON:{json.dumps(snapshot, ensure_ascii=False)}" if snapshot else "")
+            )
         ))
 
         # Notify requester + all parties who received the request so far (steps/handlers)

@@ -1,6 +1,6 @@
 # workflow/templates_admin.py
 
-from flask import render_template, request, redirect, url_for, flash, send_file
+from flask import abort, render_template, request, redirect, url_for, flash, send_file
 from flask_login import login_required, current_user
 from sqlalchemy import func
 from io import BytesIO
@@ -21,10 +21,12 @@ from workflow.dynamic_paths import (
     node_path_label,
     org_node_approver_names,
 )
+from workflow.temporary_delete import can_delete_workflow_template
 from models import (
     WorkflowTemplate,
     WorkflowTemplateStep,
     WorkflowTemplateParallelAssignee,
+    AuditLog,
     User,
     Department,
     Directorate,
@@ -215,6 +217,11 @@ def templates_list():
     return render_template(
         "workflow/templates_admin/list.html",
         items=items,
+        can_delete_template_ids={
+            int(template.id)
+            for template in items
+            if can_delete_workflow_template(current_user, template)
+        },
         q=q,
         sort=sort,
         direction=direction,
@@ -401,7 +408,12 @@ def templates_import_excel():
                 obj.sla_days_default = sla
                 updated += 1
             else:
-                obj = WorkflowTemplate(name=name, is_active=bool(is_active) if is_active is not None else True, sla_days_default=sla)
+                obj = WorkflowTemplate(
+                    name=name,
+                    is_active=bool(is_active) if is_active is not None else True,
+                    sla_days_default=sla,
+                    created_by_id=current_user.id,
+                )
                 db.session.add(obj)
                 created += 1
 
@@ -719,6 +731,7 @@ def templates_edit(template_id):
         org_node_approver_names_map=org_node_approver_names_map,
         role_choices=role_choices,
         committees=committees,
+        can_delete_template=can_delete_workflow_template(current_user, t),
     )
 
 
@@ -837,11 +850,20 @@ def templates_details(template_id):
 
 @workflow_bp.route("/templates/<int:template_id>/delete", methods=["POST"])
 @login_required
-@perm_required("WORKFLOW_TEMPLATES_DELETE")
 def templates_delete(template_id):
     t = WorkflowTemplate.query.get_or_404(template_id)
 
+    if not can_delete_workflow_template(current_user, t):
+        abort(403)
+
     WorkflowTemplateStep.query.filter_by(template_id=t.id).delete()
+    db.session.add(AuditLog(
+        action="WORKFLOW_TEMPLATE_DELETED",
+        user_id=current_user.id,
+        target_type="WorkflowTemplate",
+        target_id=t.id,
+        note=f"Workflow template #{t.id} deleted by {current_user.email}",
+    ))
     db.session.delete(t)
     db.session.commit()
 

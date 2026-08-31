@@ -14,6 +14,7 @@ class PermDef:
     label: str
     desc: str = ""
     module: str = ""  # used by UI helpers (select-all etc.)
+    user_only: bool = False
 
 
 # Canonical (CRUD-like) keys for better UX.
@@ -31,6 +32,13 @@ PERMS: Dict[str, List[PermDef]] = {
     "مسار العمل ولوحات المتابعة": [
         PermDef("WORKFLOW_DASHBOARD_READ", "عرض لوحة عمل مسار", "الوصول إلى لوحة عمل مسار لمتابعة المهام والطلبات والمسارات.", module="WORKFLOW"),
         PermDef("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ", "عرض لوحة إشعارات مسار", "عرض إحصاءات وإجماليات إشعارات نظام مسار.", module="WORKFLOW_NOTIFICATIONS"),
+        PermDef(
+            "WORKFLOW_TEMPORARY_DELETE",
+            "حذف المسارات والطلبات لمدة ساعة",
+            "يسمح لمنشئ المسار أو الطلب بحذفه خلال أول ساعة فقط. يمنح لمستخدم محدد ولا ينتقل عبر الدور أو التفويض.",
+            module="WORKFLOW",
+            user_only=True,
+        ),
     ],
     "التعميمات": [
         PermDef("PORTAL_CIRCULARS_MANAGE", "إدارة التعميمات", "إصدار تعميمات وإرسال تنبيهات مستعجلة للمستخدمين.", module="PORTAL_CIRCULARS"),

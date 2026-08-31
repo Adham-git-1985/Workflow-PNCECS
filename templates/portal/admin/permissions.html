@@ -248,11 +248,13 @@
                        id="perm_{{ scope }}_{{ p.key }}"
                        data-group="{{ group_idx }}"
                        data-module="{{ p.module }}"
+                       {% if p.user_only and scope == 'role' %}disabled{% endif %}
                        {% if in_user %}checked{% endif %}>
 
                 <label class="form-check-label" for="perm_{{ scope }}_{{ p.key }}">
                   <span class="fw-semibold">{{ p.label }}</span>
                   <span class="text-muted small perm-key">({{ p.key }})</span>
+                  {% if p.user_only %}<span class="badge bg-info text-dark ms-2">للمستخدم فقط</span>{% endif %}
 
                   {% if scope == 'user' %}
                     {% if in_role %}<span class="badge bg-secondary ms-2">من الدور</span>{% endif %}
