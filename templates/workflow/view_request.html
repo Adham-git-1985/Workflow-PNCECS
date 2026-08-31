@@ -827,6 +827,19 @@
               {% set mention_status = mentioned_task_statuses.get(u.id) if mentioned_task_statuses else None %}
               <span class="badge {% if mention_status == 'PENDING' %}bg-warning text-dark{% elif mention_status == 'RESPONDED' %}bg-success{% elif mention_status == 'BYPASSED' %}bg-secondary{% else %}bg-light text-dark border{% endif %}">
                 {{ u.full_name or u.email }}{% if mention_status %} — {{ mention_status|ui_label }}{% endif %}
+                {% if u.id in mention_removable_user_ids %}
+                  <form method="post"
+                        action="{{ url_for('workflow.remove_request_mention', request_id=req.id, mentioned_user_id=u.id) }}"
+                        class="d-inline"
+                        onsubmit="return confirm('هل تريد إزالة هذا الشخص من المنشن؟');">
+                    <button type="submit"
+                            class="btn btn-sm p-0 ms-1 border-0 text-reset"
+                            title="إزالة من المنشن"
+                            aria-label="إزالة {{ u.full_name or u.email }} من المنشن">
+                      <i class="bi bi-x-lg"></i>
+                    </button>
+                  </form>
+                {% endif %}
               </span>
             {% endfor %}
           </div>

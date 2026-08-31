@@ -4,14 +4,30 @@ from unittest.mock import patch
 from flask import Flask
 
 from extensions import db
-from models import AuditLog, OrgNode, OrgNodeAssignment, OrgNodeManager, OrgNodeType, User, WorkflowRequest
+from models import (
+    AuditLog,
+    OrgNode,
+    OrgNodeAssignment,
+    OrgNodeManager,
+    OrgNodeType,
+    User,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowRequest,
+    WorkflowStepTask,
+)
+from workflow import workflow_bp
 from workflow.routes import (
     MENTION_ACCESS_ACTION,
+    MENTION_ACCESS_REVOKED_ACTION,
     MENTION_HIERARCHY_DENIED,
     _can_mention_user_by_hierarchy,
     _filter_mention_users_by_hierarchy,
     _grant_mention_access,
+    _mentioned_user_ids_for_request,
+    _user_can_view_request,
     mention_search,
+    remove_request_mention,
 )
 
 
@@ -30,6 +46,7 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
             SECRET_KEY="workflow-mention-hierarchy-test",
         )
+        cls.app.register_blueprint(workflow_bp, url_prefix="/workflow")
         db.init_app(cls.app)
         cls.context = cls.app.app_context()
         cls.context.push()
@@ -221,6 +238,87 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
 
         self.assertEqual(blocked_results, [])
         self.assertEqual([item["label"] for item in allowed_results], [self.lower_user.name])
+
+    def test_removed_mention_can_be_added_again_as_pending_task(self):
+        request_row = WorkflowRequest(
+            requester_id=self.department_user.id,
+            title="طلب اختبار حذف المنشن",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(request_id=request_row.id, current_step_order=1, is_completed=False)
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add(WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            mode="SEQUENTIAL",
+            approver_kind="USER",
+            approver_user_id=self.department_user.id,
+            status="PENDING",
+        ))
+
+        with self.app.test_request_context(f"/workflow/request/{request_row.id}/note"), patch(
+            "workflow.routes.current_user", self.department_user
+        ), patch("workflow.routes._send_mention_internal_message"), patch(
+            "workflow.routes.emit_event"
+        ):
+            added, unresolved = _grant_mention_access(
+                request_row,
+                instance,
+                f"@{self.lower_user.email}",
+                step_order=1,
+            )
+
+        self.assertEqual([user.id for user in added], [self.lower_user.id])
+        self.assertEqual(unresolved, [])
+        db.session.commit()
+
+        remove = _unwrapped(remove_request_mention)
+        with self.app.test_request_context(
+            f"/workflow/request/{request_row.id}/mention/{self.lower_user.id}/remove",
+            method="POST",
+        ), patch("workflow.routes.current_user", self.department_user):
+            response = remove(request_row.id, self.lower_user.id)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn(self.lower_user.id, _mentioned_user_ids_for_request(request_row.id))
+        self.assertFalse(_user_can_view_request(self.lower_user, request_row))
+        task = WorkflowStepTask.query.filter_by(
+            instance_id=instance.id,
+            step_order=1,
+            assignee_user_id=self.lower_user.id,
+        ).one()
+        self.assertEqual(task.status, "BYPASSED")
+        self.assertEqual(
+            AuditLog.query.filter_by(
+                request_id=request_row.id,
+                action=MENTION_ACCESS_REVOKED_ACTION,
+                target_id=self.lower_user.id,
+            ).count(),
+            1,
+        )
+
+        with self.app.test_request_context(f"/workflow/request/{request_row.id}/note"), patch(
+            "workflow.routes.current_user", self.department_user
+        ), patch("workflow.routes._send_mention_internal_message"), patch(
+            "workflow.routes.emit_event"
+        ):
+            added, unresolved = _grant_mention_access(
+                request_row,
+                instance,
+                f"@{self.lower_user.email}",
+                step_order=1,
+            )
+
+        self.assertEqual([user.id for user in added], [self.lower_user.id])
+        self.assertEqual(unresolved, [])
+        db.session.flush()
+        self.assertIn(self.lower_user.id, _mentioned_user_ids_for_request(request_row.id))
+        self.assertTrue(_user_can_view_request(self.lower_user, request_row))
+        self.assertEqual(task.status, "PENDING")
+        self.assertEqual(task.response, "NONE")
 
 
 if __name__ == "__main__":

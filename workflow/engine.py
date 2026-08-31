@@ -45,7 +45,10 @@ def is_mention_task(task: WorkflowStepTask | None) -> bool:
     """Return whether a runtime task was created by a workflow mention."""
     return bool(
         task
-        and (getattr(task, "note", None) or "").strip() in MENTION_TASK_MARKERS
+        and (
+            (getattr(task, "note", None) or "").strip() in MENTION_TASK_MARKERS
+            or (getattr(task, "note", None) or "").strip().startswith("MENTION_TASK")
+        )
     )
 
 # =========================
@@ -1723,7 +1726,13 @@ def decide_step(
         # For documentation only (does not change routing)
         task.response = "APPROVED" if decision == "APPROVED" else "REJECTED"
         task.responded_at = now
-        task.note = note
+        # Keep the mention marker when a mentioned user responds. It is used
+        # to revoke and later reactivate the same assignment safely.
+        task.note = (
+            "MENTION_TASK" + (f"\n{note}" if note else "")
+            if is_mention_task(task)
+            else note
+        )
 
         db.session.add(AuditLog(
             request_id=req.id,

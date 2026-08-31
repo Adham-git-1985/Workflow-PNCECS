@@ -283,6 +283,7 @@ def _role_variants(role: str | None) -> list[str]:
 
 
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
+MENTION_ACCESS_REVOKED_ACTION = "WORKFLOW_MENTION_ACCESS_REVOKED"
 # Store a stable marker on the runtime task. The task is kept separate from
 # the template's candidate list, while the user-facing label is rendered by
 # the UI as "بالمنشن".
@@ -294,7 +295,18 @@ MENTION_HIERARCHY_DENIED = "لا تسمح صلاحية المنشن بالتوج
 def _is_mention_task(task: WorkflowStepTask | None) -> bool:
     return bool(
         task
-        and (getattr(task, "note", None) or "").strip() in MENTION_TASK_NOTES
+        and (
+            (getattr(task, "note", None) or "").strip() in MENTION_TASK_NOTES
+            or (getattr(task, "note", None) or "").strip().startswith(MENTION_TASK_NOTE)
+        )
+    )
+
+
+def _mention_task_note_filter():
+    """SQL filter that also recognizes mention tasks that contain a response."""
+    return or_(
+        WorkflowStepTask.note.in_(MENTION_TASK_NOTES),
+        WorkflowStepTask.note.like(f"{MENTION_TASK_NOTE}%"),
     )
 
 
@@ -310,7 +322,7 @@ def _mention_task_user_ids(
 
     query = WorkflowStepTask.query.filter(
         WorkflowStepTask.instance_id == int(instance_id),
-        WorkflowStepTask.note.in_(MENTION_TASK_NOTES),
+        _mention_task_note_filter(),
     )
     if step_order is not None:
         query = query.filter(WorkflowStepTask.step_order == int(step_order))
@@ -593,24 +605,39 @@ def mention_search():
     return jsonify({"q": q, "results": results[: limit * 2]})
 
 
-def _mentioned_user_ids_for_request(req_id: int) -> set[int]:
+def _active_mention_access_logs(req_id: int) -> dict[int, AuditLog]:
+    """Return the latest active mention grant for each user on a request.
+
+    Mentions are audit-backed.  A removal is therefore written as a separate
+    event instead of deleting the original grant, allowing the same user to be
+    added again later with a clean pending task.
+    """
     rows = (
-        db.session.query(AuditLog.target_id)
+        AuditLog.query
         .filter(
             AuditLog.request_id == int(req_id),
-            AuditLog.action == MENTION_ACCESS_ACTION,
+            AuditLog.action.in_((MENTION_ACCESS_ACTION, MENTION_ACCESS_REVOKED_ACTION)),
             AuditLog.target_type == "USER",
             AuditLog.target_id.isnot(None),
         )
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
         .all()
     )
-    out: set[int] = set()
-    for (uid,) in rows:
+    active: dict[int, AuditLog] = {}
+    for log in rows:
         try:
-            out.add(int(uid))
+            uid = int(log.target_id)
         except Exception:
-            pass
-    return out
+            continue
+        if log.action == MENTION_ACCESS_ACTION:
+            active[uid] = log
+        else:
+            active.pop(uid, None)
+    return active
+
+
+def _mentioned_user_ids_for_request(req_id: int) -> set[int]:
+    return set(_active_mention_access_logs(req_id))
 
 
 def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str | None, *, step_order: int | None) -> None:
@@ -749,6 +776,18 @@ def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, n
                     note=MENTION_TASK_NOTE,
                     created_at=now,
                 ))
+                task_created = True
+            elif _is_mention_task(task):
+                # The user may have been removed from a previous mention on
+                # this same step. Re-adding them must make the task pending
+                # again instead of retaining its old bypassed state.
+                task.status = "PENDING"
+                task.response = "NONE"
+                task.note = MENTION_TASK_NOTE
+                task.responded_at = None
+                task.bypassed_by_id = None
+                task.bypass_reason = None
+                task.bypassed_at = None
                 task_created = True
 
         _send_mention_internal_message(req, user, note, step_order=step_order)
@@ -2626,7 +2665,10 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
             WorkflowStepTask.query
             .filter(
                 WorkflowStepTask.instance_id == inst.id,
-                WorkflowStepTask.assignee_user_id == user.id
+                WorkflowStepTask.assignee_user_id == user.id,
+                # Mention-only tasks should not preserve access after the
+                # corresponding mention has been removed.
+                or_(WorkflowStepTask.note.is_(None), ~_mention_task_note_filter()),
             )
             .first()
             is not None
@@ -2635,20 +2677,11 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
     except Exception:
         pass
 
-    # ✅ Mention-added participants: a comment can grant access to a user/role
-    # without changing the original template.
+    # Mention-added participants have access only while their most recent
+    # mention grant is active. A later removal event revokes this source of
+    # access while retaining the audit history.
     try:
-        if (
-            AuditLog.query
-            .filter(
-                AuditLog.request_id == req.id,
-                AuditLog.action == MENTION_ACCESS_ACTION,
-                AuditLog.target_type == "USER",
-                AuditLog.target_id == user.id,
-            )
-            .first()
-            is not None
-        ):
+        if int(user.id) in _mentioned_user_ids_for_request(req.id):
             return True
     except Exception:
         pass
@@ -2690,6 +2723,9 @@ def _get_request_followers_user_ids(req_id: int) -> set[int]:
             db.session.query(WorkflowStepTask.assignee_user_id)
             .filter(WorkflowStepTask.instance_id == inst.id)
             .filter(WorkflowStepTask.status.in_(["RESPONDED", "BYPASSED"]))
+            # Mention tasks are included separately only while their grant is
+            # active, so a removed mention stops receiving follow-up alerts.
+            .filter(or_(WorkflowStepTask.note.is_(None), ~_mention_task_note_filter()))
             .all()
         )
         for (uid2,) in rows2:
@@ -4537,6 +4573,8 @@ def view_request(request_id):
         "STEP_REJECTED": "تمت إضافة تعليق",
         "WORKFLOW_COMMENT": "تمت إضافة تعليق",
         "WORKFLOW_REPLY": "تمت إضافة رد",
+        MENTION_ACCESS_ACTION: "تمت إضافة مستخدم بالمنشن",
+        MENTION_ACCESS_REVOKED_ACTION: "تمت إزالة مستخدم من المنشن",
         "DYNAMIC_BRANCH_SELECTED": "تم توجيه المسار إلى دائرة مختارة",
         "PARALLEL_SYNC_AUTHORIZED": "تم توجيه الخطوة المتزامنة",
         "PARALLEL_SYNC_RESPONDED": "تمت متابعة الخطوة المتزامنة",
@@ -4638,18 +4676,26 @@ def view_request(request_id):
     committees_map = {c.id: c for c in Committee.query.all()}
     mentioned_users = []
     mentioned_task_statuses = {}
+    mention_removable_user_ids = set()
     try:
+        active_mention_logs = _active_mention_access_logs(req.id)
         mentioned_users = [
             users_map[uid]
-            for uid in sorted(_mentioned_user_ids_for_request(req.id))
+            for uid in sorted(active_mention_logs)
             if uid in users_map
         ]
+        is_super_admin_user = bool(current_user.has_role("SUPER_ADMIN"))
+        mention_removable_user_ids = {
+            uid
+            for uid, log in active_mention_logs.items()
+            if is_super_admin_user or int(getattr(log, "user_id", 0) or 0) == int(current_user.id)
+        }
         if inst:
             mention_tasks = (
                 WorkflowStepTask.query
                 .filter(
                     WorkflowStepTask.instance_id == inst.id,
-                    WorkflowStepTask.note.in_(MENTION_TASK_NOTES),
+                    _mention_task_note_filter(),
                 )
                 .order_by(WorkflowStepTask.step_order.desc(), WorkflowStepTask.id.desc())
                 .all()
@@ -4661,6 +4707,7 @@ def view_request(request_id):
     except Exception:
         mentioned_users = []
         mentioned_task_statuses = {}
+        mention_removable_user_ids = set()
 
     def _human_size(num_bytes):
         try:
@@ -4915,6 +4962,7 @@ def view_request(request_id):
         hierarchy_bypass_step=hierarchy_bypass_step,
         mentioned_users=mentioned_users,
         mentioned_task_statuses=mentioned_task_statuses,
+        mention_removable_user_ids=mention_removable_user_ids,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
@@ -6123,6 +6171,76 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
 
     return redirect(url_for("workflow.view_request", request_id=req.id))
 
+
+
+# =========================
+# Remove a mention
+# =========================
+@workflow_bp.route("/request/<int:request_id>/mention/<int:mentioned_user_id>/remove", methods=["POST"])
+@login_required
+def remove_request_mention(request_id: int, mentioned_user_id: int):
+    req = WorkflowRequest.query.get_or_404(request_id)
+
+    # A mention can be removed only by the person who added it, or by a
+    # super-admin. Delegation does not transfer this ownership.
+    if not _user_can_view_request(current_user, req):
+        abort(403)
+
+    active_grant = _active_mention_access_logs(req.id).get(int(mentioned_user_id))
+    if not active_grant:
+        flash("هذا المستخدم غير مضاف حاليًا بالمنشن.", "warning")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    is_super_admin_user = bool(current_user.has_role("SUPER_ADMIN"))
+    if not is_super_admin_user and int(getattr(active_grant, "user_id", 0) or 0) != int(current_user.id):
+        abort(403)
+
+    mentioned_user = User.query.get(int(mentioned_user_id))
+    mentioned_label = (
+        (mentioned_user.full_name or mentioned_user.email)
+        if mentioned_user else f"مستخدم #{mentioned_user_id}"
+    )
+
+    try:
+        now = datetime.utcnow()
+        mention_tasks = (
+            WorkflowStepTask.query
+            .filter(
+                WorkflowStepTask.request_id == req.id,
+                WorkflowStepTask.assignee_user_id == int(mentioned_user_id),
+                _mention_task_note_filter(),
+            )
+            .all()
+        )
+        for task in mention_tasks:
+            # Keep the runtime row for audit and for a possible re-add, but
+            # remove it from the active pending workload immediately.
+            if task.status == "PENDING":
+                task.status = "BYPASSED"
+                task.response = "NONE"
+                task.bypassed_by_id = int(current_user.id)
+                task.bypass_reason = "Removed from workflow mention"
+                task.bypassed_at = now
+
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action=MENTION_ACCESS_REVOKED_ACTION,
+            old_status=req.status,
+            new_status=req.status,
+            note=f"تمت إزالة المستخدم المشار إليه={mentioned_label}",
+            target_type="USER",
+            target_id=int(mentioned_user_id),
+            created_at=now,
+        ))
+        db.session.commit()
+        flash(f"تمت إزالة {mentioned_label} من المنشن. يمكنك إضافته من جديد في أي وقت.", "success")
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed to remove workflow mention for request %s", req.id)
+        flash("تعذرت إزالة المستخدم من المنشن.", "danger")
+
+    return redirect(url_for("workflow.view_request", request_id=req.id))
 
 
 # =========================
