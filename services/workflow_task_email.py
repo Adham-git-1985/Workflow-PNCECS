@@ -47,7 +47,7 @@ DAILY_REMINDER = "DAILY_REMINDER"
 PENDING = "PENDING"
 SENT = "SENT"
 FAILED = "FAILED"
-MAX_ATTEMPTS = 5
+MAX_ATTEMPTS = 2
 DAILY_REMINDER_TIME = time(hour=8, minute=30)
 DAILY_REMINDER_TIMEZONE = "Asia/Jerusalem"
 
@@ -366,6 +366,21 @@ def send_pending_task_emails(limit: int = 50, now: datetime | None = None) -> in
         return 0
 
     now = now or datetime.utcnow()
+    exhausted_deliveries = (
+        WorkflowTaskEmailDelivery.query
+        .filter(
+            WorkflowTaskEmailDelivery.status == PENDING,
+            WorkflowTaskEmailDelivery.attempt_count >= MAX_ATTEMPTS,
+        )
+        .all()
+    )
+    for delivery in exhausted_deliveries:
+        delivery.status = FAILED
+        delivery.next_attempt_at = None
+        delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
+    if exhausted_deliveries:
+        db.session.commit()
+
     deliveries = (
         WorkflowTaskEmailDelivery.query
         .filter(

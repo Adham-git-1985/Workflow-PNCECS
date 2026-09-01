@@ -136,6 +136,21 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
         return 0
 
     now = now or datetime.utcnow()
+    exhausted_deliveries = (
+        NotificationEmailDelivery.query
+        .filter(
+            NotificationEmailDelivery.status == PENDING,
+            NotificationEmailDelivery.attempt_count >= MAX_ATTEMPTS,
+        )
+        .all()
+    )
+    for delivery in exhausted_deliveries:
+        delivery.status = FAILED
+        delivery.next_attempt_at = None
+        delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
+    if exhausted_deliveries:
+        db.session.commit()
+
     deliveries = (
         NotificationEmailDelivery.query
         .filter(

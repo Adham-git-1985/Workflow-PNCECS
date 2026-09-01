@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 from flask import Flask
@@ -82,6 +83,39 @@ class NotificationEmailTests(unittest.TestCase):
             self.assertEqual(send_pending_notification_emails(), 1)
 
         self.assertEqual(send_email.call_args.args[1], "new-recipient@example.test")
+
+    def test_notification_email_stops_retrying_after_two_attempts(self):
+        db.session.add(Notification(
+            user_id=self.user.id,
+            message="Retry limit test",
+            source="portal",
+            is_read=False,
+        ))
+        db.session.commit()
+        first_attempt = datetime(2026, 9, 1, 8, 0)
+
+        with patch(
+            "services.notification_email._send_email",
+            side_effect=RuntimeError("SMTP unavailable"),
+        ) as send_email:
+            self.assertEqual(send_pending_notification_emails(now=first_attempt), 0)
+            delivery = NotificationEmailDelivery.query.one()
+            self.assertEqual(delivery.attempt_count, 1)
+            self.assertEqual(delivery.status, "PENDING")
+
+            self.assertEqual(
+                send_pending_notification_emails(now=delivery.next_attempt_at),
+                0,
+            )
+            delivery = NotificationEmailDelivery.query.one()
+            self.assertEqual(delivery.attempt_count, 2)
+            self.assertEqual(delivery.status, "FAILED")
+
+            self.assertEqual(
+                send_pending_notification_emails(now=datetime(2026, 9, 2, 8, 0)),
+                0,
+            )
+            self.assertEqual(send_email.call_count, 2)
 
     def test_dedicated_and_mirror_notifications_are_not_duplicated(self):
         db.session.add_all((
