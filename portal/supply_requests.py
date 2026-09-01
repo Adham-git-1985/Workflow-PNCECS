@@ -128,6 +128,7 @@ def _notify(row, recipient_ids, text):
         target_kind="USER",
         target_id=recipient_ids[0],
         created_at=datetime.utcnow(),
+        is_system_generated=True,
     )
     db.session.add(message)
     db.session.flush()

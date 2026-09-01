@@ -672,6 +672,7 @@ def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str |
         target_id=uid,
         created_at=datetime.utcnow(),
         reply_to_id=None,
+        is_system_generated=True,
     )
     db.session.add(msg)
     db.session.flush()
@@ -5804,6 +5805,7 @@ def escalate_request(request_id):
             target_id=target_id,
             created_at=datetime.utcnow(),
             reply_to_id=None,
+            is_system_generated=True,
         )
         db.session.add(msg)
         db.session.flush()

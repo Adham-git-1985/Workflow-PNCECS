@@ -42,7 +42,7 @@ from sqlalchemy import text
 from models import (
     User, WorkflowRequest,
     Approval, AuditLog, Notification,
-    MessageRecipient, WorkflowInstance, WorkflowInstanceStep,
+    Message, MessageRecipient, WorkflowInstance, WorkflowInstanceStep,
     Department, Directorate, Committee,
 )
 
@@ -206,14 +206,16 @@ app.jinja_env.globals["get_unread_count"] = get_unread_count
 
 
 def get_unread_messages_count(user_id):
-    """Count unread internal messages for current user."""
+    """Count unread correspondence messages for the current user."""
     try:
         return (
             db.session.query(func.count(MessageRecipient.id))
+            .join(Message, Message.id == MessageRecipient.message_id)
             .filter(
                 MessageRecipient.recipient_user_id == user_id,
                 MessageRecipient.is_deleted.is_(False),
-                MessageRecipient.is_read.is_(False)
+                MessageRecipient.is_read.is_(False),
+                Message.is_system_generated.is_(False),
             )
             .scalar()
         )
@@ -381,6 +383,42 @@ def _ensure_runtime_schema():
             if not _col_exists("users", "directorate_id"):
                 try:
                     db.session.execute(text("ALTER TABLE users ADD COLUMN directorate_id INTEGER"))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
+            # The correspondence inbox must not be shared with automatic
+            # workflow, meeting, circular, and HR alert messages.  Keep the
+            # lightweight SQLite deployment path in sync when Alembic is not
+            # run manually on the server.
+            if not _col_exists("messages", "is_system_generated"):
+                _add_column_retry(
+                    "messages",
+                    "is_system_generated",
+                    "BOOLEAN NOT NULL DEFAULT 0",
+                )
+            if _col_exists("messages", "is_system_generated"):
+                try:
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_messages_is_system_generated "
+                        "ON messages (is_system_generated)"
+                    ))
+                    db.session.execute(text("""
+                        UPDATE messages
+                           SET is_system_generated = 1
+                         WHERE subject LIKE 'تعميم إداري:%'
+                            OR subject LIKE 'تعميم إداري مستعجل:%'
+                            OR subject LIKE 'دعوة اجتماع:%'
+                            OR subject LIKE 'تذكير اجتماع:%'
+                            OR subject LIKE 'رد على دعوة اجتماع:%'
+                            OR subject LIKE 'إلغاء اجتماع:%'
+                            OR subject LIKE 'محضر اجتماع:%'
+                            OR subject LIKE 'قسيمة راتب %'
+                            OR subject LIKE 'تمت إضافتك إلى مسار الطلب #%'
+                            OR subject LIKE 'تنبيه تصعيد:%'
+                            OR subject LIKE 'طلب حركة #% بانتظار الإجراء'
+                            OR subject LIKE 'طلب مواد #%'
+                    """))
                     db.session.commit()
                 except Exception:
                     db.session.rollback()

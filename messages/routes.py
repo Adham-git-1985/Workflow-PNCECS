@@ -169,7 +169,8 @@ def inbox():
         .join(MessageRecipient.message)
         .filter(
             MessageRecipient.recipient_user_id == current_user.id,
-            MessageRecipient.is_deleted.is_(False)
+            MessageRecipient.is_deleted.is_(False),
+            Message.is_system_generated.is_(False),
         )
     )
 
@@ -188,10 +189,12 @@ def inbox():
     pagination = q.paginate(page=page, per_page=20, error_out=False)
     unread_count = (
         MessageRecipient.query
+        .join(MessageRecipient.message)
         .filter(
             MessageRecipient.recipient_user_id == current_user.id,
             MessageRecipient.is_deleted.is_(False),
             MessageRecipient.is_read.is_(False),
+            Message.is_system_generated.is_(False),
         )
         .count()
     )
@@ -208,7 +211,7 @@ def inbox():
 @messages_bp.route("/inbox/mark-all-read", methods=["POST"])
 @login_required
 def mark_all_messages_read():
-    """Mark every non-deleted inbox message for the current recipient as read."""
+    """Mark every non-deleted correspondence message for the current recipient as read."""
     try:
         from datetime import datetime
 
@@ -218,6 +221,9 @@ def mark_all_messages_read():
                 MessageRecipient.recipient_user_id == current_user.id,
                 MessageRecipient.is_deleted.is_(False),
                 MessageRecipient.is_read.is_(False),
+                MessageRecipient.message_id.in_(
+                    db.session.query(Message.id).filter(Message.is_system_generated.is_(False))
+                ),
             )
             .update(
                 {"is_read": True, "read_at": datetime.utcnow()},
@@ -245,7 +251,8 @@ def sent():
         Message.query
         .filter(
             Message.sender_id == current_user.id,
-            Message.sender_deleted.is_(False)
+            Message.sender_deleted.is_(False),
+            Message.is_system_generated.is_(False),
         )
     )
 

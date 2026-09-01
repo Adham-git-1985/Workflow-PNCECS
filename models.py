@@ -858,6 +858,11 @@ class Message(db.Model):
     # Reply/thread support (optional)
     reply_to_id = db.Column(db.Integer, nullable=True)  # message_id being replied to
 
+    # The internal correspondence mailbox is reserved for person-to-person
+    # correspondence.  System-generated entries are retained for traceability
+    # but are shown through the relevant notification/task screens instead.
+    is_system_generated = db.Column(db.Boolean, default=False, nullable=False, index=True)
+
     # Soft delete flags
     sender_deleted = db.Column(db.Boolean, default=False, nullable=False)
     sender_deleted_at = db.Column(db.DateTime, nullable=True)

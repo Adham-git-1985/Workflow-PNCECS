@@ -719,6 +719,7 @@ def _send_movement_alert(row: TransportPermit, recipient_ids: list[int], message
         target_kind="USER",
         target_id=recipient_ids[0],
         created_at=datetime.utcnow(),
+        is_system_generated=True,
     )
     db.session.add(internal_message)
     db.session.flush()

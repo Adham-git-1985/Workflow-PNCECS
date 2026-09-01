@@ -3181,6 +3181,7 @@ def _meeting_notify_users(
                 target_id=clean_ids[0],
                 created_at=now,
                 reply_to_id=None,
+                is_system_generated=True,
             )
             db.session.add(internal_msg)
             db.session.flush()
@@ -4890,6 +4891,7 @@ def _create_circular_internal_message(row: PortalCircular, user_ids: list[int]) 
         target_id=recipients[0],
         created_at=datetime.utcnow(),
         reply_to_id=None,
+        is_system_generated=True,
     )
     db.session.add(msg)
     db.session.flush()
@@ -10255,8 +10257,14 @@ def _hr_can_manage_attendance() -> bool:
 
 
 def _hr_can_edit_attendance() -> bool:
-    """Only the Secretary General may create or change manual attendance corrections."""
+    """Allow the Secretary General and Super Admin to manage manual attendance corrections."""
     try:
+        # Super Admin has unrestricted portal access.  Do this explicit check
+        # here because this sensitive action is otherwise limited to the
+        # Secretary General below, rather than being granted by a normal
+        # HR permission.
+        if _is_super_admin():
+            return True
         current_user_id = int(getattr(current_user, "id", 0) or 0)
         if current_user_id and current_user_id in set(secretary_general_user_ids()):
             return True
@@ -14123,6 +14131,7 @@ def hr_payslips_send():
                 target_kind="USER",
                 target_id=int(att.user_id),
                 created_at=datetime.utcnow(),
+                is_system_generated=True,
             )
             db.session.add(msg)
             db.session.flush()

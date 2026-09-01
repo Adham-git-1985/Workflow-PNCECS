@@ -18,7 +18,9 @@ from messages.routes import (
     _save_message_attachments,
     compose,
     download_attachment,
+    inbox,
     mark_all_messages_read,
+    sent,
 )
 
 
@@ -200,6 +202,56 @@ class MessageAttachmentTests(unittest.TestCase):
         self.assertTrue(own_recipient.is_read)
         self.assertIsNotNone(own_recipient.read_at)
         self.assertFalse(untouched_recipient.is_read)
+
+    def test_system_messages_are_excluded_from_correspondence_inbox_and_sent(self):
+        system_message = Message(
+            sender_id=self.sender.id,
+            subject="طلب حركة #10 بانتظار الإجراء",
+            body="إشعار آلي",
+            target_kind="USER",
+            target_id=self.recipient.id,
+            is_system_generated=True,
+        )
+        db.session.add(system_message)
+        db.session.flush()
+        db.session.add(MessageRecipient(
+            message_id=system_message.id,
+            recipient_user_id=self.recipient.id,
+            is_read=False,
+        ))
+        db.session.commit()
+
+        inbox_unwrapped = _unwrapped(inbox)
+        with self.app.test_request_context("/messages/inbox"), patch(
+            "messages.routes.current_user", self.recipient
+        ), patch("messages.routes.render_template", side_effect=lambda _template, **context: context):
+            inbox_context = inbox_unwrapped()
+
+        self.assertEqual(
+            [recipient.message_id for recipient in inbox_context["items"]],
+            [self.message.id],
+        )
+        self.assertEqual(inbox_context["unread_count"], 1)
+
+        sent_unwrapped = _unwrapped(sent)
+        with self.app.test_request_context("/messages/sent"), patch(
+            "messages.routes.current_user", self.sender
+        ), patch("messages.routes.render_template", side_effect=lambda _template, **context: context):
+            sent_context = sent_unwrapped()
+
+        self.assertEqual([message.id for message in sent_context["messages"]], [self.message.id])
+
+        mark_all_unwrapped = _unwrapped(mark_all_messages_read)
+        with self.app.test_request_context("/messages/inbox/mark-all-read", method="POST"), patch(
+            "messages.routes.current_user", self.recipient
+        ):
+            mark_all_unwrapped()
+
+        system_recipient = MessageRecipient.query.filter_by(
+            message_id=system_message.id,
+            recipient_user_id=self.recipient.id,
+        ).one()
+        self.assertFalse(system_recipient.is_read)
 
 
 if __name__ == "__main__":
