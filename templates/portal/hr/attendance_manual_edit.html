@@ -5,7 +5,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h5 class="mb-1"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</h5>
-      <div class="text-muted small">يسجّل هذا التعديل كتصحيح إداري مستقل ولا يغيّر سجل جهاز الدوام الخام.</div>
+      <div class="text-muted small">يسجّل هذا التعديل كتصحيح إداري مستقل ولا يغيّر سجل جهاز الدوام الخام. متاح للأمين العام فقط.</div>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_daily', day_from=day, day_to=day, user_id=user_id or '') }}"><i class="bi bi-arrow-right"></i> العودة للملخص</a>
   </div>

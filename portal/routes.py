@@ -296,6 +296,7 @@ from services.hr_request_workflow import (
     request_ids_user_participated_in,
     reopen_permission_request,
     resolve_direct_manager,
+    secretary_general_user_ids,
     stage_label as hr_stage_label,
     start_request_flow,
 )
@@ -7589,6 +7590,9 @@ def hr_report_delay():
     work_location_id = int(work_location_id) if work_location_id.isdigit() else None
     from_date = _parse_yyyy_mm_dd(request.args.get('from') or request.args.get('from_date'))
     to_date = _parse_yyyy_mm_dd(request.args.get('to') or request.args.get('to_date'))
+    today = date.today()
+    from_date = from_date or today
+    to_date = to_date or today
 
     delay_type = (request.args.get('delay_type') or '').strip()  # late|early|''
     dur_op = (request.args.get('dur_op') or '').strip()
@@ -10143,6 +10147,20 @@ def _hr_can_manage_attendance() -> bool:
         return False
 
 
+def _hr_can_edit_attendance() -> bool:
+    """Only the Secretary General may create or change manual attendance corrections."""
+    try:
+        current_user_id = int(getattr(current_user, "id", 0) or 0)
+        if current_user_id and current_user_id in set(secretary_general_user_ids()):
+            return True
+        return bool(
+            current_user.has_role("GENERAL-SECRETARY")
+            or current_user.has_role("SECRETARY_GENERAL")
+        )
+    except Exception:
+        return False
+
+
 def _hr_lookup_items_for_category(category: str):
     """Return active HRLookupItem rows for a given category.
 
@@ -10316,7 +10334,7 @@ def hr_att_special_log():
 @_perm_any(HR_ATT_READ, HR_REQUESTS_VIEW_ALL, HR_READ)
 def hr_attendance_manual_edit():
     """Create or update an HR correction without altering imported clock rows."""
-    if not _hr_can_manage_attendance():
+    if not _hr_can_edit_attendance():
         abort(403)
 
     if request.method == 'POST':
@@ -17142,6 +17160,8 @@ def hr_attendance_events():
         device_id=device_id,
         batch_id=batch_id,
         user_id=user_id,
+        manual_edit_day=selected_day or _as_yyyy_mm_dd(date.today()),
+        can_edit_attendance=_hr_can_edit_attendance(),
     )
 
 
@@ -22158,6 +22178,33 @@ def _attendance_recompute_summaries_for_keys(summary_keys) -> int:
     return count
 
 
+def _sort_and_number_attendance_daily_rows(rows):
+    """Group summaries by day and number present employees by first check-in."""
+    ordered_rows = list(rows)
+    # The stable two-pass sort keeps days newest-first and, inside each day,
+    # places actual check-ins in their chronological order.
+    ordered_rows.sort(key=lambda row: (
+        getattr(row, "first_in", None) is None,
+        getattr(row, "first_in", None) or datetime.max,
+        getattr(row, "user_id", 0) or 0,
+    ))
+    ordered_rows.sort(key=lambda row: getattr(row, "day", "") or "", reverse=True)
+
+    current_day = None
+    sequence = 0
+    for row in ordered_rows:
+        row_day = getattr(row, "day", None)
+        if row_day != current_day:
+            current_day = row_day
+            sequence = 0
+        if getattr(row, "first_in", None):
+            sequence += 1
+            row.daily_employee_number = sequence
+        else:
+            row.daily_employee_number = None
+    return ordered_rows
+
+
 @portal_bp.route('/hr/attendance/daily')
 @login_required
 @_perm(HR_ATT_READ)
@@ -22183,13 +22230,24 @@ def hr_attendance_daily():
     if user_id.isdigit():
         qry = qry.filter(AttendanceDailySummary.user_id == int(user_id))
 
-    rows = qry.order_by(AttendanceDailySummary.day.desc()).limit(500).all()
+    rows = _sort_and_number_attendance_daily_rows(
+        qry.order_by(AttendanceDailySummary.day.desc()).limit(500).all()
+    )
     _attach_reconciled_departures(rows)
     users = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
+    attendance_count_today = (
+        AttendanceDailySummary.query
+        .filter(AttendanceDailySummary.day == today)
+        .filter(AttendanceDailySummary.first_in.isnot(None))
+        .count()
+    )
 
     return render_template('portal/hr/attendance_daily.html', rows=rows, users=users,
                            day_from=day_from, day_to=day_to, user_id=user_id,
-                           can_manage=_hr_can_manage_attendance())
+                           today=today,
+                           attendance_count_today=attendance_count_today,
+                           can_manage=_hr_can_manage_attendance(),
+                           can_edit_attendance=_hr_can_edit_attendance())
 
 
 @portal_bp.route('/hr/attendance/daily/recompute', methods=['POST'])

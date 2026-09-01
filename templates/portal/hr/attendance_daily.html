@@ -7,7 +7,7 @@
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_import') }}">استيراد</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">الأحداث</a>
-      {% if can_manage %}<a class="btn btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit') }}"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</a>{% endif %}
+      {% if can_edit_attendance %}<a class="btn btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit', day=today) }}"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</a>{% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}">إعدادات الموارد البشرية</a>
     </div>
   </div>
@@ -37,6 +37,11 @@
     </div>
   </form>
 
+  <div class="border rounded-3 px-3 py-2 mt-3 d-inline-flex align-items-center gap-2">
+    <span class="text-muted small">الموظفون الذين داوموا اليوم ({{ today }})</span>
+    <strong class="fs-5">{{ attendance_count_today }}</strong>
+  </div>
+
   <div class="d-flex flex-wrap gap-2 mt-3">
     <form method="post" action="{{ url_for('portal.hr_attendance_daily_recompute') }}" class="d-inline">
       <input type="hidden" name="day_from" value="{{ day_from }}">
@@ -56,6 +61,7 @@
     <table class="table table-sm align-middle">
       <thead>
         <tr>
+          <th>م اليوم</th>
           <th>{{ portal_sort_link('اليوم', 'day') }}</th>
           <th>{{ portal_sort_link('الموظف', 'user') }}</th>
           <th>{{ portal_sort_link('أول دخول', 'first_in') }}</th>
@@ -68,12 +74,13 @@
           <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
           <th>{{ portal_sort_link('الحالة', 'status') }}</th>
           <th>{{ portal_sort_link('الجدول', 'schedule') }}</th>
-          {% if can_manage %}<th>إجراء</th>{% endif %}
+          {% if can_edit_attendance %}<th>إجراء</th>{% endif %}
         </tr>
       </thead>
       <tbody>
         {% for r in rows %}
         <tr>
+          <td class="fw-semibold">{{ r.daily_employee_number or '—' }}</td>
           <td><code>{{ r.day }}</code></td>
           <td>{{ r.user.name or r.user.email }}</td>
           <td class="text-muted">{{ r.first_in.strftime('%Y-%m-%d %H:%M:%S') if r.first_in else '—' }}</td>
@@ -91,7 +98,7 @@
             {% endif %}
           </td>
           <td class="text-muted">{{ r.schedule.name if r.schedule else '—' }}</td>
-          {% if can_manage %}
+          {% if can_edit_attendance %}
           <td><a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=r.user_id, day=r.day) }}"><i class="bi bi-pencil-square"></i> تعديل</a></td>
           {% endif %}
         </tr>
