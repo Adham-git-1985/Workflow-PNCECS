@@ -7,7 +7,7 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import Notification, PortalCircular, TroubleTicket, User
+from models import Notification, PortalCircular, TroubleTicket, User, UserPermission
 from portal import portal_bp
 from utils.events import emit_event
 from utils.notification_links import notification_target_path, safe_local_notification_url
@@ -223,6 +223,84 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         notification = Notification.query.filter_by(user_id=self.user.id, source="portal").one()
         self.assertIn(f"#{ticket.id}", notification.message)
         self.assertEqual(notification.link_url, f"/portal/trouble-tickets/{ticket.id}")
+
+    def test_support_tickets_and_updates_are_limited_to_requester_and_admin_roles(self):
+        admin = User(
+            email="admin@example.test",
+            name="Admin",
+            password_hash="not-used-in-test",
+            role="ADMIN",
+        )
+        support_agent = User(
+            email="support-agent@example.test",
+            name="Support Agent",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add_all((admin, support_agent))
+        db.session.flush()
+        db.session.add(UserPermission(
+            user_id=support_agent.id,
+            key="TROUBLE_TICKETS_MANAGE",
+            is_allowed=True,
+        ))
+        ticket = TroubleTicket(
+            requester_id=self.other_user.id,
+            assigned_to_id=support_agent.id,
+            subject="Restricted support ticket",
+            description="Only the requester and administrators may view this.",
+            category="SYSTEM",
+            priority="HIGH",
+            status="OPEN",
+        )
+        db.session.add(ticket)
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, support_agent.id)
+            list_response = client.get("/portal/trouble-tickets?scope=all")
+            detail_response = client.get(f"/portal/trouble-tickets/{ticket.id}")
+            manage_response = client.get("/portal/trouble-tickets/manage")
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertNotIn("Restricted support ticket", list_response.get_data(as_text=True))
+        self.assertEqual(detail_response.status_code, 403)
+        self.assertEqual(manage_response.status_code, 403)
+
+        with self.app.test_client() as client:
+            self._login(client, admin.id)
+            admin_detail_response = client.get(f"/portal/trouble-tickets/{ticket.id}")
+
+        self.assertEqual(admin_detail_response.status_code, 200)
+
+        with self.app.test_client() as client:
+            self._login(client, self.other_user.id)
+            response = client.post(
+                f"/portal/trouble-tickets/{ticket.id}",
+                data={"action": "comment", "body": "Please review the latest details."},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        comment_recipients = {
+            notification.user_id
+            for notification in Notification.query.filter_by(type="TROUBLE_TICKET").all()
+        }
+        self.assertEqual(comment_recipients, {self.user.id, admin.id})
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.post(
+                f"/portal/trouble-tickets/{ticket.id}",
+                data={"action": "update", "status": "RESOLVED", "assigned_to_id": ""},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        update_recipients = {
+            notification.user_id
+            for notification in Notification.query.filter_by(type="TROUBLE_TICKET").all()
+            if "تم تحديث تذكرة الدعم" in notification.message
+        }
+        self.assertEqual(update_recipients, {self.other_user.id, admin.id})
 
     def test_support_ticket_search_matches_requester_email(self):
         matching_ticket = TroubleTicket(

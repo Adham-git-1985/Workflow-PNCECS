@@ -4,7 +4,7 @@ from unittest.mock import patch
 from flask import Flask
 
 from extensions import db
-from models import Notification, NotificationEmailDelivery, SystemSetting, User
+from models import Notification, NotificationEmailDelivery, SystemSetting, TroubleTicket, User
 from services.notification_email import send_pending_notification_emails
 
 
@@ -90,6 +90,42 @@ class NotificationEmailTests(unittest.TestCase):
         db.session.commit()
 
         self.assertEqual(NotificationEmailDelivery.query.count(), 0)
+
+    def test_unauthorized_support_ticket_notification_never_sends_email(self):
+        requester = User(
+            email="requester@example.test",
+            name="Requester",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        db.session.add(requester)
+        db.session.flush()
+        ticket = TroubleTicket(
+            requester_id=requester.id,
+            subject="Private support ticket",
+            description="Ticket details",
+            category="SYSTEM",
+            priority="NORMAL",
+            status="OPEN",
+        )
+        db.session.add(ticket)
+        db.session.flush()
+        db.session.add(Notification(
+            user_id=self.user.id,
+            message="Support ticket update",
+            type="TROUBLE_TICKET",
+            source="portal",
+            link_url=f"/portal/trouble-tickets/{ticket.id}",
+            is_read=False,
+        ))
+        db.session.commit()
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 0)
+
+        send_email.assert_not_called()
+        delivery = NotificationEmailDelivery.query.one()
+        self.assertEqual(delivery.status, "FAILED")
 
 
 if __name__ == "__main__":

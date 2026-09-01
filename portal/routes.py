@@ -171,6 +171,7 @@ from models import (
     PortalMeetingTask,
     Delegation,
     UserPermission,
+    Role,
     Notification,
     Message,
     MessageRecipient,
@@ -303,7 +304,6 @@ PORTAL_ADMIN_PERMISSIONS_MANAGE = "PORTAL_ADMIN_PERMISSIONS_MANAGE"
 
 PORTAL_CIRCULARS_MANAGE = "PORTAL_CIRCULARS_MANAGE"
 PORTAL_MEETINGS_MANAGE = "PORTAL_MEETINGS_MANAGE"
-TROUBLE_TICKETS_MANAGE = "TROUBLE_TICKETS_MANAGE"
 
 HR_READ = "HR_READ"
 HR_ATT_READ = "HR_ATTENDANCE_READ"
@@ -4038,6 +4038,8 @@ TROUBLE_TICKET_STATUSES = {
 TROUBLE_TICKET_MAX_FILES = 10
 TROUBLE_TICKET_MAX_FILE_BYTES = 25 * 1024 * 1024
 TROUBLE_TICKET_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
+_TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
 
 
 def _trouble_ticket_attachment_dir(ticket_id: int) -> Path:
@@ -4088,12 +4090,80 @@ def _save_trouble_ticket_attachments(ticket: TroubleTicket, uploads) -> int:
     return len(candidates)
 
 
+def _normalize_trouble_ticket_role(value: str | None) -> str:
+    """Normalize a stored role value without applying delegated permissions."""
+    normalized = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    try:
+        normalized = unicodedata.normalize("NFKC", normalized)
+        normalized = "".join(ch for ch in normalized if ch.isalnum() or ch == "_")
+    except Exception:
+        pass
+    return normalized
+
+
+def _trouble_ticket_user_is_admin(user: User | None) -> bool:
+    """Whether this user is an actual Admin/SuperAdmin for ticket access.
+
+    Support tickets are deliberately not governed by general portal or ticket
+    permissions.  This also avoids granting access through a delegated user's
+    permissions: only the user's own stored role is considered here.
+    """
+    if not user:
+        return False
+
+    raw_role = (getattr(user, "role", None) or "").strip()
+    role_code = _normalize_trouble_ticket_role(raw_role)
+    if role_code in _TROUBLE_TICKET_ADMIN_ROLE_CODES:
+        return True
+    if not raw_role:
+        return False
+
+    # Some deployments persist the display label instead of Role.code.
+    try:
+        role_row = Role.query.filter(
+            or_(
+                func.upper(Role.code) == role_code,
+                Role.name_ar == raw_role,
+                func.lower(Role.name_en) == raw_role.lower(),
+            )
+        ).first()
+        return bool(
+            role_row
+            and _normalize_trouble_ticket_role(role_row.code) in _TROUBLE_TICKET_ADMIN_ROLE_CODES
+        )
+    except Exception:
+        return False
+
+
+def _trouble_ticket_admin_users() -> list[User]:
+    """Return exactly the Admin and SuperAdmin accounts allowed on tickets."""
+    return [
+        user
+        for user in User.query.order_by(User.name, User.email).all()
+        if _trouble_ticket_user_is_admin(user)
+    ]
+
+
+def _trouble_ticket_admin_user_ids() -> list[int]:
+    return [int(user.id) for user in _trouble_ticket_admin_users() if user.id]
+
+
+def _trouble_ticket_notification_recipient_ids(
+    ticket: TroubleTicket,
+    *,
+    exclude_user_id: int | None = None,
+) -> list[int]:
+    """Restrict ticket notifications (and their emails) to valid viewers."""
+    recipient_ids = set(_trouble_ticket_admin_user_ids())
+    if ticket.requester_id:
+        recipient_ids.add(int(ticket.requester_id))
+    if exclude_user_id:
+        recipient_ids.discard(int(exclude_user_id))
+    return sorted(recipient_ids)
+
+
 def _can_manage_trouble_tickets() -> bool:
-    return bool(
-        current_user.has_perm("PORTAL_ADMIN_READ")
-        or current_user.has_perm("PORTAL_ADMIN_PERMISSIONS_MANAGE")
-        or current_user.has_perm(TROUBLE_TICKETS_MANAGE)
-    )
+    return _trouble_ticket_user_is_admin(current_user)
 
 
 def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
@@ -4188,17 +4258,19 @@ def trouble_ticket_new():
                     target_type="TROUBLE_TICKET",
                     target_id=ticket.id,
                 ))
-                for admin_id in _portal_admin_user_ids():
-                    if int(admin_id) != int(current_user.id):
-                        db.session.add(Notification(
-                            user_id=int(admin_id),
-                            message=f"تذكرة دعم جديدة #{ticket.id}: {ticket.subject}",
-                            type="PORTAL",
-                            source="portal",
-                            is_read=False,
-                            created_at=datetime.utcnow(),
-                            link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
-                        ))
+                for recipient_id in _trouble_ticket_notification_recipient_ids(
+                    ticket,
+                    exclude_user_id=current_user.id,
+                ):
+                    db.session.add(Notification(
+                        user_id=recipient_id,
+                        message=f"تذكرة دعم جديدة #{ticket.id}: {ticket.subject}",
+                        type=TROUBLE_TICKET_NOTIFICATION_TYPE,
+                        source="portal",
+                        is_read=False,
+                        created_at=datetime.utcnow(),
+                        link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
+                    ))
             except ValueError as exc:
                 db.session.rollback()
                 flash(str(exc), "danger")
@@ -4266,20 +4338,14 @@ def trouble_ticket_view(ticket_id: int):
                 ticket.updated_at = datetime.utcnow()
                 if ticket.status == "WAITING" and ticket.requester_id == current_user.id:
                     ticket.status = "IN_PROGRESS"
-                recipient_ids: set[int] = set()
-                if int(current_user.id) == int(ticket.requester_id):
-                    if ticket.assigned_to_id:
-                        recipient_ids.add(int(ticket.assigned_to_id))
-                    else:
-                        recipient_ids.update(int(uid) for uid in _portal_admin_user_ids() if uid)
-                else:
-                    recipient_ids.add(int(ticket.requester_id))
-                recipient_ids.discard(int(current_user.id))
-                for recipient_id in sorted(recipient_ids):
+                for recipient_id in _trouble_ticket_notification_recipient_ids(
+                    ticket,
+                    exclude_user_id=current_user.id,
+                ):
                     db.session.add(Notification(
                         user_id=recipient_id,
                         message=f"تعليق جديد على تذكرة الدعم #{ticket.id}: {ticket.subject}",
-                        type="PORTAL",
+                        type=TROUBLE_TICKET_NOTIFICATION_TYPE,
                         source="portal",
                         link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
                         is_read=False,
@@ -4294,6 +4360,11 @@ def trouble_ticket_view(ticket_id: int):
             assignee_id = (request.form.get("assigned_to_id") or "").strip()
             if status not in TROUBLE_TICKET_STATUSES:
                 flash("الحالة المختارة غير صالحة.", "danger")
+            elif assignee_id and (
+                not assignee_id.isdigit()
+                or int(assignee_id) not in set(_trouble_ticket_admin_user_ids())
+            ):
+                flash("يمكن إسناد التذكرة إلى Admin أو SuperAdmin فقط.", "danger")
             else:
                 ticket.status = status
                 ticket.assigned_to_id = int(assignee_id) if assignee_id.isdigit() else None
@@ -4306,22 +4377,24 @@ def trouble_ticket_view(ticket_id: int):
                     target_type="TROUBLE_TICKET",
                     target_id=ticket.id,
                 ))
-                db.session.add(Notification(
-                    user_id=ticket.requester_id,
-                    message=f"تم تحديث تذكرة الدعم #{ticket.id} إلى: {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
-                    type="PORTAL",
-                    source="portal",
-                    is_read=False,
-                    created_at=datetime.utcnow(),
-                    link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
-                ))
+                for recipient_id in _trouble_ticket_notification_recipient_ids(
+                    ticket,
+                    exclude_user_id=current_user.id,
+                ):
+                    db.session.add(Notification(
+                        user_id=recipient_id,
+                        message=f"تم تحديث تذكرة الدعم #{ticket.id} إلى: {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
+                        type=TROUBLE_TICKET_NOTIFICATION_TYPE,
+                        source="portal",
+                        is_read=False,
+                        created_at=datetime.utcnow(),
+                        link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
+                    ))
                 db.session.commit()
                 flash("تم تحديث التذكرة.", "success")
             return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
 
-    assignees = []
-    if is_manager:
-        assignees = User.query.order_by(User.name, User.email).all()
+    assignees = _trouble_ticket_admin_users() if is_manager else []
     return render_template(
         "portal/trouble_tickets/view.html",
         ticket=ticket,

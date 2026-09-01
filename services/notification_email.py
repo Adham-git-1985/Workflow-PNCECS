@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from html import escape
+import re
+import unicodedata
 
 from flask import current_app
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from extensions import db
-from models import Notification, NotificationEmailDelivery, User
+from models import Notification, NotificationEmailDelivery, Role, TroubleTicket, User
 from services.workflow_task_email import (
     FAILED,
     MAX_ATTEMPTS,
@@ -20,6 +22,65 @@ from services.workflow_task_email import (
     _send_email,
     _valid_email,
 )
+
+
+_TROUBLE_TICKET_LINK_RE = re.compile(r"^/portal/trouble-tickets/(\d+)(?:[/?#]|$)")
+_TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
+
+
+def _normalize_trouble_ticket_role(value: str | None) -> str:
+    normalized = (value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    try:
+        normalized = unicodedata.normalize("NFKC", normalized)
+        return "".join(ch for ch in normalized if ch.isalnum() or ch == "_")
+    except Exception:
+        return normalized
+
+
+def _user_has_ticket_admin_role(user: User) -> bool:
+    """Match the strict ticket viewer roles without delegated permissions."""
+    raw_role = (getattr(user, "role", None) or "").strip()
+    role_code = _normalize_trouble_ticket_role(raw_role)
+    if role_code in _TROUBLE_TICKET_ADMIN_ROLE_CODES:
+        return True
+    if not raw_role:
+        return False
+    try:
+        role_row = Role.query.filter(
+            or_(
+                func.upper(Role.code) == role_code,
+                Role.name_ar == raw_role,
+                func.lower(Role.name_en) == raw_role.lower(),
+            )
+        ).first()
+        return bool(
+            role_row
+            and _normalize_trouble_ticket_role(role_row.code) in _TROUBLE_TICKET_ADMIN_ROLE_CODES
+        )
+    except Exception:
+        return False
+
+
+def _can_receive_ticket_notification_email(user: User, notification: Notification) -> bool:
+    """Keep ticket emails limited to the requester and Admin/SuperAdmin users.
+
+    The link check also protects old queued ticket notifications created before
+    the role restriction was introduced.
+    """
+    notification_type = (getattr(notification, "type", None) or "").strip().upper()
+    link_match = _TROUBLE_TICKET_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
+    if notification_type != "TROUBLE_TICKET" and not link_match:
+        return True
+
+    ticket_id = int(link_match.group(1)) if link_match else None
+    if not ticket_id:
+        return False
+    ticket = db.session.get(TroubleTicket, ticket_id)
+    if not ticket:
+        return False
+    if int(user.id) == int(ticket.requester_id):
+        return True
+    return _user_has_ticket_admin_role(user)
 
 
 def _email_content(user: User, notification: Notification) -> tuple[str, str, str]:
@@ -80,6 +141,12 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
         if not notification or not user or not recipient:
             delivery.status = FAILED
             delivery.last_error = "Notification or recipient email address is unavailable."
+            db.session.commit()
+            continue
+        if not _can_receive_ticket_notification_email(user, notification):
+            delivery.status = FAILED
+            delivery.last_error = "Recipient is not authorized for this support-ticket notification."
+            delivery.next_attempt_at = None
             db.session.commit()
             continue
 
