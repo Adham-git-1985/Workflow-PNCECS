@@ -60,7 +60,7 @@
       <div class="text-muted small mb-2">عرض وطلبات الإجازات.</div>
       {% if leaves_pending is defined %}
       <div class="mb-3">
-        <span class="badge text-bg-warning">معلقة: {{ leaves_pending }}</span>
+        <a class="badge text-bg-warning text-decoration-none" href="{{ url_for('portal.hr_my_pending_requests') }}">معلّقة: {{ leaves_pending }}</a>
         <span class="badge text-bg-light ms-1">الإجمالي: {{ leaves_total }}</span>
       </div>
       {% else %}
@@ -85,7 +85,7 @@
       <div class="text-muted small mb-2">عرض وطلبات المغادرات.</div>
       {% if permissions_pending is defined %}
       <div class="mb-3">
-        <span class="badge text-bg-warning">معلقة: {{ permissions_pending }}</span>
+        <a class="badge text-bg-warning text-decoration-none" href="{{ url_for('portal.hr_my_pending_requests') }}">معلّقة: {{ permissions_pending }}</a>
         <span class="badge text-bg-light ms-1">الإجمالي: {{ permissions_total }}</span>
       </div>
       {% else %}

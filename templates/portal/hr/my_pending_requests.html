@@ -1,0 +1,29 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}طلباتي قيد المراجعة{% endblock %}
+{% block hr_content %}
+<div class="p-4 bg-white rounded-3 shadow-sm">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-hourglass-split"></i> طلباتي قيد المراجعة</h4>
+      <div class="text-muted">طلبات الإجازات والمغادرات التي لم تعتمد بعد، مع مرحلة الاعتماد الحالية.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_me_home') }}"><i class="bi bi-arrow-right"></i> العودة</a>
+  </div>
+
+  {% if pending %}
+  <div class="list-group">
+    {% for request_item in pending %}
+    <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center gap-3" href="{{ request_item.url }}">
+      <span>
+        <i class="bi {{ request_item.icon }} me-2"></i><strong>{{ request_item.kind }}:</strong> {{ request_item.title }}
+        <span class="badge bg-{{ request_item.status_badge or 'warning' }} ms-2">{{ request_item.status_label }}</span>
+      </span>
+      <span class="text-muted small">{{ request_item.date_label }} <i class="bi bi-arrow-left"></i></span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-muted py-4 text-center">لا توجد طلبات قيد المراجعة.</div>
+  {% endif %}
+</div>
+{% endblock %}

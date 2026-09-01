@@ -141,6 +141,26 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertEqual(response.headers["Location"], "/portal/trouble-tickets/73")
         self.assertTrue(db.session.get(Notification, notification_id).is_read)
 
+    def test_open_notification_without_a_destination_still_marks_it_read(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="إشعار قديم بلا رابط",
+            source="portal",
+            type="PORTAL",
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.commit()
+        notification_id = notification.id
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.get(f"/workflow/notifications/{notification_id}/open")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/workflow/notifications")
+        self.assertTrue(db.session.get(Notification, notification_id).is_read)
+
     def test_legacy_ticket_number_is_linked_without_matching_a_workflow_request(self):
         notification = Notification(
             user_id=self.user.id,

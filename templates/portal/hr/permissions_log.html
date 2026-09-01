@@ -72,7 +72,7 @@
       <select class="form-select" name="status">
         <option value="">بدون تحديد</option>
         {% for st in ['DRAFT','SUBMITTED','APPROVED','REJECTED','CANCELLED'] %}
-          <option value="{{ st }}" {% if (status or '') == st %}selected{% endif %}>{{ st }}</option>
+          <option value="{{ st }}" {% if (status or '') == st %}selected{% endif %}>{{ st|ui_label }}</option>
         {% endfor %}
       </select>
     </div>
@@ -123,10 +123,14 @@
             <td>{{ r.day }}</td>
             <td>{{ r.from_time or '-' }}</td>
             <td>{{ r.to_time or '-' }}</td>
-            <td>{{ r.status|ui_label }}</td>
+            {% set progress = (request_progress|default({})).get(r.id, {}) %}
+            <td><span class="badge bg-{{ progress.get('badge', 'secondary') }}">{{ progress.get('label', r.status|ui_label) }}</span></td>
             <td>{{ users[r.created_by_id].full_name if users.get(r.created_by_id) else r.created_by_id }}</td>
             <td class="text-end">
-              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_permission_request_edit', req_id=r.id) }}"><i class="bi bi-pencil"></i> تعديل</a>
+              <div class="d-flex gap-1 flex-wrap justify-content-end">
+                <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_approval_permission', req_id=r.id) }}"><i class="bi bi-diagram-3"></i> متابعة الاعتماد</a>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_permission_request_edit', req_id=r.id) }}"><i class="bi bi-pencil"></i> تعديل</a>
+              </div>
             </td>
           </tr>
         {% else %}

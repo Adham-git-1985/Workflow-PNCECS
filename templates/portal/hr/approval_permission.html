@@ -3,16 +3,13 @@
 
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
-  <h4 class="mb-1"><i class="bi bi-door-open"></i> مراجعة طلب مغادرة #{{ r.id }}</h4>
-  <div class="text-muted">تحقق من البيانات ثم اعتمد أو ارفض.</div>
+  <h4 class="mb-1"><i class="bi bi-door-open"></i> {% if is_requester %}متابعة{% else %}مراجعة{% endif %} طلب مغادرة #{{ r.id }}</h4>
+  <div class="text-muted">{% if is_requester %}تابع حالة طلبك ومراحل اعتماده.{% else %}تحقق من البيانات ثم اعتمد أو ارفض.{% endif %}</div>
 </div>
 
 {% set st = (r.status or '').upper() %}
-{% set badge = 'secondary' %}
-{% if st == 'SUBMITTED' %}{% set badge = 'warning' %}{% endif %}
-{% if st == 'APPROVED' %}{% set badge = 'success' %}{% endif %}
-{% if st == 'REJECTED' %}{% set badge = 'danger' %}{% endif %}
-{% if st == 'CANCELLED' %}{% set badge = 'secondary' %}{% endif %}
+{% set progress = request_progress or {} %}
+{% set badge = progress.get('badge', 'secondary') %}
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="row g-3">
@@ -22,7 +19,7 @@
     </div>
     <div class="col-12 col-md-6">
       <div class="text-muted small">الحالة</div>
-      <div><span class="badge bg-{{ badge }}">{{ st }}</span></div>
+      <div><span class="badge bg-{{ badge }}">{{ progress.get('label', 'حالة غير محددة') }}</span></div>
     </div>
 
     <div class="col-12 col-md-6">
@@ -81,10 +78,16 @@
 </div>
 {% else %}
 {% if st == 'SUBMITTED' and not can_act %}
-  <div class="alert alert-info">هذا الطلب متاح لك للاطلاع فقط، والقرار حاليًا لدى {{ stage_label(current_step.stage_code) if current_step else 'الجهة المسؤولة' }}.</div>
+  <div class="alert alert-info">
+    {% if is_requester %}
+      طلبك قيد الاعتماد، والقرار حاليًا لدى {{ stage_label(current_step.stage_code) if current_step else 'الجهة المسؤولة' }}.
+    {% else %}
+      هذا الطلب متاح لك للاطلاع فقط، والقرار حاليًا لدى {{ stage_label(current_step.stage_code) if current_step else 'الجهة المسؤولة' }}.
+    {% endif %}
+  </div>
 {% endif %}
 <div class="mt-3">
-  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_my_permissions') if is_requester else url_for('portal.hr_approvals') }}"><i class="bi bi-arrow-right"></i> {{ 'العودة لمغادراتي' if is_requester else 'رجوع' }}</a>
 </div>
 {% endif %}
 

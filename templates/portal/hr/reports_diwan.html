@@ -35,6 +35,9 @@
       {% endif %}
 
       {% if can_export %}
+        <a class="btn btn-success" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, user_id=selected_user_id, export='official_xlsx') }}">
+          <i class="bi bi-file-earmark-spreadsheet"></i> كشف الديوان الرسمي
+        </a>
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_diwan', work_location_id=selected_work_location_id, year=year, month=month, appointment_type_id=selected_appointment_type_id, user_id=selected_user_id, export='xlsx') }}">
           <i class="bi bi-file-earmark-excel"></i> Excel
         </a>
@@ -101,6 +104,7 @@
       <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i></button>
     </div>
   </form>
+  <div class="form-text mt-2">«كشف الديوان الرسمي» ينزّل نموذجاً شهرياً حسب ملف الديوان المرفق: رمز لكل يوم، وورقة مستقلة تضم تعريف الرموز. تُسجل دقائق المغادرات الشخصية والرسمية في عمود الملاحظات.</div>
 </div>
 
 {% if view=='diwan' %}

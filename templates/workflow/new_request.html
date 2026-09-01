@@ -363,11 +363,12 @@
               <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                 <div>
                   <div class="fw-bold"><i class="bi bi-person-lines-fill"></i> مديرو منشئ الطلب</div>
-                  <div class="small text-muted mt-1">لديك أكثر من تعيين تنظيمي. اختر مديراً واحداً أو أكثر؛ وسيظهر المختارون بالترتيب في بداية المسار.</div>
+                  <div class="small text-muted mt-1">اختيار المديرين اختياري. اختر أي عدد منهم، أو ألغِ اختيار الجميع ليبدأ المسار بالجهة المحددة مباشرة.</div>
                 </div>
-                <button type="button" class="btn btn-sm btn-outline-primary" id="dynamicSelectAllManagers">
-                  <i class="bi bi-check2-all"></i> اختيار الكل
-                </button>
+                <div class="btn-group btn-group-sm">
+                  <button type="button" class="btn btn-outline-primary" id="dynamicSelectAllManagers"><i class="bi bi-check2-all"></i> اختيار الكل</button>
+                  <button type="button" class="btn btn-outline-secondary" id="dynamicClearAllManagers"><i class="bi bi-x-lg"></i> إلغاء اختيار الكل</button>
+                </div>
               </div>
               <div class="row g-2">
                 {% for manager in dynamic_manager_options %}
@@ -390,7 +391,6 @@
                   </div>
                 {% endfor %}
               </div>
-              <div class="small text-danger mt-2 d-none" id="dynamicManagerValidation" role="alert">اختر مديراً واحداً على الأقل لبدء المسار.</div>
             </div>
           {% endif %}
           <div class="row g-2 align-items-end mb-3">
@@ -1015,7 +1015,7 @@
     const managerUserIdsField = document.getElementById('dynamicManagerUserIds');
     const managerChoices = Array.from(document.querySelectorAll('.dynamic-manager-checkbox'));
     const selectAllManagersButton = document.getElementById('dynamicSelectAllManagers');
-    const managerValidation = document.getElementById('dynamicManagerValidation');
+    const clearAllManagersButton = document.getElementById('dynamicClearAllManagers');
     const dynamicSlaDays = document.getElementById('dynamicSlaDays');
     const legacyUserIdsField = document.getElementById('dynamicUserIds');
     const selectedList = document.getElementById('dynamicSelectedList');
@@ -1428,9 +1428,6 @@
         missingRefs.push(targetRef);
       });
       syncHidden();
-      if (managerValidation) {
-        managerValidation.classList.toggle('d-none', managerChoices.some(control => control.checked));
-      }
       if (presetNameInput) presetNameInput.value = preset.name || '';
       renderSelected();
       setPresetStatus(
@@ -1852,16 +1849,17 @@
     managerChoices.forEach(function(control){
       control.addEventListener('change', function(){
         syncHidden();
-        if (managerValidation) {
-          managerValidation.classList.toggle('d-none', managerChoices.some(item => item.checked));
-        }
         schedulePreview();
       });
     });
     if (selectAllManagersButton) selectAllManagersButton.addEventListener('click', function(){
       managerChoices.forEach(control => { control.checked = true; });
       syncHidden();
-      if (managerValidation) managerValidation.classList.add('d-none');
+      schedulePreview();
+    });
+    if (clearAllManagersButton) clearAllManagersButton.addEventListener('click', function(){
+      managerChoices.forEach(control => { control.checked = false; });
+      syncHidden();
       schedulePreview();
     });
     if (dynamicSlaDays) dynamicSlaDays.addEventListener('input', schedulePreview);
@@ -1995,12 +1993,6 @@
       renderSelected();
     });
     form.addEventListener('submit', function(event){
-      if (isDynamic() && managerChoices.length && !managerChoices.some(control => control.checked)) {
-        event.preventDefault();
-        if (managerValidation) managerValidation.classList.remove('d-none');
-        window.alert('اختر مديراً واحداً على الأقل لبدء المسار الديناميكي.');
-        return;
-      }
       if (isDynamic() && !selected.length) {
         event.preventDefault();
         window.alert('اختر جهة تنظيمية أو شخصاً أو لجنة واحدة على الأقل للمسار الديناميكي.');

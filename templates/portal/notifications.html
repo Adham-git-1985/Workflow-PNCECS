@@ -48,13 +48,9 @@
               <span class="text-muted small">{{ (n.created_at or "") }}</span>
             </div>
             <div class="mt-2">
-              {% if n.link_url %}
-                <a class="text-decoration-none" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">{{ n.message }}</a>
-              {% else %}
-                {{ n.message }}
-              {% endif %}
+              <a class="text-decoration-none" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">{{ n.message }}</a>
             </div>
-            {% if n.link_url %}<a class="btn btn-sm btn-primary mt-2" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">فتح الطلب</a>{% endif %}
+            <a class="btn btn-sm btn-primary mt-2" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">فتح الإشعار</a>
           </div>
           <div class="text-end">
             {% if not n.is_read %}

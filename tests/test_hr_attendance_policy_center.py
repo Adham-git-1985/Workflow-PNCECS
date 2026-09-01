@@ -16,6 +16,12 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
         cls.deduction_view = (
             PROJECT_ROOT / "templates" / "portal" / "hr" / "deductions_view.html"
         ).read_text(encoding="utf-8")
+        cls.daily_view = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "attendance_daily.html"
+        ).read_text(encoding="utf-8")
+        cls.manual_edit_view = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "attendance_manual_edit.html"
+        ).read_text(encoding="utf-8")
 
     def test_policy_center_exposes_independent_grace_and_hybrid_modes(self):
         for field in (
@@ -61,6 +67,25 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
         self.assertIn("Entry on behalf of an employee is not approval", self.routes)
         self.assertIn('status="SUBMITTED"', self.routes)
         self.assertIn("approver_user_id=(approver.id if approver else None)", self.routes)
+
+    def test_manual_attendance_correction_preserves_clock_events_and_recomputes_summary(self):
+        self.assertIn("def hr_attendance_manual_edit", self.routes)
+        self.assertIn("def _manual_attendance_override", self.routes)
+        self.assertIn("kind='MANUAL_ATTENDANCE'", self.routes)
+        self.assertIn("_attendance_recompute_summaries_for_keys(affected_keys)", self.routes)
+        self.assertIn("'A', 'I', 'IN', 'CHECKIN'", self.routes)
+        self.assertIn('name="start_time"', self.manual_edit_view)
+        self.assertIn('name="end_time"', self.manual_edit_view)
+        self.assertIn('name="day_to"', self.manual_edit_view)
+        self.assertIn("hr_attendance_manual_edit", self.daily_view)
+
+    def test_pending_request_indicator_has_a_direct_destination(self):
+        index = (PROJECT_ROOT / "templates" / "portal" / "index.html").read_text(encoding="utf-8")
+        routes = self.routes
+        self.assertIn("def hr_my_pending_requests", routes)
+        self.assertIn("HRLeaveRequest.query", routes)
+        self.assertIn("HRPermissionRequest.query", routes)
+        self.assertIn("portal.hr_my_pending_requests", index)
 
 
 if __name__ == "__main__":

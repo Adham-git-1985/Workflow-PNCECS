@@ -2057,8 +2057,8 @@ def _notification_target_url(notification: Notification) -> str | None:
 
 
 def _notification_open_url(notification: Notification) -> str | None:
-    if not _notification_target_url(notification):
-        return None
+    # Always pass through the open endpoint: legacy rows can have no safe
+    # destination, but opening them must still clear their unread state.
     return url_for("workflow.open_notification", notif_id=notification.id)
 
 
@@ -2270,15 +2270,15 @@ def open_notification(notif_id):
         .filter(Notification.user_id == current_user.id)
         .first_or_404()
     )
-    target_url = _notification_target_url(notification)
-    if not target_url:
-        return redirect(url_for("workflow.notifications"))
-
     if not getattr(notification, "is_mirror", False) and not notification.is_read:
         notification.is_read = True
         if getattr(notification, "event_key", None):
             _sync_mirror_for_event(notification.event_key)
         db.session.commit()
+
+    target_url = _notification_target_url(notification)
+    if not target_url:
+        return redirect(url_for("workflow.notifications"))
     return redirect(target_url)
 
 

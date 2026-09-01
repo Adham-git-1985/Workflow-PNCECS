@@ -7,6 +7,8 @@ from portal.routes import (
     _attendance_departure_type_label,
     _attendance_event_code,
     _attendance_event_label,
+    _attach_departure_sources_to_attendance_events,
+    _departure_display_lines,
     _departure_records_match,
     _parse_timeclock_line,
     _reconciled_departure_records,
@@ -118,9 +120,46 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
 
         self.assertEqual(len(records), 2)
         self.assertEqual(records[0]['source'], 'CLOCK_SYSTEM')
-        self.assertEqual(records[0]['counted_minutes'], 60)
+        self.assertEqual(records[0]['from_dt'], datetime(2026, 9, 1, 10, 0))
+        self.assertEqual(records[0]['to_dt'], datetime(2026, 9, 1, 11, 10))
+        self.assertEqual(records[0]['counted_minutes'], 70)
         self.assertEqual(records[1]['source'], 'SYSTEM')
         self.assertEqual(records[1]['counted_minutes'], 30)
+
+    def test_report_cell_shows_clock_and_masar_times_separately(self):
+        record = {
+            'kind': 'PRIVATE',
+            'label': 'مغادرة شخصية',
+            'source': 'CLOCK_SYSTEM',
+            'clock_from_dt': datetime(2026, 9, 1, 10, 0),
+            'clock_to_dt': datetime(2026, 9, 1, 11, 0),
+            'system_from_dt': datetime(2026, 9, 1, 10, 10),
+            'system_to_dt': datetime(2026, 9, 1, 11, 10),
+        }
+
+        lines = _departure_display_lines([record])
+
+        self.assertEqual(len(lines), 2)
+        self.assertEqual([line['source_label'] for line in lines], ['ساعة الدوام', 'نظام مسار'])
+        self.assertIn('10:00', lines[0]['time_range'])
+        self.assertIn('10:10', lines[1]['time_range'])
+
+    def test_system_only_departure_creates_a_report_row(self):
+        record = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'label': 'مغادرة شخصية',
+            'source': 'SYSTEM',
+            'system_from_dt': datetime(2026, 9, 1, 12, 0),
+            'system_to_dt': datetime(2026, 9, 1, 12, 30),
+        }
+
+        rows = _attach_departure_sources_to_attendance_events([], [record])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].display_event_label, 'مغادرة من نظام مسار')
+        self.assertEqual(rows[0].departure_display_lines[0]['source_label'], 'نظام مسار')
 
 
 if __name__ == '__main__':

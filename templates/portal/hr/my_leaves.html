@@ -46,12 +46,8 @@
           <tbody>
             {% for r in reqs %}
               {% set st = (r.status or '').upper() %}
-        {% set can_cancel = (st in ('SUBMITTED','DRAFT')) or (st=='APPROVED' and r.start_date and today_str and r.start_date > today_str) %}
-              {% set badge = 'secondary' %}
-              {% if st == 'SUBMITTED' %}{% set badge = 'warning' %}{% endif %}
-              {% if st == 'APPROVED' %}{% set badge = 'success' %}{% endif %}
-              {% if st == 'REJECTED' %}{% set badge = 'danger' %}{% endif %}
-              {% if st == 'CANCELLED' %}{% set badge = 'secondary' %}{% endif %}
+              {% set progress = (request_progress|default({})).get(r.id, {}) %}
+              {% set badge = progress.get('badge', 'secondary') %}
               {% set atts = (atts_map.get(r.id) if atts_map else []) or [] %}
 
               <tr>
@@ -65,7 +61,7 @@
                 <td>{{ r.start_date }}</td>
                 <td>{{ r.end_date }}</td>
                 <td>{{ r.days or '-' }}</td>
-                <td><span class="badge bg-{{ badge }}">{{ st }}</span></td>
+                <td><span class="badge bg-{{ badge }}">{{ progress.get('label', 'حالة غير محددة') }}</span></td>
 
                 <td>
                   <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#att{{ r.id }}" aria-expanded="false">
@@ -85,8 +81,11 @@
                 </td>
 
                 <td>
-                  {% if st in ['SUBMITTED', 'DRAFT'] %}
-                    <div class="d-flex gap-1">
+                  <div class="d-flex gap-1 flex-wrap">
+                    <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_approval_leave', req_id=r.id) }}">
+                      <i class="bi bi-diagram-3"></i> متابعة الاعتماد
+                    </a>
+                    {% if st in ['SUBMITTED', 'DRAFT'] and can_create %}
                       <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_leave_request_edit', req_id=r.id) }}">
                         <i class="bi bi-pencil"></i> تعديل
                       </a>
@@ -95,10 +94,8 @@
                           <i class="bi bi-x-circle"></i> إلغاء
                         </button>
                       </form>
-                    </div>
-                  {% else %}
-                    <span class="text-muted">—</span>
                   {% endif %}
+                  </div>
                 </td>
               </tr>
 

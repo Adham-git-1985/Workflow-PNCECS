@@ -186,13 +186,53 @@ def inbox():
     q = q.order_by(Message.created_at.desc())
 
     pagination = q.paginate(page=page, per_page=20, error_out=False)
+    unread_count = (
+        MessageRecipient.query
+        .filter(
+            MessageRecipient.recipient_user_id == current_user.id,
+            MessageRecipient.is_deleted.is_(False),
+            MessageRecipient.is_read.is_(False),
+        )
+        .count()
+    )
 
     return render_template(
         "messages/inbox.html",
         items=pagination.items,
         pagination=pagination,
-        q=search
+        q=search,
+        unread_count=unread_count,
     )
+
+
+@messages_bp.route("/inbox/mark-all-read", methods=["POST"])
+@login_required
+def mark_all_messages_read():
+    """Mark every non-deleted inbox message for the current recipient as read."""
+    try:
+        from datetime import datetime
+
+        updated = (
+            MessageRecipient.query
+            .filter(
+                MessageRecipient.recipient_user_id == current_user.id,
+                MessageRecipient.is_deleted.is_(False),
+                MessageRecipient.is_read.is_(False),
+            )
+            .update(
+                {"is_read": True, "read_at": datetime.utcnow()},
+                synchronize_session=False,
+            )
+        )
+        db.session.commit()
+        if updated:
+            flash("تم تعليم جميع المراسلات كمقروءة.", "success")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to mark inbox messages as read for user_id=%s", current_user.id)
+        flash("تعذر تحديث حالة المراسلات.", "danger")
+
+    return redirect(url_for("messages.inbox", q=(request.form.get("q") or "").strip()))
 
 
 @messages_bp.route("/sent")

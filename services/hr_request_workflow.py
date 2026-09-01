@@ -649,6 +649,61 @@ def current_step(kind: str, request_id: int) -> HRRequestApprovalStep | None:
     )
 
 
+def request_progress(kind: str, row, *, active_step: HRRequestApprovalStep | None = None) -> dict[str, str]:
+    """Return the employee-facing Arabic status for a leave or departure request."""
+    status = (getattr(row, "status", None) or "").strip().upper()
+    progress = {
+        "status": status,
+        "label": "حالة غير محددة",
+        "badge": "secondary",
+        "current_stage": "",
+    }
+
+    if status == "DRAFT":
+        progress.update(label="مسودة", badge="secondary")
+    elif status == "SUBMITTED":
+        step = active_step if active_step is not None else current_step(kind, row.id)
+        if step:
+            stage = stage_label(step.stage_code)
+            progress.update(
+                label=f"قيد الاعتماد — بانتظار {stage}",
+                badge="warning",
+                current_stage=stage,
+            )
+        else:
+            progress.update(label="قيد الاعتماد — جارٍ تحديد جهة الاعتماد", badge="warning")
+    elif status == "APPROVED":
+        progress.update(label="معتمد نهائياً", badge="success")
+    elif status == "REJECTED":
+        progress.update(label="مرفوض", badge="danger")
+    elif status == "CANCELLED":
+        progress.update(label="ملغى", badge="secondary")
+
+    return progress
+
+
+def request_progress_map(kind: str, rows: Iterable) -> dict[int, dict[str, str]]:
+    """Build employee-facing progress labels without one query per request."""
+    request_rows = [row for row in rows if row and getattr(row, "id", None)]
+    request_ids = [int(row.id) for row in request_rows]
+    if not request_ids:
+        return {}
+
+    active_steps = (
+        HRRequestApprovalStep.query
+        .filter(HRRequestApprovalStep.request_kind == (kind or "").upper())
+        .filter(HRRequestApprovalStep.request_id.in_(request_ids))
+        .filter(HRRequestApprovalStep.status == "PENDING")
+        .order_by(HRRequestApprovalStep.request_id.asc(), HRRequestApprovalStep.step_order.asc())
+        .all()
+    )
+    steps_by_request = {int(step.request_id): step for step in active_steps}
+    return {
+        int(row.id): request_progress(kind, row, active_step=steps_by_request.get(int(row.id)))
+        for row in request_rows
+    }
+
+
 def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetime | None = None) -> bool:
     if not user or not step or (step.status or "").upper() != "PENDING":
         return False

@@ -35,7 +35,7 @@
           <span class="badge text-bg-light border"><i class="bi bi-clock"></i> أيام دوام هذا الشهر: <b>{{ s.get('att_days_month', 0) }}</b></span>
         {% endif %}
         {% if f.get('can_hr') %}
-          <span class="badge text-bg-light border"><i class="bi bi-person-check"></i> طلباتي قيد المراجعة: <b>{{ s.get('my_requests_open', 0) }}</b></span>
+          <a class="badge text-bg-light border text-decoration-none" href="{{ url_for('portal.hr_my_pending_requests') }}" title="فتح طلبات الإجازات والمغادرات قيد المراجعة"><i class="bi bi-person-check"></i> طلباتي قيد المراجعة: <b>{{ s.get('my_requests_open', 0) }}</b></a>
         {% endif %}
         {% if f.get('can_meetings_manage') or s.get('meetings_week', 0)|int > 0 or s.get('meeting_tasks_open', 0)|int > 0 %}
           <span class="badge text-bg-light border"><i class="bi bi-calendar2-week"></i> اجتماعات الأسبوع: <b>{{ s.get('meetings_week', 0) }}</b></span>

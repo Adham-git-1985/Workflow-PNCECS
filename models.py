@@ -3107,7 +3107,7 @@ class HRAttendanceSpecialCase(db.Model):
     # Target kind (future-proof). Currently we support USER only.
     target_kind = db.Column(db.String(20), nullable=True, default="USER")
 
-    kind = db.Column(db.String(20), nullable=False, default="STATUS")  # STATUS/EXCEPTION
+    kind = db.Column(db.String(20), nullable=False, default="STATUS")  # STATUS/EXCEPTION/MANUAL_ATTENDANCE
 
     # STATUS override
     status = db.Column(db.String(30), nullable=True)

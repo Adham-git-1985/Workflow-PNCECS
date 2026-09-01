@@ -112,6 +112,7 @@
           <th>التاريخ/الوقت</th>
           <th>الحركة</th>
           <th>نوع المغادرة</th>
+          <th>مصدر وأوقات المغادرة</th>
         </tr>
       </thead>
       <tbody>
@@ -127,7 +128,8 @@
             <td class="text-muted">{{ e.event_dt.strftime('%Y-%m-%d %H:%M') if e.event_dt else '' }}</td>
             <td>
               {% set code = (e.display_event_code or e.event_type)|upper %}
-              {% if code in ('A', 'I', 'IN', 'CHECKIN') %}<span class="badge text-bg-success">{{ event_labels.get(code, code) }}</span>
+              {% if e.display_event_label %}<span class="badge text-bg-info text-dark">{{ e.display_event_label }}</span>
+              {% elif code in ('A', 'I', 'IN', 'CHECKIN') %}<span class="badge text-bg-success">{{ event_labels.get(code, code) }}</span>
               {% elif code in ('B', 'O', 'OUT', 'CHECKOUT') %}<span class="badge text-bg-danger">{{ event_labels.get(code, code) }}</span>
               {% elif code in ('C', 'D', 'E', 'F') %}<span class="badge text-bg-info text-dark">{{ event_labels.get(code, code) }}</span>
               {% else %}<span class="badge text-bg-secondary">{{ event_labels.get(code, code) }}</span>
@@ -140,10 +142,19 @@
                 <span class="badge text-bg-info text-dark">مغادرة رسمية</span>
               {% else %}—{% endif %}
             </td>
+            <td class="small">
+              {% for detail in e.departure_display_lines|default([]) %}
+                <div class="mb-1">
+                  <span class="fw-semibold">{{ detail.kind_label }}</span>
+                  <span class="text-muted">— {{ detail.source_label }}:</span>
+                  {{ detail.time_range }}
+                </div>
+              {% else %}—{% endfor %}
+            </td>
           </tr>
         {% endfor %}
         {% if not events %}
-          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+          <tr><td colspan="6" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
         {% endif %}
       </tbody>
     </table>

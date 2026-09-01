@@ -1,0 +1,53 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تعديل دوام يدوي{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4" style="max-width: 900px;">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</h5>
+      <div class="text-muted small">يسجّل هذا التعديل كتصحيح إداري مستقل ولا يغيّر سجل جهاز الدوام الخام.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_daily', day_from=day, day_to=day, user_id=user_id or '') }}"><i class="bi bi-arrow-right"></i> العودة للملخص</a>
+  </div>
+
+  <hr class="my-4">
+  <form method="post" class="row g-3">
+    <input type="hidden" name="override_id" value="{{ override.id if override else '' }}">
+    <div class="col-md-7">
+      <label class="form-label" for="manualAttendanceUser">الموظف</label>
+      <select class="form-select" id="manualAttendanceUser" name="user_id" required>
+        <option value="">— اختر الموظف —</option>
+        {% for employee in users %}
+          <option value="{{ employee.id }}" {% if user_id == employee.id %}selected{% endif %}>{{ employee.name or employee.email }}{% if employee.email %} — {{ employee.email }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-5">
+      <label class="form-label" for="manualAttendanceDay">من تاريخ</label>
+      <input class="form-control" type="date" id="manualAttendanceDay" name="day" value="{{ day }}" required>
+    </div>
+    <div class="col-md-5">
+      <label class="form-label" for="manualAttendanceDayTo">إلى تاريخ</label>
+      <input class="form-control" type="date" id="manualAttendanceDayTo" name="day_to" value="{{ day_to }}" required>
+      <div class="form-text">يمكن إدخال يوم واحد أو فترة متصلة؛ يطبّق الوقت نفسه على كل يوم في الفترة.</div>
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="manualAttendanceStart">وقت الحضور</label>
+      <input class="form-control" type="time" id="manualAttendanceStart" name="start_time" value="{{ override.start_time if override and override.start_time else '' }}">
+    </div>
+    <div class="col-md-6">
+      <label class="form-label" for="manualAttendanceEnd">وقت الانصراف</label>
+      <input class="form-control" type="time" id="manualAttendanceEnd" name="end_time" value="{{ override.end_time if override and override.end_time else '' }}">
+      <div class="form-text">أدخل وقتاً واحداً على الأقل. إن أدخلت الوقتين فيجب أن يكون الانصراف بعد الحضور.</div>
+    </div>
+    <div class="col-12">
+      <label class="form-label" for="manualAttendanceNote">سبب التعديل</label>
+      <textarea class="form-control" id="manualAttendanceNote" name="note" rows="3" required>{{ override.note if override and override.note else '' }}</textarea>
+    </div>
+    <div class="col-12 d-flex gap-2">
+      <button class="btn btn-success" type="submit"><i class="bi bi-check2-circle"></i> حفظ وإعادة احتساب الفترة</button>
+      {% if override %}<span class="text-muted align-self-center small">يجري تعديل آخر تصحيح يدوي محفوظ لهذا اليوم.</span>{% endif %}
+    </div>
+  </form>
+</div>
+{% endblock %}

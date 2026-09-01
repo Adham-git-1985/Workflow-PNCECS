@@ -1462,8 +1462,8 @@ def build_dynamic_target_path(
             user_id for user_id in normalized_manager_ids
             if user_id in manager_options_by_id
         ]
-        if manager_options and not selected_manager_ids:
-            errors.append("اختر مديراً واحداً على الأقل لبدء المسار الديناميكي.")
+        # Selecting direct managers is optional.  An explicit empty selection
+        # means that the request starts from the chosen target immediately.
     else:
         # Calls from older integrations keep the established automatic route.
         # The new-request UI always sends an explicit selection.

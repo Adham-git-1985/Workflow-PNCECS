@@ -564,6 +564,44 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIn(b"Jordan", detail.data)
         self.assertIn(b"Family visit", detail.data)
 
+    def test_requester_can_follow_leave_and_departure_approval_in_arabic(self):
+        db.session.add_all([
+            UserPermission(user_id=self.employee.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_REQUESTS_READ")
+        ])
+        leave = self._leave(self.normal_type)
+        permission = self._permission()
+        start_request_flow(KIND_LEAVE, leave)
+        start_request_flow(KIND_PERMISSION, permission)
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+
+        leave_page = client.get(f"/portal/hr/approvals/leaves/{leave.id}")
+        self.assertEqual(leave_page.status_code, 200)
+        leave_body = leave_page.get_data(as_text=True)
+        self.assertIn("متابعة طلب إجازة", leave_body)
+        self.assertIn("قيد الاعتماد — بانتظار المسؤولون على الهيكلية", leave_body)
+        self.assertIn("مسار الاعتماد", leave_body)
+        self.assertNotIn("SUBMITTED", leave_body)
+
+        permission_page = client.get(f"/portal/hr/approvals/permissions/{permission.id}")
+        self.assertEqual(permission_page.status_code, 200)
+        permission_body = permission_page.get_data(as_text=True)
+        self.assertIn("متابعة طلب مغادرة", permission_body)
+        self.assertIn("قيد الاعتماد — بانتظار المسؤولون على الهيكلية", permission_body)
+        self.assertIn("مسار الاعتماد", permission_body)
+        self.assertNotIn("SUBMITTED", permission_body)
+
+        leave_list = client.get("/portal/hr/me/leaves")
+        self.assertEqual(leave_list.status_code, 200)
+        self.assertIn(f"/portal/hr/approvals/leaves/{leave.id}", leave_list.get_data(as_text=True))
+
+        permission_list = client.get("/portal/hr/me/permissions")
+        self.assertEqual(permission_list.status_code, 200)
+        self.assertIn(f"/portal/hr/approvals/permissions/{permission.id}", permission_list.get_data(as_text=True))
+
     def test_general_director_board_scope_contains_directorate_employee(self):
         visible_ids = board_visible_user_ids(self.general_director)
         self.assertIsNotNone(visible_ids)

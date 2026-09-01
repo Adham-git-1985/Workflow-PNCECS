@@ -723,9 +723,13 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             [f"NODE:{self.department_b.id}"],
             selected_manager_user_ids=[],
         )
-        self.assertIn(
-            "اختر مديراً واحداً على الأقل لبدء المسار الديناميكي.",
-            empty_result["errors"],
+        self.assertEqual(empty_result["errors"], [])
+        self.assertEqual(empty_result["selected_manager_user_ids"], [])
+        self.assertTrue(
+            all(
+                step.get("approver_user_id") not in {self.source_manager.id, irene.id, raed.id}
+                for step in empty_result["steps"]
+            )
         )
 
     def test_requester_includes_every_non_governance_hierarchy_manager(self):

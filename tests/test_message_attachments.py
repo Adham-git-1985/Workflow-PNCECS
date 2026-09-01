@@ -18,6 +18,7 @@ from messages.routes import (
     _save_message_attachments,
     compose,
     download_attachment,
+    mark_all_messages_read,
 )
 
 
@@ -174,6 +175,31 @@ class MessageAttachmentTests(unittest.TestCase):
         ):
             with self.assertRaises(Forbidden):
                 download_unwrapped(attachment.id)
+
+    def test_mark_all_messages_read_updates_only_the_current_recipient(self):
+        other_recipient = MessageRecipient(
+            message_id=self.message.id,
+            recipient_user_id=self.other_user.id,
+            is_read=False,
+        )
+        db.session.add(other_recipient)
+        db.session.commit()
+
+        mark_all_unwrapped = _unwrapped(mark_all_messages_read)
+        with self.app.test_request_context("/messages/inbox/mark-all-read", method="POST"), patch(
+            "messages.routes.current_user", self.recipient
+        ):
+            response = mark_all_unwrapped()
+
+        own_recipient = MessageRecipient.query.filter_by(
+            message_id=self.message.id,
+            recipient_user_id=self.recipient.id,
+        ).one()
+        untouched_recipient = db.session.get(MessageRecipient, other_recipient.id)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(own_recipient.is_read)
+        self.assertIsNotNone(own_recipient.read_at)
+        self.assertFalse(untouched_recipient.is_read)
 
 
 if __name__ == "__main__":

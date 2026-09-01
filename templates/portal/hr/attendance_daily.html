@@ -7,6 +7,7 @@
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_import') }}">استيراد</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">الأحداث</a>
+      {% if can_manage %}<a class="btn btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit') }}"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</a>{% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}">إعدادات الموارد البشرية</a>
     </div>
   </div>
@@ -67,6 +68,7 @@
           <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
           <th>{{ portal_sort_link('الحالة', 'status') }}</th>
           <th>{{ portal_sort_link('الجدول', 'schedule') }}</th>
+          {% if can_manage %}<th>إجراء</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -89,6 +91,9 @@
             {% endif %}
           </td>
           <td class="text-muted">{{ r.schedule.name if r.schedule else '—' }}</td>
+          {% if can_manage %}
+          <td><a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=r.user_id, day=r.day) }}"><i class="bi bi-pencil-square"></i> تعديل</a></td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

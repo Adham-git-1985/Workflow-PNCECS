@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import wraps
+from types import SimpleNamespace
 
 from datetime import datetime, date, timedelta
 import os
@@ -287,6 +288,8 @@ from services.hr_request_workflow import (
     direct_approver_names_for_requests,
     is_special_leave,
     process_pending_approvals,
+    request_progress,
+    request_progress_map,
     request_ids_user_can_act_on,
     request_ids_user_participated_in,
     resolve_direct_manager,
@@ -8875,6 +8878,372 @@ def hr_report_negative_movements():
         to_date=to_date.strftime('%Y-%m-%d') if to_date else '',
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
     )
+_DIWAN_OFFICIAL_SYMBOLS = (
+    ('N', 'نقل من وزارة إلى أخرى'),
+    ('L', 'إجازة سنوية'),
+    ('W', 'إجازة بدون راتب'),
+    ('M', 'إجازة أمومة'),
+    ('A', 'حادث عمل'),
+    ('-', 'غياب بدون إذن'),
+    ('T', 'إجازة طارئة'),
+    ('R', 'مهمة عمل'),
+    ('P', 'إيقاف عن العمل'),
+    ('H', 'حج'),
+    ('F', 'عطل أسبوعية'),
+    ('V', 'أعياد ومناسبات رسمية'),
+    ('*', 'دوام طوارئ: يوم عمل هجين لا يحتاج بصمة حضور'),
+    ('?', 'حالة غير معرّفة'),
+    ('X', 'يوم تأخير'),
+    ('+', 'يوم عمل'),
+    ('C', 'رمز C حسب تعليمات الديوان'),
+    ('J', 'رمز J حسب تعليمات الديوان'),
+    ('S', 'إجازة مرضية'),
+    ('E', 'لا يوجد توقيع/بصمة دوام'),
+    ('U', 'إجازة دراسية'),
+    ('D', 'مناوبة'),
+    ('B', 'مرافقة زوجها السفير'),
+    ('K', 'غياب بسبب الكورونا'),
+    ('Y', 'إجازة أبوة'),
+)
+
+
+def _diwan_official_leave_symbol(leave_type) -> str:
+    """Map configured HR leave types to the Diwan monthly-sheet symbols."""
+    raw = ' '.join((
+        str(getattr(leave_type, 'code', '') or ''),
+        str(getattr(leave_type, 'name_ar', '') or ''),
+        str(getattr(leave_type, 'name_en', '') or ''),
+    )).lower()
+    compact = raw.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
+    mappings = (
+        ('N', ('نقل', 'transfer')),
+        ('W', ('بدون راتب', 'دون راتب', 'unpaid', 'no_pay', 'no pay')),
+        ('M', ('امومة', 'maternity')),
+        ('A', ('حادث عمل', 'work accident')),
+        ('T', ('طارئ', 'طارئة', 'emergency', 'casual')),
+        ('R', ('مهمة', 'mission')),
+        ('P', ('ايقاف', 'suspension')),
+        ('H', ('حج', 'hajj')),
+        ('S', ('مرض', 'sick', 'medical')),
+        ('U', ('دراسي', 'study')),
+        ('B', ('مرافقة زوج', 'مرافقه زوج', 'ambassador spouse')),
+        ('K', ('كورونا', 'covid', 'corona')),
+        ('Y', ('ابوة', 'ابوه', 'paternity')),
+        ('L', ('سنوي', 'annual', 'personal')),
+    )
+    for symbol, keywords in mappings:
+        if any(keyword in compact or keyword in raw for keyword in keywords):
+            return symbol
+    return '?'
+
+
+def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, departure_totals) -> list[dict]:
+    """Build one official Diwan row per employee for a selected calendar month."""
+    user_ids = [int(user_id) for user_id in (user_ids or []) if user_id]
+    if not user_ids:
+        return []
+
+    start_s, end_s = start.isoformat(), end.isoformat()
+    summaries_by_key = {(row.user_id, row.day): row for row in (summaries or [])}
+    users_by_id = {user.id: user for user in User.query.filter(User.id.in_(user_ids)).all()}
+    leave_by_key: dict[tuple[int, str], str] = {}
+    for leave in (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(user_ids))
+        .filter(HRLeaveRequest.status == 'APPROVED')
+        .filter(HRLeaveRequest.start_date <= end_s)
+        .filter(HRLeaveRequest.end_date >= start_s)
+        .order_by(HRLeaveRequest.id.asc())
+        .all()
+    ):
+        leave_start = _parse_yyyy_mm_dd(leave.start_date)
+        leave_end = _parse_yyyy_mm_dd(leave.end_date)
+        if not leave_start or not leave_end:
+            continue
+        current = max(leave_start, start)
+        last = min(leave_end, end)
+        symbol = _diwan_official_leave_symbol(leave.leave_type)
+        while current <= last:
+            leave_by_key[(leave.user_id, current.isoformat())] = symbol
+            current += timedelta(days=1)
+
+    special_by_key: dict[tuple[int, str], str] = {}
+    special_symbols = {
+        'PRESENT': '+', 'ABSENT': '-', 'MISSION': 'R', 'HOLIDAY': 'V',
+        'OFF': 'F', 'LEAVE': 'L', 'SUSPENDED': 'P',
+    }
+    special_rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id.in_(user_ids))
+        .filter(HRAttendanceSpecialCase.kind == 'STATUS')
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.day <= end_s)
+        .filter(or_(HRAttendanceSpecialCase.day_to.is_(None), HRAttendanceSpecialCase.day_to >= start_s))
+        .order_by(HRAttendanceSpecialCase.created_at.asc(), HRAttendanceSpecialCase.id.asc())
+        .all()
+    )
+    for special in special_rows:
+        symbol = special_symbols.get((special.status or '').strip().upper())
+        special_start = _parse_yyyy_mm_dd(special.day)
+        special_end = _parse_yyyy_mm_dd(special.day_to or special.day)
+        if not symbol or not special_start or not special_end:
+            continue
+        current = max(special_start, start)
+        last = min(special_end, end)
+        while current <= last:
+            special_by_key[(special.user_id, current.isoformat())] = symbol
+            current += timedelta(days=1)
+
+    official_days = {
+        row.day for row in HROfficialOccasion.query
+        .filter(HROfficialOccasion.day >= start_s, HROfficialOccasion.day <= end_s)
+        .filter(HROfficialOccasion.is_day_off.is_(True))
+        .all()
+    }
+    try:
+        from models import HROfficialOccasionRange
+        official_ranges = (
+            HROfficialOccasionRange.query
+            .filter(HROfficialOccasionRange.start_day <= end_s)
+            .filter(HROfficialOccasionRange.end_day >= start_s)
+            .filter(HROfficialOccasionRange.is_day_off.is_(True))
+            .all()
+        )
+    except Exception:
+        official_ranges = []
+
+    def is_official_holiday(day_s: str, employee_file) -> bool:
+        if day_s in official_days:
+            return True
+        for occasion in official_ranges:
+            if not (occasion.start_day <= day_s <= occasion.end_day):
+                continue
+            if occasion.work_governorate_lookup_id and occasion.work_governorate_lookup_id != getattr(employee_file, 'work_governorate_lookup_id', None):
+                continue
+            if occasion.work_location_lookup_id and occasion.work_location_lookup_id != getattr(employee_file, 'work_location_lookup_id', None):
+                continue
+            return True
+        return False
+
+    rows = []
+    for user_id in user_ids:
+        user = users_by_id.get(user_id)
+        if not user:
+            continue
+        employee_file = getattr(user, 'employee_file', None)
+        organization = getattr(employee_file, 'organization', None) if employee_file else None
+        ministry_code = (
+            getattr(organization, 'code', None)
+            or _setting_get('HR_DIWAN_MINISTRY_CODE', '')
+            or getattr(organization, 'name_ar', None)
+            or ''
+        )
+        cells = []
+        notes = []
+        current = start
+        while current <= end:
+            day_s = current.isoformat()
+            summary = summaries_by_key.get((user_id, day_s))
+            missing_attendance = False
+            actual_office_attendance = False
+            if _is_weekly_off(current, _weekly_mask()):
+                symbol = 'F'
+            elif is_official_holiday(day_s, employee_file):
+                symbol = 'V'
+            elif special_by_key.get((user_id, day_s)):
+                symbol = special_by_key[(user_id, day_s)]
+                actual_office_attendance = symbol == '+'
+            elif leave_by_key.get((user_id, day_s)):
+                symbol = leave_by_key[(user_id, day_s)]
+            elif not summary:
+                symbol = 'E'
+                missing_attendance = True
+            elif (summary.status or '').upper() == 'ABSENT':
+                symbol = '-'
+                missing_attendance = True
+            elif (summary.status or '').upper() == 'INCOMPLETE' or not summary.first_in or not summary.last_out:
+                symbol = 'E'
+            elif int(summary.late_minutes or 0) > 0 or int(summary.early_leave_minutes or 0) > 0:
+                symbol = 'X'
+                actual_office_attendance = True
+            elif getattr(summary.schedule, 'kind', '') == 'SHIFT':
+                symbol = 'D'
+                actual_office_attendance = True
+            else:
+                symbol = '+'
+                actual_office_attendance = True
+
+            departure = (departure_totals or {}).get((user_id, day_s), {}) or {}
+            private_minutes = int(departure.get('private_minutes') or 0)
+            official_minutes = int(departure.get('official_minutes') or 0)
+            if private_minutes or official_minutes:
+                pieces = []
+                if private_minutes:
+                    pieces.append(f'شخصية {private_minutes} د')
+                if official_minutes:
+                    pieces.append(f'رسمية {official_minutes} د')
+                notes.append(f'{current.day}: ' + '، '.join(pieces))
+            cells.append({
+                'day': current,
+                'symbol': symbol,
+                'missing_attendance': missing_attendance,
+                'actual_office_attendance': actual_office_attendance,
+            })
+            current += timedelta(days=1)
+
+        # In a flexible hybrid policy, the days actually attended (including
+        # late attendance) satisfy the office quota.  The remaining normal
+        # workdays are emergency-duty days and use the official '*' symbol.
+        weeks = {}
+        for cell in cells:
+            week_start = cell['day'] - timedelta(days=cell['day'].weekday())
+            weeks.setdefault(week_start, []).append(cell)
+        for week_start, week_cells in weeks.items():
+            policy = _effective_work_policy_for_user(user_id, week_start.isoformat())
+            if not policy or (policy.days_policy or '').upper() != 'HYBRID_WEEKLY_QUOTA':
+                continue
+            office_days = max(0, int(policy.hybrid_office_days or 0))
+            selection_mode = (policy.hybrid_selection_mode or 'FLEXIBLE').upper()
+            office_mask = int(policy.hybrid_fixed_days_mask or 0)
+            # The report may start or end in the middle of a week.  Count the
+            # whole week so attendance on an adjacent calendar-month day still
+            # completes the hybrid office quota.
+            attended_days = {
+                cell['day'] for cell in week_cells if cell['actual_office_attendance']
+            }
+            for offset in range(7):
+                candidate_day = week_start + timedelta(days=offset)
+                candidate_summary = summaries_by_key.get((user_id, candidate_day.isoformat()))
+                if not candidate_summary:
+                    continue
+                status = (candidate_summary.status or '').upper()
+                if (
+                    status not in {'ABSENT', 'INCOMPLETE'}
+                    and candidate_summary.first_in
+                    and candidate_summary.last_out
+                ):
+                    attended_days.add(candidate_day)
+            actual_count = len(attended_days)
+            for cell in week_cells:
+                if not cell['missing_attendance']:
+                    continue
+                if selection_mode == 'FIXED' and office_mask:
+                    if not (office_mask & (1 << cell['day'].weekday())):
+                        cell['symbol'] = '*'
+                elif selection_mode != 'FIXED' and actual_count >= office_days:
+                    cell['symbol'] = '*'
+
+        symbols = [cell['symbol'] for cell in cells]
+
+        rows.append({
+            'month': start.month,
+            'year': start.year,
+            'ministry_code': str(ministry_code),
+            'employee_no': (getattr(employee_file, 'employee_no', None) or ''),
+            'employee_name': (
+                getattr(employee_file, 'full_name_quad', None)
+                or getattr(user, 'full_name', None)
+                or getattr(user, 'name', None)
+                or getattr(user, 'email', None)
+                or ''
+            ),
+            'symbols': symbols,
+            'notes': ' | '.join(notes),
+        })
+    return sorted(rows, key=lambda row: (str(row['employee_no']), str(row['employee_name'])))
+
+
+def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[dict]):
+    """Export the official Diwan monthly attendance grid and its symbol key."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = 'كشف الدوام'
+    sheet.sheet_view.rightToLeft = True
+    sheet.freeze_panes = 'F3'
+    sheet.page_setup.orientation = 'landscape'
+    sheet.page_setup.fitToWidth = 1
+    sheet.page_margins.left = 0.15
+    sheet.page_margins.right = 0.15
+
+    headers = ['الشهر', 'السنة', 'الوزارة', 'رقم الموظف', 'اسم الموظف'] + list(range(1, end.day + 1)) + ['ملاحظات']
+    weekdays = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد']
+    sheet.append(headers)
+    sheet.append([''] * 5 + [weekdays[(start + timedelta(days=offset)).weekday()] for offset in range(end.day)] + [''])
+
+    thin = Side(style='thin', color='808080')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_fill = PatternFill('solid', fgColor='1F4E78')
+    weekday_fill = PatternFill('solid', fgColor='D9EAF7')
+    symbol_fills = {
+        '+': PatternFill('solid', fgColor='E2F0D9'),
+        '*': PatternFill('solid', fgColor='D9EAD3'),
+        '-': PatternFill('solid', fgColor='F4CCCC'),
+        'X': PatternFill('solid', fgColor='FFF2CC'),
+        'E': PatternFill('solid', fgColor='FCE4D6'),
+        'F': PatternFill('solid', fgColor='E7E6E6'),
+        'V': PatternFill('solid', fgColor='DDEBF7'),
+        'L': PatternFill('solid', fgColor='E4DFEC'),
+        'S': PatternFill('solid', fgColor='F4CCCC'),
+        'D': PatternFill('solid', fgColor='D9EAD3'),
+    }
+    for cell in sheet[1]:
+        cell.font = Font(color='FFFFFF', bold=True)
+        cell.fill = header_fill
+        cell.border = border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    for cell in sheet[2]:
+        cell.font = Font(bold=True, size=9)
+        cell.fill = weekday_fill
+        cell.border = border
+        cell.alignment = Alignment(horizontal='center', vertical='center', text_rotation=90)
+
+    for row in rows:
+        sheet.append([
+            row['month'], row['year'], row['ministry_code'], row['employee_no'], row['employee_name'],
+            *row['symbols'], row['notes'],
+        ])
+    for row in sheet.iter_rows(min_row=3, max_row=sheet.max_row):
+        for index, cell in enumerate(row, start=1):
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=index in {5, len(row)})
+            if 6 <= index < len(row):
+                cell.font = Font(bold=True)
+                cell.fill = symbol_fills.get(str(cell.value or ''), PatternFill(fill_type=None))
+
+    widths = {1: 8, 2: 8, 3: 14, 4: 14, 5: 28, len(headers): 44}
+    for column_index in range(6, 6 + end.day):
+        widths[column_index] = 5
+    for column_index, width in widths.items():
+        sheet.column_dimensions[get_column_letter(column_index)].width = width
+    sheet.row_dimensions[1].height = 25
+    sheet.row_dimensions[2].height = 68
+    sheet.auto_filter.ref = f'A1:{get_column_letter(len(headers))}{max(sheet.max_row, 2)}'
+
+    key_sheet = workbook.create_sheet('الرموز')
+    key_sheet.sheet_view.rightToLeft = True
+    key_sheet.append(['الرمز', 'التعريف'])
+    for symbol, label in _DIWAN_OFFICIAL_SYMBOLS:
+        key_sheet.append([symbol, label])
+    for row in key_sheet.iter_rows():
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(horizontal='center' if cell.column == 1 else 'right', vertical='center')
+    for cell in key_sheet[1]:
+        cell.font = Font(color='FFFFFF', bold=True)
+        cell.fill = header_fill
+    key_sheet.column_dimensions['A'].width = 12
+    key_sheet.column_dimensions['B'].width = 42
+
+    output = BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return output
+
+
 @portal_bp.route('/hr/reports/attendance/diwan', methods=['GET'])
 @login_required
 @_perm(HR_REPORTS_VIEW)
@@ -8913,7 +9282,11 @@ def hr_report_diwan():
             end = date(year, month + 1, 1) - timedelta(days=1)
     except Exception:
         start = date(datetime.utcnow().year, datetime.utcnow().month, 1)
-        end = start
+        if start.month == 12:
+            end = date(start.year + 1, 1, 1) - timedelta(days=1)
+        else:
+            end = date(start.year, start.month + 1, 1) - timedelta(days=1)
+        year, month = start.year, start.month
 
     # Digits + date formatting helpers (force western digits 0123456789)
     _ARABIC_INDIC = '٠١٢٣٤٥٦٧٨٩'
@@ -8942,6 +9315,8 @@ def hr_report_diwan():
     else:
         user_ids = _filtered_user_ids(work_location_id=work_location_id, appointment_type_id=appointment_type_id)
     rows_view = []
+    recs = []
+    departure_totals = {}
     if user_ids:
         q = AttendanceDailySummary.query.filter(AttendanceDailySummary.user_id.in_(user_ids))            .filter(AttendanceDailySummary.day >= start.strftime('%Y-%m-%d'))            .filter(AttendanceDailySummary.day <= end.strftime('%Y-%m-%d'))
 
@@ -8985,7 +9360,36 @@ def hr_report_diwan():
             })
         rows_view.sort(key=lambda x: (x.get('name') or ''), reverse=False)
 
-    if (request.args.get('export') or '').lower() == 'xlsx':
+    export_format = (request.args.get('export') or '').lower()
+    if export_format == 'official_xlsx':
+        if not current_user.has_perm(HR_REPORTS_EXPORT):
+            abort(403)
+        scope_start = start - timedelta(days=start.weekday())
+        scope_end = end + timedelta(days=6 - end.weekday())
+        official_summaries = []
+        if user_ids:
+            official_summaries = (
+                AttendanceDailySummary.query
+                .filter(AttendanceDailySummary.user_id.in_(user_ids))
+                .filter(AttendanceDailySummary.day >= scope_start.isoformat())
+                .filter(AttendanceDailySummary.day <= scope_end.isoformat())
+                .all()
+            )
+        official_rows = _diwan_official_month_rows(
+            user_ids,
+            start,
+            end,
+            official_summaries,
+            departure_totals,
+        )
+        return send_file(
+            _export_diwan_official_attendance_xlsx(start, end, official_rows),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'official_diwan_attendance_{year}_{month:02d}.xlsx',
+        )
+
+    if export_format == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
         headers = ['الرقم الوظيفي', 'الموظف', 'أيام', 'غياب', 'ساعات عمل', 'ساعات تأخير', 'ساعات خروج مبكر', 'ساعات مغادرات شخصية', 'ساعات مغادرات رسمية', 'ساعات عمل إضافي']
@@ -9827,7 +10231,7 @@ def hr_att_special_log():
 
     q = HRAttendanceSpecialCase.query
 
-    if kind in ('STATUS', 'EXCEPTION'):
+    if kind in ('STATUS', 'EXCEPTION', 'MANUAL_ATTENDANCE'):
         q = q.filter(HRAttendanceSpecialCase.kind == kind)
 
     # date overlap filtering (string compare works for YYYY-MM-DD)
@@ -9864,6 +10268,112 @@ def hr_att_special_log():
         exception_filter=exception_filter,
         users=_list_hr_users(),
         can_manage=_hr_can_manage_attendance(),
+    )
+
+
+@portal_bp.route('/hr/attendance/manual', methods=['GET', 'POST'])
+@login_required
+@_perm_any(HR_ATT_READ, HR_REQUESTS_VIEW_ALL, HR_READ)
+def hr_attendance_manual_edit():
+    """Create or update an HR correction without altering imported clock rows."""
+    if not _hr_can_manage_attendance():
+        abort(403)
+
+    if request.method == 'POST':
+        uid_raw = (request.form.get('user_id') or '').strip()
+        day = (request.form.get('day') or '').strip()
+        day_to = (request.form.get('day_to') or '').strip() or day
+        start_time = _parse_hhmm(request.form.get('start_time') or '')
+        end_time = _parse_hhmm(request.form.get('end_time') or '')
+        note = (request.form.get('note') or '').strip()
+        override_id = (request.form.get('override_id') or '').strip()
+
+        try:
+            user_id = int(uid_raw)
+        except (TypeError, ValueError):
+            flash('اختر موظفاً بشكل صحيح.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit'))
+
+        if not User.query.get(user_id):
+            flash('الموظف المختار غير موجود.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit'))
+        start_day = _parse_yyyy_mm_dd(day)
+        end_day = _parse_yyyy_mm_dd(day_to)
+        if not start_day or not end_day or end_day < start_day:
+            flash('تاريخ الدوام غير صحيح.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id))
+        if (end_day - start_day).days > 366:
+            flash('لا يمكن أن تتجاوز فترة التعديل اليدوي سنة واحدة.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day))
+        if not start_time and not end_time:
+            flash('أدخل وقت الحضور أو وقت الانصراف على الأقل.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day))
+        if start_time and end_time and _parse_hhmm_minutes(start_time) > _parse_hhmm_minutes(end_time):
+            flash('وقت الانصراف يجب أن يكون بعد وقت الحضور.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day))
+        if not note:
+            flash('أدخل سبب التعديل اليدوي لحفظ أثر المراجعة.', 'danger')
+            return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day))
+
+        row = None
+        if override_id.isdigit():
+            row = HRAttendanceSpecialCase.query.get(int(override_id))
+            if not row or row.kind != 'MANUAL_ATTENDANCE':
+                abort(404)
+        if not row:
+            row = HRAttendanceSpecialCase(
+                user_id=user_id,
+                day=day,
+                day_to=day_to,
+                target_kind='USER',
+                kind='MANUAL_ATTENDANCE',
+                created_by_id=getattr(current_user, 'id', None),
+            )
+            db.session.add(row)
+
+        row.user_id = user_id
+        row.day = day
+        row.day_to = day_to
+        row.start_time = start_time
+        row.end_time = end_time
+        row.note = note
+        row.applied = True
+        db.session.flush()
+        affected_keys = set()
+        current_day = start_day
+        while current_day <= end_day:
+            affected_keys.add((user_id, current_day.isoformat()))
+            current_day += timedelta(days=1)
+        _attendance_recompute_summaries_for_keys(affected_keys)
+        _portal_audit(
+            'HR_ATTENDANCE_MANUAL_OVERRIDE',
+            f'manual attendance override user_id={user_id} days={day}..{day_to} start={start_time or ""} end={end_time or ""}',
+            target_type='ATT_DAILY',
+            target_id=row.id,
+        )
+        db.session.commit()
+
+        flash('تم حفظ تعديل الدوام اليدوي وإعادة احتساب الفترة.', 'success')
+        return redirect(url_for('portal.hr_attendance_daily', day_from=day, day_to=day_to, user_id=user_id))
+
+    selected_user_id = (request.args.get('user_id') or '').strip()
+    selected_day = (request.args.get('day') or '').strip()
+    if not _parse_yyyy_mm_dd(selected_day):
+        selected_day = _as_yyyy_mm_dd(date.today())
+    user_id = int(selected_user_id) if selected_user_id.isdigit() else None
+    override = _manual_attendance_override(user_id, selected_day) if user_id else None
+    if override:
+        selected_day = override.day
+        selected_day_to = override.day_to or override.day
+    else:
+        selected_day_to = selected_day
+    return render_template(
+        'portal/hr/attendance_manual_edit.html',
+        users=_list_hr_users(),
+        user_id=user_id,
+        day=selected_day,
+        day_to=selected_day_to,
+        override=override,
     )
 
 
@@ -10012,8 +10522,26 @@ def hr_att_special_delete(row_id: int):
 
     row = HRAttendanceSpecialCase.query.get_or_404(int(row_id))
     kind = (row.kind or '').strip().upper()
+    affected_keys = set()
+    if kind == 'MANUAL_ATTENDANCE':
+        start_day = _parse_yyyy_mm_dd(row.day)
+        end_day = _parse_yyyy_mm_dd(row.day_to or row.day)
+        if start_day and end_day:
+            current_day = start_day
+            while current_day <= end_day:
+                affected_keys.add((row.user_id, current_day.isoformat()))
+                current_day += timedelta(days=1)
 
     db.session.delete(row)
+    db.session.flush()
+    if affected_keys:
+        _attendance_recompute_summaries_for_keys(affected_keys)
+        _portal_audit(
+            'HR_ATTENDANCE_MANUAL_OVERRIDE_DELETE',
+            f'deleted manual attendance override row_id={row_id}',
+            target_type='ATT_DAILY',
+            target_id=row_id,
+        )
     db.session.commit()
 
     flash('تم حذف السجل.', 'success')
@@ -11109,13 +11637,13 @@ def hr_me_home():
     permissions_total = permissions_pending = 0
     if can_hr:
         try:
-            leaves_total = HrLeaveRequest.query.filter_by(user_id=uid).count()
-            leaves_pending = HrLeaveRequest.query.filter_by(user_id=uid, status="PENDING").count()
+            leaves_total = HRLeaveRequest.query.filter_by(user_id=uid).count()
+            leaves_pending = HRLeaveRequest.query.filter_by(user_id=uid, status="SUBMITTED").count()
         except Exception:
             pass
         try:
-            permissions_total = HrPermissionRequest.query.filter_by(user_id=uid).count()
-            permissions_pending = HrPermissionRequest.query.filter_by(user_id=uid, status="PENDING").count()
+            permissions_total = HRPermissionRequest.query.filter_by(user_id=uid).count()
+            permissions_pending = HRPermissionRequest.query.filter_by(user_id=uid, status="SUBMITTED").count()
         except Exception:
             pass
 
@@ -11203,6 +11731,69 @@ def hr_me_home():
     )
 
 
+def _can_access_own_hr_requests() -> bool:
+    """Employees may always follow their own leave and departure requests."""
+    try:
+        return bool(
+            current_user.has_perm(HR_READ)
+            or current_user.has_perm(HR_REQUESTS_READ)
+            or current_user.has_perm(HR_REQUESTS_CREATE)
+        )
+    except Exception:
+        return False
+
+
+@portal_bp.route("/hr/me/pending-requests")
+@login_required
+@_perm(PORTAL_READ)
+def hr_my_pending_requests():
+    """One destination for the pending-request indicator on the portal home page."""
+    if not _can_access_own_hr_requests():
+        abort(403)
+
+    pending = []
+    leaves = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id == current_user.id, HRLeaveRequest.status == 'SUBMITTED')
+        .order_by(HRLeaveRequest.created_at.desc())
+        .all()
+    )
+    leave_progress = request_progress_map(KIND_LEAVE, leaves)
+    for leave in leaves:
+        progress = leave_progress.get(leave.id, {})
+        pending.append({
+            'kind': 'إجازة',
+            'icon': 'bi-calendar2-check',
+            'title': leave.leave_type.name_ar if leave.leave_type else 'إجازة',
+            'date_label': f'{leave.start_date} إلى {leave.end_date}',
+            'status_label': progress.get('label', 'قيد الاعتماد'),
+            'status_badge': progress.get('badge', 'warning'),
+            'created_at': leave.created_at,
+            'url': url_for('portal.hr_approval_leave', req_id=leave.id),
+        })
+    permissions = (
+        HRPermissionRequest.query
+        .filter(HRPermissionRequest.user_id == current_user.id, HRPermissionRequest.status == 'SUBMITTED')
+        .order_by(HRPermissionRequest.created_at.desc())
+        .all()
+    )
+    permission_progress = request_progress_map(KIND_PERMISSION, permissions)
+    for permission in permissions:
+        progress = permission_progress.get(permission.id, {})
+        pending.append({
+            'kind': 'مغادرة',
+            'icon': 'bi-door-open',
+            'title': permission.permission_type.name_ar if permission.permission_type else 'مغادرة',
+            'date_label': ' — '.join(part for part in (permission.day, permission.from_time, permission.to_time) if part),
+            'status_label': progress.get('label', 'قيد الاعتماد'),
+            'status_badge': progress.get('badge', 'warning'),
+            'created_at': permission.created_at,
+            'url': url_for('portal.hr_approval_permission', req_id=permission.id),
+        })
+    pending.sort(key=lambda item: item.get('created_at') or datetime.min, reverse=True)
+    return render_template('portal/hr/my_pending_requests.html', pending=pending)
+
+
 @portal_bp.route("/hr/me/attendance")
 @login_required
 @_perm(PORTAL_READ)
@@ -11239,10 +11830,7 @@ def hr_my_attendance():
 @_perm(PORTAL_READ)
 def hr_my_leaves():
     """Employee leaves (types + requests)."""
-    try:
-        if not current_user.has_perm(HR_READ):
-            abort(403)
-    except Exception:
+    if not _can_access_own_hr_requests():
         abort(403)
 
     types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
@@ -11251,8 +11839,8 @@ def hr_my_leaves():
     can_requests = False
     can_create = False
     try:
-        can_requests = current_user.has_perm(HR_REQUESTS_READ)
         can_create = current_user.has_perm(HR_REQUESTS_CREATE)
+        can_requests = bool(current_user.has_perm(HR_REQUESTS_READ) or can_create)
     except Exception:
         pass
 
@@ -11270,6 +11858,7 @@ def hr_my_leaves():
         KIND_LEAVE,
         [row.id for row in reqs],
     )
+    leave_progress = request_progress_map(KIND_LEAVE, reqs)
 
 
     # Attachments per request
@@ -11294,6 +11883,7 @@ def hr_my_leaves():
         today_str=today_str,
         atts_map=atts_map,
         leave_approver_names=leave_approver_names,
+        request_progress=leave_progress,
     )
 
 
@@ -11302,10 +11892,7 @@ def hr_my_leaves():
 @_perm(PORTAL_READ)
 def hr_my_permissions():
     """Employee departures/permissions (types + requests)."""
-    try:
-        if not current_user.has_perm(HR_READ):
-            abort(403)
-    except Exception:
+    if not _can_access_own_hr_requests():
         abort(403)
 
     # Admin/Manager log view (same menu item "السجل")
@@ -11431,6 +12018,7 @@ def hr_my_permissions():
             created_by_id=created_by_id,
             q=q_text,
             can_view_all=can_view_all,
+            request_progress=request_progress_map(KIND_PERMISSION, reqs),
         )
 
     types = HRPermissionType.query.filter_by(is_active=True).order_by(HRPermissionType.name_ar.asc()).all()
@@ -11438,8 +12026,8 @@ def hr_my_permissions():
     can_requests = False
     can_create = False
     try:
-        can_requests = current_user.has_perm(HR_REQUESTS_READ)
         can_create = current_user.has_perm(HR_REQUESTS_CREATE)
+        can_requests = bool(current_user.has_perm(HR_REQUESTS_READ) or can_create)
     except Exception:
         pass
 
@@ -11457,6 +12045,7 @@ def hr_my_permissions():
         KIND_PERMISSION,
         [row.id for row in reqs],
     )
+    permission_progress = request_progress_map(KIND_PERMISSION, reqs)
 
     return render_template(
         "portal/hr/my_permissions.html",
@@ -11465,6 +12054,7 @@ def hr_my_permissions():
         can_create=can_create,
         can_requests=can_requests,
         permission_approver_names=permission_approver_names,
+        request_progress=permission_progress,
     )
 
 
@@ -12558,24 +13148,23 @@ def hr_employees_out():
 @login_required
 @_perm(PORTAL_READ)
 def hr_approval_leave(req_id: int):
-    try:
-        if not current_user.has_perm(HR_READ):
-            abort(403)
-    except Exception:
-        abort(403)
-
     r = HRLeaveRequest.query.get_or_404(req_id)
-    if (r.status or "").upper() == "SUBMITTED" and not hr_request_approval_steps(KIND_LEAVE, r.id):
-        start_request_flow(KIND_LEAVE, r)
-        db.session.commit()
-
+    is_requester = r.user_id == getattr(current_user, "id", None)
+    can_hr_read = False
     can_view_all = False
     try:
+        can_hr_read = bool(current_user.has_perm(HR_READ))
         can_view_all = bool(current_user.has_perm(HR_REQUESTS_VIEW_ALL))
     except Exception:
         pass
-    if not (can_view_all or can_view_hr_request(current_user, KIND_LEAVE, r.id)):
+    if not (is_requester or can_hr_read):
         abort(403)
+    if not (is_requester or can_view_all or can_view_hr_request(current_user, KIND_LEAVE, r.id)):
+        abort(403)
+
+    if (r.status or "").upper() == "SUBMITTED" and not hr_request_approval_steps(KIND_LEAVE, r.id):
+        start_request_flow(KIND_LEAVE, r)
+        db.session.commit()
 
     step = current_hr_request_step(KIND_LEAVE, r.id)
     can_act = can_act_on_hr_request_step(current_user, step)
@@ -12632,6 +13221,8 @@ def hr_approval_leave(req_id: int):
         approval_candidate_names=approval_candidate_names_map(approval_rows),
         current_step=step,
         can_act=can_act,
+        is_requester=is_requester,
+        request_progress=request_progress(KIND_LEAVE, r, active_step=step),
         exceptional=exceptional,
         requires_hr=exceptional,
         note_required=note_required,
@@ -12682,24 +13273,23 @@ def hr_leave_cancel_by_hr(req_id: int):
 @login_required
 @_perm(PORTAL_READ)
 def hr_approval_permission(req_id: int):
-    try:
-        if not current_user.has_perm(HR_READ):
-            abort(403)
-    except Exception:
-        abort(403)
-
     r = HRPermissionRequest.query.get_or_404(req_id)
-    if (r.status or "").upper() == "SUBMITTED" and not hr_request_approval_steps(KIND_PERMISSION, r.id):
-        start_request_flow(KIND_PERMISSION, r)
-        db.session.commit()
-
+    is_requester = r.user_id == getattr(current_user, "id", None)
+    can_hr_read = False
     can_view_all = False
     try:
+        can_hr_read = bool(current_user.has_perm(HR_READ))
         can_view_all = bool(current_user.has_perm(HR_REQUESTS_VIEW_ALL))
     except Exception:
         pass
-    if not (can_view_all or can_view_hr_request(current_user, KIND_PERMISSION, r.id)):
+    if not (is_requester or can_hr_read):
         abort(403)
+    if not (is_requester or can_view_all or can_view_hr_request(current_user, KIND_PERMISSION, r.id)):
+        abort(403)
+
+    if (r.status or "").upper() == "SUBMITTED" and not hr_request_approval_steps(KIND_PERMISSION, r.id):
+        start_request_flow(KIND_PERMISSION, r)
+        db.session.commit()
 
     step = current_hr_request_step(KIND_PERMISSION, r.id)
     can_act = can_act_on_hr_request_step(current_user, step)
@@ -12729,6 +13319,8 @@ def hr_approval_permission(req_id: int):
         approval_candidate_names=approval_candidate_names_map(approval_rows),
         current_step=step,
         can_act=can_act,
+        is_requester=is_requester,
+        request_progress=request_progress(KIND_PERMISSION, r, active_step=step),
         stage_label=hr_stage_label,
     )
 
@@ -16184,6 +16776,72 @@ def hr_attendance_events():
         day_key = event.event_dt.date().isoformat() if event.event_dt else ''
         event.daily_employee_number = employee_numbers.get((event.user_id, day_key))
 
+    # Merge the approved Masar requests with C/D/E/F clock movements for the
+    # report display.  Unlike the daily total, this preserves both submitted
+    # and clock times so they can be read in one table cell.
+    raw_event_days = [event.event_dt.date().isoformat() for event in events if event.event_dt]
+    report_start = date_from or (min(raw_event_days) if raw_event_days else '') or date_to
+    report_end = date_to or (max(raw_event_days) if raw_event_days else '') or date_from
+    report_user_ids = {int(event.user_id) for event in events if event.user_id}
+    if user_id.isdigit():
+        report_user_ids.add(int(user_id))
+
+    if report_start and report_end and report_start <= report_end:
+        # Include employees who have a Masar departure but no clock movement at
+        # all on that day. A text/device/batch filter applies to raw clock data,
+        # so it intentionally does not inject unrelated system-only rows.
+        if not user_id.isdigit() and not q and not device_id and not batch_id:
+            system_users_query = (
+                db.session.query(HRPermissionRequest.user_id)
+                .filter(HRPermissionRequest.status == 'APPROVED')
+                .filter(HRPermissionRequest.day >= report_start)
+                .filter(HRPermissionRequest.day <= report_end)
+            )
+            if work_location_lookup_id.isdigit():
+                system_users_query = (
+                    system_users_query
+                    .join(User, User.id == HRPermissionRequest.user_id)
+                    .join(EmployeeFile, EmployeeFile.user_id == User.id)
+                    .filter(EmployeeFile.work_location_lookup_id == int(work_location_lookup_id))
+                )
+            report_user_ids.update(
+                int(uid)
+                for (uid,) in system_users_query.distinct().limit(500).all()
+                if uid
+            )
+
+        departure_records = _reconciled_departure_records(
+            report_user_ids,
+            report_start,
+            report_end,
+        )
+        kind_for_event_type = {
+            'C': 'PRIVATE', 'D': 'PRIVATE',
+            'E': 'OFFICIAL', 'F': 'OFFICIAL',
+        }
+        if event_type:
+            expected_kind = kind_for_event_type.get(event_type)
+            departure_records = [
+                record for record in departure_records
+                if expected_kind and record.get('kind') == expected_kind
+            ]
+        events = _attach_departure_sources_to_attendance_events(events, departure_records)
+
+    # Synthetic system-only rows need the same daily employee sequence used by
+    # clock events.  They do not increase the attendance count by themselves.
+    for event in events:
+        event_dt = getattr(event, 'event_dt', None)
+        if not event_dt or not getattr(event, 'user_id', None):
+            continue
+        day_key = event_dt.date().isoformat()
+        if getattr(event, 'daily_employee_number', None) is None:
+            day_users = users_by_day.setdefault(day_key, {})
+            if event.user_id not in day_users:
+                day_users[event.user_id] = len(day_users) + 1
+            event.daily_employee_number = day_users[event.user_id]
+        if getattr(event, 'departure_display_lines', None):
+            departure_users_by_day.setdefault(day_key, set()).add(event.user_id)
+
     events = _sort_attendance_events_for_display(events)
 
     attendance_day_stats = [
@@ -16223,6 +16881,7 @@ def hr_attendance_events():
                 "التاريخ والوقت",
                 "الحركة",
                 "نوع المغادرة",
+                "مصدر وأوقات المغادرة",
             ]
             rows = []
             for e in events:
@@ -16232,8 +16891,12 @@ def hr_attendance_events():
                     (u.full_name or u.name or u.email) if u else '',
                     (u.email if u else ""),
                     str(e.event_dt),
-                    _attendance_event_label(e),
+                    getattr(e, 'display_event_label', None) or _attendance_event_label(e),
                     e.departure_type_label or '',
+                    ' | '.join(
+                        f"{line['source_label']}: {line['time_range']}"
+                        for line in getattr(e, 'departure_display_lines', [])
+                    ),
                 ])
             xbytes = make_xlsx_bytes("attendance_events", headers, rows)
             return send_file(
@@ -18165,6 +18828,38 @@ def _effective_schedule_for_user(user_id: int, day_str: str) -> WorkSchedule | N
     return None
 
 
+def _effective_work_policy_for_user(user_id: int, day_str: str) -> WorkPolicy | None:
+    """Resolve the active user/role/department policy for one day."""
+    try:
+        _ensure_work_policy_tables()
+        user = User.query.get(user_id)
+        role = (getattr(user, 'role', None) or '').strip() or None
+        department_id = _portal_department_id_for_user(user_id)
+        conditions = [and_(WorkAssignment.target_type == 'USER', WorkAssignment.target_user_id == user_id)]
+        if role:
+            conditions.append(and_(WorkAssignment.target_type == 'ROLE', WorkAssignment.target_role == role))
+        if department_id:
+            conditions.append(and_(WorkAssignment.target_type == 'DEPARTMENT', WorkAssignment.target_department_id == department_id))
+
+        priority = {'DEPARTMENT': 1, 'ROLE': 2, 'USER': 3}
+        candidates = (
+            WorkAssignment.query
+            .filter(WorkAssignment.is_active.is_(True))
+            .filter(or_(*conditions))
+            .filter(or_(WorkAssignment.start_date.is_(None), WorkAssignment.start_date <= day_str))
+            .filter(or_(WorkAssignment.end_date.is_(None), WorkAssignment.end_date >= day_str))
+            .all()
+        )
+        best = max(
+            candidates,
+            key=lambda item: (priority.get((item.target_type or '').upper(), 0), item.start_date or '', item.id),
+            default=None,
+        )
+        return best.policy if best and best.policy and best.policy.is_active else None
+    except Exception:
+        return None
+
+
 @portal_bp.route("/hr/masterdata")
 @login_required
 @_perm(HR_MASTERDATA_MANAGE)
@@ -19330,13 +20025,19 @@ def _departure_records_match(clock_record: dict, system_record: dict) -> bool:
 def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> list[dict]:
     """Merge approved system requests with clock C/D/E/F movements.
 
-    A matched record uses the actual clock duration. An unmatched complete
-    clock pair is counted by itself, as is an approved system request without
-    a clock record. This is the fallback policy requested for the two sources
-    and prevents double counting when both are present.
+    A matched record spans the earliest departure and latest return from both
+    sources. An unmatched complete clock pair is counted by itself, as is an
+    approved system request without a clock record. This prevents double
+    counting while retaining the most conservative complete interval.
     """
     clock_records = _clock_departure_records(user_ids, start_day, end_day)
     system_records = _system_departure_records(user_ids, start_day, end_day)
+    for record in clock_records:
+        record['clock_from_dt'] = record.get('from_dt')
+        record['clock_to_dt'] = record.get('to_dt')
+    for record in system_records:
+        record['system_from_dt'] = record.get('from_dt')
+        record['system_to_dt'] = record.get('to_dt')
     clock_by_key = {}
     for record in clock_records:
         clock_by_key.setdefault((record['user_id'], record['day'], record['kind']), []).append(record)
@@ -19352,13 +20053,20 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> lis
 
         used_clock_ids.add(id(match))
         combined = dict(match)
+        combined_from = min(match['from_dt'], system_record['from_dt'])
+        combined_to = max(match['to_dt'], system_record['to_dt'])
         combined.update({
             'source': 'CLOCK_SYSTEM',
             'permission_id': system_record.get('permission_id'),
             'permission_type_id': system_record.get('permission_type_id'),
             'permission_name': system_record.get('permission_name') or '',
-            # Clock is the observed record when both sources agree.
-            'minutes': match.get('minutes', 0),
+            'system_from_dt': system_record.get('from_dt'),
+            'system_to_dt': system_record.get('to_dt'),
+            # Count a single interval: earliest recorded departure to latest
+            # recorded return, regardless of which source supplied each end.
+            'from_dt': combined_from,
+            'to_dt': combined_to,
+            'minutes': max(0, int((combined_to - combined_from).total_seconds() // 60)),
         })
         merged.append(combined)
 
@@ -19372,6 +20080,118 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> lis
         record['counted_minutes'] = int(record.get('minutes') or 0) if record.get('kind') == 'PRIVATE' and record.get('countable') else 0
 
     return sorted(merged, key=lambda item: (item['day'], item['user_id'], item.get('from_dt') or item.get('to_dt') or datetime.min))
+
+
+def _departure_time_range_label(from_dt: datetime | None, to_dt: datetime | None) -> str:
+    """Format a departure interval without hiding an incomplete clock pair."""
+    start = from_dt.strftime('%H:%M') if from_dt else ''
+    end = to_dt.strftime('%H:%M') if to_dt else ''
+    if start and end:
+        return f'من {start} إلى {end}'
+    if start:
+        return f'من {start} — لم تُسجّل العودة'
+    if end:
+        return f'عودة عند {end} — لم تُسجّل المغادرة'
+    return 'الوقت غير متاح'
+
+
+def _departure_display_lines(records: list[dict] | tuple[dict, ...]) -> list[dict[str, str]]:
+    """Build source-labelled clock and Masar times for one report cell."""
+    lines: list[dict[str, str]] = []
+    for record in records or []:
+        kind_label = record.get('label') or _departure_record_label(record.get('kind') or '')
+        source = record.get('source')
+        if source == 'CLOCK_SYSTEM':
+            lines.extend((
+                {
+                    'kind_label': kind_label,
+                    'source_label': 'ساعة الدوام',
+                    'time_range': _departure_time_range_label(
+                        record.get('clock_from_dt'), record.get('clock_to_dt'),
+                    ),
+                },
+                {
+                    'kind_label': kind_label,
+                    'source_label': 'نظام مسار',
+                    'time_range': _departure_time_range_label(
+                        record.get('system_from_dt'), record.get('system_to_dt'),
+                    ),
+                },
+            ))
+            continue
+
+        is_clock = source == 'CLOCK'
+        lines.append({
+            'kind_label': kind_label,
+            'source_label': 'ساعة الدوام' if is_clock else 'نظام مسار',
+            'time_range': _departure_time_range_label(
+                record.get('clock_from_dt') if is_clock else record.get('system_from_dt', record.get('from_dt')),
+                record.get('clock_to_dt') if is_clock else record.get('system_to_dt', record.get('to_dt')),
+            ),
+        })
+    return lines
+
+
+def _attach_departure_sources_to_attendance_events(events, departure_records: list[dict]) -> list:
+    """Attach all departure source times to one raw-event row per movement.
+
+    A system-only approved departure has no AttendanceEvent.  It receives a
+    synthetic display row so it is visible in the attendance-events report.
+    """
+    display_events = list(events or [])
+    events_by_key: dict[tuple[int, str], list] = {}
+    for event in display_events:
+        event_dt = getattr(event, 'event_dt', None)
+        if event_dt and getattr(event, 'user_id', None):
+            events_by_key.setdefault((int(event.user_id), event_dt.date().isoformat()), []).append(event)
+
+    records_by_key: dict[tuple[int, str, str], list[dict]] = {}
+    for record in departure_records or []:
+        user_id = record.get('user_id')
+        day = record.get('day')
+        kind = record.get('kind')
+        if user_id and day and kind:
+            records_by_key.setdefault((int(user_id), str(day), str(kind)), []).append(record)
+
+    for (user_id, day, kind), records in records_by_key.items():
+        candidates = sorted(
+            events_by_key.get((user_id, day), []),
+            key=lambda item: getattr(item, 'event_dt', None) or datetime.min,
+        )
+        start_code = 'C' if kind == 'PRIVATE' else 'E'
+        anchor = next(
+            (event for event in candidates if _attendance_event_code(event) == start_code),
+            None,
+        )
+        if anchor is None and candidates:
+            anchor = candidates[0]
+        if anchor is None:
+            timestamp = next(
+                (
+                    record.get('system_from_dt') or record.get('clock_from_dt')
+                    or record.get('from_dt') or record.get('system_to_dt')
+                    or record.get('clock_to_dt') or record.get('to_dt')
+                    for record in records
+                ),
+                None,
+            )
+            anchor = SimpleNamespace(
+                id=None,
+                user_id=user_id,
+                event_dt=timestamp,
+                event_type='SYSTEM_DEPARTURE',
+                raw_line=None,
+                display_event_code='SYSTEM_DEPARTURE',
+                display_event_label='مغادرة من نظام مسار',
+                departure_type_label='رسمية' if kind == 'OFFICIAL' else 'شخصية',
+                daily_employee_number=None,
+            )
+            display_events.append(anchor)
+            events_by_key.setdefault((user_id, day), []).append(anchor)
+
+        anchor.departure_display_lines = _departure_display_lines(records)
+
+    return display_events
 
 
 def _departure_totals_by_key(records) -> dict:
@@ -20958,6 +21778,22 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
     return None
 
 
+def _manual_attendance_override(user_id: int | None, day_str: str):
+    """Return the latest active HR time correction for one employee/day."""
+    if not user_id or not _parse_yyyy_mm_dd(day_str):
+        return None
+    return (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
+        .filter(HRAttendanceSpecialCase.kind == 'MANUAL_ATTENDANCE')
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.day <= day_str)
+        .filter(or_(HRAttendanceSpecialCase.day_to.is_(None), HRAttendanceSpecialCase.day_to >= day_str))
+        .order_by(HRAttendanceSpecialCase.created_at.desc(), HRAttendanceSpecialCase.id.desc())
+        .first()
+    )
+
+
 def _summary_compute_one(user_id: int, day_str: str):
     # Collect day events
     dt_from = datetime.fromisoformat(day_str + 'T00:00:00')
@@ -20975,13 +21811,20 @@ def _summary_compute_one(user_id: int, day_str: str):
     # selected as the day's final checkout.
     normal_events = [e for e in evs if _attendance_event_code(e) not in {'C', 'D', 'E', 'F'}]
     all_times = [e.event_dt for e in normal_events if e.event_dt]
-    ins = [e.event_dt for e in normal_events if e.event_dt and _attendance_event_code(e) in {'I', 'IN', 'CHECKIN'}]
-    outs = [e.event_dt for e in normal_events if e.event_dt and _attendance_event_code(e) in {'O', 'OUT', 'CHECKOUT'}]
+    ins = [e.event_dt for e in normal_events if e.event_dt and _attendance_event_code(e) in {'A', 'I', 'IN', 'CHECKIN'}]
+    outs = [e.event_dt for e in normal_events if e.event_dt and _attendance_event_code(e) in {'B', 'O', 'OUT', 'CHECKOUT'}]
 
     first_in = ins[0] if ins else (all_times[0] if all_times else None)
     last_out = outs[-1] if outs else None
     if not last_out and len(all_times) > 1:
         last_out = all_times[-1]
+
+    manual_override = _manual_attendance_override(user_id, day_str)
+    if manual_override:
+        if manual_override.start_time:
+            first_in = datetime.fromisoformat(f'{day_str}T{manual_override.start_time}:00')
+        if manual_override.end_time:
+            last_out = datetime.fromisoformat(f'{day_str}T{manual_override.end_time}:00')
 
     schedule = _effective_schedule_for_user(user_id, day_str)
     schedule_id = schedule.id if schedule else None
@@ -21120,7 +21963,8 @@ def hr_attendance_daily():
     users = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
 
     return render_template('portal/hr/attendance_daily.html', rows=rows, users=users,
-                           day_from=day_from, day_to=day_to, user_id=user_id)
+                           day_from=day_from, day_to=day_to, user_id=user_id,
+                           can_manage=_hr_can_manage_attendance())
 
 
 @portal_bp.route('/hr/attendance/daily/recompute', methods=['POST'])
