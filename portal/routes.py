@@ -13150,15 +13150,11 @@ def hr_employees_out():
 def hr_approval_leave(req_id: int):
     r = HRLeaveRequest.query.get_or_404(req_id)
     is_requester = r.user_id == getattr(current_user, "id", None)
-    can_hr_read = False
     can_view_all = False
     try:
-        can_hr_read = bool(current_user.has_perm(HR_READ))
         can_view_all = bool(current_user.has_perm(HR_REQUESTS_VIEW_ALL))
     except Exception:
         pass
-    if not (is_requester or can_hr_read):
-        abort(403)
     if not (is_requester or can_view_all or can_view_hr_request(current_user, KIND_LEAVE, r.id)):
         abort(403)
 
@@ -13275,15 +13271,11 @@ def hr_leave_cancel_by_hr(req_id: int):
 def hr_approval_permission(req_id: int):
     r = HRPermissionRequest.query.get_or_404(req_id)
     is_requester = r.user_id == getattr(current_user, "id", None)
-    can_hr_read = False
     can_view_all = False
     try:
-        can_hr_read = bool(current_user.has_perm(HR_READ))
         can_view_all = bool(current_user.has_perm(HR_REQUESTS_VIEW_ALL))
     except Exception:
         pass
-    if not (is_requester or can_hr_read):
-        abort(403)
     if not (is_requester or can_view_all or can_view_hr_request(current_user, KIND_PERMISSION, r.id)):
         abort(403)
 

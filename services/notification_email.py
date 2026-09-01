@@ -11,7 +11,8 @@ from flask import current_app
 from sqlalchemy import func, or_
 
 from extensions import db
-from models import Notification, NotificationEmailDelivery, Role, TroubleTicket, User
+from models import HRLeaveRequest, HRPermissionRequest, Notification, NotificationEmailDelivery, Role, TroubleTicket, User
+from services.hr_request_workflow import KIND_LEAVE, KIND_PERMISSION, can_view_request
 from services.workflow_task_email import (
     FAILED,
     MAX_ATTEMPTS,
@@ -25,6 +26,7 @@ from services.workflow_task_email import (
 
 
 _TROUBLE_TICKET_LINK_RE = re.compile(r"^/portal/trouble-tickets/(\d+)(?:[/?#]|$)")
+_HR_REQUEST_LINK_RE = re.compile(r"^/portal/hr/approvals/(leaves|permissions)/(\d+)(?:[/?#]|$)")
 _TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
 
 
@@ -81,6 +83,22 @@ def _can_receive_ticket_notification_email(user: User, notification: Notificatio
     if int(user.id) == int(ticket.requester_id):
         return True
     return _user_has_ticket_admin_role(user)
+
+
+def _can_receive_hr_request_notification_email(user: User, notification: Notification) -> bool:
+    """Reject queued HR-request emails for users who cannot open the request."""
+    link_match = _HR_REQUEST_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
+    if not link_match:
+        return True
+
+    kind = KIND_LEAVE if link_match.group(1) == "leaves" else KIND_PERMISSION
+    request_id = int(link_match.group(2))
+    row = db.session.get(HRLeaveRequest if kind == KIND_LEAVE else HRPermissionRequest, request_id)
+    if not row:
+        return False
+    if int(user.id) == int(row.user_id):
+        return True
+    return can_view_request(user, kind, request_id)
 
 
 def _email_content(user: User, notification: Notification) -> tuple[str, str, str]:
@@ -143,9 +161,12 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
             delivery.last_error = "Notification or recipient email address is unavailable."
             db.session.commit()
             continue
-        if not _can_receive_ticket_notification_email(user, notification):
+        if not (
+            _can_receive_ticket_notification_email(user, notification)
+            and _can_receive_hr_request_notification_email(user, notification)
+        ):
             delivery.status = FAILED
-            delivery.last_error = "Recipient is not authorized for this support-ticket notification."
+            delivery.last_error = "Recipient is not authorized for this notification."
             delivery.next_attempt_at = None
             db.session.commit()
             continue

@@ -80,6 +80,33 @@ def _request_link(kind: str, request_id: int) -> str:
     return f"/portal/hr/approvals/{endpoint}/{int(request_id)}"
 
 
+def _request_notification_recipient_ids(kind: str, request_id: int) -> set[int]:
+    """Return only users who are entitled to receive a request notification."""
+    kind = (kind or "").upper()
+    row = _request(kind, request_id)
+    if not row:
+        return set()
+
+    recipient_ids = {int(row.user_id)}
+    for step in approval_steps(kind, request_id):
+        recipient_ids.update(_step_approver_ids(step))
+        for user_id in (
+            getattr(step, "decided_by_id", None),
+            getattr(step, "escalated_from_user_id", None),
+        ):
+            if user_id:
+                recipient_ids.add(int(user_id))
+    recipient_ids.update(
+        int(observer.user_id)
+        for observer in HRRequestObserver.query.filter_by(
+            request_kind=kind,
+            request_id=int(request_id),
+        ).all()
+        if observer.user_id
+    )
+    return recipient_ids
+
+
 def _notify(user_ids: Iterable[int], message: str, *, kind: str, request_id: int, ntype: str = "HR_APPROVAL") -> None:
     now = datetime.utcnow()
     try:
@@ -90,8 +117,26 @@ def _notify(user_ids: Iterable[int], message: str, *, kind: str, request_id: int
     except Exception:
         link = _request_link(kind, request_id)
     recipient_ids = {int(value) for value in user_ids if value}
-    if (kind or "").upper() == KIND_PERMISSION:
-        recipient_ids.intersection_update(_permission_notification_recipient_ids(request_id))
+    if ntype == "HR_APPROVAL_ROUTING_ERROR":
+        # A routing alert is intentionally sent to HR/secretariat users. Record
+        # them as observers first so its link is usable and the email remains
+        # within the same authorization boundary as every other request alert.
+        for user_id in recipient_ids:
+            observer = HRRequestObserver.query.filter_by(
+                request_kind=(kind or "").upper(),
+                request_id=int(request_id),
+                user_id=user_id,
+            ).first()
+            if not observer:
+                db.session.add(HRRequestObserver(
+                    request_kind=(kind or "").upper(),
+                    request_id=int(request_id),
+                    user_id=user_id,
+                    observer_scope="ROUTING_ERROR",
+                    notified_at=now,
+                    created_at=now,
+                ))
+    recipient_ids.intersection_update(_request_notification_recipient_ids(kind, request_id))
     for user_id in sorted(recipient_ids):
         db.session.add(Notification(
             user_id=user_id,
@@ -483,22 +528,6 @@ def hr_notification_user_ids() -> list[int]:
             if employee_file.user_id:
                 recipient_ids.add(int(employee_file.user_id))
     return sorted(recipient_ids)
-
-
-def _permission_notification_recipient_ids(request_id: int) -> set[int]:
-    """Allowed recipients for an employee departure notification only."""
-    row = _request(KIND_PERMISSION, request_id)
-    if not row:
-        return set()
-
-    recipient_ids: set[int] = {int(row.user_id)}
-    for manager in resolve_responsible_managers(int(row.user_id)):
-        recipient_ids.add(int(manager.id))
-        delegation = _active_delegation_for(manager.id)
-        if delegation and delegation.to_user_id:
-            recipient_ids.add(int(delegation.to_user_id))
-    recipient_ids.update(hr_notification_user_ids())
-    return recipient_ids
 
 
 def _stage_due_at(kind: str, stage_code: str, assigned_at: datetime) -> datetime:

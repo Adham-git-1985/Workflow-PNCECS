@@ -36,6 +36,7 @@ from services.hr_request_workflow import (
     can_user_act,
     current_step,
     decide_request,
+    _notify,
     process_pending_approvals,
     start_request_flow,
 )
@@ -601,6 +602,40 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         permission_list = client.get("/portal/hr/me/permissions")
         self.assertEqual(permission_list.status_code, 200)
         self.assertIn(f"/portal/hr/approvals/permissions/{permission.id}", permission_list.get_data(as_text=True))
+
+    def test_unrelated_employee_cannot_view_or_receive_request_updates(self):
+        outsider = User(
+            email="outsider@example.test",
+            name="Outsider",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add(outsider)
+        db.session.flush()
+        db.session.add_all([
+            UserPermission(user_id=outsider.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ")
+        ])
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, outsider.id)
+        self.assertEqual(client.get(f"/portal/hr/approvals/leaves/{row.id}").status_code, 403)
+        self.assertEqual(client.get("/portal/hr/approvals").status_code, 403)
+
+        _notify(
+            [self.manager.id, outsider.id],
+            "تحديث خاص بطلب إجازة.",
+            kind=KIND_LEAVE,
+            request_id=row.id,
+        )
+        db.session.commit()
+        self.assertEqual(
+            {notification.user_id for notification in Notification.query.all()},
+            {self.manager.id},
+        )
 
     def test_general_director_board_scope_contains_directorate_employee(self):
         visible_ids = board_visible_user_ids(self.general_director)

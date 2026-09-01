@@ -4,7 +4,7 @@ from unittest.mock import patch
 from flask import Flask
 
 from extensions import db
-from models import Notification, NotificationEmailDelivery, SystemSetting, TroubleTicket, User
+from models import HRLeaveRequest, HRLeaveType, Notification, NotificationEmailDelivery, SystemSetting, TroubleTicket, User
 from services.notification_email import send_pending_notification_emails
 
 
@@ -126,6 +126,41 @@ class NotificationEmailTests(unittest.TestCase):
         send_email.assert_not_called()
         delivery = NotificationEmailDelivery.query.one()
         self.assertEqual(delivery.status, "FAILED")
+
+    def test_unauthorized_hr_request_notification_never_sends_email(self):
+        requester = User(
+            email="leave-requester@example.test",
+            name="Leave Requester",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(code="ANNUAL", name_ar="Annual", is_active=True)
+        db.session.add_all((requester, leave_type))
+        db.session.flush()
+        leave = HRLeaveRequest(
+            user_id=requester.id,
+            leave_type_id=leave_type.id,
+            start_date="2026-09-01",
+            end_date="2026-09-01",
+            status="SUBMITTED",
+        )
+        db.session.add(leave)
+        db.session.flush()
+        db.session.add(Notification(
+            user_id=self.user.id,
+            message="Private leave request update",
+            type="HR_APPROVAL",
+            source="portal",
+            link_url=f"/portal/hr/approvals/leaves/{leave.id}",
+            is_read=False,
+        ))
+        db.session.commit()
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 0)
+
+        send_email.assert_not_called()
+        self.assertEqual(NotificationEmailDelivery.query.one().status, "FAILED")
 
 
 if __name__ == "__main__":
