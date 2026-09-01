@@ -1032,6 +1032,32 @@ def _ensure_runtime_schema():
                     db.session.rollback()
                 except Exception:
                     pass
+
+            # Grant the sensitive, permanent approved-leave deletion capability
+            # only to the two system administrator roles by default.
+            try:
+                from sqlalchemy import func
+                from models import RolePermission
+
+                perm = "HR_LEAVE_APPROVED_DELETE"
+                changed = 0
+                for role_code in ("ADMIN", "SUPER_ADMIN"):
+                    exists = (
+                        RolePermission.query
+                        .filter(func.lower(RolePermission.role) == role_code.lower())
+                        .filter(RolePermission.permission == perm)
+                        .first()
+                    )
+                    if not exists:
+                        db.session.add(RolePermission(role=role_code, permission=perm))
+                        changed += 1
+                if changed:
+                    db.session.commit()
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
     except Exception:
         # do not block app startup
         try:

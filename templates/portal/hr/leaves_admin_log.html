@@ -97,6 +97,11 @@
             {% if can_manage %}
               <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_leaves_admin_edit', row_id=r.id) }}">تعديل</a>
             {% endif %}
+            {% if can_delete_approved_leave and (r.status or '')|upper == 'APPROVED' %}
+              <form method="post" action="{{ url_for('portal.hr_leave_approved_delete', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('سيتم حذف الإجازة المعتمدة ومرفقاتها نهائياً ولا يمكن استعادتها. هل تريد المتابعة؟');">
+                <button class="btn btn-outline-danger btn-sm" type="submit">حذف نهائي</button>
+              </form>
+            {% endif %}
           </td>
         </tr>
       {% endfor %}

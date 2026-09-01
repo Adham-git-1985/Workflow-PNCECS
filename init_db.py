@@ -92,7 +92,7 @@ def init_database():
         WorkflowRequest, RequestAttachment,
         WorkflowTemplate, WorkflowTemplateStep, WorkflowInstance, WorkflowInstanceStep,
         Organization, Directorate, Unit, Department,
-        Role, RequestType, WorkflowRoutingRule, Committee, CommitteeAssignee
+        Role, RolePermission, RequestType, WorkflowRoutingRule, Committee, CommitteeAssignee
     )
 
     with app.app_context():
@@ -660,6 +660,18 @@ def init_database():
                 r.is_active = bool(active)
 
             db.session.flush()
+
+            # This permission is intentionally limited to the two system
+            # administrator roles, even in freshly initialized databases.
+            for role_code in ("ADMIN", "SUPER_ADMIN"):
+                if not RolePermission.query.filter_by(
+                    role=role_code,
+                    permission="HR_LEAVE_APPROVED_DELETE",
+                ).first():
+                    db.session.add(RolePermission(
+                        role=role_code,
+                        permission="HR_LEAVE_APPROVED_DELETE",
+                    ))
 
             # ---- Request Types ----
             request_types = [

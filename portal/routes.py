@@ -338,6 +338,7 @@ HR_REQUESTS_READ = "HR_REQUESTS_READ"
 HR_REQUESTS_CREATE = "HR_REQUESTS_CREATE"
 HR_REQUESTS_APPROVE = "HR_REQUESTS_APPROVE"
 HR_REQUESTS_VIEW_ALL = "HR_REQUESTS_VIEW_ALL"
+HR_LEAVE_APPROVED_DELETE = "HR_LEAVE_APPROVED_DELETE"
 HR_ABSENCE_BOARD_VIEW = "HR_ABSENCE_BOARD_VIEW"
 
 # HR Self-Service (Light Workflow)
@@ -13285,10 +13286,13 @@ def hr_approval_leave(req_id: int):
     today_str = date.today().strftime("%Y-%m-%d")
     started = bool(r.start_date and r.start_date <= today_str)
     can_hr_cancel = False
+    can_delete_approved_leave = False
     try:
         can_hr_cancel = current_user.has_perm(HR_EMP_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_role("ADMIN")
+        can_delete_approved_leave = current_user.has_perm(HR_LEAVE_APPROVED_DELETE)
     except Exception:
         can_hr_cancel = False
+        can_delete_approved_leave = False
 
     attachments = HRLeaveAttachment.query.filter_by(request_id=r.id).order_by(HRLeaveAttachment.id.desc()).all()
 
@@ -13299,6 +13303,7 @@ def hr_approval_leave(req_id: int):
         today_str=today_str,
         started=started,
         can_hr_cancel=can_hr_cancel,
+        can_delete_approved_leave=can_delete_approved_leave,
         attachments=attachments,
         approval_steps=approval_rows,
         approval_candidate_names=approval_candidate_names_map(approval_rows),
@@ -13350,6 +13355,82 @@ def hr_leave_cancel_by_hr(req_id: int):
 
     flash("تم إلغاء الطلب.", "success")
     return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+
+
+@portal_bp.route("/hr/approvals/leaves/<int:req_id>/delete", methods=["POST"])
+@login_required
+@_perm(HR_LEAVE_APPROVED_DELETE)
+def hr_leave_approved_delete(req_id: int):
+    """Permanently delete a final-approved leave and its dependent HR records."""
+    row = HRLeaveRequest.query.get_or_404(req_id)
+    if (row.status or "").upper() != "APPROVED":
+        flash("الحذف النهائي متاح للإجازات المعتمدة فقط.", "warning")
+        return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+
+    from models import HRRequestApprovalStep, NotificationEmailDelivery
+
+    leave_link = url_for("portal.hr_approval_leave", req_id=row.id)
+    attachment_dir = Path(current_app.instance_path) / "uploads" / "leaves" / str(int(row.id))
+    employee_name = (getattr(row.user, "full_name", None) or getattr(row.user, "email", None) or "-")
+    leave_type_name = (
+        getattr(row.leave_type, "name_ar", None)
+        or getattr(row.leave_type, "name_en", None)
+        or getattr(row.leave_type, "code", None)
+        or "-"
+    )
+
+    try:
+        notification_ids = [
+            notification_id
+            for (notification_id,) in (
+                db.session.query(Notification.id)
+                .filter(Notification.link_url == leave_link)
+                .all()
+            )
+        ]
+        if notification_ids:
+            NotificationEmailDelivery.query.filter(
+                NotificationEmailDelivery.notification_id.in_(notification_ids)
+            ).delete(synchronize_session=False)
+            Notification.query.filter(Notification.id.in_(notification_ids)).delete(
+                synchronize_session=False
+            )
+
+        HRRequestApprovalStep.query.filter_by(
+            request_kind=KIND_LEAVE,
+            request_id=row.id,
+        ).delete(synchronize_session=False)
+        HRRequestObserver.query.filter_by(
+            request_kind=KIND_LEAVE,
+            request_id=row.id,
+        ).delete(synchronize_session=False)
+
+        _portal_audit(
+            "HR_LEAVE_APPROVED_DELETE",
+            f"حذف نهائي لإجازة معتمدة #{row.id}: الموظف={employee_name}; النوع={leave_type_name}",
+            target_type="LEAVE_REQUEST",
+            target_id=row.id,
+        )
+        db.session.delete(row)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to permanently delete approved leave %s", req_id)
+        flash("تعذر حذف الإجازة المعتمدة نهائياً.", "danger")
+        return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+
+    try:
+        if attachment_dir.is_dir() and not attachment_dir.is_symlink():
+            shutil.rmtree(attachment_dir)
+    except OSError:
+        current_app.logger.warning(
+            "Could not remove leave attachment directory after deleting request %s: %s",
+            req_id,
+            attachment_dir,
+        )
+
+    flash("تم حذف الإجازة المعتمدة نهائياً.", "success")
+    return redirect(url_for("portal.hr_approvals"))
 
 
 @portal_bp.route("/hr/approvals/permissions/<int:req_id>", methods=["GET", "POST"])
@@ -30398,6 +30479,7 @@ def hr_leaves_admin_log():
         leave_types=HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all(),
         status_defs=_ensure_status_defs("LEAVE"),
         can_manage=_hr_can_manage(),
+        can_delete_approved_leave=current_user.has_perm(HR_LEAVE_APPROVED_DELETE),
         filters=dict(user_id=user_id, leave_type_id=leave_type_id, admin_status_id=admin_status_id, leave_place=leave_place),
     )
 
