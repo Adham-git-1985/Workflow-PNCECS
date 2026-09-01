@@ -7619,6 +7619,13 @@ def hr_report_delay():
                 'hours': hours,
             })
 
+        # Show the largest delay first.  ``hours`` already reflects the
+        # selected delay type (late, early exit, or their combined duration).
+        rows_view.sort(
+            key=lambda row: (row['hours'], row['date'] or ''),
+            reverse=True,
+        )
+
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
