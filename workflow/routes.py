@@ -145,6 +145,7 @@ from workflow.engine import (
     resolve_dynamic_branch_steps,
     resolve_hierarchy_bypass_step,
     resolve_step_approver_user_ids,
+    can_committee_chair_bypass_parallel_step,
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
 )
 
@@ -4868,6 +4869,7 @@ def view_request(request_id):
     parallel_tasks = []
     my_parallel_task = None
     can_bypass_parallel = False
+    can_bypass_parallel_as_committee_chair = False
     try:
         if current_step and (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
             try:
@@ -4919,6 +4921,15 @@ def view_request(request_id):
                 except Exception:
                     pass
 
+            # The actual committee chair may bypass other members in a
+            # Committee_ALL step.  This authority is not delegated.
+            if not can_bypass_parallel and can_committee_chair_bypass_parallel_step(
+                current_user.id,
+                current_step,
+            ):
+                can_bypass_parallel = True
+                can_bypass_parallel_as_committee_chair = True
+
             if not parallel_tasks:
                 parallel_awaiting_authorization = True
                 candidate_ids = resolve_parallel_candidate_user_ids(req, inst, current_step)
@@ -4930,11 +4941,18 @@ def view_request(request_id):
                     (candidate_map[uid] for uid in candidate_ids if uid in candidate_map),
                     key=lambda u: ((u.full_name or u.email or "").casefold(), int(u.id)),
                 )
-                can_authorize_parallel = can_bypass_parallel
+                # Selecting the initial participants remains reserved for the
+                # previous-step actor or an administrator.  A chair can only
+                # bypass already assigned committee members.
+                can_authorize_parallel = (
+                    can_bypass_parallel
+                    and not can_bypass_parallel_as_committee_chair
+                )
     except Exception:
         parallel_tasks = []
         my_parallel_task = None
         can_bypass_parallel = False
+        can_bypass_parallel_as_committee_chair = False
 
     # In PARALLEL_SYNC: show action buttons only to the assignee who still has a PENDING task.
     try:
@@ -4987,6 +5005,7 @@ def view_request(request_id):
         parallel_tasks=parallel_tasks,
         my_parallel_task=my_parallel_task,
         can_bypass_parallel=can_bypass_parallel,
+        can_bypass_parallel_as_committee_chair=can_bypass_parallel_as_committee_chair,
         can_authorize_parallel=can_authorize_parallel,
         parallel_awaiting_authorization=parallel_awaiting_authorization,
         parallel_candidates=parallel_candidates,
@@ -6124,6 +6143,9 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
     if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
         acting_user = current_user
     elif int(getattr(inst, "last_step_actor_id", 0) or 0) == int(current_user.id):
+        acting_user = current_user
+    elif can_committee_chair_bypass_parallel_step(current_user.id, step):
+        # A delegate cannot use the chair's bypass authority.
         acting_user = current_user
     else:
         try:

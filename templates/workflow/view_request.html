@@ -509,13 +509,27 @@
               <div class="alert alert-warning py-2 mb-3">
                 <div class="d-flex flex-wrap align-items-end justify-content-between gap-2">
                   <div>
-                    <div class="fw-bold">تجاوز المتبقين (كل من حالته قيد الانتظار)</div>
-                    <div class="small text-muted">هذا الخيار متاح لمنفّذ الخطوة السابقة أو مدير النظام.</div>
+                    <div class="fw-bold">
+                      {% if can_bypass_parallel_as_committee_chair %}
+                        تجاوز الأعضاء المتبقين (باستثناء مهمتك الشخصية)
+                      {% else %}
+                        تجاوز المتبقين (كل من حالته قيد الانتظار)
+                      {% endif %}
+                    </div>
+                    <div class="small text-muted">
+                      {% if can_bypass_parallel_as_committee_chair %}
+                        متاح لرئيس اللجنة في مسار «كل أعضاء اللجنة»؛ ولا يشمل مهمته الشخصية.
+                      {% else %}
+                        هذا الخيار متاح لمنفّذ الخطوة السابقة أو مدير النظام.
+                      {% endif %}
+                    </div>
                   </div>
                   <form method="post" class="d-flex gap-2" action="{{ url_for('workflow.bypass_parallel_assignee', request_id=req.id, step_order=current_step.step_order) }}">
                     <input type="hidden" name="bypass_all" value="1">
                     <input class="form-control form-control-sm" name="reason" placeholder="سبب التجاوز" required>
-                    <button class="btn btn-sm btn-danger" type="submit">تجاوز المتبقين</button>
+                    <button class="btn btn-sm btn-danger" type="submit">
+                      {% if can_bypass_parallel_as_committee_chair %}تجاوز الأعضاء{% else %}تجاوز المتبقين{% endif %}
+                    </button>
                   </form>
                 </div>
               </div>
@@ -570,7 +584,7 @@
                         {% endif %}
                       </td>
                       <td>
-                        {% if can_bypass_parallel and (t.status or '') == 'PENDING' %}
+                        {% if can_bypass_parallel and (t.status or '') == 'PENDING' and (not can_bypass_parallel_as_committee_chair or t.assignee_user_id != current_user.id) %}
                           <form method="post" class="d-flex gap-2" action="{{ url_for('workflow.bypass_parallel_assignee', request_id=req.id, step_order=current_step.step_order) }}">
                             <input type="hidden" name="assignee_user_id" value="{{ t.assignee_user_id }}">
                             <input class="form-control form-control-sm" name="reason" placeholder="سبب التجاوز" required>
@@ -592,7 +606,13 @@
             </div>
 
             {% if can_bypass_parallel %}
-              <div class="form-text mt-2">صلاحية التجاوز: منفّذ الخطوة السابقة أو مدير النظام.</div>
+              <div class="form-text mt-2">
+                {% if can_bypass_parallel_as_committee_chair %}
+                  صلاحية التجاوز: رئيس اللجنة للأعضاء الآخرين في مسار «كل أعضاء اللجنة».
+                {% else %}
+                  صلاحية التجاوز: منفّذ الخطوة السابقة أو مدير النظام.
+                {% endif %}
+              </div>
             {% endif %}
           {% elif parallel_awaiting_authorization %}
             {% if can_authorize_parallel %}

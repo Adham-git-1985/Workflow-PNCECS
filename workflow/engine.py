@@ -738,6 +738,37 @@ def _is_parallel_sync(step: WorkflowInstanceStep) -> bool:
     return (getattr(step, "mode", "SEQUENTIAL") or "SEQUENTIAL") == "PARALLEL_SYNC"
 
 
+def can_committee_chair_bypass_parallel_step(
+    user_id: int | None,
+    step: WorkflowInstanceStep | None,
+) -> bool:
+    """Return whether a committee chair may bypass other committee members.
+
+    The authority is limited to active PARALLEL_SYNC steps delivered to all
+    members of the committee.  It does not apply to chair-only, secretary-only,
+    or non-committee steps.
+    """
+    if not user_id or not step or not _is_parallel_sync(step):
+        return False
+    if (getattr(step, "approver_kind", "") or "").strip().upper() != "COMMITTEE":
+        return False
+
+    delivery_mode = (
+        getattr(step, "committee_delivery_mode", None) or "Committee_ALL"
+    ).strip().upper()
+    if delivery_mode != "COMMITTEE_ALL":
+        return False
+
+    try:
+        chair_ids = _resolve_committee_users(
+            getattr(step, "approver_committee_id", None),
+            "Committee_CHAIR",
+        )
+        return int(user_id) in set(chair_ids)
+    except (TypeError, ValueError):
+        return False
+
+
 def resolve_parallel_candidate_user_ids(
     req: WorkflowRequest,
     inst: WorkflowInstance,
@@ -1412,14 +1443,17 @@ def bypass_parallel_task(
     if inst.current_step_order != step_order or step.status != "PENDING":
         raise ValueError("الخطوة المتزامنة ليست نشطة حاليًا")
 
-    # Authorization: admin/superadmin OR previous-step actor (effective; delegation-aware)
+    # Authorization: admin/superadmin OR previous-step actor (effective;
+    # delegation-aware) OR the chair of a Committee_ALL step.
     actor_user = User.query.get(actor_user_id)
     eff_user = User.query.get(effective_user_id)
 
     is_admin = bool(actor_user and (actor_user.has_role("ADMIN") or actor_user.has_role("SUPER_ADMIN"))) or \
         bool(eff_user and (eff_user.has_role("ADMIN") or eff_user.has_role("SUPER_ADMIN")))
+    is_previous_step_actor = int(inst.last_step_actor_id or 0) == int(effective_user_id)
+    is_committee_chair = can_committee_chair_bypass_parallel_step(effective_user_id, step)
 
-    if not is_admin and int(inst.last_step_actor_id or 0) != int(effective_user_id):
+    if not is_admin and not is_previous_step_actor and not is_committee_chair:
         raise PermissionError("غير مخوّل بالتجاوز في هذه الخطوة")
 
     _ensure_parallel_tasks(req, inst, step)
@@ -1432,6 +1466,13 @@ def bypass_parallel_task(
         raise ValueError("المستخدم غير ضمن المتزامنين")
     if task.status != "PENDING":
         raise ValueError("لا يمكن تجاوز مستخدم حالته ليست قيد الانتظار")
+    if (
+        is_committee_chair
+        and not is_admin
+        and not is_previous_step_actor
+        and int(task.assignee_user_id) == int(effective_user_id)
+    ):
+        raise PermissionError("رئيس اللجنة لا يمكنه تجاوز مهمته الشخصية")
 
     now = datetime.utcnow()
     task.status = "BYPASSED"
@@ -1525,6 +1566,7 @@ def bypass_all_parallel_tasks(
     Authorized:
     - ADMIN / SUPER_ADMIN
     - Previous-step actor (WorkflowInstance.last_step_actor_id) using effective_user_id (delegation-aware)
+    - Chair of a Committee_ALL step, for other members only
     """
 
     reason = (reason or "").strip()
@@ -1544,8 +1586,10 @@ def bypass_all_parallel_tasks(
     eff_user = User.query.get(effective_user_id)
     is_admin = bool(actor_user and (actor_user.has_role("ADMIN") or actor_user.has_role("SUPER_ADMIN"))) or \
         bool(eff_user and (eff_user.has_role("ADMIN") or eff_user.has_role("SUPER_ADMIN")))
+    is_previous_step_actor = int(inst.last_step_actor_id or 0) == int(effective_user_id)
+    is_committee_chair = can_committee_chair_bypass_parallel_step(effective_user_id, step)
 
-    if not is_admin and int(inst.last_step_actor_id or 0) != int(effective_user_id):
+    if not is_admin and not is_previous_step_actor and not is_committee_chair:
         raise PermissionError("غير مخوّل بالتجاوز في هذه الخطوة")
 
     _ensure_parallel_tasks(req, inst, step)
@@ -1556,7 +1600,14 @@ def bypass_all_parallel_tasks(
         .order_by(WorkflowStepTask.assignee_user_id.asc())
         .all()
     )
+    if is_committee_chair and not is_admin and not is_previous_step_actor:
+        pending_tasks = [
+            task for task in pending_tasks
+            if int(task.assignee_user_id) != int(effective_user_id)
+        ]
     if not pending_tasks:
+        if is_committee_chair and not is_admin and not is_previous_step_actor:
+            raise ValueError("لا يمكن لرئيس اللجنة تجاوز مهمته الشخصية")
         raise ValueError("لا يوجد متزامنون بحالة قيد الانتظار لتجاوزهم")
 
     now = datetime.utcnow()
