@@ -6,9 +6,11 @@ from unittest.mock import patch
 from portal.routes import (
     _attendance_departure_type_label,
     _attendance_event_code,
+    _attendance_event_label,
     _departure_records_match,
     _parse_timeclock_line,
     _reconciled_departure_records,
+    _sort_attendance_events_for_display,
 )
 
 
@@ -30,6 +32,28 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         self.assertEqual(_attendance_departure_type_label('E'), 'رسمية')
         self.assertEqual(_attendance_departure_type_label('F'), 'رسمية')
         self.assertEqual(_attendance_departure_type_label('I'), '')
+
+    def test_attendance_labels_do_not_expose_clock_codes(self):
+        self.assertEqual(_attendance_event_label('A'), 'دخول')
+        self.assertEqual(_attendance_event_label('B'), 'خروج')
+        self.assertEqual(_attendance_event_label('C'), 'مغادرة شخصية')
+        self.assertEqual(_attendance_event_label('D'), 'عودة من مغادرة شخصية')
+        self.assertEqual(_attendance_event_label('E'), 'مغادرة رسمية')
+        self.assertEqual(_attendance_event_label('F'), 'عودة من مغادرة رسمية')
+
+    def test_display_order_uses_time_then_daily_employee_number(self):
+        at_eight_eighteen = datetime(2026, 9, 1, 8, 18)
+        events = [
+            SimpleNamespace(id=1, event_dt=datetime(2026, 9, 1, 8, 32), daily_employee_number=17),
+            SimpleNamespace(id=2, event_dt=at_eight_eighteen, daily_employee_number=14),
+            SimpleNamespace(id=3, event_dt=at_eight_eighteen, daily_employee_number=13),
+            SimpleNamespace(id=4, event_dt=at_eight_eighteen, daily_employee_number=15),
+            SimpleNamespace(id=5, event_dt=datetime(2026, 9, 1, 8, 14), daily_employee_number=12),
+        ]
+
+        ordered = _sort_attendance_events_for_display(events)
+
+        self.assertEqual([event.daily_employee_number for event in ordered], [17, 13, 14, 15, 12])
 
     def test_legacy_out_row_recovers_departure_code_from_raw_fixed_record(self):
         legacy_event = SimpleNamespace(

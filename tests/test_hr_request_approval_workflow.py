@@ -415,6 +415,26 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(row.status, "APPROVED")
         self.assertEqual(steps[0].decided_by_id, raed.id)
 
+        allowed_notification_ids = set(expected_ids) | {requester.id, self.hr.id}
+        recipient_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                link_url=f"/portal/hr/approvals/permissions/{row.id}",
+            ).all()
+        }
+        self.assertEqual(recipient_ids, allowed_notification_ids)
+        self.assertNotIn(self.general_director.id, recipient_ids)
+        self.assertNotIn(self.secretary.id, recipient_ids)
+
+        observer_ids = {
+            observer.user_id
+            for observer in HRRequestObserver.query.filter_by(
+                request_kind=KIND_PERMISSION,
+                request_id=row.id,
+            ).all()
+        }
+        self.assertEqual(observer_ids, set(expected_ids) | {self.hr.id})
+
         client = self.app.test_client()
         self._login(client, requester.id)
         my_permissions = client.get("/portal/hr/me/permissions")

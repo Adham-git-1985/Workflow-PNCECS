@@ -89,7 +89,10 @@ def _notify(user_ids: Iterable[int], message: str, *, kind: str, request_id: int
         ) or _request_link(kind, request_id)
     except Exception:
         link = _request_link(kind, request_id)
-    for user_id in sorted({int(value) for value in user_ids if value}):
+    recipient_ids = {int(value) for value in user_ids if value}
+    if (kind or "").upper() == KIND_PERMISSION:
+        recipient_ids.intersection_update(_permission_notification_recipient_ids(request_id))
+    for user_id in sorted(recipient_ids):
         db.session.add(Notification(
             user_id=user_id,
             type=ntype,
@@ -449,6 +452,55 @@ def hr_observer_user_ids() -> list[int]:
     return sorted({int(user.id) for user in User.query.all() if _is_hr_approver(user)})
 
 
+def hr_notification_user_ids() -> list[int]:
+    """Return HR staff who may receive employee-request notifications.
+
+    Approval permissions are intentionally not enough here: those permissions
+    are also assigned to directors and department heads.  Notifications for an
+    employee's leave or departure must stay within the HR department.
+    """
+    hr_department_ids: set[int] = set()
+    for department in Department.query.filter_by(is_active=True).all():
+        label = " ".join((
+            getattr(department, "name_ar", "") or "",
+            getattr(department, "name_en", "") or "",
+            getattr(department, "code", "") or "",
+        )).casefold()
+        if "الموارد البشرية" in label or "human resources" in label:
+            hr_department_ids.add(int(department.id))
+
+    recipient_ids: set[int] = set()
+    for user in User.query.all():
+        role = _normalize(getattr(user, "role", None))
+        if role in {"HR", "HRMANAGER", "HRADMIN"}:
+            recipient_ids.add(int(user.id))
+            continue
+        if getattr(user, "department_id", None) in hr_department_ids:
+            recipient_ids.add(int(user.id))
+
+    if hr_department_ids:
+        for employee_file in EmployeeFile.query.filter(EmployeeFile.department_id.in_(hr_department_ids)).all():
+            if employee_file.user_id:
+                recipient_ids.add(int(employee_file.user_id))
+    return sorted(recipient_ids)
+
+
+def _permission_notification_recipient_ids(request_id: int) -> set[int]:
+    """Allowed recipients for an employee departure notification only."""
+    row = _request(KIND_PERMISSION, request_id)
+    if not row:
+        return set()
+
+    recipient_ids: set[int] = {int(row.user_id)}
+    for manager in resolve_responsible_managers(int(row.user_id)):
+        recipient_ids.add(int(manager.id))
+        delegation = _active_delegation_for(manager.id)
+        if delegation and delegation.to_user_id:
+            recipient_ids.add(int(delegation.to_user_id))
+    recipient_ids.update(hr_notification_user_ids())
+    return recipient_ids
+
+
 def _stage_due_at(kind: str, stage_code: str, assigned_at: datetime) -> datetime:
     if kind == KIND_PERMISSION and stage_code == STAGE_DIRECT_MANAGER:
         minutes = _setting_int("HR_PERMISSION_APPROVAL_ESCALATION_MINUTES", 60)
@@ -675,7 +727,16 @@ def stage_label(stage_code: str | None) -> str:
     }.get((stage_code or "").upper(), stage_code or "-")
 
 
-def _observer_groups(row) -> dict[str, set[int]]:
+def _observer_groups(kind: str, row) -> dict[str, set[int]]:
+    if kind == KIND_PERMISSION:
+        return {
+            "DIRECT_MANAGER": {
+                int(manager.id)
+                for manager in resolve_responsible_managers(int(row.user_id))
+            },
+            "HR": set(hr_notification_user_ids()),
+        }
+
     groups: dict[str, set[int]] = {
         "HR": set(hr_observer_user_ids()),
         "GENERAL_DIRECTOR": set(),
@@ -694,8 +755,8 @@ def _observer_groups(row) -> dict[str, set[int]]:
 def _record_final_observers(kind: str, row, now: datetime) -> None:
     seen: set[int] = set()
     cc_ids: set[int] = set()
-    for scope, user_ids in _observer_groups(row).items():
-        if scope == "HR":
+    for scope, user_ids in _observer_groups(kind, row).items():
+        if scope == "HR" or (kind == KIND_PERMISSION and scope == "DIRECT_MANAGER"):
             cc_ids.update(user_ids)
         for user_id in sorted(user_ids):
             if user_id in seen:

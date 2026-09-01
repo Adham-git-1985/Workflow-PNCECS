@@ -74,10 +74,10 @@
         <option value="">بدون تحديد</option>
         <option value="I" {% if event_type == 'I' %}selected{% endif %}>دخول</option>
         <option value="O" {% if event_type == 'O' %}selected{% endif %}>خروج</option>
-        <option value="C" {% if event_type == 'C' %}selected{% endif %}>مغادرة شخصية (C)</option>
-        <option value="D" {% if event_type == 'D' %}selected{% endif %}>عودة من مغادرة شخصية (D)</option>
-        <option value="E" {% if event_type == 'E' %}selected{% endif %}>مغادرة رسمية (E)</option>
-        <option value="F" {% if event_type == 'F' %}selected{% endif %}>عودة من مغادرة رسمية (F)</option>
+        <option value="C" {% if event_type == 'C' %}selected{% endif %}>مغادرة شخصية</option>
+        <option value="D" {% if event_type == 'D' %}selected{% endif %}>عودة من مغادرة شخصية</option>
+        <option value="E" {% if event_type == 'E' %}selected{% endif %}>مغادرة رسمية</option>
+        <option value="F" {% if event_type == 'F' %}selected{% endif %}>عودة من مغادرة رسمية</option>
       </select>
     </div>
 
@@ -127,9 +127,9 @@
             <td class="text-muted">{{ e.event_dt.strftime('%Y-%m-%d %H:%M') if e.event_dt else '' }}</td>
             <td>
               {% set code = (e.display_event_code or e.event_type)|upper %}
-              {% if code in ('I', 'IN', 'CHECKIN') %}<span class="badge text-bg-success">{{ event_labels.get(code, code) }}</span>
-              {% elif code in ('O', 'OUT', 'CHECKOUT') %}<span class="badge text-bg-danger">{{ event_labels.get(code, code) }}</span>
-              {% elif code in ('C', 'D', 'E', 'F') %}<span class="badge text-bg-info text-dark">{{ event_labels.get(code, code) }} ({{ code }})</span>
+              {% if code in ('A', 'I', 'IN', 'CHECKIN') %}<span class="badge text-bg-success">{{ event_labels.get(code, code) }}</span>
+              {% elif code in ('B', 'O', 'OUT', 'CHECKOUT') %}<span class="badge text-bg-danger">{{ event_labels.get(code, code) }}</span>
+              {% elif code in ('C', 'D', 'E', 'F') %}<span class="badge text-bg-info text-dark">{{ event_labels.get(code, code) }}</span>
               {% else %}<span class="badge text-bg-secondary">{{ event_labels.get(code, code) }}</span>
               {% endif %}
             </td>

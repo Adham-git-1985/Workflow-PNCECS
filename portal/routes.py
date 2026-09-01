@@ -15566,9 +15566,11 @@ def hr_employee_attachment_delete(user_id: int, att_id: int):
 # HR: Attendance import
 # -------------------------
 _ATTENDANCE_EVENT_LABELS = {
+    'A': 'دخول',
     'I': 'دخول',
     'IN': 'دخول',
     'CHECKIN': 'دخول',
+    'B': 'خروج',
     'O': 'خروج',
     'OUT': 'خروج',
     'CHECKOUT': 'خروج',
@@ -15620,6 +15622,23 @@ def _attendance_departure_type_label(event_or_code) -> str:
     if code in {'E', 'F'}:
         return 'رسمية'
     return ''
+
+
+def _sort_attendance_events_for_display(events):
+    """Order movements by time, then by the employee's daily sequence number."""
+    ordered_events = list(events)
+    # Python sorting is stable: apply the secondary order first so equal-time
+    # movements stay ordered by the number shown in the first table column.
+    ordered_events.sort(key=lambda event: (
+        getattr(event, 'daily_employee_number', None) is None,
+        getattr(event, 'daily_employee_number', None) or 0,
+        getattr(event, 'id', None) or 0,
+    ))
+    ordered_events.sort(
+        key=lambda event: getattr(event, 'event_dt', None) or datetime.min,
+        reverse=True,
+    )
+    return ordered_events
 
 
 def _attendance_event_exists(user_id: int, parsed: dict) -> bool:
@@ -16076,7 +16095,7 @@ def hr_attendance_events():
         employee_numbers[(event.user_id, day_key)] = day_users[event.user_id]
 
         code = _attendance_event_code(event)
-        if code in {'I', 'IN', 'CHECKIN'}:
+        if code in {'A', 'I', 'IN', 'CHECKIN'}:
             present_users_by_day.setdefault(day_key, set()).add(event.user_id)
         if code in {'C', 'D', 'E', 'F'}:
             departure_users_by_day.setdefault(day_key, set()).add(event.user_id)
@@ -16084,6 +16103,8 @@ def hr_attendance_events():
     for event in events:
         day_key = event.event_dt.date().isoformat() if event.event_dt else ''
         event.daily_employee_number = employee_numbers.get((event.user_id, day_key))
+
+    events = _sort_attendance_events_for_display(events)
 
     attendance_day_stats = [
         {
