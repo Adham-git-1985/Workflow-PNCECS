@@ -1153,8 +1153,18 @@ def edit_user(user_id):
         target.name = (request.form.get("name") or "").strip() or None
         target.job_title = (request.form.get("job_title") or "").strip() or None
         new_email = (request.form.get("email") or "").strip()
-        if new_email:
+        if new_email and new_email != (target.email or ""):
+            duplicate = User.query.filter(User.email == new_email, User.id != target.id).first()
+            if duplicate:
+                flash("البريد الإلكتروني مستخدم لحساب آخر.", "danger")
+                return redirect(url_for("users.edit_user", user_id=target.id))
+            old_email = target.email
             target.email = new_email
+            _audit(
+                "UPDATE_NOTIFICATION_EMAIL",
+                target,
+                f"Notification email changed: {old_email or '-'} -> {new_email}",
+            )
 
         # Org assignment (optional) — supports Directorate/Unit/Department/Section/Division
         def _parse_int(field: str):

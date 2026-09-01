@@ -115,6 +115,30 @@ class EmailAttachmentExtraction:
     warnings: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class EmailPreviewAttachment:
+    """Safe metadata for one EML attachment; never exposes its payload."""
+
+    filename: str
+    mimetype: str
+    size_bytes: int | None
+
+
+@dataclass(frozen=True)
+class EmailPreview:
+    """Headers and text-only content rendered by the EML preview page."""
+
+    subject: str
+    sender: str
+    recipients: tuple[str, ...]
+    cc: tuple[str, ...]
+    reply_to: tuple[str, ...]
+    message_date: str
+    body: str
+    attachments: tuple[EmailPreviewAttachment, ...]
+    warnings: tuple[str, ...]
+
+
 class _OcrRuntimeError(RuntimeError):
     pass
 
@@ -1170,6 +1194,92 @@ def extract_eml_attachments(
         total_bytes += len(attachment_payload)
 
     return EmailAttachmentExtraction(tuple(attachments), tuple(warnings))
+
+
+def preview_eml(
+    payload: bytes,
+    *,
+    max_chars: int = 80_000,
+    max_attachments: int = 100,
+) -> EmailPreview:
+    """Build a safe, text-only preview of a stored RFC 822 email message.
+
+    EML content must not be sent straight to the browser because it can contain
+    active HTML and tracking resources.  This function shows only decoded
+    headers, a plain-text rendition of the message, and attachment metadata.
+    """
+    message = _parse_eml_message(payload)
+    plain_parts: list[str] = []
+    html_parts: list[str] = []
+    attachments: list[EmailPreviewAttachment] = []
+    warnings: list[str] = []
+    max_chars = max(1, min(int(max_chars or 1), 250_000))
+    max_attachments = max(1, min(int(max_attachments or 1), 200))
+
+    parts = message.walk() if message.is_multipart() else [message]
+    for part in parts:
+        disposition = (part.get_content_disposition() or "").lower()
+        has_filename = bool(part.get_filename())
+        if disposition == "attachment" or has_filename:
+            if len(attachments) >= max_attachments:
+                if not warnings:
+                    warnings.append("لم تُعرض بقية مرفقات البريد لتجاوز العدد المسموح للمعاينة.")
+                continue
+            filename = _email_attachment_filename(part, len(attachments) + 1)
+            try:
+                part_payload = part.as_bytes(policy=policy.default) if part.is_multipart() else (part.get_payload(decode=True) or b"")
+                size_bytes = len(part_payload)
+            except Exception:
+                size_bytes = None
+            attachments.append(EmailPreviewAttachment(
+                filename=filename,
+                mimetype=str(part.get_content_type() or "application/octet-stream"),
+                size_bytes=size_bytes,
+            ))
+            continue
+
+        content_type = (part.get_content_type() or "").lower()
+        if content_type not in {"text/plain", "text/html"}:
+            continue
+        try:
+            content = str(part.get_content())
+        except Exception:
+            content = _decode_text(part.get_payload(decode=True) or b"")
+        if content_type == "text/html":
+            try:
+                from bs4 import BeautifulSoup
+
+                content = BeautifulSoup(content, "html.parser").get_text("\n")
+            except Exception:
+                content = re.sub(r"<[^>]+>", " ", content)
+            html_parts.append(content)
+        else:
+            plain_parts.append(content)
+
+    def _addresses(header_name: str) -> tuple[str, ...]:
+        values = getaddresses(message.get_all(header_name, []))
+        return tuple(
+            (name or address or "").strip()
+            for name, address in values
+            if (name or address or "").strip()
+        )
+
+    sender_name, sender_address = parseaddr(str(message.get("From") or ""))
+    body_source = plain_parts or html_parts
+    body = _clean_text("\n\n".join(body_source), max_chars)
+    if not body:
+        body = "لا يحتوي البريد على نص قابل للمعاينة."
+    return EmailPreview(
+        subject=str(message.get("Subject") or "").strip() or "(بدون موضوع)",
+        sender=(sender_name or sender_address or "").strip() or "-",
+        recipients=_addresses("To"),
+        cc=_addresses("Cc"),
+        reply_to=_addresses("Reply-To"),
+        message_date=str(message.get("Date") or "").strip() or "-",
+        body=body,
+        attachments=tuple(attachments),
+        warnings=tuple(warnings),
+    )
 
 
 def _extract_eml(payload: bytes, max_chars: int) -> tuple[str, list[str], dict]:

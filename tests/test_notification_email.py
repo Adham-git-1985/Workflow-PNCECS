@@ -66,6 +66,23 @@ class NotificationEmailTests(unittest.TestCase):
         self.assertIn("http://10.10.10.204:5000/portal/inventory/employee-requests/12", html_body)
         self.assertEqual(NotificationEmailDelivery.query.one().status, "SENT")
 
+    def test_pending_notification_uses_the_user_current_email_address(self):
+        db.session.add(Notification(
+            user_id=self.user.id,
+            message="Pending notification",
+            source="portal",
+            is_read=False,
+        ))
+        db.session.commit()
+
+        self.user.email = "new-recipient@example.test"
+        db.session.commit()
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+
+        self.assertEqual(send_email.call_args.args[1], "new-recipient@example.test")
+
     def test_dedicated_and_mirror_notifications_are_not_duplicated(self):
         db.session.add_all((
             Notification(

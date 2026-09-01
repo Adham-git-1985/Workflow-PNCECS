@@ -2874,6 +2874,53 @@ class HRPermissionRequest(db.Model):
     )
 
 
+class HRPermissionRequestRevision(db.Model):
+    """Immutable before/after snapshot when an approved departure is resubmitted.
+
+    The main request deliberately keeps its identity so links, attendance
+    reports, and the original approval remain connected.  This table supplies
+    the missing audit trail needed to show approvers exactly what changed.
+    """
+
+    __tablename__ = "hr_permission_request_revision"
+
+    id = db.Column(db.Integer, primary_key=True)
+    request_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_permission_request.id"),
+        nullable=False,
+        index=True,
+    )
+    revision_no = db.Column(db.Integer, nullable=False)
+
+    previous_permission_type_name = db.Column(db.String(255), nullable=True)
+    current_permission_type_name = db.Column(db.String(255), nullable=True)
+    previous_day = db.Column(db.String(10), nullable=True)
+    current_day = db.Column(db.String(10), nullable=True)
+    previous_from_time = db.Column(db.String(5), nullable=True)
+    current_from_time = db.Column(db.String(5), nullable=True)
+    previous_to_time = db.Column(db.String(5), nullable=True)
+    current_to_time = db.Column(db.String(5), nullable=True)
+    previous_note = db.Column(db.Text, nullable=True)
+    current_note = db.Column(db.Text, nullable=True)
+
+    reason = db.Column(db.Text, nullable=True)
+    resubmitted_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    resubmitted_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    request = db.relationship(
+        "HRPermissionRequest",
+        foreign_keys=[request_id],
+        backref=db.backref("revisions", lazy="selectin", cascade="all, delete-orphan"),
+    )
+    resubmitted_by = db.relationship("User", foreign_keys=[resubmitted_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("request_id", "revision_no", name="uq_hr_perm_revision_request_number"),
+        db.Index("ix_hr_perm_revision_request_submitted", "request_id", "resubmitted_at"),
+    )
+
+
 class HRRequestApprovalStep(db.Model):
     """Runtime approval step for leave and permission requests.
 
@@ -2887,6 +2934,10 @@ class HRRequestApprovalStep(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     request_kind = db.Column(db.String(20), nullable=False, index=True)  # LEAVE/PERMISSION
     request_id = db.Column(db.Integer, nullable=False, index=True)
+    # A request can be reopened after final approval.  The regular step order
+    # remains globally unique for old SQLite databases, while this value groups
+    # the visible history into its original and resubmitted approval rounds.
+    flow_revision = db.Column(db.Integer, nullable=False, default=1, index=True)
     step_order = db.Column(db.Integer, nullable=False)
     stage_code = db.Column(db.String(40), nullable=False, index=True)
     approver_scope = db.Column(db.String(30), nullable=False, default="USER")  # USER/HR/SECRETARY_GENERAL

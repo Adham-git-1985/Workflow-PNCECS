@@ -2,7 +2,18 @@
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="fw-semibold mb-3"><i class="bi bi-diagram-3"></i> مسار الاعتماد</div>
   <div class="d-flex flex-column gap-2">
+    {% set flow_state = namespace(value=None, step_no=0) %}
     {% for step in approval_steps %}
+      {% set flow_revision = step.flow_revision|default(1, true) %}
+      {% if flow_state.value != flow_revision %}
+        {% set flow_state.value = flow_revision %}
+        {% set flow_state.step_no = 0 %}
+        <div class="small fw-semibold text-muted pt-2">
+          <i class="bi bi-arrow-repeat"></i>
+          {{ 'المسار الأصلي' if flow_revision == 1 else 'إعادة اعتماد رقم ' ~ (flow_revision - 1) }}
+        </div>
+      {% endif %}
+      {% set flow_state.step_no = flow_state.step_no + 1 %}
       {% set step_status = (step.status or '').upper() %}
       {% set color = 'secondary' %}
       {% if step_status == 'PENDING' %}{% set color = 'warning' %}{% endif %}
@@ -12,7 +23,7 @@
         <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
           <div>
             {% set candidate_names = (approval_candidate_names|default({})).get(step.id, []) %}
-            <span class="badge bg-{{ color }} ms-2">{{ step.step_order }}</span>
+            <span class="badge bg-{{ color }} ms-2">{{ flow_state.step_no }}</span>
             <span class="fw-semibold">{{ stage_label(step.stage_code) }}</span>
             {% if candidate_names %}
               <span class="text-muted">— {{ candidate_names|join('، ') }}</span>

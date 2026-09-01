@@ -150,6 +150,23 @@ class WorkflowTaskEmailTests(unittest.TestCase):
         self.assertTrue(any("تذكير يومي" in message["Subject"] for message in messages))
 
 
+    def test_pending_task_email_uses_the_current_user_email_address(self):
+        enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+        self.assignee.email = "new-assignee@example.test"
+        db.session.commit()
+
+        with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
+            self.assertEqual(send_pending_task_emails(), 1)
+
+        message = smtp_class.return_value.send_message.call_args.args[0]
+        self.assertEqual(message["To"], "new-assignee@example.test")
+
     def test_daily_reminder_includes_pending_mentioned_user(self):
         mentioned = User(
             email="mentioned@example.test",

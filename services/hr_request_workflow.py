@@ -564,7 +564,13 @@ def _step_specs(kind: str, row) -> list[tuple[str, str]]:
     return specs
 
 
-def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[HRRequestApprovalStep]:
+def start_request_flow(
+    kind: str,
+    row,
+    *,
+    now: datetime | None = None,
+    restart: bool = False,
+) -> list[HRRequestApprovalStep]:
     """Create approval steps and notify the first approval stage.
 
     The function is idempotent so legacy/admin routes can safely call it after
@@ -578,8 +584,18 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
         .order_by(HRRequestApprovalStep.step_order.asc())
         .all()
     )
-    if existing:
+    if existing and not restart:
         return existing
+
+    # ``step_order`` is unique across the request for compatibility with the
+    # initial flow schema.  A reopened request therefore appends its fresh
+    # path, and ``flow_revision`` lets the UI show the path as a new round.
+    previous_flow_revision = max(
+        (int(getattr(step, "flow_revision", 1) or 1) for step in existing),
+        default=0,
+    )
+    flow_revision = previous_flow_revision + 1 if existing else 1
+    first_step_order = max((int(step.step_order or 0) for step in existing), default=0) + 1
 
     managers = resolve_responsible_managers(int(row.user_id))
     original_manager_id = managers[0].id if managers else None
@@ -608,7 +624,8 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
     first_approver_id = effective_approver_ids[0] if effective_approver_ids else None
 
     steps: list[HRRequestApprovalStep] = []
-    for order, (stage_code, approver_scope) in enumerate(_step_specs(kind, row), start=1):
+    for index, (stage_code, approver_scope) in enumerate(_step_specs(kind, row), start=0):
+        order = first_step_order + index
         approver_user_id = None
         approver_user_ids = None
         if stage_code == STAGE_DIRECT_MANAGER:
@@ -618,10 +635,11 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
             secretary_ids = secretary_general_user_ids()
             approver_user_id = secretary_ids[0] if len(secretary_ids) == 1 else None
 
-        active = order == 1
+        active = index == 0
         step = HRRequestApprovalStep(
             request_kind=kind,
             request_id=int(row.id),
+            flow_revision=flow_revision,
             step_order=order,
             stage_code=stage_code,
             approver_scope=approver_scope,
@@ -657,6 +675,57 @@ def start_request_flow(kind: str, row, *, now: datetime | None = None) -> list[H
             request_id=row.id,
             ntype="HR_APPROVAL_ROUTING_ERROR",
         )
+    return steps
+
+
+def reopen_permission_request(
+    row: HRPermissionRequest,
+    *,
+    changed_by: User,
+    previous_from_time: str | None,
+    previous_to_time: str | None,
+    now: datetime | None = None,
+) -> list[HRRequestApprovalStep]:
+    """Return an approved departure to the same approval path.
+
+    Historical decisions remain untouched.  The new round is appended to the
+    runtime path and every person who has participated in, observes, or now
+    approves the request receives a clear change notification.
+    """
+    now = now or datetime.utcnow()
+    row.status = "SUBMITTED"
+    row.submitted_at = now
+    row.decided_at = None
+    row.decided_by_id = None
+    row.decision_note = None
+    row.approver_user_id = None
+    row.updated_at = now
+
+    steps = start_request_flow(KIND_PERMISSION, row, now=now, restart=True)
+    recipient_ids = _request_notification_recipient_ids(KIND_PERMISSION, row.id)
+    old_range = f"{previous_from_time or '-'} - {previous_to_time or '-'}"
+    new_range = f"{getattr(row, 'from_time', None) or '-'} - {getattr(row, 'to_time', None) or '-'}"
+    _notify(
+        recipient_ids,
+        (
+            f"تم تعديل طلب المغادرة رقم #{row.id} للموظف "
+            f"{_request_employee_name(row)} من {old_range} إلى {new_range}، "
+            "وأُعيد إلى مسار الاعتماد. يرجى مراجعة التغيير قبل اتخاذ القرار."
+        ),
+        kind=KIND_PERMISSION,
+        request_id=row.id,
+        ntype="HR_PERMISSION_REOPENED",
+    )
+    db.session.add(AuditLog(
+        user_id=changed_by.id,
+        action="HR_PERMISSION_REOPENED",
+        old_status="APPROVED",
+        new_status="SUBMITTED",
+        target_type="HR_PERMISSION_REQUEST",
+        target_id=row.id,
+        note=f"previous_time={old_range}; current_time={new_range}",
+        created_at=now,
+    ))
     return steps
 
 

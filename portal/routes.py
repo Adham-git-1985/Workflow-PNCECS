@@ -70,6 +70,7 @@ from services.correspondence_intake import (
     OcrConfig,
     analyze_correspondence_attachment,
     extract_eml_attachments,
+    preview_eml,
     read_limited_upload,
 )
 from services.employee_data_import import (
@@ -132,6 +133,7 @@ from models import (
     HRPermissionType,
     HRLeaveType,
     HRPermissionRequest,
+    HRPermissionRequestRevision,
     HRLeaveRequest,
     HRLeaveAttachment,
     HRLeaveBalance,
@@ -292,6 +294,7 @@ from services.hr_request_workflow import (
     request_progress_map,
     request_ids_user_can_act_on,
     request_ids_user_participated_in,
+    reopen_permission_request,
     resolve_direct_manager,
     stage_label as hr_stage_label,
     start_request_flow,
@@ -12046,6 +12049,20 @@ def hr_my_permissions():
         [row.id for row in reqs],
     )
     permission_progress = request_progress_map(KIND_PERMISSION, reqs)
+    permission_revision_counts = {}
+    if reqs:
+        permission_revision_counts = {
+            int(request_id): int(count or 0)
+            for request_id, count in (
+                db.session.query(
+                    HRPermissionRequestRevision.request_id,
+                    func.count(HRPermissionRequestRevision.id),
+                )
+                .filter(HRPermissionRequestRevision.request_id.in_([row.id for row in reqs]))
+                .group_by(HRPermissionRequestRevision.request_id)
+                .all()
+            )
+        }
 
     return render_template(
         "portal/hr/my_permissions.html",
@@ -12055,6 +12072,7 @@ def hr_my_permissions():
         can_requests=can_requests,
         permission_approver_names=permission_approver_names,
         request_progress=permission_progress,
+        permission_revision_counts=permission_revision_counts,
     )
 
 
@@ -12526,6 +12544,7 @@ def hr_permission_request_new():
 
     # HRPermissionType uses name_ar/name_en (no generic "name" column)
     types = HRPermissionType.query.order_by(HRPermissionType.name_ar.asc()).all()
+    today_str = date.today().strftime("%Y-%m-%d")
 
     # Admin/Manager can choose the employee
     can_pick_any = False
@@ -12607,7 +12626,9 @@ def hr_permission_request_new():
                         selected_user_id=selected_user_id,
                     )
 
-        day = (request.form.get("day") or "").strip()
+        # A departure is always registered for the current day.  Do not trust
+        # a posted date from a stale form or a manually crafted request.
+        day = today_str
         from_time = (request.form.get("from_time") or "").strip()
         to_time = (request.form.get("to_time") or "").strip()
         note = (request.form.get("note") or "").strip()
@@ -12721,6 +12742,7 @@ def hr_permission_request_new():
         users=users,
         is_admin_entry=is_admin_entry,
         selected_user_id=selected_user_id,
+        today_str=today_str,
     )
 
 
@@ -12775,7 +12797,7 @@ def hr_permission_request_edit(req_id: int):
                 ok = False
         if not ok:
             abort(403)
-    elif is_owner and status in {'DRAFT', 'SUBMITTED'}:
+    elif is_owner and status in {'DRAFT', 'SUBMITTED', 'APPROVED'}:
         try:
             if not current_user.has_perm(HR_REQUESTS_CREATE):
                 abort(403)
@@ -12847,7 +12869,9 @@ def hr_permission_request_edit(req_id: int):
                         req=r,
                     )
 
-        day = (request.form.get('day') or '').strip()
+        # The departure date is assigned when it is first submitted and is not
+        # editable afterwards.  Reopening preserves that approved record.
+        day = r.day
         from_time = (request.form.get('from_time') or '').strip()
         to_time = (request.form.get('to_time') or '').strip()
         note = (request.form.get('note') or '').strip()
@@ -12855,16 +12879,48 @@ def hr_permission_request_edit(req_id: int):
         if not permission_type_id:
             flash('نوع المغادرة مطلوب.', 'danger')
             return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
-        if not day:
-            flash('التاريخ مطلوب.', 'danger')
-            return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
-
         try:
             ft = _parse_hhmm(from_time)
             tt = _parse_hhmm(to_time)
         except Exception:
             flash('صيغة الوقت غير صحيحة. استخدم HH:MM.', 'danger')
             return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
+
+        permission_type = HRPermissionType.query.get(permission_type_id)
+        if not permission_type:
+            flash('نوع المغادرة غير موجود.', 'danger')
+            return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
+
+        reapproval = status == 'APPROVED'
+        reopen_reason = (request.form.get('reopen_reason') or '').strip()
+        previous_type_name = (
+            getattr(getattr(r, 'permission_type', None), 'name_ar', None)
+            or getattr(getattr(r, 'permission_type', None), 'name_en', None)
+            or getattr(getattr(r, 'permission_type', None), 'code', None)
+            or ''
+        )
+        current_type_name = permission_type.name_ar or permission_type.name_en or permission_type.code or ''
+        changed = any((
+            r.user_id != target_user_id,
+            r.permission_type_id != permission_type_id,
+            (r.from_time or '') != (ft or ''),
+            (r.to_time or '') != (tt or ''),
+            (r.note or '') != (note or ''),
+        ))
+        if reapproval and not changed:
+            flash('عدّل بيانات المغادرة أولاً قبل إعادة إرسالها للاعتماد.', 'warning')
+            return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
+        if reapproval and not reopen_reason:
+            flash('يرجى كتابة سبب إعادة الاعتماد لإبلاغ أطراف المسار.', 'danger')
+            return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
+
+        previous_values = {
+            'permission_type_name': previous_type_name,
+            'day': r.day,
+            'from_time': r.from_time,
+            'to_time': r.to_time,
+            'note': r.note,
+        }
 
         # Apply updates
         r.user_id = target_user_id
@@ -12874,6 +12930,37 @@ def hr_permission_request_edit(req_id: int):
         r.to_time = tt
         r.note = note or None
         r.updated_at = datetime.utcnow()
+
+        if reapproval:
+            next_revision_no = (
+                db.session.query(func.max(HRPermissionRequestRevision.revision_no))
+                .filter(HRPermissionRequestRevision.request_id == r.id)
+                .scalar()
+                or 0
+            ) + 1
+            db.session.add(HRPermissionRequestRevision(
+                request_id=r.id,
+                revision_no=next_revision_no,
+                previous_permission_type_name=previous_values['permission_type_name'] or None,
+                current_permission_type_name=current_type_name or None,
+                previous_day=previous_values['day'],
+                current_day=r.day,
+                previous_from_time=previous_values['from_time'],
+                current_from_time=r.from_time,
+                previous_to_time=previous_values['to_time'],
+                current_to_time=r.to_time,
+                previous_note=previous_values['note'],
+                current_note=r.note,
+                reason=reopen_reason,
+                resubmitted_by_id=current_user.id,
+                resubmitted_at=datetime.utcnow(),
+            ))
+            reopen_permission_request(
+                r,
+                changed_by=current_user,
+                previous_from_time=previous_values['from_time'],
+                previous_to_time=previous_values['to_time'],
+            )
 
         # Optional attachment replace
         file = request.files.get('attachment')
@@ -13304,6 +13391,12 @@ def hr_approval_permission(req_id: int):
         return redirect(url_for("portal.hr_approvals"))
 
     approval_rows = hr_request_approval_steps(KIND_PERMISSION, r.id)
+    revisions = (
+        HRPermissionRequestRevision.query
+        .filter_by(request_id=r.id)
+        .order_by(HRPermissionRequestRevision.revision_no.desc())
+        .all()
+    )
     return render_template(
         "portal/hr/approval_permission.html",
         r=r,
@@ -13314,6 +13407,7 @@ def hr_approval_permission(req_id: int):
         is_requester=is_requester,
         request_progress=request_progress(KIND_PERMISSION, r, active_step=step),
         stage_label=hr_stage_label,
+        revisions=revisions,
     )
 
 
@@ -24953,6 +25047,9 @@ def corr_attachment_view(att_id: int):
             return redirect(url_for("portal.outbound_view", outbound_id=att.outbound_id))
         return redirect(url_for("portal.corr_index"))
 
+    if Path(att.original_name or att.stored_name).suffix.lower() == ".eml":
+        return redirect(url_for("portal.corr_attachment_eml_preview", att_id=att.id))
+
     _ensure_corr_attachment_file_stamped(att, file_path)
     mime, _ = mimetypes.guess_type(file_path)
     mime = mime or "application/octet-stream"
@@ -24969,6 +25066,52 @@ def corr_attachment_view(att_id: int):
         att.stored_name,
         as_attachment=False,
         mimetype=mime,
+    )
+
+
+@portal_bp.route("/corr/attachment/<int:att_id>/eml-preview")
+@login_required
+def corr_attachment_eml_preview(att_id: int):
+    """Render an EML as inert text instead of opening email HTML inline."""
+    att = CorrAttachment.query.get_or_404(att_id)
+    item = _corr_item_for_attachment(att)
+    _corr_require_access(item)
+    if Path(att.original_name or att.stored_name).suffix.lower() != ".eml":
+        abort(404)
+
+    storage = _corr_storage_dir()
+    file_path = os.path.join(storage, att.stored_name)
+    if not os.path.exists(file_path):
+        flash("الملف غير موجود.", "danger")
+        if att.inbound_id:
+            return redirect(url_for("portal.inbound_view", inbound_id=att.inbound_id))
+        if att.outbound_id:
+            return redirect(url_for("portal.outbound_view", outbound_id=att.outbound_id))
+        return redirect(url_for("portal.corr_index"))
+
+    max_preview_bytes = 15 * 1024 * 1024
+    if os.path.getsize(file_path) > max_preview_bytes:
+        flash("ملف البريد كبير للمعاينة؛ يمكنك تنزيله وفتحه ببرنامج البريد.", "warning")
+        return redirect(url_for("portal.corr_attachment_download", att_id=att.id))
+
+    try:
+        with open(file_path, "rb") as email_file:
+            preview = preview_eml(email_file.read())
+    except (OSError, CorrespondenceIntakeError):
+        flash("تعذر قراءة ملف البريد الإلكتروني للمعاينة.", "danger")
+        return redirect(url_for("portal.corr_attachment_download", att_id=att.id))
+
+    if att.inbound_id:
+        back_url = url_for("portal.inbound_view", inbound_id=att.inbound_id)
+    elif att.outbound_id:
+        back_url = url_for("portal.outbound_view", outbound_id=att.outbound_id)
+    else:
+        back_url = url_for("portal.corr_index")
+    return render_template(
+        "portal/corr/eml_preview.html",
+        attachment=att,
+        preview=preview,
+        back_url=back_url,
     )
 
 

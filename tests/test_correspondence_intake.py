@@ -14,6 +14,7 @@ from services.correspondence_intake import (
     analyze_workflow_attachment,
     extract_eml_attachments,
     extract_attachment_text,
+    preview_eml,
     read_limited_upload,
 )
 
@@ -205,6 +206,33 @@ class CorrespondenceIntakeTests(unittest.TestCase):
 
         self.assertEqual([attachment.filename for attachment in result.attachments], ["first.txt"])
         self.assertTrue(any("الحجم الإجمالي" in warning for warning in result.warnings))
+
+    def test_eml_preview_is_text_only_and_includes_attachment_metadata(self):
+        message = EmailMessage()
+        message["From"] = "Sender <sender@example.test>"
+        message["To"] = "Recipient <recipient@example.test>"
+        message["Cc"] = "Copy <copy@example.test>"
+        message["Subject"] = "Preview subject"
+        message.set_content("Plain preview body")
+        message.add_alternative("<p>HTML preview body</p><script>alert(1)</script>", subtype="html")
+        message.add_attachment(
+            b"document payload",
+            maintype="application",
+            subtype="pdf",
+            filename="report.pdf",
+        )
+
+        preview = preview_eml(message.as_bytes())
+
+        self.assertEqual(preview.subject, "Preview subject")
+        self.assertEqual(preview.sender, "Sender")
+        self.assertEqual(preview.recipients, ("Recipient",))
+        self.assertEqual(preview.cc, ("Copy",))
+        self.assertIn("Plain preview body", preview.body)
+        self.assertEqual(len(preview.attachments), 1)
+        self.assertEqual(preview.attachments[0].filename, "report.pdf")
+        self.assertEqual(preview.attachments[0].mimetype, "application/pdf")
+        self.assertEqual(preview.attachments[0].size_bytes, len(b"document payload"))
 
     def test_image_returns_manual_ocr_warning_and_filename_subject(self):
         result = analyze_correspondence_attachment(b"not-a-real-image", "scan.jpg")

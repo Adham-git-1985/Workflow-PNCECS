@@ -1,6 +1,6 @@
 import json
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from flask import Flask, g
@@ -16,6 +16,7 @@ from models import (
     HRLeaveRequest,
     HRLeaveType,
     HRPermissionRequest,
+    HRPermissionRequestRevision,
     HRPermissionType,
     HRRequestObserver,
     Notification,
@@ -484,11 +485,105 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         updated = db.session.get(HRPermissionRequest, row.id)
-        self.assertEqual(updated.day, "2026-09-02")
+        # The date is fixed at initial submission; posted values cannot
+        # backdate a departure.
+        self.assertEqual(updated.day, "2026-09-01")
         self.assertEqual(updated.from_time, "11:00")
         self.assertEqual(updated.to_time, "12:30")
         self.assertEqual(updated.note, "Updated departure")
         self.assertEqual(updated.status, "SUBMITTED")
+
+    def test_employee_can_reopen_an_approved_permission_and_restart_approval(self):
+        db.session.add_all([
+            UserPermission(user_id=self.employee.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
+        ])
+        row = self._permission()
+        first_round = start_request_flow(KIND_PERMISSION, row)
+        self.assertEqual(decide_request(KIND_PERMISSION, row, self.manager, "APPROVE"), "APPROVED")
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+        response = client.post(
+            f"/portal/hr/permissions/{row.id}/edit",
+            data={
+                "permission_type_id": self.permission_type.id,
+                "day": "2026-01-01",  # Must be ignored by the server.
+                "from_time": "10:00",
+                "to_time": "12:30",
+                "note": "Returned later than planned",
+                "reopen_reason": "Returned at 12:30",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        updated = db.session.get(HRPermissionRequest, row.id)
+        self.assertEqual(updated.status, "SUBMITTED")
+        self.assertEqual(updated.day, "2026-09-01")
+        self.assertEqual(updated.to_time, "12:30")
+
+        revision = HRPermissionRequestRevision.query.filter_by(request_id=row.id).one()
+        self.assertEqual(revision.revision_no, 1)
+        self.assertEqual(revision.previous_to_time, "11:00")
+        self.assertEqual(revision.current_to_time, "12:30")
+        self.assertEqual(revision.reason, "Returned at 12:30")
+
+        rounds = {
+            step.flow_revision
+            for step in db.session.query(type(first_round[0])).filter_by(
+                request_kind=KIND_PERMISSION,
+                request_id=row.id,
+            ).all()
+        }
+        self.assertEqual(rounds, {1, 2})
+        current = current_step(KIND_PERMISSION, row.id)
+        self.assertIsNotNone(current)
+        self.assertEqual(current.flow_revision, 2)
+        self.assertEqual(current.status, "PENDING")
+
+        notified_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(type="HR_PERMISSION_REOPENED").all()
+        }
+        self.assertTrue({self.employee.id, self.manager.id, self.hr.id}.issubset(notified_ids))
+
+        self._login(client, self.manager.id)
+        detail = client.get(f"/portal/hr/approvals/permissions/{row.id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn("12:30", detail.get_data(as_text=True))
+
+    def test_new_permission_uses_today_and_24_hour_time_choices(self):
+        db.session.add_all([
+            UserPermission(user_id=self.employee.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
+        ])
+        db.session.commit()
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+
+        form = client.get("/portal/hr/me/permissions/new")
+        self.assertEqual(form.status_code, 200)
+        html = form.get_data(as_text=True)
+        self.assertIn('name="from_time"', html)
+        self.assertIn('value="12:30"', html)
+        self.assertNotIn('type="time"', html)
+
+        response = client.post(
+            "/portal/hr/me/permissions/new",
+            data={
+                "permission_type_id": self.permission_type.id,
+                "day": "2000-01-01",
+                "from_time": "11:00",
+                "to_time": "12:30",
+                "note": "Today's permission",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        created = HRPermissionRequest.query.order_by(HRPermissionRequest.id.desc()).first()
+        self.assertEqual(created.day, date.today().isoformat())
+        self.assertEqual(created.from_time, "11:00")
+        self.assertEqual(created.to_time, "12:30")
 
     def test_employee_can_edit_unapproved_external_leave_and_its_details_are_visible(self):
         requester = User(

@@ -48,7 +48,11 @@
                 <td>{{ r.day }}</td>
                 <td>{{ r.from_time or '-' }}</td>
                 <td>{{ r.to_time or '-' }}</td>
-                <td>{{ r.hours or '-' }}</td>
+                <td>
+                  {{ r.hours or '-' }}
+                  {% set revision_count = (permission_revision_counts|default({})).get(r.id, 0) %}
+                  {% if revision_count %}<div class="small text-warning mt-1">أُعيد للاعتماد {{ revision_count }} مرة</div>{% endif %}
+                </td>
                 <td><span class="badge bg-{{ badge }}">{{ progress.get('label', 'حالة غير محددة') }}</span></td>
                 <td class="text-muted small">
                   {% set approver_names = (permission_approver_names|default({})).get(r.id, []) %}
@@ -75,7 +79,12 @@
                         </button>
                       </form>
                   {% endif %}
-                  </div>
+                  {% if st == 'APPROVED' and can_create %}
+                    <a class="btn btn-sm btn-outline-warning" href="{{ url_for('portal.hr_permission_request_edit', req_id=r.id) }}">
+                      <i class="bi bi-arrow-repeat"></i> تعديل وإعادة اعتماد
+                    </a>
+                  {% endif %}
+                </div>
                 </td>
               </tr>
 
