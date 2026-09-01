@@ -54,11 +54,9 @@
         <label class="form-label">من</label>
         <select class="form-select" name="from_time" aria-label="وقت المغادرة من بنظام 24 ساعة">
           <option value="">-- اختر الوقت --</option>
-          {% for hour in range(0, 24) %}
-            {% for minute in range(0, 60, 5) %}
-              {% set time_value = '%02d:%02d'|format(hour, minute) %}
-              <option value="{{ time_value }}" {% if r and r.from_time == time_value %}selected{% endif %}>{{ time_value }}</option>
-            {% endfor %}
+          {% for total_minutes in range(8 * 60, 15 * 60 + 1, 5) %}
+            {% set time_value = '%02d:%02d'|format(total_minutes // 60, total_minutes % 60) %}
+            <option value="{{ time_value }}" {% if r and r.from_time == time_value %}selected{% endif %}>{{ time_value }}</option>
           {% endfor %}
         </select>
       </div>
@@ -66,11 +64,9 @@
         <label class="form-label">إلى</label>
         <select class="form-select" name="to_time" aria-label="وقت المغادرة إلى بنظام 24 ساعة">
           <option value="">-- اختر الوقت --</option>
-          {% for hour in range(0, 24) %}
-            {% for minute in range(0, 60, 5) %}
-              {% set time_value = '%02d:%02d'|format(hour, minute) %}
-              <option value="{{ time_value }}" {% if r and r.to_time == time_value %}selected{% endif %}>{{ time_value }}</option>
-            {% endfor %}
+          {% for total_minutes in range(8 * 60, 15 * 60 + 1, 5) %}
+            {% set time_value = '%02d:%02d'|format(total_minutes // 60, total_minutes % 60) %}
+            <option value="{{ time_value }}" {% if r and r.to_time == time_value %}selected{% endif %}>{{ time_value }}</option>
           {% endfor %}
         </select>
       </div>
@@ -85,7 +81,7 @@
       </div>
 
       <div class="col-12">
-        <div class="form-text">اختر الوقت بصيغة 24 ساعة، مثل 13:30؛ لا يستخدم النموذج AM أو PM.</div>
+        <div class="form-text">الأوقات المتاحة من 08:00 إلى 15:00 فقط، بصيغة 24 ساعة.</div>
       </div>
 
       <div class="col-12 col-md-6">

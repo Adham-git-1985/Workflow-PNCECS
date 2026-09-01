@@ -28,6 +28,8 @@ from services.workflow_task_email import (
 _TROUBLE_TICKET_LINK_RE = re.compile(r"^/portal/trouble-tickets/(\d+)(?:[/?#]|$)")
 _HR_REQUEST_LINK_RE = re.compile(r"^/portal/hr/approvals/(leaves|permissions)/(\d+)(?:[/?#]|$)")
 _TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
+_TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
+_TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
 
 
 def _normalize_trouble_ticket_role(value: str | None) -> str:
@@ -64,14 +66,18 @@ def _user_has_ticket_admin_role(user: User) -> bool:
 
 
 def _can_receive_ticket_notification_email(user: User, notification: Notification) -> bool:
-    """Keep ticket emails limited to the requester and Admin/SuperAdmin users.
+    """Keep ticket emails to Admin/SuperAdmin, except direct creator updates.
 
     The link check also protects old queued ticket notifications created before
     the role restriction was introduced.
     """
     notification_type = (getattr(notification, "type", None) or "").strip().upper()
     link_match = _TROUBLE_TICKET_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
-    if notification_type != "TROUBLE_TICKET" and not link_match:
+    ticket_notification_types = {
+        _TROUBLE_TICKET_NOTIFICATION_TYPE,
+        _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE,
+    }
+    if notification_type not in ticket_notification_types and not link_match:
         return True
 
     ticket_id = int(link_match.group(1)) if link_match else None
@@ -80,8 +86,8 @@ def _can_receive_ticket_notification_email(user: User, notification: Notificatio
     ticket = db.session.get(TroubleTicket, ticket_id)
     if not ticket:
         return False
-    if int(user.id) == int(ticket.requester_id):
-        return True
+    if notification_type == _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE:
+        return ticket.requester_id is not None and int(user.id) == int(ticket.requester_id)
     return _user_has_ticket_admin_role(user)
 
 

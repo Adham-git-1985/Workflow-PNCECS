@@ -4064,6 +4064,7 @@ TROUBLE_TICKET_MAX_FILES = 10
 TROUBLE_TICKET_MAX_FILE_BYTES = 25 * 1024 * 1024
 TROUBLE_TICKET_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
+TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
 _TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
 
 
@@ -4176,15 +4177,23 @@ def _trouble_ticket_admin_user_ids() -> list[int]:
 def _trouble_ticket_notification_recipient_ids(
     ticket: TroubleTicket,
     *,
+    include_requester: bool = False,
     exclude_user_id: int | None = None,
 ) -> list[int]:
-    """Restrict ticket notifications (and their emails) to valid viewers."""
+    """Return ticket-notification recipients allowed by the ticket policy."""
     recipient_ids = set(_trouble_ticket_admin_user_ids())
-    if ticket.requester_id:
+    if include_requester and ticket.requester_id:
         recipient_ids.add(int(ticket.requester_id))
     if exclude_user_id:
         recipient_ids.discard(int(exclude_user_id))
     return sorted(recipient_ids)
+
+
+def _trouble_ticket_notification_type(ticket: TroubleTicket, recipient_id: int) -> str:
+    """Use a dedicated type for a direct update sent to the ticket creator."""
+    if ticket.requester_id and int(recipient_id) == int(ticket.requester_id):
+        return TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE
+    return TROUBLE_TICKET_NOTIFICATION_TYPE
 
 
 def _can_manage_trouble_tickets() -> bool:
@@ -4365,12 +4374,13 @@ def trouble_ticket_view(ticket_id: int):
                     ticket.status = "IN_PROGRESS"
                 for recipient_id in _trouble_ticket_notification_recipient_ids(
                     ticket,
+                    include_requester=is_manager,
                     exclude_user_id=current_user.id,
                 ):
                     db.session.add(Notification(
                         user_id=recipient_id,
                         message=f"تعليق جديد على تذكرة الدعم #{ticket.id}: {ticket.subject}",
-                        type=TROUBLE_TICKET_NOTIFICATION_TYPE,
+                        type=_trouble_ticket_notification_type(ticket, recipient_id),
                         source="portal",
                         link_url=url_for("portal.trouble_ticket_view", ticket_id=ticket.id),
                         is_read=False,
@@ -4404,12 +4414,13 @@ def trouble_ticket_view(ticket_id: int):
                 ))
                 for recipient_id in _trouble_ticket_notification_recipient_ids(
                     ticket,
+                    include_requester=True,
                     exclude_user_id=current_user.id,
                 ):
                     db.session.add(Notification(
                         user_id=recipient_id,
                         message=f"تم تحديث تذكرة الدعم #{ticket.id} إلى: {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
-                        type=TROUBLE_TICKET_NOTIFICATION_TYPE,
+                        type=_trouble_ticket_notification_type(ticket, recipient_id),
                         source="portal",
                         is_read=False,
                         created_at=datetime.utcnow(),
@@ -10122,6 +10133,12 @@ def _parse_hhmm(s: str):
         return None
 
 
+def _is_allowed_permission_time(value: str | None) -> bool:
+    """Only accept departure times inside the organization's workday."""
+    minutes = _parse_hhmm_minutes(value)
+    return minutes is not None and 8 * 60 <= minutes <= 15 * 60
+
+
 
 # -------------------------
 # HR - Pages previously marked as "قيد التطوير" (Phase 1)
@@ -12722,6 +12739,18 @@ def hr_permission_request_new():
                 selected_user_id=selected_user_id,
             )
 
+        if (from_time and not _is_allowed_permission_time(ft)) or (
+            to_time and not _is_allowed_permission_time(tt)
+        ):
+            flash("وقت المغادرة يجب أن يكون بين 08:00 و15:00.", "danger")
+            return render_template(
+                "portal/hr/permission_request_new.html",
+                types=types,
+                users=users,
+                is_admin_entry=is_admin_entry,
+                selected_user_id=selected_user_id,
+            )
+
         pt = HRPermissionType.query.get(permission_type_id)
         if not pt:
             flash("نوع المغادرة غير موجود.", "danger")
@@ -12939,6 +12968,12 @@ def hr_permission_request_edit(req_id: int):
             tt = _parse_hhmm(to_time)
         except Exception:
             flash('صيغة الوقت غير صحيحة. استخدم HH:MM.', 'danger')
+            return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
+
+        if (from_time and not _is_allowed_permission_time(ft)) or (
+            to_time and not _is_allowed_permission_time(tt)
+        ):
+            flash('وقت المغادرة يجب أن يكون بين 08:00 و15:00.', 'danger')
             return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
 
         permission_type = HRPermissionType.query.get(permission_type_id)

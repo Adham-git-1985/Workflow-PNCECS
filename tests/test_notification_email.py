@@ -178,6 +178,32 @@ class NotificationEmailTests(unittest.TestCase):
         delivery = NotificationEmailDelivery.query.one()
         self.assertEqual(delivery.status, "FAILED")
 
+    def test_ticket_creator_receives_a_direct_reply_email(self):
+        ticket = TroubleTicket(
+            requester_id=self.user.id,
+            subject="Support ticket with an administrator reply",
+            description="The requester should receive the reply.",
+            category="SYSTEM",
+            priority="NORMAL",
+            status="IN_PROGRESS",
+        )
+        db.session.add(ticket)
+        db.session.flush()
+        db.session.add(Notification(
+            user_id=self.user.id,
+            message="Administrator replied to your support ticket.",
+            type="TROUBLE_TICKET_REQUESTER_UPDATE",
+            source="portal",
+            link_url=f"/portal/trouble-tickets/{ticket.id}",
+            is_read=False,
+        ))
+        db.session.commit()
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+
+        self.assertEqual(send_email.call_args.args[1], self.user.email)
+
     def test_unauthorized_hr_request_notification_never_sends_email(self):
         requester = User(
             email="leave-requester@example.test",

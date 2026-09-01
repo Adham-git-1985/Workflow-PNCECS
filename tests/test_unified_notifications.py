@@ -320,7 +320,15 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             for notification in Notification.query.filter_by(type="TROUBLE_TICKET").all()
             if "تم تحديث تذكرة الدعم" in notification.message
         }
-        self.assertEqual(update_recipients, {self.other_user.id, admin.id})
+        self.assertEqual(update_recipients, {admin.id})
+        requester_update_recipients = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="TROUBLE_TICKET_REQUESTER_UPDATE",
+            ).all()
+            if "تم تحديث تذكرة الدعم" in notification.message
+        }
+        self.assertEqual(requester_update_recipients, {self.other_user.id})
 
     def test_support_ticket_search_matches_requester_email(self):
         matching_ticket = TroubleTicket(

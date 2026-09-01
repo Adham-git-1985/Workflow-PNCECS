@@ -582,7 +582,10 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(form.status_code, 200)
         html = form.get_data(as_text=True)
         self.assertIn('name="from_time"', html)
+        self.assertIn('value="08:00"', html)
         self.assertIn('value="12:30"', html)
+        self.assertIn('value="15:00"', html)
+        self.assertNotIn('value="07:55"', html)
         self.assertNotIn('type="time"', html)
 
         response = client.post(
@@ -600,6 +603,29 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(created.day, date.today().isoformat())
         self.assertEqual(created.from_time, "11:00")
         self.assertEqual(created.to_time, "12:30")
+
+    def test_permission_rejects_times_outside_the_workday(self):
+        db.session.add_all([
+            UserPermission(user_id=self.employee.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
+        ])
+        db.session.commit()
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+
+        response = client.post(
+            "/portal/hr/me/permissions/new",
+            data={
+                "permission_type_id": self.permission_type.id,
+                "from_time": "07:55",
+                "to_time": "12:30",
+                "note": "Outside the permitted workday",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(HRPermissionRequest.query.count(), 0)
+        self.assertIn("08:00", response.get_data(as_text=True))
 
     def test_employee_can_edit_unapproved_external_leave_and_its_details_are_visible(self):
         requester = User(
