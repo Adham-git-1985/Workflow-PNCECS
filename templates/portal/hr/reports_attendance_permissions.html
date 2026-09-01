@@ -23,7 +23,7 @@
       <div class="text-muted">فلترة حسب الموظف/موقع العمل/نطاق التاريخ + نوع التعيين + نوع الحركات + مقارنة المدة الفعلية.</div>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       {% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_attendance_permissions', user_id=selected_user_id or '', work_location_id=selected_work_location_id or '', appointment_type_id=selected_appointment_type_id or '', from_date=from_date, to_date=to_date, move_kind=move_kind, dur_op=dur_op, hours=hours_value, export='xlsx') }}">
           <i class="bi bi-file-earmark-excel"></i> Excel

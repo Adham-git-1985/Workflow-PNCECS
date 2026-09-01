@@ -16911,6 +16911,11 @@ def hr_attendance_events():
     q = (request.args.get("q") or "").strip()
     date_from = (request.args.get("date_from") or "").strip()
     date_to = (request.args.get("date_to") or "").strip()
+    date_from, date_to = _attendance_event_date_range(
+        date_from,
+        date_to,
+        _as_yyyy_mm_dd(date.today()),
+    )
     event_type = (request.args.get("event_type") or "").strip().upper()  # I/O/C/D/E/F
     # UI-required filters (may be used later in more advanced logic)
     work_location_lookup_id = (request.args.get("work_location_lookup_id") or "").strip()
@@ -16956,7 +16961,9 @@ def hr_attendance_events():
         except Exception:
             pass
 
-    events = qry.order_by(AttendanceEvent.event_dt.desc()).limit(500).all()
+    # The default range is one day. For a user-selected range, retain every
+    # migrated movement so the merged departure rows include all selected days.
+    events = qry.order_by(AttendanceEvent.event_dt.desc()).all()
     for event in events:
         # Display recovered legacy C/D codes without mutating the stored event.
         event.display_event_code = _attendance_event_code(event)
@@ -17041,7 +17048,7 @@ def hr_attendance_events():
                 )
             report_user_ids.update(
                 int(uid)
-                for (uid,) in system_users_query.distinct().limit(500).all()
+                for (uid,) in system_users_query.distinct().all()
                 if uid
             )
 
@@ -22205,6 +22212,30 @@ def _sort_and_number_attendance_daily_rows(rows):
     return ordered_rows
 
 
+def _attendance_count_day(day_from: str, day_to: str, today: str) -> str:
+    """Choose the day shown in the attended-employees counter.
+
+    A single-day filter should report that selected day. For date ranges, the
+    counter intentionally remains a current-day indicator.
+    """
+    return day_from if day_from == day_to else today
+
+
+def _attendance_event_date_range(
+    date_from: str,
+    date_to: str,
+    today: str,
+) -> tuple[str, str]:
+    """Provide a useful default period for the attendance-events screen."""
+    if not date_from and not date_to:
+        return today, today
+    if date_from and not date_to:
+        return date_from, date_from
+    if date_to and not date_from:
+        return date_to, date_to
+    return date_from, date_to
+
+
 @portal_bp.route('/hr/attendance/daily')
 @login_required
 @_perm(HR_ATT_READ)
@@ -22235,16 +22266,22 @@ def hr_attendance_daily():
     )
     _attach_reconciled_departures(rows)
     users = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
-    attendance_count_today = (
+    attendance_count_day = _attendance_count_day(day_from, day_to, today)
+    attendance_count_query = (
         AttendanceDailySummary.query
-        .filter(AttendanceDailySummary.day == today)
+        .filter(AttendanceDailySummary.day == attendance_count_day)
         .filter(AttendanceDailySummary.first_in.isnot(None))
-        .count()
     )
+    if user_id.isdigit():
+        attendance_count_query = attendance_count_query.filter(
+            AttendanceDailySummary.user_id == int(user_id)
+        )
+    attendance_count_today = attendance_count_query.count()
 
     return render_template('portal/hr/attendance_daily.html', rows=rows, users=users,
                            day_from=day_from, day_to=day_to, user_id=user_id,
                            today=today,
+                           attendance_count_day=attendance_count_day,
                            attendance_count_today=attendance_count_today,
                            can_manage=_hr_can_manage_attendance(),
                            can_edit_attendance=_hr_can_edit_attendance())

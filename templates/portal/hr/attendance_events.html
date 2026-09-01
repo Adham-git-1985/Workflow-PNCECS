@@ -1,14 +1,15 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}سجلات الدوام{% endblock %}
+{% block title %}سجل الدخول والخروج والمغادرات{% endblock %}
 
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3" id="attEventsPrint">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <h4 class="mb-1"><i class="bi bi-clock-history"></i> سجلات الدوام</h4>
+      <h4 class="mb-1"><i class="bi bi-clock-history"></i> سجل الدخول والخروج والمغادرات</h4>
       <div class="text-muted">سجل يومي واضح للحضور والانصراف والمغادرات الشخصية والرسمية.</div>
     </div>
     <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_attendance_events', q=q, date_from=date_from, date_to=date_to, event_type=event_type, work_location_lookup_id=work_location_lookup_id, closing=closing, device_id=device_id, batch_id=batch_id, user_id=user_id, export='xlsx') }}">
         <i class="bi bi-download"></i> Excel
       </a>

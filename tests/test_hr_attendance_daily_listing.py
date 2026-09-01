@@ -7,10 +7,39 @@ from flask_login import LoginManager, login_user, logout_user
 
 from extensions import db
 from models import User
-from portal.routes import _hr_can_edit_attendance, _sort_and_number_attendance_daily_rows
+from portal.routes import (
+    _attendance_count_day,
+    _attendance_event_date_range,
+    _hr_can_edit_attendance,
+    _sort_and_number_attendance_daily_rows,
+)
 
 
 class AttendanceDailyListingTests(unittest.TestCase):
+    def test_attendance_counter_uses_the_selected_day_for_a_single_day_filter(self):
+        self.assertEqual(
+            _attendance_count_day("2026-08-30", "2026-08-30", "2026-09-01"),
+            "2026-08-30",
+        )
+
+    def test_attendance_counter_uses_today_for_a_multi_day_filter(self):
+        self.assertEqual(
+            _attendance_count_day("2026-08-30", "2026-09-01", "2026-09-01"),
+            "2026-09-01",
+        )
+
+    def test_attendance_events_defaults_to_today_and_retains_selected_dates(self):
+        today = "2026-09-01"
+        self.assertEqual(_attendance_event_date_range("", "", today), (today, today))
+        self.assertEqual(
+            _attendance_event_date_range("2026-08-30", "", today),
+            ("2026-08-30", "2026-08-30"),
+        )
+        self.assertEqual(
+            _attendance_event_date_range("2026-01-01", "2026-09-01", today),
+            ("2026-01-01", "2026-09-01"),
+        )
+
     def test_rows_are_numbered_by_first_checkin_within_each_day(self):
         first = SimpleNamespace(user_id=1, day="2026-09-01", first_in=datetime(2026, 9, 1, 8, 0))
         second = SimpleNamespace(user_id=2, day="2026-09-01", first_in=datetime(2026, 9, 1, 8, 15))

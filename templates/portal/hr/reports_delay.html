@@ -9,7 +9,7 @@
       <div class="text-muted">فلترة حسب الموظف/موقع العمل/نطاق التاريخ + نوع التأخير + مقارنة مدة التأخير (بالساعات).</div>
     </div>
     <div class="d-flex gap-2">
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       {% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_delay', user_id=selected_user_id, work_location_id=selected_work_location_id, from_date=from_date, to_date=to_date, delay_type=delay_type, dur_op=dur_op, hours=hours_value, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> تصدير Excel</a>
       {% endif %}

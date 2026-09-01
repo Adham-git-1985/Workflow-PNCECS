@@ -5,8 +5,9 @@
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
     <h5 class="mb-0"><i class="bi bi-graph-up"></i> ملخص الدوام اليومي</h5>
     <div class="d-flex gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}"><i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_import') }}">استيراد</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">الأحداث</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_events') }}">سجل الدخول والخروج والمغادرات</a>
       {% if can_edit_attendance %}<a class="btn btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit', day=today) }}"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</a>{% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}">إعدادات الموارد البشرية</a>
     </div>
@@ -38,7 +39,7 @@
   </form>
 
   <div class="border rounded-3 px-3 py-2 mt-3 d-inline-flex align-items-center gap-2">
-    <span class="text-muted small">الموظفون الذين داوموا اليوم ({{ today }})</span>
+    <span class="text-muted small">الموظفون الذين داوموا {% if attendance_count_day == today %}اليوم{% else %}في{% endif %} ({{ attendance_count_day }})</span>
     <strong class="fs-5">{{ attendance_count_today }}</strong>
   </div>
 
