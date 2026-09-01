@@ -38,12 +38,16 @@
         <label class="form-label">المفوّض إليه</label>
         <select name="to_user_id" class="form-select" required>
           <option value="">— اختر —</option>
-          {% for u in users %}
-            {% if u.id != current_user.id %}
-              <option value="{{ u.id }}">{{ u.email }}{% if u.name %} — {{ u.name }}{% endif %}</option>
-            {% endif %}
+          {% for u in delegatee_users %}
+            <option value="{{ u.id }}">{{ u.email }}{% if u.name %} — {{ u.name }}{% endif %}</option>
           {% endfor %}
         </select>
+        {% if not can_manage %}
+          <div class="form-text">يظهر فقط من يساويك في المستوى الإداري أو يقع في مستوى أدنى.</div>
+          {% if not delegatee_users %}
+            <div class="form-text text-warning">لا توجد جهة مؤهلة للتفويض. تأكد من ربط ملفك وملفات الموظفين بالهيكل التنظيمي.</div>
+          {% endif %}
+        {% endif %}
       </div>
 
       <div class="col-md-4">

@@ -7,6 +7,7 @@ from sqlalchemy import func
 from . import delegation_bp
 from extensions import db
 from models import Delegation, User, AuditLog, RolePermission
+from utils.org_dynamic import get_user_org_hierarchy_level
 
 
 
@@ -62,11 +63,44 @@ def _can_manage_delegations() -> bool:
 
 
 def _can_self_delegate() -> bool:
-    return _has_permission("DELEGATION_SELF")
+    """Every authenticated employee may create a delegation for themselves."""
+    return bool(getattr(current_user, "is_authenticated", False))
 
 
 def _can_access_delegations_page() -> bool:
     return _can_manage_delegations() or _can_self_delegate()
+
+
+def _uses_self_delegation_mode(can_manage: bool, can_self: bool) -> bool:
+    """Keep ordinary employees in self-delegation mode.
+
+    Full delegation administration remains available only to ADMIN and
+    SUPER_ADMIN users. This allows every employee to create their own
+    delegation without allowing them to create delegations for others.
+    """
+    return bool(can_self and not _is_admin_user())
+
+
+def _can_delegate_by_hierarchy(delegator: User, delegatee: User) -> bool:
+    """Allow delegation only to the same or a lower administrative level."""
+    try:
+        if int(delegator.id) == int(delegatee.id):
+            return False
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    delegator_level = get_user_org_hierarchy_level(delegator)
+    delegatee_level = get_user_org_hierarchy_level(delegatee)
+    return (
+        delegator_level is not None
+        and delegatee_level is not None
+        and delegator_level <= delegatee_level
+    )
+
+
+def _eligible_delegatees(delegator: User, users: list[User]) -> list[User]:
+    """Return delegatees permitted for a self-delegating employee."""
+    return [user for user in users if _can_delegate_by_hierarchy(delegator, user)]
 
 
 def _parse_date(s: str):
@@ -89,27 +123,21 @@ def _parse_dt_local(s: str):
 def index():
     can_manage = _can_manage_delegations()
     can_self = _can_self_delegate()
-    # إذا كان المستخدم يملك DELEGATION_SELF (وليس Admin/SuperAdmin) نُجبر وضع التفويض الذاتي
-    if can_self and not _is_admin_user():
-        can_manage = False
-    # إذا كان المستخدم يملك DELEGATION_SELF (وليس Admin/SuperAdmin) نُجبر وضع التفويض الذاتي
-    if can_self and not _is_admin_user():
-        can_manage = False
-    # إذا كان المستخدم يملك DELEGATION_SELF (وليس Admin/SuperAdmin) نُجبر وضع التفويض الذاتي
-    if can_self and not _is_admin_user():
+    if _uses_self_delegation_mode(can_manage, can_self):
         can_manage = False
     if not (can_manage or can_self):
         abort(403)
 
     now = datetime.now()
 
+    users = User.query.order_by(User.id.asc()).all()
     if can_manage:
         delegations = (
             Delegation.query
             .order_by(Delegation.id.desc())
             .all()
         )
-        users = User.query.order_by(User.id.asc()).all()
+        delegatee_users = users
     else:
         # Self-delegation mode: show only delegations created by this user (as delegator)
         delegations = (
@@ -118,12 +146,13 @@ def index():
             .order_by(Delegation.id.desc())
             .all()
         )
-        users = User.query.order_by(User.id.asc()).all()
+        delegatee_users = _eligible_delegatees(current_user, users)
 
     return render_template(
         "delegation/index.html",
         delegations=delegations,
         users=users,
+        delegatee_users=delegatee_users,
         now=now,
         can_manage=can_manage,
         can_self=can_self,
@@ -135,6 +164,8 @@ def index():
 def create():
     can_manage = _can_manage_delegations()
     can_self = _can_self_delegate()
+    if _uses_self_delegation_mode(can_manage, can_self):
+        can_manage = False
     if not (can_manage or can_self):
         abort(403)
 
@@ -157,6 +188,20 @@ def create():
 
     if from_user_id == to_user_id:
         flash("لا يمكن عمل تفويض للنفس.", "danger")
+        return redirect(url_for("delegation.index"))
+
+    delegator = db.session.get(User, from_user_id)
+    delegatee = db.session.get(User, to_user_id)
+    if not delegator or not delegatee:
+        flash("تعذر العثور على المفوِّض أو المفوَّض إليه.", "danger")
+        return redirect(url_for("delegation.index"))
+
+    if not can_manage and not _can_delegate_by_hierarchy(delegator, delegatee):
+        flash(
+            "يسمح بالتفويض فقط لموظف في نفس المستوى الإداري أو مستوى أدنى. "
+            "تأكد من ربط الموظفين بالهيكل التنظيمي.",
+            "danger",
+        )
         return redirect(url_for("delegation.index"))
 
     starts_at = None
@@ -249,6 +294,8 @@ def create():
 def revoke(delegation_id):
     can_manage = _can_manage_delegations()
     can_self = _can_self_delegate()
+    if _uses_self_delegation_mode(can_manage, can_self):
+        can_manage = False
     if not (can_manage or can_self):
         abort(403)
 

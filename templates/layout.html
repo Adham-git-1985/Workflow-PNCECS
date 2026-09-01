@@ -138,12 +138,7 @@
         or current_user.has_perm('USER_PERMISSIONS_MANAGE')
     ) %}
 
-    {% set can_delegations = (
-        current_user.has_role('ADMIN')
-        or current_user.has_role('SUPER_ADMIN')
-        or current_user.has_perm('DELEGATION_MANAGE')
-        or current_user.has_perm('DELEGATION_SELF')
-    ) %}
+    {% set can_delegations = current_user.is_authenticated %}
 
     <!-- ===== SIDEBAR (Responsive) ===== -->
 
