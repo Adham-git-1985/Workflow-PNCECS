@@ -86,6 +86,13 @@ from services.employee_attachment_archive import (
     archive_employee_attachment_deletion,
     sync_employee_attachment_to_archive,
 )
+from services.delivery_controls import (
+    EMAIL_DELIVERY_ENABLED_SETTING,
+    NOTIFICATIONS_ENABLED_SETTING,
+    cancel_pending_email_deliveries,
+    email_delivery_enabled,
+    notifications_enabled,
+)
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -1059,6 +1066,7 @@ def _inject_portal_context():
             .filter(Notification.is_mirror.is_(False))
             .filter(Notification.source == 'portal')
             .filter(Notification.is_read == False)  # noqa: E712
+            .filter(Notification.is_visible.is_(True))
         )
     except Exception:
         notif_unread = 0
@@ -5056,6 +5064,9 @@ def _send_circular_to_whatsapp(row: PortalCircular) -> tuple[str, str]:
 
 
 def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
+    if not email_delivery_enabled():
+        return "warning", "إرسال البريد الإلكتروني معطّل من إعدادات السوبر أدمن."
+
     cfg = _email_circular_settings(include_secrets=True)
     if not cfg.get("enabled"):
         return "warning", "تكامل البريد الإلكتروني غير مفعل من صفحة التكاملات."
@@ -5206,6 +5217,7 @@ def circular_view(circular_id: int):
         Notification.source == "portal",
         Notification.is_mirror.is_(False),
         Notification.is_read.is_(False),
+        Notification.is_visible.is_(True),
         or_(
             Notification.link_url == circular_link,
             and_(
@@ -6398,13 +6410,14 @@ def portal_notifications():
                     Notification.is_mirror.is_(False),
                     Notification.source == 'portal',
                     Notification.is_read == False,  # noqa: E712
+                    Notification.is_visible.is_(True),
                 ).update({"is_read": True})
                 db.session.commit()
                 flash("تم تعليم جميع الإشعارات كمقروءة.", "success")
             elif action == "READ_ONE":
                 nid = int(request.form.get("id") or 0)
                 n = Notification.query.get(nid)
-                if n and n.user_id == current_user.id and (getattr(n, 'source', None) == 'portal') and (not getattr(n, 'is_mirror', False)):
+                if n and n.user_id == current_user.id and (getattr(n, 'source', None) == 'portal') and getattr(n, 'is_visible', True) and (not getattr(n, 'is_mirror', False)):
                     n.is_read = True
                     db.session.commit()
                 return redirect(url_for("portal.portal_notifications"))
@@ -6418,7 +6431,8 @@ def portal_notifications():
     q = (Notification.query
          .filter(Notification.user_id == current_user.id)
          .filter(Notification.is_mirror.is_(False))
-         .filter(Notification.source == 'portal'))
+         .filter(Notification.source == 'portal')
+         .filter(Notification.is_visible.is_(True)))
     if unread_only:
         q = q.filter(Notification.is_read == False)  # noqa: E712
     rows = q.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(120).all()
@@ -6429,6 +6443,7 @@ def portal_notifications():
             .filter(Notification.user_id == current_user.id)
             .filter(Notification.is_mirror.is_(False))
             .filter(Notification.source == 'portal')
+            .filter(Notification.is_visible.is_(True))
             .filter(Notification.is_read == False))
     except Exception:
         unread_count = 0
@@ -21942,6 +21957,42 @@ def _timeclock_sync(file_path: str, imported_by_id: int, append_only: bool = Tru
 def portal_admin_integrations():
     if request.method == 'POST':
         action = (request.form.get('action') or 'timeclock').strip()
+        if action == 'delivery_controls':
+            is_super_admin = bool(
+                current_user.has_role('SUPER_ADMIN')
+                or current_user.has_role('SUPERADMIN')
+            )
+            if not is_super_admin:
+                abort(403)
+
+            notifications_allowed = (request.form.get('notifications_enabled') or '0') == '1'
+            emails_allowed = (request.form.get('email_delivery_enabled') or '0') == '1'
+            _setting_set(
+                NOTIFICATIONS_ENABLED_SETTING,
+                '1' if notifications_allowed else '0',
+            )
+            _setting_set(
+                EMAIL_DELIVERY_ENABLED_SETTING,
+                '1' if emails_allowed else '0',
+            )
+            cancelled_emails = 0
+            if not emails_allowed:
+                cancelled_emails = cancel_pending_email_deliveries()
+
+            _portal_audit(
+                'SUPER_ADMIN_DELIVERY_CONTROLS_UPDATE',
+                (
+                    f"notifications={1 if notifications_allowed else 0} "
+                    f"emails={1 if emails_allowed else 0} "
+                    f"cancelled_pending_emails={cancelled_emails}"
+                ),
+                target_type='SETTING',
+                target_id=0,
+            )
+            db.session.commit()
+            flash('تم حفظ صلاحيات إرسال الإشعارات والبريد الإلكتروني.', 'success')
+            return redirect(url_for('portal.portal_admin_integrations'))
+
         if action == 'whatsapp_circulars':
             enabled = (request.form.get('wa_enabled') or '0') == '1'
             mode = (request.form.get('wa_mode') or 'webhook').strip().lower()
@@ -22093,6 +22144,14 @@ def portal_admin_integrations():
     last_file = _setting_get('TIMECLK_LAST_FILE') or ''
     wa_config = _whatsapp_circular_settings()
     email_config = _email_circular_settings()
+    is_super_admin = bool(
+        current_user.has_role('SUPER_ADMIN')
+        or current_user.has_role('SUPERADMIN')
+    )
+    delivery_controls = {
+        'notifications_enabled': notifications_enabled(),
+        'emails_enabled': email_delivery_enabled(),
+    }
 
     return render_template('portal/admin/integrations.html',
                            timeclock_file_path=file_path,
@@ -22107,7 +22166,9 @@ def portal_admin_integrations():
                            match_by=match_by,
                            last_file=last_file,
                            wa_config=wa_config,
-                           email_config=email_config)
+                           email_config=email_config,
+                           is_super_admin=is_super_admin,
+                           delivery_controls=delivery_controls)
 
 
 @portal_bp.route('/hr/attendance/sync-now', methods=['POST'])
@@ -26171,7 +26232,13 @@ def portal_admin_dashboard():
     add_card("TRANSPORT_UPDATE", "ثوابت الحركة", "السيارات/السائقون/المناطق/الوجهات.", "bi-truck", "portal.transport_home")
 
     # Integrations
-    add_card(PORTAL_INTEGRATIONS_MANAGE, "التكاملات", "إعداد مزامنة ملف ساعة الدوام من السيرفر.", "bi-plug", "portal.hr_attendance_import")
+    add_card(
+        PORTAL_INTEGRATIONS_MANAGE,
+        "التكاملات",
+        "إعداد مزامنة ساعة الدوام وقنوات الإشعارات والبريد الإلكتروني.",
+        "bi-plug",
+        "portal.portal_admin_integrations",
+    )
 
     return render_template("portal/admin/index.html", cards=cards, pending_access=pending_access)
 

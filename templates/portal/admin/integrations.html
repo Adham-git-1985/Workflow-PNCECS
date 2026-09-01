@@ -3,6 +3,7 @@
 {% block content %}
 {% set wa = wa_config|default({'enabled': false, 'ready': false, 'mode': 'webhook', 'webhook_url': '', 'group_id': '', 'webhook_secret_set': false, 'api_version': 'v20.0', 'phone_number_id': '', 'cloud_token_set': false, 'recipients_raw': '', 'recipients': [], 'last_sent_at': '', 'last_status': ''}, true) %}
 {% set mail_cfg = email_config|default({'enabled': false, 'ready': false, 'host': '', 'port': 587, 'security': 'starttls', 'username': '', 'password_set': false, 'from_email': '', 'from_name': 'البوابة الإدارية', 'reply_to': '', 'batch_size': 50, 'recipient_count': 0, 'last_sent_at': '', 'last_status': ''}, true) %}
+{% set controls = delivery_controls|default({'notifications_enabled': true, 'emails_enabled': true}, true) %}
 <div class="bg-white rounded-3 shadow-sm p-4">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
     <h5 class="mb-0"><i class="bi bi-plug"></i> التكاملات</h5>
@@ -12,6 +13,35 @@
   </div>
 
   <hr class="my-4">
+
+  {% if is_super_admin %}
+    <div class="card border-primary mb-4">
+      <div class="card-body">
+        <h6 class="card-title mb-2"><i class="bi bi-shield-lock"></i> تحكم السوبر أدمن في قنوات الإرسال</h6>
+        <p class="text-muted small mb-3">يطبّق هذا التحكم على جميع الإشعارات الجديدة في النظام، بشكل مستقل عن إعدادات خادم البريد.</p>
+        <form method="post" class="row g-3 align-items-center">
+          <input type="hidden" name="action" value="delivery_controls">
+          <div class="col-md-5">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" id="notifications_enabled" name="notifications_enabled" value="1" {% if controls.notifications_enabled %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="notifications_enabled">السماح بإرسال الإشعارات داخل النظام</label>
+            </div>
+            <div class="form-text">عند التعطيل لا تظهر الإشعارات الجديدة للمستخدمين.</div>
+          </div>
+          <div class="col-md-5">
+            <div class="form-check form-switch">
+              <input class="form-check-input" type="checkbox" role="switch" id="email_delivery_enabled" name="email_delivery_enabled" value="1" {% if controls.emails_enabled %}checked{% endif %}>
+              <label class="form-check-label fw-semibold" for="email_delivery_enabled">السماح بإرسال البريد الإلكتروني</label>
+            </div>
+            <div class="form-text">عند التعطيل لا توضع رسائل جديدة في الإرسال، وتُلغى الرسائل المعلّقة دون محاولة اتصال بخادم البريد.</div>
+          </div>
+          <div class="col-md-2 d-grid">
+            <button class="btn btn-primary" type="submit"><i class="bi bi-save"></i> حفظ</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {% endif %}
 
   <div class="row g-4">
     <div class="col-lg-7">
@@ -197,6 +227,9 @@
 
       <div class="p-3 border rounded-3 mb-3">
         <h6 class="mb-3"><i class="bi bi-envelope-at"></i> البريد الإلكتروني للتعاميم وإشعارات المهام</h6>
+        {% if not controls.emails_enabled %}
+          <div class="alert alert-warning py-2 small">إرسال البريد الإلكتروني موقوف حاليًا من تحكم السوبر أدمن؛ لن تُرسل أي رسالة حتى إعادة تفعيله.</div>
+        {% endif %}
         <form method="post" class="row g-2">
           <input type="hidden" name="action" value="email_circulars">
 

@@ -2118,6 +2118,7 @@ def notifications():
         Notification.query
         .filter(Notification.user_id == current_user.id)
         .filter(Notification.is_mirror.is_(scope == "sent"))
+        .filter(Notification.is_visible.is_(True))
     )
     if scope == "sent":
         query = query.filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
@@ -2148,12 +2149,12 @@ def notifications():
     # Counts shown in header
     unread_count = (
         Notification.query
-        .filter_by(user_id=current_user.id, is_mirror=False, is_read=False)
+        .filter_by(user_id=current_user.id, is_mirror=False, is_read=False, is_visible=True)
         .count()
     )
     pending_sent_count = (
         Notification.query
-        .filter_by(user_id=current_user.id, is_mirror=True, is_read=False)
+        .filter_by(user_id=current_user.id, is_mirror=True, is_read=False, is_visible=True)
         .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
         .count()
     )
@@ -2187,7 +2188,8 @@ def unread_notifications_count():
     count = (Notification.query.filter_by(
         user_id=current_user.id,
         is_mirror=False,
-        is_read=False
+        is_read=False,
+        is_visible=True,
     ).count())
     return jsonify({"count": count})
 
@@ -2203,6 +2205,7 @@ def _sync_mirror_for_event(event_key: str):
             Notification.event_key == event_key,
             Notification.is_mirror.is_(False),
             Notification.is_read.is_(False),
+            Notification.is_visible.is_(True),
             or_(Notification.source.is_(None), Notification.source == "workflow")
         )
         .scalar()
@@ -2215,6 +2218,7 @@ def _sync_mirror_for_event(event_key: str):
                 Notification.event_key == event_key,
                 Notification.is_mirror.is_(True),
                 Notification.is_read.is_(False),
+                Notification.is_visible.is_(True),
                 or_(Notification.source.is_(None), Notification.source == "workflow")
             )
             .values(is_read=True)
@@ -2234,6 +2238,7 @@ def mark_all_notifications_read():
                     Notification.user_id == current_user.id,
                     Notification.is_mirror.is_(False),
                     Notification.is_read.is_(False),
+                    Notification.is_visible.is_(True),
                     Notification.event_key.isnot(None)
                 )
                 .distinct()
@@ -2249,6 +2254,7 @@ def mark_all_notifications_read():
                     Notification.user_id == current_user.id,
                     Notification.is_mirror.is_(False),
                     Notification.is_read.is_(False),
+                    Notification.is_visible.is_(True),
                 )
                 .values(is_read=True)
             )
@@ -2281,6 +2287,7 @@ def mark_notification_read(notif_id):
     n = (Notification.query
          .filter(Notification.id == notif_id)
          .filter(Notification.user_id == current_user.id)
+         .filter(Notification.is_visible.is_(True))
          .first_or_404())
 
     # Mirror (sent-tracking) notifications are read-only (auto-updated)
@@ -2303,6 +2310,7 @@ def open_notification(notif_id):
         Notification.query
         .filter(Notification.id == notif_id)
         .filter(Notification.user_id == current_user.id)
+        .filter(Notification.is_visible.is_(True))
         .first_or_404()
     )
     if not getattr(notification, "is_mirror", False) and not notification.is_read:
@@ -2329,6 +2337,7 @@ def _notification_state_for_user(user_id: int) -> dict:
             Notification.user_id == int(user_id),
             Notification.is_mirror.is_(False),
             Notification.is_read.is_(False),
+            Notification.is_visible.is_(True),
         )
         .group_by(Notification.source)
         .all()
@@ -2343,6 +2352,7 @@ def _notification_state_for_user(user_id: int) -> dict:
         .filter(
             Notification.user_id == int(user_id),
             Notification.is_mirror.is_(False),
+            Notification.is_visible.is_(True),
         )
         .scalar()
     )
@@ -2382,6 +2392,7 @@ def poll_notifications():
             .filter(
                 Notification.user_id == current_user.id,
                 Notification.is_mirror.is_(False),
+                Notification.is_visible.is_(True),
                 Notification.id > max(after_id, 0),
             )
             .order_by(Notification.id.asc())
@@ -2428,6 +2439,7 @@ def event_stream():
                             .filter(
                                 Notification.user_id == current_user.id,
                                 Notification.is_mirror.is_(False),
+                                Notification.is_visible.is_(True),
                                 Notification.id > int(last_seen_id or 0),
                             )
                             .order_by(Notification.id.asc())
@@ -2468,8 +2480,13 @@ def event_stream():
 @login_required
 @perm_required("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ")
 def notifications_dashboard():
-    total = Notification.query.filter(or_(Notification.source.is_(None), Notification.source == 'workflow')).count()
-    unread = Notification.query.filter_by(is_read=False).filter(or_(Notification.source.is_(None), Notification.source == 'workflow')).count()
+    total = Notification.query.filter(
+        Notification.is_visible.is_(True),
+        or_(Notification.source.is_(None), Notification.source == 'workflow'),
+    ).count()
+    unread = Notification.query.filter_by(is_read=False, is_visible=True).filter(
+        or_(Notification.source.is_(None), Notification.source == 'workflow')
+    ).count()
 
     top_users = (
         db.session.query(
@@ -2477,7 +2494,10 @@ def notifications_dashboard():
             func.count(Notification.id).label("count")
         )
         .join(Notification, Notification.user_id == User.id)
-        .filter(or_(Notification.source.is_(None), Notification.source == 'workflow'))
+        .filter(
+            Notification.is_visible.is_(True),
+            or_(Notification.source.is_(None), Notification.source == 'workflow'),
+        )
         .group_by(User.email)
         .order_by(func.count(Notification.id).desc())
         .limit(5)
@@ -2489,7 +2509,10 @@ def notifications_dashboard():
             Notification.type,
             func.count(Notification.id)
         )
-        .filter(or_(Notification.source.is_(None), Notification.source == 'workflow'))
+        .filter(
+            Notification.is_visible.is_(True),
+            or_(Notification.source.is_(None), Notification.source == 'workflow'),
+        )
         .group_by(Notification.type)
         .all()
     )
@@ -4421,6 +4444,7 @@ def view_request(request_id):
                 Notification.user_id == current_user.id,
                 Notification.is_mirror.is_(False),
                 Notification.is_read.is_(False),
+                Notification.is_visible.is_(True),
                 Notification.type == "WORKFLOW",
                 Notification.message.contains(f"#{req.id}")
             )

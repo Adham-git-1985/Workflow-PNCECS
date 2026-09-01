@@ -312,7 +312,10 @@ def _notification_section(user, message: str, *, broad: bool) -> tuple[str, list
     if not _contains(normalized, "اشعار", "اشعارات", "تنبيه", "تنبيهات", "غير مقروء") and not broad:
         return "", [], []
 
-    query = Notification.query.filter(Notification.user_id == int(user.id))
+    query = Notification.query.filter(
+        Notification.user_id == int(user.id),
+        Notification.is_visible.is_(True),
+    )
     total = query.count()
     unread = query.filter(Notification.is_read.is_(False)).count()
     latest = query.order_by(Notification.created_at.desc(), Notification.id.desc()).limit(5).all()

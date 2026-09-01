@@ -12,6 +12,10 @@ from sqlalchemy import func, or_
 
 from extensions import db
 from models import HRLeaveRequest, HRPermissionRequest, Notification, NotificationEmailDelivery, Role, TroubleTicket, User
+from services.delivery_controls import (
+    cancel_pending_email_deliveries,
+    email_delivery_enabled,
+)
 from services.hr_request_workflow import KIND_LEAVE, KIND_PERMISSION, can_view_request
 from services.workflow_task_email import (
     FAILED,
@@ -143,6 +147,10 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
 
 def send_pending_notification_emails(limit: int = 100, now: datetime | None = None) -> int:
     """Send due general notification emails from the durable outbox."""
+    if not email_delivery_enabled():
+        cancel_pending_email_deliveries()
+        db.session.commit()
+        return 0
     config = _mail_config()
     if not config["ready"]:
         return 0

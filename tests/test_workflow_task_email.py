@@ -167,6 +167,24 @@ class WorkflowTaskEmailTests(unittest.TestCase):
         message = smtp_class.return_value.send_message.call_args.args[0]
         self.assertEqual(message["To"], "new-assignee@example.test")
 
+    def test_disabled_global_email_control_skips_task_email_queue_and_smtp(self):
+        db.session.add(SystemSetting(key="SYSTEM_EMAIL_DELIVERY_ENABLED", value="0"))
+        db.session.commit()
+
+        queued = enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+
+        self.assertEqual(queued, 0)
+        self.assertEqual(WorkflowTaskEmailDelivery.query.count(), 0)
+        with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
+            self.assertEqual(send_pending_task_emails(), 0)
+        smtp_class.assert_not_called()
+
     def test_daily_reminder_includes_pending_mentioned_user(self):
         mentioned = User(
             email="mentioned@example.test",

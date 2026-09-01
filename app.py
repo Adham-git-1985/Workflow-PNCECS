@@ -194,6 +194,7 @@ def get_unread_count(user_id, source="workflow"):
         Notification.user_id == user_id,
         Notification.is_mirror.is_(False),
         Notification.is_read.is_(False),
+        Notification.is_visible.is_(True),
     )
     if src_filter is not None:
         query = query.filter(src_filter)
@@ -937,6 +938,15 @@ def _ensure_runtime_schema():
                     "notification",
                     "email_delivery_mode",
                     "TEXT NOT NULL DEFAULT 'GENERAL'",
+                )
+
+            # Email-only notifications are retained for the outbox when the
+            # super administrator turns off in-app notification delivery.
+            if not _col_exists("notification", "is_visible"):
+                _add_column_retry(
+                    "notification",
+                    "is_visible",
+                    "INTEGER NOT NULL DEFAULT 1",
                 )
 
             if not _col_exists("inv_item", "variant"):

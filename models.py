@@ -6,6 +6,7 @@ from extensions import db
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from sqlalchemy import event, func
+from sqlalchemy.orm import Session
 
 
 # ======================
@@ -462,7 +463,8 @@ class User(db.Model, UserMixin):
         # يتم تنفيذها وقت الاستدعاء، فمسموح حتى لو Notification أسفل الملف
         return Notification.query.filter_by(
             user_id=self.id,
-            is_read=False
+            is_read=False,
+            is_visible=True,
         ).count()
 
 
@@ -823,6 +825,9 @@ class Notification(db.Model):
     source = db.Column(db.String(20), default="workflow", nullable=True)
     link_url = db.Column(db.String(500), nullable=True)
     email_delivery_mode = db.Column(db.String(30), default="GENERAL", nullable=False)
+    # Email-only notifications stay available to the delivery outbox without
+    # appearing in the user-facing notification centre.
+    is_visible = db.Column(db.Boolean, default=True, nullable=False)
 
     # ===== Read-receipts / tracking =====
     # event_key groups notifications that belong to the same emitted event.
@@ -1318,9 +1323,35 @@ class NotificationEmailDelivery(db.Model):
     )
 
 
+@event.listens_for(Session, "before_flush")
+def _apply_notification_visibility_control(session, flush_context, instances):
+    """Hide newly created notifications when delivery is disabled globally.
+
+    The row is retained for the independent email outbox, so switching off
+    in-app notifications does not also suppress email delivery.
+    """
+    new_notifications = [
+        obj for obj in session.new
+        if isinstance(obj, Notification)
+    ]
+    if not new_notifications:
+        return
+
+    from services.delivery_controls import notifications_enabled
+
+    if notifications_enabled(session=session):
+        return
+    for notification in new_notifications:
+        notification.is_visible = False
+
+
 @event.listens_for(Notification, "after_insert")
 def _queue_notification_email_delivery(mapper, connection, target):
     """Queue every recipient notification except dedicated task-assignment mail."""
+    from services.delivery_controls import email_delivery_enabled
+
+    if not email_delivery_enabled(connection=connection):
+        return
     if bool(getattr(target, "is_mirror", False)):
         return
     if (getattr(target, "email_delivery_mode", "GENERAL") or "GENERAL").upper() in {

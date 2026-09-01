@@ -27,6 +27,10 @@ from models import (
     WorkflowTaskEmailDelivery,
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
+from services.delivery_controls import (
+    cancel_pending_email_deliveries,
+    email_delivery_enabled,
+)
 from utils.notification_links import notification_target_path
 
 
@@ -142,6 +146,8 @@ def enqueue_task_assignment_emails(
     link_url: str | None = None,
 ) -> int:
     """Add one durable assignment email per newly responsible user."""
+    if not email_delivery_enabled():
+        return 0
     if not workflow_request or not workflow_request.id or not step_order:
         return 0
 
@@ -298,6 +304,8 @@ def _send_email(config: dict, recipient: str, subject: str, text_body: str, html
 
 def enqueue_daily_task_reminders(today: date | None = None) -> int:
     """Queue one reminder per still-pending task and recipient each day."""
+    if not email_delivery_enabled():
+        return 0
     if not _mail_config()["enabled"]:
         return 0
 
@@ -361,6 +369,10 @@ def enqueue_daily_task_reminders(today: date | None = None) -> int:
 
 def send_pending_task_emails(limit: int = 50, now: datetime | None = None) -> int:
     """Send due outbox rows. Failed deliveries retry with bounded backoff."""
+    if not email_delivery_enabled():
+        cancel_pending_email_deliveries()
+        db.session.commit()
+        return 0
     config = _mail_config()
     if not config["ready"]:
         return 0
