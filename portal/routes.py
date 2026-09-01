@@ -7110,7 +7110,10 @@ def hr_home():
 @_perm(HR_ATT_READ)
 def hr_attendance_home():
     """Landing page for the two primary attendance screens."""
-    return render_template("portal/hr/attendance_home.html")
+    return render_template(
+        "portal/hr/attendance_home.html",
+        can_view_reports=current_user.has_perm(HR_REPORTS_VIEW),
+    )
 
 
 @portal_bp.route("/hr/reports")
@@ -22115,6 +22118,14 @@ def hr_attendance_daily():
     day_from = (request.args.get('day_from') or '').strip()
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
+
+    # The daily attendance screen should open on today's records.  Users can
+    # still replace either date through the existing filter form.
+    today = _as_yyyy_mm_dd(date.today())
+    if not day_from:
+        day_from = today
+    if not day_to:
+        day_to = today
 
     qry = AttendanceDailySummary.query
 
