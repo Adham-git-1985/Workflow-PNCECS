@@ -49,7 +49,12 @@
 
     <div class="col-12 col-md-6">
       <div class="text-muted small">نوع الإجازة</div>
-      <div class="fw-semibold">{{ r.leave_type.name_ar if r.leave_type else '-' }}</div>
+      <div class="fw-semibold">
+        {{ r.leave_type.name_ar if r.leave_type else '-' }}
+        {% if r.leave_place == 'EXTERNAL' or (r.leave_type and r.leave_type.is_external) %}
+          <span class="badge bg-info text-dark ms-1"><i class="bi bi-globe2"></i> إجازة خارجية</span>
+        {% endif %}
+      </div>
       {% if r.leave_type and r.leave_type.requires_documents and r.leave_type.documents_hint %}
         <div class="text-muted small">ملاحظة: {{ r.leave_type.documents_hint }}</div>
       {% endif %}
@@ -59,16 +64,17 @@
       <div class="fw-semibold">{{ r.start_date }} → {{ r.end_date }}{% if r.days %} ({{ r.days }} يوم){% endif %}</div>
     </div>
 
-    {% if r.leave_type and r.leave_type.is_external %}
+    {% if r.leave_place == 'EXTERNAL' or (r.leave_type and r.leave_type.is_external) %}
       <div class="col-12">
         <div class="border rounded-3 p-3 bg-light">
           <div class="fw-semibold mb-2"><i class="bi bi-globe2"></i> تفاصيل الإجازة الخارجية</div>
           <div class="row g-2">
-            <div class="col-12 col-md-6"><span class="text-muted">الوجهة:</span> {{ r.destination_country or '-' }}</div>
+            <div class="col-12 col-md-6"><span class="text-muted">الدولة:</span> {{ r.travel_country or '-' }}</div>
+            <div class="col-12 col-md-6"><span class="text-muted">المدينة:</span> {{ r.travel_city or '-' }}</div>
             <div class="col-12 col-md-6"><span class="text-muted">الغرض:</span> {{ r.travel_purpose or '-' }}</div>
-            <div class="col-12 col-md-6"><span class="text-muted">تكلفة التذاكر:</span> {{ r.ticket_cost if r.ticket_cost is not none else '-' }}</div>
-            <div class="col-12 col-md-6"><span class="text-muted">تكلفة الإقامة:</span> {{ r.accommodation_cost if r.accommodation_cost is not none else '-' }}</div>
+            <div class="col-12 col-md-6"><span class="text-muted">هاتف التواصل:</span> {{ r.travel_contact_phone or '-' }}</div>
             <div class="col-12"><span class="text-muted">اسم المعبر:</span> {{ r.border_crossing or '-' }}</div>
+            <div class="col-12"><span class="text-muted">العنوان في الخارج:</span> {{ r.travel_address or '-' }}</div>
           </div>
         </div>
       </div>

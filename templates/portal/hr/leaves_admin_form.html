@@ -29,7 +29,7 @@
         <label class="form-label">نوع الإجازة</label>
         <select class="form-select" name="leave_type_id" required>
           {% for t in leave_types %}
-            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %}>{{ t.name_ar }}</option>
+            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}</option>
           {% endfor %}
         </select>
       </div>
@@ -125,13 +125,14 @@
     const box = document.getElementById('external-fields');
     if (!sel) return;
 
+    const placeSel = document.getElementById('leave_place');
+
     function refresh() {
       const id = sel.value || '';
-      const isExternal = !!(meta[id] && meta[id].is_external);
+      const isExternal = !!(meta[id] && meta[id].is_external) || !!(placeSel && placeSel.value === 'EXTERNAL');
       if (box) box.style.display = isExternal ? '' : 'none';
 
       // Auto place
-      const placeSel = document.getElementById('leave_place');
       if (placeSel) {
         if (isExternal && !placeSel.value) placeSel.value = 'EXTERNAL';
       }
@@ -150,6 +151,7 @@
     }
 
     sel.addEventListener('change', refresh);
+    if (placeSel) placeSel.addEventListener('change', refresh);
     refresh();
   })();
 </script>

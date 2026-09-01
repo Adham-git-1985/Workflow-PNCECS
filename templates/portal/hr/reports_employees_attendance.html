@@ -126,6 +126,8 @@
           <th>ساعات الدوام</th>
           <th>تأخير</th>
           <th>خروج مبكر</th>
+          <th>مغادرة شخصية</th>
+          <th>مغادرة رسمية</th>
           <th>إضافي</th>
           <th>الحالة</th>
         </tr>
@@ -147,6 +149,8 @@
             <td>{{ r.get('work_hours') or 0 }}</td>
             <td>{{ r.get('late_minutes') or 0 }}</td>
             <td>{{ r.get('early_minutes') or 0 }}</td>
+            <td>{{ r.get('private_departure_minutes') or 0 }}</td>
+            <td>{{ r.get('official_departure_minutes') or 0 }}</td>
             <td>{{ r.get('overtime_minutes') or 0 }}</td>
             <td>{{ r.get('status') or '' }}</td>
           </tr>

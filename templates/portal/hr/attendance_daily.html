@@ -62,6 +62,8 @@
           <th>ساعات العمل</th>
           <th>{{ portal_sort_link('تأخير', 'late_minutes') }}</th>
           <th>{{ portal_sort_link('خروج مبكر', 'early_leave_minutes') }}</th>
+          <th>مغادرة شخصية</th>
+          <th>مغادرة رسمية</th>
           <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
           <th>{{ portal_sort_link('الحالة', 'status') }}</th>
           <th>{{ portal_sort_link('الجدول', 'schedule') }}</th>
@@ -77,6 +79,8 @@
           <td>{{ '%.2f'|format((r.work_minutes or 0) / 60) }}</td>
           <td>{% if r.late_minutes %}<span class="badge bg-warning text-dark">{{ r.late_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
+          <td>{% if r.private_departure_minutes %}<span class="badge bg-warning text-dark">{{ r.private_departure_minutes }} د</span>{% else %}—{% endif %}</td>
+          <td>{% if r.official_departure_minutes %}<span class="badge bg-info text-dark">{{ r.official_departure_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>
             {% if r.status == 'OK' %}<span class="badge bg-success">مكتمل</span>

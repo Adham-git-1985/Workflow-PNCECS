@@ -469,6 +469,81 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(updated.note, "Updated departure")
         self.assertEqual(updated.status, "SUBMITTED")
 
+    def test_employee_can_edit_unapproved_external_leave_and_its_details_are_visible(self):
+        requester = User(
+            email="editable-leave-requester@example.test",
+            name="Editable Leave Requester",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add(requester)
+        db.session.flush()
+        db.session.add(EmployeeFile(
+            user_id=requester.id,
+            direct_manager_user_id=self.manager.id,
+        ))
+        db.session.add_all([
+            UserPermission(user_id=requester.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
+        ])
+        row = HRLeaveRequest(
+            user_id=requester.id,
+            leave_type_id=self.normal_type.id,
+            start_date="2026-09-01",
+            end_date="2026-09-02",
+            days=2,
+            leave_place="EXTERNAL",
+            travel_country="Before update",
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(row)
+        db.session.flush()
+        start_request_flow(KIND_LEAVE, row)
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, requester.id)
+        listing = client.get("/portal/hr/me/leaves")
+        self.assertEqual(listing.status_code, 200)
+        self.assertIn(f"/portal/hr/me/leaves/{row.id}/edit".encode("utf-8"), listing.data)
+
+        edit_page = client.get(f"/portal/hr/me/leaves/{row.id}/edit")
+        self.assertEqual(edit_page.status_code, 200)
+        self.assertIn(b"Before update", edit_page.data)
+        response = client.post(
+            f"/portal/hr/me/leaves/{row.id}/edit",
+            data={
+                "leave_type_id": self.normal_type.id,
+                "start_date": "2026-09-03",
+                "end_date": "2026-09-05",
+                "days": "3",
+                "leave_place": "EXTERNAL",
+                "travel_country": "Jordan",
+                "travel_city": "Amman",
+                "travel_address": "External address",
+                "travel_contact_phone": "12345",
+                "travel_purpose": "Family visit",
+                "border_crossing": "Bridge",
+                "note": "Updated external leave",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        updated = db.session.get(HRLeaveRequest, row.id)
+        self.assertEqual(updated.status, "SUBMITTED")
+        self.assertEqual(updated.start_date, "2026-09-03")
+        self.assertEqual(updated.end_date, "2026-09-05")
+        self.assertEqual(updated.leave_place, "EXTERNAL")
+        self.assertEqual(updated.travel_country, "Jordan")
+        self.assertEqual(updated.travel_city, "Amman")
+        self.assertEqual(updated.travel_purpose, "Family visit")
+
+        self._login(client, self.manager.id)
+        detail = client.get(f"/portal/hr/approvals/leaves/{row.id}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertIn(b"Jordan", detail.data)
+        self.assertIn(b"Family visit", detail.data)
+
     def test_general_director_board_scope_contains_directorate_employee(self):
         visible_ids = board_visible_user_ids(self.general_director)
         self.assertIsNotNone(visible_ids)

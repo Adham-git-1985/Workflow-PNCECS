@@ -63,7 +63,12 @@
           <tr>
             <td>{{ r.id }}</td>
             <td>{{ (r.user.name or r.user.email) if r.user else r.user_id }}</td>
-            <td>{{ r.leave_type.name_ar if r.leave_type else r.leave_type_id }}</td>
+            <td>
+              {{ r.leave_type.name_ar if r.leave_type else r.leave_type_id }}
+              {% if r.leave_place == 'EXTERNAL' or (r.leave_type and r.leave_type.is_external) %}
+                <span class="badge bg-info text-dark ms-1">خارجية</span>
+              {% endif %}
+            </td>
             <td>{{ r.start_date }}</td>
             <td>{{ r.end_date }}</td>
             <td>{{ r.days }}</td>

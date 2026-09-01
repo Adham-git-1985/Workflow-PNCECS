@@ -72,6 +72,8 @@
           <th>ساعات العمل</th>
           <th>تأخير (دقيقة)</th>
           <th>خروج مبكر (دقيقة)</th>
+          <th>مغادرة شخصية (د)</th>
+          <th>مغادرة رسمية (د)</th>
           <th>عمل إضافي (دقيقة)</th>
           <th>الحالة</th>
         </tr>
@@ -86,6 +88,8 @@
             <td>{{ '%.2f'|format((a.work_minutes or 0)/60.0) }}</td>
             <td>{{ a.late_minutes or 0 }}</td>
             <td>{{ a.early_leave_minutes or 0 }}</td>
+            <td>{{ a.private_departure_minutes or 0 }}</td>
+            <td>{{ a.official_departure_minutes or 0 }}</td>
             <td>{{ a.overtime_minutes or 0 }}</td>
             <td>{{ a.status|ui_label if a.status else '—' }}</td>
           </tr>

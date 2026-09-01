@@ -6,7 +6,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-clock-history"></i> سجلات الدوام</h4>
-      <div class="text-muted">عرض حركات الدوام الخام مع مرشحات البحث الأساسية.</div>
+      <div class="text-muted">سجل يومي واضح للحضور والانصراف والمغادرات الشخصية والرسمية.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_attendance_events', q=q, date_from=date_from, date_to=date_to, event_type=event_type, work_location_lookup_id=work_location_lookup_id, closing=closing, device_id=device_id, batch_id=batch_id, user_id=user_id, export='xlsx') }}">
@@ -15,6 +15,25 @@
       <button class="btn btn-outline-secondary" onclick="window.print()"><i class="bi bi-printer"></i> طباعة</button>
     </div>
   </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  {% if selected_day %}
+    {% set day_stats = attendance_day_stats[0] if attendance_day_stats else {} %}
+    <div class="d-flex flex-wrap align-items-center gap-3">
+      <div class="text-muted small">إحصائية يوم {{ selected_day }}</div>
+      <div class="border rounded-3 px-3 py-2">
+        <span class="text-muted small">الموظفون الحاضرون</span>
+        <strong class="fs-5 ms-2">{{ day_stats.get('present_count', 0) }}</strong>
+      </div>
+      <div class="border rounded-3 px-3 py-2">
+        <span class="text-muted small">موظفون لديهم مغادرات</span>
+        <strong class="fs-5 ms-2">{{ day_stats.get('departure_employee_count', 0) }}</strong>
+      </div>
+    </div>
+  {% else %}
+    <div class="text-muted small">اختر اليوم نفسه في حقلي «من» و«إلى» لإظهار عدد الموظفين الحاضرين لذلك اليوم.</div>
+  {% endif %}
 </div>
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
@@ -55,6 +74,10 @@
         <option value="">بدون تحديد</option>
         <option value="I" {% if event_type == 'I' %}selected{% endif %}>دخول</option>
         <option value="O" {% if event_type == 'O' %}selected{% endif %}>خروج</option>
+        <option value="C" {% if event_type == 'C' %}selected{% endif %}>مغادرة شخصية (C)</option>
+        <option value="D" {% if event_type == 'D' %}selected{% endif %}>عودة من مغادرة شخصية (D)</option>
+        <option value="E" {% if event_type == 'E' %}selected{% endif %}>مغادرة رسمية (E)</option>
+        <option value="F" {% if event_type == 'F' %}selected{% endif %}>عودة من مغادرة رسمية (F)</option>
       </select>
     </div>
 
@@ -84,20 +107,18 @@
     <table class="table table-sm align-middle">
       <thead>
         <tr>
-          <th>#</th>
+          <th>م اليوم</th>
           <th>الموظف</th>
           <th>التاريخ/الوقت</th>
-          <th>النوع</th>
-          <th>الجهاز</th>
-          <th>دفعة الاستيراد</th>
-          <th class="text-muted">البيانات الخام</th>
+          <th>الحركة</th>
+          <th>نوع المغادرة</th>
         </tr>
       </thead>
       <tbody>
         {% for e in events %}
           {% set u = users.get(e.user_id) %}
           <tr>
-            <td>{{ e.id }}</td>
+            <td class="fw-semibold">{{ e.daily_employee_number or '—' }}</td>
             <td>
               {# Jinja ternary syntax: A if cond else B #}
               <div class="fw-bold">{{ u.name if (u and u.name) else (u.email if (u and u.email) else e.user_id) }}</div>
@@ -105,18 +126,24 @@
             </td>
             <td class="text-muted">{{ e.event_dt.strftime('%Y-%m-%d %H:%M') if e.event_dt else '' }}</td>
             <td>
-              {% if e.event_type == 'I' %}<span class="badge text-bg-success">دخول</span>
-              {% elif e.event_type == 'O' %}<span class="badge text-bg-danger">خروج</span>
-              {% else %}<span class="badge text-bg-secondary">{{ e.event_type }}</span>
+              {% set code = (e.display_event_code or e.event_type)|upper %}
+              {% if code in ('I', 'IN', 'CHECKIN') %}<span class="badge text-bg-success">{{ event_labels.get(code, code) }}</span>
+              {% elif code in ('O', 'OUT', 'CHECKOUT') %}<span class="badge text-bg-danger">{{ event_labels.get(code, code) }}</span>
+              {% elif code in ('C', 'D', 'E', 'F') %}<span class="badge text-bg-info text-dark">{{ event_labels.get(code, code) }} ({{ code }})</span>
+              {% else %}<span class="badge text-bg-secondary">{{ event_labels.get(code, code) }}</span>
               {% endif %}
             </td>
-            <td class="text-muted">{{ e.device_id or '' }}</td>
-            <td class="text-muted">{{ e.batch_id or '' }}</td>
-            <td class="text-muted small" style="max-width: 420px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ e.raw_line or '' }}</td>
+            <td>
+              {% if e.departure_type_label == 'شخصية' %}
+                <span class="badge text-bg-warning">مغادرة شخصية</span>
+              {% elif e.departure_type_label == 'رسمية' %}
+                <span class="badge text-bg-info text-dark">مغادرة رسمية</span>
+              {% else %}—{% endif %}
+            </td>
           </tr>
         {% endfor %}
         {% if not events %}
-          <tr><td colspan="7" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
         {% endif %}
       </tbody>
     </table>

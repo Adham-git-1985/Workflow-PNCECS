@@ -56,7 +56,12 @@
 
               <tr>
                 <td class="text-muted">{{ r.id }}</td>
-                <td class="fw-semibold">{{ r.leave_type.name_ar if r.leave_type else '-' }}</td>
+                <td class="fw-semibold">
+                  {{ r.leave_type.name_ar if r.leave_type else '-' }}
+                  {% if r.leave_place == 'EXTERNAL' or (r.leave_type and r.leave_type.is_external) %}
+                    <span class="badge bg-info text-dark ms-1"><i class="bi bi-globe2"></i> خارجية</span>
+                  {% endif %}
+                </td>
                 <td>{{ r.start_date }}</td>
                 <td>{{ r.end_date }}</td>
                 <td>{{ r.days or '-' }}</td>
@@ -81,11 +86,16 @@
 
                 <td>
                   {% if st in ['SUBMITTED', 'DRAFT'] %}
-                    <form method="post" action="{{ url_for('portal.hr_leave_request_cancel', req_id=r.id) }}" onsubmit="return confirm('هل تريد إلغاء الطلب؟');">
-                      <button class="btn btn-sm btn-outline-danger" type="submit">
-                        <i class="bi bi-x-circle"></i> إلغاء
-                      </button>
-                    </form>
+                    <div class="d-flex gap-1">
+                      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_leave_request_edit', req_id=r.id) }}">
+                        <i class="bi bi-pencil"></i> تعديل
+                      </a>
+                      <form method="post" action="{{ url_for('portal.hr_leave_request_cancel', req_id=r.id) }}" onsubmit="return confirm('هل تريد إلغاء الطلب؟');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">
+                          <i class="bi bi-x-circle"></i> إلغاء
+                        </button>
+                      </form>
+                    </div>
                   {% else %}
                     <span class="text-muted">—</span>
                   {% endif %}
@@ -168,7 +178,7 @@
           <tbody>
             {% for t in types %}
               <tr>
-                <td class="fw-semibold">{{ t.name_ar }}</td>
+                <td class="fw-semibold">{{ t.name_ar }}{% if t.is_external %} <span class="badge bg-info text-dark">خارجية</span>{% endif %}</td>
                 <td class="text-muted small">{{ t.code }}</td>
                 <td>{{ t.max_days or '-' }}</td>
                 <td>

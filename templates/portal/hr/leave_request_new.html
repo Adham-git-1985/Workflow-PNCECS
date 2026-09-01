@@ -1,10 +1,12 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}طلب إجازة جديد{% endblock %}
+{% block title %}{{ 'تعديل طلب إجازة' if edit_mode else 'طلب إجازة جديد' }}{% endblock %}
 
 {% block hr_content %}
+{% set selected_type_id = request.form.get('leave_type_id') or (req.leave_type_id|string if req else '') %}
+{% set selected_place = request.form.get('leave_place') or (req.leave_place if req else '') %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
-  <h4 class="mb-1"><i class="bi bi-plus-circle"></i> طلب إجازة جديد</h4>
-  <div class="text-muted">املأ البيانات ثم اضغط إرسال.</div>
+  <h4 class="mb-1"><i class="bi {{ 'bi-pencil-square' if edit_mode else 'bi-plus-circle' }}"></i> {{ 'تعديل طلب الإجازة' if edit_mode else 'طلب إجازة جديد' }}</h4>
+  <div class="text-muted">{{ 'يمكن التعديل ما دام الطلب بانتظار الاعتماد.' if edit_mode else 'املأ البيانات ثم اضغط إرسال.' }}</div>
 </div>
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
@@ -15,24 +17,24 @@
         <select name="leave_type_id" class="form-select" required>
           <option value="">— اختر —</option>
           {% for t in types %}
-            <option value="{{ t.id }}">{{ t.name_ar }}{% if t.max_days %} (حد أقصى {{ t.max_days }} يوم){% endif %}</option>
+            <option value="{{ t.id }}" {% if selected_type_id == (t.id|string) %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}{% if t.max_days %} (حد أقصى {{ t.max_days }} يوم){% endif %}</option>
           {% endfor %}
         </select>
       </div>
 
       <div class="col-12 col-md-3">
         <label class="form-label">من تاريخ</label>
-        <input type="date" name="start_date" class="form-control" required>
+        <input type="date" name="start_date" class="form-control" value="{{ request.form.get('start_date') or (req.start_date if req else '') }}" required>
       </div>
 
       <div class="col-12 col-md-3">
         <label class="form-label">إلى تاريخ</label>
-        <input type="date" name="end_date" class="form-control" required>
+        <input type="date" name="end_date" class="form-control" value="{{ request.form.get('end_date') or (req.end_date if req else '') }}" required>
       </div>
 
       <div class="col-12 col-md-3">
         <label class="form-label">عدد الأيام</label>
-        <input type="number" min="0" name="days" class="form-control" placeholder="تلقائي">
+        <input type="number" min="0" name="days" class="form-control" value="{{ request.form.get('days') or (req.days if req and req.days is not none else '') }}" placeholder="تلقائي">
         <div class="form-text">يُحتسب تلقائياً باستثناء العطل/الأعياد إن تُرك فارغاً.</div>
       </div>
 
@@ -40,8 +42,8 @@
         <label class="form-label">مكان الإجازة</label>
         <select name="leave_place" class="form-select">
           <option value="">— تلقائي —</option>
-          <option value="INTERNAL">داخلية</option>
-          <option value="EXTERNAL">خارجية</option>
+          <option value="INTERNAL" {% if selected_place == 'INTERNAL' %}selected{% endif %}>داخلية</option>
+          <option value="EXTERNAL" {% if selected_place == 'EXTERNAL' %}selected{% endif %}>خارجية</option>
         </select>
       </div>
 
@@ -52,29 +54,29 @@
           <div class="row g-3">
             <div class="col-12 col-md-4">
               <label class="form-label">الدولة</label>
-              <input class="form-control" name="travel_country" placeholder="مثال: الأردن">
+              <input class="form-control" name="travel_country" value="{{ request.form.get('travel_country') or (req.travel_country if req else '') }}" placeholder="مثال: الأردن">
             </div>
             <div class="col-12 col-md-4">
               <label class="form-label">المدينة</label>
-              <input class="form-control" name="travel_city" placeholder="مثال: عمّان">
+              <input class="form-control" name="travel_city" value="{{ request.form.get('travel_city') or (req.travel_city if req else '') }}" placeholder="مثال: عمّان">
             </div>
             <div class="col-12 col-md-4">
               <label class="form-label">المعبر/الحدود</label>
-              <input class="form-control" name="border_crossing" placeholder="اختياري">
+              <input class="form-control" name="border_crossing" value="{{ request.form.get('border_crossing') or (req.border_crossing if req else '') }}" placeholder="اختياري">
             </div>
 
             <div class="col-12">
               <label class="form-label">العنوان في الخارج</label>
-              <input class="form-control" name="travel_address" placeholder="اختياري">
+              <input class="form-control" name="travel_address" value="{{ request.form.get('travel_address') or (req.travel_address if req else '') }}" placeholder="اختياري">
             </div>
 
             <div class="col-12 col-md-6">
               <label class="form-label">هاتف للتواصل</label>
-              <input class="form-control" name="travel_contact_phone" placeholder="اختياري">
+              <input class="form-control" name="travel_contact_phone" value="{{ request.form.get('travel_contact_phone') or (req.travel_contact_phone if req else '') }}" placeholder="اختياري">
             </div>
             <div class="col-12 col-md-6">
               <label class="form-label">الغرض من السفر</label>
-              <input class="form-control" name="travel_purpose" placeholder="اختياري">
+              <input class="form-control" name="travel_purpose" value="{{ request.form.get('travel_purpose') or (req.travel_purpose if req else '') }}" placeholder="اختياري">
             </div>
           </div>
         </div>
@@ -82,7 +84,7 @@
 
       <div class="col-12">
         <label class="form-label">ملاحظات</label>
-        <textarea name="note" class="form-control" rows="3" placeholder="سبب الإجازة (اختياري)"></textarea>
+        <textarea name="note" class="form-control" rows="3" placeholder="سبب الإجازة (اختياري)">{{ request.form.get('note') or (req.note if req else '') }}</textarea>
       </div>
 
 
@@ -90,10 +92,11 @@
         <label class="form-label">مرفقات (تقرير/مستند) <span id="docs-required" class="badge bg-danger" style="display:none;">مطلوب</span></label>
         <input class="form-control" type="file" name="attachments" id="attachments" multiple>
         <div class="form-text" id="docs-hint">اختياري. يمكن رفع أكثر من ملف (PDF/Word/Image) حسب الحاجة.</div>
+        {% if edit_mode and has_attachments %}<div class="form-text text-success">توجد مرفقات محفوظة لهذا الطلب.</div>{% endif %}
       </div>
 
       <div class="col-12 d-flex gap-2 flex-wrap">
-        <button class="btn btn-primary" type="submit"><i class="bi bi-send"></i> إرسال الطلب</button>
+        <button class="btn btn-primary" type="submit"><i class="bi {{ 'bi-check2-circle' if edit_mode else 'bi-send' }}"></i> {{ 'حفظ التعديل' if edit_mode else 'إرسال الطلب' }}</button>
 
         <a class="btn btn-outline-secondary" href="{{ url_for('users.help_leaves_guide') }}" target="_blank">
           <i class="bi bi-book"></i> دليل الإجازات
@@ -111,14 +114,15 @@
     const sel = document.querySelector('select[name="leave_type_id"]');
     const box = document.getElementById('external-fields');
     if (!sel || !box) return;
+    const placeSel = document.querySelector('select[name="leave_place"]');
+    const hasExistingAttachments = {{ 'true' if has_attachments else 'false' }};
 
     function refresh() {
       const id = sel.value || '';
-      const isExternal = !!(meta[id] && meta[id].is_external);
+      const isExternal = !!(meta[id] && meta[id].is_external) || !!(placeSel && placeSel.value === 'EXTERNAL');
       box.style.display = isExternal ? '' : 'none';
 
       // Auto place
-      const placeSel = document.querySelector('select[name="leave_place"]');
       if (placeSel) {
         if (isExternal && !placeSel.value) placeSel.value = 'EXTERNAL';
       }
@@ -130,13 +134,14 @@
       if (docsInput && docsRequired && docsHint) {
         const requiresDocs = !!(meta[id] && meta[id].requires_documents);
         const hint = (meta[id] && meta[id].documents_hint) ? String(meta[id].documents_hint) : '';
-        docsInput.required = requiresDocs;
+        docsInput.required = requiresDocs && !hasExistingAttachments;
         docsRequired.style.display = requiresDocs ? '' : 'none';
         docsHint.textContent = (requiresDocs ? (hint || 'هذا النوع يتطلب إرفاق تقرير/مستند.') : (hint || 'اختياري. يمكن رفع أكثر من ملف حسب الحاجة.'));
       }
     }
 
     sel.addEventListener('change', refresh);
+    if (placeSel) placeSel.addEventListener('change', refresh);
     refresh();
   })();
 </script>

@@ -389,6 +389,8 @@
             <th>ساعات عمل</th>
             <th>ساعات تأخير</th>
             <th>ساعات خروج مبكر</th>
+            <th>مغادرات شخصية</th>
+            <th>مغادرات رسمية</th>
             <th>ساعات عمل إضافي</th>
           </tr>
         </thead>
@@ -403,6 +405,8 @@
               <td>{{ r.get('work_hours') or 0 }}</td>
               <td>{{ r.get('late_hours') or 0 }}</td>
               <td>{{ r.get('early_hours') or 0 }}</td>
+              <td>{{ r.get('private_departure_hours') or 0 }}</td>
+              <td>{{ r.get('official_departure_hours') or 0 }}</td>
               <td>{{ r.get('overtime_hours') or 0 }}</td>
             </tr>
           {% endfor %}

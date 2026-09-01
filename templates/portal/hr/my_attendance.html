@@ -24,6 +24,8 @@
             <th>ساعات العمل</th>
             <th>{{ portal_sort_link('تأخير', 'late_minutes') }}</th>
             <th>{{ portal_sort_link('مغادرة مبكرة', 'early_leave_minutes') }}</th>
+            <th>مغادرة شخصية</th>
+            <th>مغادرة رسمية</th>
             <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
             <th>{{ portal_sort_link('الحالة', 'status') }}</th>
           </tr>
@@ -37,6 +39,8 @@
               <td>{{ '%.2f'|format((r.work_minutes or 0)/60) }}</td>
               <td>{{ r.late_minutes or 0 }} د</td>
               <td>{{ r.early_leave_minutes or 0 }} د</td>
+              <td>{{ r.private_departure_minutes or 0 }} د</td>
+              <td>{{ r.official_departure_minutes or 0 }} د</td>
               <td>{{ r.overtime_minutes or 0 }} د</td>
               <td>
                 {% if r.status == 'OK' %}
