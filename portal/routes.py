@@ -9104,10 +9104,10 @@ _DIWAN_OFFICIAL_SYMBOLS = (
     ('P', 'إيقاف عن العمل'),
     ('H', 'حج'),
     ('F', 'عطل أسبوعية'),
-    ('V', 'أعياد ومناسبات رسمية'),
+    ('v', 'أعياد ومناسبات رسمية'),
     ('*', 'دوام طوارئ: يوم عمل هجين لا يحتاج بصمة حضور'),
     ('?', 'حالة غير معرّفة'),
-    ('X', 'يوم تأخير'),
+    ('x', 'يوم تأخير'),
     ('+', 'يوم عمل'),
     ('C', 'رمز C حسب تعليمات الديوان'),
     ('J', 'رمز J حسب تعليمات الديوان'),
@@ -9151,6 +9151,22 @@ def _diwan_official_leave_symbol(leave_type) -> str:
     return '?'
 
 
+def _diwan_weekly_holidays_mask() -> int:
+    """Return the weekly-off mask used by the official monthly sheet.
+
+    Legacy Diwan monthly sheets use Friday and Saturday as weekly holidays.
+    Keep a configured HR mask authoritative, while using that legacy default
+    when HR has not yet saved its weekly-holidays setting.
+    """
+    raw = _setting_get('HR_WEEKLY_HOLIDAYS_MASK')
+    if raw is None or not str(raw).strip():
+        return (1 << 4) | (1 << 5)  # Friday + Saturday (Monday is bit zero)
+    try:
+        return int(str(raw).strip())
+    except (TypeError, ValueError):
+        return (1 << 4) | (1 << 5)
+
+
 def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, departure_totals) -> list[dict]:
     """Build one official Diwan row per employee for a selected calendar month."""
     user_ids = [int(user_id) for user_id in (user_ids or []) if user_id]
@@ -9183,7 +9199,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
 
     special_by_key: dict[tuple[int, str], str] = {}
     special_symbols = {
-        'PRESENT': '+', 'ABSENT': '-', 'MISSION': 'R', 'HOLIDAY': 'V',
+        'PRESENT': '+', 'ABSENT': '-', 'MISSION': 'R', 'HOLIDAY': 'v',
         'OFF': 'F', 'LEAVE': 'L', 'SUSPENDED': 'P',
     }
     special_rows = (
@@ -9260,25 +9276,30 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
             summary = summaries_by_key.get((user_id, day_s))
             missing_attendance = False
             actual_office_attendance = False
-            if _is_weekly_off(current, _weekly_mask()):
+            if _is_weekly_off(current, _diwan_weekly_holidays_mask()):
                 symbol = 'F'
             elif is_official_holiday(day_s, employee_file):
-                symbol = 'V'
+                symbol = 'v'
             elif special_by_key.get((user_id, day_s)):
                 symbol = special_by_key[(user_id, day_s)]
                 actual_office_attendance = symbol == '+'
             elif leave_by_key.get((user_id, day_s)):
                 symbol = leave_by_key[(user_id, day_s)]
             elif not summary:
-                symbol = 'E'
+                # Match the legacy monthly Diwan form: a normal day with no
+                # fingerprint is an emergency/hybrid-duty day. An explicit
+                # ABSENT summary remains '-' below, so confirmed absences do
+                # not disappear from the report.
+                symbol = '*'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'ABSENT':
                 symbol = '-'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'INCOMPLETE' or not summary.first_in or not summary.last_out:
-                symbol = 'E'
+                symbol = 'x'
+                actual_office_attendance = bool(summary.first_in or summary.last_out)
             elif int(summary.late_minutes or 0) > 0 or int(summary.early_leave_minutes or 0) > 0:
-                symbol = 'X'
+                symbol = 'x'
                 actual_office_attendance = True
             elif getattr(summary.schedule, 'kind', '') == 'SHIFT':
                 symbol = 'D'
@@ -9375,7 +9396,9 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
 
     workbook = Workbook()
     sheet = workbook.active
-    sheet.title = 'كشف الدوام'
+    # These worksheet names match the legacy monthly template supplied by the
+    # Diwan: ``data`` contains the monthly grid and ``List`` the symbol key.
+    sheet.title = 'data'
     sheet.sheet_view.rightToLeft = True
     sheet.freeze_panes = 'F3'
     sheet.page_setup.orientation = 'landscape'
@@ -9383,10 +9406,20 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
     sheet.page_margins.left = 0.15
     sheet.page_margins.right = 0.15
 
-    headers = ['الشهر', 'السنة', 'الوزارة', 'رقم الموظف', 'اسم الموظف'] + list(range(1, end.day + 1)) + ['ملاحظات']
-    weekdays = ['الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت', 'الأحد']
+    headers = ['الشهر', 'السنة', 'الوزارة', 'رقم الموظف', 'اسم الموظف'] + list(range(1, end.day + 1)) + ['']
+    # Keep the compact weekday labels used by the legacy monthly sheet.
+    weekdays = ['اثنين', 'ثلاثاء', 'اربعاء', 'خميس', 'جمعة', 'سبت', 'احد']
     sheet.append(headers)
-    sheet.append([''] * 5 + [weekdays[(start + timedelta(days=offset)).weekday()] for offset in range(end.day)] + [''])
+    first_ministry_code = rows[0]['ministry_code'] if rows else ''
+    sheet.append([
+        start.month,
+        start.year,
+        first_ministry_code,
+        0,
+        '',
+        *[weekdays[(start + timedelta(days=offset)).weekday()] for offset in range(end.day)],
+        'ملاحظات',
+    ])
 
     thin = Side(style='thin', color='808080')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -9396,10 +9429,10 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
         '+': PatternFill('solid', fgColor='E2F0D9'),
         '*': PatternFill('solid', fgColor='D9EAD3'),
         '-': PatternFill('solid', fgColor='F4CCCC'),
-        'X': PatternFill('solid', fgColor='FFF2CC'),
+        'x': PatternFill('solid', fgColor='FFF2CC'),
         'E': PatternFill('solid', fgColor='FCE4D6'),
         'F': PatternFill('solid', fgColor='E7E6E6'),
-        'V': PatternFill('solid', fgColor='DDEBF7'),
+        'v': PatternFill('solid', fgColor='DDEBF7'),
         'L': PatternFill('solid', fgColor='E4DFEC'),
         'S': PatternFill('solid', fgColor='F4CCCC'),
         'D': PatternFill('solid', fgColor='D9EAD3'),
@@ -9437,7 +9470,7 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
     sheet.row_dimensions[2].height = 68
     sheet.auto_filter.ref = f'A1:{get_column_letter(len(headers))}{max(sheet.max_row, 2)}'
 
-    key_sheet = workbook.create_sheet('الرموز')
+    key_sheet = workbook.create_sheet('List')
     key_sheet.sheet_view.rightToLeft = True
     key_sheet.append(['الرمز', 'التعريف'])
     for symbol, label in _DIWAN_OFFICIAL_SYMBOLS:

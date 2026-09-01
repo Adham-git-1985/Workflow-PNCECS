@@ -5,7 +5,15 @@ from pathlib import Path
 from flask import Flask
 
 from extensions import db
-from models import AttendanceDailySummary, SystemSetting, User, WorkAssignment, WorkPolicy, WorkSchedule
+from models import (
+    AttendanceDailySummary,
+    HROfficialOccasion,
+    SystemSetting,
+    User,
+    WorkAssignment,
+    WorkPolicy,
+    WorkSchedule,
+)
 from portal.routes import _diwan_official_month_rows, _export_diwan_official_attendance_xlsx
 
 
@@ -23,10 +31,10 @@ class DiwanOfficialAttendanceReportTests(unittest.TestCase):
     def test_official_sheet_has_daily_symbols_and_symbol_key(self):
         self.assertIn('def _diwan_official_month_rows', self.routes)
         self.assertIn('def _export_diwan_official_attendance_xlsx', self.routes)
-        self.assertIn("sheet.title = 'كشف الدوام'", self.routes)
-        self.assertIn("key_sheet = workbook.create_sheet('الرموز')", self.routes)
+        self.assertIn("sheet.title = 'data'", self.routes)
+        self.assertIn("key_sheet = workbook.create_sheet('List')", self.routes)
         self.assertIn("download_name=f'official_diwan_attendance_{year}_{month:02d}.xlsx'", self.routes)
-        for symbol in ('L', 'W', 'M', 'S', 'F', 'V', '+', 'X', 'E', '*'):
+        for symbol in ('L', 'W', 'M', 'S', 'F', 'v', '+', 'x', 'E', '*'):
             with self.subTest(symbol=symbol):
                 self.assertIn(f"('{symbol}',", self.routes)
         self.assertIn("cell['symbol'] = '*'", self.routes)
@@ -121,7 +129,7 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(rows[0]['symbols'], ['+', 'X', '*', '*', 'F', 'F', '*'])
+        self.assertEqual(rows[0]['symbols'], ['+', 'x', '*', '*', 'F', 'F', '*'])
 
     def test_flexible_three_day_hybrid_policy_uses_its_own_quota(self):
         user = User(
@@ -176,7 +184,54 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(rows[0]['symbols'], ['+', '+', 'X', '*', 'F', 'F', '*'])
+        self.assertEqual(rows[0]['symbols'], ['+', '+', 'x', '*', 'F', 'F', '*'])
+
+    def test_legacy_monthly_symbols_are_used_without_manual_policy_setup(self):
+        user = User(
+            email='legacy-monthly-symbols@example.test',
+            name='Legacy Monthly Symbols',
+            password_hash='not-used-in-test',
+            role='EMPLOYEE',
+        )
+        db.session.add(user)
+        db.session.flush()
+        db.session.add_all((
+            HROfficialOccasion(
+                title='Official holiday',
+                day='2026-03-08',
+                is_day_off=True,
+            ),
+            AttendanceDailySummary(
+                user_id=user.id,
+                day='2026-03-02',
+                first_in=datetime(2026, 3, 2, 8, 20),
+                last_out=datetime(2026, 3, 2, 15, 0),
+                late_minutes=20,
+                status='OK',
+            ),
+            AttendanceDailySummary(
+                user_id=user.id,
+                day='2026-03-03',
+                first_in=datetime(2026, 3, 3, 8, 0),
+                status='INCOMPLETE',
+            ),
+            AttendanceDailySummary(
+                user_id=user.id,
+                day='2026-03-04',
+                status='ABSENT',
+            ),
+        ))
+        db.session.commit()
+
+        rows = _diwan_official_month_rows(
+            [user.id],
+            date(2026, 3, 1),
+            date(2026, 3, 8),
+            AttendanceDailySummary.query.all(),
+            {},
+        )
+
+        self.assertEqual(rows[0]['symbols'], ['*', 'x', 'x', '-', '*', 'F', 'F', 'v'])
 
     def test_emergency_duty_symbol_is_written_to_the_exported_workbook(self):
         from openpyxl import load_workbook
@@ -195,9 +250,12 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
             }],
         ))
 
-        sheet = workbook['كشف الدوام']
+        self.assertEqual(workbook.sheetnames, ['data', 'List'])
+        sheet = workbook['data']
+        self.assertEqual(sheet.cell(row=2, column=6).value, 'احد')
         self.assertEqual(sheet.cell(row=3, column=6).value, '*')
         self.assertEqual(sheet.cell(row=3, column=6).fill.fgColor.rgb, '00D9EAD3')
+        self.assertEqual(sheet.cell(row=2, column=sheet.max_column).value, 'ملاحظات')
 
 
 if __name__ == '__main__':
