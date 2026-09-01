@@ -7649,10 +7649,10 @@ def hr_report_delay():
                 'hours': hours,
             })
 
-        # Show the largest delay first.  ``hours`` already reflects the
-        # selected delay type (late, early exit, or their combined duration).
+        # Sort daily records by morning lateness, highest first.  The date
+        # keeps the newest record first when two records have the same delay.
         rows_view.sort(
-            key=lambda row: (row['hours'], row['date'] or ''),
+            key=lambda row: (row['late_minutes'], row['date'] or ''),
             reverse=True,
         )
 
