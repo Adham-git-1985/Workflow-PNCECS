@@ -28,18 +28,28 @@
 
       <div class="mt-3 d-flex flex-wrap gap-2">
         {% if f.get('can_corr') %}
-          <span class="badge text-bg-light border"><i class="bi bi-envelope"></i> وارد 30 يوم: <b>{{ s.get('corr_in_30', 0) }}</b></span>
-          <span class="badge text-bg-light border"><i class="bi bi-send"></i> صادر 30 يوم: <b>{{ s.get('corr_out_30', 0) }}</b></span>
+          <a class="badge text-bg-light border text-decoration-none text-dark" href="{{ url_for('portal.inbound_list') }}" title="فتح قائمة الوارد">
+            <i class="bi bi-envelope"></i> وارد 30 يوم: <b>{{ s.get('corr_in_30', 0) }}</b>
+          </a>
+          <a class="badge text-bg-light border text-decoration-none text-dark" href="{{ url_for('portal.outbound_list') }}" title="فتح قائمة الصادر">
+            <i class="bi bi-send"></i> صادر 30 يوم: <b>{{ s.get('corr_out_30', 0) }}</b>
+          </a>
         {% endif %}
         {% if f.get('can_att') %}
-          <span class="badge text-bg-light border"><i class="bi bi-clock"></i> أيام دوام هذا الشهر: <b>{{ s.get('att_days_month', 0) }}</b></span>
+          <a class="badge text-bg-light border text-decoration-none text-dark" href="{{ url_for('portal.hr_my_attendance') }}" title="فتح دوامي">
+            <i class="bi bi-clock"></i> أيام دوام هذا الشهر: <b>{{ s.get('att_days_month', 0) }}</b>
+          </a>
         {% endif %}
         {% if f.get('can_hr') %}
           <a class="badge text-bg-light border text-decoration-none" href="{{ url_for('portal.hr_my_pending_requests') }}" title="فتح طلبات الإجازات والمغادرات قيد المراجعة"><i class="bi bi-person-check"></i> طلباتي قيد المراجعة: <b>{{ s.get('my_requests_open', 0) }}</b></a>
         {% endif %}
         {% if f.get('can_meetings_manage') or s.get('meetings_week', 0)|int > 0 or s.get('meeting_tasks_open', 0)|int > 0 %}
-          <span class="badge text-bg-light border"><i class="bi bi-calendar2-week"></i> اجتماعات الأسبوع: <b>{{ s.get('meetings_week', 0) }}</b></span>
-          <span class="badge text-bg-light border"><i class="bi bi-check2-square"></i> مهام متابعة: <b>{{ s.get('meeting_tasks_open', 0) }}</b></span>
+          <a class="badge text-bg-light border text-decoration-none text-dark" href="{{ url_for('portal.meetings_dashboard') }}" title="فتح اجتماعات الأسبوع">
+            <i class="bi bi-calendar2-week"></i> اجتماعات الأسبوع: <b>{{ s.get('meetings_week', 0) }}</b>
+          </a>
+          <a class="badge text-bg-light border text-decoration-none text-dark" href="{{ url_for('portal.meetings_dashboard') }}" title="فتح مهام المتابعة">
+            <i class="bi bi-check2-square"></i> مهام متابعة: <b>{{ s.get('meeting_tasks_open', 0) }}</b>
+          </a>
         {% endif %}
       </div>
     </div>
