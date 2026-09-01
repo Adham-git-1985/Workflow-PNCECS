@@ -7,7 +7,7 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import User, UserPermission
+from models import User, UserPermission, WorkflowInstance, WorkflowInstanceStep, WorkflowRequest
 from workflow import workflow_bp
 
 
@@ -105,6 +105,51 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
             response = client.get("/workflow/work")
 
         self.assertEqual(response.status_code, 200)
+
+    def test_dashboard_prefers_the_saved_selected_recipient_name(self):
+        selected_recipient = User(
+            email="selected-recipient@example.test",
+            name="Route Candidate",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(selected_recipient)
+        db.session.flush()
+        request_row = WorkflowRequest(
+            requester_id=self.employee.id,
+            title="Request with a specifically selected recipient",
+            description="",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=1,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add(WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            approver_kind="ROLE",
+            approver_role="EMPLOYEE",
+            routing_label="The specifically selected recipient",
+            status="PENDING",
+        ))
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_DASHBOARD_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            response = client.get("/workflow/work?queue=created")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("The specifically selected recipient", response.get_data(as_text=True))
 
 
 if __name__ == "__main__":

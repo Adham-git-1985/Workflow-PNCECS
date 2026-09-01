@@ -129,12 +129,15 @@
               هذه المعاملة سرية. لن يبدأ المسار إذا كان القالب يضم أي مشارك غير موجود ضمن الأشخاص المخولين.
             </div>
           {% endif %}
-          <select class="form-select form-select-sm" name="template_id" required>
+          <select class="form-select form-select-sm" name="template_id" id="inboundWorkflowTemplate" required>
             <option value="">اختر قالب المسار</option>
             {% for t in workflow_templates|default([]) %}
               <option value="{{ t.id }}" {% if item.workflow_template_id == t.id %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
           </select>
+          {% set workflow_template_preview_id = 'inboundWorkflow' %}
+          {% set workflow_template_preview_select_id = 'inboundWorkflowTemplate' %}
+          {% include 'portal/corr/_workflow_template_steps_preview.html' %}
           <button class="btn btn-sm btn-primary" type="submit">
             <i class="bi bi-play-circle"></i> بدء مسار للمعاملة
           </button>

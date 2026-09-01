@@ -1760,7 +1760,10 @@ def build_dynamic_target_path(
                 "approver_kind": "ORG_NODE",
                 "approver_org_node_id": int(secretary_general.id),
                 "sla_days": None,
-                "label": f"{_node_type_name(secretary_general) or _node_type_code(secretary_general)}: {secretary_general.name_ar}",
+                "label": secretary_manager.full_name or secretary_manager.email or (
+                    f"{_node_type_name(secretary_general) or _node_type_code(secretary_general)}: "
+                    f"{secretary_general.name_ar}"
+                ),
                 "job_title": (getattr(secretary_manager, "job_title", None) or "").strip(),
                 "reason": "",
                 "node_id": int(secretary_general.id),

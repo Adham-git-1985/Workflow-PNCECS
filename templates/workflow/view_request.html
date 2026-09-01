@@ -359,7 +359,10 @@
   {% elif k == "ORG_NODE" %}
     <span class="badge bg-secondary">عنصر هيكلي</span>
     {{ org_nodes_map.get(s.approver_org_node_id).name_ar if s.approver_org_node_id and org_nodes_map.get(s.approver_org_node_id) else ('#' ~ s.approver_org_node_id) }}
-    → <strong class="text-body">{{ org_node_approver_names_map.get(s.approver_org_node_id, 'لا يوجد مدير/نائب معيّن') }}</strong>
+    → <strong class="text-body">{{ s.routing_label or org_node_approver_names_map.get(s.approver_org_node_id, 'لا يوجد مدير/نائب معيّن') }}</strong>
+    {% if s.routing_job_title %}
+      <span class="text-muted">— {{ s.routing_job_title }}</span>
+    {% endif %}
   {% elif k == "COMMITTEE" %}
     <span class="badge bg-secondary">لجنة</span>
     {% if s.approver_committee_id and committees_map and committees_map.get(s.approver_committee_id) %}

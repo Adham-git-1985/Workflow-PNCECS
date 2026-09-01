@@ -497,6 +497,31 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertIn("الخطوة الاختيارية: ارفع المرفق وحلله", template)
         self.assertNotIn('id="inboundFiles" multiple required', template)
 
+    def test_correspondence_route_picker_shows_selected_route_steps(self):
+        project_root = Path(__file__).resolve().parents[1]
+        procedure_fields = (
+            project_root / "templates" / "portal" / "corr" / "_procedure_fields.html"
+        ).read_text(encoding="utf-8")
+        inbound_view = (
+            project_root / "templates" / "portal" / "corr" / "inbound_view.html"
+        ).read_text(encoding="utf-8")
+        outbound_view = (
+            project_root / "templates" / "portal" / "corr" / "outbound_view.html"
+        ).read_text(encoding="utf-8")
+        routes = (project_root / "portal" / "routes.py").read_text(encoding="utf-8")
+
+        self.assertIn('id="corrWorkflowTemplatePreview"', procedure_fields)
+        self.assertIn('id="corrWorkflowTemplatePreviewSteps"', procedure_fields)
+        self.assertIn('id="corrWorkflowTemplateStepsData"', procedure_fields)
+        self.assertIn("renderRoutePreview", procedure_fields)
+        self.assertIn("_workflow_template_steps_preview.html", inbound_view)
+        self.assertIn("_workflow_template_steps_preview.html", outbound_view)
+        self.assertIn("_corr_workflow_template_steps_data", routes)
+        self.assertIn(
+            "workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates)",
+            routes,
+        )
+
     def test_outbound_form_exposes_optional_attachment_analysis(self):
         project_root = Path(__file__).resolve().parents[1]
         template = (

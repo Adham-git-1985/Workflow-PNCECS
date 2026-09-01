@@ -18,6 +18,11 @@
             <option value="{{ workflow_template.id }}" {% if current_template_id|string == workflow_template.id|string %}selected{% endif %}>{{ workflow_template.name }}</option>
           {% endfor %}
         </select>
+        <script type="application/json" id="corrWorkflowTemplateStepsData">{{ (workflow_template_steps|default({}, true))|tojson }}</script>
+        <div class="alert alert-light border mt-2 mb-0 py-2 d-none" id="corrWorkflowTemplatePreview" aria-live="polite">
+          <div class="small fw-semibold mb-1"><i class="bi bi-signpost-split"></i> مسار المعاملة المختار</div>
+          <div class="small d-flex flex-wrap align-items-center gap-1" id="corrWorkflowTemplatePreviewSteps"></div>
+        </div>
         <div class="form-text">تظهر هنا المسارات النشطة المنشأة في نظام مسار. يبدأ التنفيذ عند الضغط على «بدء المسار» بعد حفظ المعاملة.</div>
       </div>
       <div class="col-lg-3 col-md-6">
@@ -83,6 +88,44 @@
     <div class="form-text mt-2">يُستخدم الموعد النهائي لإظهار تنبيهات المتابعة حتى إغلاق المعاملة أو أرشفتها.</div>
   </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  const select = document.querySelector('select[name="workflow_template_id"]');
+  const dataElement = document.getElementById('corrWorkflowTemplateStepsData');
+  const preview = document.getElementById('corrWorkflowTemplatePreview');
+  const stepsContainer = document.getElementById('corrWorkflowTemplatePreviewSteps');
+  if (!select || !dataElement || !preview || !stepsContainer) return;
+
+  let routeSteps = {};
+  try {
+    routeSteps = JSON.parse(dataElement.textContent || '{}');
+  } catch (_error) {
+    routeSteps = {};
+  }
+
+  function renderRoutePreview() {
+    const steps = routeSteps[String(select.value || '')] || [];
+    preview.classList.toggle('d-none', !steps.length);
+    stepsContainer.replaceChildren();
+    steps.forEach(function (step, index) {
+      if (index) {
+        const arrow = document.createElement('span');
+        arrow.className = 'text-primary fw-bold';
+        arrow.textContent = '←';
+        stepsContainer.appendChild(arrow);
+      }
+      const item = document.createElement('span');
+      item.className = 'badge rounded-pill text-bg-light border text-dark text-wrap';
+      item.textContent = 'الخطوة ' + String(step.order) + ': ' + String(step.label || '');
+      stepsContainer.appendChild(item);
+    });
+  }
+
+  select.addEventListener('change', renderRoutePreview);
+  renderRoutePreview();
+});
+</script>
 
 {% if may_manage_confidential %}
 <script>

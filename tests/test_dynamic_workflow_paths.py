@@ -918,6 +918,7 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         secretary_step = with_secretary_general["steps"][len(with_secretary_general["steps"]) // 2]
         self.assertEqual(secretary_step["node_id"], secretary_general.id)
         self.assertEqual(secretary_step["approver_kind"], "ORG_NODE")
+        self.assertEqual(secretary_step["label"], secretary_manager.full_name)
         self.assertEqual(secretary_step["reason"], "")
         self.assertEqual(with_secretary_general["steps"][-1]["node_id"], source_department.id)
         self.assertEqual(with_secretary_general["steps"][-1]["reason"], DYNAMIC_RETURN_REASON)

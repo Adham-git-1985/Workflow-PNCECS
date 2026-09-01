@@ -100,7 +100,7 @@ from utils.org_dynamic import (
     sync_existing_legacy_node,
     sync_legacy_now,
 )
-from workflow.dynamic_paths import node_path_label
+from workflow.dynamic_paths import node_path_label, org_node_approver_names
 from models import (
     User,
     EmployeeFile,
@@ -146,6 +146,8 @@ from models import (
     RequestAttachment,
     WorkflowRequest,
     WorkflowTemplate,
+    WorkflowTemplateStep,
+    Committee,
     AttendanceImportBatch,
     AttendanceEvent,
     InboundMail,
@@ -1326,6 +1328,94 @@ def _active_workflow_templates() -> list[WorkflowTemplate]:
 
 def _corr_workflow_templates() -> list[WorkflowTemplate]:
     return _active_workflow_templates()
+
+
+def _corr_workflow_template_steps_data(templates) -> dict[str, list[dict[str, object]]]:
+    """Return concise, readable route steps for the correspondence forms."""
+    template_ids = [int(template.id) for template in (templates or []) if template.id]
+    result: dict[str, list[dict[str, object]]] = {
+        str(template_id): [] for template_id in template_ids
+    }
+    if not template_ids:
+        return result
+
+    steps = (
+        WorkflowTemplateStep.query
+        .filter(WorkflowTemplateStep.template_id.in_(template_ids))
+        .order_by(
+            WorkflowTemplateStep.template_id.asc(),
+            WorkflowTemplateStep.step_order.asc(),
+        )
+        .all()
+    )
+    user_ids = {
+        int(step.approver_user_id)
+        for step in steps
+        if getattr(step, "approver_user_id", None)
+    }
+    node_ids = {
+        int(step.approver_org_node_id)
+        for step in steps
+        if getattr(step, "approver_org_node_id", None)
+    }
+    users_map = {
+        int(user.id): user
+        for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
+    }
+    nodes_map = {
+        int(node.id): node
+        for node in (OrgNode.query.filter(OrgNode.id.in_(node_ids)).all() if node_ids else [])
+    }
+    node_approvers = org_node_approver_names(node_ids)
+    departments_map = {int(row.id): row for row in Department.query.all()}
+    directorates_map = {int(row.id): row for row in Directorate.query.all()}
+    units_map = {int(row.id): row for row in Unit.query.all()}
+    sections_map = {int(row.id): row for row in Section.query.all()}
+    divisions_map = {int(row.id): row for row in Division.query.all()}
+    committees_map = {int(row.id): row for row in Committee.query.all()}
+
+    def named_row_label(prefix: str, rows: dict[int, object], identifier) -> str:
+        try:
+            row_id = int(identifier or 0)
+        except (TypeError, ValueError):
+            row_id = 0
+        row = rows.get(row_id)
+        name = getattr(row, "name_ar", None) if row else None
+        return f"{prefix}: {name or ('#' + str(row_id) if row_id else 'غير محدد')}"
+
+    for step in steps:
+        kind = (getattr(step, "approver_kind", "") or "").strip().upper()
+        if kind == "USER":
+            user = users_map.get(int(step.approver_user_id or 0))
+            label = f"مستخدم: {user.full_name if user else '#' + str(step.approver_user_id)}"
+        elif kind == "ROLE":
+            label = f"دور: {step.approver_role or 'غير محدد'}"
+        elif kind == "ORG_NODE":
+            node_id = int(step.approver_org_node_id or 0)
+            node = nodes_map.get(node_id)
+            node_name = node.name_ar if node else f"#{node_id}"
+            approver = node_approvers.get(node_id)
+            label = f"عنصر هيكلي: {node_name}" + (f" → {approver}" if approver else "")
+        elif kind == "DIRECTORATE":
+            label = named_row_label("إدارة", directorates_map, step.approver_directorate_id)
+        elif kind == "DEPARTMENT" or not kind:
+            label = named_row_label("دائرة", departments_map, step.approver_department_id)
+        elif kind == "UNIT":
+            label = named_row_label("وحدة", units_map, step.approver_unit_id)
+        elif kind == "SECTION":
+            label = named_row_label("قسم", sections_map, step.approver_section_id)
+        elif kind == "DIVISION":
+            label = named_row_label("شعبة", divisions_map, step.approver_division_id)
+        elif kind == "COMMITTEE":
+            label = named_row_label("لجنة", committees_map, step.approver_committee_id)
+        else:
+            label = "وجهة غير محددة"
+
+        result.setdefault(str(step.template_id), []).append({
+            "order": int(step.step_order),
+            "label": label,
+        })
+    return result
 
 
 def _corr_first_parallel_candidate_map(item, templates) -> dict[int, list[User]]:
@@ -24227,6 +24317,7 @@ def inbound_new():
         sender_rows=sender_rows,
         competence_options=competence_options,
         workflow_templates=workflow_templates,
+        workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         confidential_user_options=confidential_user_options,
         intake_max_bytes=intake_max_bytes,
         intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
@@ -24534,6 +24625,7 @@ def outbound_new():
         recipient_rows=recipient_rows,
         competence_options=competence_options,
         workflow_templates=workflow_templates,
+        workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         confidential_user_options=confidential_user_options,
         intake_max_bytes=intake_max_bytes,
         intake_max_megabytes=f"{intake_max_bytes / (1024 * 1024):g}",
@@ -24583,6 +24675,7 @@ def outbound_view(outbound_id: int):
         can_delete=can_delete,
         can_upload=can_upload,
         workflow_templates=workflow_templates,
+        workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         workflow_parallel_candidates=_corr_first_parallel_candidate_map(
             item,
             workflow_templates,
@@ -24618,6 +24711,7 @@ def inbound_view(inbound_id: int):
 
     can_upload = bool(current_user.has_perm(CORR_CREATE) or can_update)
     procedure_context = _corr_procedure_context("IN", item)
+    workflow_templates = _corr_workflow_templates()
     official_replies = (
         OutboundMail.query
         .filter_by(source_inbound_id=item.id)
@@ -24633,7 +24727,8 @@ def inbound_view(inbound_id: int):
         can_update=can_update,
         can_delete=can_delete,
         can_upload=can_upload,
-        workflow_templates=_corr_workflow_templates(),
+        workflow_templates=workflow_templates,
+        workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         official_replies=official_replies,
         **procedure_context,
     )
@@ -24910,6 +25005,7 @@ def inbound_edit(inbound_id: int):
         sender_rows=sender_rows,
         competence_options=competence_options,
         workflow_templates=workflow_templates,
+        workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         confidential_user_options=confidential_user_options,
         selected_confidential_user_ids=_corr_authorized_user_ids(item),
         can_manage_confidential_access=can_manage_confidential_access,
@@ -25061,6 +25157,7 @@ def outbound_edit(outbound_id: int):
         recipient_rows=recipient_rows,
         competence_options=competence_options,
         workflow_templates=workflow_templates,
+        workflow_template_steps=_corr_workflow_template_steps_data(workflow_templates),
         confidential_user_options=confidential_user_options,
         selected_confidential_user_ids=_corr_authorized_user_ids(item),
         can_manage_confidential_access=can_manage_confidential_access,

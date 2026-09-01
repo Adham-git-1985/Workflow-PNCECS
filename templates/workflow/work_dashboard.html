@@ -72,7 +72,16 @@
                     </span>
                   {% endif %}
                 </div>
-                {% if row.step_assignee_details %}
+                {% if row.step.routing_label %}
+                  <div class="small mt-1">
+                    <i class="bi bi-person-check"></i>
+                    <span class="text-muted">المسار لدى:</span>
+                    <span class="fw-semibold">{{ row.step.routing_label }}</span>
+                    {% if row.step.routing_job_title %}
+                      <span class="text-muted">— {{ row.step.routing_job_title }}</span>
+                    {% endif %}
+                  </div>
+                {% elif row.step_assignee_details %}
                   {% for assignee_detail in row.step_assignee_details %}
                     {% set assignee = assignee_detail.user %}
                     <div class="small mt-1">
@@ -90,14 +99,6 @@
                       {% endif %}
                     </div>
                   {% endfor %}
-                {% elif row.step.routing_label %}
-                  <div class="small mt-1">
-                    <i class="bi bi-person"></i>
-                    <span class="fw-semibold">{{ row.step.routing_label }}</span>
-                    {% if row.step.routing_job_title %}
-                      <span class="text-muted">— {{ row.step.routing_job_title }}</span>
-                    {% endif %}
-                  </div>
                 {% endif %}
               {% else %}-{% endif %}
             </td>

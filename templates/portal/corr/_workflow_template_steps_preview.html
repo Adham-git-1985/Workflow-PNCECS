@@ -1,0 +1,45 @@
+{% set preview_prefix = workflow_template_preview_id|default('corrWorkflowTemplate') %}
+{% set preview_select_id = workflow_template_preview_select_id|default('corrWorkflowTemplateSelect') %}
+
+<script type="application/json" id="{{ preview_prefix }}StepsData">{{ (workflow_template_steps|default({}, true))|tojson }}</script>
+<div class="alert alert-light border py-2 mb-0 d-none" id="{{ preview_prefix }}Preview" aria-live="polite">
+  <div class="small fw-semibold mb-1"><i class="bi bi-signpost-split"></i> مسار المعاملة المختار</div>
+  <div class="small d-flex flex-wrap align-items-center gap-1" id="{{ preview_prefix }}PreviewSteps"></div>
+</div>
+<script>
+(function () {
+  const select = document.getElementById('{{ preview_select_id }}');
+  const dataElement = document.getElementById('{{ preview_prefix }}StepsData');
+  const preview = document.getElementById('{{ preview_prefix }}Preview');
+  const stepsContainer = document.getElementById('{{ preview_prefix }}PreviewSteps');
+  if (!select || !dataElement || !preview || !stepsContainer) return;
+
+  let routeSteps = {};
+  try {
+    routeSteps = JSON.parse(dataElement.textContent || '{}');
+  } catch (_error) {
+    routeSteps = {};
+  }
+
+  function renderRoutePreview() {
+    const steps = routeSteps[String(select.value || '')] || [];
+    preview.classList.toggle('d-none', !steps.length);
+    stepsContainer.replaceChildren();
+    steps.forEach(function (step, index) {
+      if (index) {
+        const arrow = document.createElement('span');
+        arrow.className = 'text-primary fw-bold';
+        arrow.textContent = '←';
+        stepsContainer.appendChild(arrow);
+      }
+      const item = document.createElement('span');
+      item.className = 'badge rounded-pill text-bg-light border text-dark text-wrap';
+      item.textContent = 'الخطوة ' + String(step.order) + ': ' + String(step.label || '');
+      stepsContainer.appendChild(item);
+    });
+  }
+
+  select.addEventListener('change', renderRoutePreview);
+  renderRoutePreview();
+})();
+</script>

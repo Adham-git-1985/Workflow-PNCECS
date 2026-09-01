@@ -134,6 +134,9 @@
               <option value="{{ t.id }}" {% if item.workflow_template_id == t.id %}selected{% endif %}>{{ t.name }}</option>
             {% endfor %}
           </select>
+          {% set workflow_template_preview_id = 'outboundWorkflow' %}
+          {% set workflow_template_preview_select_id = 'outboundWorkflowTemplate' %}
+          {% include 'portal/corr/_workflow_template_steps_preview.html' %}
           <div id="outboundParallelSelection" class="d-none">
             {% for template_id, users in (workflow_parallel_candidates|default({})).items() %}
               <div class="d-none border border-warning rounded bg-white p-3"
