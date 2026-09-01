@@ -66,10 +66,10 @@ def _user_has_ticket_admin_role(user: User) -> bool:
 
 
 def _can_receive_ticket_notification_email(user: User, notification: Notification) -> bool:
-    """Keep ticket emails to Admin/SuperAdmin, except direct creator updates.
+    """Allow ticket emails only to admins, the creator, or current assignee.
 
     The link check also protects old queued ticket notifications created before
-    the role restriction was introduced.
+    assignment was supported for any user.
     """
     notification_type = (getattr(notification, "type", None) or "").strip().upper()
     link_match = _TROUBLE_TICKET_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
@@ -88,7 +88,13 @@ def _can_receive_ticket_notification_email(user: User, notification: Notificatio
         return False
     if notification_type == _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE:
         return ticket.requester_id is not None and int(user.id) == int(ticket.requester_id)
-    return _user_has_ticket_admin_role(user)
+    return bool(
+        _user_has_ticket_admin_role(user)
+        or (
+            ticket.assigned_to_id is not None
+            and int(user.id) == int(ticket.assigned_to_id)
+        )
+    )
 
 
 def _can_receive_hr_request_notification_email(user: User, notification: Notification) -> bool:

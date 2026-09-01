@@ -4265,6 +4265,16 @@ def _trouble_ticket_admin_user_ids() -> list[int]:
     return [int(user.id) for user in _trouble_ticket_admin_users() if user.id]
 
 
+def _trouble_ticket_assignable_users() -> list[User]:
+    """Return every user who may be explicitly assigned a support ticket.
+
+    Assignment is deliberately broader than ticket administration: Admin and
+    SuperAdmin retain the ability to manage tickets, while any selected user
+    can receive and follow up on a ticket assigned to them.
+    """
+    return User.query.order_by(User.name, User.email).all()
+
+
 def _trouble_ticket_notification_recipient_ids(
     ticket: TroubleTicket,
     *,
@@ -4275,6 +4285,8 @@ def _trouble_ticket_notification_recipient_ids(
     recipient_ids = set(_trouble_ticket_admin_user_ids())
     if include_requester and ticket.requester_id:
         recipient_ids.add(int(ticket.requester_id))
+    if ticket.assigned_to_id:
+        recipient_ids.add(int(ticket.assigned_to_id))
     if exclude_user_id:
         recipient_ids.discard(int(exclude_user_id))
     return sorted(recipient_ids)
@@ -4289,6 +4301,19 @@ def _trouble_ticket_notification_type(ticket: TroubleTicket, recipient_id: int) 
 
 def _can_manage_trouble_tickets() -> bool:
     return _trouble_ticket_user_is_admin(current_user)
+
+
+def _can_access_trouble_ticket(ticket: TroubleTicket, user: User | None = None) -> bool:
+    """Allow only the creator, ticket admins, and its current assignee."""
+    user = user or current_user
+    user_id = getattr(user, "id", None)
+    if not user_id:
+        return False
+    return bool(
+        _trouble_ticket_user_is_admin(user)
+        or int(ticket.requester_id or 0) == int(user_id)
+        or int(ticket.assigned_to_id or 0) == int(user_id)
+    )
 
 
 def _ticket_label(mapping: dict[str, str], value: str | None) -> str:
@@ -4325,11 +4350,17 @@ def trouble_tickets():
     search_query = (request.args.get("q") or "").strip()[:160]
     is_manager = _can_manage_trouble_tickets()
     scope = (request.args.get("scope") or ("all" if is_manager else "mine")).strip().lower()
-    if not is_manager:
-        scope = "mine"
 
     query = TroubleTicket.query
-    if scope == "mine":
+    if not is_manager:
+        # A regular user sees only tickets they created or that an admin
+        # explicitly assigned to them; no ticket is broadcast to everyone.
+        scope = "mine"
+        query = query.filter(or_(
+            TroubleTicket.requester_id == current_user.id,
+            TroubleTicket.assigned_to_id == current_user.id,
+        ))
+    elif scope == "mine":
         query = query.filter(TroubleTicket.requester_id == current_user.id)
     elif scope == "assigned":
         query = query.filter(TroubleTicket.assigned_to_id == current_user.id)
@@ -4346,7 +4377,7 @@ def trouble_tickets():
         active_status=status,
         is_manager=is_manager,
         active_scope=scope,
-        show_requester=is_manager and scope != "mine",
+        show_requester=(is_manager and scope != "mine") or not is_manager,
         search_query=search_query,
     )
 
@@ -4428,7 +4459,7 @@ def trouble_ticket_new():
 @login_required
 def trouble_ticket_attachment_download(ticket_id: int, attachment_id: int):
     ticket = TroubleTicket.query.get_or_404(ticket_id)
-    if ticket.requester_id != current_user.id and not _can_manage_trouble_tickets():
+    if not _can_access_trouble_ticket(ticket):
         abort(403)
     attachment = TroubleTicketAttachment.query.filter_by(id=attachment_id, ticket_id=ticket.id).first_or_404()
     response = send_from_directory(
@@ -4449,7 +4480,7 @@ def trouble_ticket_attachment_download(ticket_id: int, attachment_id: int):
 def trouble_ticket_view(ticket_id: int):
     ticket = TroubleTicket.query.get_or_404(ticket_id)
     is_manager = _can_manage_trouble_tickets()
-    if ticket.requester_id != current_user.id and not is_manager:
+    if not _can_access_trouble_ticket(ticket):
         abort(403)
 
     if request.method == "POST":
@@ -4465,7 +4496,7 @@ def trouble_ticket_view(ticket_id: int):
                     ticket.status = "IN_PROGRESS"
                 for recipient_id in _trouble_ticket_notification_recipient_ids(
                     ticket,
-                    include_requester=is_manager,
+                    include_requester=current_user.id != ticket.requester_id,
                     exclude_user_id=current_user.id,
                 ):
                     db.session.add(Notification(
@@ -4484,16 +4515,23 @@ def trouble_ticket_view(ticket_id: int):
         if action == "update" and is_manager:
             status = (request.form.get("status") or "").strip().upper()
             assignee_id = (request.form.get("assigned_to_id") or "").strip()
+            assignee = None
             if status not in TROUBLE_TICKET_STATUSES:
                 flash("الحالة المختارة غير صالحة.", "danger")
-            elif assignee_id and (
-                not assignee_id.isdigit()
-                or int(assignee_id) not in set(_trouble_ticket_admin_user_ids())
-            ):
-                flash("يمكن إسناد التذكرة إلى Admin أو SuperAdmin فقط.", "danger")
+            elif assignee_id and not assignee_id.isdigit():
+                flash("المستخدم المحدد للإسناد غير صالح.", "danger")
             else:
+                if assignee_id:
+                    assignee = db.session.get(User, int(assignee_id))
+                    if not assignee:
+                        flash("المستخدم المحدد للإسناد غير موجود.", "danger")
+                        return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
+
+                previous_assignee_id = ticket.assigned_to_id
+                new_assignee_id = int(assignee.id) if assignee else None
+                assignment_changed = previous_assignee_id != new_assignee_id
                 ticket.status = status
-                ticket.assigned_to_id = int(assignee_id) if assignee_id.isdigit() else None
+                ticket.assigned_to_id = new_assignee_id
                 ticket.resolved_at = datetime.utcnow() if status in {"RESOLVED", "CLOSED"} else None
                 ticket.updated_at = datetime.utcnow()
                 db.session.add(AuditLog(
@@ -4508,9 +4546,16 @@ def trouble_ticket_view(ticket_id: int):
                     include_requester=True,
                     exclude_user_id=current_user.id,
                 ):
+                    if assignment_changed and new_assignee_id and recipient_id == new_assignee_id:
+                        notification_message = f"تم إسناد تذكرة الدعم #{ticket.id} إليك: {ticket.subject}"
+                    else:
+                        notification_message = (
+                            f"تم تحديث تذكرة الدعم #{ticket.id} إلى: "
+                            f"{_ticket_label(TROUBLE_TICKET_STATUSES, status)}"
+                        )
                     db.session.add(Notification(
                         user_id=recipient_id,
-                        message=f"تم تحديث تذكرة الدعم #{ticket.id} إلى: {_ticket_label(TROUBLE_TICKET_STATUSES, status)}",
+                        message=notification_message,
                         type=_trouble_ticket_notification_type(ticket, recipient_id),
                         source="portal",
                         is_read=False,
@@ -4521,7 +4566,7 @@ def trouble_ticket_view(ticket_id: int):
                 flash("تم تحديث التذكرة.", "success")
             return redirect(url_for("portal.trouble_ticket_view", ticket_id=ticket.id))
 
-    assignees = _trouble_ticket_admin_users() if is_manager else []
+    assignees = _trouble_ticket_assignable_users() if is_manager else []
     return render_template(
         "portal/trouble_tickets/view.html",
         ticket=ticket,

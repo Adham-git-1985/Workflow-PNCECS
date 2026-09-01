@@ -204,6 +204,41 @@ class NotificationEmailTests(unittest.TestCase):
 
         self.assertEqual(send_email.call_args.args[1], self.user.email)
 
+    def test_current_ticket_assignee_receives_a_ticket_email(self):
+        requester = User(
+            email="ticket-requester@example.test",
+            name="Ticket Requester",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        db.session.add(requester)
+        db.session.flush()
+        ticket = TroubleTicket(
+            requester_id=requester.id,
+            assigned_to_id=self.user.id,
+            subject="Assigned support ticket",
+            description="The assignee should receive this update.",
+            category="SYSTEM",
+            priority="NORMAL",
+            status="IN_PROGRESS",
+        )
+        db.session.add(ticket)
+        db.session.flush()
+        db.session.add(Notification(
+            user_id=self.user.id,
+            message="A support ticket was assigned to you.",
+            type="TROUBLE_TICKET",
+            source="portal",
+            link_url=f"/portal/trouble-tickets/{ticket.id}",
+            is_read=False,
+        ))
+        db.session.commit()
+
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+
+        self.assertEqual(send_email.call_args.args[1], self.user.email)
+
     def test_unauthorized_hr_request_notification_never_sends_email(self):
         requester = User(
             email="leave-requester@example.test",

@@ -244,7 +244,7 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertIn(f"#{ticket.id}", notification.message)
         self.assertEqual(notification.link_url, f"/portal/trouble-tickets/{ticket.id}")
 
-    def test_support_tickets_and_updates_are_limited_to_requester_and_admin_roles(self):
+    def test_assigned_user_can_follow_ticket_without_becoming_a_ticket_manager(self):
         admin = User(
             email="admin@example.test",
             name="Admin",
@@ -283,8 +283,8 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             manage_response = client.get("/portal/trouble-tickets/manage")
 
         self.assertEqual(list_response.status_code, 200)
-        self.assertNotIn("Restricted support ticket", list_response.get_data(as_text=True))
-        self.assertEqual(detail_response.status_code, 403)
+        self.assertIn("Restricted support ticket", list_response.get_data(as_text=True))
+        self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(manage_response.status_code, 403)
 
         with self.app.test_client() as client:
@@ -305,7 +305,7 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             notification.user_id
             for notification in Notification.query.filter_by(type="TROUBLE_TICKET").all()
         }
-        self.assertEqual(comment_recipients, {self.user.id, admin.id})
+        self.assertEqual(comment_recipients, {self.user.id, admin.id, support_agent.id})
 
         with self.app.test_client() as client:
             self._login(client, self.user.id)
@@ -329,6 +329,72 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             if "تم تحديث تذكرة الدعم" in notification.message
         }
         self.assertEqual(requester_update_recipients, {self.other_user.id})
+
+    def test_admin_can_assign_a_ticket_to_any_user_without_notifying_others(self):
+        admin = User(
+            email="admin-assignment@example.test",
+            name="Admin Assignment",
+            password_hash="not-used-in-test",
+            role="ADMIN",
+        )
+        assignee = User(
+            email="assignee@example.test",
+            name="Assigned Employee",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        unrelated_user = User(
+            email="unrelated@example.test",
+            name="Unrelated Employee",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        ticket = TroubleTicket(
+            requester_id=self.other_user.id,
+            subject="Assign this ticket",
+            description="Only the selected employee should receive it.",
+            category="SYSTEM",
+            priority="NORMAL",
+            status="OPEN",
+        )
+        db.session.add_all((admin, assignee, unrelated_user, ticket))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.post(
+                f"/portal/trouble-tickets/{ticket.id}",
+                data={
+                    "action": "update",
+                    "status": "IN_PROGRESS",
+                    "assigned_to_id": str(assignee.id),
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(db.session.get(TroubleTicket, ticket.id).assigned_to_id, assignee.id)
+        assignment_recipients = {
+            notification.user_id
+            for notification in Notification.query.filter(Notification.message.contains("تم إسناد تذكرة الدعم")).all()
+        }
+        self.assertEqual(assignment_recipients, {assignee.id})
+        all_update_recipients = {
+            notification.user_id
+            for notification in Notification.query.filter(
+                Notification.link_url == f"/portal/trouble-tickets/{ticket.id}"
+            ).all()
+        }
+        self.assertEqual(all_update_recipients, {admin.id, assignee.id, self.other_user.id})
+        self.assertNotIn(unrelated_user.id, all_update_recipients)
+
+        with self.app.test_client() as client:
+            self._login(client, assignee.id)
+            list_response = client.get("/portal/trouble-tickets")
+            detail_response = client.get(f"/portal/trouble-tickets/{ticket.id}")
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIn("Assign this ticket", list_response.get_data(as_text=True))
+        self.assertEqual(detail_response.status_code, 200)
 
     def test_support_ticket_search_matches_requester_email(self):
         matching_ticket = TroubleTicket(
