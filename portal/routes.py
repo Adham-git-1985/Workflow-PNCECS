@@ -7000,15 +7000,14 @@ def hr_home():
     add_item(HR_DOCS_READ, "وثائق HR", "سياسات ونماذج بآخر نسخة معتمدة.", "bi-journal-text", "portal.hr_docs_home", "البرامج الفرعية")
     add_item(HR_PERF_READ, "الأداء والتقييم", "تقييم 360 (مدير/زملاء/ذاتي) حسب التكليف.", "bi-graph-up", "portal.hr_perf_home", "البرامج الفرعية")
 
-    # --- Attendance (viewer vs importer) ---
+    # --- Attendance ---
     try:
         if current_user.has_perm(HR_ATT_READ):
-            endpoint = "portal.hr_attendance_import" if current_user.has_perm(HR_ATT_CREATE) else "portal.hr_my_attendance"
             _sec_map["الدوام"].append({
-                "title": "الدوام",
-                "desc": "ملف ساعة الدوام، الأحداث، التقارير.",
+                "title": "شاشات الدوام",
+                "desc": "اختر بين ملخص الدوام اليومي وسجلات الدوام.",
                 "icon": "bi-clock-history",
-                "url": url_for(endpoint),
+                "url": url_for("portal.hr_attendance_home"),
             })
     except Exception:
         pass
@@ -7097,6 +7096,14 @@ def hr_home():
             sections.append({"title": title, "icon": icon, "items": items})
 
     return render_template("portal/hr/index.html", sections=sections)
+
+
+@portal_bp.route("/hr/attendance")
+@login_required
+@_perm(HR_ATT_READ)
+def hr_attendance_home():
+    """Landing page for the two primary attendance screens."""
+    return render_template("portal/hr/attendance_home.html")
 
 
 @portal_bp.route("/hr/reports")
