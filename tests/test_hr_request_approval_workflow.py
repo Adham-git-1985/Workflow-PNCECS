@@ -332,6 +332,22 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(step.approver_user_id, self.general_director.id)
         self.assertEqual(step.escalation_reason, "GENERAL_DIRECTOR")
 
+    def test_overdue_permission_step_is_not_escalated(self):
+        row = self._permission()
+        start_request_flow(KIND_PERMISSION, row)
+        step = current_step(KIND_PERMISSION, row.id)
+        step.due_at = datetime.utcnow() - timedelta(minutes=1)
+        db.session.flush()
+
+        result = process_pending_approvals(now=datetime.utcnow(), send_notifications=False)
+
+        self.assertEqual(result["escalated"], 0)
+        self.assertEqual(row.status, "SUBMITTED")
+        self.assertEqual(step.status, "PENDING")
+        self.assertEqual(step.approver_user_id, self.manager.id)
+        self.assertIsNone(step.escalated_at)
+        self.assertIsNone(step.escalation_reason)
+
     def test_active_delegation_is_used_when_the_request_is_submitted(self):
         delegate = User(email="delegate@example.test", name="Delegate", password_hash="x", role="employee")
         db.session.add(delegate)

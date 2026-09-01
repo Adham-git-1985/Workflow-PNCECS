@@ -531,9 +531,6 @@ def hr_notification_user_ids() -> list[int]:
 
 
 def _stage_due_at(kind: str, stage_code: str, assigned_at: datetime) -> datetime:
-    if kind == KIND_PERMISSION and stage_code == STAGE_DIRECT_MANAGER:
-        minutes = _setting_int("HR_PERMISSION_APPROVAL_ESCALATION_MINUTES", 60)
-        return assigned_at + timedelta(minutes=minutes)
     days = _setting_int("HR_APPROVAL_ESCALATION_WORKDAYS", 2)
     return add_working_days(assigned_at, days)
 
@@ -621,6 +618,11 @@ def start_request_flow(
             effective_approver_ids = [int(secretary_ids[0])]
         initial_escalation_reason = "NO_ORG_MANAGER" if effective_approver_ids else None
 
+    # Departure requests remain assigned to the resolved approver (including
+    # an active delegate), but never carry escalation state or are escalated
+    # later by the overdue-request job.
+    record_initial_escalation = kind != KIND_PERMISSION and bool(initial_escalation_reason)
+
     first_approver_id = effective_approver_ids[0] if effective_approver_ids else None
 
     steps: list[HRRequestApprovalStep] = []
@@ -648,10 +650,14 @@ def start_request_flow(
             status="PENDING" if active else "WAITING",
             assigned_at=now if active else None,
             due_at=_stage_due_at(kind, stage_code, now) if active else None,
-            escalated_at=now if active and initial_escalation_reason else None,
-            escalated_from_user_id=original_manager_id if first_manager_was_delegated else None,
-            escalation_count=1 if active and initial_escalation_reason else 0,
-            escalation_reason=initial_escalation_reason,
+            escalated_at=now if active and record_initial_escalation else None,
+            escalated_from_user_id=(
+                original_manager_id
+                if first_manager_was_delegated and record_initial_escalation
+                else None
+            ),
+            escalation_count=1 if active and record_initial_escalation else 0,
+            escalation_reason=initial_escalation_reason if record_initial_escalation else None,
         )
         db.session.add(step)
         steps.append(step)
@@ -1110,6 +1116,11 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
             reminded += 1
 
         if step.stage_code != STAGE_DIRECT_MANAGER or not step.due_at or now < step.due_at:
+            continue
+
+        # A departure request stays with its original approval path. It may
+        # receive reminders, but is never reassigned to a higher approver.
+        if step.request_kind == KIND_PERMISSION:
             continue
 
         candidate_ids = _step_approver_ids(step)
