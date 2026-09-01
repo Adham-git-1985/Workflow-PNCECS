@@ -998,6 +998,10 @@ def _ensure_runtime_schema():
                 ("hr_att_deduction_item", "leave_deduction_days", "REAL NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "salary_deduction_days", "REAL NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "remainder_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_special_case", "approval_status", "TEXT NOT NULL DEFAULT 'APPROVED'"),
+                ("hr_att_special_case", "approved_by_id", "INTEGER"),
+                ("hr_att_special_case", "approved_at", "TEXT"),
+                ("hr_att_special_case", "approval_note", "TEXT"),
             ]:
                 if not _col_exists(_table, _col):
                     _add_column_retry(_table, _col, _ctype)
@@ -1089,6 +1093,45 @@ def _ensure_runtime_schema():
                     if not exists:
                         db.session.add(RolePermission(role=role_code, permission=perm))
                         changed += 1
+                if changed:
+                    db.session.commit()
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+
+            # Manual attendance corrections use two independent permissions:
+            # one to submit a correction and one to approve it.  Seed both
+            # for the Secretary General and Super Admin roles so existing
+            # deployments have the intended initial access immediately.
+            try:
+                from sqlalchemy import func
+                from models import Role, RolePermission
+
+                permission_keys = (
+                    "HR_ATTENDANCE_EDIT",
+                    "HR_ATTENDANCE_EDIT_APPROVE",
+                )
+                role_codes = [
+                    (row.code or "").strip()
+                    for row in Role.query.filter(
+                        func.upper(Role.code).in_(("GENERAL_SECRETARY", "SUPER_ADMIN"))
+                    ).all()
+                    if (row.code or "").strip()
+                ]
+                changed = 0
+                for role_code in role_codes:
+                    for permission_key in permission_keys:
+                        exists = (
+                            RolePermission.query
+                            .filter(func.lower(RolePermission.role) == role_code.lower())
+                            .filter(RolePermission.permission == permission_key)
+                            .first()
+                        )
+                        if not exists:
+                            db.session.add(RolePermission(role=role_code, permission=permission_key))
+                            changed += 1
                 if changed:
                     db.session.commit()
             except Exception:

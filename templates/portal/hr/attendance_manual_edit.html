@@ -5,14 +5,16 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h5 class="mb-1"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</h5>
-      <div class="text-muted small">يسجّل هذا التعديل كتصحيح إداري مستقل ولا يغيّر سجل جهاز الدوام الخام. متاح للأمين العام فقط.</div>
+      <div class="text-muted small">يسجّل هذا التعديل كطلب مستقل ولا يغيّر سجل جهاز الدوام الخام. لا يصبح التعديل نافذاً قبل اعتماده.</div>
     </div>
+    {% if can_view_attendance %}
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_daily', day_from=day, day_to=day, user_id=user_id or '') }}"><i class="bi bi-arrow-right"></i> العودة للملخص</a>
+    {% endif %}
   </div>
 
   <hr class="my-4">
   <form method="post" class="row g-3">
-    <input type="hidden" name="override_id" value="{{ override.id if override else '' }}">
+    <input type="hidden" name="override_id" value="{{ override.id if editable_override else '' }}">
     <div class="col-md-7">
       <label class="form-label" for="manualAttendanceUser">الموظف</label>
       <select class="form-select" id="manualAttendanceUser" name="user_id" required>
@@ -45,8 +47,11 @@
       <textarea class="form-control" id="manualAttendanceNote" name="note" rows="3" required>{{ override.note if override and override.note else '' }}</textarea>
     </div>
     <div class="col-12 d-flex gap-2">
-      <button class="btn btn-success" type="submit"><i class="bi bi-check2-circle"></i> حفظ وإعادة احتساب الفترة</button>
-      {% if override %}<span class="text-muted align-self-center small">يجري تعديل آخر تصحيح يدوي محفوظ لهذا اليوم.</span>{% endif %}
+      <button class="btn btn-success" type="submit"><i class="bi bi-send-check"></i> تقديم للاعتماد</button>
+      {% if approval_status == 'PENDING' %}<span class="text-warning align-self-center small">هذا الطلب قيد الاعتماد ولم يطبّق بعد.</span>{% endif %}
+      {% if approval_status == 'APPROVED' %}<span class="text-muted align-self-center small">ستنشئ عملية الحفظ طلب تعديل جديداً للاعتماد.</span>{% endif %}
+      {% if approval_status == 'REJECTED' %}<span class="text-danger align-self-center small">تم رفض الطلب السابق؛ يمكنك تعديله وتقديمه مجدداً.</span>{% endif %}
+      {% if override and override.approval_note %}<span class="text-muted align-self-center small">ملاحظة المراجع: {{ override.approval_note }}</span>{% endif %}
     </div>
   </form>
 </div>

@@ -6,12 +6,16 @@ from flask import Flask
 from flask_login import LoginManager, login_user, logout_user
 
 from extensions import db
-from models import User
+from models import AttendanceDailySummary, HRAttendanceSpecialCase, User, UserPermission
+from portal import portal_bp
 from portal.routes import (
     _attendance_count_day,
     _attendance_event_date_range,
+    _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
     _sort_and_number_attendance_daily_rows,
+    hr_attendance_manual_edit,
+    hr_attendance_manual_review,
 )
 
 
@@ -66,6 +70,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         )
         db.init_app(cls.app)
         LoginManager(cls.app)
+        cls.app.register_blueprint(portal_bp)
         cls.context = cls.app.app_context()
         cls.context.push()
         db.create_all()
@@ -80,25 +85,114 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         db.drop_all()
         db.create_all()
 
-    def test_only_secretary_general_is_an_attendance_editor(self):
+    def test_manual_edit_and_approval_permissions_are_independent(self):
         hr_user = User(email="hr@example.test", name="HR", password_hash="x", role="HR")
-        secretary_general = User(
+        attendance_editor = User(
             email="secretary@example.test",
             name="Secretary General",
             password_hash="x",
             role="GENERAL-SECRETARY",
         )
-        db.session.add_all((hr_user, secretary_general))
+        attendance_approver = User(
+            email="approver@example.test",
+            name="Attendance Approver",
+            password_hash="x",
+            role="HR",
+        )
+        super_admin = User(
+            email="superadmin@example.test",
+            name="Super Admin",
+            password_hash="x",
+            role="SUPER_ADMIN",
+        )
+        db.session.add_all((hr_user, attendance_editor, attendance_approver, super_admin))
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(
+                user_id=attendance_editor.id,
+                key="HR_ATTENDANCE_EDIT",
+                is_allowed=True,
+            ),
+            UserPermission(
+                user_id=attendance_approver.id,
+                key="HR_ATTENDANCE_EDIT_APPROVE",
+                is_allowed=True,
+            ),
+        ))
         db.session.commit()
 
         with self.app.test_request_context():
             login_user(hr_user)
             self.assertFalse(_hr_can_edit_attendance())
+            self.assertFalse(_hr_can_approve_attendance_edit())
             logout_user()
 
-            login_user(secretary_general)
+            login_user(attendance_editor)
             self.assertTrue(_hr_can_edit_attendance())
+            self.assertFalse(_hr_can_approve_attendance_edit())
             logout_user()
+
+            login_user(attendance_approver)
+            self.assertFalse(_hr_can_edit_attendance())
+            self.assertTrue(_hr_can_approve_attendance_edit())
+            logout_user()
+
+            login_user(super_admin)
+            self.assertTrue(_hr_can_edit_attendance())
+            self.assertTrue(_hr_can_approve_attendance_edit())
+            logout_user()
+
+    def test_submitted_edit_affects_attendance_only_after_approval(self):
+        employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
+        editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")
+        approver = User(email="approver@example.test", name="Approver", password_hash="x", role="HR")
+        db.session.add_all((employee, editor, approver))
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(user_id=editor.id, key="HR_ATTENDANCE_EDIT", is_allowed=True),
+            UserPermission(user_id=approver.id, key="HR_ATTENDANCE_EDIT_APPROVE", is_allowed=True),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            "/portal/hr/attendance/manual",
+            method="POST",
+            data={
+                "user_id": str(employee.id),
+                "day": "2026-09-01",
+                "day_to": "2026-09-01",
+                "start_time": "08:00",
+                "end_time": "15:00",
+                "note": "تصحيح معتمد المصدر",
+            },
+        ):
+            login_user(editor)
+            response = hr_attendance_manual_edit()
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        correction = HRAttendanceSpecialCase.query.one()
+        self.assertEqual(correction.approval_status, "PENDING")
+        self.assertFalse(correction.applied)
+        self.assertIsNone(AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-01").first())
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "تمت المراجعة"},
+        ):
+            login_user(approver)
+            response = hr_attendance_manual_review(correction.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        correction = db.session.get(HRAttendanceSpecialCase, correction.id)
+        summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-01").one()
+        self.assertEqual(correction.approval_status, "APPROVED")
+        self.assertTrue(correction.applied)
+        self.assertEqual(correction.approved_by_id, approver.id)
+        self.assertEqual(summary.first_in.hour, 8)
+        self.assertEqual(summary.last_out.hour, 15)
 
 
 if __name__ == "__main__":

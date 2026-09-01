@@ -57,6 +57,12 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('portal.hr_attendance_home') }}">شاشات الدوام</a>
             </li>
+            {% if current_user.has_perm('HR_ATTENDANCE_EDIT') %}
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_attendance_manual_edit') }}"><i class="bi bi-pencil-square"></i> تعديل الدوام</a></li>
+            {% endif %}
+            {% if current_user.has_perm('HR_ATTENDANCE_EDIT_APPROVE') %}
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_attendance_manual_approval_queue') }}"><i class="bi bi-check2-square"></i> اعتماد تعديلات الدوام</a></li>
+            {% endif %}
 
             <li class="dropdown-submenu">
               <a class="dropdown-item dropdown-toggle" href="#">حالات خاصة</a>

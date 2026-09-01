@@ -80,10 +80,12 @@
 {% set home_url = (url_for('portal.index') if can_enter_portal else (url_for('portal.portal_admin_dashboard') if can_admin else url_for('portal.portal_entry'))) %}
 {% set masar_home_url = (url_for('workflow.work_dashboard') if au.has_perm('WORKFLOW_DASHBOARD_READ') else url_for('workflow.inbox')) %}
 {% set can_corr = _flags.get('can_corr', au.has_perm('CORR_READ')) %}
-{% set can_att  = _flags.get('can_att', au.has_perm('HR_ATTENDANCE_READ')) %}
+{% set can_att  = _flags.get('can_att', (au.has_perm('HR_ATTENDANCE_READ') or au.has_perm('HR_ATTENDANCE_EDIT') or au.has_perm('HR_ATTENDANCE_EDIT_APPROVE'))) %}
 {% set can_hr   = _flags.get('can_hr', (
   au.has_perm('HR_READ')
   or au.has_perm('HR_ATTENDANCE_READ')
+  or au.has_perm('HR_ATTENDANCE_EDIT')
+  or au.has_perm('HR_ATTENDANCE_EDIT_APPROVE')
   or au.has_perm('HR_EMPLOYEE_READ')
   or au.has_perm('HR_ORGSTRUCTURE_READ')
   or au.has_perm('HR_MASTERDATA_MANAGE')
@@ -106,7 +108,11 @@
 
 {# Attendance default target (used in HR dropdown). #}
 {% set att_url = url_for('portal.hr_my_attendance') %}
-{% if can_att and au.has_perm('HR_ATTENDANCE_CREATE') %}
+{% if can_att and au.has_perm('HR_ATTENDANCE_EDIT') %}
+  {% set att_url = url_for('portal.hr_attendance_manual_edit') %}
+{% elif can_att and au.has_perm('HR_ATTENDANCE_EDIT_APPROVE') %}
+  {% set att_url = url_for('portal.hr_attendance_manual_approval_queue') %}
+{% elif can_att and au.has_perm('HR_ATTENDANCE_CREATE') %}
   {% set att_url = url_for('portal.hr_attendance_import') %}
 {% endif %}
 

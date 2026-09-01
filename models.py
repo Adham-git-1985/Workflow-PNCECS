@@ -3181,11 +3181,20 @@ class HRAttendanceSpecialCase(db.Model):
     note = db.Column(db.Text, nullable=True)
     applied = db.Column(db.Boolean, default=True, nullable=False)
 
+    # Manual attendance corrections are submitted first, then become active
+    # only after a holder of HR_ATTENDANCE_EDIT_APPROVE accepts them.
+    # Other special-case kinds retain the default APPROVED state.
+    approval_status = db.Column(db.String(20), nullable=False, default="APPROVED", index=True)
+    approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    approved_at = db.Column(db.DateTime, nullable=True, index=True)
+    approval_note = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
 
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    approved_by = db.relationship("User", foreign_keys=[approved_by_id], lazy="joined")
     __table_args__ = (
         db.Index("ix_hr_att_special_user_day", "user_id", "day"),
     )

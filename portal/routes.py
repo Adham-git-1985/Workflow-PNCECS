@@ -177,6 +177,7 @@ from models import (
     Delegation,
     UserPermission,
     Role,
+    RolePermission,
     Notification,
     Message,
     MessageRecipient,
@@ -317,12 +318,16 @@ PORTAL_MEETINGS_MANAGE = "PORTAL_MEETINGS_MANAGE"
 HR_READ = "HR_READ"
 HR_ATT_READ = "HR_ATTENDANCE_READ"
 HR_ATT_CREATE = "HR_ATTENDANCE_CREATE"
+HR_ATT_EDIT = "HR_ATTENDANCE_EDIT"
+HR_ATT_EDIT_APPROVE = "HR_ATTENDANCE_EDIT_APPROVE"
 HR_ATT_EXPORT = "HR_ATTENDANCE_EXPORT"
 
 
 # Backward-compat variable names (some decorators use the full names)
 HR_ATTENDANCE_READ = HR_ATT_READ
 HR_ATTENDANCE_CREATE = HR_ATT_CREATE
+HR_ATTENDANCE_EDIT = HR_ATT_EDIT
+HR_ATTENDANCE_EDIT_APPROVE = HR_ATT_EDIT_APPROVE
 HR_ATTENDANCE_EXPORT = HR_ATT_EXPORT
 
 # HR Reports
@@ -675,10 +680,12 @@ def _portal_flags():
             return False
 
     can_corr = has(CORR_READ)
-    can_att = has(HR_ATT_READ)
+    can_att = any([has(HR_ATT_READ), has(HR_ATT_EDIT), has(HR_ATT_EDIT_APPROVE)])
     can_hr = any([
         has(HR_READ),
         has(HR_ATT_READ),
+        has(HR_ATT_EDIT),
+        has(HR_ATT_EDIT_APPROVE),
         has(HR_EMP_READ),
         has(HR_ORG_READ),
         has(HR_MASTERDATA_MANAGE),
@@ -10302,23 +10309,93 @@ def _hr_can_manage_attendance() -> bool:
 
 
 def _hr_can_edit_attendance() -> bool:
-    """Allow the Secretary General and Super Admin to manage manual attendance corrections."""
+    """Whether the user may submit or amend a pending attendance correction."""
     try:
-        # Super Admin has unrestricted portal access.  Do this explicit check
-        # here because this sensitive action is otherwise limited to the
-        # Secretary General below, rather than being granted by a normal
-        # HR permission.
-        if _is_super_admin():
-            return True
-        current_user_id = int(getattr(current_user, "id", 0) or 0)
-        if current_user_id and current_user_id in set(secretary_general_user_ids()):
-            return True
-        return bool(
-            current_user.has_role("GENERAL-SECRETARY")
-            or current_user.has_role("SECRETARY_GENERAL")
-        )
+        return bool(current_user.has_perm(HR_ATT_EDIT))
     except Exception:
         return False
+
+
+def _hr_can_approve_attendance_edit() -> bool:
+    """Whether the user may approve or reject a pending attendance correction."""
+    try:
+        return bool(current_user.has_perm(HR_ATT_EDIT_APPROVE))
+    except Exception:
+        return False
+
+
+def _manual_attendance_approval_status(row: HRAttendanceSpecialCase | None) -> str:
+    """Return a stable review state, including records created before this workflow."""
+    value = (getattr(row, 'approval_status', None) or '').strip().upper()
+    if value in {'PENDING', 'APPROVED', 'REJECTED'}:
+        return value
+    return 'APPROVED' if bool(getattr(row, 'applied', False)) else 'PENDING'
+
+
+def _attendance_summary_keys_for_period(user_id: int, day: str, day_to: str | None) -> set[tuple[int, str]]:
+    """Build daily-summary keys affected by a manual attendance correction."""
+    start_day = _parse_yyyy_mm_dd(day)
+    end_day = _parse_yyyy_mm_dd(day_to or day)
+    if not start_day or not end_day or end_day < start_day:
+        return set()
+
+    keys: set[tuple[int, str]] = set()
+    current_day = start_day
+    while current_day <= end_day:
+        keys.add((int(user_id), current_day.isoformat()))
+        current_day += timedelta(days=1)
+    return keys
+
+
+def _attendance_edit_approver_user_ids() -> list[int]:
+    """Find all users currently granted the independent attendance-approval permission."""
+    ids: set[int] = set()
+
+    try:
+        ids.update(
+            int(row.user_id)
+            for row in (
+                UserPermission.query
+                .filter(UserPermission.key == HR_ATT_EDIT_APPROVE)
+                .filter(UserPermission.is_allowed == True)  # noqa: E712
+                .all()
+            )
+            if row.user_id
+        )
+    except Exception:
+        pass
+
+    try:
+        permitted_roles = {
+            (row.role or '').strip().upper()
+            for row in RolePermission.query
+            .filter(RolePermission.permission == HR_ATT_EDIT_APPROVE)
+            .all()
+            if (row.role or '').strip()
+        }
+        role_name_to_code = {}
+        for role in Role.query.all():
+            code = (role.code or '').strip().upper()
+            if not code:
+                continue
+            for value in (role.code, role.name_ar, role.name_en):
+                value = (value or '').strip().lower()
+                if value:
+                    role_name_to_code[value] = code
+
+        for user in User.query.all():
+            raw_role = (user.role or '').strip()
+            role_code = role_name_to_code.get(raw_role.lower(), raw_role.upper())
+            if (
+                role_code in permitted_roles
+                or role_code == 'ADMIN'
+                or role_code.startswith('SUPER')
+            ):
+                ids.add(int(user.id))
+    except Exception:
+        pass
+
+    return sorted(ids)
 
 
 def _hr_lookup_items_for_category(category: str):
@@ -10436,7 +10513,7 @@ def hr_employee_followup():
 
 @portal_bp.route('/hr/attendance/special')
 @login_required
-@_perm_any(HR_ATT_READ, HR_REQUESTS_VIEW_ALL, HR_READ)
+@_perm_any(HR_ATT_READ, HR_ATT_EDIT, HR_ATT_EDIT_APPROVE, HR_REQUESTS_VIEW_ALL, HR_READ)
 def hr_att_special_log():
     """سجل الحالات الخاصة (حالة/استثناء) - مطابق للشاشات المرفقة."""
     kind = (request.args.get('kind') or '').strip().upper()
@@ -10486,14 +10563,16 @@ def hr_att_special_log():
         exception_filter=exception_filter,
         users=_list_hr_users(),
         can_manage=_hr_can_manage_attendance(),
+        can_edit_attendance=_hr_can_edit_attendance(),
+        can_approve_attendance_edit=_hr_can_approve_attendance_edit(),
     )
 
 
 @portal_bp.route('/hr/attendance/manual', methods=['GET', 'POST'])
 @login_required
-@_perm_any(HR_ATT_READ, HR_REQUESTS_VIEW_ALL, HR_READ)
+@_perm(HR_ATT_EDIT)
 def hr_attendance_manual_edit():
-    """Create or update an HR correction without altering imported clock rows."""
+    """Submit or amend a pending correction without altering imported clock rows."""
     if not _hr_can_edit_attendance():
         abort(403)
 
@@ -10538,6 +10617,11 @@ def hr_attendance_manual_edit():
             row = HRAttendanceSpecialCase.query.get(int(override_id))
             if not row or row.kind != 'MANUAL_ATTENDANCE':
                 abort(404)
+            if _manual_attendance_approval_status(row) != 'PENDING':
+                flash('لا يمكن تعديل طلب تم البت فيه. أنشئ طلب تعديل جديداً.', 'warning')
+                return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day))
+            if int(row.user_id) != int(user_id):
+                abort(400)
         if not row:
             row = HRAttendanceSpecialCase(
                 user_id=user_id,
@@ -10555,31 +10639,55 @@ def hr_attendance_manual_edit():
         row.start_time = start_time
         row.end_time = end_time
         row.note = note
-        row.applied = True
+        row.applied = False
+        row.approval_status = 'PENDING'
+        row.approved_by_id = None
+        row.approved_at = None
+        row.approval_note = None
         db.session.flush()
-        affected_keys = set()
-        current_day = start_day
-        while current_day <= end_day:
-            affected_keys.add((user_id, current_day.isoformat()))
-            current_day += timedelta(days=1)
-        _attendance_recompute_summaries_for_keys(affected_keys)
+
+        approval_url = url_for('portal.hr_attendance_manual_approval_queue')
+        notifier_id = int(getattr(current_user, 'id', 0) or 0)
+        for approver_id in _attendance_edit_approver_user_ids():
+            if approver_id == notifier_id:
+                continue
+            db.session.add(Notification(
+                user_id=approver_id,
+                message=f'طلب تعديل دوام جديد #{row.id} بانتظار الاعتماد.',
+                type='PORTAL',
+                source='portal',
+                is_read=False,
+                link_url=approval_url,
+                created_at=datetime.utcnow(),
+            ))
         _portal_audit(
-            'HR_ATTENDANCE_MANUAL_OVERRIDE',
-            f'manual attendance override user_id={user_id} days={day}..{day_to} start={start_time or ""} end={end_time or ""}',
+            'HR_ATTENDANCE_MANUAL_EDIT_SUBMIT',
+            f'manual attendance edit submitted user_id={user_id} days={day}..{day_to} start={start_time or ""} end={end_time or ""}',
             target_type='ATT_DAILY',
             target_id=row.id,
         )
         db.session.commit()
 
-        flash('تم حفظ تعديل الدوام اليدوي وإعادة احتساب الفترة.', 'success')
-        return redirect(url_for('portal.hr_attendance_daily', day_from=day, day_to=day_to, user_id=user_id))
+        flash('تم تقديم تعديل الدوام للاعتماد. لن يؤثر في الملخص اليومي قبل اعتماده.', 'success')
+        return redirect(url_for('portal.hr_attendance_manual_edit', user_id=user_id, day=day, override_id=row.id))
 
     selected_user_id = (request.args.get('user_id') or '').strip()
     selected_day = (request.args.get('day') or '').strip()
+    selected_override_id = (request.args.get('override_id') or '').strip()
     if not _parse_yyyy_mm_dd(selected_day):
         selected_day = _as_yyyy_mm_dd(date.today())
     user_id = int(selected_user_id) if selected_user_id.isdigit() else None
-    override = _manual_attendance_override(user_id, selected_day) if user_id else None
+    override = None
+    if selected_override_id.isdigit():
+        override = HRAttendanceSpecialCase.query.get(int(selected_override_id))
+        if not override or override.kind != 'MANUAL_ATTENDANCE':
+            abort(404)
+        user_id = override.user_id
+        selected_day = override.day
+    elif user_id:
+        # Pre-fill from the currently effective correction, but do not amend it
+        # in place. A new submission must go through approval again.
+        override = _manual_attendance_override(user_id, selected_day)
     if override:
         selected_day = override.day
         selected_day_to = override.day_to or override.day
@@ -10592,7 +10700,97 @@ def hr_attendance_manual_edit():
         day=selected_day,
         day_to=selected_day_to,
         override=override,
+        editable_override=bool(override and _manual_attendance_approval_status(override) == 'PENDING'),
+        approval_status=_manual_attendance_approval_status(override) if override else None,
+        can_view_attendance=bool(current_user.has_perm(HR_ATT_READ)),
     )
+
+
+@portal_bp.route('/hr/attendance/manual/approvals', methods=['GET'])
+@login_required
+@_perm(HR_ATT_EDIT_APPROVE)
+def hr_attendance_manual_approval_queue():
+    """Review queue for manual attendance corrections awaiting a decision."""
+    rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.kind == 'MANUAL_ATTENDANCE')
+        .filter(HRAttendanceSpecialCase.approval_status == 'PENDING')
+        .order_by(HRAttendanceSpecialCase.created_at.asc(), HRAttendanceSpecialCase.id.asc())
+        .all()
+    )
+    return render_template('portal/hr/attendance_manual_approval_queue.html', rows=rows)
+
+
+@portal_bp.route('/hr/attendance/manual/<int:row_id>/review', methods=['POST'])
+@login_required
+@_perm(HR_ATT_EDIT_APPROVE)
+def hr_attendance_manual_review(row_id: int):
+    """Approve or reject a submitted manual attendance correction."""
+    row = HRAttendanceSpecialCase.query.get_or_404(row_id)
+    if row.kind != 'MANUAL_ATTENDANCE':
+        abort(404)
+    if _manual_attendance_approval_status(row) != 'PENDING':
+        flash('تم البت في هذا الطلب مسبقاً.', 'warning')
+        return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
+
+    action = (request.form.get('action') or '').strip().lower()
+    approval_note = (request.form.get('approval_note') or '').strip()
+    if action not in {'approve', 'reject'}:
+        abort(400)
+    if action == 'reject' and not approval_note:
+        flash('أدخل سبب الرفض.', 'danger')
+        return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
+
+    row.approved_by_id = int(current_user.id)
+    row.approved_at = datetime.utcnow()
+    row.approval_note = approval_note or None
+
+    if action == 'approve':
+        row.approval_status = 'APPROVED'
+        row.applied = True
+        db.session.flush()
+        affected_keys = _attendance_summary_keys_for_period(row.user_id, row.day, row.day_to)
+        _attendance_recompute_summaries_for_keys(affected_keys)
+        _portal_audit(
+            'HR_ATTENDANCE_MANUAL_EDIT_APPROVE',
+            f'manual attendance edit approved row_id={row.id} user_id={row.user_id} days={row.day}..{row.day_to or row.day}',
+            target_type='ATT_DAILY',
+            target_id=row.id,
+        )
+        result_message = 'تم اعتماد تعديل الدوام وإعادة احتساب الفترة.'
+        notification_message = f'تم اعتماد طلب تعديل الدوام #{row.id}.'
+        notification_type = 'SUCCESS'
+    else:
+        row.approval_status = 'REJECTED'
+        row.applied = False
+        _portal_audit(
+            'HR_ATTENDANCE_MANUAL_EDIT_REJECT',
+            f'manual attendance edit rejected row_id={row.id} user_id={row.user_id}; note={approval_note}',
+            target_type='ATT_DAILY',
+            target_id=row.id,
+        )
+        result_message = 'تم رفض تعديل الدوام.'
+        notification_message = f'تم رفض طلب تعديل الدوام #{row.id}. السبب: {approval_note}'
+        notification_type = 'WARNING'
+
+    if row.created_by_id and int(row.created_by_id) != int(current_user.id):
+        db.session.add(Notification(
+            user_id=int(row.created_by_id),
+            message=notification_message,
+            type=notification_type,
+            source='portal',
+            is_read=False,
+            link_url=url_for(
+                'portal.hr_attendance_manual_edit',
+                user_id=row.user_id,
+                day=row.day,
+                override_id=row.id,
+            ),
+            created_at=datetime.utcnow(),
+        ))
+    db.session.commit()
+    flash(result_message, 'success' if action == 'approve' else 'warning')
+    return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
 
 
 @portal_bp.route('/hr/attendance/special/status/new', methods=['GET', 'POST'])
@@ -10732,23 +10930,36 @@ def hr_att_special_exception_new():
 
 @portal_bp.route('/hr/attendance/special/<int:row_id>/delete', methods=['POST'])
 @login_required
-@_perm_any(HR_ATT_READ, HR_REQUESTS_VIEW_ALL, HR_READ)
+@_perm_any(HR_ATT_READ, HR_ATT_EDIT, HR_ATT_EDIT_APPROVE, HR_REQUESTS_VIEW_ALL, HR_READ)
 def hr_att_special_delete(row_id: int):
     """حذف سجل حالة/استثناء من سجل الحالات الخاصة."""
+    row = HRAttendanceSpecialCase.query.get_or_404(int(row_id))
+    kind = (row.kind or '').strip().upper()
+
+    # A pending manual correction may be withdrawn by a user with the edit
+    # permission. An approved correction must never be deleted directly,
+    # because that would bypass the independent approval workflow.
+    if kind == 'MANUAL_ATTENDANCE':
+        if not _hr_can_edit_attendance():
+            abort(403)
+        if _manual_attendance_approval_status(row) != 'PENDING':
+            flash('لا يمكن حذف تعديل دوام تم البت فيه. قدّم طلب تعديل جديداً عند الحاجة.', 'warning')
+            return redirect(url_for('portal.hr_att_special_log', kind=kind))
+        db.session.delete(row)
+        _portal_audit(
+            'HR_ATTENDANCE_MANUAL_EDIT_CANCEL',
+            f'manual attendance edit cancelled row_id={row_id}',
+            target_type='ATT_DAILY',
+            target_id=row_id,
+        )
+        db.session.commit()
+        flash('تم سحب طلب تعديل الدوام.', 'success')
+        return redirect(url_for('portal.hr_att_special_log', kind=kind))
+
     if not _hr_can_manage_attendance():
         abort(403)
 
-    row = HRAttendanceSpecialCase.query.get_or_404(int(row_id))
-    kind = (row.kind or '').strip().upper()
     affected_keys = set()
-    if kind == 'MANUAL_ATTENDANCE':
-        start_day = _parse_yyyy_mm_dd(row.day)
-        end_day = _parse_yyyy_mm_dd(row.day_to or row.day)
-        if start_day and end_day:
-            current_day = start_day
-            while current_day <= end_day:
-                affected_keys.add((row.user_id, current_day.isoformat()))
-                current_day += timedelta(days=1)
 
     db.session.delete(row)
     db.session.flush()

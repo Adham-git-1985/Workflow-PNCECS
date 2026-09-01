@@ -70,8 +70,12 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
 
     def test_manual_attendance_correction_preserves_clock_events_and_recomputes_summary(self):
         self.assertIn("def hr_attendance_manual_edit", self.routes)
+        self.assertIn("def hr_attendance_manual_approval_queue", self.routes)
+        self.assertIn("def hr_attendance_manual_review", self.routes)
         self.assertIn("def _manual_attendance_override", self.routes)
         self.assertIn("kind='MANUAL_ATTENDANCE'", self.routes)
+        self.assertIn("approval_status = 'PENDING'", self.routes)
+        self.assertIn("HR_ATTENDANCE_EDIT_APPROVE", self.routes)
         self.assertIn("_attendance_recompute_summaries_for_keys(affected_keys)", self.routes)
         self.assertIn("'A', 'I', 'IN', 'CHECKIN'", self.routes)
         self.assertIn('name="start_time"', self.manual_edit_view)

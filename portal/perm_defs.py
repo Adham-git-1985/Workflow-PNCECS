@@ -92,6 +92,8 @@ PERMS: Dict[str, List[PermDef]] = {
         ),
         PermDef("HR_ATTENDANCE_READ", "عرض الدوام", "عرض دفعات/أحداث الدوام وتقاريرها.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_CREATE", "استيراد الدوام", "استيراد بيانات ساعة الدوام (يدوي/تلقائي لاحقًا).", module="HR_ATTENDANCE"),
+        PermDef("HR_ATTENDANCE_EDIT", "تعديل الدوام", "تقديم تعديل يدوي للحضور أو الانصراف. لا يصبح نافذاً قبل اعتماده.", module="HR_ATTENDANCE"),
+        PermDef("HR_ATTENDANCE_EDIT_APPROVE", "اعتماد تعديل الدوام", "اعتماد أو رفض تعديلات الدوام اليدوية المقدمة؛ التعديل المعتمد فقط يؤثر في الملخص اليومي.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_EXPORT", "تصدير الدوام", "تصدير الدوام PDF/Excel.", module="HR_ATTENDANCE"),
         PermDef("HR_REPORTS_VIEW", "عرض تقارير الموارد البشرية", "عرض تقارير الموارد البشرية (الإجازات/الدوام).", module="HR_REPORTS"),
         PermDef("HR_REPORTS_EXPORT", "تصدير تقارير الموارد البشرية", "تصدير تقارير الموارد البشرية PDF/Excel.", module="HR_REPORTS"),

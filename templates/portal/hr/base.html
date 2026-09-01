@@ -111,6 +111,8 @@
       current_user.has_perm('HR_MASTERDATA_MANAGE')
       or current_user.has_perm('HR_REQUESTS_VIEW_ALL')
       or current_user.has_perm('HR_REPORTS_VIEW')
+      or current_user.has_perm('HR_ATTENDANCE_EDIT')
+      or current_user.has_perm('HR_ATTENDANCE_EDIT_APPROVE')
   ) %}
 
   {% if show_hr_admin_nav %}

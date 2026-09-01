@@ -1,0 +1,60 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}اعتماد تعديلات الدوام{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-check2-square"></i> اعتماد تعديلات الدوام</h5>
+      <div class="text-muted small">لن يظهر التعديل في الملخص اليومي إلا بعد اعتماده من هذه الشاشة.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_special_log', kind='MANUAL_ATTENDANCE') }}"><i class="bi bi-list-check"></i> سجل التعديلات</a>
+  </div>
+
+  <hr class="my-4">
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>الموظف</th>
+          <th>الفترة</th>
+          <th>الحضور / الانصراف</th>
+          <th>مقدّم الطلب</th>
+          <th>سبب التعديل</th>
+          <th>تاريخ التقديم</th>
+          <th style="min-width: 260px;">قرار الاعتماد</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td>
+            <div class="fw-semibold">{{ row.user.name if row.user else row.user_id }}</div>
+            <div class="small text-muted">{{ row.user.email if row.user else '' }}</div>
+          </td>
+          <td>{{ row.day }} <span class="text-muted">إلى</span> {{ row.day_to or row.day }}</td>
+          <td>{{ row.start_time or '—' }} <span class="text-muted">→</span> {{ row.end_time or '—' }}</td>
+          <td>{{ row.created_by.name if row.created_by else row.created_by_id or '—' }}</td>
+          <td class="small">{{ row.note or '—' }}</td>
+          <td class="small text-muted">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '—' }}</td>
+          <td>
+            <form method="post" action="{{ url_for('portal.hr_attendance_manual_review', row_id=row.id) }}" class="d-flex flex-column gap-2">
+              <input class="form-control form-control-sm" type="text" name="approval_note" maxlength="1000" placeholder="ملاحظة الاعتماد أو سبب الرفض">
+              <div class="d-flex gap-1">
+                <button class="btn btn-sm btn-success" name="action" value="approve" type="submit"><i class="bi bi-check-lg"></i> اعتماد</button>
+                <button class="btn btn-sm btn-outline-danger" name="action" value="reject" type="submit"><i class="bi bi-x-lg"></i> رفض</button>
+              </div>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not rows %}
+        <tr><td colspan="8" class="text-center text-muted py-4">لا توجد تعديلات دوام بانتظار الاعتماد.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
