@@ -341,6 +341,23 @@ HR_REQUESTS_VIEW_ALL = "HR_REQUESTS_VIEW_ALL"
 HR_LEAVE_APPROVED_DELETE = "HR_LEAVE_APPROVED_DELETE"
 HR_ABSENCE_BOARD_VIEW = "HR_ABSENCE_BOARD_VIEW"
 
+LEAVE_APPROVED_DELETE_STATUS_CODES = frozenset({
+    "APPROVED",
+    "APPROVED_BY_MANAGER",
+    "CONFIRMED",
+})
+
+
+def _is_leave_approved_for_permanent_deletion(row: HRLeaveRequest) -> bool:
+    """Return whether a leave is approved in its workflow or admin status."""
+    workflow_status = (getattr(row, "status", None) or "").strip().upper()
+    admin_status = getattr(row, "admin_status", None)
+    admin_status_code = (getattr(admin_status, "code", None) or "").strip().upper()
+    return (
+        workflow_status in LEAVE_APPROVED_DELETE_STATUS_CODES
+        or admin_status_code in LEAVE_APPROVED_DELETE_STATUS_CODES
+    )
+
 # HR Self-Service (Light Workflow)
 HR_SS_READ = "HR_SS_READ"
 HR_SS_CREATE = "HR_SS_CREATE"
@@ -6986,7 +7003,7 @@ def hr_home():
     ]
     _sec_map = {t: [] for t, _ in sections_order}
 
-    def add_item(perm_key, title, desc, icon, endpoint, section_title, *, when=True):
+    def add_item(perm_key, title, desc, icon, endpoint, section_title, *, when=True, url_values=None):
         """Append a link tile into a section if permission is granted."""
         try:
             if when and current_user.has_perm(perm_key):
@@ -6994,7 +7011,7 @@ def hr_home():
                     "title": title,
                     "desc": desc,
                     "icon": icon,
-                    "url": url_for(endpoint),
+                    "url": url_for(endpoint, **(url_values or {})),
                 })
         except Exception:
             pass
@@ -7043,6 +7060,15 @@ def hr_home():
     add_item(HR_ORG_MANAGE, "مسؤولو الهيكلية الموحدة", "تعيين المسؤول ونائبه المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
+    add_item(
+        HR_LEAVE_APPROVED_DELETE,
+        "حذف الإجازات المعتمدة",
+        "حذف نهائي للإجازات المعتمدة أو المثبتة.",
+        "bi-trash3",
+        "portal.hr_approvals",
+        "الإجازات والمهام",
+        url_values={"status": "ALL"},
+    )
     try:
         if can_view_absence_board(current_user):
             _sec_map["الإجازات والمهام"].append({
@@ -13104,6 +13130,16 @@ def hr_approvals():
 
     leave_reqs = _base(HRLeaveRequest.query, KIND_LEAVE).order_by(HRLeaveRequest.created_at.desc()).limit(200).all()
     perm_reqs = _base(HRPermissionRequest.query, KIND_PERMISSION).order_by(HRPermissionRequest.created_at.desc()).limit(200).all()
+    can_delete_approved_leave = False
+    try:
+        can_delete_approved_leave = bool(current_user.has_perm(HR_LEAVE_APPROVED_DELETE))
+    except Exception:
+        pass
+    deletable_leave_ids = {
+        row.id
+        for row in leave_reqs
+        if can_delete_approved_leave and _is_leave_approved_for_permanent_deletion(row)
+    }
     current_stage_labels = {}
     for row in list(leave_reqs) + list(perm_reqs):
         kind = KIND_LEAVE if isinstance(row, HRLeaveRequest) else KIND_PERMISSION
@@ -13116,6 +13152,7 @@ def hr_approvals():
         can_view_all=can_view_all,
         leave_reqs=leave_reqs,
         perm_reqs=perm_reqs,
+        deletable_leave_ids=deletable_leave_ids,
         current_stage_labels=current_stage_labels,
     )
 
@@ -13299,7 +13336,10 @@ def hr_approval_leave(req_id: int):
     can_delete_approved_leave = False
     try:
         can_hr_cancel = current_user.has_perm(HR_EMP_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_role("ADMIN")
-        can_delete_approved_leave = current_user.has_perm(HR_LEAVE_APPROVED_DELETE)
+        can_delete_approved_leave = bool(
+            current_user.has_perm(HR_LEAVE_APPROVED_DELETE)
+            and _is_leave_approved_for_permanent_deletion(r)
+        )
     except Exception:
         can_hr_cancel = False
         can_delete_approved_leave = False
@@ -13373,8 +13413,8 @@ def hr_leave_cancel_by_hr(req_id: int):
 def hr_leave_approved_delete(req_id: int):
     """Permanently delete a final-approved leave and its dependent HR records."""
     row = HRLeaveRequest.query.get_or_404(req_id)
-    if (row.status or "").upper() != "APPROVED":
-        flash("الحذف النهائي متاح للإجازات المعتمدة فقط.", "warning")
+    if not _is_leave_approved_for_permanent_deletion(row):
+        flash("الحذف النهائي متاح للإجازات المعتمدة أو المثبتة فقط.", "warning")
         return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
 
     from models import HRRequestApprovalStep, NotificationEmailDelivery
@@ -30488,6 +30528,16 @@ def hr_leaves_admin_log():
     uids = [r.user_id for r in rows]
     files = EmployeeFile.query.filter(EmployeeFile.user_id.in_(uids)).all() if uids else []
     file_map = {f.user_id: f for f in files}
+    can_delete_approved_leave = False
+    try:
+        can_delete_approved_leave = bool(current_user.has_perm(HR_LEAVE_APPROVED_DELETE))
+    except Exception:
+        pass
+    deletable_leave_ids = {
+        row.id
+        for row in rows
+        if can_delete_approved_leave and _is_leave_approved_for_permanent_deletion(row)
+    }
 
     return render_template(
         'portal/hr/leaves_admin_log.html',
@@ -30497,7 +30547,8 @@ def hr_leaves_admin_log():
         leave_types=HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all(),
         status_defs=_ensure_status_defs("LEAVE"),
         can_manage=_hr_can_manage(),
-        can_delete_approved_leave=current_user.has_perm(HR_LEAVE_APPROVED_DELETE),
+        can_delete_approved_leave=can_delete_approved_leave,
+        deletable_leave_ids=deletable_leave_ids,
         filters=dict(user_id=user_id, leave_type_id=leave_type_id, admin_status_id=admin_status_id, leave_place=leave_place),
     )
 

@@ -64,11 +64,21 @@
                   </td>
                   <td class="small">{{ r.start_date }} → {{ r.end_date }}</td>
                   <td class="small">{{ current_stage_labels.get(('LEAVE', r.id), '-') }}</td>
-                  <td><span class="badge bg-{{ badge }}">{{ st }}</span></td>
+                  <td>
+                    <span class="badge bg-{{ badge }}">{{ st }}</span>
+                    {% if r.admin_status %}
+                      <span class="badge bg-info text-dark">{{ r.admin_status.name_ar or r.admin_status.code }}</span>
+                    {% endif %}
+                  </td>
                   <td class="text-end">
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_approval_leave', req_id=r.id) }}">
                       فتح
                     </a>
+                    {% if r.id in (deletable_leave_ids or []) %}
+                      <form method="post" action="{{ url_for('portal.hr_leave_approved_delete', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('سيتم حذف الإجازة المعتمدة ومرفقاتها نهائياً ولا يمكن استعادتها. هل تريد المتابعة؟');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit">حذف نهائي</button>
+                      </form>
+                    {% endif %}
                   </td>
                 </tr>
               {% endfor %}

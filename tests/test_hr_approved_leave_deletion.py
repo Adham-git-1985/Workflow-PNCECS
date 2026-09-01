@@ -13,6 +13,7 @@ from models import (
     HRLeaveType,
     HRRequestApprovalStep,
     HRRequestObserver,
+    HRStatusDef,
     Notification,
     NotificationEmailDelivery,
     User,
@@ -86,14 +87,26 @@ class ApprovedLeaveDeletionTests(unittest.TestCase):
             session["_user_id"] = str(user_id)
             session["_fresh"] = True
 
-    def _approved_leave(self):
+    def _approved_leave(self, *, workflow_status="APPROVED", admin_status_code=None):
+        admin_status_id = None
+        if admin_status_code:
+            admin_status = HRStatusDef(
+                entity="LEAVE",
+                code=admin_status_code,
+                name_ar=admin_status_code,
+            )
+            db.session.add(admin_status)
+            db.session.flush()
+            admin_status_id = admin_status.id
+
         row = HRLeaveRequest(
             user_id=self.employee.id,
             leave_type_id=self.leave_type.id,
             start_date="2026-09-01",
             end_date="2026-09-02",
             days=2,
-            status="APPROVED",
+            status=workflow_status,
+            admin_status_id=admin_status_id,
         )
         db.session.add(row)
         db.session.flush()
@@ -181,6 +194,21 @@ class ApprovedLeaveDeletionTests(unittest.TestCase):
                     target_type="LEAVE_REQUEST",
                     target_id=leave_id,
                 ).first())
+
+    def test_administratively_approved_or_confirmed_leave_can_be_deleted(self):
+        for admin_status_code in ("APPROVED_BY_MANAGER", "CONFIRMED"):
+            with self.subTest(admin_status_code=admin_status_code):
+                leave_id, _ = self._approved_leave(
+                    workflow_status="SUBMITTED",
+                    admin_status_code=admin_status_code,
+                )
+                client = self.app.test_client()
+                self._login(client, self.admin.id)
+
+                response = client.post(f"/portal/hr/approvals/leaves/{leave_id}/delete")
+
+                self.assertEqual(response.status_code, 302)
+                self.assertIsNone(db.session.get(HRLeaveRequest, leave_id))
 
 
 if __name__ == "__main__":

@@ -177,7 +177,7 @@
     </form>
   {% endif %}
 
-  {% if can_delete_approved_leave and st == 'APPROVED' %}
+  {% if can_delete_approved_leave %}
     <form method="post" action="{{ url_for('portal.hr_leave_approved_delete', req_id=r.id) }}" onsubmit="return confirm('سيتم حذف الإجازة المعتمدة ومرفقاتها نهائياً ولا يمكن استعادتها. هل تريد المتابعة؟');">
       <button class="btn btn-danger" type="submit"><i class="bi bi-trash3"></i> حذف نهائي</button>
     </form>
