@@ -68,6 +68,7 @@ from services.correspondence_intake import (
     OcrConfig,
     analyze_workflow_attachment,
     extract_eml_attachments,
+    preview_eml,
     read_limited_upload,
 )
 from filters.request_filters import get_sla_days
@@ -1393,6 +1394,13 @@ def _guess_mime_for_file(f: ArchivedFile) -> str:
 def _is_inline_previewable(mime: str) -> bool:
     return is_safe_inline_mimetype(mime)
 
+
+def _is_eml_attachment(file: ArchivedFile, mime: str) -> bool:
+    """Return whether an archived attachment is an RFC 822 email message."""
+    name = (getattr(file, "original_name", None) or getattr(file, "stored_name", None) or "").lower()
+    normalized_mime = (mime or "").split(";", 1)[0].strip().lower()
+    return name.endswith(".eml") or normalized_mime == "message/rfc822"
+
 def _get_user_hierarchy(user):
     """Return (organization_id, directorate_id, department_id) for user, best-effort."""
     dept_id = getattr(user, "department_id", None)
@@ -1994,6 +2002,31 @@ def preview_workflow_attachment(file_id):
         abort(403)
 
     mime = _guess_mime_for_file(file)
+
+    # EML messages are not safe to send inline: they can contain active HTML,
+    # remote images, and tracking links. Render only the decoded text and
+    # attachment metadata, as the correspondence module does.
+    if _is_eml_attachment(file, mime):
+        max_preview_bytes = 15 * 1024 * 1024
+        try:
+            if os.path.getsize(file.file_path) > max_preview_bytes:
+                flash("ملف البريد كبير للمعاينة؛ يمكنك تنزيله وفتحه ببرنامج البريد.", "warning")
+                return redirect(url_for("workflow.download_workflow_attachment", file_id=file.id))
+
+            with open(file.file_path, "rb") as email_file:
+                preview = preview_eml(email_file.read())
+        except (OSError, CorrespondenceIntakeError):
+            flash("تعذرت قراءة ملف البريد الإلكتروني للمعاينة.", "danger")
+            return redirect(url_for("workflow.download_workflow_attachment", file_id=file.id))
+
+        return render_template(
+            "workflow/eml_preview.html",
+            file=file,
+            preview=preview,
+            request_obj=req,
+            download_url=url_for("workflow.download_workflow_attachment", file_id=file.id),
+            back_url=url_for("workflow.request_attachments", request_id=req.id),
+        )
 
     # Stream inline for types browsers usually can render
     if _is_inline_previewable(mime):
