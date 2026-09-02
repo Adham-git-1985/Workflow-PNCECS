@@ -120,6 +120,11 @@
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">أنواع الإجازات</a></li>
               </ul>
             </li>
+            {% if current_user.has_perm('HR_REQUESTS_APPROVE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') %}
+            <li>
+              <a class="dropdown-item" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-check2-square"></i> الاعتمادات</a>
+            </li>
+            {% endif %}
 
             <li>
               <a class="dropdown-item" href="{{ url_for('portal.hr_official_missions') }}">المهمات الرسمية</a>
