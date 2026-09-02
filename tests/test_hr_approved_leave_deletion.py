@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask, g
 from flask_login import LoginManager
@@ -209,6 +210,58 @@ class ApprovedLeaveDeletionTests(unittest.TestCase):
 
                 self.assertEqual(response.status_code, 302)
                 self.assertIsNone(db.session.get(HRLeaveRequest, leave_id))
+
+    def test_super_admin_can_cancel_or_delete_any_leave_type_from_admin_log(self):
+        maternity_type = HRLeaveType(code="MATERNITY", name_ar="إجازة أمومة", is_active=True)
+        draft_leave = HRLeaveRequest(
+            user_id=self.employee.id,
+            leave_type_id=self.leave_type.id,
+            start_date="2026-09-01",
+            end_date="2026-09-02",
+            days=2,
+            status="DRAFT",
+        )
+        maternity_leave = HRLeaveRequest(
+            user_id=self.employee.id,
+            leave_type=maternity_type,
+            start_date="2026-09-03",
+            end_date="2026-09-04",
+            days=2,
+            status="APPROVED",
+        )
+        db.session.add_all((maternity_type, draft_leave, maternity_leave))
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.super_admin.id)
+
+        with patch("portal.routes.render_template", return_value="OK") as render_template:
+            leave_log = client.get("/portal/hr/leaves/admin")
+        leave_log_context = render_template.call_args.kwargs
+
+        self.assertEqual(leave_log.status_code, 200)
+        for leave in (draft_leave, maternity_leave):
+            self.assertIn(leave.id, leave_log_context["cancelable_leave_ids"])
+            self.assertIn(leave.id, leave_log_context["deletable_leave_ids"])
+
+        cancel_response = client.post(
+            f"/portal/hr/approvals/leaves/{maternity_leave.id}/cancel",
+            data={"return_to": "LEAVES_ADMIN_LOG"},
+        )
+
+        self.assertEqual(cancel_response.status_code, 302)
+        self.assertTrue(cancel_response.headers["Location"].endswith("/portal/hr/leaves/admin"))
+        self.assertEqual(db.session.get(HRLeaveRequest, maternity_leave.id).status, "CANCELLED")
+
+        delete_response = client.post(f"/portal/hr/approvals/leaves/{draft_leave.id}/delete")
+
+        self.assertEqual(delete_response.status_code, 302)
+        self.assertIsNone(db.session.get(HRLeaveRequest, draft_leave.id))
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            action="HR_LEAVE_SUPER_ADMIN_DELETE",
+            target_type="LEAVE_REQUEST",
+            target_id=draft_leave.id,
+        ).first())
 
 
 if __name__ == "__main__":

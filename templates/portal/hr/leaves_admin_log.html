@@ -97,8 +97,14 @@
             {% if can_manage %}
               <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_leaves_admin_edit', row_id=r.id) }}">تعديل</a>
             {% endif %}
+            {% if r.id in (cancelable_leave_ids or []) %}
+              <form method="post" action="{{ url_for('portal.hr_leave_cancel_by_hr', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('هل تريد إلغاء الإجازة؟');">
+                <input type="hidden" name="return_to" value="LEAVES_ADMIN_LOG">
+                <button class="btn btn-outline-warning btn-sm" type="submit">إلغاء</button>
+              </form>
+            {% endif %}
             {% if r.id in (deletable_leave_ids or []) %}
-              <form method="post" action="{{ url_for('portal.hr_leave_approved_delete', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('سيتم حذف الإجازة المعتمدة ومرفقاتها نهائياً ولا يمكن استعادتها. هل تريد المتابعة؟');">
+              <form method="post" action="{{ url_for('portal.hr_leave_approved_delete', req_id=r.id) }}" class="d-inline" onsubmit="return confirm('سيتم حذف الإجازة ومرفقاتها نهائياً ولا يمكن استعادتها. هل تريد المتابعة؟');">
                 <button class="btn btn-outline-danger btn-sm" type="submit">حذف نهائي</button>
               </form>
             {% endif %}

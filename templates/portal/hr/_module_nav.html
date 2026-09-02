@@ -118,6 +118,9 @@
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_leaves') }}">إجازاتي</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_absence_board', view='leaves') }}">لوحة المجازين والمغادرين</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">أنواع الإجازات</a></li>
+                {% if current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') %}
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_leaves_admin_log') }}"><i class="bi bi-list-check"></i> إدارة الإجازات</a></li>
+                {% endif %}
               </ul>
             </li>
             {% if current_user.has_perm('HR_REQUESTS_APPROVE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') %}

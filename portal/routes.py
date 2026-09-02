@@ -14190,6 +14190,8 @@ def hr_leave_cancel_by_hr(req_id: int):
     db.session.commit()
 
     flash("تم إلغاء الطلب.", "success")
+    if (request.form.get("return_to") or "").strip() == "LEAVES_ADMIN_LOG":
+        return redirect(url_for("portal.hr_leaves_admin_log"))
     return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
 
 
@@ -14197,9 +14199,11 @@ def hr_leave_cancel_by_hr(req_id: int):
 @login_required
 @_perm(HR_LEAVE_APPROVED_DELETE)
 def hr_leave_approved_delete(req_id: int):
-    """Permanently delete a final-approved leave and its dependent HR records."""
+    """Permanently delete a leave request and its dependent HR records."""
     row = HRLeaveRequest.query.get_or_404(req_id)
-    if not _is_leave_approved_for_permanent_deletion(row):
+    can_delete_any_leave = _is_super_admin()
+    is_approved_leave = _is_leave_approved_for_permanent_deletion(row)
+    if not can_delete_any_leave and not is_approved_leave:
         flash("الحذف النهائي متاح للإجازات المعتمدة أو المثبتة فقط.", "warning")
         return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
 
@@ -14213,6 +14217,11 @@ def hr_leave_approved_delete(req_id: int):
         or getattr(row.leave_type, "name_en", None)
         or getattr(row.leave_type, "code", None)
         or "-"
+    )
+    affected_summary_keys = _attendance_existing_keys_for_period(
+        row.user_id,
+        row.start_date,
+        row.end_date,
     )
 
     try:
@@ -14242,12 +14251,14 @@ def hr_leave_approved_delete(req_id: int):
         ).delete(synchronize_session=False)
 
         _portal_audit(
-            "HR_LEAVE_APPROVED_DELETE",
-            f"حذف نهائي لإجازة معتمدة #{row.id}: الموظف={employee_name}; النوع={leave_type_name}",
+            "HR_LEAVE_APPROVED_DELETE" if is_approved_leave else "HR_LEAVE_SUPER_ADMIN_DELETE",
+            f"حذف نهائي لإجازة #{row.id}: الموظف={employee_name}; النوع={leave_type_name}",
             target_type="LEAVE_REQUEST",
             target_id=row.id,
         )
         db.session.delete(row)
+        db.session.flush()
+        _attendance_recompute_summaries_for_keys(affected_summary_keys)
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -31629,6 +31640,7 @@ def hr_leaves_admin_log():
     files = EmployeeFile.query.filter(EmployeeFile.user_id.in_(uids)).all() if uids else []
     file_map = {f.user_id: f for f in files}
     can_delete_approved_leave = False
+    can_delete_any_leave = _is_super_admin()
     try:
         can_delete_approved_leave = bool(current_user.has_perm(HR_LEAVE_APPROVED_DELETE))
     except Exception:
@@ -31636,7 +31648,14 @@ def hr_leaves_admin_log():
     deletable_leave_ids = {
         row.id
         for row in rows
-        if can_delete_approved_leave and _is_leave_approved_for_permanent_deletion(row)
+        if can_delete_approved_leave and (
+            can_delete_any_leave or _is_leave_approved_for_permanent_deletion(row)
+        )
+    }
+    cancelable_leave_ids = {
+        row.id
+        for row in rows
+        if can_delete_any_leave and (row.status or "").upper() in {"APPROVED", "SUBMITTED", "DRAFT"}
     }
 
     return render_template(
@@ -31649,6 +31668,7 @@ def hr_leaves_admin_log():
         can_manage=_hr_can_manage(),
         can_delete_approved_leave=can_delete_approved_leave,
         deletable_leave_ids=deletable_leave_ids,
+        cancelable_leave_ids=cancelable_leave_ids,
         filters=dict(user_id=user_id, leave_type_id=leave_type_id, admin_status_id=admin_status_id, leave_place=leave_place),
     )
 
