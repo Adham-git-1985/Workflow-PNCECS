@@ -7310,8 +7310,6 @@ def hr_attendance_home():
     return render_template(
         "portal/hr/attendance_home.html",
         can_view_reports=current_user.has_perm(HR_REPORTS_VIEW),
-        can_create_maternity_departure=_hr_can_edit_attendance(),
-        can_approve_maternity_departure=_hr_can_approve_attendance_edit(),
     )
 
 
@@ -7350,6 +7348,30 @@ def _add_years_safe(d: date, years: int):
             pass
         # generic fallback
         return date(d.year + years, d.month, min(d.day, 28))
+
+
+MATERNITY_LEAVE_CODE = "M"
+
+
+def _is_maternity_leave_type(leave_type: HRLeaveType | None) -> bool:
+    return (getattr(leave_type, "code", None) or "").strip().upper() == MATERNITY_LEAVE_CODE
+
+
+def _is_maternity_leave(request_row: HRLeaveRequest | None) -> bool:
+    return _is_maternity_leave_type(getattr(request_row, "leave_type", None))
+
+
+def _maternity_leave_period_error(
+    leave_type: HRLeaveType | None,
+    start_day: date,
+    end_day: date,
+) -> str | None:
+    if not _is_maternity_leave_type(leave_type):
+        return None
+    maximum_end_day = _add_years_safe(start_day, 1) - timedelta(days=1)
+    if end_day > maximum_end_day:
+        return "مدة إجازة الأمومة لا يمكن أن تتجاوز سنة واحدة من تاريخ البدء."
+    return None
 
 
 def _hr_lookup_options(category: str):
@@ -10916,6 +10938,8 @@ def _maternity_departure_overlaps(user_id: int, start_day: date, end_day: date) 
 @_perm_any(HR_ATT_EDIT, HR_ATT_EDIT_APPROVE)
 def hr_maternity_departure_log():
     """List annual maternity departures and their approval state."""
+    return redirect(url_for('portal.hr_my_leaves'))
+
     user_id = (request.args.get('user_id') or '').strip()
     status = (request.args.get('status') or '').strip().upper()
     q = HRAttendanceSpecialCase.query.filter(
@@ -10942,6 +10966,8 @@ def hr_maternity_departure_log():
 @_perm(HR_ATT_EDIT)
 def hr_maternity_departure_new():
     """Submit an annual one-hour daily maternity departure for approval."""
+    return redirect(url_for('portal.hr_leave_request_new'))
+
     if not _hr_can_edit_attendance():
         abort(403)
 
@@ -11015,6 +11041,8 @@ def hr_maternity_departure_new():
 @_perm(HR_ATT_EDIT_APPROVE)
 def hr_maternity_departure_approval_queue():
     """Review queue for annual maternity departure requests."""
+    return redirect(url_for('portal.hr_approvals'))
+
     rows = (
         HRAttendanceSpecialCase.query
         .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
@@ -11030,6 +11058,8 @@ def hr_maternity_departure_approval_queue():
 @_perm(HR_ATT_EDIT_APPROVE)
 def hr_maternity_departure_review(row_id: int):
     """Approve or reject an annual maternity departure request."""
+    return redirect(url_for('portal.hr_approvals'))
+
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MATERNITY_DEPARTURE':
         abort(404)
@@ -11096,6 +11126,8 @@ def hr_maternity_departure_review(row_id: int):
 @_perm(HR_ATT_EDIT)
 def hr_maternity_departure_cancel(row_id: int):
     """Withdraw a maternity departure before it has been reviewed."""
+    return redirect(url_for('portal.hr_my_leaves'))
+
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MATERNITY_DEPARTURE':
         abort(404)
@@ -12903,6 +12935,11 @@ def hr_leave_request_new():
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
             return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
+        maternity_period_error = _maternity_leave_period_error(lt, start_d, end_d)
+        if maternity_period_error:
+            flash(maternity_period_error, "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+
         auto_days = _calc_leave_days_excluding_off(start_s, end_s)
         if not auto_days:
             auto_days = (end_d - start_d).days + 1
@@ -12919,7 +12956,7 @@ def hr_leave_request_new():
 
         # Enforce max days if set (with optional exceptional max)
         exceptional = False
-        if lt.max_days and days > int(lt.max_days):
+        if not _is_maternity_leave_type(lt) and lt.max_days and days > int(lt.max_days):
             ex = getattr(lt, "exception_max_days", None)
             if ex and days <= int(ex):
                 exceptional = True
@@ -13080,6 +13117,11 @@ def hr_leave_request_edit(req_id: int):
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
             return render_form()
 
+        maternity_period_error = _maternity_leave_period_error(leave_type, start_date, end_date)
+        if maternity_period_error:
+            flash(maternity_period_error, "danger")
+            return render_form()
+
         auto_days = _calc_leave_days_excluding_off(start_s, end_s)
         if not auto_days:
             auto_days = (end_date - start_date).days + 1
@@ -13093,7 +13135,7 @@ def hr_leave_request_edit(req_id: int):
             flash("هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
             return render_form()
 
-        if leave_type.max_days and days > int(leave_type.max_days):
+        if not _is_maternity_leave_type(leave_type) and leave_type.max_days and days > int(leave_type.max_days):
             exceptional_max_days = getattr(leave_type, "exception_max_days", None)
             if exceptional_max_days and days <= int(exceptional_max_days):
                 flash(
@@ -13186,6 +13228,11 @@ def hr_leave_request_cancel(req_id: int):
     r.cancel_note = "إلغاء من الموظف"
     r.cancel_effective_date = today_str
     r.updated_at = datetime.utcnow()
+    if _is_maternity_leave(r):
+        db.session.flush()
+        _attendance_recompute_summaries_for_keys(
+            _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
+        )
     db.session.commit()
 
     flash("تم إلغاء الطلب.", "success")
@@ -14050,6 +14097,11 @@ def hr_approval_leave(req_id: int):
         except ValueError:
             flash("هذا الطلب ليس بانتظار إجراء صالح منك.", "warning")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+        if result == "APPROVED" and _is_maternity_leave(r):
+            db.session.flush()
+            _attendance_recompute_summaries_for_keys(
+                _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
+            )
         db.session.commit()
         if result == "NEXT":
             flash("تمت الموافقة وانتقل الطلب إلى المرحلة التالية.", "success")
@@ -14130,6 +14182,11 @@ def hr_leave_cancel_by_hr(req_id: int):
     r.cancel_note = (request.form.get("cancel_note") or "").strip() or "إلغاء من مدير الموارد البشرية"
     r.cancel_effective_date = today_str
     r.updated_at = datetime.utcnow()
+    if _is_maternity_leave(r):
+        db.session.flush()
+        _attendance_recompute_summaries_for_keys(
+            _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
+        )
     db.session.commit()
 
     flash("تم إلغاء الطلب.", "success")
@@ -22772,7 +22829,7 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
             .filter(HRLeaveRequest.end_date >= day_str)
             .first()
         )
-        if approved_leave:
+        if approved_leave and not _is_maternity_leave(approved_leave):
             return "APPROVED_LEAVE"
     except Exception:
         pass
@@ -22800,18 +22857,18 @@ def _maternity_departure_allowance_minutes(user_id: int | None, day_str: str) ->
     """Return the approved one-hour daily maternity departure allowance."""
     if not user_id or not _parse_yyyy_mm_dd(day_str):
         return 0
-    row = (
-        HRAttendanceSpecialCase.query
-        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
-        .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
-        .filter(HRAttendanceSpecialCase.applied.is_(True))
-        .filter(HRAttendanceSpecialCase.approval_status == 'APPROVED')
-        .filter(HRAttendanceSpecialCase.day <= day_str)
-        .filter(or_(HRAttendanceSpecialCase.day_to.is_(None), HRAttendanceSpecialCase.day_to >= day_str))
-        .order_by(HRAttendanceSpecialCase.approved_at.desc(), HRAttendanceSpecialCase.id.desc())
+    leave_request = (
+        HRLeaveRequest.query
+        .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
+        .filter(HRLeaveRequest.user_id == int(user_id))
+        .filter(HRLeaveRequest.status == 'APPROVED')
+        .filter(func.upper(HRLeaveType.code) == MATERNITY_LEAVE_CODE)
+        .filter(HRLeaveRequest.start_date <= day_str)
+        .filter(HRLeaveRequest.end_date >= day_str)
+        .order_by(HRLeaveRequest.decided_at.desc(), HRLeaveRequest.id.desc())
         .first()
     )
-    return 60 if row else 0
+    return 60 if leave_request else 0
 
 
 def _summary_compute_one(user_id: int, day_str: str):
@@ -23071,9 +23128,11 @@ def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], st
         user_id
         for (user_id,) in (
             HRLeaveRequest.query
+            .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
             .filter(HRLeaveRequest.status.in_(active_leave_statuses))
             .filter(HRLeaveRequest.start_date <= day_str)
             .filter(HRLeaveRequest.end_date >= day_str)
+            .filter(func.upper(HRLeaveType.code) != MATERNITY_LEAVE_CODE)
             .with_entities(HRLeaveRequest.user_id)
             .distinct()
             .all()
@@ -31608,6 +31667,23 @@ def hr_leaves_admin_new():
             lt = HRLeaveType.query.get(int(leave_type_id))
         except Exception:
             lt = None
+        if not lt or not lt.is_active:
+            flash('اختر نوع إجازة فعالاً.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
+
+        start_day = _parse_yyyy_mm_dd(start_date)
+        end_day = _parse_yyyy_mm_dd(end_date)
+        if not start_day or not end_day:
+            flash('أدخل تاريخ بداية ونهاية صحيحين.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
+        if end_day < start_day:
+            flash('تاريخ النهاية يجب أن يكون بعد تاريخ البداية.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
+        maternity_period_error = _maternity_leave_period_error(lt, start_day, end_day)
+        if maternity_period_error:
+            flash(maternity_period_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
+
         is_external = bool(getattr(lt, 'is_external', False)) if lt else False
 
         # External leave fields (optional)

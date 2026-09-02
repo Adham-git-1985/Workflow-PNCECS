@@ -83,12 +83,6 @@
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_permission_request_new') }}">إدخال المغادرات</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_permissions') }}">السجل</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_absence_board', view='permissions') }}">لوحة المجازين والمغادرين</a></li>
-                {% if current_user.has_perm('HR_ATTENDANCE_EDIT') %}
-                <li><a class="dropdown-item" href="{{ url_for('portal.hr_maternity_departure_new') }}">مغادرة أمومة</a></li>
-                {% endif %}
-                {% if current_user.has_perm('HR_ATTENDANCE_EDIT_APPROVE') %}
-                <li><a class="dropdown-item" href="{{ url_for('portal.hr_maternity_departure_approval_queue') }}">اعتماد مغادرات الأمومة</a></li>
-                {% endif %}
               </ul>
             </li>
 

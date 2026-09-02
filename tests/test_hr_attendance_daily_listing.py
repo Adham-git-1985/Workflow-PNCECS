@@ -14,6 +14,7 @@ from models import (
     HRAttendanceSpecialCase,
     HRLeaveRequest,
     HRLeaveType,
+    HRRequestApprovalStep,
     User,
     UserPermission,
 )
@@ -25,10 +26,12 @@ from portal.routes import (
     _attendance_event_date_range,
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
+    _maternity_leave_period_error,
     _summary_compute_one,
     _sort_and_number_attendance_daily_rows,
     hr_attendance_manual_edit,
     hr_attendance_manual_review,
+    hr_leave_request_new,
     hr_maternity_departure_new,
     hr_maternity_departure_review,
 )
@@ -209,7 +212,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
 
-    def test_maternity_departure_grants_daily_hour_only_after_approval(self):
+    def _legacy_maternity_departure_workflow(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
         editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")
         approver = User(email="approver@example.test", name="Approver", password_hash="x", role="HR")
@@ -277,6 +280,83 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary.early_leave_minutes, 0)
         self.assertEqual(AttendanceDailySummary.query.count(), 1)
 
+    def test_maternity_leave_uses_regular_leave_workflow_and_allows_shorter_period(self):
+        employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        maternity_type = HRLeaveType(
+            code="M",
+            name_ar="إجازة أمومة",
+            max_days=30,
+            is_active=True,
+        )
+        db.session.add_all((
+            maternity_type,
+            UserPermission(user_id=employee.id, key="PORTAL_READ", is_allowed=True),
+            UserPermission(user_id=employee.id, key="HR_READ", is_allowed=True),
+            UserPermission(user_id=employee.id, key="HR_REQUESTS_CREATE", is_allowed=True),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 1, 8, 0), event_type="IN"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 1, 14, 0), event_type="OUT"),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            "/portal/hr/me/leaves/new",
+            method="POST",
+            data={
+                "leave_type_id": str(maternity_type.id),
+                "start_date": "2026-09-01",
+                "end_date": "2027-02-28",
+                "note": "مغادرة أمومة",
+            },
+        ):
+            login_user(employee)
+            response = hr_leave_request_new()
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        leave_request = HRLeaveRequest.query.one()
+        self.assertEqual(leave_request.status, "SUBMITTED")
+        self.assertEqual(leave_request.start_date, "2026-09-01")
+        self.assertEqual(leave_request.end_date, "2027-02-28")
+        self.assertTrue(
+            HRRequestApprovalStep.query.filter_by(
+                request_kind="LEAVE",
+                request_id=leave_request.id,
+            ).count()
+        )
+        self.assertIsNone(
+            _maternity_leave_period_error(
+                maternity_type,
+                datetime(2026, 9, 1).date(),
+                datetime(2027, 2, 28).date(),
+            )
+        )
+        self.assertIsNotNone(
+            _maternity_leave_period_error(
+                maternity_type,
+                datetime(2026, 9, 1).date(),
+                datetime(2027, 9, 2).date(),
+            )
+        )
+
+        schedule = SimpleNamespace(
+            id=None,
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+            break_minutes=0,
+            grace_minutes=0,
+            start_grace_minutes=None,
+            end_grace_minutes=None,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-01")["early_leave_minutes"], 60)
+            leave_request.status = "APPROVED"
+            db.session.commit()
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-01")["early_leave_minutes"], 0)
+
 
 class AttendanceAbsenceCandidatesTests(unittest.TestCase):
     @classmethod
@@ -343,6 +423,30 @@ class AttendanceAbsenceCandidatesTests(unittest.TestCase):
 
         self.assertIsNone(excluded_reason)
         self.assertEqual([row.user_id for row in rows], [absent.id])
+
+    def test_maternity_leave_does_not_hide_an_employee_from_absence(self):
+        employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        maternity_type = HRLeaveType(code="M", name_ar="إجازة أمومة", is_active=True)
+        db.session.add_all((
+            maternity_type,
+            EmployeeFile(user_id=employee.id, timeclock_code="1001"),
+        ))
+        db.session.flush()
+        db.session.add(HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=maternity_type.id,
+            start_date="2026-09-02",
+            end_date="2027-02-28",
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        rows, excluded_reason = _attendance_absence_candidates("2026-09-02")
+
+        self.assertIsNone(excluded_reason)
+        self.assertEqual([row.user_id for row in rows], [employee.id])
 
     def test_daily_attendance_query_excludes_explicit_absence_rows(self):
         present = User(email="present@example.test", name="Present", password_hash="x", role="USER")
