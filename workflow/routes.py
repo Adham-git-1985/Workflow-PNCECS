@@ -121,8 +121,12 @@ from utils.org_dynamic import (
     resolve_user_org_node_id,
 )
 from workflow.dynamic_paths import (
+    DYNAMIC_DELIVERY_MODE_DIRECT,
+    DYNAMIC_DELIVERY_MODE_HIERARCHICAL,
+    DYNAMIC_DIRECT_DELIVERY_REF,
     FINAL_SECRETARY_GENERAL_REF,
     build_dynamic_target_path,
+    can_use_direct_dynamic_delivery,
     dynamic_committee_choices,
     dynamic_org_browser_nodes,
     dynamic_user_choices,
@@ -2911,6 +2915,14 @@ def _dynamic_secretary_general_requested() -> bool:
     }
 
 
+def _requested_dynamic_delivery_mode() -> str:
+    """Read the route-delivery choice; authorization stays in the path builder."""
+    return (
+        request.form.get("dynamic_delivery_mode")
+        or DYNAMIC_DELIVERY_MODE_HIERARCHICAL
+    ).strip().upper()
+
+
 def _requested_dynamic_sla_days(default=None) -> int | None:
     raw = request.form.get("dynamic_sla_days")
     if raw is None or not str(raw).strip():
@@ -2951,6 +2963,7 @@ def preview_dynamic_request_path():
         include_secretary_general=_dynamic_secretary_general_requested(),
         sla_days=_requested_dynamic_sla_days(default=get_sla_days()),
         selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
+        delivery_mode=_requested_dynamic_delivery_mode(),
     )
     return jsonify({
         "ok": not result["errors"],
@@ -2959,6 +2972,7 @@ def preview_dynamic_request_path():
         "segments": result["segments"],
         "warnings": result["warnings"],
         "errors": result["errors"],
+        "delivery_mode": result.get("delivery_mode"),
     })
 
 
@@ -2982,11 +2996,16 @@ def save_dynamic_path_preset():
         selected_values,
         include_secretary_general=include_secretary_general,
         selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
+        delivery_mode=_requested_dynamic_delivery_mode(),
     )
     if result["errors"]:
         return jsonify({"ok": False, "errors": result["errors"]}), 400
 
-    normalized_refs = [
+    normalized_refs = (
+        [DYNAMIC_DIRECT_DELIVERY_REF]
+        if result.get("delivery_mode") == DYNAMIC_DELIVERY_MODE_DIRECT
+        else []
+    ) + [
         f"MANAGER:{user_id}"
         for user_id in result.get("selected_manager_user_ids", [])
     ] + [
@@ -3072,7 +3091,11 @@ def new_request():
     if selected_rt_id and str(selected_rt_id).isdigit():
         selected_request_type = db.session.get(RequestType, int(selected_rt_id))
         selected_request_type_name = selected_request_type.label if selected_request_type else ""
-    dynamic_choices = dynamic_user_choices(current_user)
+    dynamic_direct_routing_allowed = can_use_direct_dynamic_delivery(current_user)
+    dynamic_choices = dynamic_user_choices(
+        current_user,
+        include_unassigned=dynamic_direct_routing_allowed,
+    )
     dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, current_user)
     dynamic_committees = dynamic_committee_choices()
     dynamic_manager_options = requester_dynamic_manager_options(current_user)
@@ -3085,6 +3108,7 @@ def new_request():
     requester_org_node_id = resolve_user_org_node_id(current_user)
     dynamic_route_available = bool(
         requester_org_node_id
+        or (dynamic_direct_routing_allowed and dynamic_choices)
         or any(committee.get("can_select") for committee in dynamic_committees)
     )
 
@@ -3134,6 +3158,7 @@ def new_request():
                 include_secretary_general=_dynamic_secretary_general_requested(),
                 sla_days=dynamic_sla_days,
                 selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
+                delivery_mode=_requested_dynamic_delivery_mode(),
             )
             if dynamic_path["errors"]:
                 for error in dynamic_path["errors"]:
@@ -3251,6 +3276,7 @@ def new_request():
         dynamic_manager_options=dynamic_manager_options,
         dynamic_presets=[preset.as_dict() for preset in dynamic_presets],
         requester_org_node_id=requester_org_node_id,
+        dynamic_direct_routing_allowed=dynamic_direct_routing_allowed,
         dynamic_route_available=dynamic_route_available,
         dynamic_sla_days_default=get_sla_days(),
         intake_max_bytes=intake_max_bytes,

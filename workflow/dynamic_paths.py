@@ -30,6 +30,9 @@ from utils.org_dynamic import resolve_user_org_node_id
 
 MAX_DYNAMIC_TARGETS = 20
 FINAL_SECRETARY_GENERAL_REF = "FINAL_SECRETARY_GENERAL"
+DYNAMIC_DIRECT_DELIVERY_REF = "DIRECT_DELIVERY"
+DYNAMIC_DELIVERY_MODE_HIERARCHICAL = "HIERARCHICAL"
+DYNAMIC_DELIVERY_MODE_DIRECT = "DIRECT"
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 COMMITTEE_DELIVERY_MODES = {
     "ALL": ("Committee_ALL", "كل أعضاء اللجنة"),
@@ -55,6 +58,42 @@ def _is_secretary_general_node(node: OrgNode | None) -> bool:
     normalized_name = _normalized_org_text(getattr(node, "name_ar", None))
     normalized_english = _normalized_org_text(getattr(node, "name_en", None))
     return normalized_name in {"الامينالعام", "امينعامالمجلس"} or normalized_english == "secretarygeneral"
+
+
+def can_use_direct_dynamic_delivery(user: User | None) -> bool:
+    """Whether the actor may send a dynamic route directly to an employee.
+
+    Direct delivery is deliberately limited to the General Secretary role.  The
+    role check accepts the legacy underscore spelling as well as the canonical
+    ``GENERAL-SECRETARY`` code used by the permissions seed.
+    """
+    if not user:
+        return False
+    try:
+        if any(
+            user.has_role(role)
+            for role in ("GENERAL-SECRETARY", "GENERAL_SECRETARY")
+        ):
+            return True
+    except Exception:
+        pass
+
+    normalized_role = _normalized_org_text(getattr(user, "role", ""))
+    return normalized_role in {
+        "generalsecretary",
+        "الامينالعام",
+        "امينعامالمجلس",
+    }
+
+
+def _normalize_dynamic_delivery_mode(value: str | None) -> str | None:
+    normalized = (value or DYNAMIC_DELIVERY_MODE_HIERARCHICAL).strip().upper()
+    aliases = {
+        "HIERARCHY": DYNAMIC_DELIVERY_MODE_HIERARCHICAL,
+        "STRUCTURAL": DYNAMIC_DELIVERY_MODE_HIERARCHICAL,
+        "DIRECT": DYNAMIC_DELIVERY_MODE_DIRECT,
+    }
+    return aliases.get(normalized, normalized if normalized == DYNAMIC_DELIVERY_MODE_HIERARCHICAL else None)
 
 
 def _normalized_org_text(value: str | None) -> str:
@@ -979,7 +1018,17 @@ def build_structural_template_path(source_node_id: int, target_node_id: int) -> 
     return {"steps": steps, "warnings": warnings, "errors": errors}
 
 
-def dynamic_user_choices(requester: User) -> list[dict]:
+def dynamic_user_choices(
+    requester: User,
+    *,
+    include_unassigned: bool = False,
+) -> list[dict]:
+    """Return people selectable for a dynamic route.
+
+    The General Secretary may use direct delivery, which also permits an
+    employee who has not yet been placed in the organizational tree.  Those
+    employees remain hidden in the normal structural-routing experience.
+    """
     choices = []
     requester_chain = node_chain(resolve_user_org_node_id(requester))
     memberships_by_user: dict[int, list[dict]] = {}
@@ -1006,7 +1055,7 @@ def dynamic_user_choices(requester: User) -> list[dict]:
             continue
         node_id = resolve_user_org_node_id(user)
         chain = node_chain(node_id)
-        if not chain:
+        if not chain and not include_unassigned:
             continue
         team_node = next(
             (node for node in reversed(chain) if _node_type_code(node) == "TEAM"),
@@ -1026,8 +1075,8 @@ def dynamic_user_choices(requester: User) -> list[dict]:
             "name": user.full_name or user.email or f"مستخدم #{user.id}",
             "job_title": (getattr(user, "job_title", None) or "").strip(),
             "email": user.email or "",
-            "node_id": int(node_id),
-            "node_label": node_path_label(node_id),
+            "node_id": int(node_id) if node_id else None,
+            "node_label": node_path_label(node_id) if node_id else "غير مربوط بالهيكل التنظيمي",
             "team_id": first_team["id"] if first_team else None,
             "team_name": first_team["name"] if first_team else "",
             "teams": user_teams,
@@ -1407,11 +1456,28 @@ def build_dynamic_target_path(
     include_secretary_general: bool = False,
     sla_days: int | None = None,
     selected_manager_user_ids=None,
+    delivery_mode: str = DYNAMIC_DELIVERY_MODE_HIERARCHICAL,
 ) -> dict:
-    """Expand ordered USER/NODE/COMMITTEE targets into sequential runtime steps."""
+    """Expand ordered USER/NODE/COMMITTEE targets into runtime steps.
+
+    Normal routes pass through the vertical organizational hierarchy.  The
+    General Secretary can instead choose direct delivery, which sends the
+    selected USER targets in their chosen order without inserting managers or
+    a return path.
+    """
     target_refs, errors = _normalized_dynamic_target_refs(selected_target_refs)
     if not target_refs:
         errors.append("اختر جهة تنظيمية أو شخصاً أو لجنة واحدة على الأقل للمسار الديناميكي.")
+
+    normalized_delivery_mode = _normalize_dynamic_delivery_mode(delivery_mode)
+    if not normalized_delivery_mode:
+        errors.append("طريقة تسليم المسار الديناميكي غير صالحة.")
+        normalized_delivery_mode = DYNAMIC_DELIVERY_MODE_HIERARCHICAL
+    direct_delivery = normalized_delivery_mode == DYNAMIC_DELIVERY_MODE_DIRECT
+    if direct_delivery and not can_use_direct_dynamic_delivery(requester):
+        errors.append("التوجيه المباشر دون التسلسل الإداري متاح لدور الأمين العام فقط.")
+        direct_delivery = False
+        normalized_delivery_mode = DYNAMIC_DELIVERY_MODE_HIERARCHICAL
 
     user_ids = [target_id for kind, target_id, _start_id, _mode in target_refs if kind == "USER"]
     node_ids = [target_id for kind, target_id, _start_id, _mode in target_refs if kind == "NODE"]
@@ -1442,7 +1508,11 @@ def build_dynamic_target_path(
         for option in manager_options
     }
     explicit_manager_selection = selected_manager_user_ids is not None
-    if explicit_manager_selection:
+    if direct_delivery:
+        # Direct delivery must never inherit an optional manager selection
+        # posted by the browser or another integration.
+        selected_manager_ids: list[int] = []
+    elif explicit_manager_selection:
         normalized_manager_ids: list[int] = []
         for raw_user_id in selected_manager_user_ids or []:
             try:
@@ -1470,7 +1540,10 @@ def build_dynamic_target_path(
         selected_manager_ids = []
     requires_org_chain = bool(
         include_secretary_general
-        or any(kind != "COMMITTEE" for kind, _target_id, _start_id, _mode in target_refs)
+        or (
+            not direct_delivery
+            and any(kind != "COMMITTEE" for kind, _target_id, _start_id, _mode in target_refs)
+        )
     )
     if not requester_chain and requires_org_chain:
         errors.append("يجب ربط منشئ الطلب بعنصر أساسي في الهيكل التنظيمي أولاً.")
@@ -1514,14 +1587,14 @@ def build_dynamic_target_path(
                 continue
             target_node_id = resolve_user_org_node_id(target_user)
             target_chain = node_chain(target_node_id)
-            if not target_chain:
+            if not target_chain and not direct_delivery:
                 errors.append(f"المستخدم «{target_user.full_name}» غير مربوط بالهيكل التنظيمي.")
                 continue
             resolved_targets.append({
                 "kind": "USER",
                 "id": target_id,
                 "user": target_user,
-                "node": target_chain[-1],
+                "node": target_chain[-1] if target_chain else None,
                 "chain": target_chain,
                 "label": target_user.full_name or target_user.email or f"مستخدم #{target_user.id}",
             })
@@ -1586,7 +1659,11 @@ def build_dynamic_target_path(
         if target["kind"] == "USER":
             return add_user_step(
                 target_user,
-                "المستلم المختار بعد المرور بالمسار الإداري العمودي",
+                (
+                    "توجيه مباشر من الأمين العام دون المرور بالتسلسل الإداري"
+                    if direct_delivery else
+                    "المستلم المختار بعد المرور بالمسار الإداري العمودي"
+                ),
                 target_node,
             )
         target_user_id = int(target_user.id)
@@ -1600,7 +1677,11 @@ def build_dynamic_target_path(
             "sla_days": None,
             "label": target_user.full_name or target_user.email or target["label"],
             "job_title": (getattr(target_user, "job_title", None) or "").strip(),
-            "reason": f"مسؤول الجهة الهدف «{target['label']}» ضمن المسار العمودي",
+            "reason": (
+                f"مسؤول الجهة الهدف «{target['label']}» بتوجيه مباشر من الأمين العام"
+                if direct_delivery else
+                f"مسؤول الجهة الهدف «{target['label']}» ضمن المسار العمودي"
+            ),
             "node_id": int(target_node.id),
             "node_label": node_path_label(target_node),
         })
@@ -1675,7 +1756,7 @@ def build_dynamic_target_path(
         target_user = target["user"]
         target_node = target["node"]
         target_chain = target["chain"]
-        direct = same_administration(current_chain, target_chain)
+        same_admin = same_administration(current_chain, target_chain)
         target_ref = f"{target['kind']}:{int(target['id'])}"
         segment = {
             "from_user_id": int(current_user.id),
@@ -1685,9 +1766,18 @@ def build_dynamic_target_path(
             "target_ref": target_ref,
             "route_start_node_id": None,
             "route_start_label": "",
-            "same_administration": direct,
+            "same_administration": same_admin,
+            "delivery_mode": normalized_delivery_mode,
             "intermediate_manager_count": 0,
         }
+
+        if direct_delivery:
+            add_target_step(target)
+            segments.append(segment)
+            current_user = target_user
+            current_chain = target_chain
+            first_structural_target = False
+            continue
 
         route_nodes = vertical_structural_route_nodes(current_chain, target_chain)
         resolved_manager_count = 0
@@ -1711,7 +1801,7 @@ def build_dynamic_target_path(
             ):
                 segment["intermediate_manager_count"] += 1
 
-        if not resolved_manager_count and not direct:
+        if not resolved_manager_count and not same_admin:
             errors.append(
                 f"لا يمكن الانتقال من «{current_user.full_name}» إلى «{target['label']}»: "
                 "لم يتم تعيين مسؤول أو نائب مسؤول على المسار العمودي بينهما."
@@ -1770,19 +1860,20 @@ def build_dynamic_target_path(
                 "node_label": node_path_label(secretary_general),
             })
 
-    # A dynamic route is a round trip.  After the final destination acts, the
-    # request returns through the same approvals in reverse order.  The final
-    # destination itself is not duplicated; completing the last return step
-    # hands the request back to its creator through the normal completion flow.
-    forward_steps = list(steps)
-    for index in range(len(forward_steps) - 2, -1, -1):
-        forward_step = forward_steps[index]
-        following_step = forward_steps[index + 1]
-        if _steps_are_non_managerial_peers(forward_step, following_step):
-            continue
-        return_step = dict(forward_step)
-        return_step["reason"] = DYNAMIC_RETURN_REASON
-        steps.append(return_step)
+    if not direct_delivery:
+        # A hierarchical dynamic route is a round trip.  After the final
+        # destination acts, the request returns through the same approvals in
+        # reverse order.  The final destination itself is not duplicated;
+        # completing the last return step hands it back to its creator.
+        forward_steps = list(steps)
+        for index in range(len(forward_steps) - 2, -1, -1):
+            forward_step = forward_steps[index]
+            following_step = forward_steps[index + 1]
+            if _steps_are_non_managerial_peers(forward_step, following_step):
+                continue
+            return_step = dict(forward_step)
+            return_step["reason"] = DYNAMIC_RETURN_REASON
+            steps.append(return_step)
 
     try:
         effective_dynamic_sla = int(sla_days) if sla_days is not None else None
@@ -1803,6 +1894,7 @@ def build_dynamic_target_path(
         "warnings": warnings,
         "errors": list(dict.fromkeys(errors)),
         "include_secretary_general": bool(include_secretary_general),
+        "delivery_mode": normalized_delivery_mode,
         "manager_options": manager_options,
         "selected_manager_user_ids": selected_manager_ids,
     }

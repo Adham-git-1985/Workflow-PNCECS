@@ -318,6 +318,8 @@
         </div>
         {% if not dynamic_route_available %}
           <div class="form-text text-danger">لا يمكن تفعيل البناء الديناميكي قبل ربط حسابك بالهيكل التنظيمي أو تفعيل لجنة تحتوي على أعضاء.</div>
+        {% elif dynamic_direct_routing_allowed and not requester_org_node_id %}
+          <div class="form-text">بصفتك الأمين العام، يمكنك إنشاء توجيه مباشر إلى أي موظف حتى إن لم يكن حسابك مربوطاً بالهيكل التنظيمي.</div>
         {% elif not requester_org_node_id %}
           <div class="form-text">يمكنك إنشاء مسار إلى لجنة نشطة. لاختيار جهات أو أشخاص، يجب ربط حسابك بالهيكل التنظيمي أولاً.</div>
         {% else %}
@@ -358,6 +360,36 @@
           <input type="hidden" name="dynamic_user_ids" id="dynamicUserIds" value="">
           <input type="hidden" name="dynamic_manager_user_ids" id="dynamicManagerUserIds"
                  value="{{ dynamic_manager_options|map(attribute='user_id')|join(',') }}">
+          {% if dynamic_direct_routing_allowed %}
+            <fieldset class="border border-warning rounded-3 p-3 bg-warning bg-opacity-10 mb-3" id="dynamicDeliveryModeBox">
+              <legend class="float-none w-auto fs-6 fw-bold px-2 mb-2">
+                <i class="bi bi-send"></i> طريقة تسليم المسار
+              </legend>
+              <div class="d-flex flex-wrap gap-4">
+                <div class="form-check">
+                  <input class="form-check-input dynamic-delivery-mode" type="radio"
+                         name="dynamic_delivery_mode" id="dynamicDeliveryHierarchy"
+                         value="HIERARCHICAL" checked>
+                  <label class="form-check-label" for="dynamicDeliveryHierarchy">
+                    عبر الهيكلية والتسلسل الإداري
+                  </label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input dynamic-delivery-mode" type="radio"
+                         name="dynamic_delivery_mode" id="dynamicDeliveryDirect"
+                         value="DIRECT">
+                  <label class="form-check-label fw-semibold" for="dynamicDeliveryDirect">
+                    توجيه مباشر إلى الموظف — دون تسلسل إداري
+                  </label>
+                </div>
+              </div>
+              <div class="small text-muted mt-2" id="dynamicDeliveryModeHint">
+                يمر المسار عبر المسؤولين المعتمدين في الهيكل التنظيمي ثم يعود بالتسلسل نفسه.
+              </div>
+            </fieldset>
+          {% else %}
+            <input type="hidden" name="dynamic_delivery_mode" value="HIERARCHICAL">
+          {% endif %}
           {% if dynamic_manager_options %}
             <div class="border border-primary rounded-3 p-3 bg-primary bg-opacity-10 mb-3" id="dynamicManagerChoicesBox">
               <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
@@ -474,14 +506,14 @@
               </div>
             {% endif %}
 
-            {% if (dynamic_choices or dynamic_org_nodes) and requester_org_node_id %}
+            {% if (dynamic_choices or dynamic_org_nodes) and (requester_org_node_id or dynamic_direct_routing_allowed) %}
             <div class="border rounded-3 p-3 bg-light mb-3">
               <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
                 <div>
                   <div class="form-label fw-bold mb-1"><i class="bi bi-diagram-3"></i> الهيكلية</div>
-                  <div class="small text-muted">اختر بطاقة الجهة من الشجرة، ثم اضغط «إضافة الجهة نفسها إلى المسار»؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.</div>
+                  <div class="small text-muted" id="dynamicHierarchyExplanation">اختر بطاقة الجهة من الشجرة، ثم اضغط «إضافة الجهة نفسها إلى المسار»؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.</div>
                 </div>
-                <span class="badge text-bg-light border"><i class="bi bi-diagram-3"></i> مسار عمودي تلقائي</span>
+                <span class="badge text-bg-light border" id="dynamicHierarchyModeBadge"><i class="bi bi-diagram-3"></i> مسار عمودي تلقائي</span>
               </div>
               <select class="d-none" id="dynamicHierarchySelect" data-searchable="0" tabindex="-1" aria-hidden="true">
                 <option value="">— اختر جهة من الهيكلية —</option>
@@ -528,7 +560,7 @@
             <div class="collapse" id="dynamicEmployeesPanel">
               <div class="border rounded-3 p-3 mb-3 bg-white">
                 <div class="mb-3">
-                  <label class="form-label" for="dynamicUserSearch">البحث ضمن الجهة المختارة وفروعها</label>
+                  <label class="form-label" for="dynamicUserSearch" id="dynamicUserSearchLabel">البحث ضمن الجهة المختارة وفروعها</label>
                   <input class="form-control" id="dynamicUserSearch" type="search" placeholder="ابحث بالاسم، المسمى الوظيفي، أو البريد..." autocomplete="off">
                 </div>
                 <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
@@ -558,7 +590,7 @@
                           <div class="small text-muted mt-2 text-break" style="overflow-wrap:anywhere;">
                             <i class="bi bi-diagram-3"></i> {{ choice.node_label }}
                           </div>
-                          <span class="badge mt-2 dynamic-wrap-badge text-bg-primary">عبر المسار الإداري العمودي</span>
+                          <span class="badge mt-2 dynamic-wrap-badge text-bg-primary dynamic-user-route-badge">عبر المسار الإداري العمودي</span>
                         </div>
                         <div class="form-check border rounded-3 px-3 py-2 flex-shrink-0 bg-light">
                           <input type="checkbox"
@@ -1013,7 +1045,13 @@
     const clearVisibleButton = document.getElementById('dynamicClearVisible');
     const targetRefsField = document.getElementById('dynamicTargetRefs');
     const managerUserIdsField = document.getElementById('dynamicManagerUserIds');
+    const managerChoicesBox = document.getElementById('dynamicManagerChoicesBox');
     const managerChoices = Array.from(document.querySelectorAll('.dynamic-manager-checkbox'));
+    const deliveryModeChoices = Array.from(document.querySelectorAll('.dynamic-delivery-mode'));
+    const deliveryModeHint = document.getElementById('dynamicDeliveryModeHint');
+    const hierarchyExplanation = document.getElementById('dynamicHierarchyExplanation');
+    const hierarchyModeBadge = document.getElementById('dynamicHierarchyModeBadge');
+    const userSearchLabel = document.getElementById('dynamicUserSearchLabel');
     const selectAllManagersButton = document.getElementById('dynamicSelectAllManagers');
     const clearAllManagersButton = document.getElementById('dynamicClearAllManagers');
     const dynamicSlaDays = document.getElementById('dynamicSlaDays');
@@ -1031,6 +1069,7 @@
     const presetSaveStatus = document.getElementById('dynamicPresetSaveStatus');
     const secretaryChoices = Array.from(document.querySelectorAll('.dynamic-secretary-choice'));
     const finalSecretaryGeneralRef = 'FINAL_SECRETARY_GENERAL';
+    const directDeliveryRef = 'DIRECT_DELIVERY';
     const selected = [];
     let currentOrgNodeId = null;
     let orgNodes = [];
@@ -1108,6 +1147,53 @@
       return Boolean(dynamicRadio && dynamicRadio.checked);
     }
 
+    function selectedDeliveryMode(){
+      const selectedChoice = deliveryModeChoices.find(control => control.checked);
+      return selectedChoice ? String(selectedChoice.value || 'HIERARCHICAL').toUpperCase() : 'HIERARCHICAL';
+    }
+
+    function isDirectDelivery(){
+      return selectedDeliveryMode() === 'DIRECT';
+    }
+
+    function setDynamicDeliveryMode(mode){
+      const desiredMode = String(mode || 'HIERARCHICAL').toUpperCase();
+      deliveryModeChoices.forEach(function(control){
+        control.checked = String(control.value || '').toUpperCase() === desiredMode;
+      });
+    }
+
+    function syncDeliveryModeUI(){
+      const direct = isDirectDelivery();
+      if (managerChoicesBox) managerChoicesBox.classList.toggle('d-none', direct);
+      if (deliveryModeHint) {
+        deliveryModeHint.textContent = direct
+          ? 'يرسل الأمين العام الطلب إلى الموظفين المختارين بالترتيب الذي تحدده، دون إدراج أي مدير أو مسار عودة.'
+          : 'يمر المسار عبر المسؤولين المعتمدين في الهيكل التنظيمي ثم يعود بالتسلسل نفسه.';
+      }
+      if (hierarchyExplanation) {
+        hierarchyExplanation.textContent = direct
+          ? 'يمكنك استخدام الشجرة للتعرّف إلى مواقع الموظفين، بينما يعرض البحث أدناه جميع الموظفين للتوجيه المباشر.'
+          : 'اختر بطاقة الجهة من الشجرة، ثم اضغط «إضافة الجهة نفسها إلى المسار»؛ يظهر المسؤول وعدد الموظفين داخل البطاقة.';
+      }
+      if (hierarchyModeBadge) {
+        hierarchyModeBadge.innerHTML = direct
+          ? '<i class="bi bi-send"></i> توجيه مباشر'
+          : '<i class="bi bi-diagram-3"></i> مسار عمودي تلقائي';
+      }
+      if (userSearchLabel) {
+        userSearchLabel.textContent = direct
+          ? 'البحث بين جميع الموظفين'
+          : 'البحث ضمن الجهة المختارة وفروعها';
+      }
+      document.querySelectorAll('.dynamic-user-route-badge').forEach(function(badge){
+        badge.textContent = direct ? 'توجيه مباشر دون تسلسل إداري' : 'عبر المسار الإداري العمودي';
+        badge.classList.toggle('text-bg-warning', direct);
+        badge.classList.toggle('text-bg-primary', !direct);
+      });
+      filterChoices();
+    }
+
     function renderPredefinedPreview(){
       if (!predefinedPreview || !predefinedPreviewSteps || !templateSelect) return;
       const steps = predefinedTemplateSteps[String(templateSelect.value || '')] || [];
@@ -1141,10 +1227,12 @@
     function syncHidden(){
       targetRefsField.value = selected.map(item => item.ref).join(',');
       if (managerUserIdsField) {
-        managerUserIdsField.value = managerChoices
-          .filter(control => control.checked)
-          .map(control => control.value)
-          .join(',');
+        managerUserIdsField.value = isDirectDelivery()
+          ? ''
+          : managerChoices
+            .filter(control => control.checked)
+            .map(control => control.value)
+            .join(',');
       }
       legacyUserIdsField.value = selected
         .filter(item => item.kind === 'USER')
@@ -1380,6 +1468,10 @@
       setIncludeSecretaryGeneral(false);
       const missingRefs = [];
       const presetRefs = preset.target_refs || [];
+      const usesDirectDelivery = presetRefs.some(function(targetRef){
+        return String(targetRef || '').toUpperCase() === directDeliveryRef;
+      });
+      setDynamicDeliveryMode(usesDirectDelivery ? 'DIRECT' : 'HIERARCHICAL');
       const hasSavedManagerSelection = presetRefs.some(function(targetRef){
         return String(targetRef || '').toUpperCase().startsWith('MANAGER:');
       });
@@ -1389,6 +1481,9 @@
       presetRefs.forEach(function(targetRef){
         if (String(targetRef || '').toUpperCase() === finalSecretaryGeneralRef) {
           setIncludeSecretaryGeneral(true);
+          return;
+        }
+        if (String(targetRef || '').toUpperCase() === directDeliveryRef) {
           return;
         }
         const parts = String(targetRef || '').split(':');
@@ -1428,6 +1523,7 @@
         missingRefs.push(targetRef);
       });
       syncHidden();
+      syncDeliveryModeUI();
       if (presetNameInput) presetNameInput.value = preset.name || '';
       renderSelected();
       setPresetStatus(
@@ -1455,6 +1551,7 @@
       payload.append('name', name);
       payload.append('dynamic_target_refs', targetRefsField.value);
       if (managerUserIdsField) payload.append('dynamic_manager_user_ids', managerUserIdsField.value);
+      payload.append('dynamic_delivery_mode', selectedDeliveryMode());
       payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
       payload.append('csrf_token', csrfToken());
       savePresetButton.disabled = true;
@@ -1528,6 +1625,8 @@
         const badgeClass = isCommittee ? 'text-bg-info' : (isNode ? 'text-bg-primary' : (item.sameAdmin ? 'text-bg-success' : 'text-bg-warning'));
         const badgeText = isCommittee
           ? 'آخر وجهة — ' + (item.modeLabel || 'كل أعضاء اللجنة')
+          : isDirectDelivery()
+          ? 'توجيه مباشر دون تسلسل إداري'
           : 'مسار إداري عمودي تلقائي';
         const disableUp = isCommittee || index === 0;
         const disableDown = isCommittee || index === selected.length - 1 || (selected[index + 1] && selected[index + 1].kind === 'COMMITTEE');
@@ -1723,7 +1822,8 @@
     function filterChoices(){
       const query = normalizeHierarchySearch(userSearch && userSearch.value);
       let visibleCount = 0;
-      const scopeReady = Boolean(currentOrgNodeId);
+      const directDelivery = isDirectDelivery();
+      const scopeReady = directDelivery || Boolean(currentOrgNodeId);
       document.querySelectorAll('.dynamic-user-choice').forEach(function(card){
         const matchesSearch = !query || normalizeHierarchySearch(card.dataset.search).includes(query);
         let candidateNodeId = String(card.dataset.nodeId || '');
@@ -1740,13 +1840,17 @@
             ? String(candidateNode.parent_id)
             : '';
         }
-        const visible = scopeReady && matchesSearch && matchesScope;
+        const visible = directDelivery
+          ? matchesSearch
+          : scopeReady && matchesSearch && matchesScope;
         card.classList.toggle('d-none', !visible);
         if (visible) visibleCount += 1;
       });
       if (visibleScopeHint) {
         const currentNode = currentOrgNodeId ? orgNodesById.get(String(currentOrgNodeId)) : null;
-        visibleScopeHint.textContent = currentNode
+        visibleScopeHint.textContent = directDelivery
+          ? 'يمكنك توجيه الطلب مباشرة إلى أي موظف، بغض النظر عن موقعه في الهيكل التنظيمي.'
+          : currentNode
           ? 'الموظفون في جهة «' + hierarchyNodeName(currentNode) + '» والجهات التابعة لها.'
           : 'اختر جهة من الهيكل لعرض موظفيها وموظفي الفروع التابعة لها.';
       }
@@ -1754,6 +1858,10 @@
         searchEmpty.classList.toggle('d-none', visibleCount !== 0);
         searchEmpty.textContent = !scopeReady
           ? 'اختر جهة من الهيكل الإداري لعرض الموظفين.'
+          : directDelivery && query
+          ? 'لا توجد أسماء مطابقة للبحث.'
+          : directDelivery
+          ? 'لا يوجد موظفون متاحون للتوجيه المباشر.'
           : (query ? 'لا توجد أسماء مطابقة للبحث ضمن الجهة المختارة وفروعها.' : 'لا يوجد موظفون مرتبطون بهذه الجهة أو فروعها.');
       }
       if (selectVisibleButton) selectVisibleButton.disabled = visibleCount === 0;
@@ -1776,6 +1884,7 @@
       const payload = new FormData();
       payload.append('dynamic_target_refs', targetRefsField.value);
       if (managerUserIdsField) payload.append('dynamic_manager_user_ids', managerUserIdsField.value);
+      payload.append('dynamic_delivery_mode', selectedDeliveryMode());
       payload.append('dynamic_add_secretary_general', includeSecretaryGeneral() ? '1' : '0');
       if (dynamicSlaDays) payload.append('dynamic_sla_days', dynamicSlaDays.value);
       const csrfField = form.querySelector('[name="csrf_token"]');
@@ -1850,6 +1959,13 @@
       control.addEventListener('change', function(){
         syncHidden();
         schedulePreview();
+      });
+    });
+    deliveryModeChoices.forEach(function(control){
+      control.addEventListener('change', function(){
+        syncHidden();
+        syncDeliveryModeUI();
+        renderSelected();
       });
     });
     if (selectAllManagersButton) selectAllManagersButton.addEventListener('click', function(){
@@ -2004,6 +2120,7 @@
     setCommitteeEnabled(false);
     updateCommitteeSelection();
     updateHierarchySelection();
+    syncDeliveryModeUI();
     updateMode();
   })();
 </script>

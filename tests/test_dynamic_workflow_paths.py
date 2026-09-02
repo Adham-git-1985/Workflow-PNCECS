@@ -42,6 +42,7 @@ from workflow.routes import (
     request_pdf,
 )
 from workflow.dynamic_paths import (
+    DYNAMIC_DELIVERY_MODE_DIRECT,
     DYNAMIC_RETURN_REASON,
     FINAL_SECRETARY_GENERAL_REF,
     administration_anchor_id,
@@ -168,6 +169,45 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         )
         self.assertEqual(result["origin"]["user_id"], self.requester.id)
         self.assertTrue(all("عمودي" in step["reason"] for step in result["steps"]))
+
+    def test_general_secretary_can_send_directly_to_an_unassigned_employee(self):
+        self.requester.role = "GENERAL-SECRETARY"
+        unassigned_employee = self._user(
+            "unassigned@example.test",
+            "موظف غير مربوط بالهيكل",
+        )
+        db.session.commit()
+
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"USER:{unassigned_employee.id}"],
+            selected_manager_user_ids=[self.source_manager.id],
+            delivery_mode=DYNAMIC_DELIVERY_MODE_DIRECT,
+        )
+
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["delivery_mode"], DYNAMIC_DELIVERY_MODE_DIRECT)
+        self.assertEqual(result["selected_manager_user_ids"], [])
+        self.assertEqual(
+            [step["approver_user_id"] for step in result["steps"]],
+            [unassigned_employee.id],
+        )
+        self.assertIsNone(result["steps"][0]["approver_org_node_id"])
+        self.assertIn("توجيه مباشر", result["steps"][0]["reason"])
+        self.assertEqual(result["segments"][0]["intermediate_manager_count"], 0)
+
+    def test_direct_delivery_is_rejected_for_non_secretary_general(self):
+        result = build_dynamic_target_path(
+            self.requester,
+            [f"USER:{self.cross_target.id}"],
+            delivery_mode=DYNAMIC_DELIVERY_MODE_DIRECT,
+        )
+
+        self.assertIn(
+            "التوجيه المباشر دون التسلسل الإداري متاح لدور الأمين العام فقط.",
+            result["errors"],
+        )
+        self.assertEqual(result["delivery_mode"], "HIERARCHICAL")
 
     def test_non_managerial_peers_are_not_repeated_on_return(self):
         directorate_manager = self._user("directorate-manager@example.test", "مدير الإدارة")
