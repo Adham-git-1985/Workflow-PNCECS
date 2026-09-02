@@ -1,0 +1,75 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}سجل مغادرات الأمومة{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-heart-pulse"></i> سجل مغادرات الأمومة</h5>
+      <div class="text-muted small">كل طلب معتمد يمنح ساعة انصراف يومية ضمن الفترة المحددة فقط.</div>
+    </div>
+    <div class="d-flex gap-2">
+      {% if can_create %}<a class="btn btn-success" href="{{ url_for('portal.hr_maternity_departure_new') }}"><i class="bi bi-plus-lg"></i> مغادرة أمومة</a>{% endif %}
+      {% if can_approve %}<a class="btn btn-outline-warning" href="{{ url_for('portal.hr_maternity_departure_approval_queue') }}"><i class="bi bi-check2-square"></i> الاعتمادات</a>{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-5">
+      <label class="form-label" for="maternityLogUser">الموظفة</label>
+      <select class="form-select" id="maternityLogUser" name="user_id">
+        <option value="">بدون تحديد</option>
+        {% for employee in users %}
+        <option value="{{ employee.id }}" {% if user_id|int == employee.id %}selected{% endif %}>{{ employee.name or employee.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-4">
+      <label class="form-label" for="maternityLogStatus">حالة الاعتماد</label>
+      <select class="form-select" id="maternityLogStatus" name="status">
+        <option value="">بدون تحديد</option>
+        <option value="PENDING" {% if status == 'PENDING' %}selected{% endif %}>قيد الاعتماد</option>
+        <option value="APPROVED" {% if status == 'APPROVED' %}selected{% endif %}>معتمد</option>
+        <option value="REJECTED" {% if status == 'REJECTED' %}selected{% endif %}>مرفوض</option>
+      </select>
+    </div>
+    <div class="col-md-3"><button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button></div>
+  </form>
+</div>
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>#</th><th>الموظفة</th><th>من</th><th>إلى</th><th>السماح</th><th>الحالة</th><th>مقدّم الطلب</th><th>الملاحظات</th><th></th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td><div class="fw-semibold">{{ row.user.name if row.user else row.user_id }}</div><div class="small text-muted">{{ row.user.email if row.user else '' }}</div></td>
+          <td>{{ row.day }}</td>
+          <td>{{ row.day_to or row.day }}</td>
+          <td>ساعة يومياً</td>
+          <td>
+            {% if row.approval_status == 'PENDING' %}<span class="badge text-bg-warning">قيد الاعتماد</span>
+            {% elif row.approval_status == 'APPROVED' %}<span class="badge text-bg-success">معتمد</span>
+            {% else %}<span class="badge text-bg-danger">مرفوض</span>{% endif %}
+            {% if row.approved_by %}<div class="small text-muted mt-1">{{ row.approved_by.name or row.approved_by.email }}</div>{% endif %}
+          </td>
+          <td>{{ row.created_by.name if row.created_by else row.created_by_id or '—' }}</td>
+          <td class="small">{{ row.note or '—' }}{% if row.approval_note %}<div class="text-muted mt-1">{{ row.approval_note }}</div>{% endif %}</td>
+          <td class="text-end">
+            {% if row.approval_status == 'PENDING' and can_create %}
+            <form method="post" action="{{ url_for('portal.hr_maternity_departure_cancel', row_id=row.id) }}" class="d-inline" onsubmit="return confirm('سحب طلب مغادرة الأمومة؟');">
+              <button class="btn btn-sm btn-outline-danger" type="submit"><i class="bi bi-trash"></i> سحب</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not rows %}<tr><td colspan="9" class="text-center text-muted py-4">لا توجد طلبات مغادرة أمومة.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,38 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}اعتماد مغادرات الأمومة{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-check2-square"></i> اعتماد مغادرات الأمومة</h5>
+      <div class="text-muted small">يصبح إعفاء ساعة الانصراف اليومية فعالاً بعد الاعتماد فقط.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_maternity_departure_log') }}"><i class="bi bi-list-check"></i> السجل</a>
+  </div>
+  <hr class="my-4">
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr><th>#</th><th>الموظفة</th><th>الفترة</th><th>السماح</th><th>مقدّم الطلب</th><th>الملاحظات</th><th>القرار</th></tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.id }}</td>
+          <td><div class="fw-semibold">{{ row.user.name if row.user else row.user_id }}</div><div class="small text-muted">{{ row.user.email if row.user else '' }}</div></td>
+          <td>{{ row.day }} <span class="text-muted">إلى</span> {{ row.day_to or row.day }}</td>
+          <td>ساعة انصراف يومياً</td>
+          <td>{{ row.created_by.name if row.created_by else row.created_by_id or '—' }}</td>
+          <td class="small">{{ row.note or '—' }}</td>
+          <td style="min-width: 260px;">
+            <form method="post" action="{{ url_for('portal.hr_maternity_departure_review', row_id=row.id) }}" class="d-flex flex-column gap-2">
+              <input class="form-control form-control-sm" type="text" name="approval_note" maxlength="1000" placeholder="ملاحظة الاعتماد أو سبب الرفض">
+              <div class="d-flex gap-1"><button class="btn btn-sm btn-success" name="action" value="approve" type="submit"><i class="bi bi-check-lg"></i> اعتماد</button><button class="btn btn-sm btn-outline-danger" name="action" value="reject" type="submit"><i class="bi bi-x-lg"></i> رفض</button></div>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not rows %}<tr><td colspan="7" class="text-center text-muted py-4">لا توجد طلبات بانتظار الاعتماد.</td></tr>{% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

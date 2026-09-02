@@ -7310,6 +7310,8 @@ def hr_attendance_home():
     return render_template(
         "portal/hr/attendance_home.html",
         can_view_reports=current_user.has_perm(HR_REPORTS_VIEW),
+        can_create_maternity_departure=_hr_can_edit_attendance(),
+        can_approve_maternity_departure=_hr_can_approve_attendance_edit(),
     )
 
 
@@ -10380,6 +10382,14 @@ def _manual_attendance_approval_status(row: HRAttendanceSpecialCase | None) -> s
     return 'APPROVED' if bool(getattr(row, 'applied', False)) else 'PENDING'
 
 
+def _maternity_departure_approval_status(row: HRAttendanceSpecialCase | None) -> str:
+    """Return the review status of a maternity departure request."""
+    value = (getattr(row, 'approval_status', None) or '').strip().upper()
+    if value in {'PENDING', 'APPROVED', 'REJECTED'}:
+        return value
+    return 'APPROVED' if bool(getattr(row, 'applied', False)) else 'PENDING'
+
+
 def _attendance_summary_keys_for_period(user_id: int, day: str, day_to: str | None) -> set[tuple[int, str]]:
     """Build daily-summary keys affected by a manual attendance correction."""
     start_day = _parse_yyyy_mm_dd(day)
@@ -10392,6 +10402,42 @@ def _attendance_summary_keys_for_period(user_id: int, day: str, day_to: str | No
     while current_day <= end_day:
         keys.add((int(user_id), current_day.isoformat()))
         current_day += timedelta(days=1)
+    return keys
+
+
+def _attendance_existing_keys_for_period(user_id: int, day: str, day_to: str | None) -> set[tuple[int, str]]:
+    """Return existing attendance days in a period without creating absences."""
+    start_day = _parse_yyyy_mm_dd(day)
+    end_day = _parse_yyyy_mm_dd(day_to or day)
+    if not start_day or not end_day or end_day < start_day:
+        return set()
+
+    user_id = int(user_id)
+    keys = {
+        (user_id, row.day)
+        for row in (
+            AttendanceDailySummary.query
+            .filter(AttendanceDailySummary.user_id == user_id)
+            .filter(AttendanceDailySummary.day >= start_day.isoformat())
+            .filter(AttendanceDailySummary.day <= end_day.isoformat())
+            .with_entities(AttendanceDailySummary.day)
+            .all()
+        )
+        if row.day
+    }
+    events = (
+        AttendanceEvent.query
+        .filter(AttendanceEvent.user_id == user_id)
+        .filter(AttendanceEvent.event_dt >= datetime.combine(start_day, datetime.min.time()))
+        .filter(AttendanceEvent.event_dt < datetime.combine(end_day + timedelta(days=1), datetime.min.time()))
+        .with_entities(AttendanceEvent.event_dt)
+        .all()
+    )
+    keys.update(
+        (user_id, event.event_dt.date().isoformat())
+        for event in events
+        if event.event_dt
+    )
     return keys
 
 
@@ -10839,6 +10885,232 @@ def hr_attendance_manual_review(row_id: int):
     db.session.commit()
     flash(result_message, 'success' if action == 'approve' else 'warning')
     return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
+
+
+def _maternity_departure_end_day(start_day: date) -> date:
+    """Calculate the inclusive final day of the one-year maternity allowance."""
+    return _add_years_safe(start_day, 1) - timedelta(days=1)
+
+
+def _maternity_departure_overlaps(user_id: int, start_day: date, end_day: date) -> bool:
+    """Prevent two active or pending annual maternity allowances from overlapping."""
+    return (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
+        .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
+        .filter(HRAttendanceSpecialCase.approval_status.in_(('PENDING', 'APPROVED')))
+        .filter(HRAttendanceSpecialCase.day <= end_day.isoformat())
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= start_day.isoformat(),
+        ))
+        .first()
+        is not None
+    )
+
+
+@portal_bp.route('/hr/attendance/maternity-departures', methods=['GET'])
+@login_required
+@_perm_any(HR_ATT_EDIT, HR_ATT_EDIT_APPROVE)
+def hr_maternity_departure_log():
+    """List annual maternity departures and their approval state."""
+    user_id = (request.args.get('user_id') or '').strip()
+    status = (request.args.get('status') or '').strip().upper()
+    q = HRAttendanceSpecialCase.query.filter(
+        HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE'
+    )
+    if user_id.isdigit():
+        q = q.filter(HRAttendanceSpecialCase.user_id == int(user_id))
+    if status in {'PENDING', 'APPROVED', 'REJECTED'}:
+        q = q.filter(HRAttendanceSpecialCase.approval_status == status)
+
+    return render_template(
+        'portal/hr/maternity_departure_log.html',
+        rows=q.order_by(HRAttendanceSpecialCase.created_at.desc(), HRAttendanceSpecialCase.id.desc()).limit(500).all(),
+        users=_list_hr_users(),
+        user_id=user_id,
+        status=status,
+        can_create=_hr_can_edit_attendance(),
+        can_approve=_hr_can_approve_attendance_edit(),
+    )
+
+
+@portal_bp.route('/hr/attendance/maternity-departures/new', methods=['GET', 'POST'])
+@login_required
+@_perm(HR_ATT_EDIT)
+def hr_maternity_departure_new():
+    """Submit an annual one-hour daily maternity departure for approval."""
+    if not _hr_can_edit_attendance():
+        abort(403)
+
+    if request.method == 'POST':
+        user_id = (request.form.get('user_id') or '').strip()
+        start_day = _parse_yyyy_mm_dd(request.form.get('start_day') or '')
+        note = (request.form.get('note') or '').strip()
+
+        if not user_id.isdigit() or not User.query.get(int(user_id)):
+            flash('اختر موظفة بشكل صحيح.', 'danger')
+            return redirect(url_for('portal.hr_maternity_departure_new'))
+        if not start_day:
+            flash('أدخل تاريخ بدء المغادرة.', 'danger')
+            return redirect(url_for('portal.hr_maternity_departure_new', user_id=user_id))
+
+        employee_id = int(user_id)
+        end_day = _maternity_departure_end_day(start_day)
+        if _maternity_departure_overlaps(employee_id, start_day, end_day):
+            flash('يوجد طلب مغادرة أمومة قائم أو بانتظار الاعتماد ضمن هذه الفترة.', 'warning')
+            return redirect(url_for('portal.hr_maternity_departure_log', user_id=employee_id))
+
+        row = HRAttendanceSpecialCase(
+            user_id=employee_id,
+            target_kind='USER',
+            day=start_day.isoformat(),
+            day_to=end_day.isoformat(),
+            kind='MATERNITY_DEPARTURE',
+            allow_evening_minutes=60,
+            note=note or None,
+            applied=False,
+            approval_status='PENDING',
+            created_by_id=int(current_user.id),
+        )
+        db.session.add(row)
+        db.session.flush()
+
+        approval_url = url_for('portal.hr_maternity_departure_approval_queue')
+        for approver_id in _attendance_edit_approver_user_ids():
+            if approver_id == int(current_user.id):
+                continue
+            db.session.add(Notification(
+                user_id=approver_id,
+                message=f'طلب مغادرة أمومة جديد #{row.id} بانتظار الاعتماد.',
+                type='PORTAL',
+                source='portal',
+                is_read=False,
+                link_url=approval_url,
+                created_at=datetime.utcnow(),
+            ))
+        _portal_audit(
+            'HR_MATERNITY_DEPARTURE_SUBMIT',
+            f'maternity departure submitted user_id={employee_id} days={row.day}..{row.day_to}',
+            target_type='HR_MATERNITY_DEPARTURE',
+            target_id=row.id,
+        )
+        db.session.commit()
+
+        flash('تم تقديم مغادرة الأمومة للاعتماد. ستمنح ساعة انصراف يومية لمدة سنة بعد الاعتماد.', 'success')
+        return redirect(url_for('portal.hr_maternity_departure_log', user_id=employee_id))
+
+    return render_template(
+        'portal/hr/maternity_departure_new.html',
+        users=_list_hr_users(),
+        today=date.today().isoformat(),
+        selected_user_id=(request.args.get('user_id') or '').strip(),
+    )
+
+
+@portal_bp.route('/hr/attendance/maternity-departures/approvals', methods=['GET'])
+@login_required
+@_perm(HR_ATT_EDIT_APPROVE)
+def hr_maternity_departure_approval_queue():
+    """Review queue for annual maternity departure requests."""
+    rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
+        .filter(HRAttendanceSpecialCase.approval_status == 'PENDING')
+        .order_by(HRAttendanceSpecialCase.created_at.asc(), HRAttendanceSpecialCase.id.asc())
+        .all()
+    )
+    return render_template('portal/hr/maternity_departure_approval_queue.html', rows=rows)
+
+
+@portal_bp.route('/hr/attendance/maternity-departures/<int:row_id>/review', methods=['POST'])
+@login_required
+@_perm(HR_ATT_EDIT_APPROVE)
+def hr_maternity_departure_review(row_id: int):
+    """Approve or reject an annual maternity departure request."""
+    row = HRAttendanceSpecialCase.query.get_or_404(row_id)
+    if row.kind != 'MATERNITY_DEPARTURE':
+        abort(404)
+    if _maternity_departure_approval_status(row) != 'PENDING':
+        flash('تم البت في هذا الطلب مسبقاً.', 'warning')
+        return redirect(url_for('portal.hr_maternity_departure_approval_queue'))
+
+    action = (request.form.get('action') or '').strip().lower()
+    approval_note = (request.form.get('approval_note') or '').strip()
+    if action not in {'approve', 'reject'}:
+        abort(400)
+    if action == 'reject' and not approval_note:
+        flash('أدخل سبب الرفض.', 'danger')
+        return redirect(url_for('portal.hr_maternity_departure_approval_queue'))
+
+    row.approved_by_id = int(current_user.id)
+    row.approved_at = datetime.utcnow()
+    row.approval_note = approval_note or None
+    if action == 'approve':
+        row.approval_status = 'APPROVED'
+        row.applied = True
+        db.session.flush()
+        affected_keys = _attendance_existing_keys_for_period(row.user_id, row.day, row.day_to)
+        _attendance_recompute_summaries_for_keys(affected_keys)
+        _portal_audit(
+            'HR_MATERNITY_DEPARTURE_APPROVE',
+            f'maternity departure approved row_id={row.id} user_id={row.user_id} days={row.day}..{row.day_to}',
+            target_type='HR_MATERNITY_DEPARTURE',
+            target_id=row.id,
+        )
+        result_message = 'تم اعتماد مغادرة الأمومة وإعادة احتساب أيام الدوام المسجلة ضمن الفترة.'
+        notification_message = f'تم اعتماد طلب مغادرة الأمومة #{row.id}.'
+        notification_type = 'SUCCESS'
+    else:
+        row.approval_status = 'REJECTED'
+        row.applied = False
+        _portal_audit(
+            'HR_MATERNITY_DEPARTURE_REJECT',
+            f'maternity departure rejected row_id={row.id} user_id={row.user_id}; note={approval_note}',
+            target_type='HR_MATERNITY_DEPARTURE',
+            target_id=row.id,
+        )
+        result_message = 'تم رفض مغادرة الأمومة.'
+        notification_message = f'تم رفض طلب مغادرة الأمومة #{row.id}. السبب: {approval_note}'
+        notification_type = 'WARNING'
+
+    if row.created_by_id and int(row.created_by_id) != int(current_user.id):
+        db.session.add(Notification(
+            user_id=int(row.created_by_id),
+            message=notification_message,
+            type=notification_type,
+            source='portal',
+            is_read=False,
+            link_url=url_for('portal.hr_maternity_departure_log', user_id=row.user_id),
+            created_at=datetime.utcnow(),
+        ))
+    db.session.commit()
+    flash(result_message, 'success' if action == 'approve' else 'warning')
+    return redirect(url_for('portal.hr_maternity_departure_approval_queue'))
+
+
+@portal_bp.route('/hr/attendance/maternity-departures/<int:row_id>/cancel', methods=['POST'])
+@login_required
+@_perm(HR_ATT_EDIT)
+def hr_maternity_departure_cancel(row_id: int):
+    """Withdraw a maternity departure before it has been reviewed."""
+    row = HRAttendanceSpecialCase.query.get_or_404(row_id)
+    if row.kind != 'MATERNITY_DEPARTURE':
+        abort(404)
+    if _maternity_departure_approval_status(row) != 'PENDING':
+        flash('لا يمكن سحب طلب تم البت فيه.', 'warning')
+        return redirect(url_for('portal.hr_maternity_departure_log', user_id=row.user_id))
+
+    db.session.delete(row)
+    _portal_audit(
+        'HR_MATERNITY_DEPARTURE_CANCEL',
+        f'maternity departure cancelled row_id={row_id}',
+        target_type='HR_MATERNITY_DEPARTURE',
+        target_id=row_id,
+    )
+    db.session.commit()
+    flash('تم سحب طلب مغادرة الأمومة.', 'success')
+    return redirect(url_for('portal.hr_maternity_departure_log'))
 
 
 @portal_bp.route('/hr/attendance/special/status/new', methods=['GET', 'POST'])
@@ -22522,6 +22794,24 @@ def _manual_attendance_override(user_id: int | None, day_str: str):
     )
 
 
+def _maternity_departure_allowance_minutes(user_id: int | None, day_str: str) -> int:
+    """Return the approved one-hour daily maternity departure allowance."""
+    if not user_id or not _parse_yyyy_mm_dd(day_str):
+        return 0
+    row = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
+        .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.approval_status == 'APPROVED')
+        .filter(HRAttendanceSpecialCase.day <= day_str)
+        .filter(or_(HRAttendanceSpecialCase.day_to.is_(None), HRAttendanceSpecialCase.day_to >= day_str))
+        .order_by(HRAttendanceSpecialCase.approved_at.desc(), HRAttendanceSpecialCase.id.desc())
+        .first()
+    )
+    return 60 if row else 0
+
+
 def _summary_compute_one(user_id: int, day_str: str):
     # Collect day events
     dt_from = datetime.fromisoformat(day_str + 'T00:00:00')
@@ -22615,6 +22905,12 @@ def _summary_compute_one(user_id: int, day_str: str):
             thr = schedule.overtime_threshold_minutes
             thr = int(thr) if (thr is not None) else 0
             overtime_minutes = max(0, actual_out - en_min - thr)
+
+    if not exemption_reason and early_leave_minutes:
+        early_leave_minutes = max(
+            0,
+            early_leave_minutes - _maternity_departure_allowance_minutes(user_id, day_str),
+        )
 
     if not exemption_reason and schedule and schedule.kind in ('FLEX', 'REMOTE'):
         # Late/Early undefined; overtime is minutes above required_minutes (if set)

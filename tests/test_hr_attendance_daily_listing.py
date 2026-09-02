@@ -1,6 +1,7 @@
 import unittest
 from datetime import datetime
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from flask import Flask
 from flask_login import LoginManager, login_user, logout_user
@@ -23,9 +24,12 @@ from portal.routes import (
     _attendance_event_date_range,
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
+    _summary_compute_one,
     _sort_and_number_attendance_daily_rows,
     hr_attendance_manual_edit,
     hr_attendance_manual_review,
+    hr_maternity_departure_new,
+    hr_maternity_departure_review,
 )
 
 
@@ -203,6 +207,74 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(correction.approved_by_id, approver.id)
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
+
+    def test_maternity_departure_grants_daily_hour_only_after_approval(self):
+        employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
+        editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")
+        approver = User(email="approver@example.test", name="Approver", password_hash="x", role="HR")
+        db.session.add_all((employee, editor, approver))
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(user_id=editor.id, key="HR_ATTENDANCE_EDIT", is_allowed=True),
+            UserPermission(user_id=approver.id, key="HR_ATTENDANCE_EDIT_APPROVE", is_allowed=True),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 1, 8, 0), event_type="IN"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 1, 14, 0), event_type="OUT"),
+        ))
+        db.session.commit()
+
+        schedule = SimpleNamespace(
+            id=None,
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+            break_minutes=0,
+            grace_minutes=0,
+            start_grace_minutes=None,
+            end_grace_minutes=None,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-01")["early_leave_minutes"], 60)
+
+            with self.app.test_request_context(
+                "/portal/hr/attendance/maternity-departures/new",
+                method="POST",
+                data={
+                    "user_id": str(employee.id),
+                    "start_day": "2026-09-01",
+                    "note": "عودة من إجازة أمومة",
+                },
+            ):
+                login_user(editor)
+                response = hr_maternity_departure_new()
+                self.assertEqual(response.status_code, 302)
+                logout_user()
+
+            maternity_departure = HRAttendanceSpecialCase.query.filter_by(
+                kind="MATERNITY_DEPARTURE"
+            ).one()
+            self.assertEqual(maternity_departure.day, "2026-09-01")
+            self.assertEqual(maternity_departure.day_to, "2027-08-31")
+            self.assertEqual(maternity_departure.approval_status, "PENDING")
+            self.assertFalse(maternity_departure.applied)
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-01")["early_leave_minutes"], 60)
+
+            with self.app.test_request_context(
+                f"/portal/hr/attendance/maternity-departures/{maternity_departure.id}/review",
+                method="POST",
+                data={"action": "approve", "approval_note": "تمت المراجعة"},
+            ):
+                login_user(approver)
+                response = hr_maternity_departure_review(maternity_departure.id)
+                self.assertEqual(response.status_code, 302)
+                logout_user()
+
+        maternity_departure = db.session.get(HRAttendanceSpecialCase, maternity_departure.id)
+        summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-01").one()
+        self.assertEqual(maternity_departure.approval_status, "APPROVED")
+        self.assertTrue(maternity_departure.applied)
+        self.assertEqual(summary.early_leave_minutes, 0)
+        self.assertEqual(AttendanceDailySummary.query.count(), 1)
 
 
 class AttendanceAbsenceCandidatesTests(unittest.TestCase):
