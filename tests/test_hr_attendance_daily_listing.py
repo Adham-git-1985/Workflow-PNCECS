@@ -233,13 +233,20 @@ class AttendanceAbsenceCandidatesTests(unittest.TestCase):
         absent = User(email="absent@example.test", name="Absent", password_hash="x", role="USER")
         punched = User(email="punched@example.test", name="Punched", password_hash="x", role="USER")
         on_leave = User(email="leave@example.test", name="Leave", password_hash="x", role="USER")
+        secretary_general = User(
+            email="secretary@example.test",
+            name="Secretary General",
+            password_hash="x",
+            role="GENERAL-SECRETARY",
+        )
         unmapped = User(email="unmapped@example.test", name="Unmapped", password_hash="x", role="USER")
-        db.session.add_all((absent, punched, on_leave, unmapped))
+        db.session.add_all((absent, punched, on_leave, secretary_general, unmapped))
         db.session.flush()
         db.session.add_all((
             EmployeeFile(user_id=absent.id, timeclock_code="1001"),
             EmployeeFile(user_id=punched.id, timeclock_code="1002"),
             EmployeeFile(user_id=on_leave.id, timeclock_code="1003"),
+            EmployeeFile(user_id=secretary_general.id, timeclock_code="1004"),
             EmployeeFile(user_id=unmapped.id),
         ))
         leave_type = HRLeaveType(code="ANNUAL", name_ar="Annual", is_active=True)

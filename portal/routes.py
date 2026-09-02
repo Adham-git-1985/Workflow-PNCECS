@@ -22720,6 +22720,21 @@ def _attendance_event_date_range(
     return date_from, date_to
 
 
+def _is_general_secretary(user: User | None) -> bool:
+    """Return whether a user is the General Secretary, who does not use the timeclock."""
+    role = unicodedata.normalize("NFKC", str(getattr(user, "role", "") or ""))
+    role = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]", "", role)
+    normalized_role = re.sub(r"[\s_-]+", "", role).casefold()
+    normalized_role = normalized_role.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    return normalized_role in {
+        "generalsecretary",
+        "secretarygeneral",
+        "الامينالعام",
+        "امينعام",
+        "امينعامالمجلس",
+    }
+
+
 def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], str | None]:
     """Return timeclock employees without an attendance or leave record for one day."""
     selected_day = _parse_yyyy_mm_dd(day_str)
@@ -22793,13 +22808,11 @@ def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], st
     if excluded_user_ids:
         query = query.filter(~EmployeeFile.user_id.in_(excluded_user_ids))
 
-    return (
-        query.order_by(
-            func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc(),
-            EmployeeFile.user_id.asc(),
-        ).all(),
-        None,
-    )
+    rows = query.order_by(
+        func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc(),
+        EmployeeFile.user_id.asc(),
+    ).all()
+    return [row for row in rows if not _is_general_secretary(row.user)], None
 
 
 @portal_bp.route('/hr/attendance/absence')
