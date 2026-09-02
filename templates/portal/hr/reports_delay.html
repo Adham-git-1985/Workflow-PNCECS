@@ -89,6 +89,7 @@
         <tr>
           <th>التاريخ</th>
           <th>الموظف</th>
+          <th>وقت الدخول</th>
           <th>تأخير صباحي (دقيقة)</th>
           <th>خروج مبكر (دقيقة)</th>
           <th>المدة (ساعات)</th>
@@ -99,6 +100,7 @@
           <tr>
             <td>{{ r.date or '—' }}</td>
             <td>{{ (r.user.full_name or r.user.name or r.user.email) if r.user else '—' }}</td>
+            <td>{{ r.check_in_time or '—' }}</td>
             <td>{{ r.late_minutes }}</td>
             <td>{{ r.early_minutes }}</td>
             <td>{{ ('%.2f' % r.hours) if r.hours is not none else '—' }}</td>

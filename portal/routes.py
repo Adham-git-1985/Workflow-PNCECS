@@ -7816,6 +7816,7 @@ def hr_report_delay():
             rows_view.append({
                 'date': a.day,
                 'user': u,
+                'check_in_time': a.first_in.strftime('%H:%M') if a.first_in else '',
                 'late_minutes': late,
                 'early_minutes': early,
                 'hours': hours,
@@ -7831,13 +7832,14 @@ def hr_report_delay():
     if (request.args.get('export') or '').lower() == 'xlsx':
         if not current_user.has_perm(HR_REPORTS_EXPORT):
             abort(403)
-        headers = ['التاريخ', 'الموظف', 'تأخير صباحي (دقيقة)', 'خروج مبكر (دقيقة)', 'المدة (ساعات)']
+        headers = ['التاريخ', 'الموظف', 'وقت الدخول', 'تأخير صباحي (دقيقة)', 'خروج مبكر (دقيقة)', 'المدة (ساعات)']
         xrows = []
         for r in rows_view:
             u = r.get('user')
             xrows.append([
                 r.get('date') or '',
                 (u.full_name or u.name or u.email) if u else '',
+                r.get('check_in_time') or '',
                 r.get('late_minutes') or 0,
                 r.get('early_minutes') or 0,
                 round(float(r.get('hours') or 0), 2),
