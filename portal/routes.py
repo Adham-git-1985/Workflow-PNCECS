@@ -23001,6 +23001,14 @@ def _attendance_count_day(day_from: str, day_to: str, today: str) -> str:
     return day_from if day_from == day_to else today
 
 
+def _attendance_daily_without_absences(query):
+    """Keep explicit absence records on the dedicated absence page only."""
+    return query.filter(or_(
+        AttendanceDailySummary.status.is_(None),
+        func.upper(AttendanceDailySummary.status) != 'ABSENT',
+    ))
+
+
 def _attendance_event_date_range(
     date_from: str,
     date_to: str,
@@ -23154,7 +23162,7 @@ def hr_attendance_daily():
     if not day_to:
         day_to = today
 
-    qry = AttendanceDailySummary.query
+    qry = _attendance_daily_without_absences(AttendanceDailySummary.query)
 
     if day_from:
         qry = qry.filter(AttendanceDailySummary.day >= day_from)
@@ -23246,7 +23254,7 @@ def hr_attendance_daily_export_xlsx():
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
 
-    qry = AttendanceDailySummary.query
+    qry = _attendance_daily_without_absences(AttendanceDailySummary.query)
     if day_from:
         qry = qry.filter(AttendanceDailySummary.day >= day_from)
     if day_to:

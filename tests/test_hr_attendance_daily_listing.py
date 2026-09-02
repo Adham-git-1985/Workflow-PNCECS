@@ -20,6 +20,7 @@ from models import (
 from portal import portal_bp
 from portal.routes import (
     _attendance_count_day,
+    _attendance_daily_without_absences,
     _attendance_absence_candidates,
     _attendance_event_date_range,
     _hr_can_approve_attendance_edit,
@@ -342,6 +343,31 @@ class AttendanceAbsenceCandidatesTests(unittest.TestCase):
 
         self.assertIsNone(excluded_reason)
         self.assertEqual([row.user_id for row in rows], [absent.id])
+
+    def test_daily_attendance_query_excludes_explicit_absence_rows(self):
+        present = User(email="present@example.test", name="Present", password_hash="x", role="USER")
+        absent = User(email="absent@example.test", name="Absent", password_hash="x", role="USER")
+        db.session.add_all((present, absent))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceDailySummary(
+                user_id=present.id,
+                day="2026-09-02",
+                status="OK",
+            ),
+            AttendanceDailySummary(
+                user_id=absent.id,
+                day="2026-09-02",
+                status="ABSENT",
+            ),
+        ))
+        db.session.commit()
+
+        rows = _attendance_daily_without_absences(
+            AttendanceDailySummary.query
+        ).all()
+
+        self.assertEqual([row.user_id for row in rows], [present.id])
 
 
 if __name__ == "__main__":
