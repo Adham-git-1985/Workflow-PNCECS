@@ -16,12 +16,13 @@
               <th>الحالة</th>
               <th>مقدم الطلب</th>
               <th>تاريخ الإنشاء</th>
+              <th class="text-center">المرفقات</th>
               <th class="text-center">فتح</th>
             </tr>
           </thead>
           <tbody>
           {% for r in workflow_results %}
-            <tr>
+            <tr{% if selected_workflow and selected_workflow.id == r.id %} class="table-primary"{% endif %}>
               <td class="text-muted">#{{ r.id }}</td>
               <td>
                 <div class="fw-semibold">{{ r.title or 'بدون عنوان' }}</div>
@@ -32,6 +33,12 @@
               <td><span class="badge bg-light text-dark border">{{ r.status|ui_label }}</span></td>
               <td>{{ r.requester.full_name if r.requester else '-' }}</td>
               <td>{{ r.created_at.strftime('%Y-%m-%d') if r.created_at else '-' }}</td>
+              <td class="text-center">
+                <a class="btn btn-sm btn-outline-secondary"
+                   href="?{{ workflow_result_query }}{% if workflow_result_query %}&amp;{% endif %}workflow_request_id={{ r.id }}">
+                  📎 عرض المرفقات
+                </a>
+              </td>
               <td class="text-center">
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=r.id) }}">فتح</a>
               </td>

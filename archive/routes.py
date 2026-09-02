@@ -15,7 +15,7 @@ from flask import (
 )
 from flask_login import login_required, current_user
 from sqlalchemy import or_, func
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from extensions import db
 from permissions import roles_required
@@ -492,6 +492,7 @@ def _parse_date_arg(value: str | None):
 
 def _archive_filters_from_request() -> dict:
     owner_id = request.args.get("owner_id", type=int)
+    workflow_request_id = request.args.get("workflow_request_id", type=int)
     return {
         "q": (request.args.get("q") or "").strip(),
         "file_type": (request.args.get("file_type") or "").strip().upper(),
@@ -502,13 +503,15 @@ def _archive_filters_from_request() -> dict:
         "date_to": (request.args.get("date_to") or "").strip(),
         "workflow_q": (request.args.get("workflow_q") or "").strip(),
         "workflow_status": (request.args.get("workflow_status") or "").strip().upper(),
+        "workflow_request_id": workflow_request_id if workflow_request_id else None,
     }
 
 
-def _page_query(filters: dict) -> str:
+def _page_query(filters: dict, *, exclude: set[str] | None = None) -> str:
+    exclude = exclude or set()
     pairs = []
     for key, value in (filters or {}).items():
-        if value is None or value == "":
+        if key in exclude or value is None or value == "":
             continue
         pairs.append((key, value))
     return urlencode(pairs)
@@ -629,17 +632,25 @@ def _search_workflows_from_archive(filters: dict) -> list[WorkflowRequest]:
     if not term and not status:
         return []
 
-    query = WorkflowRequest.query.options(joinedload(WorkflowRequest.requester))
+    query = WorkflowRequest.query.options(
+        joinedload(WorkflowRequest.requester),
+        selectinload(WorkflowRequest.attachments).joinedload(RequestAttachment.archived_file),
+    )
 
     if term:
         clauses = [
             WorkflowRequest.title.ilike(f"%{term}%"),
             WorkflowRequest.description.ilike(f"%{term}%"),
-            WorkflowRequest.status.ilike(f"%{term}%"),
+            ArchivedFile.original_name.ilike(f"%{term}%"),
+            ArchivedFile.description.ilike(f"%{term}%"),
         ]
-        if term.isdigit():
-            clauses.append(WorkflowRequest.id == int(term))
-        query = query.filter(or_(*clauses))
+        query = (
+            query
+            .outerjoin(RequestAttachment, RequestAttachment.request_id == WorkflowRequest.id)
+            .outerjoin(ArchivedFile, ArchivedFile.id == RequestAttachment.archived_file_id)
+            .filter(or_(*clauses))
+            .distinct()
+        )
 
     if status:
         query = query.filter(WorkflowRequest.status == status)
@@ -656,9 +667,21 @@ def _search_workflows_from_archive(filters: dict) -> list[WorkflowRequest]:
 def _filter_files_to_workflow_results(query, filters: dict, workflow_results: list[WorkflowRequest]):
     if not (filters.get("workflow_q") or filters.get("workflow_status")):
         return query
+
     request_ids = [row.id for row in workflow_results]
     if not request_ids:
         return query.filter(ArchivedFile.id == -1)
+
+    selected_request_id = filters.get("workflow_request_id")
+    if selected_request_id:
+        if selected_request_id not in request_ids:
+            return query.filter(ArchivedFile.id == -1)
+        request_ids = [selected_request_id]
+    elif len(request_ids) > 1:
+        # Do not mix attachments from several workflow results. The user must
+        # choose one result first, so each list always belongs to one request.
+        return query.filter(ArchivedFile.id == -1)
+
     return (
         query.join(RequestAttachment, RequestAttachment.archived_file_id == ArchivedFile.id)
         .filter(RequestAttachment.request_id.in_(request_ids))
@@ -741,6 +764,13 @@ def archive_files():
     page = request.args.get("page", 1, type=int)
 
     workflow_results = _search_workflows_from_archive(filters)
+    selected_workflow = next(
+        (row for row in workflow_results if row.id == filters.get("workflow_request_id")),
+        None,
+    )
+    workflow_selection_required = bool(
+        len(workflow_results) > 1 and not selected_workflow
+    )
     query = archive_access_query(current_user)
     query = _apply_archive_filters(query, filters)
     query = _filter_files_to_workflow_results(query, filters, workflow_results)
@@ -761,6 +791,9 @@ def archive_files():
         counters=counters,
         filters=filters,
         page_query=_page_query(filters),
+        workflow_result_query=_page_query(filters, exclude={"workflow_request_id"}),
+        selected_workflow=selected_workflow,
+        workflow_selection_required=workflow_selection_required,
         owners=User.query.order_by(User.email.asc()).all(),
         file_type_options=FILE_TYPE_OPTIONS,
         visibility_options=VISIBILITY_OPTIONS,
@@ -1135,6 +1168,13 @@ def my_files():
     per_page = 15
 
     workflow_results = _search_workflows_from_archive(filters)
+    selected_workflow = next(
+        (row for row in workflow_results if row.id == filters.get("workflow_request_id")),
+        None,
+    )
+    workflow_selection_required = bool(
+        len(workflow_results) > 1 and not selected_workflow
+    )
     query = archive_access_query(current_user)
     query = _apply_archive_filters(query, filters)
     query = _filter_files_to_workflow_results(query, filters, workflow_results)
@@ -1168,6 +1208,9 @@ def my_files():
         shared_by_map=shared_by_map,
         filters=filters,
         page_query=_page_query(filters),
+        workflow_result_query=_page_query(filters, exclude={"workflow_request_id"}),
+        selected_workflow=selected_workflow,
+        workflow_selection_required=workflow_selection_required,
         owners=User.query.order_by(User.email.asc()).all(),
         file_type_options=FILE_TYPE_OPTIONS,
         visibility_options=VISIBILITY_OPTIONS,

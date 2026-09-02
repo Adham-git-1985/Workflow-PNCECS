@@ -44,7 +44,13 @@
     {% include "archive/_advanced_filters.html" %}
     {% include "archive/_workflow_results.html" %}
 
-    {% if files %}
+    {% if workflow_selection_required %}
+    <div class="archive-card">
+      <div class="card-body text-center text-muted p-5">
+        اختر مساراً من نتائج المسارات أعلاه لعرض مرفقاته فقط.
+      </div>
+    </div>
+    {% elif files %}
     <!-- GRID -->
     <div class="grid-files">
 

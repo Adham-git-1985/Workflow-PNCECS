@@ -57,7 +57,11 @@
 <div class="card shadow-sm">
     <div class="card-body p-0">
 
-        {% if files %}
+        {% if workflow_selection_required %}
+        <div class="text-center text-muted p-5">
+            اختر مساراً من نتائج المسارات أعلاه لعرض مرفقاته فقط.
+        </div>
+        {% elif files %}
         <div class="table-responsive">
             <table class="table table-hover align-middle mb-0">
                 <thead class="table-light">
