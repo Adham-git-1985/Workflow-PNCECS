@@ -6,6 +6,8 @@ from utils.ui_labels import ui_label, ui_text, workflow_status_label
 class UiLabelsArabicTests(unittest.TestCase):
     def test_workflow_approved_uses_follow_up_wording_only_in_workflows(self):
         self.assertEqual(workflow_status_label("APPROVED"), "تم الاطلاع والمتابعة")
+        self.assertEqual(workflow_status_label("REJECTED"), "تم توقيف المسار")
+        self.assertEqual(ui_label("STEP_REJECTED"), "توقيف المسار")
         self.assertEqual(ui_label("APPROVED"), "موافق عليه")
 
     def test_requested_audit_and_category_codes_are_arabic(self):

@@ -3390,7 +3390,7 @@ def _workflow_user_summary(req, step):
     elif action in {"APPROVE", "WORKFLOW_APPROVE", "STEP_APPROVED"}:
         last_action = f"تمت المتابعة من {actor}"
     elif action in {"REJECT", "WORKFLOW_REJECT", "STEP_REJECTED"}:
-        last_action = f"تمت إضافة تعليق من {actor}"
+        last_action = f"تم توقيف المسار بواسطة {actor}"
     elif log:
         last_action = f"آخر إجراء: {ui_label(log.action)} بواسطة {actor}"
     else:
@@ -3419,7 +3419,7 @@ def _workflow_user_summary(req, step):
 def _clean_workflow_note(note: str | None) -> str:
     """Remove audit-instrumentation metadata from comments shown to users."""
     cleaned = (note or "").split("\nمصدر العملية:", 1)[0].strip()
-    return cleaned.replace("موافق عليه", "تم الاطلاع والمتابعة").replace("مرفوض", "تعليق")
+    return cleaned.replace("موافق عليه", "تم الاطلاع والمتابعة").replace("مرفوض", "تم توقيف المسار")
 
 
 @workflow_bp.route("/inbox")
@@ -4629,7 +4629,7 @@ def view_request(request_id):
         "WORKFLOW_STARTED": "تم بدء المسار",
         "WORKFLOW_COMPLETED": "اكتمل المسار",
         "STEP_APPROVED": "تم الاطلاع والمتابعة",
-        "STEP_REJECTED": "تمت إضافة تعليق",
+        "STEP_REJECTED": "تم توقيف المسار",
         "WORKFLOW_COMMENT": "تمت إضافة تعليق",
         "WORKFLOW_REPLY": "تمت إضافة رد",
         MENTION_ACCESS_ACTION: "تمت إضافة مستخدم بالمنشن",
@@ -4659,7 +4659,7 @@ def view_request(request_id):
             if latest_step.status == "APPROVED":
                 simple_audit["last_action"] = f"تمت المتابعة من {actor_name}"
             elif latest_step.status == "REJECTED":
-                simple_audit["last_action"] = f"تمت إضافة تعليق من {actor_name}"
+                simple_audit["last_action"] = f"تم توقيف المسار بواسطة {actor_name}"
             if _clean_workflow_note(latest_step.note):
                 simple_comments.append({
                     "kind": "تعليق",
@@ -6000,7 +6000,7 @@ def decide_request_step(request_id, step_order):
             actor_user_id=current_user.id,
             note=(
                 f"قرار الخطوة {step_order} في مسار #{req.id}: "
-                f"{'موافقة' if decision == 'APPROVED' else 'إعادة/رفض'}"
+                f"{'موافقة' if decision == 'APPROVED' else 'توقيف المسار'}"
                 + (f" — {note}" if note else "")
             ),
         )

@@ -1746,7 +1746,7 @@ def decide_step(
     hierarchy_bypassed_steps: list[WorkflowInstanceStep] = []
     if int(step_order) != int(inst.current_step_order or 0):
         if decision != "APPROVED":
-            raise ValueError("يمكن للمستوى الأعلى المتابعة والتجاوز فقط، ولا يمكنه رفض خطوة لم تصل إليه بعد.")
+            raise ValueError("يمكن للمستوى الأعلى المتابعة والتجاوز فقط، ولا يمكنه توقيف مسار لم يصل إليه بعد.")
         bypass_target = resolve_hierarchy_bypass_step(inst, [effective_user_id])
         if not bypass_target or int(bypass_target.id) != int(step.id):
             raise ValueError("لا يمكن تنفيذ هذه الخطوة قبل دورها لأنها ليست مستوى أعلى ضمن تسلسل الصعود الحالي.")
@@ -2041,9 +2041,9 @@ def decide_step(
         db.session.add_all([req, inst])
 
         # Notify requester with the decision + note
-        msg = f"تم رفض طلبك #{req.id} (الخطوة {step_order}) من {actor_display}"
+        msg = f"تم توقيف مسار طلبك #{req.id} (الخطوة {step_order}) بواسطة {actor_display}"
         if note:
-            msg += f" | السبب/التعليق: {note}"
+            msg += f" | السبب/الملاحظة: {note}"
         _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
 
         # ✅ Notify followers (previous approvers) so they can keep tracking the workflow
@@ -2051,9 +2051,9 @@ def decide_step(
         follower_ids.discard(int(effective_user_id))
         follower_ids.discard(int(req.requester_id))
         if follower_ids:
-            fmsg = f"تحديث على المسار: تم رفض الطلب #{req.id} (الخطوة {step_order}) من {actor_display}"
+            fmsg = f"تحديث على المسار: تم توقيف الطلب #{req.id} (الخطوة {step_order}) بواسطة {actor_display}"
             if note:
-                fmsg += f" | السبب/التعليق: {note}"
+                fmsg += f" | السبب/الملاحظة: {note}"
             _notify_users(sorted(follower_ids), message=fmsg, ntype="WORKFLOW", req=req)
 
         if auto_commit:

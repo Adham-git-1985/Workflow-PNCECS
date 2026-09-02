@@ -69,7 +69,7 @@ _ACTION_TEMPLATES = {
     "DYNAMIC_BRANCH_SELECTED": "وجّه {actor} المسار الديناميكي إلى الفرع المختار.",
     "PARALLEL_SYNC_AUTHORIZED": "وجّه {actor} الخطوة المتزامنة إلى المعنيين المحددين.",
     "STEP_APPROVED": "وافق {actor} على الخطوة.",
-    "STEP_REJECTED": "رفض {actor} الخطوة.",
+    "STEP_REJECTED": "أوقف {actor} المسار.",
     "REQUEST_DELETED": "حذف {actor} المعاملة.",
     "REQUEST_CLOSED": "أغلق {actor} المعاملة بعد انتهاء مسارها.",
     "REQUEST_ESCALATION": "صعّد {actor} المعاملة للمتابعة.",

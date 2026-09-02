@@ -89,7 +89,7 @@ UI_LABELS_AR = {
     "PORTAL_PERMISSIONS_ROLE_UPDATE": "تحديث صلاحيات دور في البوابة",
     "REQUEST_DELETED": "حذف طلب",
     "REQUEST_CLOSED": "إغلاق الطلب",
-    "STEP_REJECTED": "إعادة أو رفض الخطوة",
+    "STEP_REJECTED": "توقيف المسار",
     "USER_DELETED": "حذف مستخدم",
     "USER_PROFILE_UPDATED": "تحديث الملف الشخصي للمستخدم",
     "ARCHIVE_FILE": "ملف أرشيف",
@@ -249,6 +249,8 @@ def workflow_status_label(value):
     key = re.sub(r"[\s\-]+", "_", normalized.upper())
     if key == "APPROVED":
         return "تم الاطلاع والمتابعة"
+    if key == "REJECTED":
+        return "تم توقيف المسار"
     return ui_label(value)
 
 
