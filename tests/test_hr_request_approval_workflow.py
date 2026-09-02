@@ -501,9 +501,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         updated = db.session.get(HRPermissionRequest, row.id)
-        # The date is fixed at initial submission; posted values cannot
-        # backdate a departure.
-        self.assertEqual(updated.day, "2026-09-01")
+        self.assertEqual(updated.day, "2026-09-02")
         self.assertEqual(updated.from_time, "11:00")
         self.assertEqual(updated.to_time, "12:30")
         self.assertEqual(updated.note, "Updated departure")
@@ -525,7 +523,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             f"/portal/hr/permissions/{row.id}/edit",
             data={
                 "permission_type_id": self.permission_type.id,
-                "day": "2026-01-01",  # Must be ignored by the server.
+                "day": "2026-01-01",
                 "from_time": "10:00",
                 "to_time": "12:30",
                 "note": "Returned later than planned",
@@ -536,11 +534,13 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
 
         updated = db.session.get(HRPermissionRequest, row.id)
         self.assertEqual(updated.status, "SUBMITTED")
-        self.assertEqual(updated.day, "2026-09-01")
+        self.assertEqual(updated.day, "2026-01-01")
         self.assertEqual(updated.to_time, "12:30")
 
         revision = HRPermissionRequestRevision.query.filter_by(request_id=row.id).one()
         self.assertEqual(revision.revision_no, 1)
+        self.assertEqual(revision.previous_day, "2026-09-01")
+        self.assertEqual(revision.current_day, "2026-01-01")
         self.assertEqual(revision.previous_to_time, "11:00")
         self.assertEqual(revision.current_to_time, "12:30")
         self.assertEqual(revision.reason, "Returned at 12:30")
@@ -569,7 +569,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertIn("12:30", detail.get_data(as_text=True))
 
-    def test_new_permission_uses_today_and_24_hour_time_choices(self):
+    def test_new_permission_allows_a_selected_date_and_24_hour_time_choices(self):
         db.session.add_all([
             UserPermission(user_id=self.employee.id, key=key, is_allowed=True)
             for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_READ", "HR_REQUESTS_CREATE")
@@ -587,6 +587,8 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIn('value="15:00"', html)
         self.assertNotIn('value="07:55"', html)
         self.assertNotIn('type="time"', html)
+        self.assertIn('type="date"', html)
+        self.assertIn('دليل الإجازات والمغادرات', html)
 
         response = client.post(
             "/portal/hr/me/permissions/new",
@@ -595,12 +597,12 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
                 "day": "2000-01-01",
                 "from_time": "11:00",
                 "to_time": "12:30",
-                "note": "Today's permission",
+                "note": "Selected-date permission",
             },
         )
         self.assertEqual(response.status_code, 302)
         created = HRPermissionRequest.query.order_by(HRPermissionRequest.id.desc()).first()
-        self.assertEqual(created.day, date.today().isoformat())
+        self.assertEqual(created.day, "2000-01-01")
         self.assertEqual(created.from_time, "11:00")
         self.assertEqual(created.to_time, "12:30")
 
@@ -617,6 +619,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             "/portal/hr/me/permissions/new",
             data={
                 "permission_type_id": self.permission_type.id,
+                "day": date.today().isoformat(),
                 "from_time": "07:55",
                 "to_time": "12:30",
                 "note": "Outside the permitted workday",

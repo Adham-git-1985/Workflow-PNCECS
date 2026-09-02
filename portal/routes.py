@@ -13421,9 +13421,7 @@ def hr_permission_request_new():
                         selected_user_id=selected_user_id,
                     )
 
-        # A departure is always registered for the current day.  Do not trust
-        # a posted date from a stale form or a manually crafted request.
-        day = today_str
+        day = (request.form.get("day") or "").strip()
         from_time = (request.form.get("from_time") or "").strip()
         to_time = (request.form.get("to_time") or "").strip()
         note = (request.form.get("note") or "").strip()
@@ -13438,8 +13436,8 @@ def hr_permission_request_new():
                 is_admin_entry=is_admin_entry,
                 selected_user_id=selected_user_id,
             )
-        if not day:
-            flash("التاريخ مطلوب.", "danger")
+        if not _parse_yyyy_mm_dd(day):
+            flash("أدخل تاريخ مغادرة صحيحًا.", "danger")
             return render_template(
                 "portal/hr/permission_request_new.html",
                 types=types,
@@ -13676,15 +13674,16 @@ def hr_permission_request_edit(req_id: int):
                         req=r,
                     )
 
-        # The departure date is assigned when it is first submitted and is not
-        # editable afterwards.  Reopening preserves that approved record.
-        day = r.day
+        day = (request.form.get('day') or '').strip()
         from_time = (request.form.get('from_time') or '').strip()
         to_time = (request.form.get('to_time') or '').strip()
         note = (request.form.get('note') or '').strip()
 
         if not permission_type_id:
             flash('نوع المغادرة مطلوب.', 'danger')
+            return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
+        if not _parse_yyyy_mm_dd(day):
+            flash('أدخل تاريخ مغادرة صحيحًا.', 'danger')
             return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
         try:
             ft = _parse_hhmm(from_time)
@@ -13716,6 +13715,7 @@ def hr_permission_request_edit(req_id: int):
         changed = any((
             r.user_id != target_user_id,
             r.permission_type_id != permission_type_id,
+            (r.day or '') != day,
             (r.from_time or '') != (ft or ''),
             (r.to_time or '') != (tt or ''),
             (r.note or '') != (note or ''),
@@ -13771,6 +13771,7 @@ def hr_permission_request_edit(req_id: int):
             reopen_permission_request(
                 r,
                 changed_by=current_user,
+                previous_day=previous_values['day'],
                 previous_from_time=previous_values['from_time'],
                 previous_to_time=previous_values['to_time'],
             )

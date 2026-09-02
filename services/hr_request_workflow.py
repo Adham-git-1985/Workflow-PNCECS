@@ -688,6 +688,7 @@ def reopen_permission_request(
     row: HRPermissionRequest,
     *,
     changed_by: User,
+    previous_day: str | None,
     previous_from_time: str | None,
     previous_to_time: str | None,
     now: datetime | None = None,
@@ -711,11 +712,14 @@ def reopen_permission_request(
     recipient_ids = _request_notification_recipient_ids(KIND_PERMISSION, row.id)
     old_range = f"{previous_from_time or '-'} - {previous_to_time or '-'}"
     new_range = f"{getattr(row, 'from_time', None) or '-'} - {getattr(row, 'to_time', None) or '-'}"
+    old_day = previous_day or '-'
+    new_day = getattr(row, 'day', None) or '-'
     _notify(
         recipient_ids,
         (
             f"تم تعديل طلب المغادرة رقم #{row.id} للموظف "
-            f"{_request_employee_name(row)} من {old_range} إلى {new_range}، "
+            f"{_request_employee_name(row)} بتاريخ {old_day} من {old_range} "
+            f"إلى تاريخ {new_day} من {new_range}، "
             "وأُعيد إلى مسار الاعتماد. يرجى مراجعة التغيير قبل اتخاذ القرار."
         ),
         kind=KIND_PERMISSION,
@@ -729,7 +733,10 @@ def reopen_permission_request(
         new_status="SUBMITTED",
         target_type="HR_PERMISSION_REQUEST",
         target_id=row.id,
-        note=f"previous_time={old_range}; current_time={new_range}",
+        note=(
+            f"previous_day={old_day}; current_day={new_day}; "
+            f"previous_time={old_range}; current_time={new_range}"
+        ),
         created_at=now,
     ))
     return steps

@@ -72,12 +72,9 @@
       </div>
 
       <div class="col-12 col-md-3">
-        <label class="form-label">التاريخ</label>
-        <input type="hidden" name="day" value="{{ permission_day }}">
-        <div class="form-control bg-body-tertiary" aria-label="تاريخ المغادرة">
-          {{ permission_day }}
-        </div>
-        <div class="form-text">تُسجّل المغادرة تلقائياً بتاريخ اليوم.</div>
+        <label class="form-label">تاريخ المغادرة</label>
+        <input type="date" class="form-control" name="day" value="{{ permission_day }}" required>
+        <div class="form-text">اختر التاريخ المطلوب. تعديل طلب معتمد يعيده لمسار الاعتماد.</div>
       </div>
 
       <div class="col-12">
@@ -111,6 +108,9 @@
     </div>
 
     <div class="d-flex justify-content-end gap-2 mt-4">
+      <a class="btn btn-outline-secondary" href="{{ url_for('users.help_leaves_guide') }}#permissions" target="_blank">
+        <i class="bi bi-book"></i> دليل الإجازات والمغادرات
+      </a>
       <button type="reset" class="btn btn-info"><i class="bi bi-arrow-counterclockwise"></i> إعادة تعيين</button>
       <button type="submit" class="btn btn-primary">
         <i class="bi bi-check2-circle"></i>
