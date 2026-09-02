@@ -6,10 +6,20 @@ from flask import Flask
 from flask_login import LoginManager, login_user, logout_user
 
 from extensions import db
-from models import AttendanceDailySummary, HRAttendanceSpecialCase, User, UserPermission
+from models import (
+    AttendanceDailySummary,
+    AttendanceEvent,
+    EmployeeFile,
+    HRAttendanceSpecialCase,
+    HRLeaveRequest,
+    HRLeaveType,
+    User,
+    UserPermission,
+)
 from portal import portal_bp
 from portal.routes import (
     _attendance_count_day,
+    _attendance_absence_candidates,
     _attendance_event_date_range,
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
@@ -193,6 +203,66 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(correction.approved_by_id, approver.id)
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
+
+
+class AttendanceAbsenceCandidatesTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = Flask(__name__)
+        cls.app.config.update(
+            SECRET_KEY="attendance-absence-test",
+            SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
+            SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        )
+        db.init_app(cls.app)
+        cls.context = cls.app.app_context()
+        cls.context.push()
+        db.create_all()
+
+    @classmethod
+    def tearDownClass(cls):
+        db.session.remove()
+        cls.context.pop()
+
+    def setUp(self):
+        db.session.remove()
+        db.drop_all()
+        db.create_all()
+
+    def test_candidates_exclude_punched_and_leave_recorded_employees(self):
+        absent = User(email="absent@example.test", name="Absent", password_hash="x", role="USER")
+        punched = User(email="punched@example.test", name="Punched", password_hash="x", role="USER")
+        on_leave = User(email="leave@example.test", name="Leave", password_hash="x", role="USER")
+        unmapped = User(email="unmapped@example.test", name="Unmapped", password_hash="x", role="USER")
+        db.session.add_all((absent, punched, on_leave, unmapped))
+        db.session.flush()
+        db.session.add_all((
+            EmployeeFile(user_id=absent.id, timeclock_code="1001"),
+            EmployeeFile(user_id=punched.id, timeclock_code="1002"),
+            EmployeeFile(user_id=on_leave.id, timeclock_code="1003"),
+            EmployeeFile(user_id=unmapped.id),
+        ))
+        leave_type = HRLeaveType(code="ANNUAL", name_ar="Annual", is_active=True)
+        db.session.add(leave_type)
+        db.session.flush()
+        db.session.add(AttendanceEvent(
+            user_id=punched.id,
+            event_dt=datetime(2026, 9, 2, 8, 0),
+            event_type="IN",
+        ))
+        db.session.add(HRLeaveRequest(
+            user_id=on_leave.id,
+            leave_type_id=leave_type.id,
+            start_date="2026-09-02",
+            end_date="2026-09-02",
+            status="SUBMITTED",
+        ))
+        db.session.commit()
+
+        rows, excluded_reason = _attendance_absence_candidates("2026-09-02")
+
+        self.assertIsNone(excluded_reason)
+        self.assertEqual([row.user_id for row in rows], [absent.id])
 
 
 if __name__ == "__main__":

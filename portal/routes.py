@@ -22720,6 +22720,115 @@ def _attendance_event_date_range(
     return date_from, date_to
 
 
+def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], str | None]:
+    """Return timeclock employees without an attendance or leave record for one day."""
+    selected_day = _parse_yyyy_mm_dd(day_str)
+    if not selected_day:
+        return [], "INVALID_DATE"
+
+    if _is_weekly_off(selected_day, _weekly_mask()):
+        return [], "WEEKLY_OFF"
+    if _is_official_day_off(selected_day.isoformat()):
+        return [], "OFFICIAL_HOLIDAY"
+
+    day_start = datetime.combine(selected_day, datetime.min.time())
+    next_day_start = day_start + timedelta(days=1)
+    active_leave_statuses = ("DRAFT", "PENDING", "SUBMITTED", "APPROVED")
+
+    punched_user_ids = {
+        user_id
+        for (user_id,) in (
+            AttendanceEvent.query
+            .filter(AttendanceEvent.event_dt >= day_start)
+            .filter(AttendanceEvent.event_dt < next_day_start)
+            .with_entities(AttendanceEvent.user_id)
+            .distinct()
+            .all()
+        )
+    }
+    leave_user_ids = {
+        user_id
+        for (user_id,) in (
+            HRLeaveRequest.query
+            .filter(HRLeaveRequest.status.in_(active_leave_statuses))
+            .filter(HRLeaveRequest.start_date <= day_str)
+            .filter(HRLeaveRequest.end_date >= day_str)
+            .with_entities(HRLeaveRequest.user_id)
+            .distinct()
+            .all()
+        )
+    }
+    alternative_attendance_user_ids = {
+        user_id
+        for (user_id,) in (
+            HRAttendanceSpecialCase.query
+            .filter(HRAttendanceSpecialCase.applied.is_(True))
+            .filter(HRAttendanceSpecialCase.day <= day_str)
+            .filter(or_(
+                HRAttendanceSpecialCase.day_to.is_(None),
+                HRAttendanceSpecialCase.day_to >= day_str,
+            ))
+            .filter(or_(
+                HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE",
+                and_(
+                    HRAttendanceSpecialCase.kind == "STATUS",
+                    func.upper(HRAttendanceSpecialCase.status).in_(
+                        ("PRESENT", "LEAVE", "MISSION", "HOLIDAY", "OFF", "SUSPENDED")
+                    ),
+                ),
+            ))
+            .with_entities(HRAttendanceSpecialCase.user_id)
+            .distinct()
+            .all()
+        )
+    }
+    excluded_user_ids = punched_user_ids | leave_user_ids | alternative_attendance_user_ids
+
+    query = (
+        EmployeeFile.query
+        .join(User, User.id == EmployeeFile.user_id)
+        .filter(EmployeeFile.timeclock_code.isnot(None))
+        .filter(func.trim(EmployeeFile.timeclock_code) != "")
+    )
+    if excluded_user_ids:
+        query = query.filter(~EmployeeFile.user_id.in_(excluded_user_ids))
+
+    return (
+        query.order_by(
+            func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc(),
+            EmployeeFile.user_id.asc(),
+        ).all(),
+        None,
+    )
+
+
+@portal_bp.route('/hr/attendance/absence')
+@login_required
+@_perm(HR_ATT_READ)
+def hr_attendance_absence():
+    """Show timeclock employees with no punch or active leave for one day."""
+    day = (request.args.get('day') or '').strip() or _as_yyyy_mm_dd(date.today())
+    rows, excluded_reason = _attendance_absence_candidates(day)
+    if excluded_reason == "INVALID_DATE":
+        flash('حدد تاريخاً صحيحاً لعرض الغياب.', 'warning')
+        day = _as_yyyy_mm_dd(date.today())
+        rows, excluded_reason = _attendance_absence_candidates(day)
+
+    work_locations = {
+        row.id: row.name
+        for row in _hr_lookup_options('WORK_LOCATION')
+    }
+    return render_template(
+        'portal/hr/attendance_absence.html',
+        day=day,
+        rows=rows,
+        excluded_reason=excluded_reason,
+        work_locations=work_locations,
+        can_edit_attendance=_hr_can_edit_attendance(),
+        can_view_employees=current_user.has_perm(HR_EMP_READ),
+    )
+
+
 @portal_bp.route('/hr/attendance/daily')
 @login_required
 @_perm(HR_ATT_READ)
