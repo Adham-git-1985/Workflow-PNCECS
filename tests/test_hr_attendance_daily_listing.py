@@ -212,6 +212,42 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
 
+    def test_approved_maternity_departure_does_not_create_early_leave_deduction(self):
+        employee = User(email="maternity@example.test", name="Maternity Employee", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 1, 8, 0), event_type="IN"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 1, 14, 0), event_type="OUT"),
+            HRAttendanceSpecialCase(
+                user_id=employee.id,
+                target_kind="USER",
+                day="2026-09-01",
+                day_to="2027-08-31",
+                kind="MATERNITY_DEPARTURE",
+                allow_evening_minutes=60,
+                applied=True,
+                approval_status="APPROVED",
+            ),
+        ))
+        db.session.commit()
+
+        schedule = SimpleNamespace(
+            id=None,
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+            break_minutes=0,
+            grace_minutes=0,
+            start_grace_minutes=None,
+            end_grace_minutes=None,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            result = _summary_compute_one(employee.id, "2026-09-01")
+
+        self.assertEqual(result["early_leave_minutes"], 0)
+
     def _legacy_maternity_departure_workflow(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
         editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")

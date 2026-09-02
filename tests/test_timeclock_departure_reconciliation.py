@@ -80,14 +80,14 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         self.assertTrue(_departure_records_match(clock_record, matching_system_record))
         self.assertFalse(_departure_records_match(clock_record, different_kind))
 
-    def test_reconciliation_uses_clock_or_system_as_the_single_fallback_source(self):
+    def test_reconciliation_uses_clock_as_authoritative_source_when_both_match(self):
         clock = {
             'user_id': 7,
             'day': '2026-09-01',
             'kind': 'PRIVATE',
-            'from_dt': datetime(2026, 9, 1, 10, 0),
-            'to_dt': datetime(2026, 9, 1, 11, 0),
-            'minutes': 60,
+            'from_dt': datetime(2026, 9, 1, 12, 10),
+            'to_dt': datetime(2026, 9, 1, 13, 30),
+            'minutes': 80,
             'complete': True,
             'countable': True,
             'source': 'CLOCK',
@@ -96,8 +96,8 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
             'user_id': 7,
             'day': '2026-09-01',
             'kind': 'PRIVATE',
-            'from_dt': datetime(2026, 9, 1, 10, 10),
-            'to_dt': datetime(2026, 9, 1, 11, 10),
+            'from_dt': datetime(2026, 9, 1, 12, 0),
+            'to_dt': datetime(2026, 9, 1, 13, 0),
             'minutes': 60,
             'complete': True,
             'countable': True,
@@ -120,9 +120,11 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
 
         self.assertEqual(len(records), 2)
         self.assertEqual(records[0]['source'], 'CLOCK_SYSTEM')
-        self.assertEqual(records[0]['from_dt'], datetime(2026, 9, 1, 10, 0))
-        self.assertEqual(records[0]['to_dt'], datetime(2026, 9, 1, 11, 10))
-        self.assertEqual(records[0]['counted_minutes'], 70)
+        self.assertEqual(records[0]['from_dt'], datetime(2026, 9, 1, 12, 10))
+        self.assertEqual(records[0]['to_dt'], datetime(2026, 9, 1, 13, 30))
+        self.assertEqual(records[0]['counted_minutes'], 80)
+        self.assertEqual(records[0]['system_from_dt'], datetime(2026, 9, 1, 12, 0))
+        self.assertEqual(records[0]['system_to_dt'], datetime(2026, 9, 1, 13, 0))
         self.assertEqual(records[1]['source'], 'SYSTEM')
         self.assertEqual(records[1]['counted_minutes'], 30)
 

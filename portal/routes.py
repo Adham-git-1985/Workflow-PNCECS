@@ -21038,10 +21038,11 @@ def _departure_records_match(clock_record: dict, system_record: dict) -> bool:
 def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> list[dict]:
     """Merge approved system requests with clock C/D/E/F movements.
 
-    A matched record spans the earliest departure and latest return from both
-    sources. An unmatched complete clock pair is counted by itself, as is an
-    approved system request without a clock record. This prevents double
-    counting while retaining the most conservative complete interval.
+    A matched record keeps both sources for reporting, but the clock interval
+    is authoritative for calculation. An unmatched complete clock pair is
+    counted by itself, as is an approved system request without a clock
+    record. This prevents double counting while preserving the time actually
+    recorded by the attendance clock.
     """
     clock_records = _clock_departure_records(user_ids, start_day, end_day)
     system_records = _system_departure_records(user_ids, start_day, end_day)
@@ -21066,8 +21067,6 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> lis
 
         used_clock_ids.add(id(match))
         combined = dict(match)
-        combined_from = min(match['from_dt'], system_record['from_dt'])
-        combined_to = max(match['to_dt'], system_record['to_dt'])
         combined.update({
             'source': 'CLOCK_SYSTEM',
             'permission_id': system_record.get('permission_id'),
@@ -21075,11 +21074,12 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> lis
             'permission_name': system_record.get('permission_name') or '',
             'system_from_dt': system_record.get('from_dt'),
             'system_to_dt': system_record.get('to_dt'),
-            # Count a single interval: earliest recorded departure to latest
-            # recorded return, regardless of which source supplied each end.
-            'from_dt': combined_from,
-            'to_dt': combined_to,
-            'minutes': max(0, int((combined_to - combined_from).total_seconds() // 60)),
+            # Keep both intervals visible in reports, but always use the
+            # complete C/D or E/F interval from the clock as the source of
+            # truth for the calculated minutes.
+            'from_dt': match['from_dt'],
+            'to_dt': match['to_dt'],
+            'minutes': int(match.get('minutes') or 0),
         })
         merged.append(combined)
 
@@ -22857,6 +22857,27 @@ def _maternity_departure_allowance_minutes(user_id: int | None, day_str: str) ->
     """Return the approved one-hour daily maternity departure allowance."""
     if not user_id or not _parse_yyyy_mm_dd(day_str):
         return 0
+
+    maternity_departure = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == int(user_id))
+        .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.approval_status == 'APPROVED')
+        .filter(HRAttendanceSpecialCase.day <= day_str)
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= day_str,
+        ))
+        .order_by(HRAttendanceSpecialCase.approved_at.desc(), HRAttendanceSpecialCase.id.desc())
+        .first()
+    )
+    if maternity_departure:
+        try:
+            return max(0, int(maternity_departure.allow_evening_minutes or 0))
+        except (TypeError, ValueError):
+            return 0
+
     leave_request = (
         HRLeaveRequest.query
         .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
