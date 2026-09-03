@@ -247,6 +247,24 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
         self.assertEqual(result["early_leave_minutes"], 0)
 
+    def test_multiple_checkins_are_not_inferred_as_a_checkout(self):
+        employee = User(email="duplicate-checkins@example.test", name="Duplicate Checkins", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 3, 7, 54), event_type="I"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 3, 7, 55), event_type="I"),
+        ))
+        db.session.commit()
+
+        result = _summary_compute_one(employee.id, "2026-09-03")
+
+        self.assertEqual(result["first_in"], datetime(2026, 9, 3, 7, 54))
+        self.assertIsNone(result["last_out"])
+        self.assertEqual(result["work_minutes"], 0)
+        self.assertEqual(result["early_leave_minutes"], 0)
+        self.assertEqual(result["status"], "INCOMPLETE")
+
     def _legacy_maternity_departure_workflow(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
         editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")

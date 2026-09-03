@@ -22985,7 +22985,12 @@ def _summary_compute_one(user_id: int, day_str: str):
 
     first_in = ins[0] if ins else (all_times[0] if all_times else None)
     last_out = outs[-1] if outs else None
-    if not last_out and len(all_times) > 1:
+
+    # Never infer a checkout from another known check-in.  Some devices emit
+    # duplicate/near-duplicate arrival rows (A/I); treating the later arrival
+    # as an OUT produces a false early-leave deduction.  Retain the fallback
+    # only for legacy rows whose movement code is unknown to both lists.
+    if not last_out and not ins and len(all_times) > 1:
         last_out = all_times[-1]
 
     manual_override = _manual_attendance_override(user_id, day_str)
