@@ -2691,6 +2691,15 @@ class HRLeaveType(db.Model):
     max_days = db.Column(db.Integer, nullable=True)
     # Default annual balance (days). Optional; used for leave balance reports/alerts.
     default_balance_days = db.Column(db.Integer, nullable=True)
+    # Whether approved days from this type consume the employee's leave balance.
+    # Examples: annual leave normally consumes balance; maternity/paternity may not.
+    deduct_from_balance = db.Column(db.Boolean, default=True, nullable=False)
+    # Basis for calculating the duration of this leave type.  Calendar days
+    # include weekly holidays, while working days exclude them.
+    day_count_basis = db.Column(db.String(20), default="WORKING_DAYS", nullable=False)
+    # When enabled, official holidays are excluded from the duration in
+    # addition to any handling of weekly holidays defined by day_count_basis.
+    exclude_official_holidays = db.Column(db.Boolean, default=False, nullable=False)
     # Optional: exceptional maximum duration (e.g., chronic sick leave extension).
     # If set, a request may exceed max_days up to this limit, but typically requires HR approval.
     exception_max_days = db.Column(db.Integer, nullable=True)

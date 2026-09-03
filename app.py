@@ -326,6 +326,37 @@ def _ensure_runtime_schema():
                         return False
                 return False
 
+            # Leave-type policy controls.  Keep existing SQLite deployments in
+            # sync even when database migrations are not run manually.
+            _new_leave_policy_columns = set()
+            for _col, _ctype in [
+                ("deduct_from_balance", "BOOLEAN NOT NULL DEFAULT 1"),
+                ("day_count_basis", "TEXT NOT NULL DEFAULT 'WORKING_DAYS'"),
+                ("exclude_official_holidays", "BOOLEAN NOT NULL DEFAULT 0"),
+            ]:
+                if not _col_exists("hr_leave_type", _col):
+                    if _add_column_retry("hr_leave_type", _col, _ctype):
+                        _new_leave_policy_columns.add(_col)
+
+            # Apply sensible values only when upgrading old databases that did
+            # not have these controls.  Later administrator choices are never
+            # overwritten at startup.
+            if _new_leave_policy_columns:
+                try:
+                    if "deduct_from_balance" in _new_leave_policy_columns:
+                        db.session.execute(text(
+                            "UPDATE hr_leave_type SET deduct_from_balance = 0 "
+                            "WHERE UPPER(code) IN ('M', 'MATERNITY', 'P', 'PATERNITY', 'PATERNITY_LEAVE')"
+                        ))
+                    if "day_count_basis" in _new_leave_policy_columns:
+                        db.session.execute(text(
+                            "UPDATE hr_leave_type SET day_count_basis = 'CALENDAR_DAYS' "
+                            "WHERE UPPER(code) IN ('M', 'MATERNITY')"
+                        ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             def _ensure_team_section_optional() -> bool:
                 """Rebuild the SQLite teams table once so section_id may be NULL."""
                 connection = None

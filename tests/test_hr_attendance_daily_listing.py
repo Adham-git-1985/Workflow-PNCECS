@@ -26,7 +26,6 @@ from portal.routes import (
     _attendance_event_date_range,
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
-    _maternity_leave_period_error,
     _summary_compute_one,
     _sort_and_number_attendance_daily_rows,
     hr_attendance_manual_edit,
@@ -323,7 +322,9 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         maternity_type = HRLeaveType(
             code="M",
             name_ar="إجازة أمومة",
-            max_days=30,
+            max_days=365,
+            deduct_from_balance=False,
+            day_count_basis="CALENDAR_DAYS",
             is_active=True,
         )
         db.session.add_all((
@@ -355,27 +356,13 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(leave_request.status, "SUBMITTED")
         self.assertEqual(leave_request.start_date, "2026-09-01")
         self.assertEqual(leave_request.end_date, "2027-02-28")
+        self.assertEqual(leave_request.days, 181)
         self.assertTrue(
             HRRequestApprovalStep.query.filter_by(
                 request_kind="LEAVE",
                 request_id=leave_request.id,
             ).count()
         )
-        self.assertIsNone(
-            _maternity_leave_period_error(
-                maternity_type,
-                datetime(2026, 9, 1).date(),
-                datetime(2027, 2, 28).date(),
-            )
-        )
-        self.assertIsNotNone(
-            _maternity_leave_period_error(
-                maternity_type,
-                datetime(2026, 9, 1).date(),
-                datetime(2027, 9, 2).date(),
-            )
-        )
-
         schedule = SimpleNamespace(
             id=None,
             kind="FIXED",
@@ -460,7 +447,7 @@ class AttendanceAbsenceCandidatesTests(unittest.TestCase):
         self.assertIsNone(excluded_reason)
         self.assertEqual([row.user_id for row in rows], [absent.id])
 
-    def test_maternity_leave_does_not_hide_an_employee_from_absence(self):
+    def test_approved_maternity_leave_hides_an_employee_from_absence(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
         db.session.add(employee)
         db.session.flush()
@@ -482,7 +469,7 @@ class AttendanceAbsenceCandidatesTests(unittest.TestCase):
         rows, excluded_reason = _attendance_absence_candidates("2026-09-02")
 
         self.assertIsNone(excluded_reason)
-        self.assertEqual([row.user_id for row in rows], [employee.id])
+        self.assertEqual([row.user_id for row in rows], [])
 
     def test_daily_attendance_query_excludes_explicit_absence_rows(self):
         present = User(email="present@example.test", name="Present", password_hash="x", role="USER")

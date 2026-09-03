@@ -44,8 +44,8 @@
       </div>
       <div class="col-md-3">
         <label class="form-label">عدد الأيام</label>
-        <input class="form-control" type="number" min="0" name="days" value="{{ row.days if row and row.days is not none else '' }}" placeholder="تلقائي">
-        <div class="form-text">يُحتسب تلقائياً باستثناء العطل/الأعياد إن تُرك فارغاً.</div>
+        <input class="form-control" type="number" min="0" name="days" value="{{ row.days if row and row.days is not none else '' }}" placeholder="يُحسب عند الحفظ" readonly>
+        <div class="form-text">يحسب النظام المدة تلقائياً حسب سياسة نوع الإجازة.</div>
       </div>
       <div class="col-md-3">
         <label class="form-label">مكان الإجازة</label>
@@ -107,6 +107,10 @@
       </div>
 
       <div class="col-12">
+        <div id="leave-policy" class="alert alert-light border mb-0 small" role="status"></div>
+      </div>
+
+      <div class="col-12">
         <label class="form-label">تفاصيل</label>
         <textarea class="form-control" name="note" rows="3">{{ row.note if row else '' }}</textarea>
       </div>
@@ -147,6 +151,25 @@
         docsInput.required = requiresDocs;
         docsRequired.style.display = requiresDocs ? '' : 'none';
         docsHint.textContent = requiresDocs ? (hint || 'هذا النوع يتطلب إرفاق تقرير/مستند.') : (hint || 'اختياري. يمكن رفع أكثر من ملف حسب الحاجة.');
+      }
+
+      const policy = document.getElementById('leave-policy');
+      if (policy) {
+        const current = meta[id] || {};
+        if (!id) {
+          policy.textContent = 'اختر نوع الإجازة لعرض سياسة احتساب المدة والرصيد.';
+        } else {
+          const basis = current.day_count_basis === 'CALENDAR_DAYS'
+            ? 'أيام تقويمية تشمل العطل الأسبوعية'
+            : 'أيام عمل تستبعد العطل الأسبوعية';
+          const official = current.exclude_official_holidays
+            ? 'وتُستبعد العطل الرسمية من المدة.'
+            : 'والعطل الرسمية تدخل ضمن المدة.';
+          const balance = current.deduct_from_balance
+            ? 'تُخصم الأيام المعتمدة من رصيد هذا النوع.'
+            : 'لا تُخصم الأيام المعتمدة من رصيد هذا النوع.';
+          policy.textContent = `أساس الاحتساب: ${basis}؛ ${official} ${balance}`;
+        }
       }
     }
 

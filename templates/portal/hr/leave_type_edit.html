@@ -66,6 +66,32 @@
       </div>
 
       <div class="col-12 col-md-3">
+        <label class="form-label">خصم من رصيد الإجازات</label>
+        <select class="form-select" name="deduct_from_balance">
+          <option value="1" {% if row.deduct_from_balance %}selected{% endif %}>نعم، تُخصم من الرصيد</option>
+          <option value="0" {% if not row.deduct_from_balance %}selected{% endif %}>لا، لا تُخصم من الرصيد</option>
+        </select>
+        <div class="form-text">مثال: إجازتا الأمومة والأبوة لا تستهلكان الرصيد عند اختيار «لا».</div>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">أساس احتساب المدة</label>
+        <select class="form-select" name="day_count_basis">
+          <option value="WORKING_DAYS" {% if row.day_count_basis != 'CALENDAR_DAYS' %}selected{% endif %}>أيام عمل (تستبعد العطل الأسبوعية)</option>
+          <option value="CALENDAR_DAYS" {% if row.day_count_basis == 'CALENDAR_DAYS' %}selected{% endif %}>أيام تقويمية (تشمل العطل الأسبوعية)</option>
+        </select>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">العطل الرسمية</label>
+        <select class="form-select" name="exclude_official_holidays">
+          <option value="0" {% if not row.exclude_official_holidays %}selected{% endif %}>تدخل ضمن مدة الإجازة</option>
+          <option value="1" {% if row.exclude_official_holidays %}selected{% endif %}>تُستبعد من مدة الإجازة</option>
+        </select>
+        <div class="form-text">يُطبّق هذا الخيار مع الأيام التقويمية أو أيام العمل.</div>
+      </div>
+
+      <div class="col-12 col-md-3">
         <label class="form-label">إجازة خارجية؟</label>
         <select class="form-select" name="is_external">
           <option value="0" {% if not row.is_external %}selected{% endif %}>لا</option>

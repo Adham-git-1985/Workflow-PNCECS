@@ -6,7 +6,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-wallet2"></i> أرصدة الإجازات</h4>
-      <div class="text-muted">إدارة رصيد الإجازات السنوي (المعتمد) لكل موظف + عرض المستهلك والمتبقي.</div>
+      <div class="text-muted">إدارة رصيد الإجازات السنوي (المعتمد) لكل موظف + عرض المستهلك والمتبقي. الأنواع غير الخاضعة للخصم تظهر للتوثيق فقط.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}"><i class="bi bi-arrow-right"></i> رجوع لإعدادات الموارد البشرية</a>
@@ -61,6 +61,7 @@
           <tr>
             <th>الرمز</th>
             <th>النوع</th>
+            <th>سياسة الرصيد</th>
             <th style="width:180px">الرصيد المعتمد (أيام)</th>
             <th>المستهلك</th>
             <th>المتبقي</th>
@@ -72,15 +73,26 @@
               <td><code>{{ r.lt.code }}</code></td>
               <td>{{ r.lt.name_ar }}</td>
               <td>
-                {% if can_manage %}
+                {% if r.deducts_from_balance %}
+                  <span class="badge bg-primary">تُخصم من الرصيد</span>
+                {% else %}
+                  <span class="badge bg-secondary">لا تُخصم من الرصيد</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if not r.deducts_from_balance %}
+                  —
+                {% elif can_manage %}
                   <input class="form-control form-control-sm" type="number" min="0" name="total_{{ r.lt.id }}" value="{{ r.total }}">
                 {% else %}
                   {{ r.total }}
                 {% endif %}
               </td>
-              <td>{{ r.used }}</td>
+              <td>{{ r.used if r.deducts_from_balance else '—' }}</td>
               <td>
-                {% if r.remaining <= 0 %}
+                {% if not r.deducts_from_balance %}
+                  —
+                {% elif r.remaining <= 0 %}
                   <span class="badge bg-danger">{{ r.remaining }}</span>
                 {% elif r.remaining <= 2 %}
                   <span class="badge bg-warning text-dark">{{ r.remaining }}</span>

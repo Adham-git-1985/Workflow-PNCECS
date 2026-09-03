@@ -34,8 +34,8 @@
 
       <div class="col-12 col-md-3">
         <label class="form-label">عدد الأيام</label>
-        <input type="number" min="0" name="days" class="form-control" value="{{ request.form.get('days') or (req.days if req and req.days is not none else '') }}" placeholder="تلقائي">
-        <div class="form-text">يُحتسب تلقائياً باستثناء العطل/الأعياد إن تُرك فارغاً.</div>
+        <input type="number" min="0" name="days" class="form-control" value="{{ request.form.get('days') or (req.days if req and req.days is not none else '') }}" placeholder="يُحسب عند الإرسال" readonly>
+        <div class="form-text">يحتسب النظام المدة تلقائياً حسب سياسة نوع الإجازة.</div>
       </div>
 
       <div class="col-12 col-md-3">
@@ -95,6 +95,10 @@
         {% if edit_mode and has_attachments %}<div class="form-text text-success">توجد مرفقات محفوظة لهذا الطلب.</div>{% endif %}
       </div>
 
+      <div class="col-12">
+        <div id="leave-policy" class="alert alert-light border mb-0 small" role="status"></div>
+      </div>
+
       <div class="col-12 d-flex gap-2 flex-wrap">
         <button class="btn btn-primary" type="submit"><i class="bi {{ 'bi-check2-circle' if edit_mode else 'bi-send' }}"></i> {{ 'حفظ التعديل' if edit_mode else 'إرسال الطلب' }}</button>
 
@@ -137,6 +141,25 @@
         docsInput.required = requiresDocs && !hasExistingAttachments;
         docsRequired.style.display = requiresDocs ? '' : 'none';
         docsHint.textContent = (requiresDocs ? (hint || 'هذا النوع يتطلب إرفاق تقرير/مستند.') : (hint || 'اختياري. يمكن رفع أكثر من ملف حسب الحاجة.'));
+      }
+
+      const policy = document.getElementById('leave-policy');
+      if (policy) {
+        const current = meta[id] || {};
+        if (!id) {
+          policy.textContent = 'اختر نوع الإجازة لعرض سياسة احتساب المدة والرصيد.';
+        } else {
+          const basis = current.day_count_basis === 'CALENDAR_DAYS'
+            ? 'أيام تقويمية تشمل العطل الأسبوعية'
+            : 'أيام عمل تستبعد العطل الأسبوعية';
+          const official = current.exclude_official_holidays
+            ? 'وتُستبعد العطل الرسمية من المدة.'
+            : 'والعطل الرسمية تدخل ضمن المدة.';
+          const balance = current.deduct_from_balance
+            ? 'تُخصم الأيام المعتمدة من رصيد هذا النوع.'
+            : 'لا تُخصم الأيام المعتمدة من رصيد هذا النوع.';
+          policy.textContent = `أساس الاحتساب: ${basis}؛ ${official} ${balance}`;
+        }
       }
     }
 

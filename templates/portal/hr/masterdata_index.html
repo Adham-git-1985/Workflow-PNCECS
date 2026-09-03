@@ -250,6 +250,24 @@
           </div>
           <div class="col-md-2"><input class="form-control" name="default_balance_days" placeholder="رصيد سنوي" type="number" min="0"></div>
           <div class="col-md-3">
+            <select class="form-select" name="deduct_from_balance">
+              <option value="1" selected>تُخصم من رصيد الإجازات</option>
+              <option value="0">لا تُخصم من رصيد الإجازات</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <select class="form-select" name="day_count_basis">
+              <option value="WORKING_DAYS" selected>المدة: أيام عمل</option>
+              <option value="CALENDAR_DAYS">المدة: أيام تقويمية</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <select class="form-select" name="exclude_official_holidays">
+              <option value="0" selected>العطل الرسمية ضمن المدة</option>
+              <option value="1">استبعاد العطل الرسمية من المدة</option>
+            </select>
+          </div>
+          <div class="col-md-3">
             <select class="form-select" name="is_external">
               <option value="0">داخلية</option>
               <option value="1">خارجية</option>
@@ -270,7 +288,7 @@
 
         <div class="table-responsive mt-3">
           <table class="table table-sm align-middle">
-            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد أيام', 'max_days') }}</th><th>حد استثنائي</th><th>الرصيد السنوي</th><th>خارجية</th><th>مرفقات</th><th>نشط</th><th></th></tr></thead>
+            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد أيام', 'max_days') }}</th><th>حد استثنائي</th><th>الرصيد السنوي</th><th>خصم الرصيد</th><th>أساس المدة</th><th>العطل الرسمية</th><th>خارجية</th><th>مرفقات</th><th>نشط</th><th></th></tr></thead>
             <tbody>
               {% for t in leave_types %}
               <tr>
@@ -280,6 +298,9 @@
                 <td>{{ t.max_days or '—' }}</td>
                 <td>{{ t.exception_max_days if t.exception_max_days is not none else '—' }}</td>
                 <td>{{ t.default_balance_days if t.default_balance_days is not none else '—' }}</td>
+                <td>{{ 'نعم' if t.deduct_from_balance else 'لا' }}</td>
+                <td>{{ 'أيام تقويمية' if t.day_count_basis == 'CALENDAR_DAYS' else 'أيام عمل' }}</td>
+                <td>{{ 'مستبعدة' if t.exclude_official_holidays else 'ضمن المدة' }}</td>
                 <td>{{ 'نعم' if t.is_external else 'لا' }}</td>
                 <td>{{ 'نعم' if t.requires_documents else 'لا' }}</td>
                 <td>{% if t.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-danger">لا</span>{% endif %}</td>

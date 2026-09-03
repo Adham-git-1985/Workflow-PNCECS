@@ -7353,6 +7353,37 @@ def _add_years_safe(d: date, years: int):
 MATERNITY_LEAVE_CODE = "M"
 
 
+def _ensure_maternity_leave_type() -> HRLeaveType | None:
+    """Make the built-in maternity leave type available on legacy databases."""
+    try:
+        row = HRLeaveType.query.filter(
+            func.upper(HRLeaveType.code) == MATERNITY_LEAVE_CODE
+        ).first()
+        if row:
+            if not row.is_active:
+                row.is_active = True
+                db.session.commit()
+            return row
+
+        row = HRLeaveType(
+            code=MATERNITY_LEAVE_CODE,
+            name_ar="إجازة أمومة",
+            name_en="Maternity leave",
+            requires_approval=True,
+            deduct_from_balance=False,
+            day_count_basis=LEAVE_DAY_COUNT_CALENDAR,
+            exclude_official_holidays=False,
+            is_active=True,
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(row)
+        db.session.commit()
+        return row
+    except Exception:
+        db.session.rollback()
+        return None
+
+
 def _is_maternity_leave_type(leave_type: HRLeaveType | None) -> bool:
     return (getattr(leave_type, "code", None) or "").strip().upper() == MATERNITY_LEAVE_CODE
 
@@ -12884,10 +12915,19 @@ def hr_leave_request_new():
     except Exception:
         abort(403)
 
+    _ensure_maternity_leave_type()
     types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
-    types_meta = {str(t.id): {"is_external": bool(getattr(t, "is_external", False)),
-                                   "requires_documents": bool(getattr(t, "requires_documents", False)),
-                                   "documents_hint": (getattr(t, "documents_hint", None) or "")} for t in types}
+    types_meta = {
+        str(t.id): {
+            "is_external": bool(getattr(t, "is_external", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "documents_hint": (getattr(t, "documents_hint", None) or ""),
+            "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "day_count_basis": _leave_type_day_count_basis(t),
+            "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+        }
+        for t in types
+    }
 
     if request.method == "POST":
         leave_type_id = (request.form.get("leave_type_id") or "").strip()
@@ -12895,7 +12935,6 @@ def hr_leave_request_new():
         end_s = (request.form.get("end_date") or "").strip()
         note = (request.form.get("note") or "").strip()
 
-        days_s = (request.form.get("days") or "").strip()
         leave_place = (request.form.get("leave_place") or "").strip()
 
         # External leave fields (all optional)
@@ -12935,18 +12974,7 @@ def hr_leave_request_new():
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
             return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
-        maternity_period_error = _maternity_leave_period_error(lt, start_d, end_d)
-        if maternity_period_error:
-            flash(maternity_period_error, "danger")
-            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
-
-        auto_days = _calc_leave_days_excluding_off(start_s, end_s)
-        if not auto_days:
-            auto_days = (end_d - start_d).days + 1
-        try:
-            days = int(days_s) if days_s else int(auto_days)
-        except Exception:
-            days = int(auto_days)
+        days = _calculate_leave_days(lt, start_s, end_s, user_id=current_user.id)
 
 
         # Enforce documents if the leave type requires them
@@ -12956,7 +12984,7 @@ def hr_leave_request_new():
 
         # Enforce max days if set (with optional exceptional max)
         exceptional = False
-        if not _is_maternity_leave_type(lt) and lt.max_days and days > int(lt.max_days):
+        if lt.max_days and days > int(lt.max_days):
             ex = getattr(lt, "exception_max_days", None)
             if ex and days <= int(ex):
                 exceptional = True
@@ -13054,6 +13082,8 @@ def hr_leave_request_edit(req_id: int):
         flash("لا يمكن تعديل طلب الإجازة بعد اعتماده أو إغلاقه.", "warning")
         return redirect(url_for("portal.hr_my_leaves"))
 
+    _ensure_maternity_leave_type()
+
     # Keep the selected type visible if it was subsequently disabled, while
     # still allowing the employee to choose any active type.
     types = (
@@ -13067,6 +13097,9 @@ def hr_leave_request_edit(req_id: int):
             "is_external": bool(getattr(t, "is_external", False)),
             "requires_documents": bool(getattr(t, "requires_documents", False)),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
+            "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "day_count_basis": _leave_type_day_count_basis(t),
+            "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
         }
         for t in types
     }
@@ -13086,7 +13119,6 @@ def hr_leave_request_edit(req_id: int):
         leave_type_id = (request.form.get("leave_type_id") or "").strip()
         start_s = (request.form.get("start_date") or "").strip()
         end_s = (request.form.get("end_date") or "").strip()
-        days_s = (request.form.get("days") or "").strip()
         note = (request.form.get("note") or "").strip()
         leave_place = (request.form.get("leave_place") or "").strip()
 
@@ -13117,25 +13149,14 @@ def hr_leave_request_edit(req_id: int):
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
             return render_form()
 
-        maternity_period_error = _maternity_leave_period_error(leave_type, start_date, end_date)
-        if maternity_period_error:
-            flash(maternity_period_error, "danger")
-            return render_form()
-
-        auto_days = _calc_leave_days_excluding_off(start_s, end_s)
-        if not auto_days:
-            auto_days = (end_date - start_date).days + 1
-        try:
-            days = int(days_s) if days_s else int(auto_days)
-        except Exception:
-            days = int(auto_days)
+        days = _calculate_leave_days(leave_type, start_s, end_s, user_id=current_user.id)
 
         has_existing_attachments = HRLeaveAttachment.query.filter_by(request_id=req.id).first() is not None
         if getattr(leave_type, "requires_documents", False) and not (valid_files or has_existing_attachments):
             flash("هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
             return render_form()
 
-        if not _is_maternity_leave_type(leave_type) and leave_type.max_days and days > int(leave_type.max_days):
+        if leave_type.max_days and days > int(leave_type.max_days):
             exceptional_max_days = getattr(leave_type, "exception_max_days", None)
             if exceptional_max_days and days <= int(exceptional_max_days):
                 flash(
@@ -13228,7 +13249,7 @@ def hr_leave_request_cancel(req_id: int):
     r.cancel_note = "إلغاء من الموظف"
     r.cancel_effective_date = today_str
     r.updated_at = datetime.utcnow()
-    if _is_maternity_leave(r):
+    if prev == "APPROVED":
         db.session.flush()
         _attendance_recompute_summaries_for_keys(
             _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
@@ -14098,7 +14119,7 @@ def hr_approval_leave(req_id: int):
         except ValueError:
             flash("هذا الطلب ليس بانتظار إجراء صالح منك.", "warning")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
-        if result == "APPROVED" and _is_maternity_leave(r):
+        if result == "APPROVED":
             db.session.flush()
             _attendance_recompute_summaries_for_keys(
                 _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
@@ -14183,7 +14204,7 @@ def hr_leave_cancel_by_hr(req_id: int):
     r.cancel_note = (request.form.get("cancel_note") or "").strip() or "إلغاء من مدير الموارد البشرية"
     r.cancel_effective_date = today_str
     r.updated_at = datetime.utcnow()
-    if _is_maternity_leave(r):
+    if st == "APPROVED":
         db.session.flush()
         _attendance_recompute_summaries_for_keys(
             _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
@@ -19889,6 +19910,7 @@ def _effective_work_policy_for_user(user_id: int, day_str: str) -> WorkPolicy | 
 @login_required
 @_perm(HR_MASTERDATA_MANAGE)
 def hr_masterdata_index():
+    _ensure_maternity_leave_type()
     schedules = WorkSchedule.query.order_by(WorkSchedule.id.desc()).all()
     perm_types = HRPermissionType.query.order_by(HRPermissionType.code.asc()).all()
     leave_types = HRLeaveType.query.order_by(HRLeaveType.code.asc()).all()
@@ -20586,6 +20608,11 @@ def hr_leave_type_new():
     requires_approval = (request.form.get("requires_approval") or "") == "1"
     max_days = (request.form.get("max_days") or "").strip()
     default_balance = (request.form.get("default_balance_days") or "").strip()
+    deduct_from_balance = (request.form.get("deduct_from_balance") or "1") == "1"
+    day_count_basis = (request.form.get("day_count_basis") or LEAVE_DAY_COUNT_WORKING).strip().upper()
+    if day_count_basis not in {LEAVE_DAY_COUNT_CALENDAR, LEAVE_DAY_COUNT_WORKING}:
+        day_count_basis = LEAVE_DAY_COUNT_WORKING
+    exclude_official_holidays = (request.form.get("exclude_official_holidays") or "0") == "1"
     exc_max_days = (request.form.get("exception_max_days") or "").strip()
     exc_requires_hr = (request.form.get("exception_requires_hr") or "1") == "1"
     exc_requires_note = (request.form.get("exception_requires_note") or "0") == "1"
@@ -20615,6 +20642,9 @@ def hr_leave_type_new():
         requires_approval=requires_approval,
         max_days=md,
         default_balance_days=dbd,
+        deduct_from_balance=deduct_from_balance,
+        day_count_basis=day_count_basis,
+        exclude_official_holidays=exclude_official_holidays,
         exception_max_days=exc_md,
         exception_requires_hr=exc_requires_hr,
         exception_requires_note=exc_requires_note,
@@ -20656,6 +20686,11 @@ def hr_leave_type_edit(lt_id: int):
         requires_approval = (request.form.get("requires_approval") or "") == "1"
         max_days = (request.form.get("max_days") or "").strip()
         default_balance = (request.form.get("default_balance_days") or "").strip()
+        deduct_from_balance = (request.form.get("deduct_from_balance") or "1") == "1"
+        day_count_basis = (request.form.get("day_count_basis") or LEAVE_DAY_COUNT_WORKING).strip().upper()
+        if day_count_basis not in {LEAVE_DAY_COUNT_CALENDAR, LEAVE_DAY_COUNT_WORKING}:
+            day_count_basis = LEAVE_DAY_COUNT_WORKING
+        exclude_official_holidays = (request.form.get("exclude_official_holidays") or "0") == "1"
         exc_max_days = (request.form.get("exception_max_days") or "").strip()
         exc_requires_hr = (request.form.get("exception_requires_hr") or "1") == "1"
         exc_requires_note = (request.form.get("exception_requires_note") or "0") == "1"
@@ -20685,6 +20720,9 @@ def hr_leave_type_edit(lt_id: int):
         row.requires_approval = requires_approval
         row.max_days = md
         row.default_balance_days = dbd
+        row.deduct_from_balance = deduct_from_balance
+        row.day_count_basis = day_count_basis
+        row.exclude_official_holidays = exclude_official_holidays
         row.exception_max_days = exc_md
         row.exception_requires_hr = exc_requires_hr
         row.exception_requires_note = exc_requires_note
@@ -21308,7 +21346,7 @@ def _permission_excess_leave_type_id() -> int | None:
         v = (_setting_get('HR_EXCESS_PERM_DEDUCT_LEAVE_TYPE_ID') or '').strip()
         if v.isdigit():
             lt = HRLeaveType.query.get(int(v))
-            if lt:
+            if lt and _leave_type_deducts_from_balance(lt):
                 return int(lt.id)
     except Exception:
         pass
@@ -21317,14 +21355,16 @@ def _permission_excess_leave_type_id() -> int | None:
     try:
         for code in ('PERSONAL', 'ANNUAL', 'ANNUAL_LEAVE'):
             lt = HRLeaveType.query.filter(func.upper(HRLeaveType.code) == code).first()
-            if lt:
+            if lt and _leave_type_deducts_from_balance(lt):
                 return int(lt.id)
     except Exception:
         pass
 
     try:
-        lt = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).first()
-        return int(lt.id) if lt else None
+        for lt in HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all():
+            if _leave_type_deducts_from_balance(lt):
+                return int(lt.id)
+        return None
     except Exception:
         return None
 
@@ -21332,6 +21372,10 @@ def _permission_excess_leave_type_id() -> int | None:
 def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: date) -> float:
     """Compute used leave days for a given year up to a specific date (day-by-day)."""
     try:
+        leave_type = HRLeaveType.query.get(int(leave_type_id))
+        if not leave_type or not _leave_type_deducts_from_balance(leave_type):
+            return 0.0
+
         # Bound as_of to the requested year
         if as_of.year < year:
             return 0.0
@@ -21373,8 +21417,14 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
             if e < s:
                 continue
 
-            days = (e - s).days + 1
-            total += float(days)
+            total += float(
+                _calculate_leave_days(
+                    leave_type,
+                    s.isoformat(),
+                    e.isoformat(),
+                    user_id=user_id,
+                )
+            )
 
         # Add only approved deduction runs. Draft previews must never affect
         # leave balances or salary reports.
@@ -21538,6 +21588,8 @@ def hr_leave_balances():
 
         updated = 0
         for lt in leave_types:
+            if not _leave_type_deducts_from_balance(lt):
+                continue
             key = f'total_{lt.id}'
             raw = (request.form.get(key) or '').strip()
             if raw == '':
@@ -21564,10 +21616,17 @@ def hr_leave_balances():
     rows = []
     if selected_user:
         for lt in leave_types:
-            total = _leave_entitlement_days(selected_user.id, lt, year)
-            used = _leave_used_days(selected_user.id, lt.id, year)
-            rem = total - used
-            rows.append({'lt': lt, 'total': total, 'used': used, 'remaining': rem})
+            deducts_from_balance = _leave_type_deducts_from_balance(lt)
+            total = _leave_entitlement_days(selected_user.id, lt, year) if deducts_from_balance else None
+            used = _leave_used_days(selected_user.id, lt.id, year) if deducts_from_balance else None
+            rem = (total - used) if deducts_from_balance else None
+            rows.append({
+                'lt': lt,
+                'total': total,
+                'used': used,
+                'remaining': rem,
+                'deducts_from_balance': deducts_from_balance,
+            })
 
     return render_template(
         'portal/hr/leave_balances.html',
@@ -21716,7 +21775,14 @@ def hr_monthly_leave_report():
                 if oe < os:
                     continue
 
-                days += float((oe - os).days + 1)
+                days += float(
+                    _calculate_leave_days(
+                        lt,
+                        os.isoformat(),
+                        oe.isoformat(),
+                        user_id=selected_user.id,
+                    )
+                )
 
             leave_days_in_month.append({'leave_type': lt, 'days': days})
 
@@ -21946,7 +22012,11 @@ def hr_alerts():
     year = now.year
     low_leave = []
     try:
-        active_types = HRLeaveType.query.filter(HRLeaveType.is_active == True).order_by(HRLeaveType.code.asc()).all()  # noqa: E712
+        active_types = [
+            leave_type
+            for leave_type in HRLeaveType.query.filter(HRLeaveType.is_active == True).order_by(HRLeaveType.code.asc()).all()  # noqa: E712
+            if _leave_type_deducts_from_balance(leave_type)
+        ]
 
         # Scope users first when filtering is enabled
         users_q = User.query.order_by(User.id.asc()).all()
@@ -22841,7 +22911,7 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
             .filter(HRLeaveRequest.end_date >= day_str)
             .first()
         )
-        if approved_leave and not _is_maternity_leave(approved_leave):
+        if approved_leave:
             return "APPROVED_LEAVE"
     except Exception:
         pass
@@ -22890,18 +22960,7 @@ def _maternity_departure_allowance_minutes(user_id: int | None, day_str: str) ->
         except (TypeError, ValueError):
             return 0
 
-    leave_request = (
-        HRLeaveRequest.query
-        .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
-        .filter(HRLeaveRequest.user_id == int(user_id))
-        .filter(HRLeaveRequest.status == 'APPROVED')
-        .filter(func.upper(HRLeaveType.code) == MATERNITY_LEAVE_CODE)
-        .filter(HRLeaveRequest.start_date <= day_str)
-        .filter(HRLeaveRequest.end_date >= day_str)
-        .order_by(HRLeaveRequest.decided_at.desc(), HRLeaveRequest.id.desc())
-        .first()
-    )
-    return 60 if leave_request else 0
+    return 0
 
 
 def _summary_compute_one(user_id: int, day_str: str):
@@ -23165,7 +23224,6 @@ def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], st
             .filter(HRLeaveRequest.status.in_(active_leave_statuses))
             .filter(HRLeaveRequest.start_date <= day_str)
             .filter(HRLeaveRequest.end_date >= day_str)
-            .filter(func.upper(HRLeaveType.code) != MATERNITY_LEAVE_CODE)
             .with_entities(HRLeaveRequest.user_id)
             .distinct()
             .all()
@@ -31517,33 +31575,92 @@ def _weekly_mask() -> int:
 def _is_weekly_off(d: date, mask: int) -> bool:
     return bool(mask & (1 << d.weekday()))
 
-def _is_official_day_off(day_s: str) -> bool:
+LEAVE_DAY_COUNT_CALENDAR = "CALENDAR_DAYS"
+LEAVE_DAY_COUNT_WORKING = "WORKING_DAYS"
+
+
+def _leave_type_deducts_from_balance(leave_type: HRLeaveType | None) -> bool:
+    """Return the balance policy, defaulting legacy types to deductible."""
+    return bool(getattr(leave_type, "deduct_from_balance", True))
+
+
+def _leave_type_day_count_basis(leave_type: HRLeaveType | None) -> str:
+    """Return a valid duration basis, keeping legacy types work-day based."""
+    value = (getattr(leave_type, "day_count_basis", None) or "").strip().upper()
+    if value == LEAVE_DAY_COUNT_CALENDAR:
+        return LEAVE_DAY_COUNT_CALENDAR
+    return LEAVE_DAY_COUNT_WORKING
+
+
+def _leave_type_excludes_official_holidays(leave_type: HRLeaveType | None) -> bool:
+    return bool(getattr(leave_type, "exclude_official_holidays", False))
+
+
+def _is_official_day_off(day_s: str, user_id: int | None = None) -> bool:
     from models import HROfficialOccasionRange
     r1 = HROfficialOccasion.query.filter_by(day=day_s).first()
     if r1 and bool(r1.is_day_off):
         return True
+
+    employee = None
+    if user_id:
+        try:
+            employee = EmployeeFile.query.filter_by(user_id=int(user_id)).first()
+        except Exception:
+            employee = None
+
     ranges = HROfficialOccasionRange.query.filter(
         HROfficialOccasionRange.start_day <= day_s,
         HROfficialOccasionRange.end_day >= day_s
     ).all()
-    return any(bool(x.is_day_off) for x in ranges)
+    for occasion in ranges:
+        if not occasion.is_day_off:
+            continue
+        if occasion.work_governorate_lookup_id and occasion.work_governorate_lookup_id != getattr(employee, 'work_governorate_lookup_id', None):
+            continue
+        if occasion.work_location_lookup_id and occasion.work_location_lookup_id != getattr(employee, 'work_location_lookup_id', None):
+            continue
+        return True
+    return False
 
-def _calc_leave_days_excluding_off(start_s: str, end_s: str) -> int:
+
+def _calculate_leave_days(
+    leave_type: HRLeaveType | None,
+    start_s: str,
+    end_s: str,
+    user_id: int | None = None,
+) -> int:
+    """Calculate leave duration from the policy stored on its leave type.
+
+    Calendar days include weekly holidays.  Working days exclude them.  In
+    either mode, official holidays are excluded only when the type's policy
+    explicitly enables that option.
+    """
     d0 = _parse_yyyy_mm_dd(start_s)
     d1 = _parse_yyyy_mm_dd(end_s)
-    if not d0 or not d1:
+    if not d0 or not d1 or d1 < d0:
         return 0
-    if d1 < d0:
-        d0, d1 = d1, d0
-    mask = _weekly_mask()
-    n = 0
-    cur = d0
-    while cur <= d1:
-        ds = _as_yyyy_mm_dd(cur)
-        if (not _is_weekly_off(cur, mask)) and (not _is_official_day_off(ds)):
-            n += 1
-        cur += timedelta(days=1)
-    return n
+
+    basis = _leave_type_day_count_basis(leave_type)
+    exclude_official = _leave_type_excludes_official_holidays(leave_type)
+    weekly_mask = _weekly_mask()
+    days = 0
+    current_day = d0
+    while current_day <= d1:
+        day_s = _as_yyyy_mm_dd(current_day)
+        if basis == LEAVE_DAY_COUNT_WORKING and _is_weekly_off(current_day, weekly_mask):
+            current_day += timedelta(days=1)
+            continue
+        if exclude_official and _is_official_day_off(day_s, user_id=user_id):
+            current_day += timedelta(days=1)
+            continue
+        days += 1
+        current_day += timedelta(days=1)
+    return days
+
+def _calc_leave_days_excluding_off(start_s: str, end_s: str) -> int:
+    """Legacy working-day calculation retained for non-leave callers."""
+    return _calculate_leave_days(None, start_s, end_s)
 
 def _mission_upload_dir(mission_id: int) -> Path:
     base = Path(current_app.instance_path) / "uploads" / "missions" / str(mission_id)
@@ -31697,13 +31814,6 @@ def hr_leaves_admin_new():
             flash('التاريخ غير صحيح.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
 
-        auto_days = _calc_leave_days_excluding_off(start_date, end_date)
-        try:
-            days_val = int(days_s) if days_s else auto_days
-        except Exception:
-            days_val = auto_days
-
-
         lt = None
         try:
             lt = HRLeaveType.query.get(int(leave_type_id))
@@ -31721,10 +31831,7 @@ def hr_leaves_admin_new():
         if end_day < start_day:
             flash('تاريخ النهاية يجب أن يكون بعد تاريخ البداية.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
-        maternity_period_error = _maternity_leave_period_error(lt, start_day, end_day)
-        if maternity_period_error:
-            flash(maternity_period_error, 'danger')
-            return redirect(url_for('portal.hr_leaves_admin_new'))
+        days_val = _calculate_leave_days(lt, start_date, end_date, user_id=int(user_id))
 
         is_external = bool(getattr(lt, 'is_external', False)) if lt else False
 
@@ -31804,9 +31911,17 @@ def hr_leaves_admin_new():
         return redirect(url_for('portal.hr_leaves_admin_log'))
 
     leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all()
-    types_meta = {str(t.id): {"is_external": bool(getattr(t, "is_external", False)),
-                              "requires_documents": bool(getattr(t, "requires_documents", False)),
-                              "documents_hint": (getattr(t, "documents_hint", None) or "")} for t in leave_types}
+    types_meta = {
+        str(t.id): {
+            "is_external": bool(getattr(t, "is_external", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "documents_hint": (getattr(t, "documents_hint", None) or ""),
+            "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "day_count_basis": _leave_type_day_count_basis(t),
+            "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+        }
+        for t in leave_types
+    }
 
     return render_template(
         'portal/hr/leaves_admin_form.html',
@@ -31854,14 +31969,12 @@ def hr_leaves_admin_edit(row_id: int):
         row.travel_purpose = ((request.form.get('travel_purpose') or '').strip() or None) if has_external_details else None
         row.border_crossing = ((request.form.get('border_crossing') or '').strip() or None) if has_external_details else None
 
-        days_s = (request.form.get('days') or '').strip()
-        if days_s:
-            try:
-                row.days = int(days_s)
-            except Exception:
-                pass
-        else:
-            row.days = _calc_leave_days_excluding_off(row.start_date, row.end_date)
+        row.days = _calculate_leave_days(
+            lt,
+            row.start_date,
+            row.end_date,
+            user_id=row.user_id,
+        )
 
         admin_status_id = (request.form.get('admin_status_id') or '').strip()
         row.admin_status_id = int(admin_status_id) if admin_status_id.isdigit() else None
@@ -31899,9 +32012,17 @@ def hr_leaves_admin_edit(row_id: int):
         return redirect(url_for('portal.hr_leaves_admin_log'))
 
     leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all()
-    types_meta = {str(t.id): {"is_external": bool(getattr(t, "is_external", False)),
-                              "requires_documents": bool(getattr(t, "requires_documents", False)),
-                              "documents_hint": (getattr(t, "documents_hint", None) or "")} for t in leave_types}
+    types_meta = {
+        str(t.id): {
+            "is_external": bool(getattr(t, "is_external", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "documents_hint": (getattr(t, "documents_hint", None) or ""),
+            "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "day_count_basis": _leave_type_day_count_basis(t),
+            "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+        }
+        for t in leave_types
+    }
 
     return render_template(
         'portal/hr/leaves_admin_form.html',
@@ -32308,6 +32429,10 @@ def hr_report_leave_employee_balances():
             wl_name = loc_map.get(getattr(ef, 'work_location_lookup_id', None), '') if ef else ''
             ap_name = app_map.get(getattr(ef, 'appointment_type_lookup_id', None), '') if ef else ''
             for lt in leave_types:
+                # Informational leave types (for example maternity/paternity)
+                # are documented as requests but have no annual balance to report.
+                if not _leave_type_deducts_from_balance(lt):
+                    continue
                 total = int(_leave_entitlement_days(uid, lt, year) or 0)
                 used = float(_leave_used_days_as_of(uid, lt.id, year, today) or 0.0)
                 if total == 0 and used == 0:
