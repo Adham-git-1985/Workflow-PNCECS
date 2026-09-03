@@ -159,16 +159,16 @@
         if (!id) {
           policy.textContent = 'اختر نوع الإجازة لعرض سياسة احتساب المدة والرصيد.';
         } else {
-          const basis = current.day_count_basis === 'CALENDAR_DAYS'
-            ? 'أيام تقويمية تشمل العطل الأسبوعية'
-            : 'أيام عمل تستبعد العطل الأسبوعية';
+          const weekly = current.day_count_basis === 'CALENDAR_DAYS'
+            ? 'العطل الأسبوعية الواقعة ضمن الفترة تُحتسب ضمن عدد الأيام.'
+            : 'العطل الأسبوعية الواقعة ضمن الفترة لا تُحتسب ضمن عدد الأيام.';
           const official = current.exclude_official_holidays
             ? 'وتُستبعد العطل الرسمية من المدة.'
             : 'والعطل الرسمية تدخل ضمن المدة.';
           const balance = current.deduct_from_balance
             ? 'تُخصم الأيام المعتمدة من رصيد هذا النوع.'
             : 'لا تُخصم الأيام المعتمدة من رصيد هذا النوع.';
-          policy.textContent = `أساس الاحتساب: ${basis}؛ ${official} ${balance}`;
+          policy.textContent = `${weekly} ${official} ${balance}`;
         }
       }
     }

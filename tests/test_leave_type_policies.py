@@ -89,13 +89,19 @@ class LeaveTypePolicyTests(unittest.TestCase):
             deduct_from_balance=True,
             day_count_basis="CALENDAR_DAYS",
         )
+        deductible_working_days = HRLeaveType(
+            code="ANNUAL-WORK",
+            name_ar="سنوية أيام عمل",
+            deduct_from_balance=True,
+            day_count_basis="WORKING_DAYS",
+        )
         non_deductible = HRLeaveType(
             code="MATERNITY",
             name_ar="أمومة",
             deduct_from_balance=False,
             day_count_basis="CALENDAR_DAYS",
         )
-        db.session.add_all((employee, deductible, non_deductible))
+        db.session.add_all((employee, deductible, deductible_working_days, non_deductible))
         db.session.flush()
         db.session.add_all((
             HRLeaveRequest(
@@ -104,6 +110,14 @@ class LeaveTypePolicyTests(unittest.TestCase):
                 start_date="2026-09-03",
                 end_date="2026-09-07",
                 days=5,
+                status="APPROVED",
+            ),
+            HRLeaveRequest(
+                user_id=employee.id,
+                leave_type_id=deductible_working_days.id,
+                start_date="2026-09-03",
+                end_date="2026-09-07",
+                days=3,
                 status="APPROVED",
             ),
             HRLeaveRequest(
@@ -119,6 +133,7 @@ class LeaveTypePolicyTests(unittest.TestCase):
 
         as_of = date(2026, 9, 7)
         self.assertEqual(_leave_used_days_as_of(employee.id, deductible.id, 2026, as_of), 5.0)
+        self.assertEqual(_leave_used_days_as_of(employee.id, deductible_working_days.id, 2026, as_of), 3.0)
         self.assertEqual(_leave_used_days_as_of(employee.id, non_deductible.id, 2026, as_of), 0.0)
 
     def test_master_data_persists_each_leave_policy(self):
