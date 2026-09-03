@@ -9,9 +9,10 @@ from flask import Flask
 from werkzeug.datastructures import FileStorage
 
 from extensions import db
-from models import PortalCircular, PortalCircularAttachment
+from models import EmployeeFile, PortalCircular, PortalCircularAttachment, User
 from portal.routes import (
     _circular_whatsapp_text,
+    _circular_user_emails,
     _remove_circular_attachment_files,
     _save_circular_attachments,
     _send_circular_to_email,
@@ -135,6 +136,26 @@ class CircularAttachmentStorageTests(unittest.TestCase):
         self.assertEqual(len(attachments), 1)
         self.assertEqual(attachments[0].get_filename(), "مرفق التعميم.pdf")
         self.assertEqual(attachments[0].get_payload(decode=True), b"pdf-content")
+
+    def test_circular_uses_the_email_from_the_employee_file(self):
+        user = User(
+            email="legacy-account@example.test",
+            name="Employee",
+            password_hash="unused",
+            role="EMPLOYEE",
+        )
+        db.session.add(user)
+        db.session.flush()
+        db.session.add(EmployeeFile(
+            user_id=user.id,
+            email="official-employee@example.test",
+        ))
+        db.session.commit()
+
+        self.assertEqual(
+            _circular_user_emails([user.id]),
+            ["official-employee@example.test"],
+        )
 
     def test_registered_attachment_files_are_removed_with_circular(self):
         row = self._circular()

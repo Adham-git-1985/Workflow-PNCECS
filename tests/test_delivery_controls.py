@@ -50,7 +50,7 @@ class DeliveryControlTests(unittest.TestCase):
         ))
         db.session.commit()
 
-    def test_in_app_notifications_can_be_hidden_without_disabling_email(self):
+    def test_in_app_notifications_can_be_hidden_without_queuing_an_email(self):
         db.session.add_all((
             SystemSetting(key=NOTIFICATIONS_ENABLED_SETTING, value="0"),
             SystemSetting(key=EMAIL_DELIVERY_ENABLED_SETTING, value="1"),
@@ -59,17 +59,17 @@ class DeliveryControlTests(unittest.TestCase):
 
         notification = Notification(
             user_id=self.user.id,
-            message="Email-only delivery",
+            message="In-app only delivery",
             source="portal",
         )
         db.session.add(notification)
         db.session.commit()
 
         self.assertFalse(db.session.get(Notification, notification.id).is_visible)
-        self.assertEqual(NotificationEmailDelivery.query.count(), 1)
+        self.assertEqual(NotificationEmailDelivery.query.count(), 0)
         with patch("services.notification_email._send_email") as send_email:
-            self.assertEqual(send_pending_notification_emails(), 1)
-        send_email.assert_called_once()
+            self.assertEqual(send_pending_notification_emails(), 0)
+        send_email.assert_not_called()
 
     def test_disabled_email_control_creates_no_outbox_entry_or_smtp_attempt(self):
         db.session.add(SystemSetting(key=EMAIL_DELIVERY_ENABLED_SETTING, value="0"))
@@ -88,26 +88,6 @@ class DeliveryControlTests(unittest.TestCase):
         with patch("services.notification_email._send_email") as send_email:
             self.assertEqual(send_pending_notification_emails(), 0)
         send_email.assert_not_called()
-
-    def test_disabling_email_cancels_already_queued_messages_without_sending(self):
-        db.session.add(Notification(
-            user_id=self.user.id,
-            message="Queued before switch-off",
-            source="portal",
-        ))
-        db.session.commit()
-        self.assertEqual(NotificationEmailDelivery.query.count(), 1)
-
-        db.session.add(SystemSetting(key=EMAIL_DELIVERY_ENABLED_SETTING, value="0"))
-        db.session.commit()
-        with patch("services.notification_email._send_email") as send_email:
-            self.assertEqual(send_pending_notification_emails(), 0)
-
-        send_email.assert_not_called()
-        delivery = NotificationEmailDelivery.query.one()
-        self.assertEqual(delivery.status, "CANCELLED")
-        self.assertEqual(delivery.attempt_count, 0)
-
 
 if __name__ == "__main__":
     unittest.main()

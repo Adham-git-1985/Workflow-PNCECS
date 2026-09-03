@@ -93,6 +93,7 @@ from services.delivery_controls import (
     email_delivery_enabled,
     notifications_enabled,
 )
+from services.workflow_task_email import resolve_user_delivery_email
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -4766,17 +4767,16 @@ def _circular_user_emails(user_ids: list[int] | None = None) -> list[str]:
     emails: list[str] = []
     seen: set[str] = set()
     try:
-        query = db.session.query(User.email).filter(User.email.isnot(None))
+        query = User.query
         if user_ids is not None:
             if not user_ids:
                 return []
             query = query.filter(User.id.in_(user_ids))
-        rows = query.all()
+        users = query.all()
     except Exception:
-        rows = []
-    for row in rows:
-        raw = row[0] if isinstance(row, tuple) else getattr(row, "email", None)
-        email = _valid_email_address(raw)
+        users = []
+    for user in users:
+        email = resolve_user_delivery_email(user)
         key = email.lower()
         if not email or key in seen:
             continue

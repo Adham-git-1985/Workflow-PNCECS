@@ -1347,28 +1347,8 @@ def _apply_notification_visibility_control(session, flush_context, instances):
 
 @event.listens_for(Notification, "after_insert")
 def _queue_notification_email_delivery(mapper, connection, target):
-    """Queue every recipient notification except dedicated task-assignment mail."""
-    from services.delivery_controls import email_delivery_enabled
-
-    if not email_delivery_enabled(connection=connection):
-        return
-    if bool(getattr(target, "is_mirror", False)):
-        return
-    if (getattr(target, "email_delivery_mode", "GENERAL") or "GENERAL").upper() in {
-        "TASK_ASSIGNMENT",
-        "DIRECT_EMAIL",
-    }:
-        return
-
-    connection.execute(
-        NotificationEmailDelivery.__table__.insert().values(
-            notification_id=target.id,
-            user_id=target.user_id,
-            status="PENDING",
-            attempt_count=0,
-            created_at=datetime.utcnow(),
-        )
-    )
+    """Keep notifications in-app only; email is reserved for task mail."""
+    return
 
 
 # ======================

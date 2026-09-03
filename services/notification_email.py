@@ -25,7 +25,7 @@ from services.workflow_task_email import (
     _mail_config,
     _portal_url,
     _send_email,
-    _valid_email,
+    resolve_user_delivery_email,
 )
 
 
@@ -34,6 +34,7 @@ _HR_REQUEST_LINK_RE = re.compile(r"^/portal/hr/approvals/(leaves|permissions)/(\
 _TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
 _TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
 _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
+NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 
 
 def _normalize_trouble_ticket_role(value: str | None) -> str:
@@ -146,90 +147,12 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
 
 
 def send_pending_notification_emails(limit: int = 100, now: datetime | None = None) -> int:
-    """Send due general notification emails from the durable outbox."""
-    if not email_delivery_enabled():
-        cancel_pending_email_deliveries()
-        db.session.commit()
-        return 0
-    config = _mail_config()
-    if not config["ready"]:
-        return 0
-
-    now = now or datetime.utcnow()
-    exhausted_deliveries = (
-        NotificationEmailDelivery.query
-        .filter(
-            NotificationEmailDelivery.status == PENDING,
-            NotificationEmailDelivery.attempt_count >= MAX_ATTEMPTS,
-        )
-        .all()
-    )
-    for delivery in exhausted_deliveries:
-        delivery.status = FAILED
+    """Cancel legacy notification-email rows; notifications are in-app only."""
+    pending_deliveries = NotificationEmailDelivery.query.filter_by(status=PENDING).all()
+    for delivery in pending_deliveries:
+        delivery.status = "CANCELLED"
         delivery.next_attempt_at = None
-        delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
-    if exhausted_deliveries:
+        delivery.last_error = NOTIFICATION_EMAILS_DISABLED_REASON
+    if pending_deliveries:
         db.session.commit()
-
-    deliveries = (
-        NotificationEmailDelivery.query
-        .filter(
-            NotificationEmailDelivery.status == PENDING,
-            NotificationEmailDelivery.attempt_count < MAX_ATTEMPTS,
-            or_(
-                NotificationEmailDelivery.next_attempt_at.is_(None),
-                NotificationEmailDelivery.next_attempt_at <= now,
-            ),
-        )
-        .order_by(NotificationEmailDelivery.created_at.asc(), NotificationEmailDelivery.id.asc())
-        .limit(max(1, min(int(limit), 200)))
-        .all()
-    )
-
-    sent = 0
-    for delivery in deliveries:
-        notification = db.session.get(Notification, delivery.notification_id)
-        user = db.session.get(User, delivery.user_id)
-        recipient = _valid_email(getattr(user, "email", None))
-        if not notification or not user or not recipient:
-            delivery.status = FAILED
-            delivery.last_error = "Notification or recipient email address is unavailable."
-            db.session.commit()
-            continue
-        if not (
-            _can_receive_ticket_notification_email(user, notification)
-            and _can_receive_hr_request_notification_email(user, notification)
-        ):
-            delivery.status = FAILED
-            delivery.last_error = "Recipient is not authorized for this notification."
-            delivery.next_attempt_at = None
-            db.session.commit()
-            continue
-
-        try:
-            subject, text_body, html_body = _email_content(user, notification)
-            _send_email(config, recipient, subject, text_body, html_body)
-        except Exception as exc:
-            delivery.attempt_count += 1
-            delivery.last_error = str(exc)[:500]
-            if delivery.attempt_count >= MAX_ATTEMPTS:
-                delivery.status = FAILED
-                delivery.next_attempt_at = None
-            else:
-                delay_minutes = min(60, 2 ** delivery.attempt_count)
-                delivery.next_attempt_at = now + timedelta(minutes=delay_minutes)
-            db.session.commit()
-            current_app.logger.warning(
-                "Notification email delivery failed id=%s attempt=%s",
-                delivery.id,
-                delivery.attempt_count,
-            )
-            continue
-
-        delivery.status = SENT
-        delivery.sent_at = now
-        delivery.last_error = None
-        delivery.next_attempt_at = None
-        db.session.commit()
-        sent += 1
-    return sent
+    return 0

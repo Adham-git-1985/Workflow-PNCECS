@@ -85,7 +85,7 @@ class TransportLicenseAlertsTests(unittest.TestCase):
 
         notifications = Notification.query.order_by(Notification.id).all()
         self.assertEqual(len(notifications), 3)
-        self.assertEqual(NotificationEmailDelivery.query.count(), 3)
+        self.assertEqual(NotificationEmailDelivery.query.count(), 0)
         self.assertTrue(any("رخصة سائق" in row.message for row in notifications))
         self.assertTrue(any("رخصة مركبة" in row.message for row in notifications))
         self.assertEqual(self.driver.license_alert_sent_for, self.driver.license_end_day)
@@ -93,7 +93,7 @@ class TransportLicenseAlertsTests(unittest.TestCase):
 
         self.assertEqual(check_transport_license_expirations(self.today), 0)
         self.assertEqual(Notification.query.count(), 3)
-        self.assertEqual(NotificationEmailDelivery.query.count(), 3)
+        self.assertEqual(NotificationEmailDelivery.query.count(), 0)
 
 
 if __name__ == "__main__":

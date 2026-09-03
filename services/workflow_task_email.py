@@ -54,6 +54,7 @@ FAILED = "FAILED"
 MAX_ATTEMPTS = 2
 DAILY_REMINDER_TIME = time(hour=8, minute=30)
 DAILY_REMINDER_TIMEZONE = "Asia/Jerusalem"
+MAX_ATTEMPTS_REACHED_REASON = "Maximum email delivery attempts reached for this task recipient."
 
 
 def _setting(key: str, default: str = "") -> str:
@@ -70,6 +71,24 @@ def _valid_email(value: str | None) -> str:
     if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
         return email
     return ""
+
+
+def resolve_user_delivery_email(user: User | None) -> str:
+    """Return the authoritative email address for system deliveries.
+
+    The email recorded in the employee file is maintained by HR and takes
+    priority over the account/login email. An empty employee-file value keeps
+    the legacy account-email fallback; a non-empty invalid value deliberately
+    prevents delivery rather than sending to a stale account address.
+    """
+    if not user:
+        return ""
+
+    employee_file = getattr(user, "employee_file", None)
+    employee_email = str(getattr(employee_file, "email", None) or "").strip()
+    if employee_email:
+        return _valid_email(employee_email)
+    return _valid_email(getattr(user, "email", None))
 
 
 def _valid_public_url(value: str | None) -> str:
@@ -231,6 +250,30 @@ def _pending_step_task_user_ids(workflow_instance: WorkflowInstance, step: Workf
     }
 
 
+def _task_recipient_attempts(delivery: WorkflowTaskEmailDelivery) -> int:
+    """Return SMTP attempts already used for one task recipient.
+
+    An assignment and every daily reminder are separate outbox rows. They
+    nevertheless represent the same pending task, so the retry cap is shared
+    between them. A successful row represents one SMTP submission; a
+    pending/failed row records submissions in ``attempt_count``.
+    """
+    rows = WorkflowTaskEmailDelivery.query.filter_by(
+        request_id=delivery.request_id,
+        instance_id=delivery.instance_id,
+        step_order=delivery.step_order,
+        user_id=delivery.user_id,
+    ).all()
+    return sum(
+        max(0, int(row.attempt_count or 0)) + (1 if row.status == SENT else 0)
+        for row in rows
+    )
+
+
+def _task_recipient_has_attempts_remaining(delivery: WorkflowTaskEmailDelivery) -> bool:
+    return _task_recipient_attempts(delivery) < MAX_ATTEMPTS
+
+
 def _email_content(user: User, workflow_request: WorkflowRequest, delivery: WorkflowTaskEmailDelivery) -> tuple[str, str, str]:
     reminder = delivery.delivery_kind == DAILY_REMINDER
     heading = "تذكير يومي: مهمة بانتظار إجراءك" if reminder else "مهمة جديدة بانتظار إجراءك"
@@ -342,6 +385,18 @@ def enqueue_daily_task_reminders(today: date | None = None) -> int:
             if assignment and assignment.sent_at and assignment.sent_at.date() == today:
                 continue
 
+            # Assignment emails and daily reminders share one two-attempt
+            # budget for this recipient and pending task. Without this guard,
+            # a new reminder row every day could restart the budget.
+            reference_delivery = assignment or WorkflowTaskEmailDelivery(
+                request_id=workflow_request.id,
+                instance_id=workflow_instance.id,
+                step_order=step.step_order,
+                user_id=user_id,
+            )
+            if not _task_recipient_has_attempts_remaining(reference_delivery):
+                continue
+
             exists = WorkflowTaskEmailDelivery.query.filter_by(
                 request_id=workflow_request.id,
                 instance_id=workflow_instance.id,
@@ -410,6 +465,15 @@ def send_pending_task_emails(limit: int = 50, now: datetime | None = None) -> in
 
     sent = 0
     for delivery in deliveries:
+        # The initial query can contain both an assignment and a reminder.
+        # Once one consumes the final attempt, the other must not contact SMTP.
+        if not _task_recipient_has_attempts_remaining(delivery):
+            delivery.status = "CANCELLED"
+            delivery.next_attempt_at = None
+            delivery.last_error = MAX_ATTEMPTS_REACHED_REASON
+            db.session.commit()
+            continue
+
         if not _is_task_still_pending(delivery):
             delivery.status = "CANCELLED"
             delivery.last_error = "Task is no longer pending for this recipient."
@@ -418,7 +482,7 @@ def send_pending_task_emails(limit: int = 50, now: datetime | None = None) -> in
 
         user = db.session.get(User, delivery.user_id)
         workflow_request = db.session.get(WorkflowRequest, delivery.request_id)
-        recipient = _valid_email(getattr(user, "email", None))
+        recipient = resolve_user_delivery_email(user)
         if not user or not workflow_request or not recipient:
             delivery.status = FAILED
             delivery.last_error = "Recipient email address is unavailable or invalid."

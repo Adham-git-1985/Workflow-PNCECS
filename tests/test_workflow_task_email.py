@@ -6,6 +6,7 @@ from flask import Flask
 
 from extensions import db
 from models import (
+    EmployeeFile,
     SystemSetting,
     User,
     WorkflowInstance,
@@ -150,6 +151,41 @@ class WorkflowTaskEmailTests(unittest.TestCase):
         self.assertTrue(any("تذكير يومي" in message["Subject"] for message in messages))
 
 
+    def test_task_recipient_is_never_sent_more_than_twice_across_reminders(self):
+        enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+
+        second_day = date(2026, 8, 29)
+        third_day = date(2026, 8, 30)
+
+        with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
+            self.assertEqual(
+                send_pending_task_emails(now=datetime(2026, 8, 28, 8, 0)),
+                1,
+            )
+
+            self.assertEqual(enqueue_daily_task_reminders(second_day), 1)
+            db.session.commit()
+            self.assertEqual(
+                send_pending_task_emails(now=datetime(2026, 8, 29, 8, 30)),
+                1,
+            )
+
+            # The assignment plus one reminder consumed the shared budget.
+            self.assertEqual(enqueue_daily_task_reminders(third_day), 0)
+            db.session.commit()
+            self.assertEqual(
+                send_pending_task_emails(now=datetime(2026, 8, 30, 8, 30)),
+                0,
+            )
+
+        self.assertEqual(smtp_class.return_value.send_message.call_count, 2)
+
     def test_pending_task_email_uses_the_current_user_email_address(self):
         enqueue_task_assignment_emails(
             self.request,
@@ -166,6 +202,25 @@ class WorkflowTaskEmailTests(unittest.TestCase):
 
         message = smtp_class.return_value.send_message.call_args.args[0]
         self.assertEqual(message["To"], "new-assignee@example.test")
+
+    def test_employee_file_email_is_the_authoritative_delivery_address(self):
+        db.session.add(EmployeeFile(
+            user_id=self.assignee.id,
+            email="official-assignee@example.test",
+        ))
+        enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+
+        with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
+            self.assertEqual(send_pending_task_emails(), 1)
+
+        message = smtp_class.return_value.send_message.call_args.args[0]
+        self.assertEqual(message["To"], "official-assignee@example.test")
 
     def test_disabled_global_email_control_skips_task_email_queue_and_smtp(self):
         db.session.add(SystemSetting(key="SYSTEM_EMAIL_DELIVERY_ENABLED", value="0"))
