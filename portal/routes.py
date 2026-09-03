@@ -9155,7 +9155,6 @@ _DIWAN_OFFICIAL_SYMBOLS = (
     ('W', 'إجازة بدون راتب'),
     ('M', 'إجازة أمومة'),
     ('A', 'حادث عمل'),
-    ('-', 'غياب بدون إذن'),
     ('T', 'إجازة طارئة'),
     ('R', 'مهمة عمل'),
     ('P', 'إيقاف عن العمل'),
@@ -9256,7 +9255,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
 
     special_by_key: dict[tuple[int, str], str] = {}
     special_symbols = {
-        'PRESENT': '+', 'ABSENT': '-', 'MISSION': 'R', 'HOLIDAY': 'v',
+        'PRESENT': '+', 'ABSENT': '', 'MISSION': 'R', 'HOLIDAY': 'v',
         'OFF': 'F', 'LEAVE': 'L', 'SUSPENDED': 'P',
     }
     special_rows = (
@@ -9273,7 +9272,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
         symbol = special_symbols.get((special.status or '').strip().upper())
         special_start = _parse_yyyy_mm_dd(special.day)
         special_end = _parse_yyyy_mm_dd(special.day_to or special.day)
-        if not symbol or not special_start or not special_end:
+        if symbol is None or not special_start or not special_end:
             continue
         current = max(special_start, start)
         last = min(special_end, end)
@@ -9337,7 +9336,7 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
                 symbol = 'F'
             elif is_official_holiday(day_s, employee_file):
                 symbol = 'v'
-            elif special_by_key.get((user_id, day_s)):
+            elif (user_id, day_s) in special_by_key:
                 symbol = special_by_key[(user_id, day_s)]
                 actual_office_attendance = symbol == '+'
             elif leave_by_key.get((user_id, day_s)):
@@ -9350,12 +9349,14 @@ def _diwan_official_month_rows(user_ids, start: date, end: date, summaries, depa
                 symbol = '*'
                 missing_attendance = True
             elif (summary.status or '').upper() == 'ABSENT':
-                symbol = '-'
+                symbol = ''
                 missing_attendance = True
             elif (summary.status or '').upper() == 'INCOMPLETE' or not summary.first_in or not summary.last_out:
-                symbol = 'x'
+                # The Diwan key reserves x for lateness.  A partial clocking
+                # record is a missing-attendance-signature case instead.
+                symbol = 'E'
                 actual_office_attendance = bool(summary.first_in or summary.last_out)
-            elif int(summary.late_minutes or 0) > 0 or int(summary.early_leave_minutes or 0) > 0:
+            elif int(summary.late_minutes or 0) > 0:
                 symbol = 'x'
                 actual_office_attendance = True
             elif getattr(summary.schedule, 'kind', '') == 'SHIFT':
@@ -9485,7 +9486,6 @@ def _export_diwan_official_attendance_xlsx(start: date, end: date, rows: list[di
     symbol_fills = {
         '+': PatternFill('solid', fgColor='E2F0D9'),
         '*': PatternFill('solid', fgColor='D9EAD3'),
-        '-': PatternFill('solid', fgColor='F4CCCC'),
         'x': PatternFill('solid', fgColor='FFF2CC'),
         'E': PatternFill('solid', fgColor='FCE4D6'),
         'F': PatternFill('solid', fgColor='E7E6E6'),

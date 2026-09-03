@@ -231,7 +231,65 @@ class DiwanEmergencyDutySymbolTests(unittest.TestCase):
             {},
         )
 
-        self.assertEqual(rows[0]['symbols'], ['*', 'x', 'x', '-', '*', 'F', 'F', 'v'])
+        self.assertEqual(rows[0]['symbols'], ['*', 'x', 'E', '', '*', 'F', 'F', 'v'])
+
+    def test_only_actual_lateness_uses_x_and_absence_is_blank(self):
+        user = User(
+            email='diwan-symbol-meanings@example.test',
+            name='Diwan Symbol Meanings',
+            password_hash='not-used-in-test',
+            role='EMPLOYEE',
+        )
+        db.session.add(user)
+        db.session.flush()
+        db.session.add_all((
+            AttendanceDailySummary(
+                user_id=user.id,
+                day='2026-03-02',
+                first_in=datetime(2026, 3, 2, 8, 0),
+                last_out=datetime(2026, 3, 2, 14, 30),
+                early_leave_minutes=30,
+                status='OK',
+            ),
+            AttendanceDailySummary(
+                user_id=user.id,
+                day='2026-03-03',
+                first_in=datetime(2026, 3, 3, 8, 0),
+                status='INCOMPLETE',
+            ),
+            AttendanceDailySummary(
+                user_id=user.id,
+                day='2026-03-04',
+                status='ABSENT',
+            ),
+        ))
+        db.session.commit()
+
+        rows = _diwan_official_month_rows(
+            [user.id],
+            date(2026, 3, 2),
+            date(2026, 3, 4),
+            AttendanceDailySummary.query.all(),
+            {},
+        )
+
+        self.assertEqual(rows[0]['symbols'], ['+', 'E', ''])
+        from openpyxl import load_workbook
+
+        workbook = load_workbook(_export_diwan_official_attendance_xlsx(
+            date(2026, 3, 2),
+            date(2026, 3, 4),
+            rows,
+        ))
+        sheet = workbook['data']
+        self.assertEqual(sheet.cell(row=3, column=6).value, '+')
+        self.assertEqual(sheet.cell(row=3, column=7).value, 'E')
+        self.assertIn(sheet.cell(row=3, column=8).value, (None, ''))
+        key_symbols = {
+            workbook['List'].cell(row=row_number, column=1).value
+            for row_number in range(2, workbook['List'].max_row + 1)
+        }
+        self.assertNotIn('-', key_symbols)
 
     def test_emergency_duty_symbol_is_written_to_the_exported_workbook(self):
         from openpyxl import load_workbook
