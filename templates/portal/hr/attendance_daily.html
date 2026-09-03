@@ -1,6 +1,24 @@
 {% extends "portal/hr/base.html" %}
 {% block title %}ملخص الدوام اليومي{% endblock %}
 {% block hr_content %}
+<style>
+  .attendance-daily-table th,
+  .attendance-daily-table td {
+    white-space: nowrap;
+  }
+
+  .attendance-daily-table .attendance-employee-name {
+    min-width: 12rem;
+  }
+
+  .attendance-daily-table .attendance-schedule-column {
+    display: none;
+  }
+
+  .attendance-daily-table.show-schedule .attendance-schedule-column {
+    display: table-cell;
+  }
+</style>
 <div class="bg-white rounded-3 shadow-sm p-4">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-2">
     <h5 class="mb-0"><i class="bi bi-graph-up"></i> ملخص الدوام اليومي</h5>
@@ -54,12 +72,15 @@
     <a class="btn btn-outline-success" href="{{ url_for('portal.hr_attendance_daily_export_xlsx', day_from=day_from, day_to=day_to, user_id=user_id) }}">
       <i class="bi bi-file-earmark-excel"></i> تصدير Excel
     </a>
+    <button id="toggle-schedule-column" class="btn btn-outline-secondary" type="button" aria-expanded="false">
+      <i class="bi bi-calendar-week"></i> إظهار الجدول
+    </button>
   </div>
 
   <hr class="my-3">
 
   <div class="table-responsive">
-    <table class="table table-sm align-middle">
+    <table id="attendance-daily-table" class="table table-sm align-middle attendance-daily-table">
       <thead>
         <tr>
           <th>م اليوم</th>
@@ -74,7 +95,7 @@
           <th>مغادرة رسمية</th>
           <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
           <th>{{ portal_sort_link('الحالة', 'status') }}</th>
-          <th>{{ portal_sort_link('الجدول', 'schedule') }}</th>
+          <th class="attendance-schedule-column">{{ portal_sort_link('الجدول', 'schedule') }}</th>
           {% if can_edit_attendance %}<th>إجراء</th>{% endif %}
         </tr>
       </thead>
@@ -83,9 +104,9 @@
         <tr>
           <td class="fw-semibold">{{ r.daily_employee_number or '—' }}</td>
           <td><code>{{ r.day }}</code></td>
-          <td>{{ r.user.name or r.user.email }}</td>
-          <td class="text-muted">{{ r.first_in.strftime('%Y-%m-%d %H:%M:%S') if r.first_in else '—' }}</td>
-          <td class="text-muted">{{ r.last_out.strftime('%Y-%m-%d %H:%M:%S') if r.last_out else '—' }}</td>
+          <td class="attendance-employee-name">{{ r.user.name or r.user.email }}</td>
+          <td class="text-muted">{{ r.first_in.strftime('%H:%M') if r.first_in else '—' }}</td>
+          <td class="text-muted">{{ r.last_out.strftime('%H:%M') if r.last_out else '—' }}</td>
           <td>{{ '%.2f'|format((r.work_minutes or 0) / 60) }}</td>
           <td>{% if r.late_minutes %}<span class="badge bg-warning text-dark">{{ r.late_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
@@ -98,7 +119,7 @@
             {% else %}<span class="badge bg-secondary">{{ r.status|ui_label }}</span>
             {% endif %}
           </td>
-          <td class="text-muted">{{ r.schedule.name if r.schedule else '—' }}</td>
+          <td class="text-muted attendance-schedule-column">{{ r.schedule.name if r.schedule else '—' }}</td>
           {% if can_edit_attendance %}
           <td><a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=r.user_id, day=r.day) }}"><i class="bi bi-pencil-square"></i> تعديل</a></td>
           {% endif %}
@@ -108,4 +129,19 @@
     </table>
   </div>
 </div>
+<script>
+  (() => {
+    const table = document.getElementById('attendance-daily-table');
+    const button = document.getElementById('toggle-schedule-column');
+    if (!table || !button) return;
+
+    button.addEventListener('click', () => {
+      const isVisible = table.classList.toggle('show-schedule');
+      button.setAttribute('aria-expanded', String(isVisible));
+      button.innerHTML = isVisible
+        ? '<i class="bi bi-calendar-week"></i> إخفاء الجدول'
+        : '<i class="bi bi-calendar-week"></i> إظهار الجدول';
+    });
+  })();
+</script>
 {% endblock %}

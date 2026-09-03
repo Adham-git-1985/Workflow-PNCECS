@@ -83,6 +83,17 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
         self.assertIn('name="day_to"', self.manual_edit_view)
         self.assertIn("hr_attendance_manual_edit", self.daily_view)
 
+    def test_daily_listing_is_compact_and_schedule_is_optional(self):
+        for token in (
+            "strftime('%H:%M')",
+            "attendance-employee-name",
+            "attendance-schedule-column",
+            "toggle-schedule-column",
+            "show-schedule",
+        ):
+            with self.subTest(token=token):
+                self.assertIn(token, self.daily_view)
+
     def test_pending_request_indicator_has_a_direct_destination(self):
         index = (PROJECT_ROOT / "templates" / "portal" / "index.html").read_text(encoding="utf-8")
         routes = self.routes
