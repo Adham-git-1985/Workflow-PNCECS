@@ -12,17 +12,25 @@
   const form = root.querySelector("[data-assistant-form]");
   const input = root.querySelector("[data-assistant-input]");
   const sendButton = root.querySelector("[data-assistant-send]");
+  const attachButton = root.querySelector("[data-assistant-attach]");
+  const attachmentInput = root.querySelector("[data-assistant-attachment]");
+  const attachmentStatus = root.querySelector("[data-assistant-attachment-status]");
+  const attachmentName = root.querySelector("[data-assistant-attachment-name]");
+  const removeAttachmentButton = root.querySelector("[data-assistant-remove-attachment]");
+  const analysisModeInput = root.querySelector("[data-assistant-analysis-mode]");
   const messages = root.querySelector("[data-assistant-messages]");
   const suggestions = root.querySelector("[data-assistant-suggestions]");
   const modeLabel = root.querySelector("[data-assistant-mode]");
   const chatUrl = root.dataset.chatUrl;
+  const analyzeUrl = root.dataset.analyzeUrl;
   const csrfToken = root.dataset.csrfToken;
   const maxMessageChars = Number.parseInt(root.dataset.maxMessageChars || "2000", 10) || 2000;
+  const maxAnalysisChars = Number.parseInt(root.dataset.maxAnalysisChars || "60000", 10) || 60000;
   const internalKnowledgeEnabled = root.dataset.internalKnowledge === "1";
   const aiReady = root.dataset.aiReady === "1";
   const localAiReady = root.dataset.localAiReady === "1";
   const storageKey = `aref-assistant:v4:${root.dataset.userId || "user"}`;
-  const defaultInputPlaceholder = "اكتب كما تتكلم، مثل: مرحبًا أو أريد مساعدتك...";
+  const defaultInputPlaceholder = "اكتب أو ألصق نصًا طويلًا، أو أرفق ملفًا لتحليله...";
   const defaultSuggestions = [
     "اشرح هذه الصفحة",
     "ما الطلبات التي تخصني؟",
@@ -38,6 +46,20 @@
       title: "كيف تريد أن يساعدك عارف؟",
       hint: "اختر النوع الأقرب لما تحتاجه؛ لا يلزم أن تعرف كيف تصوغ السؤال.",
       items: [
+        {
+          icon: "bi-file-earmark-text",
+          title: "لخّص نصًا أو مرفقًا",
+          desc: "ألصق نصًا طويلًا أو استخدم مشبك الورق لتحليل PDF وWord وExcel والصور.",
+          analysisMode: "summary",
+          compose: "ألصق النص هنا، أو اختر مرفقًا من زر مشبك الورق...",
+        },
+        {
+          icon: "bi-list-task",
+          title: "استخرج مهامًا ومسودة",
+          desc: "حلّل مرفقًا أو نصًا، ثم راجع المهام والمسودة قبل أن تستخدمها.",
+          analysisMode: "actions_draft",
+          compose: "أرفق الملف أو ألصق النص؛ سيستخرج عارف المهام ويقترح مسودة للمراجعة فقط...",
+        },
         {
           icon: "bi-window",
           title: "اشرح هذه الصفحة",
@@ -328,6 +350,7 @@
         if (item.menu) {
           renderHelpMenu(item.menu);
         } else if (item.compose) {
+          if (analysisModeInput && item.analysisMode) analysisModeInput.value = item.analysisMode;
           focusComposer(item.compose);
         } else if (item.prompt) {
           input.placeholder = defaultInputPlaceholder;
@@ -372,42 +395,133 @@
     busy = value;
     input.disabled = value;
     sendButton.disabled = value;
+    if (attachButton) attachButton.disabled = value;
+    if (attachmentInput) attachmentInput.disabled = value;
+    if (removeAttachmentButton) removeAttachmentButton.disabled = value;
+    if (analysisModeInput) analysisModeInput.disabled = value;
+  }
+
+  function selectedAttachment() {
+    return attachmentInput && attachmentInput.files && attachmentInput.files.length
+      ? attachmentInput.files[0]
+      : null;
+  }
+
+  function refreshAttachmentStatus() {
+    const attachment = selectedAttachment();
+    input.required = !attachment;
+    if (!attachmentStatus || !attachmentName) return;
+    attachmentStatus.hidden = !attachment;
+    attachmentName.textContent = attachment ? attachment.name : "";
+  }
+
+  function clearAttachment() {
+    if (attachmentInput) attachmentInput.value = "";
+    refreshAttachmentStatus();
+  }
+
+  function analysisWarnings(data) {
+    const warnings = data && data.analysis && Array.isArray(data.analysis.warnings)
+      ? data.analysis.warnings.slice(0, 4).map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    return warnings.length ? `\n\nملاحظات على التحليل:\n${warnings.map((item) => `- ${item}`).join("\n")}` : "";
+  }
+
+  function selectedAnalysisMode() {
+    return analysisModeInput && analysisModeInput.value === "actions_draft"
+      ? "actions_draft"
+      : "summary";
+  }
+
+  function analysisInstruction(mode, attachment, userInstruction) {
+    const requested = String(userInstruction || "").trim();
+    if (mode === "actions_draft") {
+      const base = "حلّل المحتوى، واستخرج المهام والإجراءات والمواعيد المذكورة صراحة، ثم أنشئ مسودة رسمية للمراجعة فقط دون إرسال أو إنشاء أي معاملة.";
+      return attachment && requested ? `${base}\nتوجيه إضافي من المستخدم: ${requested}` : base;
+    }
+    return attachment && requested ? requested : "حلّل هذا المحتوى ولخّصه بوضوح.";
   }
 
   async function sendMessage(rawMessage) {
     const message = String(rawMessage || "").trim();
-    if (!message || busy) return;
-    if (message.length > maxMessageChars) {
+    const attachment = selectedAttachment();
+    if ((!message && !attachment) || busy) return;
+    const analysisMode = selectedAnalysisMode();
+    const isAnalysis = Boolean(attachment) || analysisMode === "actions_draft" || message.length > maxMessageChars;
+    if (isAnalysis && !analyzeUrl) {
+      appendMessage("assistant", "تعذر فتح خدمة تحليل المرفقات. حدّث الصفحة وحاول مجددًا.", [], "masar-assistant__message--error");
+      return;
+    }
+    if (isAnalysis && message.length > maxAnalysisChars) {
+      appendMessage("assistant", `اختصر النص إلى ${maxAnalysisChars} حرفًا أو أقل.`, [], "masar-assistant__message--error");
+      return;
+    }
+    if (!isAnalysis && message.length > maxMessageChars) {
       appendMessage("assistant", `اختصر السؤال إلى ${maxMessageChars} حرف أو أقل.`, [], "masar-assistant__message--error");
       return;
     }
 
     const previousHistory = history.slice(-8);
-    appendMessage("user", message);
-    history.push({ role: "user", content: message });
+    const defaultAnalysisRequest = analysisMode === "actions_draft"
+      ? "استخرج المهام وأنشئ مسودة للمراجعة فقط."
+      : "حلّل هذا المرفق ولخّصه.";
+    const visibleMessage = attachment
+      ? `📎 ${attachment.name}${message ? `\n${message}` : `\n${defaultAnalysisRequest}`}`
+      : message;
+    const historyMessage = isAnalysis
+      ? (attachment
+        ? `تحليل مرفق: ${attachment.name}${analysisMode === "actions_draft" ? " (مهام ومسودة)" : ""}`
+        : analysisMode === "actions_draft" ? "تحليل نص واستخراج مهام ومسودة للمراجعة" : "تلخيص نص طويل أرسله المستخدم")
+      : message;
+    appendMessage("user", visibleMessage);
+    history.push({ role: "user", content: historyMessage });
     saveHistory();
     input.value = "";
     input.style.height = "auto";
     setBusy(true);
-    const typing = appendMessage("assistant", "يبحث عارف في المعلومات المسموح بها…", [], "masar-assistant__message--typing");
+    const typing = appendMessage(
+      "assistant",
+      isAnalysis ? "يحلّل عارف المحتوى محليًا…" : "يبحث عارف في المعلومات المسموح بها…",
+      [],
+      "masar-assistant__message--typing"
+    );
 
     try {
-      const response = await fetch(chatUrl, {
+      const context = {
+        path: root.dataset.contextPath || window.location.pathname,
+        title: document.title || "",
+      };
+      let endpoint = chatUrl;
+      let headers = {
+        "Accept": "application/json",
+        "X-CSRFToken": csrfToken,
+      };
+      let body;
+      if (isAnalysis) {
+        endpoint = analyzeUrl;
+        if (attachment) {
+          const formData = new FormData();
+          formData.append("file", attachment, attachment.name);
+          formData.append("instruction", analysisInstruction(analysisMode, true, message));
+          formData.append("analysis_mode", analysisMode);
+          body = formData;
+        } else {
+          headers = { ...headers, "Content-Type": "application/json" };
+          body = JSON.stringify({
+            text: message,
+            instruction: analysisInstruction(analysisMode, false, ""),
+            analysis_mode: analysisMode,
+          });
+        }
+      } else {
+        headers = { ...headers, "Content-Type": "application/json" };
+        body = JSON.stringify({ message, history: previousHistory, context });
+      }
+      const response = await fetch(endpoint, {
         method: "POST",
         credentials: "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          "X-CSRFToken": csrfToken,
-        },
-        body: JSON.stringify({
-          message,
-          history: previousHistory,
-          context: {
-            path: root.dataset.contextPath || window.location.pathname,
-            title: document.title || "",
-          },
-        }),
+        headers,
+        body,
       });
 
       const contentType = response.headers.get("content-type") || "";
@@ -419,14 +533,21 @@
 
       typing.remove();
       const reply = String(data.reply || "لم يصل رد من عارف.");
-      appendMessage("assistant", reply, data.links || [], "", data.sources || []);
+      const replyWithWarnings = `${reply}${isAnalysis ? analysisWarnings(data) : ""}`;
+      appendMessage("assistant", replyWithWarnings, data.links || [], "", data.sources || []);
       history.push({
         role: "assistant",
-        content: reply,
+        content: replyWithWarnings,
         links: data.links || [],
         sources: data.sources || [],
       });
       saveHistory();
+      if (isAnalysis) {
+        clearAttachment();
+        // Return to the established chat/summarization behavior so a later
+        // ordinary question is never accidentally treated as document input.
+        if (analysisModeInput) analysisModeInput.value = "summary";
+      }
       renderSuggestions(data.suggestions || defaultSuggestions);
       const accessLabel = String(data.access_label || "نطاق المستخدم وصلاحياته");
       const knowledgeLabel = data.index_stats ? " — معرفة المشروع" : "";
@@ -453,12 +574,14 @@
   closeButton.addEventListener("click", () => setOpen(false));
   homeButton.addEventListener("click", () => {
     input.placeholder = defaultInputPlaceholder;
+    if (analysisModeInput) analysisModeInput.value = "summary";
     renderHelpMenu("home");
   });
   clearButton.addEventListener("click", () => {
     history = [];
     saveHistory();
     input.placeholder = defaultInputPlaceholder;
+    if (analysisModeInput) analysisModeInput.value = "summary";
     modeLabel.textContent = localAiReady
       ? "ذكاء محلي آمن — المعرفة لا تغادر الخادم"
       : aiReady
@@ -467,6 +590,16 @@
     renderConversation();
     input.focus();
   });
+  if (attachButton && attachmentInput) {
+    attachButton.addEventListener("click", () => attachmentInput.click());
+    attachmentInput.addEventListener("change", () => {
+      refreshAttachmentStatus();
+      if (selectedAttachment()) input.focus();
+    });
+  }
+  if (removeAttachmentButton) {
+    removeAttachmentButton.addEventListener("click", () => clearAttachment());
+  }
   form.addEventListener("submit", (event) => {
     event.preventDefault();
     sendMessage(input.value);
@@ -485,5 +618,6 @@
     if (event.key === "Escape" && !panel.hidden) setOpen(false);
   });
 
+  refreshAttachmentStatus();
   renderConversation();
 })();

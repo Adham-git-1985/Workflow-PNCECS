@@ -7,9 +7,11 @@
 <div id="masarAssistant"
      class="masar-assistant no-print"
      data-chat-url="{{ url_for('assistant.chat') }}"
+     data-analyze-url="{{ url_for('assistant.analyze') }}"
      data-csrf-token="{{ csrf_token() }}"
      data-user-id="{{ current_user.id }}"
      data-max-message-chars="{{ config.get('ASSISTANT_MAX_MESSAGE_CHARS', 2000) }}"
+     data-max-analysis-chars="{{ config.get('ASSISTANT_ANALYSIS_MAX_TEXT_CHARS', 60000) }}"
      data-internal-knowledge="{{ '1' if current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') else '0' }}"
      data-ai-ready="{{ '1' if assistant_ai_ready else '0' }}"
      data-local-ai-ready="{{ '1' if assistant_local_ai_ready else '0' }}"
@@ -59,19 +61,46 @@
 
     <form class="masar-assistant__form" data-assistant-form autocomplete="off">
       <label class="visually-hidden" for="masarAssistantInput">اسأل عارف</label>
+      <input id="masarAssistantAttachment"
+             type="file"
+             data-assistant-attachment
+             accept=".pdf,.doc,.docx,.xlsx,.pptx,.txt,.csv,.json,.xml,.html,.htm,.eml,.png,.jpg,.jpeg,.gif,.bmp,.tif,.tiff,.webp"
+             hidden>
+      <button type="button"
+              class="masar-assistant__attach"
+              data-assistant-attach
+              title="إرفاق ملف للتحليل والتلخيص"
+              aria-label="إرفاق ملف للتحليل والتلخيص">
+        <i class="bi bi-paperclip" aria-hidden="true"></i>
+      </button>
       <textarea id="masarAssistantInput"
                 class="form-control"
                 data-assistant-input
                 rows="1"
-                maxlength="{{ config.get('ASSISTANT_MAX_MESSAGE_CHARS', 2000) }}"
-                placeholder="اكتب كما تتكلم، مثل: مرحبًا أو أريد مساعدتك..."
+                maxlength="{{ config.get('ASSISTANT_ANALYSIS_MAX_TEXT_CHARS', 60000) }}"
+                placeholder="اكتب أو ألصق نصًا طويلًا، أو أرفق ملفًا لتحليله..."
                 required></textarea>
       <button type="submit" class="masar-assistant__send" data-assistant-send aria-label="إرسال">
         <i class="bi bi-send-fill" aria-hidden="true"></i>
       </button>
     </form>
+    <div class="masar-assistant__attachment" data-assistant-attachment-status hidden>
+      <i class="bi bi-paperclip" aria-hidden="true"></i>
+      <span data-assistant-attachment-name></span>
+      <button type="button" data-assistant-remove-attachment aria-label="إزالة المرفق" title="إزالة المرفق">
+        <i class="bi bi-x-lg" aria-hidden="true"></i>
+      </button>
+    </div>
+    <div class="masar-assistant__analysis-options">
+      <label for="masarAssistantAnalysisMode">عند تحليل نص أو مرفق:</label>
+      <select id="masarAssistantAnalysisMode" data-assistant-analysis-mode>
+        <option value="summary">تلخيص وتحليل</option>
+        <option value="actions_draft">استخراج مهام ومسودة للمراجعة</option>
+      </select>
+    </div>
     <p class="masar-assistant__privacy mb-0">
       البيانات الحكومية والحساسة تبقى محلية ولا تُرسل للخدمة الخارجية. لا ترسل كلمات مرور.
+      <br>المرفقات والنصوص الطويلة تُحلّل محليًا داخل الخادم ولا تُحفظ في المحادثة.
     </p>
   </section>
 </div>

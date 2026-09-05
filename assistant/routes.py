@@ -10,8 +10,9 @@ from flask_wtf.csrf import validate_csrf
 from wtforms.validators import ValidationError
 
 from . import assistant_bp
+from .document_analysis import CorrespondenceIntakeError, analyze_uploaded_attachment
 from .project_knowledge import index_stats, internal_knowledge_allowed, rebuild_project_index
-from .service import answer
+from .service import answer, normalize_analysis_mode, summarize_content
 
 
 _request_times: dict[int, deque[float]] = defaultdict(deque)
@@ -54,6 +55,18 @@ def _clean_context(raw_context) -> dict[str, str]:
         "path": str(raw_context.get("path") or "")[:240],
         "title": str(raw_context.get("title") or "")[:160],
     }
+
+
+def _analysis_text_limit() -> int:
+    try:
+        value = int(current_app.config.get("ASSISTANT_ANALYSIS_MAX_TEXT_CHARS", 60_000))
+    except (TypeError, ValueError):
+        value = 60_000
+    return max(1_000, min(value, 200_000))
+
+
+def _analysis_instruction(value) -> str:
+    return str(value or "").strip()[:1_000]
 
 
 @assistant_bp.route("/knowledge/status", methods=["GET"])
@@ -138,6 +151,109 @@ def chat():
             {
                 "error": "assistant_failed",
                 "message": "تعذر تشغيل عارف الآن. جرّب مرة أخرى بعد قليل.",
+            }
+        ), 500
+
+    response = jsonify(result)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@assistant_bp.route("/analyze", methods=["POST"])
+@login_required
+def analyze():
+    """Summarize pasted text or one attachment using local-only processing."""
+    try:
+        validate_csrf(request.headers.get("X-CSRFToken", ""))
+    except ValidationError:
+        return jsonify({"error": "csrf", "message": "انتهت صلاحية الجلسة. حدّث الصفحة وحاول مجددًا."}), 400
+
+    if not _rate_limit_allows(int(current_user.id)):
+        return jsonify(
+            {
+                "error": "rate_limited",
+                "message": "أرسلت طلبات كثيرة خلال وقت قصير. انتظر قليلًا ثم حاول مجددًا.",
+            }
+        ), 429
+
+    attachment = None
+    extracted: dict | None = None
+    if request.is_json:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "invalid_json", "message": "تعذر قراءة المحتوى المراد تلخيصه."}), 400
+        content = str(payload.get("text") or "").strip()
+        instruction = _analysis_instruction(payload.get("instruction"))
+        analysis_mode = normalize_analysis_mode(payload.get("analysis_mode"))
+        source_label = "النص المرسل"
+        if not content:
+            return jsonify({"error": "empty_content", "message": "ألصق النص الذي تريد تلخيصه أولًا."}), 400
+        if len(content) > _analysis_text_limit():
+            return jsonify(
+                {
+                    "error": "text_too_long",
+                    "message": f"اختصر النص إلى {_analysis_text_limit()} حرفًا أو أقل.",
+                }
+            ), 400
+        analysis = {
+            "kind": "text",
+            "label": source_label,
+            "character_count": len(content),
+            "warnings": [],
+        }
+    elif request.mimetype == "multipart/form-data":
+        attachment = request.files.get("file")
+        instruction = _analysis_instruction(request.form.get("instruction"))
+        analysis_mode = normalize_analysis_mode(request.form.get("analysis_mode"))
+        if attachment is None or not str(getattr(attachment, "filename", "") or "").strip():
+            return jsonify({"error": "missing_file", "message": "اختر مرفقًا لتحليله أولًا."}), 400
+        try:
+            extracted = analyze_uploaded_attachment(attachment)
+        except CorrespondenceIntakeError as exc:
+            return jsonify({"error": exc.code, "message": exc.message}), exc.status_code
+
+        content = str(extracted.get("text") or "").strip()
+        source_label = str(extracted.get("filename") or "المرفق")
+        analysis = {
+            "kind": "attachment",
+            "label": source_label,
+            "format": str(extracted.get("format") or "File"),
+            "warnings": list(extracted.get("warnings") or [])[:8],
+            "ocr": dict(extracted.get("ocr") or {}),
+            "metadata": dict(extracted.get("metadata") or {}),
+        }
+    else:
+        return jsonify(
+            {
+                "error": "invalid_content_type",
+                "message": "أرسل نصًا بصيغة JSON أو مرفقًا بصيغة form-data.",
+            }
+        ), 415
+
+    analysis["mode"] = analysis_mode
+    try:
+        result = summarize_content(
+            current_user,
+            content,
+            instruction=instruction,
+            source_label=source_label,
+            analysis_mode=analysis_mode,
+        )
+        result["analysis"] = analysis
+        current_app.logger.info(
+            "Aref analyzed user_id=%s source=%s format=%s chars=%s warnings=%s",
+            current_user.id,
+            analysis["kind"],
+            analysis.get("format", "text"),
+            len(content),
+            len(analysis.get("warnings") or []),
+        )
+    except Exception:
+        current_app.logger.exception("Assistant analysis failed for user_id=%s", current_user.id)
+        return jsonify(
+            {
+                "error": "assistant_analysis_failed",
+                "message": "تعذر تحليل المحتوى الآن. حاول مرة أخرى بعد قليل.",
             }
         ), 500
 

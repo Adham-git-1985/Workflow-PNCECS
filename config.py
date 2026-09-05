@@ -78,6 +78,39 @@ class BaseConfig:
     ASSISTANT_MAX_MESSAGE_CHARS = int(os.getenv("ASSISTANT_MAX_MESSAGE_CHARS", "2000"))
     ASSISTANT_RATE_LIMIT = int(os.getenv("ASSISTANT_RATE_LIMIT", "20"))
     ASSISTANT_RATE_WINDOW_SECONDS = int(os.getenv("ASSISTANT_RATE_WINDOW_SECONDS", "60"))
+    # Aref document analysis is entirely local. Uploaded files are read in
+    # memory, bounded before extraction, and never stored or sent externally.
+    ASSISTANT_ANALYSIS_MAX_FILE_BYTES = int(
+        os.getenv("ASSISTANT_ANALYSIS_MAX_FILE_BYTES", 20 * 1024 * 1024)
+    )
+    ASSISTANT_ANALYSIS_MAX_TEXT_CHARS = int(
+        os.getenv("ASSISTANT_ANALYSIS_MAX_TEXT_CHARS", "60000")
+    )
+    ASSISTANT_ANALYSIS_MAX_PDF_PAGES = int(
+        os.getenv("ASSISTANT_ANALYSIS_MAX_PDF_PAGES", "40")
+    )
+    ASSISTANT_ANALYSIS_MODEL_CONTEXT_CHARS = int(
+        os.getenv("ASSISTANT_ANALYSIS_MODEL_CONTEXT_CHARS", "30000")
+    )
+    ASSISTANT_ANALYSIS_OCR_ENABLED = os.getenv(
+        "ASSISTANT_ANALYSIS_OCR_ENABLED", "1"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    ASSISTANT_ANALYSIS_TESSERACT_CMD = os.getenv(
+        "ASSISTANT_ANALYSIS_TESSERACT_CMD", "tesseract"
+    )
+    ASSISTANT_ANALYSIS_OCR_LANGUAGES = os.getenv(
+        "ASSISTANT_ANALYSIS_OCR_LANGUAGES", "ara+eng"
+    )
+    ASSISTANT_ANALYSIS_OCR_MAX_PAGES = int(
+        os.getenv("ASSISTANT_ANALYSIS_OCR_MAX_PAGES", "10")
+    )
+    ASSISTANT_ANALYSIS_OCR_DPI = int(os.getenv("ASSISTANT_ANALYSIS_OCR_DPI", "200"))
+    ASSISTANT_ANALYSIS_OCR_TIMEOUT_SECONDS = float(
+        os.getenv("ASSISTANT_ANALYSIS_OCR_TIMEOUT_SECONDS", "45")
+    )
+    ASSISTANT_ANALYSIS_OCR_MAX_IMAGE_PIXELS = int(
+        os.getenv("ASSISTANT_ANALYSIS_OCR_MAX_IMAGE_PIXELS", "40000000")
+    )
     # Local retrieval over repository source/docs/templates plus admin-only DB
     # schema knowledge. Runtime data continues to use the normal permission gates.
     ASSISTANT_PROJECT_KNOWLEDGE_ENABLED = os.getenv("ASSISTANT_PROJECT_KNOWLEDGE_ENABLED", "1")
