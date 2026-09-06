@@ -18,7 +18,8 @@
       <div class="card-body">
         <h5 class="mb-3">👤 البيانات</h5>
         <div class="mb-2"><strong>المعرّف:</strong> {{ user.id }}</div>
-        <div class="mb-2"><strong>البريد الإلكتروني:</strong> {{ user.email }}</div>
+        <div class="mb-2"><strong>اسم المستخدم:</strong> <span dir="ltr">{{ user.username or user.email or '—' }}</span></div>
+        <div class="mb-2"><strong>البريد الإلكتروني:</strong> <span dir="ltr">{{ user.email or '—' }}</span></div>
         <div class="mb-3"><strong>الدور:</strong> {{ user.role|ui_label }}</div>
 
         <form method="post" action="{{ url_for('users.manage_user_role', user_id=user.id) }}" class="row g-2">

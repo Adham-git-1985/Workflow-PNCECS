@@ -18,6 +18,7 @@ from models import (
 from services.workflow_task_email import (
     ASSIGNMENT,
     DAILY_REMINDER,
+    PENDING,
     SENT,
     enqueue_daily_task_reminders,
     enqueue_task_assignment_emails,
@@ -202,6 +203,41 @@ class WorkflowTaskEmailTests(unittest.TestCase):
 
         message = smtp_class.return_value.send_message.call_args.args[0]
         self.assertEqual(message["To"], "new-assignee@example.test")
+
+    def test_account_without_any_email_is_not_queued_or_marked_as_failed(self):
+        self.assignee.email = None
+        db.session.commit()
+
+        queued = enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+
+        self.assertEqual(queued, 0)
+        self.assertEqual(WorkflowTaskEmailDelivery.query.count(), 0)
+
+        # A legacy delivery created before the account email was cleared is
+        # cancelled cleanly as well; it is not retried or reported as FAILED.
+        legacy = WorkflowTaskEmailDelivery(
+            request_id=self.request.id,
+            instance_id=self.instance.id,
+            step_order=1,
+            user_id=self.assignee.id,
+            delivery_kind=ASSIGNMENT,
+            delivery_date="",
+            status=PENDING,
+        )
+        db.session.add(legacy)
+        db.session.commit()
+
+        with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
+            self.assertEqual(send_pending_task_emails(), 0)
+        smtp_class.assert_not_called()
+        self.assertEqual(legacy.status, "CANCELLED")
+        self.assertEqual(legacy.attempt_count, 0)
 
     def test_employee_file_email_is_the_authoritative_delivery_address(self):
         db.session.add(EmployeeFile(

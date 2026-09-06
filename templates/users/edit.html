@@ -6,7 +6,7 @@
   <div>
     <h3 class="mb-1">✏️ تعديل المستخدم</h3>
     <div class="text-muted small">
-      <span>{{ u.email }}</span>
+      <span>اسم المستخدم: {{ u.username or u.email or '—' }}</span>
       <span class="mx-2">•</span>
       <span>الدور:</span>
       <span class="badge text-bg-dark ms-1">{{ u.role|ui_label }}</span>
@@ -47,9 +47,15 @@
               </div>
 
               <div class="col-12">
-                <label class="form-label">البريد الإلكتروني</label>
+                <label class="form-label">اسم المستخدم</label>
+                <input type="text" class="form-control" name="username" value="{{ u.username or u.email or '' }}" autocomplete="username" required>
+                <div class="form-text">هو اسم الدخول المعتمد، ويمكن أن يختلف عن البريد الإلكتروني.</div>
+              </div>
+
+              <div class="col-12">
+                <label class="form-label">البريد الإلكتروني <span class="text-muted">(اختياري)</span></label>
                 <input type="email" class="form-control" name="email" value="{{ u.email or '' }}" placeholder="example@pncecs.org">
-                <div class="form-text text-warning">هذا هو العنوان الذي تستقبل عليه إشعارات النظام؛ تغيير الاسم لا يغيره.</div>
+                <div class="form-text text-warning">يُستخدم لاستقبال البريد فقط. إذا تُرك فارغًا فلن يحاول النظام إرسال بريد لهذا الحساب.</div>
                 <div class="form-text">تأكد أن البريد فريد وغير مستخدم لموظف آخر.</div>
               </div>
 

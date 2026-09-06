@@ -6,7 +6,7 @@
 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
   <div>
     <h3 class="mb-1">👤 الملف الشخصي</h3>
-    <small class="text-muted">يمكنك تحديث بيانات حسابك (الاسم/المسمى/البريد/كلمة المرور). بيانات الموظف تُدار من الموارد البشرية في البوابة الإدارية.</small>
+    <small class="text-muted">يمكنك تحديث بيانات حسابك (الاسم/المسمى/اسم المستخدم/البريد/كلمة المرور). بيانات الموظف تُدار من الموارد البشرية في البوابة الإدارية.</small>
   </div>
   <div class="btn-group">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.index') }}">
@@ -65,9 +65,15 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label">البريد الإلكتروني</label>
-            <input type="email" name="email" class="form-control" value="{{ current_user.email }}" required>
-            <div class="form-text text-warning">هذا هو عنوان استقبال إشعارات النظام؛ تغيير الاسم لا يغير البريد.</div>
+            <label class="form-label">اسم المستخدم</label>
+            <input type="text" name="username" class="form-control" value="{{ current_user.username or current_user.email or '' }}" autocomplete="username" required>
+            <div class="form-text">هذا هو اسم الدخول المعتمد، ويمكن تعديله بصورة مستقلة.</div>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">البريد الإلكتروني <span class="text-muted">(اختياري)</span></label>
+            <input type="email" name="email" class="form-control" value="{{ current_user.email or '' }}">
+            <div class="form-text text-warning">يُستخدم لاستقبال البريد فقط. عند تركه فارغًا لن يحاول النظام إرسال بريد لهذا الحساب.</div>
           </div>
 
           <div class="mb-3">

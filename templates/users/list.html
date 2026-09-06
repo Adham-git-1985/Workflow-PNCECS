@@ -28,7 +28,7 @@
 
 <form method="get" class="row g-2 align-items-center mb-3">
   <div class="col-md-6 col-lg-5">
-    <input type="text" name="q" class="form-control" placeholder="بحث بالاسم/الإيميل/الوظيفة/ID" value="{{ q or '' }}">
+    <input type="text" name="q" class="form-control" placeholder="بحث بالاسم/اسم المستخدم/الإيميل/الوظيفة/ID" value="{{ q or '' }}">
   </div>
   <div class="col-auto">
     <button class="btn btn-outline-primary">بحث</button>
@@ -47,6 +47,7 @@
           <tr>
             <th style="width:80px">#</th>
             <th>الاسم</th>
+            <th>اسم المستخدم</th>
             <th>البريد الإلكتروني</th>
             <th style="width:220px">الدور</th>
             <th style="width:200px">إجراءات</th>
@@ -59,7 +60,8 @@
           <tr>
             <td>{{ user.id }}</td>
             <td>{{ user.name or "—" }}</td>
-            <td>{{ user.email }}</td>
+            <td dir="ltr">{{ user.username or user.email or "—" }}</td>
+            <td dir="ltr">{{ user.email or "—" }}</td>
             <td>
               {% if is_super_admin or not target_adminish %}
                 <form method="post" action="{{ url_for('users.change_role', user_id=user.id) }}" class="d-flex gap-2">

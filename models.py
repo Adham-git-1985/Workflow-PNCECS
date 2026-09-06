@@ -92,6 +92,9 @@ class User(db.Model, UserMixin):
     __tablename__ = "users"
 
     id = db.Column(db.Integer, primary_key=True)
+    # Login identifier.  It starts as the email address for legacy accounts,
+    # but remains independent so an account can work without an email address.
+    username = db.Column(db.String(255), unique=True, index=True, nullable=True)
     email = db.Column(db.String(255), unique=True, index=True)
     name = db.Column(db.String(200), nullable=True)
     job_title = db.Column(db.String(200), nullable=True)
@@ -450,7 +453,7 @@ class User(db.Model, UserMixin):
 
     @property
     def full_name(self):
-        return (self.name or "").strip() or self.email or f"User #{self.id}"
+        return (self.name or "").strip() or self.username or self.email or f"User #{self.id}"
 
     def set_password(self, password):
         self.password_hash = generate_password_hash(password)
@@ -466,6 +469,15 @@ class User(db.Model, UserMixin):
             is_read=False,
             is_visible=True,
         ).count()
+
+
+@event.listens_for(User, "before_insert")
+def _default_username_from_email(mapper, connection, target):
+    """Keep programmatic user creation compatible with the new login field."""
+    username = str(getattr(target, "username", "") or "").strip()
+    email = str(getattr(target, "email", "") or "").strip()
+    if not username and email:
+        target.username = email
 
 
 class UserPresence(db.Model):

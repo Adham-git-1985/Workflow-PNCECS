@@ -12,7 +12,7 @@ from utils.events import emit_event
 from utils import system_search
 
 # SQLAlchemy helpers
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from io import BytesIO
 from pathlib import Path
@@ -22,6 +22,7 @@ from utils.excel import make_xlsx_bytes
 import os
 import time
 import uuid
+import unicodedata
 from datetime import datetime, timedelta
 
 AVATAR_ALLOWED_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
@@ -400,6 +401,34 @@ def _validate_role(role: str) -> bool:
 
     r = Role.query.filter_by(code=role).first()
     return bool(r and r.is_active)
+
+
+def _normalize_username(value: str | None) -> str:
+    """Return a safe, human-editable login identifier without changing case."""
+    username = unicodedata.normalize("NFKC", str(value or "")).strip()
+    if not username or len(username) > 255:
+        return ""
+    if any(char.isspace() or unicodedata.category(char).startswith("C") for char in username):
+        return ""
+    return username
+
+
+def _username_in_use(username: str, *, exclude_user_id: int | None = None) -> bool:
+    query = User.query.filter(func.lower(User.username) == username.casefold())
+    if exclude_user_id is not None:
+        query = query.filter(User.id != int(exclude_user_id))
+    return query.first() is not None
+
+
+def _email_in_use(email: str, *, exclude_user_id: int | None = None) -> bool:
+    if not email:
+        return False
+    query = User.query.filter(func.lower(User.email) == email.casefold())
+    if exclude_user_id is not None:
+        query = query.filter(User.id != int(exclude_user_id))
+    return query.first() is not None
+
+
 def _audit(action: str, target_user: User, note: str):
     db.session.add(AuditLog(
         action=action,
@@ -568,10 +597,11 @@ def list_users():
 
     query = User.query
 
-    # Simple search (id/email/name/job_title)
+    # Simple search (id/username/email/name/job_title)
     if q:
         like = f"%{q}%"
         conds = [
+            User.username.ilike(like),
             User.email.ilike(like),
             User.name.ilike(like),
             User.job_title.ilike(like),
@@ -593,6 +623,7 @@ def list_users():
     for u in pagination.items:
         users_with_role.append({
             "id": u.id,
+            "username": u.username or u.email,
             "email": u.email,
             "name": getattr(u, "name", None),
             "job_title": getattr(u, "job_title", None),
@@ -618,7 +649,7 @@ def export_users_excel():
     """Export Users list to Excel (respects current filters).
 
     Filters supported:
-      - q: search by id/email/name/job_title
+      - q: search by id/username/email/name/job_title
     """
     q = (request.args.get("q") or "").strip()
 
@@ -627,6 +658,7 @@ def export_users_excel():
     if q:
         like = f"%{q}%"
         conds = [
+            User.username.ilike(like),
             User.email.ilike(like),
             User.name.ilike(like),
             User.job_title.ilike(like),
@@ -646,6 +678,7 @@ def export_users_excel():
 
     headers = [
         "ID",
+        "Username",
         "Email",
         "Name",
         "Job Title",
@@ -662,6 +695,7 @@ def export_users_excel():
         dir_name = dir_map.get(dir_id, "")
         rows.append([
             u.id,
+            u.username or "",
             u.email,
             getattr(u, "name", "") or "",
             getattr(u, "job_title", "") or "",
@@ -884,11 +918,12 @@ def create_user():
         name = request.form.get("name", "").strip()
         job_title = request.form.get("job_title", "").strip()
         email = request.form.get("email", "").strip()
+        username = _normalize_username(request.form.get("username") or email)
         password = request.form.get("password", "")
         role = request.form.get("role", "").strip()
 
-        if not email or not password or not role:
-            flash("يرجى تعبئة جميع الحقول", "danger")
+        if not username or not password or not role:
+            flash("يرجى تعبئة اسم المستخدم وكلمة المرور والدور.", "danger")
             return redirect(url_for("users.create_user"))
 
         # Only SUPER_ADMIN can create ADMIN / SUPER_ADMIN users
@@ -899,14 +934,19 @@ def create_user():
             flash("الدور المختار غير صالح", "danger")
             return redirect(url_for("users.create_user"))
 
-        if User.query.filter_by(email=email).first():
+        if _username_in_use(username):
+            flash("اسم المستخدم مستخدم مسبقًا.", "danger")
+            return redirect(url_for("users.create_user"))
+
+        if _email_in_use(email):
             flash("المستخدم موجود مسبقًا", "danger")
             return redirect(url_for("users.create_user"))
 
         user = User(
             name=name or None,
             job_title=job_title or None,
-            email=email,
+            username=username,
+            email=email or None,
             password_hash=generate_password_hash(password),
             role=role
         )
@@ -917,13 +957,13 @@ def create_user():
         _audit(
             "USER_CREATED",
             user,
-            note=f"User {email} created with role {role}"
+            note=f"User {username} created with role {role}"
         )
 
         emit_event(
             actor_id=current_user.id,
             action="USER_CREATED",
-            message=f"تم إنشاء مستخدم جديد: {user.email}",
+            message=f"تم إنشاء مستخدم جديد: {user.username}",
             target_type="User",
             target_id=user.id,
             notify_role="ADMIN",
@@ -978,7 +1018,7 @@ def change_role(user_id):
     emit_event(
         actor_id=current_user.id,
         action="USER_ROLE_CHANGED",
-        message=f"تم تغيير دور المستخدم {user.email}: {old_role} → {new_role}",
+        message=f"تم تغيير دور المستخدم {user.username or user.email or user.id}: {old_role} → {new_role}",
         target_type="User",
         target_id=user.id,
         notify_user_id=user.id,
@@ -1031,7 +1071,7 @@ def manage_user_role(user_id):
     emit_event(
         actor_id=current_user.id,
         action="USER_ROLE_CHANGED",
-        message=f"تم تغيير دور المستخدم {user.email}: {old_role} → {new_role}",
+        message=f"تم تغيير دور المستخدم {user.username or user.email or user.id}: {old_role} → {new_role}",
         target_type="User",
         target_id=user.id,
         notify_user_id=user.id,
@@ -1152,18 +1192,37 @@ def edit_user(user_id):
         # Basic fields
         target.name = (request.form.get("name") or "").strip() or None
         target.job_title = (request.form.get("job_title") or "").strip() or None
+        new_username = _normalize_username(request.form.get("username"))
+        if not new_username:
+            flash("أدخل اسم مستخدم صالحًا من دون مسافات.", "danger")
+            return redirect(url_for("users.edit_user", user_id=target.id))
+        if new_username != (target.username or "") and _username_in_use(
+            new_username,
+            exclude_user_id=target.id,
+        ):
+            flash("اسم المستخدم مستخدم لحساب آخر.", "danger")
+            return redirect(url_for("users.edit_user", user_id=target.id))
+
         new_email = (request.form.get("email") or "").strip()
-        if new_email and new_email != (target.email or ""):
-            duplicate = User.query.filter(User.email == new_email, User.id != target.id).first()
-            if duplicate:
-                flash("البريد الإلكتروني مستخدم لحساب آخر.", "danger")
-                return redirect(url_for("users.edit_user", user_id=target.id))
+        if new_email and _email_in_use(new_email, exclude_user_id=target.id):
+            flash("البريد الإلكتروني مستخدم لحساب آخر.", "danger")
+            return redirect(url_for("users.edit_user", user_id=target.id))
+
+        if new_username != (target.username or ""):
+            old_username = target.username
+            target.username = new_username
+            _audit(
+                "UPDATE_USERNAME",
+                target,
+                f"Username changed: {old_username or '-'} -> {new_username}",
+            )
+        if new_email != (target.email or ""):
             old_email = target.email
-            target.email = new_email
+            target.email = new_email or None
             _audit(
                 "UPDATE_NOTIFICATION_EMAIL",
                 target,
-                f"Notification email changed: {old_email or '-'} -> {new_email}",
+                f"Notification email changed: {old_email or '-'} -> {new_email or '-'}",
             )
 
         # Org assignment (optional) — supports Directorate/Unit/Department/Section/Division
@@ -1321,15 +1380,16 @@ def profile():
 
         form_type = (request.form.get("form_type") or "").strip().lower()
 
-        # ------- Update profile info (name/job/email)
+        # ------- Update profile info (name/job/username/email)
         if form_type in ("profile", ""):
             new_name = (request.form.get("name") or "").strip()
             new_job_title = (request.form.get("job_title") or "").strip()
             new_email = (request.form.get("email") or "").strip()
+            new_username = _normalize_username(request.form.get("username"))
             current_pw = request.form.get("current_password", "")
 
-            if not new_email or not current_pw:
-                flash("يرجى تعبئة البريد وكلمة المرور الحالية", "danger")
+            if not new_username or not current_pw:
+                flash("يرجى تعبئة اسم المستخدم وكلمة المرور الحالية.", "danger")
                 return redirect(url_for("users.profile"))
 
             if not current_user.check_password(current_pw):
@@ -1338,27 +1398,39 @@ def profile():
 
             u = User.query.get(current_user.id)
 
-            # email change (ensure unique)
-            if new_email != u.email:
-                if User.query.filter(User.email == new_email, User.id != u.id).first():
+            changed = False
+            changes: list[str] = []
+            if new_username != (u.username or ""):
+                if _username_in_use(new_username, exclude_user_id=u.id):
+                    flash("اسم المستخدم مستخدم مسبقًا.", "danger")
+                    return redirect(url_for("users.profile"))
+                u.username = new_username
+                changed = True
+                changes.append("username")
+            if new_email != (u.email or ""):
+                if _email_in_use(new_email, exclude_user_id=u.id):
                     flash("هذا البريد مستخدم مسبقًا", "danger")
                     return redirect(url_for("users.profile"))
+                u.email = new_email or None
+                changed = True
+                changes.append("email")
+            if new_name and (new_name != (u.name or "").strip()):
+                u.name = new_name
+                changed = True
+                changes.append("name")
+            if new_job_title and (new_job_title != (u.job_title or "").strip()):
+                u.job_title = new_job_title
+                changed = True
+                changes.append("job_title")
 
-                old_email = u.email
-                u.email = new_email
-                if new_name:
-                    u.name = new_name
-                if new_job_title:
-                    u.job_title = new_job_title
-
+            if changed:
                 db.session.add(AuditLog(
                     action="USER_PROFILE_UPDATED",
                     user_id=current_user.id,
                     target_type="User",
                     target_id=current_user.id,
-                    note=f"Email changed: {old_email} → {new_email}"
+                    note=f"Profile updated ({', '.join(changes)})"
                 ))
-
                 emit_event(
                     actor_id=current_user.id,
                     action="USER_PROFILE_UPDATED",
@@ -1367,30 +1439,8 @@ def profile():
                     target_id=current_user.id,
                     notify_user_id=current_user.id,
                     level="INFO",
-                    auto_commit=False
+                    auto_commit=False,
                 )
-
-                db.session.commit()
-                flash("تم تحديث البريد الإلكتروني", "success")
-                return redirect(url_for("users.profile"))
-
-            # name/job only
-            changed = False
-            if new_name and (new_name != (u.name or "").strip()):
-                u.name = new_name
-                changed = True
-            if new_job_title and (new_job_title != (u.job_title or "").strip()):
-                u.job_title = new_job_title
-                changed = True
-
-            if changed:
-                db.session.add(AuditLog(
-                    action="USER_PROFILE_UPDATED",
-                    user_id=current_user.id,
-                    target_type="User",
-                    target_id=current_user.id,
-                    note="Profile updated (name/title)"
-                ))
                 db.session.commit()
                 flash("تم تحديث بيانات الملف الشخصي", "success")
             else:

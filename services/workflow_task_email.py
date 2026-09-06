@@ -55,6 +55,7 @@ MAX_ATTEMPTS = 2
 DAILY_REMINDER_TIME = time(hour=8, minute=30)
 DAILY_REMINDER_TIMEZONE = "Asia/Jerusalem"
 MAX_ATTEMPTS_REACHED_REASON = "Maximum email delivery attempts reached for this task recipient."
+EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
 
 
 def _setting(key: str, default: str = "") -> str:
@@ -179,6 +180,10 @@ def enqueue_task_assignment_emails(
     task_url = _task_url(workflow_request.id, link_url)
     queued = 0
     for user_id in sorted({int(value) for value in (user_ids or []) if value}):
+        # Email is optional for an account. Do not create a delivery that can
+        # only become a failure later when the recipient has no address.
+        if not resolve_user_delivery_email(db.session.get(User, user_id)):
+            continue
         existing = WorkflowTaskEmailDelivery.query.filter_by(
             request_id=workflow_request.id,
             instance_id=int(instance_id),
@@ -374,6 +379,8 @@ def enqueue_daily_task_reminders(today: date | None = None) -> int:
 
         user_ids = set(filter_confidential_workflow_user_ids(workflow_request, user_ids))
         for user_id in user_ids:
+            if not resolve_user_delivery_email(db.session.get(User, user_id)):
+                continue
             assignment = WorkflowTaskEmailDelivery.query.filter_by(
                 request_id=workflow_request.id,
                 instance_id=workflow_instance.id,
@@ -483,9 +490,17 @@ def send_pending_task_emails(limit: int = 50, now: datetime | None = None) -> in
         user = db.session.get(User, delivery.user_id)
         workflow_request = db.session.get(WorkflowRequest, delivery.request_id)
         recipient = resolve_user_delivery_email(user)
-        if not user or not workflow_request or not recipient:
+        if not user or not workflow_request:
             delivery.status = FAILED
-            delivery.last_error = "Recipient email address is unavailable or invalid."
+            delivery.last_error = "Recipient or workflow request is unavailable."
+            db.session.commit()
+            continue
+        if not recipient:
+            # A missing optional email is not an SMTP failure. Cancel legacy
+            # rows cleanly without a retry or user-facing failure message.
+            delivery.status = "CANCELLED"
+            delivery.next_attempt_at = None
+            delivery.last_error = EMAIL_UNAVAILABLE_CANCELLED_REASON
             db.session.commit()
             continue
 

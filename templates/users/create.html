@@ -32,12 +32,24 @@
             </div>
 
             <div class="mb-3">
-                <label class="form-label">البريد الإلكتروني</label>
+                <label class="form-label">البريد الإلكتروني <span class="text-muted">(اختياري)</span></label>
                 <input type="email"
                        name="email"
+                       data-email-input
                        class="form-control"
-                       placeholder="example@pncecs.org"
-                       required>
+                       placeholder="example@pncecs.org">
+                <div class="form-text">يُستخدم لاستقبال البريد فقط؛ يمكن تركه فارغًا.</div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">اسم المستخدم</label>
+                <input type="text"
+                       name="username"
+                       data-username-input
+                       class="form-control"
+                       placeholder="يُملأ تلقائيًا من البريد ويمكن تعديله"
+                       autocomplete="username">
+                <div class="form-text">هو اسم الدخول المعتمد، ومطلوب فقط إذا لم تُدخل بريدًا إلكترونيًا.</div>
             </div>
 
             <div class="mb-3">
@@ -74,4 +86,23 @@
     </div>
 </div>
 
+{% endblock %}
+
+{% block extra_js %}
+{{ super() }}
+<script>
+(() => {
+  const email = document.querySelector("[data-email-input]");
+  const username = document.querySelector("[data-username-input]");
+  if (!email || !username) return;
+  let autoFilled = !username.value;
+  username.addEventListener("input", () => { autoFilled = false; });
+  email.addEventListener("input", () => {
+    if (autoFilled || !username.value) {
+      username.value = email.value.trim();
+      autoFilled = true;
+    }
+  });
+})();
+</script>
 {% endblock %}

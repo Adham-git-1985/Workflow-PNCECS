@@ -468,6 +468,46 @@ def _ensure_runtime_schema():
                         except Exception:
                             pass
 
+            # A username is the primary login identifier.  Existing accounts
+            # keep their current login value by receiving their email as the
+            # initial username.  Accounts without email get a stable local
+            # identifier, so email can remain entirely optional.
+            if not _col_exists("users", "username"):
+                _add_column_retry("users", "username", "TEXT")
+            if _col_exists("users", "username"):
+                try:
+                    rows = db.session.execute(
+                        text("SELECT id, username, email FROM users ORDER BY id ASC")
+                    ).all()
+                    used_usernames: set[str] = set()
+                    updates: list[dict[str, object]] = []
+                    for user_id, username, email in rows:
+                        current = str(username or "").strip()
+                        key = current.casefold()
+                        if not current or key in used_usernames:
+                            candidate = str(email or "").strip() or f"user-{int(user_id)}"
+                            suffix = 1
+                            base = candidate
+                            while candidate.casefold() in used_usernames:
+                                suffix += 1
+                                candidate = f"{base}-{suffix}"
+                            current = candidate
+                            updates.append({"id": int(user_id), "username": current})
+                            key = current.casefold()
+                        used_usernames.add(key)
+                    for update in updates:
+                        db.session.execute(
+                            text("UPDATE users SET username = :username WHERE id = :id"),
+                            update,
+                        )
+                    db.session.execute(
+                        text("CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username)")
+                    )
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                    app.logger.exception("Unable to initialize users.username")
+
             if not _col_exists("employee_file", "section_id"):
                 _add_column_retry("employee_file", "section_id", "INTEGER")
             if _col_exists("employee_file", "section_id"):
@@ -1322,7 +1362,11 @@ def load_user(user_id):
         if user is None:
             logger.warning(f"user_loader: user not found (id={uid})")
         else:
-            logger.debug(f"user_loader: loaded user id={user.id}, email={user.email}")
+            logger.debug(
+                "user_loader: loaded user id=%s, username=%s",
+                user.id,
+                user.username or user.email,
+            )
 
     except SQLAlchemyError as e:
         logger.exception(f"user_loader DB error for user_id={uid}")
@@ -1397,12 +1441,20 @@ def login():
     logger.info("Login page accessed")
 
     if request.method == "POST":
-        email = request.form.get("email")
+        # ``email`` is accepted as a legacy form key, while ``identifier`` is
+        # the current UI field.  Username is authoritative; email remains a
+        # backwards-compatible alternate only when it exists on the account.
+        identifier = (request.form.get("identifier") or request.form.get("email") or "").strip()
         password = request.form.get("password")
 
-        logger.info(f"Login attempt for email={email}")
+        logger.info("Login attempt for identifier=%s", identifier)
 
-        user = User.query.filter_by(email=email).first()
+        user = None
+        if identifier:
+            identifier_key = identifier.casefold()
+            user = User.query.filter(func.lower(User.username) == identifier_key).first()
+            if user is None:
+                user = User.query.filter(func.lower(User.email) == identifier_key).first()
 
         if not user:
             logger.warning("Login failed: user not found")
