@@ -4811,7 +4811,7 @@ class EmployeeFollowupItem(db.Model):
     source_type = db.Column(db.String(40), nullable=False, default="MANUAL")
     source_id = db.Column(db.Integer, nullable=True)
 
-    title = db.Column(db.String(255), nullable=False)
+    title = db.Column(db.Text, nullable=False)
     description = db.Column(db.Text, nullable=True)
     completed_on = db.Column(db.Date, nullable=True, index=True)
     status = db.Column(db.String(20), nullable=False, default="COMPLETED")

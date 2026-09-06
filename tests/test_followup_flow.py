@@ -266,6 +266,34 @@ class FollowupFlowTests(unittest.TestCase):
         with self.app.app_context():
             self.assertIsNone(db.session.get(EmployeeFollowupReport, report_id))
 
+    def test_manual_achievement_accepts_long_text(self):
+        long_title = "إنجاز تفصيلي " * 400
+        with self.app.app_context():
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="DRAFT",
+            )
+            db.session.add(report)
+            db.session.commit()
+            report_id = report.id
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/items",
+            data={"title": long_title, "completed_on": "2026-09-03"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        view = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(view.status_code, 200)
+        self.assertIn(b'<textarea id="title_', view.data)
+        self.assertIn(b'name="title" required rows="5"', view.data)
+        with self.app.app_context():
+            item = EmployeeFollowupReport.query.get(report_id).items[0]
+            self.assertEqual(item.title, long_title.strip())
+
     def test_copied_employee_cannot_view_another_employees_report(self):
         with self.app.app_context():
             report = EmployeeFollowupReport(
@@ -293,6 +321,7 @@ class FollowupFlowTests(unittest.TestCase):
             workflow_request = WorkflowRequest(
                 requester_id=self.employee_id,
                 title="معاملة لاختبار الاستيراد",
+                description="تفاصيل المعاملة من مسار",
                 status="IN_PROGRESS",
             )
             db.session.add(workflow_request)
@@ -301,6 +330,7 @@ class FollowupFlowTests(unittest.TestCase):
                 request_id=workflow_request.id,
                 user_id=self.employee_id,
                 action="STEP_APPROVED",
+                note="ملاحظة الإجراء من مسار",
                 created_at=datetime(2026, 9, 3, 10, 30),
             ))
             db.session.commit()
@@ -318,7 +348,15 @@ class FollowupFlowTests(unittest.TestCase):
             )
             self.assertIn("متابعة واعتماد خطوة", imported_item.title)
             self.assertIn("معاملة لاختبار الاستيراد", imported_item.title)
+            self.assertIn("تفاصيل المعاملة من مسار", imported_item.title)
+            self.assertIn("ملاحظة الإجراء من مسار", imported_item.title)
+            self.assertIsNone(imported_item.description)
             self.assertEqual(imported_item.completed_on.isoformat(), "2026-09-03")
+
+        with self.app.app_context():
+            audit_log = AuditLog.query.one()
+            audit_log.note = "ملاحظة محدّثة من مسار"
+            db.session.commit()
 
         response = self.employee_client.post(
             f"/portal/followups/{report.id}/import-workflow"
@@ -333,6 +371,10 @@ class FollowupFlowTests(unittest.TestCase):
             self.assertEqual(
                 len(EmployeeFollowupReport.query.one().items),
                 1,
+            )
+            self.assertIn(
+                "ملاحظة محدّثة من مسار",
+                EmployeeFollowupReport.query.one().items[0].title,
             )
 
     def test_word_export_filename_uses_the_requested_period_format(self):

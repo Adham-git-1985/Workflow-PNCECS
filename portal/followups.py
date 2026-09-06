@@ -211,7 +211,7 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
             report_id=report.id,
             source_type="MEETING_TASK",
             source_id=task.id,
-            title=(task.title or "مهمة منجزة")[:255],
+            title=task.title or "مهمة منجزة",
             description=(task.description or "")[:5000] or None,
             completed_on=completed_on,
             status="COMPLETED",
@@ -234,31 +234,44 @@ def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
         .all()
     )
 
-    added = 0
+    synchronized = 0
     for audit_log in audit_logs:
         existing = EmployeeFollowupItem.query.filter_by(
             report_id=report.id,
             source_type="WORKFLOW_AUDIT",
             source_id=audit_log.id,
         ).first()
-        if existing:
-            continue
-
         request_title = (getattr(audit_log.request, "title", None) or "").strip()
         request_label = request_title or f"معاملة #{audit_log.request_id}"
         action_label = WORKFLOW_ACCOMPLISHMENT_ACTIONS[audit_log.action]
+        details = []
+        request_description = (
+            getattr(audit_log.request, "description", None) or ""
+        ).strip()
+        if request_description:
+            details.append(f"تفاصيل المعاملة: {request_description}")
+        action_note = (audit_log.note or "").strip()
+        if action_note:
+            details.append(f"ملاحظة الإجراء: {action_note}")
+        title = "\n".join([f"{action_label}: {request_label}", *details])
+        if existing:
+            if existing.title != title or existing.description is not None:
+                existing.title = title
+                existing.description = None
+                synchronized += 1
+            continue
         db.session.add(EmployeeFollowupItem(
             report_id=report.id,
             source_type="WORKFLOW_AUDIT",
             source_id=audit_log.id,
-            title=f"{action_label}: {request_label}"[:255],
-            description=f"سجل مسار للمعاملة #{audit_log.request_id}.",
+            title=title,
+            description=None,
             completed_on=audit_log.created_at.date(),
             status="COMPLETED",
             is_included=True,
         ))
-        added += 1
-    return added
+        synchronized += 1
+    return synchronized
 
 
 def _report_docx_filename(report: EmployeeFollowupReport) -> str:
@@ -338,7 +351,7 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
     report.manager_request = (request.form.get("manager_request") or "").strip() or None
 
     for item in report.items or []:
-        item.title = (request.form.get(f"title_{item.id}") or "").strip()[:255] or item.title
+        item.title = (request.form.get(f"title_{item.id}") or "").strip() or item.title
         description_field = f"description_{item.id}"
         if description_field in request.form:
             item.description = (request.form.get(description_field) or "").strip() or None
@@ -667,7 +680,7 @@ def followups_add_item(report_id: int):
         db.session.add(EmployeeFollowupItem(
             report_id=report.id,
             source_type="MANUAL",
-            title=title[:255],
+            title=title,
             description=None,
             completed_on=item_date,
             status=status if status in ITEM_STATUS_LABELS else "COMPLETED",
