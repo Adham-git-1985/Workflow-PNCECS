@@ -72,6 +72,14 @@ class FollowupServicesTests(unittest.TestCase):
             "Sakkal Majalla",
         )
         self.assertNotIn("تقرير إنجاز الموظف", text)
+        self.assertNotIn(
+            "ملخص الموظف",
+            [paragraph.text for paragraph in document.paragraphs],
+        )
+        self.assertNotIn(
+            "ملخص الإنجاز",
+            [paragraph.text for paragraph in document.paragraphs],
+        )
         self.assertIn("موظف تجريبي", table_text)
         self.assertIn("إنجاز التقرير", table_text)
         self.assertIn("تمت المراجعة", text)

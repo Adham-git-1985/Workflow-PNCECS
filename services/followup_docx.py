@@ -273,8 +273,6 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         _fit_table_widths(document, (2.0, 2.5, 1.2)),
     )
 
-    _paragraph(document, "ملخص الموظف", bold=True)
-    _paragraph(document, report.employee_summary or report.ai_summary or "-")
     _paragraph(document, "التحديات أو الاحتياجات", bold=True)
     _paragraph(document, report.challenges or "-")
     _paragraph(document, "المطلوب من المدير", bold=True)
