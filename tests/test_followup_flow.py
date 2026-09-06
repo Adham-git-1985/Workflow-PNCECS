@@ -11,6 +11,7 @@ from extensions import db
 from models import (
     AuditLog,
     EmployeeFile,
+    EmployeeSecondment,
     EmployeeFollowupCopyRecipient,
     EmployeeFollowupReport,
     Notification,
@@ -66,6 +67,12 @@ class FollowupFlowTests(unittest.TestCase):
                 password_hash="not-used-in-test",
                 role="EMPLOYEE",
             )
+            second_manager = User(
+                email="followup-second-manager@example.test",
+                name="Second Manager",
+                password_hash="not-used-in-test",
+                role="EMPLOYEE",
+            )
             employee = User(
                 email="followup-employee@example.test",
                 name="Employee",
@@ -78,9 +85,10 @@ class FollowupFlowTests(unittest.TestCase):
                 password_hash="not-used-in-test",
                 role="EMPLOYEE",
             )
-            db.session.add_all([manager, employee, outsider])
+            db.session.add_all([manager, second_manager, employee, outsider])
             db.session.flush()
             self.manager_id = manager.id
+            self.second_manager_id = second_manager.id
             self.employee_id = employee.id
             self.outsider_id = outsider.id
             db.session.add_all([
@@ -100,6 +108,11 @@ class FollowupFlowTests(unittest.TestCase):
                     is_allowed=True,
                 ),
                 UserPermission(
+                    user_id=self.second_manager_id,
+                    key="FOLLOWUPS_REVIEW",
+                    is_allowed=True,
+                ),
+                UserPermission(
                     user_id=self.outsider_id,
                     key="FOLLOWUPS_READ",
                     is_allowed=True,
@@ -113,12 +126,16 @@ class FollowupFlowTests(unittest.TestCase):
 
         self.employee_client = self.app.test_client()
         self.manager_client = self.app.test_client()
+        self.second_manager_client = self.app.test_client()
         self.outsider_client = self.app.test_client()
         with self.employee_client.session_transaction() as session:
             session["_user_id"] = str(self.employee_id)
             session["_fresh"] = True
         with self.manager_client.session_transaction() as session:
             session["_user_id"] = str(self.manager_id)
+            session["_fresh"] = True
+        with self.second_manager_client.session_transaction() as session:
+            session["_user_id"] = str(self.second_manager_id)
             session["_fresh"] = True
         with self.outsider_client.session_transaction() as session:
             session["_user_id"] = str(self.outsider_id)
@@ -129,6 +146,14 @@ class FollowupFlowTests(unittest.TestCase):
             db.session.remove()
 
     def test_direct_manager_can_review_only_after_employee_submits(self):
+        with self.app.app_context():
+            db.session.add(UserPermission(
+                user_id=self.manager_id,
+                key="FOLLOWUPS_MANAGE",
+                is_allowed=True,
+            ))
+            db.session.commit()
+
         response = self.employee_client.post(
             "/portal/followups/new",
             data={"period_start": "2026-09-01", "period_end": "2026-09-05"},
@@ -141,6 +166,9 @@ class FollowupFlowTests(unittest.TestCase):
             self.manager_client.get(f"/portal/followups/{report_id}").status_code,
             403,
         )
+        dashboard = self.manager_client.get("/portal/followups")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertNotIn(b"2026-09-05", dashboard.data)
 
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/update",
@@ -158,6 +186,11 @@ class FollowupFlowTests(unittest.TestCase):
                 1,
             )
 
+        self.assertEqual(
+            self.manager_client.get(f"/portal/followups/{report_id}").status_code,
+            200,
+        )
+
         response = self.manager_client.post(
             f"/portal/followups/{report_id}/review",
             data={
@@ -171,6 +204,49 @@ class FollowupFlowTests(unittest.TestCase):
             report = db.session.get(EmployeeFollowupReport, report_id)
             self.assertEqual(report.status, "REVIEWED")
             self.assertEqual(report.manager_comment, "Reviewed")
+
+    def test_employee_can_choose_one_direct_manager_for_submission(self):
+        with self.app.app_context():
+            db.session.add(EmployeeSecondment(
+                user_id=self.employee_id,
+                date_from="2000-01-01",
+                date_to="2099-12-31",
+                direct_manager_user_id=self.second_manager_id,
+            ))
+            db.session.commit()
+
+        form_page = self.employee_client.get("/portal/followups/new")
+        self.assertEqual(form_page.status_code, 200)
+        self.assertIn(b"manager_user_id", form_page.data)
+        self.assertIn(b"Second Manager", form_page.data)
+
+        response = self.employee_client.post(
+            "/portal/followups/new",
+            data={
+                "period_start": "2026-09-01",
+                "period_end": "2026-09-05",
+                "manager_user_id": str(self.second_manager_id),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report_id = EmployeeFollowupReport.query.one().id
+            report = db.session.get(EmployeeFollowupReport, report_id)
+            self.assertEqual(report.manager_user_id, self.second_manager_id)
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={"action": "submit"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            self.manager_client.get(f"/portal/followups/{report_id}").status_code,
+            403,
+        )
+        self.assertEqual(
+            self.second_manager_client.get(f"/portal/followups/{report_id}").status_code,
+            200,
+        )
 
     def test_user_with_followups_read_can_delete_any_report(self):
         with self.app.app_context():

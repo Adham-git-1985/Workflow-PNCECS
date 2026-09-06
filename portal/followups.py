@@ -25,7 +25,7 @@ from models import (
 )
 from services.followup_assistant import build_followup_analysis
 from services.followup_docx import DOCX_MIME, build_followup_docx, is_valid_docx
-from services.hr_request_workflow import resolve_direct_manager
+from services.hr_request_workflow import resolve_responsible_managers
 from utils.file_uploads import clean_original_filename, random_storage_name
 from utils.notification_links import notification_target_path
 
@@ -115,8 +115,6 @@ def _display_user(user: User | None) -> str:
 
 def _access_level(report: EmployeeFollowupReport) -> str | None:
     user_id = int(current_user.id)
-    if _can_manage_all():
-        return "manager"
     if int(report.employee_user_id) == user_id:
         return "employee"
     if (
@@ -127,6 +125,20 @@ def _access_level(report: EmployeeFollowupReport) -> str | None:
     ):
         return "manager"
     return None
+
+
+def _selected_direct_manager(
+    manager_user_id: int | str | None,
+    manager_options: list[User],
+) -> User | None:
+    try:
+        selected_user_id = int(manager_user_id)
+    except (TypeError, ValueError):
+        return None
+    return next(
+        (manager for manager in manager_options if int(manager.id) == selected_user_id),
+        None,
+    )
 
 
 def _get_report_or_abort(report_id: int) -> tuple[EmployeeFollowupReport, str]:
@@ -401,13 +413,16 @@ def followups_dashboard():
     )
     review_reports = []
     if _can_review():
-        review_query = EmployeeFollowupReport.query
-        if not _can_manage_all():
-            review_query = review_query.filter(EmployeeFollowupReport.manager_user_id == current_user.id)
-        review_reports = review_query.order_by(
-            EmployeeFollowupReport.submitted_at.desc(),
-            EmployeeFollowupReport.id.desc(),
-        ).all()
+        review_reports = (
+            EmployeeFollowupReport.query
+            .filter(EmployeeFollowupReport.manager_user_id == current_user.id)
+            .filter(EmployeeFollowupReport.status != "DRAFT")
+            .order_by(
+                EmployeeFollowupReport.submitted_at.desc(),
+                EmployeeFollowupReport.id.desc(),
+            )
+            .all()
+        )
 
     current_start, current_end = _month_bounds()
     metric_reports = review_reports if _can_review() else own_reports
@@ -479,12 +494,19 @@ def followups_new():
         "period_start": request.form.get("period_start") or default_start.isoformat(),
         "period_end": request.form.get("period_end") or default_end.isoformat(),
     }
-    manager = resolve_direct_manager(current_user.id)
+    manager_options = resolve_responsible_managers(current_user.id)
+    form["manager_user_id"] = (
+        request.form.get("manager_user_id")
+        or (str(manager_options[0].id) if manager_options else "")
+    )
+    manager = _selected_direct_manager(form["manager_user_id"], manager_options)
     if request.method == "POST":
         period_start = _parse_date(form["period_start"])
         period_end = _parse_date(form["period_end"])
         if not period_start or not period_end or period_end < period_start:
             flash("يرجى تحديد فترة تقرير صحيحة.", "warning")
+        elif manager_options and not manager:
+            flash("يرجى اختيار المدير المباشر لتوجيه التقرير عند إرساله للاعتماد.", "warning")
         else:
             report = EmployeeFollowupReport(
                 employee_user_id=current_user.id,
@@ -507,6 +529,7 @@ def followups_new():
         "portal/followups/new.html",
         form=form,
         manager=manager,
+        manager_options=manager_options,
     )
 
 
@@ -571,7 +594,10 @@ def followups_update(report_id: int):
             db.session.commit()
             flash("تم إعداد اقتراحات محلية للمراجعة؛ لن تُرسل تلقائياً.", "success")
         elif action == "submit":
-            manager = resolve_direct_manager(current_user.id)
+            manager = _selected_direct_manager(
+                report.manager_user_id,
+                resolve_responsible_managers(current_user.id),
+            )
             if not manager:
                 raise ValueError("manager_not_found")
             report.manager_user_id = manager.id
