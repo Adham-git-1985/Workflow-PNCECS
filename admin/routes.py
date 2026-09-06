@@ -1649,6 +1649,14 @@ def _restore_sqlite_from_snapshot(snapshot_db: str, dest_db: str) -> None:
         src.close()
 
 
+def _sync_runtime_schema_after_restore() -> None:
+    """Apply additive SQLite upgrades required by the current application."""
+    synchronizer = current_app.extensions.get("runtime_schema_sync")
+    if not callable(synchronizer):
+        raise RuntimeError("Runtime schema synchronizer is unavailable")
+    synchronizer()
+
+
 def _restore_json_value(column, value):
     if value is None:
         return None
@@ -1967,6 +1975,7 @@ def backup_restore():
 
         replacements = _restore_persistent_files(extract_dir, files_manifest, ts)
         _validate_sqlite_snapshot(_get_db_path(), database_manifest, verify_checksum=False)
+        _sync_runtime_schema_after_restore()
     except Exception:
         current_app.logger.exception("Backup restore failed; rolling back current data")
         try:

@@ -1253,6 +1253,7 @@ def _ensure_runtime_schema():
 # _ensure_runtime_schema(), which locks the file on Windows and prevents removal.
 # We allow scripts (like init_db.py) to skip this best-effort runtime schema sync
 # by setting SKIP_RUNTIME_SCHEMA=1.
+app.extensions["runtime_schema_sync"] = _ensure_runtime_schema
 if not os.getenv("SKIP_RUNTIME_SCHEMA"):
     _ensure_runtime_schema()
 login_manager.init_app(app)

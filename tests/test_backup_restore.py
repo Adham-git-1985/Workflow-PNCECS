@@ -6,11 +6,14 @@ import tempfile
 import unittest
 import zipfile
 
+from flask import Flask
+
 from admin.routes import (
     _inspect_sqlite_database,
     _make_restore_tempdir,
     _restore_sqlite_from_snapshot,
     _safe_extract_backup_zip,
+    _sync_runtime_schema_after_restore,
     _validate_files_manifest,
     _validate_sqlite_snapshot,
 )
@@ -130,6 +133,16 @@ class BackupRestoreTests(unittest.TestCase):
             restored = _validate_sqlite_snapshot(destination_path, manifest)
             self.assertNotIn("old_data", restored["tables"])
             self.assertEqual(restored["tables"]["inv_employee_request"]["row_count"], 4)
+
+    def test_restore_runs_application_runtime_schema_sync(self):
+        app = Flask(__name__)
+        calls = []
+        app.extensions["runtime_schema_sync"] = lambda: calls.append("synced")
+
+        with app.app_context():
+            _sync_runtime_schema_after_restore()
+
+        self.assertEqual(calls, ["synced"])
 
     def test_file_manifest_detects_missing_or_changed_attachments(self):
         with tempfile.TemporaryDirectory() as root:
