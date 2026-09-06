@@ -32,6 +32,7 @@ PERM_EXTRA_KEYS = [
     ("AUDIT_DASHBOARD_READ", "عرض لوحة سجل التدقيق"),
     ("AUDIT_TIMELINE_READ", "عرض الخط الزمني"),
     ("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ", "عرض لوحة إشعارات مسار"),
+    ("NOTIFICATIONS_GLOBAL_OBSERVER", "مراقب عام للإشعارات (مسار والبوابة)"),
     ("HR_EVALUATIONS_MANAGE", "إدارة تقييم الموظفين"),
     ("HR_SYSTEM_EVALUATION_VIEW", "عرض التقييم النظامي للموظف (شهري/سنوي)"),
 ]

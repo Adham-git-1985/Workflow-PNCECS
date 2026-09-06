@@ -1427,6 +1427,142 @@ class UserPermission(db.Model):
     )
 
 
+# Notification observers receive a copy of every in-app notification, while
+# keeping the original source so workflow and portal notification centres stay
+# completely separate.  This check deliberately does not call User.has_perm:
+# ADMIN/SUPER_ADMIN inherit ordinary permissions there, but becoming a global
+# notification observer must always be an explicit assignment.
+GLOBAL_NOTIFICATION_OBSERVER_PERMISSION = "NOTIFICATIONS_GLOBAL_OBSERVER"
+
+
+def _global_notification_observer_user_ids(session: Session) -> set[int]:
+    """Resolve users explicitly granted the global-notification observer role."""
+    permission_key = GLOBAL_NOTIFICATION_OBSERVER_PERMISSION
+    observer_ids = {
+        int(user_id)
+        for (user_id,) in (
+            session.query(UserPermission.user_id)
+            .filter(func.upper(UserPermission.key) == permission_key)
+            .filter(UserPermission.is_allowed.is_(True))
+            .all()
+        )
+        if user_id
+    }
+
+    # Include a permission that is being granted in this same unit of work.
+    # This keeps the resolver correct even before that UserPermission row has
+    # reached the database.
+    changed_direct_permissions = [
+        row
+        for row in list(session.new) + list(session.dirty)
+        if isinstance(row, UserPermission)
+        and (getattr(row, "key", "") or "").strip().upper() == permission_key
+    ]
+    for row in changed_direct_permissions:
+        user_id = getattr(row, "user_id", None)
+        if not user_id:
+            continue
+        if getattr(row, "is_allowed", False):
+            observer_ids.add(int(user_id))
+        else:
+            observer_ids.discard(int(user_id))
+
+    # The same explicit permission can be assigned to a role from the role
+    # permissions screen.  Resolve role labels as well as codes for legacy
+    # accounts that store a role name instead of the code.
+    observer_roles = {
+        (role or "").strip().casefold()
+        for (role,) in (
+            session.query(RolePermission.role)
+            .filter(func.upper(RolePermission.permission) == permission_key)
+            .all()
+        )
+        if (role or "").strip()
+    }
+    if not observer_roles:
+        return observer_ids
+
+    role_aliases = set(observer_roles)
+    for role in session.query(Role).all():
+        values = {
+            (getattr(role, "code", None) or "").strip().casefold(),
+            (getattr(role, "name_ar", None) or "").strip().casefold(),
+            (getattr(role, "name_en", None) or "").strip().casefold(),
+        }
+        if values.intersection(observer_roles):
+            role_aliases.update(value for value in values if value)
+
+    observer_ids.update(
+        int(user_id)
+        for user_id, role in session.query(User.id, User.role).all()
+        if user_id and (role or "").strip().casefold() in role_aliases
+    )
+    return observer_ids
+
+
+@event.listens_for(Session, "before_flush")
+def _copy_notifications_to_global_observers(session, flush_context, instances):
+    """Give explicit observers one source-preserving copy per notification event."""
+    source_groups: dict[tuple, list[Notification]] = {}
+    for notification in list(session.new):
+        if not isinstance(notification, Notification):
+            continue
+        if getattr(notification, "is_mirror", False) or getattr(
+            notification, "_global_notification_observer_copy", False
+        ):
+            continue
+
+        source = (getattr(notification, "source", None) or "workflow").strip().lower()
+        source = source if source in {"workflow", "portal"} else "workflow"
+        event_key = (getattr(notification, "event_key", None) or "").strip()
+        # Some older writers create notification rows directly without an
+        # event key. Group matching rows so an observer does not receive the
+        # same broadcast once for every original recipient.
+        group_key = (
+            source,
+            event_key or (
+                getattr(notification, "message", None),
+                getattr(notification, "type", None),
+                getattr(notification, "actor_id", None),
+                getattr(notification, "link_url", None),
+            ),
+        )
+        source_groups.setdefault(group_key, []).append(notification)
+
+    if not source_groups:
+        return
+
+    observer_ids = _global_notification_observer_user_ids(session)
+    if not observer_ids:
+        return
+
+    for (source, _event_key), notifications in source_groups.items():
+        prototype = notifications[0]
+        delivered_ids = {
+            int(notification.user_id)
+            for notification in notifications
+            if getattr(notification, "user_id", None)
+        }
+        for observer_id in sorted(observer_ids.difference(delivered_ids)):
+            copied = Notification(
+                user_id=int(observer_id),
+                message=prototype.message,
+                type=prototype.type,
+                role=prototype.role,
+                is_read=False,
+                created_at=prototype.created_at,
+                actor_id=prototype.actor_id,
+                event_key=prototype.event_key,
+                is_mirror=False,
+                link_url=prototype.link_url,
+                source=source,
+                email_delivery_mode=prototype.email_delivery_mode,
+                is_visible=prototype.is_visible,
+            )
+            copied._global_notification_observer_copy = True
+            session.add(copied)
+
+
 class Organization(db.Model):
     __tablename__ = "organizations"
     id = db.Column(db.Integer, primary_key=True)

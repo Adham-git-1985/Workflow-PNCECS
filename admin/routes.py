@@ -396,6 +396,7 @@ def manage_permissions():
         "AUDIT_DASHBOARD_READ",
         "AUDIT_TIMELINE_READ",
         "WORKFLOW_NOTIFICATIONS_DASHBOARD_READ",
+        "NOTIFICATIONS_GLOBAL_OBSERVER",
         "HR_EVALUATIONS_MANAGE",
         # Portal/HR keys (so role-based access works from this UI)
         "PORTAL_READ",
