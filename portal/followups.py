@@ -339,7 +339,9 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
 
     for item in report.items or []:
         item.title = (request.form.get(f"title_{item.id}") or "").strip()[:255] or item.title
-        item.description = (request.form.get(f"description_{item.id}") or "").strip() or None
+        description_field = f"description_{item.id}"
+        if description_field in request.form:
+            item.description = (request.form.get(description_field) or "").strip() or None
         item_date = _parse_date(request.form.get(f"completed_on_{item.id}"), fallback=item.completed_on)
         if request.form.get(f"completed_on_{item.id}") and not item_date:
             raise ValueError("invalid_item_date")
@@ -666,7 +668,7 @@ def followups_add_item(report_id: int):
             report_id=report.id,
             source_type="MANUAL",
             title=title[:255],
-            description=(request.form.get("description") or "").strip() or None,
+            description=None,
             completed_on=item_date,
             status=status if status in ITEM_STATUS_LABELS else "COMPLETED",
             is_included=True,

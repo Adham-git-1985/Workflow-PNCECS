@@ -261,16 +261,15 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
     accomplishment_rows = [
         (
             getattr(item, "title", None) or "مهمة منجزة",
-            getattr(item, "description", None) or "-",
             _date_label(getattr(item, "completed_on", None)),
         )
         for item in completed_items
-    ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-", "-")]
+    ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-")]
     _add_rtl_table(
         document,
-        ("المهمة", "التفاصيل", "التاريخ"),
+        ("المهمة", "التاريخ"),
         accomplishment_rows,
-        _fit_table_widths(document, (2.0, 2.5, 1.2)),
+        _fit_table_widths(document, (4.0, 1.7)),
     )
 
     _paragraph(document, "التحديات أو الاحتياجات", bold=True)

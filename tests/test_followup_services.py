@@ -85,11 +85,11 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertIn("تمت المراجعة", text)
         self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[0].cells],
-            ["المهمة", "التفاصيل", "التاريخ"],
+            ["المهمة", "التاريخ"],
         )
         self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[1].cells],
-            ["إنجاز التقرير", "تفاصيل البند", "2026-09-01"],
+            ["إنجاز التقرير", "2026-09-01"],
         )
         self.assertIsNotNone(accomplishments_table._tbl.tblPr.find(qn("w:bidiVisual")))
         for table in document.tables:
@@ -144,7 +144,7 @@ class FollowupServicesTests(unittest.TestCase):
 
         self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[0].cells],
-            ["المهمة", "التفاصيل", "التاريخ"],
+            ["المهمة", "التاريخ"],
         )
         self.assertIn("لا توجد مهام منجزة", accomplishments_table.rows[1].cells[0].text)
 
