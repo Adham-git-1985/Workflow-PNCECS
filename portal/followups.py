@@ -17,7 +17,6 @@ from models import (
     AuditLog,
     EmployeeFile,
     EmployeeFollowupAttachment,
-    EmployeeFollowupCopyRecipient,
     EmployeeFollowupItem,
     EmployeeFollowupReport,
     Notification,
@@ -127,10 +126,6 @@ def _access_level(report: EmployeeFollowupReport) -> str | None:
         and int(report.manager_user_id) == user_id
     ):
         return "manager"
-    if report.status != "DRAFT" and any(
-        int(recipient.user_id) == user_id for recipient in (report.copy_recipients or [])
-    ):
-        return "copy"
     return None
 
 
@@ -297,10 +292,6 @@ def _save_attachment(report: EmployeeFollowupReport, upload, kind: str) -> Emplo
         raise
 
 
-def _copy_recipient_ids(report: EmployeeFollowupReport) -> set[int]:
-    return {int(row.user_id) for row in (report.copy_recipients or []) if row.user_id}
-
-
 def _notify(user_ids, message: str, level: str, report: EmployeeFollowupReport) -> None:
     link_url = notification_target_path("EMPLOYEE_FOLLOWUP_REPORT", report.id)
     now = datetime.utcnow()
@@ -329,33 +320,10 @@ def _notify(user_ids, message: str, level: str, report: EmployeeFollowupReport) 
         ))
 
 
-def _update_copy_recipients(report: EmployeeFollowupReport, raw_ids) -> None:
-    requested_ids: set[int] = set()
-    for raw_id in raw_ids or []:
-        try:
-            user_id = int(raw_id)
-        except (TypeError, ValueError):
-            continue
-        if user_id > 0 and user_id not in {report.employee_user_id, report.manager_user_id}:
-            requested_ids.add(user_id)
-
-    valid_ids = {
-        int(user_id)
-        for (user_id,) in User.query.filter(User.id.in_(requested_ids)).with_entities(User.id).all()
-    } if requested_ids else set()
-    current = {int(row.user_id): row for row in (report.copy_recipients or [])}
-    for user_id, row in current.items():
-        if user_id not in valid_ids:
-            db.session.delete(row)
-    for user_id in valid_ids - current.keys():
-        db.session.add(EmployeeFollowupCopyRecipient(report_id=report.id, user_id=user_id))
-
-
 def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
     report.employee_summary = (request.form.get("employee_summary") or "").strip() or None
     report.challenges = (request.form.get("challenges") or "").strip() or None
     report.manager_request = (request.form.get("manager_request") or "").strip() or None
-    _update_copy_recipients(report, request.form.getlist("copy_user_ids"))
 
     for item in report.items or []:
         item.title = (request.form.get(f"title_{item.id}") or "").strip()[:255] or item.title
@@ -556,7 +524,6 @@ def followups_view(report_id: int):
         can_edit=can_edit,
         can_review=can_review,
         can_delete_followup_reports=_can_delete_followup_reports(),
-        users=User.query.order_by(func.coalesce(User.name, User.email).asc()).all(),
         report_status_labels=REPORT_STATUS_LABELS,
         item_status_labels=ITEM_STATUS_LABELS,
         rating_labels=RATING_LABELS,
@@ -611,7 +578,7 @@ def followups_update(report_id: int):
             report.status = "SUBMITTED"
             report.submitted_at = datetime.utcnow()
             report.reviewed_at = None
-            recipients = {manager.id, *_copy_recipient_ids(report)}
+            recipients = {manager.id}
             _notify(recipients, f"تم إرسال تقرير إنجاز من {_display_user(report.employee)} للمراجعة.", "FOLLOWUP_SUBMITTED", report)
             db.session.commit()
             flash("تم إرسال التقرير إلى المدير المباشر.", "success")

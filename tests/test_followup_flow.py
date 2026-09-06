@@ -11,6 +11,7 @@ from extensions import db
 from models import (
     AuditLog,
     EmployeeFile,
+    EmployeeFollowupCopyRecipient,
     EmployeeFollowupReport,
     Notification,
     User,
@@ -71,10 +72,17 @@ class FollowupFlowTests(unittest.TestCase):
                 password_hash="not-used-in-test",
                 role="EMPLOYEE",
             )
-            db.session.add_all([manager, employee])
+            outsider = User(
+                email="followup-outsider@example.test",
+                name="Outsider",
+                password_hash="not-used-in-test",
+                role="EMPLOYEE",
+            )
+            db.session.add_all([manager, employee, outsider])
             db.session.flush()
             self.manager_id = manager.id
             self.employee_id = employee.id
+            self.outsider_id = outsider.id
             db.session.add_all([
                 UserPermission(
                     user_id=self.employee_id,
@@ -91,6 +99,11 @@ class FollowupFlowTests(unittest.TestCase):
                     key="FOLLOWUPS_REVIEW",
                     is_allowed=True,
                 ),
+                UserPermission(
+                    user_id=self.outsider_id,
+                    key="FOLLOWUPS_READ",
+                    is_allowed=True,
+                ),
                 EmployeeFile(
                     user_id=self.employee_id,
                     direct_manager_user_id=self.manager_id,
@@ -100,11 +113,15 @@ class FollowupFlowTests(unittest.TestCase):
 
         self.employee_client = self.app.test_client()
         self.manager_client = self.app.test_client()
+        self.outsider_client = self.app.test_client()
         with self.employee_client.session_transaction() as session:
             session["_user_id"] = str(self.employee_id)
             session["_fresh"] = True
         with self.manager_client.session_transaction() as session:
             session["_user_id"] = str(self.manager_id)
+            session["_fresh"] = True
+        with self.outsider_client.session_transaction() as session:
+            session["_user_id"] = str(self.outsider_id)
             session["_fresh"] = True
 
     def tearDown(self):
@@ -172,6 +189,28 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         with self.app.app_context():
             self.assertIsNone(db.session.get(EmployeeFollowupReport, report_id))
+
+    def test_copied_employee_cannot_view_another_employees_report(self):
+        with self.app.app_context():
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="SUBMITTED",
+            )
+            db.session.add(report)
+            db.session.flush()
+            db.session.add(EmployeeFollowupCopyRecipient(
+                report_id=report.id,
+                user_id=self.outsider_id,
+            ))
+            db.session.commit()
+            report_id = report.id
+
+        response = self.outsider_client.get(f"/portal/followups/{report_id}")
+
+        self.assertEqual(response.status_code, 403)
 
     def test_new_report_imports_completed_masar_work(self):
         with self.app.app_context():

@@ -88,7 +88,6 @@
           {% if report.ai_notes %}<div class="alert alert-info" style="white-space: pre-line"><i class="bi bi-stars"></i> <strong>ملاحظات المساعد المحلي:</strong><br>{{ report.ai_notes }}</div>{% endif %}
           <div class="mb-3"><label class="form-label">التحديات أو الاحتياجات</label><textarea class="form-control" name="challenges" rows="3">{{ report.challenges or '' }}</textarea></div>
           <div class="mb-3"><label class="form-label">المطلوب من المدير</label><textarea class="form-control" name="manager_request" rows="2">{{ report.manager_request or '' }}</textarea></div>
-          <div><label class="form-label">إرسال نسخة إلى مدير مشروع أو إدارة أخرى</label><select class="form-select" name="copy_user_ids" multiple size="5">{% set copy_ids = report.copy_recipients|map(attribute='user_id')|list %}{% for user in users %}{% if user.id not in [report.employee_user_id, report.manager_user_id] %}<option value="{{ user.id }}" {% if user.id in copy_ids %}selected{% endif %}>{{ user.full_name }}</option>{% endif %}{% endfor %}</select><div class="form-text">اضغط Ctrl لاختيار أكثر من مستخدم.</div></div>
         </div></div>
       </div>
       <div class="col-xl-4">

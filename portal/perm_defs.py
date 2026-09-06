@@ -59,7 +59,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("PORTAL_MEETINGS_MANAGE", "إدارة الاجتماعات", "ترتيب الاجتماعات، الأجندة، التذكيرات، المحاضر، ومهام ما بعد الاجتماع.", module="PORTAL_MEETINGS"),
     ],
     "متابعات الإنجاز": [
-        PermDef("FOLLOWUPS_READ", "عرض متابعاتي", "عرض تقارير الإنجاز الخاصة بالمستخدم والتقارير الموجهة إليه.", module="FOLLOWUPS"),
+        PermDef("FOLLOWUPS_READ", "عرض متابعاتي", "عرض تقارير الإنجاز الخاصة بالمستخدم فقط.", module="FOLLOWUPS"),
         PermDef("FOLLOWUPS_CREATE", "إنشاء متابعاتي", "إنشاء وتحرير وإرسال تقرير الإنجاز، واستخدام اقتراحات الصياغة وملف Word.", module="FOLLOWUPS"),
         PermDef("FOLLOWUPS_REVIEW", "مراجعة متابعات الموظفين", "مراجعة تقارير الموظفين التابعين مباشرة، وإعادتها للتعديل أو اعتمادها إلكترونياً.", module="FOLLOWUPS"),
         PermDef("FOLLOWUPS_MANAGE", "إدارة متابعات الإنجاز", "عرض وإدارة جميع تقارير الإنجاز عند الحاجة الإدارية.", module="FOLLOWUPS"),
