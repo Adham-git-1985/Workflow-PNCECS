@@ -39,6 +39,7 @@ COMMITTEE_DELIVERY_MODES = {
     "ALL": ("Committee_ALL", "كل أعضاء اللجنة"),
     "CHAIR": ("Committee_CHAIR", "رئيس اللجنة"),
     "SECRETARY": ("Committee_SECRETARY", "مقرر اللجنة"),
+    "MEMBERS": ("Committee_MEMBERS", "أعضاء اللجنة"),
 }
 
 
@@ -455,6 +456,15 @@ def _steps_are_non_managerial_peers(first_step: dict, second_step: dict) -> bool
     if _user_manages_node(second_user_id, first_node):
         return False
     return True
+
+
+def _steps_are_committee_stages(first_step: dict, second_step: dict) -> bool:
+    return bool(
+        (first_step.get("approver_kind") or "").strip().upper() == "COMMITTEE"
+        and (second_step.get("approver_kind") or "").strip().upper() == "COMMITTEE"
+        and first_step.get("approver_committee_id")
+        and first_step.get("approver_committee_id") == second_step.get("approver_committee_id")
+    )
 
 
 _LEGACY_ORG_MODELS = {
@@ -1118,6 +1128,11 @@ def _committee_assignees_for_mode(
             assignee for assignee in active_assignees
             if (assignee.member_role or "").strip().upper() == "SECRETARY"
         ]
+    if mode_key == "MEMBERS":
+        return [
+            assignee for assignee in active_assignees
+            if (assignee.member_role or "").strip().upper() != "CHAIR"
+        ]
     return active_assignees
 
 
@@ -1132,32 +1147,31 @@ def dynamic_committee_choices() -> list[dict]:
     committee_summaries = build_committee_summaries(committees=committees)
     choices = []
     for committee in committees:
-        available_modes = []
-        for mode_key, (canonical, label) in COMMITTEE_DELIVERY_MODES.items():
-            assignees = _committee_assignees_for_mode(committee, mode_key)
-            if assignees:
-                available_modes.append({
-                    "key": mode_key,
-                    "value": canonical,
-                    "label": label,
-                    "assignee_count": len(assignees),
-                })
-        all_mode = next(
-            (mode for mode in available_modes if mode["key"] == "ALL"),
-            None,
-        )
+        chair_assignees = _committee_assignees_for_mode(committee, "CHAIR")
+        member_assignees = _committee_assignees_for_mode(committee, "MEMBERS")
+        active_assignees = _committee_assignees_for_mode(committee, "ALL")
+        can_select = bool(chair_assignees and member_assignees)
+        available_modes = ([{
+            "key": "ALL",
+            "value": "Committee_ALL",
+            "label": "رئيس اللجنة ثم الأعضاء",
+            "assignee_count": len(active_assignees),
+        }] if can_select else [])
+        if not chair_assignees:
+            unavailable_reason = "لا يوجد رئيس لجنة نشط في هذه اللجنة."
+        elif not member_assignees:
+            unavailable_reason = "لا يوجد عضو لجنة نشط غير الرئيس في هذه اللجنة."
+        else:
+            unavailable_reason = ""
         choices.append({
             "id": int(committee.id),
             "name": committee.label,
             "code": (committee.code or "").strip(),
-            "can_select": bool(all_mode),
-            "member_count": int(all_mode["assignee_count"]) if all_mode else 0,
+            "can_select": can_select,
+            "member_count": len(active_assignees),
             "people_summary": committee_summaries.get(int(committee.id)),
             "available_modes": available_modes,
-            "unavailable_reason": (
-                "لا يوجد أعضاء نشطون في هذه اللجنة."
-                if not all_mode else ""
-            ),
+            "unavailable_reason": unavailable_reason,
         })
     return choices
 
@@ -1562,20 +1576,20 @@ def build_dynamic_target_path(
             if not normalized_mode:
                 errors.append(f"طريقة تسليم اللجنة «{committee.label}» غير صالحة.")
                 continue
-            mode_key, canonical_mode, mode_label = normalized_mode
-            assignees = _committee_assignees_for_mode(committee, mode_key)
-            if not assignees:
-                errors.append(
-                    f"لا يوجد مستلم نشط بصفة «{mode_label}» في اللجنة «{committee.label}»."
-                )
+            chair_assignees = _committee_assignees_for_mode(committee, "CHAIR")
+            member_assignees = _committee_assignees_for_mode(committee, "MEMBERS")
+            if not chair_assignees:
+                errors.append(f"لا يوجد رئيس لجنة نشط في اللجنة «{committee.label}».")
+                continue
+            if not member_assignees:
+                errors.append(f"لا يوجد عضو لجنة نشط غير الرئيس في اللجنة «{committee.label}».")
                 continue
             resolved_targets.append({
                 "kind": "COMMITTEE",
                 "id": target_id,
                 "committee": committee,
-                "committee_delivery_mode": canonical_mode,
-                "committee_mode_key": mode_key,
-                "committee_mode_label": mode_label,
+                "committee_mode_key": "ALL",
+                "committee_mode_label": "رئيس اللجنة ثم الأعضاء",
                 "label": f"لجنة: {committee.label}",
             })
             continue
@@ -1693,19 +1707,23 @@ def build_dynamic_target_path(
 
     def add_committee_step(target: dict) -> None:
         committee = target["committee"]
-        steps.append({
-            "step_order": len(steps) + 1,
-            "mode": "SEQUENTIAL",
-            "approver_kind": "COMMITTEE",
-            "approver_committee_id": int(committee.id),
-            "committee_delivery_mode": target["committee_delivery_mode"],
-            "sla_days": None,
-            "label": target["label"],
-            "job_title": target["committee_mode_label"],
-            "reason": "وجهة لجنة مختارة ضمن المسار الديناميكي",
-            "node_id": None,
-            "node_label": "",
-        })
+        for delivery_mode, job_title, reason in (
+            ("Committee_CHAIR", "رئيس اللجنة", "إحالة اللجنة الديناميكية إلى رئيس اللجنة أولاً"),
+            ("Committee_MEMBERS", "أعضاء اللجنة", "إحالة اللجنة إلى الأعضاء بعد اعتماد رئيس اللجنة"),
+        ):
+            steps.append({
+                "step_order": len(steps) + 1,
+                "mode": "SEQUENTIAL",
+                "approver_kind": "COMMITTEE",
+                "approver_committee_id": int(committee.id),
+                "committee_delivery_mode": delivery_mode,
+                "sla_days": None,
+                "label": target["label"],
+                "job_title": job_title,
+                "reason": reason,
+                "node_id": None,
+                "node_label": "",
+            })
 
     selectable_manager_ids = set(manager_options_by_id) if explicit_manager_selection else set()
     for manager_user_id in selected_manager_ids:
@@ -1872,7 +1890,10 @@ def build_dynamic_target_path(
         for index in range(len(forward_steps) - 2, -1, -1):
             forward_step = forward_steps[index]
             following_step = forward_steps[index + 1]
-            if _steps_are_non_managerial_peers(forward_step, following_step):
+            if (
+                _steps_are_non_managerial_peers(forward_step, following_step)
+                or _steps_are_committee_stages(forward_step, following_step)
+            ):
                 continue
             return_step = dict(forward_step)
             return_step["reason"] = DYNAMIC_RETURN_REASON

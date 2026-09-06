@@ -75,6 +75,7 @@ UI_LABELS_AR = {
     "SEQUENTIAL": "تسلسلي",
     "PARALLEL_SYNC": "متزامن",
     "COMMITTEE_ALL": "جميع أعضاء اللجنة",
+    "COMMITTEE_MEMBERS": "أعضاء اللجنة",
     "ARCHIVE_DELETE": "حذف ملف من الأرشيف",
     "ARCHIVE_RESTORE": "استعادة ملف من الأرشيف",
     "ARCHIVE_SHARE": "مشاركة ملف من الأرشيف",

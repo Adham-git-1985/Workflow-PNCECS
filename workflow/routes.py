@@ -2992,6 +2992,11 @@ def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
                 q = q.filter(CommitteeAssignee.member_role.ilike("CHAIR"))
             elif "SECRETARY" in cmode_up:
                 q = q.filter(CommitteeAssignee.member_role.ilike("SECRETARY"))
+            elif "MEMBERS" in cmode_up:
+                q = q.filter(db.or_(
+                    CommitteeAssignee.member_role.is_(None),
+                    ~CommitteeAssignee.member_role.ilike("CHAIR"),
+                ))
 
             if q.first() is not None:
                 return True
@@ -3930,6 +3935,13 @@ def inbox():
                                 WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_SECRETARY", "COMMITTEE_SECRETARY"]),
                                 CommitteeAssignee.member_role.ilike("SECRETARY"),
                             ),
+                            db.and_(
+                                WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_MEMBERS", "COMMITTEE_MEMBERS"]),
+                                db.or_(
+                                    CommitteeAssignee.member_role.is_(None),
+                                    ~CommitteeAssignee.member_role.ilike("CHAIR"),
+                                ),
+                            ),
                         ),
                     )
                     .exists()
@@ -4440,6 +4452,45 @@ def following():
             ])
         return db.session.query(WorkflowStepTask.id).filter(*clauses).exists()
 
+    def _committee_member_clause(user):
+        user_id = int(getattr(user, "id", 0) or 0)
+        if not user_id:
+            return db.text("0")
+
+        role_value = getattr(user, "role", "") or ""
+        role_variants = _role_variants(role_value)
+        committee_role_clause = (
+            or_(*[CommitteeAssignee.role.ilike(value) for value in role_variants])
+            if role_variants else CommitteeAssignee.role.ilike(role_value)
+        )
+        return db.session.query(CommitteeAssignee.id).filter(
+            CommitteeAssignee.committee_id == WorkflowInstanceStep.approver_committee_id,
+            CommitteeAssignee.is_active.is_(True),
+            or_(
+                db.and_(CommitteeAssignee.kind == "USER", CommitteeAssignee.user_id == user_id),
+                db.and_(CommitteeAssignee.kind == "ROLE", committee_role_clause),
+            ),
+            or_(
+                WorkflowInstanceStep.committee_delivery_mode.is_(None),
+                WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_ALL", "COMMITTEE_ALL"]),
+                db.and_(
+                    WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_CHAIR", "COMMITTEE_CHAIR"]),
+                    CommitteeAssignee.member_role.ilike("CHAIR"),
+                ),
+                db.and_(
+                    WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_SECRETARY", "COMMITTEE_SECRETARY"]),
+                    CommitteeAssignee.member_role.ilike("SECRETARY"),
+                ),
+                db.and_(
+                    WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_MEMBERS", "COMMITTEE_MEMBERS"]),
+                    db.or_(
+                        CommitteeAssignee.member_role.is_(None),
+                        ~CommitteeAssignee.member_role.ilike("CHAIR"),
+                    ),
+                ),
+            ),
+        ).exists()
+
     def _current_assignment_clause():
         clauses = []
         for u in (actor_users or []):
@@ -4515,30 +4566,7 @@ def following():
                 org_node_manager_exists,
             ))
 
-            committee_role_clause = (
-                or_(*[CommitteeAssignee.role.ilike(v) for v in role_variants])
-                if role_variants else CommitteeAssignee.role.ilike(role_value)
-            )
-            committee_member_exists = db.session.query(CommitteeAssignee.id).filter(
-                CommitteeAssignee.committee_id == WorkflowInstanceStep.approver_committee_id,
-                CommitteeAssignee.is_active.is_(True),
-                or_(
-                    db.and_(CommitteeAssignee.kind == "USER", CommitteeAssignee.user_id == uid),
-                    db.and_(CommitteeAssignee.kind == "ROLE", committee_role_clause),
-                ),
-                or_(
-                    WorkflowInstanceStep.committee_delivery_mode.is_(None),
-                    WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_ALL", "COMMITTEE_ALL"]),
-                    db.and_(
-                        WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_CHAIR", "COMMITTEE_CHAIR"]),
-                        CommitteeAssignee.member_role.ilike("CHAIR"),
-                    ),
-                    db.and_(
-                        WorkflowInstanceStep.committee_delivery_mode.in_(["Committee_SECRETARY", "COMMITTEE_SECRETARY"]),
-                        CommitteeAssignee.member_role.ilike("SECRETARY"),
-                    ),
-                ),
-            ).exists()
+            committee_member_exists = _committee_member_clause(u)
             clauses.append(db.and_(
                 WorkflowInstanceStep.approver_kind == "COMMITTEE",
                 committee_member_exists,
@@ -4579,11 +4607,25 @@ def following():
         except Exception:
             parallel_involved_exists = db.text("0")
 
+        committee_history_clauses = [
+            db.and_(
+                WorkflowInstanceStep.approver_kind == "COMMITTEE",
+                _committee_member_clause(user),
+            )
+            for user in (actor_users or [])
+            if getattr(user, "id", None)
+        ]
+        committee_history_clause = (
+            or_(*committee_history_clauses)
+            if committee_history_clauses else db.text("0")
+        )
+
         q = q.filter(
             or_(
                 WorkflowRequest.requester_id.in_(actor_ids) if actor_ids else WorkflowRequest.requester_id == effective_user.id,
                 decided_clause,
                 parallel_involved_exists,
+                committee_history_clause,
                 _current_assignment_clause(),
             )
         )

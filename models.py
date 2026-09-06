@@ -1091,7 +1091,7 @@ class WorkflowTemplateStep(db.Model):
 
     # Committee target
     approver_committee_id = db.Column(db.Integer, db.ForeignKey('committees.id'), nullable=True)
-    committee_delivery_mode = db.Column(db.String(30), nullable=True)  # Committee_ALL / Committee_CHAIR / Committee_SECRETARY
+    committee_delivery_mode = db.Column(db.String(30), nullable=True)  # Committee_ALL / Committee_CHAIR / Committee_SECRETARY / Committee_MEMBERS
 
     committee = db.relationship('Committee', foreign_keys=[approver_committee_id], lazy='joined')
 
@@ -1127,7 +1127,7 @@ class WorkflowTemplateParallelAssignee(db.Model):
 
     # Committee target
     approver_committee_id = db.Column(db.Integer, db.ForeignKey('committees.id'), nullable=True)
-    committee_delivery_mode = db.Column(db.String(30), nullable=True)  # Committee_ALL / Committee_CHAIR / Committee_SECRETARY
+    committee_delivery_mode = db.Column(db.String(30), nullable=True)  # Committee_ALL / Committee_CHAIR / Committee_SECRETARY / Committee_MEMBERS
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -1210,7 +1210,7 @@ class WorkflowInstanceStep(db.Model):
 
     # Committee target
     approver_committee_id = db.Column(db.Integer, db.ForeignKey('committees.id'), nullable=True)
-    committee_delivery_mode = db.Column(db.String(30), nullable=True)  # Committee_ALL / Committee_CHAIR / Committee_SECRETARY
+    committee_delivery_mode = db.Column(db.String(30), nullable=True)  # Committee_ALL / Committee_CHAIR / Committee_SECRETARY / Committee_MEMBERS
 
     status = db.Column(db.String(30), default="PENDING")  # PENDING / APPROVED / REJECTED / SKIPPED
 

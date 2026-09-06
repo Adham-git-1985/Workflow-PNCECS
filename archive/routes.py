@@ -52,6 +52,7 @@ from models import (
 )
 
 from workflow.engine import (
+    resolve_step_approver_user_ids,
     resolve_template_participant_user_ids,
     start_workflow_for_request,
 )
@@ -477,6 +478,7 @@ WORKFLOW_STATUS_OPTIONS = [
     ("IN_PROGRESS", "قيد الإجراء"),
     ("APPROVED", "معتمد"),
     ("REJECTED", "مرفوض"),
+    ("CLOSED", "مغلق"),
 ]
 
 
@@ -621,6 +623,8 @@ def _archive_user_can_view_workflow(user, req: WorkflowRequest) -> bool:
         if kind == "DIRECTORATE" and getattr(step, "approver_directorate_id", None):
             if getattr(user, "directorate_id", None) == step.approver_directorate_id and role in ("directorate_head", "directorate_deputy"):
                 return True
+        if kind == "COMMITTEE" and user.id in resolve_step_approver_user_ids(step):
+            return True
 
     return False
 

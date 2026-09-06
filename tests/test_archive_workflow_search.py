@@ -7,7 +7,16 @@ from flask_login import LoginManager, login_user, logout_user
 from archive import archive_bp
 from archive import routes as archive_routes
 from extensions import db
-from models import ArchivedFile, RequestAttachment, User, WorkflowRequest
+from models import (
+    ArchivedFile,
+    Committee,
+    CommitteeAssignee,
+    RequestAttachment,
+    User,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowRequest,
+)
 
 
 class ArchiveWorkflowSearchTests(unittest.TestCase):
@@ -102,9 +111,9 @@ class ArchiveWorkflowSearchTests(unittest.TestCase):
         ))
         return archived_file
 
-    def _search(self, filters):
+    def _search(self, filters, user=None):
         with self.app.test_request_context("/archive/my-files"):
-            login_user(self.admin)
+            login_user(user or self.admin)
             try:
                 return archive_routes._search_workflows_from_archive(filters)
             finally:
@@ -157,6 +166,61 @@ class ArchiveWorkflowSearchTests(unittest.TestCase):
             {row.id for row in selected_files},
             {self.second_file.id, self.attachment_match_file.id},
         )
+
+    def test_committee_member_can_find_a_closed_workflow(self):
+        member = User(
+            email="committee-member@example.test",
+            name="Committee Member",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add(member)
+        db.session.flush()
+
+        committee = Committee(name_ar="لجنة الأرشيف", is_active=True)
+        db.session.add(committee)
+        db.session.flush()
+        db.session.add(CommitteeAssignee(
+            committee_id=committee.id,
+            kind="USER",
+            user_id=member.id,
+            member_role="MEMBER",
+            is_active=True,
+        ))
+
+        closed_request = WorkflowRequest(
+            title="مسار لجنة مغلق",
+            status="CLOSED",
+            requester_id=self.admin.id,
+            confidentiality="NORMAL",
+        )
+        db.session.add(closed_request)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=closed_request.id,
+            current_step_order=1,
+            is_completed=True,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add(WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            mode="SEQUENTIAL",
+            approver_kind="COMMITTEE",
+            approver_committee_id=committee.id,
+            committee_delivery_mode="Committee_MEMBERS",
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        results = self._search({
+            "workflow_q": "",
+            "workflow_status": "CLOSED",
+        }, member)
+
+        self.assertIn(("CLOSED", "مغلق"), archive_routes.WORKFLOW_STATUS_OPTIONS)
+        self.assertEqual([row.id for row in results], [closed_request.id])
 
 
 if __name__ == "__main__":

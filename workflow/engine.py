@@ -152,6 +152,7 @@ def _resolve_committee_users(committee_id: int | None, delivery_mode: str | None
       - Committee_ALL (default)
       - Committee_CHAIR
       - Committee_SECRETARY
+      - Committee_MEMBERS
     """
     if not committee_id:
         return []
@@ -163,6 +164,11 @@ def _resolve_committee_users(committee_id: int | None, delivery_mode: str | None
         q = q.filter(or_(CommitteeAssignee.member_role == 'CHAIR', CommitteeAssignee.member_role == 'chair'))
     elif mode == 'COMMITTEE_SECRETARY':
         q = q.filter(or_(CommitteeAssignee.member_role == 'SECRETARY', CommitteeAssignee.member_role == 'secretary'))
+    elif mode == 'COMMITTEE_MEMBERS':
+        q = q.filter(or_(
+            CommitteeAssignee.member_role.is_(None),
+            ~CommitteeAssignee.member_role.ilike('CHAIR'),
+        ))
 
     members = q.all()
     user_ids: set[int] = set()
@@ -1212,6 +1218,8 @@ def start_workflow_for_request(
                 _cmode = 'Committee_CHAIR'
             elif up == 'COMMITTEE_SECRETARY':
                 _cmode = 'Committee_SECRETARY'
+            elif up == 'COMMITTEE_MEMBERS':
+                _cmode = 'Committee_MEMBERS'
 
         effective_sla_days = _effective_sla_days(
             template_sla,

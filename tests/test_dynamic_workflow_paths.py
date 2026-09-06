@@ -471,12 +471,16 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         self.assertEqual(choices[0]["member_count"], 2)
         self.assertEqual(
             [mode["key"] for mode in choices[0]["available_modes"]],
-            ["ALL", "CHAIR"],
+            ["ALL"],
+        )
+        self.assertEqual(
+            choices[0]["available_modes"][0]["label"],
+            "رئيس اللجنة ثم الأعضاء",
         )
         self.assertEqual(choices[0]["people_summary"]["chair"], self.same_target.full_name)
         self.assertEqual(choices[0]["people_summary"]["member_preview"], [self.cross_target.full_name])
 
-    def test_dynamic_path_can_end_at_committee_and_runtime_resolves_its_chair(self):
+    def test_dynamic_path_sends_committee_to_chair_then_members(self):
         committee = Committee(name_ar="لجنة المسار الديناميكي", is_active=True)
         db.session.add(committee)
         db.session.flush()
@@ -500,17 +504,23 @@ class DynamicWorkflowPathTests(unittest.TestCase):
 
         result = build_dynamic_target_path(
             self.requester,
-            [f"COMMITTEE:{committee.id}@CHAIR"],
+            [f"COMMITTEE:{committee.id}@ALL"],
         )
 
         self.assertEqual(result["errors"], [])
-        self.assertEqual(len(result["steps"]), 1)
-        self.assertEqual(result["steps"][0]["approver_kind"], "COMMITTEE")
-        self.assertEqual(result["steps"][0]["approver_committee_id"], committee.id)
-        self.assertEqual(result["steps"][0]["committee_delivery_mode"], "Committee_CHAIR")
+        self.assertEqual(len(result["steps"]), 2)
+        self.assertEqual(
+            [step["committee_delivery_mode"] for step in result["steps"]],
+            ["Committee_CHAIR", "Committee_MEMBERS"],
+        )
+        self.assertTrue(all(
+            step["approver_kind"] == "COMMITTEE"
+            and step["approver_committee_id"] == committee.id
+            for step in result["steps"]
+        ))
         self.assertEqual(
             result["segments"][0]["target_ref"],
-            f"COMMITTEE:{committee.id}@CHAIR",
+            f"COMMITTEE:{committee.id}@ALL",
         )
         unlinked_requester = self._user("unlinked@example.test", "موظف غير مربوط")
         db.session.commit()
@@ -538,15 +548,29 @@ class DynamicWorkflowPathTests(unittest.TestCase):
         db.session.commit()
 
         instance = WorkflowInstance.query.filter_by(request_id=request_row.id).one()
-        step = WorkflowInstanceStep.query.filter_by(instance_id=instance.id).one()
-        self.assertEqual(step.approver_kind, "COMMITTEE")
-        self.assertEqual(step.approver_committee_id, committee.id)
-        self.assertEqual(step.committee_delivery_mode, "Committee_CHAIR")
-        self.assertEqual(resolve_step_approver_user_ids(step), [self.same_target.id])
+        steps = (
+            WorkflowInstanceStep.query
+            .filter_by(instance_id=instance.id)
+            .order_by(WorkflowInstanceStep.step_order)
+            .all()
+        )
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(resolve_step_approver_user_ids(steps[0]), [self.same_target.id])
+        self.assertEqual(resolve_step_approver_user_ids(steps[1]), [self.cross_target.id])
         self.assertIsNotNone(Notification.query.filter_by(user_id=self.same_target.id).first())
         self.assertIsNone(Notification.query.filter_by(user_id=self.cross_target.id).first())
+        self.assertTrue(_user_can_view_request(self.cross_target, request_row))
 
-    def test_dynamic_committee_must_be_last_and_have_the_requested_member_role(self):
+        decide_step(
+            request_row.id,
+            1,
+            self.same_target.id,
+            "APPROVED",
+            auto_commit=True,
+        )
+        self.assertIsNotNone(Notification.query.filter_by(user_id=self.cross_target.id).first())
+
+    def test_dynamic_committee_must_be_last_and_include_a_non_chair_member(self):
         committee = Committee(name_ar="لجنة بلا مقرر", is_active=True)
         db.session.add(committee)
         db.session.flush()
@@ -563,13 +587,13 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             f"COMMITTEE:{committee.id}@ALL",
             f"USER:{self.same_target.id}",
         ])
-        missing_secretary = build_dynamic_target_path(
+        missing_member = build_dynamic_target_path(
             self.requester,
-            [f"COMMITTEE:{committee.id}@SECRETARY"],
+            [f"COMMITTEE:{committee.id}@ALL"],
         )
 
         self.assertIn("آخر وجهة", " ".join(not_last["errors"]))
-        self.assertIn("مقرر اللجنة", " ".join(missing_secretary["errors"]))
+        self.assertIn("عضو لجنة", " ".join(missing_member["errors"]))
 
     def test_hierarchy_position_uses_the_workflow_step_node(self):
         second_managed_node = self._node(

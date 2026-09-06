@@ -433,6 +433,8 @@
       → <span class="text-muted">رئيس اللجنة</span>
     {% elif cmode_up == "COMMITTEE_SECRETARY" or cmode == "Committee_SECRETARY" %}
       → <span class="text-muted">مقرر اللجنة</span>
+    {% elif cmode_up == "COMMITTEE_MEMBERS" or cmode == "Committee_MEMBERS" %}
+      → <span class="text-muted">أعضاء اللجنة</span>
     {% else %}
       → <span class="text-muted">كل الأعضاء</span>
     {% endif %}
