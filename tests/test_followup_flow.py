@@ -1,3 +1,4 @@
+from datetime import datetime
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,8 +8,17 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import EmployeeFile, EmployeeFollowupReport, Notification, User, UserPermission
+from models import (
+    AuditLog,
+    EmployeeFile,
+    EmployeeFollowupReport,
+    Notification,
+    User,
+    UserPermission,
+    WorkflowRequest,
+)
 from portal import portal_bp
+from portal.followups import _report_docx_filename
 
 
 class FollowupFlowTests(unittest.TestCase):
@@ -154,6 +164,64 @@ class FollowupFlowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         with self.app.app_context():
             self.assertIsNone(db.session.get(EmployeeFollowupReport, report_id))
+
+    def test_new_report_imports_completed_masar_work(self):
+        with self.app.app_context():
+            workflow_request = WorkflowRequest(
+                requester_id=self.employee_id,
+                title="معاملة لاختبار الاستيراد",
+                status="IN_PROGRESS",
+            )
+            db.session.add(workflow_request)
+            db.session.flush()
+            db.session.add(AuditLog(
+                request_id=workflow_request.id,
+                user_id=self.employee_id,
+                action="STEP_APPROVED",
+                created_at=datetime(2026, 9, 3, 10, 30),
+            ))
+            db.session.commit()
+
+        response = self.employee_client.post(
+            "/portal/followups/new",
+            data={"period_start": "2026-09-01", "period_end": "2026-09-05"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report = EmployeeFollowupReport.query.one()
+            imported_item = next(
+                item for item in report.items if item.source_type == "WORKFLOW_AUDIT"
+            )
+            self.assertIn("متابعة واعتماد خطوة", imported_item.title)
+            self.assertIn("معاملة لاختبار الاستيراد", imported_item.title)
+            self.assertEqual(imported_item.completed_on.isoformat(), "2026-09-03")
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report.id}/import-workflow"
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            self.assertEqual(
+                EmployeeFollowupReport.query.one().items[0].source_type,
+                "WORKFLOW_AUDIT",
+            )
+            self.assertEqual(
+                len(EmployeeFollowupReport.query.one().items),
+                1,
+            )
+
+    def test_word_export_filename_uses_the_requested_period_format(self):
+        report = EmployeeFollowupReport(
+            period_start=datetime(2026, 9, 1).date(),
+            period_end=datetime(2026, 9, 6).date(),
+        )
+
+        self.assertEqual(
+            _report_docx_filename(report),
+            "تقرير_انجاز_من_2026-09-01_الى_2026-09-06.docx",
+        )
 
 
 if __name__ == "__main__":

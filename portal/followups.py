@@ -14,6 +14,7 @@ from sqlalchemy import and_, func, or_
 
 from extensions import db
 from models import (
+    AuditLog,
     EmployeeFile,
     EmployeeFollowupAttachment,
     EmployeeFollowupCopyRecipient,
@@ -52,6 +53,13 @@ RATING_LABELS = {
     "EXCELLENT": "ممتاز",
     "GOOD": "جيد",
     "NEEDS_SUPPORT": "يحتاج دعم",
+}
+WORKFLOW_ACCOMPLISHMENT_ACTIONS = {
+    "WORKFLOW_STARTED": "بدء معاملة",
+    "STEP_APPROVED": "متابعة واعتماد خطوة",
+    "STEP_REJECTED": "اتخاذ قرار في خطوة",
+    "PARALLEL_SYNC_RESPONDED": "متابعة خطوة متزامنة",
+    "WORKFLOW_COMPLETED": "إكمال مسار معاملة",
 }
 
 
@@ -207,6 +215,53 @@ def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
         ))
         added += 1
     return added
+
+
+def _extract_workflow_accomplishments(report: EmployeeFollowupReport) -> int:
+    start_at = datetime.combine(report.period_start, time.min)
+    end_at = datetime.combine(report.period_end + timedelta(days=1), time.min)
+    audit_logs = (
+        AuditLog.query
+        .filter(AuditLog.user_id == report.employee_user_id)
+        .filter(AuditLog.request_id.isnot(None))
+        .filter(AuditLog.action.in_(WORKFLOW_ACCOMPLISHMENT_ACTIONS))
+        .filter(AuditLog.created_at >= start_at, AuditLog.created_at < end_at)
+        .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
+        .all()
+    )
+
+    added = 0
+    for audit_log in audit_logs:
+        existing = EmployeeFollowupItem.query.filter_by(
+            report_id=report.id,
+            source_type="WORKFLOW_AUDIT",
+            source_id=audit_log.id,
+        ).first()
+        if existing:
+            continue
+
+        request_title = (getattr(audit_log.request, "title", None) or "").strip()
+        request_label = request_title or f"معاملة #{audit_log.request_id}"
+        action_label = WORKFLOW_ACCOMPLISHMENT_ACTIONS[audit_log.action]
+        db.session.add(EmployeeFollowupItem(
+            report_id=report.id,
+            source_type="WORKFLOW_AUDIT",
+            source_id=audit_log.id,
+            title=f"{action_label}: {request_label}"[:255],
+            description=f"سجل مسار للمعاملة #{audit_log.request_id}.",
+            completed_on=audit_log.created_at.date(),
+            status="COMPLETED",
+            is_included=True,
+        ))
+        added += 1
+    return added
+
+
+def _report_docx_filename(report: EmployeeFollowupReport) -> str:
+    return (
+        f"تقرير_انجاز_من_{report.period_start.isoformat()}"
+        f"_الى_{report.period_end.isoformat()}.docx"
+    )
 
 
 def _save_attachment(report: EmployeeFollowupReport, upload, kind: str) -> EmployeeFollowupAttachment | None:
@@ -475,9 +530,12 @@ def followups_new():
             )
             db.session.add(report)
             db.session.flush()
-            extracted_count = _extract_completed_meeting_tasks(report)
+            extracted_count = (
+                _extract_completed_meeting_tasks(report)
+                + _extract_workflow_accomplishments(report)
+            )
             db.session.commit()
-            flash(f"تم إنشاء التقرير واستخراج {extracted_count} مهمة منجزة.", "success")
+            flash(f"تم إنشاء التقرير وإضافة {extracted_count} بند تلقائي من أعمال النظام.", "success")
             return redirect(url_for("portal.followups_view", report_id=report.id))
 
     return render_template(
@@ -574,6 +632,28 @@ def followups_update(report_id: int):
         current_app.logger.exception("Failed to update followup report %s", report_id)
         flash("تعذر حفظ التقرير حالياً.", "danger")
     return redirect(url_for("portal.followups_view", report_id=report_id))
+
+
+@portal_bp.route("/followups/<int:report_id>/import-workflow", methods=["POST"])
+@login_required
+def followups_import_workflow_accomplishments(report_id: int):
+    _require_followups_access()
+    report, _ = _get_report_or_abort(report_id)
+    if not _employee_can_edit(report):
+        abort(403)
+    try:
+        imported_count = _extract_workflow_accomplishments(report)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to import Masar accomplishments for report %s", report_id)
+        flash("تعذر استيراد أعمال مسار حالياً.", "danger")
+    else:
+        if imported_count:
+            flash(f"تمت إضافة {imported_count} بند من أعمال مسار.", "success")
+        else:
+            flash("لا توجد أعمال جديدة من مسار ضمن فترة التقرير.", "info")
+    return redirect(url_for("portal.followups_view", report_id=report.id))
 
 
 @portal_bp.route("/followups/<int:report_id>/items", methods=["POST"])
@@ -698,7 +778,7 @@ def followups_export_docx(report_id: int):
         current_app.logger.exception("Failed to create followup docx for %s", report.id)
         flash("تعذر إنشاء ملف Word للتقرير.", "danger")
         return redirect(url_for("portal.followups_view", report_id=report.id))
-    filename = f"تقرير إنجاز - {report.id} - {report.period_end.isoformat()}.docx"
+    filename = _report_docx_filename(report)
     from io import BytesIO
     from flask import send_file
     return send_file(
