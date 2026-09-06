@@ -1,6 +1,11 @@
 import re
 
 
+_AUDIT_OPERATION_SOURCE_LINE_RE = re.compile(
+    r"(?im)^[ \t]*مصدر[ \t]+العملية[ \t]*:[^\r\n]*(?:\r?\n|$)"
+)
+
+
 UI_LABELS_AR = {
     "ADMIN_UPDATED_USER_PROFILE_FIELDS": "قام المسؤول بتحديث حقول ملف المستخدم",
     "ADMIN_UPDATED_مستخدم_PROFILE_FIELDS": "قام المسؤول بتحديث حقول ملف المستخدم",
@@ -257,7 +262,9 @@ def workflow_status_label(value):
 def ui_text(value):
     if value is None:
         return ""
-    text = str(value)
+    # Operation-source metadata was historically appended to the same field
+    # as user comments. Keep old records readable without exposing that line.
+    text = _AUDIT_OPERATION_SOURCE_LINE_RE.sub("", str(value)).strip()
     for phrase, label in sorted(UI_TEXT_REPLACEMENTS_AR.items(), key=lambda item: len(item[0]), reverse=True):
         text = re.sub(re.escape(phrase), label, text, flags=re.IGNORECASE)
     text = re.sub(r"\bSTEP\s+(\d+)\b", r"الخطوة \1", text, flags=re.IGNORECASE)

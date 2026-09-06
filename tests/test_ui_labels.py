@@ -47,6 +47,12 @@ class UiLabelsArabicTests(unittest.TestCase):
     def test_unknown_free_text_is_preserved(self):
         self.assertEqual(ui_label("نص مخصص"), "نص مخصص")
 
+    def test_operation_source_is_hidden_from_historical_comments(self):
+        self.assertEqual(
+            ui_text("يرجى المتابعة.\nمصدر العملية: IP=127.0.0.1"),
+            "يرجى المتابعة.",
+        )
+
     def test_common_historical_audit_notes_are_arabic(self):
         timeclock_note = ui_text(
             "TIMECLK sync inserted=15 skipped=4 errors=0 summaries=15"

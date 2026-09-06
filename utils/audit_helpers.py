@@ -1,6 +1,5 @@
 from flask import g, has_request_context, request
 from flask_login import current_user
-from sqlalchemy import event
 
 
 def _safe_text(value, max_len=255):
@@ -91,49 +90,6 @@ def get_audit_source_summary() -> str:
     return "مصدر العملية: " + " | ".join(parts)
 
 
-def _append_audit_source_to_note(target) -> None:
-    """Append source details to AuditLog.note so existing timeline screens show it immediately."""
-    source = get_audit_source_summary()
-    if not source:
-        return
-
-    try:
-        note = _safe_text(getattr(target, "note", ""), 0)
-    except Exception:
-        note = ""
-
-    # Prevent duplicates if a caller already included the source line.
-    if "مصدر العملية:" in note or "IP=" in note:
-        return
-
-    if note:
-        target.note = f"{note}\n{source}"
-    else:
-        target.note = source
-
-
-def _register_audit_source_listener() -> None:
-    """Register once: enrich every new AuditLog with request source metadata."""
-    try:
-        from models import AuditLog
-
-        marker = "_audit_source_listener_registered"
-        if getattr(AuditLog, marker, False):
-            return
-
-        @event.listens_for(AuditLog, "before_insert", propagate=True)
-        def _audit_log_before_insert(mapper, connection, target):  # noqa: ARG001
-            try:
-                _append_audit_source_to_note(target)
-            except Exception:
-                # Never break the workflow because of audit enrichment.
-                pass
-
-        setattr(AuditLog, marker, True)
-    except Exception:
-        pass
-
-
 def delegation_audit_fields() -> dict:
     """Returns extra AuditLog fields when user is acting via delegation."""
     try:
@@ -145,6 +101,3 @@ def delegation_audit_fields() -> dict:
     except Exception:
         pass
     return {}
-
-
-_register_audit_source_listener()
