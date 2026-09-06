@@ -2,8 +2,27 @@
 
 {% block title %}تقرير الإنجاز{% endblock %}
 
+{% block head %}
+<style>
+  .followup-report,
+  .followup-report .table,
+  .followup-report .form-control,
+  .followup-report .form-select,
+  .followup-report textarea {
+    direction: rtl;
+    text-align: right;
+  }
+
+  .followup-report .table th,
+  .followup-report .table td {
+    text-align: right;
+    vertical-align: middle;
+  }
+</style>
+{% endblock %}
+
 {% block content %}
-<div class="container-fluid py-4" dir="rtl">
+<div class="container-fluid py-4 followup-report" dir="rtl">
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
     <div>
       <a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('portal.followups_dashboard') }}"><i class="bi bi-arrow-right"></i> متابعاتي</a>
@@ -23,20 +42,37 @@
       <div class="col-xl-8">
         <div class="card border-0 shadow-sm mb-4">
           <div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div>
-          <div class="card-body p-0">
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead class="table-light">
+                <tr>
+                  <th>الإنجاز</th>
+                  <th style="width: 170px">التاريخ</th>
+                  <th style="width: 180px">الحالة</th>
+                  <th style="width: 90px">إدراج</th>
+                  <th style="width: 80px">إجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
             {% for item in report.items %}
-            <div class="border-bottom p-3">
-              <div class="row g-2">
-                <div class="col-md-5"><label class="form-label small">الإنجاز</label><input class="form-control" name="title_{{ item.id }}" maxlength="255" value="{{ item.title }}"></div>
-                <div class="col-md-3"><label class="form-label small">التاريخ</label><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></div>
-                <div class="col-md-3"><label class="form-label small">الحالة</label><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
-                <div class="col-md-1 d-flex align-items-end"><div class="form-check mb-2"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label small" for="included_{{ item.id }}">إدراج</label></div></div>
-                <div class="col-12"><label class="form-label small">التفاصيل</label><textarea class="form-control" name="description_{{ item.id }}" rows="2">{{ item.description or '' }}</textarea></div>
-                {% if item.ai_suggestion or item.duplicate_hint %}<div class="col-12"><div class="small alert alert-info py-2 mb-0"><i class="bi bi-stars"></i> {{ item.ai_suggestion or '' }} {% if item.duplicate_hint %}<br>{{ item.duplicate_hint }}{% endif %}</div></div>{% endif %}
-              </div>
-              <div class="text-start mt-2"><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}"><i class="bi bi-trash"></i> حذف</button></div>
-            </div>
-            {% else %}<div class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أدناه.</div>{% endfor %}
+                <tr>
+                  <td>
+                    <label class="visually-hidden" for="title_{{ item.id }}">الإنجاز</label>
+                    <input id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" maxlength="255" value="{{ item.title }}">
+                    <label class="visually-hidden" for="description_{{ item.id }}">التفاصيل</label>
+                    <textarea id="description_{{ item.id }}" class="form-control mt-2" name="description_{{ item.id }}" rows="2" placeholder="تفاصيل مختصرة">{{ item.description or '' }}</textarea>
+                    {% if item.ai_suggestion or item.duplicate_hint %}
+                    <div class="small alert alert-info py-2 mt-2 mb-0"><i class="bi bi-stars"></i> {{ item.ai_suggestion or '' }} {% if item.duplicate_hint %}<br>{{ item.duplicate_hint }}{% endif %}</div>
+                    {% endif %}
+                  </td>
+                  <td><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></td>
+                  <td><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td>
+                  <td><div class="form-check"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label" for="included_{{ item.id }}">إدراج</label></div></td>
+                  <td><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}" title="حذف الإنجاز"><i class="bi bi-trash"></i><span class="visually-hidden">حذف</span></button></td>
+                </tr>
+            {% else %}<tr><td colspan="5" class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أدناه.</td></tr>{% endfor %}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -66,6 +102,21 @@
     <div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6">تفاصيل الموظف</h2><p><strong>ملخص الإنجازات:</strong><br>{{ report.employee_summary or report.ai_summary or '-' }}</p><p><strong>التحديات:</strong><br>{{ report.challenges or '-' }}</p><p class="mb-0"><strong>المطلوب من المدير:</strong><br>{{ report.manager_request or '-' }}</p></div></div></div><div class="col-lg-5"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6">مراجعة المدير</h2><div class="mb-3"><label class="form-label">التقييم المختصر</label><select class="form-select" name="manager_rating"><option value="">-</option>{% for key, label in rating_labels.items() %}<option value="{{ key }}" {% if report.manager_rating == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="mb-3"><label class="form-label">ملاحظات المدير</label><textarea class="form-control" name="manager_comment" rows="4">{{ report.manager_comment or '' }}</textarea></div><div class="d-flex gap-2"><button class="btn btn-success" name="action" value="review"><i class="bi bi-patch-check"></i> اعتماد إلكتروني</button><button class="btn btn-outline-warning" name="action" value="return"><i class="bi bi-arrow-return-right"></i> إعادة للتعديل</button></div></div></div></div></div>
   </form>
   {% else %}
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div>
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light"><tr><th>الإنجاز</th><th style="width: 170px">التاريخ</th></tr></thead>
+        <tbody>
+          {% for item in report.items if item.is_included %}
+          <tr><td><strong>{{ item.title }}</strong>{% if item.description or item.ai_suggestion %}<div class="small text-muted mt-1">{{ item.description or item.ai_suggestion }}</div>{% endif %}</td><td>{{ item.completed_on or '-' }}</td></tr>
+          {% else %}
+          <tr><td colspan="2" class="p-4 text-muted">لا توجد بنود مدرجة.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
   <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6">تفاصيل التقرير</h2><p><strong>الملخص:</strong><br>{{ report.employee_summary or report.ai_summary or '-' }}</p><p><strong>التحديات:</strong><br>{{ report.challenges or '-' }}</p><p><strong>ملاحظات المدير:</strong><br>{{ report.manager_comment or '-' }}</p></div></div>
   {% endif %}
 </div>
