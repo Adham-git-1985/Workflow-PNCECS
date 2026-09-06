@@ -128,6 +128,31 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
         self.assertEqual(self.instance.current_step_order, 1)
         self.assertEqual(step.status, "PENDING")
 
+    def test_authorized_user_can_add_multiple_quick_endorsements_in_one_multiline_comment(self):
+        first_endorsement, second_endorsement = _get_secretary_endorsements()[:2]
+        add_note = _unwrapped(add_request_note)
+        with self.app.test_request_context(
+            f"/workflow/request/{self.request_row.id}/note",
+            method="POST",
+            data={
+                "endorsement_ids": [str(first_endorsement.id), str(second_endorsement.id)],
+            },
+        ), patch("workflow.routes.current_user", self.secretary), patch(
+            "workflow.routes.emit_event"
+        ):
+            response = add_note(self.request_row.id)
+
+        saved_note = AuditLog.query.filter_by(
+            request_id=self.request_row.id,
+            action="WORKFLOW_COMMENT",
+            user_id=self.secretary.id,
+        ).one()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            saved_note.note,
+            f"{first_endorsement.text}\n{second_endorsement.text}",
+        )
+
     def test_authorized_user_can_add_and_remove_a_shared_endorsement(self):
         manage = _unwrapped(manage_secretary_endorsements)
         with self.app.test_request_context(

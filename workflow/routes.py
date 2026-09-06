@@ -400,12 +400,40 @@ def _get_secretary_endorsements() -> list[WorkflowQuickEndorsement]:
 
 def _secretary_endorsement_note(endorsement_id: str | int | None) -> str | None:
     """Return an active configured endorsement by its trusted database ID."""
-    try:
-        identifier = int(endorsement_id)
-    except (TypeError, ValueError):
+    notes = _secretary_endorsement_notes([endorsement_id])
+    return notes[0] if notes else None
+
+
+def _secretary_endorsement_notes(
+    endorsement_ids: list[str | int | None],
+) -> list[str] | None:
+    """Return active configured endorsements in the submitted order."""
+    identifiers = []
+    seen_identifiers = set()
+    for endorsement_id in endorsement_ids:
+        try:
+            identifier = int(endorsement_id)
+        except (TypeError, ValueError):
+            return None
+        if identifier not in seen_identifiers:
+            identifiers.append(identifier)
+            seen_identifiers.add(identifier)
+
+    if not identifiers:
+        return []
+
+    rows = WorkflowQuickEndorsement.query.filter(
+        WorkflowQuickEndorsement.id.in_(identifiers),
+        WorkflowQuickEndorsement.is_active.is_(True),
+    ).all()
+    notes_by_id = {
+        row.id: (row.text or "").strip()
+        for row in rows
+        if (row.text or "").strip()
+    }
+    if len(notes_by_id) != len(identifiers):
         return None
-    row = WorkflowQuickEndorsement.query.filter_by(id=identifier, is_active=True).first()
-    return (row.text or "").strip() if row else None
+    return [notes_by_id[identifier] for identifier in identifiers]
 
 
 def _endorsement_redirect(request_id: str | int | None):
@@ -6935,15 +6963,20 @@ def add_request_note(request_id):
     if not can_view:
         abort(403)
 
-    endorsement_id = request.form.get("endorsement_id")
-    endorsement_note = _secretary_endorsement_note(endorsement_id)
-    if endorsement_id:
+    endorsement_ids = request.form.getlist("endorsement_ids")
+    if not endorsement_ids:
+        legacy_endorsement_id = request.form.get("endorsement_id")
+        endorsement_ids = [legacy_endorsement_id] if legacy_endorsement_id else []
+    endorsement_notes = _secretary_endorsement_notes(endorsement_ids)
+    if endorsement_ids:
         if not _can_use_secretary_endorsements(current_user):
             abort(403)
-        if not endorsement_note:
+        if endorsement_notes is None:
             abort(400)
 
-    note = endorsement_note or _strip_workflow_operation_source(request.form.get("note"))
+    note = "\n".join(endorsement_notes or []) or _strip_workflow_operation_source(
+        request.form.get("note")
+    )
     # A note never changes the workflow state. Keep one unified action for
     # all users; legacy WORKFLOW_REPLY audit entries remain readable.
     kind = "COMMENT"
