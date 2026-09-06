@@ -10,6 +10,7 @@ from pathlib import Path
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ARABIC_FONT = "Sakkal Majalla"
 DOCUMENT_FONT_SIZE = 16
+TABLE_MAX_WIDTH_INCHES = 5.7
 
 
 def is_valid_docx(path: str | Path) -> bool:
@@ -144,9 +145,14 @@ def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
     from docx.oxml.ns import qn
     from docx.shared import Inches
 
-    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
     table_pr = table._tbl.tblPr
+    layout = table_pr.find(qn("w:tblLayout"))
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        table_pr.append(layout)
+    layout.set(qn("w:type"), "fixed")
     bidi_visual = table_pr.find(qn("w:bidiVisual"))
     if bidi_visual is None:
         bidi_visual = OxmlElement("w:bidiVisual")
@@ -166,10 +172,23 @@ def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
         border.set(qn("w:sz"), "4")
         border.set(qn("w:color"), "D9D9D9")
 
+    for index, width in enumerate(widths):
+        if index < len(table.columns):
+            table.columns[index].width = Inches(width)
     for row in table.rows:
         for index, cell in enumerate(row.cells):
             if index < len(widths):
                 cell.width = Inches(widths[index])
+
+
+def _fit_table_widths(document, proportions: tuple[float, ...]) -> tuple[float, ...]:
+    section = document.sections[-1]
+    available_width = (
+        section.page_width - section.left_margin - section.right_margin
+    ) / 914400
+    width = min(TABLE_MAX_WIDTH_INCHES, max(available_width - 0.15, 1.0))
+    total = sum(proportions)
+    return tuple(width * proportion / total for proportion in proportions)
 
 
 def _add_rtl_table(document, headers: tuple[str, ...], rows, widths: tuple[float, ...]):
@@ -221,7 +240,12 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         ("الحالة", _status_label(report.status)),
     ):
         details_rows.append((label, value))
-    _add_rtl_table(document, ("البيان", "التفاصيل"), details_rows, (1.7, 4.8))
+    _add_rtl_table(
+        document,
+        ("البيان", "التفاصيل"),
+        details_rows,
+        _fit_table_widths(document, (1.9, 3.8)),
+    )
 
     completed_items = [
         item
@@ -233,7 +257,12 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         (getattr(item, "title", None) or "مهمة منجزة", _date_label(getattr(item, "completed_on", None)))
         for item in completed_items
     ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-")]
-    _add_rtl_table(document, ("المهمة", "التاريخ"), accomplishment_rows, (5.0, 1.5))
+    _add_rtl_table(
+        document,
+        ("المهمة", "التاريخ"),
+        accomplishment_rows,
+        _fit_table_widths(document, (4.0, 1.7)),
+    )
 
     _paragraph(document, "ملخص الموظف", bold=True)
     _paragraph(document, report.employee_summary or report.ai_summary or "-")

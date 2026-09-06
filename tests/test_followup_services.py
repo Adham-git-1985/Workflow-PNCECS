@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
@@ -79,6 +80,17 @@ class FollowupServicesTests(unittest.TestCase):
             ["إنجاز التقرير", "2026-09-01"],
         )
         self.assertIsNotNone(accomplishments_table._tbl.tblPr.find(qn("w:bidiVisual")))
+        for table in document.tables:
+            widths = [
+                int(cell._tc.tcPr.tcW.get(qn("w:w")))
+                for cell in table.rows[0].cells
+            ]
+            self.assertLessEqual(sum(widths), int(5.7 * 1440))
+            self.assertEqual(table.alignment, WD_TABLE_ALIGNMENT.CENTER)
+            self.assertEqual(
+                table._tbl.tblPr.find(qn("w:tblLayout")).get(qn("w:type")),
+                "fixed",
+            )
         for paragraph in document.paragraphs[1:]:
             self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
             self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
