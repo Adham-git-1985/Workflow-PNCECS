@@ -473,6 +473,8 @@ class DynamicWorkflowPathTests(unittest.TestCase):
             [mode["key"] for mode in choices[0]["available_modes"]],
             ["ALL", "CHAIR"],
         )
+        self.assertEqual(choices[0]["people_summary"]["chair"], self.same_target.full_name)
+        self.assertEqual(choices[0]["people_summary"]["member_preview"], [self.cross_target.full_name])
 
     def test_dynamic_path_can_end_at_committee_and_runtime_resolves_its_chair(self):
         committee = Committee(name_ar="لجنة المسار الديناميكي", is_active=True)

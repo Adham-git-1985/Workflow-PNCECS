@@ -144,7 +144,8 @@
                 <select class="form-select form-select-sm" name="approver_committee_id">
                   <option value="">-- اختر لجنة --</option>
                   {% for c in committees %}
-                    <option value="{{ c.id }}">{{ c.name_ar }}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
+                    {% set _summary = committee_summaries.get(c.id) if committee_summaries else None %}
+                    <option value="{{ c.id }}">{{ c.name_ar }}{% if _summary %} — رئيس: {{ _summary.chair }}{% if _summary.member_preview %} · أعضاء: {{ _summary.member_preview|join('، ') }}{% if _summary.member_more_count %} +{{ _summary.member_more_count }}{% endif %}{% endif %}{% endif %}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
                   {% endfor %}
                 </select>
               </div>

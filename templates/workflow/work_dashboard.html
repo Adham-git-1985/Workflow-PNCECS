@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}لوحة عمل مسار{% endblock %}
 {% block content %}
+{% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
@@ -81,6 +82,9 @@
                       <span class="text-muted">— {{ row.step.routing_job_title }}</span>
                     {% endif %}
                   </div>
+                {% endif %}
+                {% if row.committee_summary %}
+                  {{ committee_people_summary(row.committee_summary, 'mt-1 text-break') }}
                 {% elif row.step_assignee_details %}
                   {% for assignee_detail in row.step_assignee_details %}
                     {% set assignee = assignee_detail.user %}

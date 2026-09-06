@@ -2,6 +2,7 @@
 {% extends "layout.html" %}
 {% block title %}عرض الطلب{% endblock %}
 {% block content %}
+{% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
 <div class="d-flex justify-content-between align-items-center mb-4">
   <div>
@@ -379,6 +380,7 @@
     {% else %}
       → <span class="text-muted">كل الأعضاء</span>
     {% endif %}
+    {{ committee_people_summary(committee_summaries.get(s.approver_committee_id) if committee_summaries else None, 'mt-1') }}
   {% elif k == "DEPARTMENT" or ((s.approver_kind or '')|trim) == '' %}
     <span class="badge bg-secondary">دائرة</span>
     {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}

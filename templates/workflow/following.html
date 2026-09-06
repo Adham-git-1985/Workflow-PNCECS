@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block content %}
+{% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
 {% set filters = filters if filters is defined else {} %}
 {% set summary = summary if summary is defined else {} %}
@@ -244,6 +245,9 @@
                   <i class="bi bi-person-workspace"></i>
                   {{ current_target_map.get(inst.id, '—') if current_target_map else '—' }}
                 </div>
+                {% if (current_report_step.approver_kind or '')|upper == 'COMMITTEE' %}
+                  {{ committee_people_summary(current_committee_summaries.get(current_report_step.approver_committee_id) if current_committee_summaries else None, 'mt-1 text-break') }}
+                {% endif %}
                 {% if current_report_step.routing_node_label %}
                   {% set current_node_label = current_report_step.routing_node_label.split(' ← ')[-1] %}
                   <div class="small text-muted text-break mt-1">

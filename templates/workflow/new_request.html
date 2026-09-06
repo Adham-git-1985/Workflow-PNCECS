@@ -185,6 +185,8 @@
 
   #predefinedRoutePreviewSteps .route-step-summary {
     flex: 0 0 auto;
+    white-space: normal;
+    max-width: 18rem;
   }
 
   @media (max-width: 575.98px) {
@@ -483,8 +485,9 @@
                       <select class="form-select dynamic-contained-select" id="dynamicCommitteeSelect">
                         <option value="">— اختر لجنة —</option>
                         {% for committee in dynamic_committees %}
+                          {% set _summary = committee.people_summary %}
                           <option value="{{ committee.id }}" {% if not committee.can_select %}disabled{% endif %}>
-                            {{ committee.name }}{% if committee.member_count %} — {{ committee.member_count }} عضو{% else %} — بلا أعضاء نشطين{% endif %}
+                            {{ committee.name }}{% if _summary %} — رئيس: {{ _summary.chair }}{% if _summary.member_preview %} · أعضاء: {{ _summary.member_preview|join('، ') }}{% if _summary.member_more_count %} +{{ _summary.member_more_count }}{% endif %}{% endif %}{% endif %}{% if committee.member_count %} ({{ committee.member_count }} عضو){% else %} — بلا أعضاء نشطين{% endif %}
                           </option>
                         {% endfor %}
                       </select>
@@ -1207,8 +1210,22 @@
           predefinedPreviewSteps.appendChild(arrow);
         }
         const item = document.createElement('span');
-        item.className = 'route-step-summary badge rounded-pill text-bg-light border text-dark p-2';
-        item.textContent = 'الخطوة ' + String(step.order) + ': ' + String(step.label || '');
+        item.className = 'route-step-summary badge rounded-pill text-bg-light border text-dark p-2 text-start';
+        const label = document.createElement('span');
+        label.className = 'd-block';
+        label.textContent = 'الخطوة ' + String(step.order) + ': ' + String(step.label || '');
+        item.appendChild(label);
+        const summary = step.committee_summary;
+        if (summary) {
+          const people = document.createElement('span');
+          const preview = Array.isArray(summary.member_preview) && summary.member_preview.length
+            ? summary.member_preview.join('، ') + (summary.member_more_count ? ' +' + summary.member_more_count : '')
+            : '—';
+          people.className = 'd-block small text-muted mt-1';
+          people.title = Array.isArray(summary.member_names) ? summary.member_names.join('، ') : '';
+          people.textContent = 'الرئيس: ' + String(summary.chair || 'غير محدد') + ' · الأعضاء: ' + preview;
+          item.appendChild(people);
+        }
         predefinedPreviewSteps.appendChild(item);
       });
     }
@@ -1701,12 +1718,17 @@
       if (!mode || selected.length >= 20 && selectedCommitteeIndex() < 0) return false;
       const existingCommitteeIndex = selectedCommitteeIndex();
       if (existingCommitteeIndex >= 0) selected.splice(existingCommitteeIndex, 1);
+      const peopleSummary = committee.people_summary || {};
+      const memberPreview = Array.isArray(peopleSummary.member_preview) && peopleSummary.member_preview.length
+        ? peopleSummary.member_preview.join('، ') + (peopleSummary.member_more_count ? ' +' + peopleSummary.member_more_count : '')
+        : '—';
+      const peopleTitle = 'الرئيس: ' + String(peopleSummary.chair || 'غير محدد') + ' · الأعضاء: ' + memberPreview;
       selected.push({
         ref: committeeTargetRef(committee.id, mode.key),
         kind: 'COMMITTEE',
         id: String(committee.id),
         name: 'لجنة: ' + (committee.name || ''),
-        title: mode.label || 'كل أعضاء اللجنة',
+        title: (mode.label || 'كل أعضاء اللجنة') + ' · ' + peopleTitle,
         modeKey: mode.key,
         modeLabel: mode.label || 'كل أعضاء اللجنة',
         memberCount: Number(mode.assignee_count || 0),

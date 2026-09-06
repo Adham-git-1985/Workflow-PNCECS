@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block content %}
+{% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
@@ -228,6 +229,7 @@
                 {% set _cm = (s.committee_delivery_mode or 'Committee_ALL')|upper %}
                 {% set _cm_lbl = 'كل الأعضاء' if _cm == 'COMMITTEE_ALL' else ('الرئيس فقط' if _cm == 'COMMITTEE_CHAIR' else ('المقرر فقط' if _cm == 'COMMITTEE_SECRETARY' else _cm)) %}
                 <span class="badge bg-light text-dark border">{{ _cm_lbl }}</span>
+                {{ committee_people_summary(committee_summaries.get(s.approver_committee_id) if committee_summaries else None, 'mt-1') }}
               {% else %}
                 <span class="text-muted">دائرة/قسم:</span>
                 {% if s.approver_department_id and depts_map.get(s.approver_department_id) %}
@@ -255,7 +257,8 @@
                     {% elif pa.approver_kind == 'DIVISION' %}
                       <span class="badge bg-light text-dark border">شعبة: {{ divisions_map.get(pa.approver_division_id).name_ar if pa.approver_division_id and divisions_map.get(pa.approver_division_id) else (pa.approver_division_id) }}</span>
                     {% elif pa.approver_kind == 'COMMITTEE' %}
-                          <span class="badge bg-light text-dark border">COMMITTEE: {{ committees_map.get(pa.approver_committee_id).name_ar if pa.approver_committee_id and committees_map.get(pa.approver_committee_id) else (pa.approver_committee_id) }}{% if pa.committee_delivery_mode %} ({{ pa.committee_delivery_mode }}){% endif %}</span>
+                      <span class="badge bg-light text-dark border">لجنة: {{ committees_map.get(pa.approver_committee_id).name_ar if pa.approver_committee_id and committees_map.get(pa.approver_committee_id) else (pa.approver_committee_id) }}{% if pa.committee_delivery_mode %} ({{ pa.committee_delivery_mode }}){% endif %}</span>
+                      {{ committee_people_summary(committee_summaries.get(pa.approver_committee_id) if committee_summaries else None, 'mt-1') }}
                         {% elif pa.approver_kind == 'DEPARTMENT' %}
                       <span class="badge bg-light text-dark border">الدائرة: {{ depts_map.get(pa.approver_department_id).name_ar if pa.approver_department_id and depts_map.get(pa.approver_department_id) else (pa.approver_department_id) }}</span>
                     {% else %}
@@ -452,7 +455,8 @@
           <select class="form-select" name="approver_committee_id" id="committee_id">
             <option value="">-- اختر --</option>
             {% for c in committees %}
-              <option value="{{ c.id }}">{{ c.name_ar }}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
+              {% set _summary = committee_summaries.get(c.id) if committee_summaries else None %}
+              <option value="{{ c.id }}">{{ c.name_ar }}{% if _summary %} — رئيس: {{ _summary.chair }}{% if _summary.member_preview %} · أعضاء: {{ _summary.member_preview|join('، ') }}{% if _summary.member_more_count %} +{{ _summary.member_more_count }}{% endif %}{% endif %}{% endif %}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
             {% endfor %}
           </select>
         </div>

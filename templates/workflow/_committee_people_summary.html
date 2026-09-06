@@ -1,0 +1,15 @@
+{% macro committee_people_summary(summary, class_name='') -%}
+  {% if summary %}
+    <div class="small text-muted {{ class_name }}"{% if summary.member_names %} title="الأعضاء: {{ summary.member_names|join('، ') }}"{% endif %}>
+      <span><i class="bi bi-person-badge"></i> الرئيس:</span>
+      <strong class="text-body">{{ summary.chair }}</strong>
+      <span class="mx-1">·</span>
+      <span><i class="bi bi-people"></i> الأعضاء:</span>
+      {% if summary.member_preview %}
+        {{ summary.member_preview|join('، ') }}{% if summary.member_more_count %} <span class="badge rounded-pill text-bg-light border">+{{ summary.member_more_count }}</span>{% endif %}
+      {% else %}
+        —
+      {% endif %}
+    </div>
+  {% endif %}
+{%- endmacro %}

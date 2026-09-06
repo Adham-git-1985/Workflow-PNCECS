@@ -16,6 +16,7 @@ from extensions import db
 from utils.perms import perm_required
 from utils.org_dynamic import build_org_node_picker_tree
 from utils.ui_labels import ui_label
+from utils.committee_display import build_committee_summaries
 from workflow.dynamic_paths import (
     build_structural_template_path,
     node_path_label,
@@ -488,6 +489,7 @@ def templates_new():
     )
     role_choices = _get_role_choices()
     committees = Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all()
+    committee_summaries = build_committee_summaries(committees=committees)
 
     if request.method == "POST":
         name = (request.form.get("name") or "").strip()
@@ -655,6 +657,7 @@ def templates_new():
         divisions=divisions,
         role_choices=role_choices,
         committees=committees,
+        committee_summaries=committee_summaries,
     )
 
 
@@ -711,6 +714,7 @@ def templates_edit(template_id):
     )
     role_choices = _get_role_choices()
     committees = Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all()
+    committee_summaries = build_committee_summaries(committees=committees)
     org_node_path_labels = {int(node.id): node_path_label(node) for node in org_nodes}
     org_node_approver_names_map = org_node_approver_names(
         int(node.id) for node in org_nodes
@@ -731,6 +735,7 @@ def templates_edit(template_id):
         org_node_approver_names_map=org_node_approver_names_map,
         role_choices=role_choices,
         committees=committees,
+        committee_summaries=committee_summaries,
         can_delete_template=can_delete_workflow_template(current_user, t),
     )
 
@@ -824,6 +829,7 @@ def templates_details(template_id):
 
     committees = Committee.query.order_by(Committee.name_ar.asc()).all()
     committees_map = {c.id: c for c in committees}
+    committee_summaries = build_committee_summaries(committees=committees)
 
     org_nodes = (
         OrgNode.query
@@ -845,6 +851,7 @@ def templates_details(template_id):
         divisions_map=divisions_map,
         org_nodes_map=org_nodes_map,
         committees_map=committees_map,
+        committee_summaries=committee_summaries,
     )
 
 
@@ -1412,6 +1419,7 @@ def templates_steps_edit(step_id):
     divisions = Division.query.filter_by(is_active=True).order_by(Division.name_ar.asc()).all()
     role_choices = _get_role_choices()
     committees = Committee.query.filter_by(is_active=True).order_by(Committee.name_ar.asc()).all()
+    committee_summaries = build_committee_summaries(committees=committees)
 
     org_nodes = (
         OrgNode.query
@@ -1527,6 +1535,7 @@ def templates_steps_edit(step_id):
         org_nodes=org_nodes,
         role_choices=role_choices,
         committees=committees,
+        committee_summaries=committee_summaries,
     )
 
 

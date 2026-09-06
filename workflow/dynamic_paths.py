@@ -25,6 +25,7 @@ from models import (
     User,
 )
 from utils.approved_org_structure import find_approved_org_node_by_name
+from utils.committee_display import build_committee_summaries
 from utils.org_dynamic import resolve_user_org_node_id
 
 
@@ -1128,6 +1129,7 @@ def dynamic_committee_choices() -> list[dict]:
         .order_by(Committee.name_ar.asc(), Committee.id.asc())
         .all()
     )
+    committee_summaries = build_committee_summaries(committees=committees)
     choices = []
     for committee in committees:
         available_modes = []
@@ -1150,6 +1152,7 @@ def dynamic_committee_choices() -> list[dict]:
             "code": (committee.code or "").strip(),
             "can_select": bool(all_mode),
             "member_count": int(all_mode["assignee_count"]) if all_mode else 0,
+            "people_summary": committee_summaries.get(int(committee.id)),
             "available_modes": available_modes,
             "unavailable_reason": (
                 "لا يوجد أعضاء نشطون في هذه اللجنة."

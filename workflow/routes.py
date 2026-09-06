@@ -45,6 +45,7 @@ from utils.file_uploads import (
     random_storage_name,
 )
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
+from utils.committee_display import build_committee_summaries
 from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
     filter_confidential_workflow_user_ids,
@@ -198,6 +199,13 @@ def _predefined_template_steps_data(templates) -> dict[str, list[dict]]:
     sections_map = {int(row.id): row for row in Section.query.all()}
     divisions_map = {int(row.id): row for row in Division.query.all()}
     committees_map = {int(row.id): row for row in Committee.query.all()}
+    committee_summaries = build_committee_summaries(
+        committee_ids=(
+            step.approver_committee_id
+            for step in steps
+            if (getattr(step, "approver_kind", "") or "").strip().upper() == "COMMITTEE"
+        )
+    )
 
     for step in steps:
         kind = (getattr(step, "approver_kind", "") or "").strip().upper()
@@ -235,6 +243,11 @@ def _predefined_template_steps_data(templates) -> dict[str, list[dict]]:
         result.setdefault(str(step.template_id), []).append({
             "order": int(step.step_order),
             "label": label,
+            "committee_summary": (
+                committee_summaries.get(int(step.approver_committee_id))
+                if kind == "COMMITTEE" and step.approver_committee_id
+                else None
+            ),
         })
     return result
 
@@ -4239,6 +4252,25 @@ def work_dashboard():
             "overdue": overdue,
         })
 
+    current_committee_summaries = build_committee_summaries(
+        committee_ids=(
+            row["step"].approver_committee_id
+            for row in rows
+            if row["step"]
+            and (row["step"].approver_kind or "").strip().upper() == "COMMITTEE"
+            and row["step"].approver_committee_id
+        )
+    )
+    for row in rows:
+        step = row["step"]
+        row["committee_summary"] = (
+            current_committee_summaries.get(int(step.approver_committee_id))
+            if step
+            and (step.approver_kind or "").strip().upper() == "COMMITTEE"
+            and step.approver_committee_id
+            else None
+        )
+
     def matches(row: dict, queue: str) -> bool:
         return {
             "my_action": row["needs_action"],
@@ -4747,6 +4779,14 @@ def following():
         )
         for instance_id, step in current_step_map.items()
     }
+    current_committee_summaries = build_committee_summaries(
+        committee_ids=(
+            step.approver_committee_id
+            for step in current_step_map.values()
+            if (step.approver_kind or "").strip().upper() == "COMMITTEE"
+            and step.approver_committee_id
+        )
+    )
 
     return render_template(
         "workflow/following.html",
@@ -4764,6 +4804,7 @@ def following():
         step_count_map=step_count_map,
         current_step_map=current_step_map,
         current_target_map=current_target_map,
+        current_committee_summaries=current_committee_summaries,
     )
 
 # =========================
@@ -5095,6 +5136,14 @@ def view_request(request_id):
     org_nodes_map = {row.id: row for row in OrgNode.query.all()}
     org_node_approver_names_map = org_node_approver_names(org_nodes_map.keys())
     committees_map = {c.id: c for c in Committee.query.all()}
+    committee_summaries = build_committee_summaries(
+        committee_ids=(
+            step.approver_committee_id
+            for step in steps
+            if (step.approver_kind or "").strip().upper() == "COMMITTEE"
+            and step.approver_committee_id
+        )
+    )
     mentioned_users = []
     mentioned_task_statuses = {}
     mention_removable_user_ids = set()
@@ -5380,6 +5429,7 @@ def view_request(request_id):
         org_nodes_map=org_nodes_map,
         org_node_approver_names_map=org_node_approver_names_map,
         committees_map=committees_map,
+        committee_summaries=committee_summaries,
         step_att_counts=step_att_counts,
         step_att_items=step_att_items,
         pre_att_items=pre_att_items,

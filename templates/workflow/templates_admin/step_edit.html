@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
 {% block content %}
+{% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
@@ -132,7 +133,8 @@
           <select class="form-select" name="approver_committee_id" id="committee_id">
             <option value="">-- اختر --</option>
             {% for c in committees %}
-              <option value="{{ c.id }}" {% if s.approver_committee_id == c.id %}selected{% endif %}>{{ c.name_ar }}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
+              {% set _summary = committee_summaries.get(c.id) if committee_summaries else None %}
+              <option value="{{ c.id }}" {% if s.approver_committee_id == c.id %}selected{% endif %}>{{ c.name_ar }}{% if _summary %} — رئيس: {{ _summary.chair }}{% if _summary.member_preview %} · أعضاء: {{ _summary.member_preview|join('، ') }}{% if _summary.member_more_count %} +{{ _summary.member_more_count }}{% endif %}{% endif %}{% endif %}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
             {% endfor %}
           </select>
         </div>
@@ -392,6 +394,7 @@
                   {% set _c = (committees | selectattr('id','equalto', pa.approver_committee_id) | list | first) %}
                   {{ _c.name_ar if _c else ('لجنة #' ~ pa.approver_committee_id) }}
                   {% if pa.committee_delivery_mode %}<span class="badge bg-light text-dark border">{{ pa.committee_delivery_mode }}</span>{% endif %}
+                  {{ committee_people_summary(committee_summaries.get(pa.approver_committee_id) if committee_summaries else None, 'mt-1') }}
                 {% else %}
                   -
                 {% endif %}
@@ -516,7 +519,8 @@
           <select class="form-select" name="pa_committee_id" id="pa_committee_id">
             <option value="">-- اختر --</option>
             {% for c in committees %}
-              <option value="{{ c.id }}">{{ c.name_ar }}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
+              {% set _summary = committee_summaries.get(c.id) if committee_summaries else None %}
+              <option value="{{ c.id }}">{{ c.name_ar }}{% if _summary %} — رئيس: {{ _summary.chair }}{% if _summary.member_preview %} · أعضاء: {{ _summary.member_preview|join('، ') }}{% if _summary.member_more_count %} +{{ _summary.member_more_count }}{% endif %}{% endif %}{% endif %}{% if c.code %} ({{ c.code }}){% endif %} [#{{ c.id }}]</option>
             {% endfor %}
           </select>
         </div>
