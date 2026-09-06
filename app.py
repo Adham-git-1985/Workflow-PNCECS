@@ -1182,6 +1182,26 @@ def _ensure_runtime_schema():
                 except Exception:
                     pass
 
+            try:
+                from sqlalchemy import func
+                from models import RolePermission
+
+                perm = "WORKFLOW_REOPEN_TO_STEP"
+                exists = (
+                    RolePermission.query
+                    .filter(func.lower(RolePermission.role) == "super_admin")
+                    .filter(RolePermission.permission == perm)
+                    .first()
+                )
+                if not exists:
+                    db.session.add(RolePermission(role="SUPER_ADMIN", permission=perm))
+                    db.session.commit()
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
+
             # Manual attendance corrections use two independent permissions:
             # one to submit a correction and one to approve it.  Seed both
             # for the Secretary General and Super Admin roles so existing

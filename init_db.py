@@ -673,6 +673,15 @@ def init_database():
                         permission="HR_LEAVE_APPROVED_DELETE",
                     ))
 
+            if not RolePermission.query.filter_by(
+                role="SUPER_ADMIN",
+                permission="WORKFLOW_REOPEN_TO_STEP",
+            ).first():
+                db.session.add(RolePermission(
+                    role="SUPER_ADMIN",
+                    permission="WORKFLOW_REOPEN_TO_STEP",
+                ))
+
             # ---- Request Types ----
             request_types = [
                 ("purchase_request", "طلب شراء", "Purchase request", True),

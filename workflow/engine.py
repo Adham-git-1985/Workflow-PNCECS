@@ -1306,6 +1306,112 @@ def start_workflow_for_request(
         db.session.commit()
 
 
+def reopen_workflow_to_step(
+    request_id: int,
+    target_step_order: int,
+    actor_user_id: int,
+    reason: str,
+    auto_commit: bool = False,
+) -> WorkflowInstanceStep:
+    """Reopen a workflow and resume it from an existing step."""
+    reason = (reason or "").strip()
+    if not reason:
+        raise ValueError("سبب إعادة الفتح مطلوب.")
+
+    req = WorkflowRequest.query.get_or_404(request_id)
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    if not inst:
+        raise ValueError("لا يوجد مسار عمل لهذا الطلب.")
+
+    try:
+        target_order = int(target_step_order)
+    except (TypeError, ValueError):
+        raise ValueError("الخطوة المحددة غير صالحة.")
+
+    current_order = int(getattr(inst, "current_step_order", 0) or 0)
+    if target_order < 1 or (current_order and target_order > current_order):
+        raise ValueError("يمكن العودة إلى خطوة حالية أو سابقة فقط.")
+
+    target_step = WorkflowInstanceStep.query.filter_by(
+        instance_id=inst.id,
+        step_order=target_order,
+    ).first()
+    if not target_step:
+        raise ValueError("الخطوة المحددة غير موجودة في هذا المسار.")
+
+    old_status = req.status
+    now = datetime.utcnow()
+    reset_steps = (
+        WorkflowInstanceStep.query
+        .filter(
+            WorkflowInstanceStep.instance_id == inst.id,
+            WorkflowInstanceStep.step_order >= target_order,
+        )
+        .all()
+    )
+    for step in reset_steps:
+        step.status = "PENDING"
+        step.decided_by_id = None
+        step.decided_at = None
+        step.note = None
+        step.due_at = None
+        step.parallel_notified_at = None
+
+    (
+        WorkflowStepTask.query
+        .filter(
+            WorkflowStepTask.instance_id == inst.id,
+            WorkflowStepTask.step_order >= target_order,
+        )
+        .delete(synchronize_session=False)
+    )
+
+    req.status = "IN_PROGRESS"
+    inst.is_completed = False
+    inst.current_step_order = target_order
+    inst.last_step_actor_id = int(actor_user_id)
+    _activate_step_sla(target_step, started_at=now, reset=True)
+
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=int(actor_user_id),
+        action="WORKFLOW_REOPENED_TO_STEP",
+        old_status=old_status,
+        new_status=req.status,
+        note=f"أُعيد فتح المسار والعودة إلى الخطوة {target_order}. السبب: {reason}",
+        target_type="WORKFLOW_INSTANCE_STEP",
+        target_id=target_step.id,
+        created_at=now,
+    ))
+
+    if not _is_parallel_sync(target_step):
+        _notify_users(
+            _resolve_approver_users(target_step),
+            message=f"أُعيد فتح الطلب #{req.id} ويحتاج إجراءً في الخطوة {target_order}.",
+            ntype="WORKFLOW",
+            role=target_step.approver_role,
+            actor_id=int(actor_user_id),
+            track_for_actor=True,
+            req=req,
+            task_assignment=True,
+            step_order=target_step.step_order,
+            instance_id=inst.id,
+        )
+
+    if req.requester_id and int(req.requester_id) != int(actor_user_id):
+        _notify_users(
+            [req.requester_id],
+            message=f"أُعيد فتح طلبك #{req.id} للمتابعة من الخطوة {target_order}.",
+            ntype="WORKFLOW",
+            actor_id=int(actor_user_id),
+            req=req,
+        )
+
+    if auto_commit:
+        db.session.commit()
+    return target_step
+
+
 def _bypass_parallel_task_legacy(
     request_id: int,
     step_order: int,

@@ -151,6 +151,7 @@ from workflow.engine import (
     resolve_dynamic_branch_steps,
     resolve_hierarchy_bypass_step,
     resolve_step_approver_user_ids,
+    reopen_workflow_to_step,
     can_committee_chair_bypass_parallel_step,
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
 )
@@ -4968,6 +4969,9 @@ def view_request(request_id):
         and (req.status or "").strip().upper() in {"APPROVED", "REJECTED"}
     )
     can_delete_request = can_delete_workflow_request(current_user, req)
+    can_reopen_workflow = bool(
+        inst and steps and current_user.has_perm("WORKFLOW_REOPEN_TO_STEP")
+    )
 
     # =========================
     # SLA helpers for UI (step SLA value + remaining days)
@@ -5063,6 +5067,7 @@ def view_request(request_id):
     action_labels = {
         "WORKFLOW_STARTED": "تم بدء المسار",
         "WORKFLOW_COMPLETED": "اكتمل المسار",
+        "WORKFLOW_REOPENED_TO_STEP": "تمت إعادة فتح المسار",
         "STEP_APPROVED": "تم الاطلاع والمتابعة",
         "STEP_REJECTED": "تم توقيف المسار",
         "WORKFLOW_COMMENT": "تمت إضافة تعليق",
@@ -5171,6 +5176,23 @@ def view_request(request_id):
     org_nodes_map = {row.id: row for row in OrgNode.query.all()}
     org_node_approver_names_map = org_node_approver_names(org_nodes_map.keys())
     committees_map = {c.id: c for c in Committee.query.all()}
+    reopen_step_options = [
+        {
+            "order": int(step.step_order),
+            "label": _step_target_label(
+                step,
+                users_map=users_map,
+                depts_map=depts_map,
+                dirs_map=dirs_map,
+                units_map=units_map,
+                sections_map=sections_map,
+                divisions_map=divisions_map,
+                committees_map=committees_map,
+            ),
+        }
+        for step in steps
+        if int(step.step_order or 0) <= int(inst.current_step_order or 0)
+    ] if can_reopen_workflow else []
     committee_summaries = build_committee_summaries(
         committee_ids=(
             step.approver_committee_id
@@ -5445,6 +5467,8 @@ def view_request(request_id):
         can_escalate=can_escalate,
         can_close=can_close,
         can_delete_request=can_delete_request,
+        can_reopen_workflow=can_reopen_workflow,
+        reopen_step_options=reopen_step_options,
         attachments=atts,
         files_map=files_map,
         audit=detailed_audit,
@@ -5533,6 +5557,52 @@ def close_request(request_id):
     db.session.commit()
 
     flash("تم إغلاق الطلب بنجاح.", "success")
+    return redirect(url_for("workflow.view_request", request_id=req.id))
+
+
+@workflow_bp.route("/request/<int:request_id>/reopen", methods=["POST"])
+@login_required
+@perm_required("WORKFLOW_REOPEN_TO_STEP")
+def reopen_request_to_step(request_id):
+    """Reopen a workflow request and resume it from a selected prior step."""
+    req = WorkflowRequest.query.get_or_404(request_id)
+    actor_users = [current_user]
+    for delegation in (get_active_delegations() or []):
+        delegator = getattr(delegation, "from_user", None)
+        if delegator and delegator.id not in [user.id for user in actor_users]:
+            actor_users.append(delegator)
+
+    if not _actor_context_can_view_request(req, actor_users):
+        abort(403)
+
+    target_step_order = request.form.get("target_step_order")
+    reason = _strip_workflow_operation_source(request.form.get("reason"))
+    try:
+        target_step = reopen_workflow_to_step(
+            req.id,
+            target_step_order,
+            current_user.id,
+            reason,
+            auto_commit=False,
+        )
+        sync_correspondence_from_workflow(
+            req,
+            actor_user_id=current_user.id,
+            note=(
+                f"إعادة فتح مسار الطلب #{req.id} والعودة إلى الخطوة "
+                f"{target_step.step_order}: {reason}"
+            ),
+        )
+        db.session.commit()
+        flash(f"تمت إعادة فتح المسار والعودة إلى الخطوة {target_step.step_order}.", "success")
+    except (TypeError, ValueError) as error:
+        db.session.rollback()
+        flash(str(error), "danger")
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed to reopen workflow request %s", req.id)
+        flash("تعذر إعادة فتح المسار.", "danger")
+
     return redirect(url_for("workflow.view_request", request_id=req.id))
 
 

@@ -44,8 +44,46 @@
       </button>
     </form>
     {% endif %}
+    {% if can_reopen_workflow %}
+    <button type="button" class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#reopenWorkflowModal">
+      <i class="bi bi-arrow-counterclockwise"></i> إعادة فتح المسار
+    </button>
+    {% endif %}
   </div>
 </div>
+
+{% if can_reopen_workflow %}
+<div class="modal fade" id="reopenWorkflowModal" tabindex="-1" aria-labelledby="reopenWorkflowModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <form method="post" action="{{ url_for('workflow.reopen_request_to_step', request_id=req.id) }}" class="modal-content">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="modal-header">
+        <h5 class="modal-title" id="reopenWorkflowModalLabel">إعادة فتح المسار</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">سيُعاد الطلب إلى الخطوة المختارة، وتُصفّر إجراءات الخطوة وما بعدها مع الاحتفاظ بسجل التدقيق.</p>
+        <div class="mb-3">
+          <label class="form-label" for="target_step_order">الخطوة المطلوبة</label>
+          <select class="form-select" id="target_step_order" name="target_step_order" required>
+            {% for option in reopen_step_options %}
+            <option value="{{ option.order }}">الخطوة {{ option.order }} — {{ option.label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="form-label" for="reopen_reason">سبب إعادة الفتح</label>
+          <textarea class="form-control" id="reopen_reason" name="reason" rows="3" required></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button type="submit" class="btn btn-warning">إعادة الفتح</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
 
 {% if req.status == 'CLOSED' %}
 <div class="alert alert-secondary d-flex align-items-center gap-2" role="status">
