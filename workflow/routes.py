@@ -89,6 +89,7 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowStepTask,
+    WorkflowQuickEndorsement,
     RequestEscalation,
     RequestAttachment,
     Approval,
@@ -291,6 +292,13 @@ def _role_variants(role: str | None) -> list[str]:
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
 MENTION_ACCESS_REVOKED_ACTION = "WORKFLOW_MENTION_ACCESS_REVOKED"
 MENTION_TASK_COMPLETED_ACTION = "WORKFLOW_MENTION_TASK_COMPLETED"
+SECRETARY_ENDORSEMENTS_PERMISSION = "WORKFLOW_SECRETARY_ENDORSEMENTS"
+_DEFAULT_SECRETARY_ENDORSEMENTS = (
+    "لاتخاذ اللازم",
+    "للمتابعة",
+    "للدراسة وإبداء الرأي",
+    "للاعتماد",
+)
 # Store a stable marker on the runtime task. The task is kept separate from
 # the template's candidate list, while the user-facing label is rendered by
 # the UI as "بالمنشن".
@@ -341,6 +349,57 @@ def _mention_task_user_ids(
         for (user_id,) in query.with_entities(WorkflowStepTask.assignee_user_id).all()
         if user_id
     }
+
+
+def _can_use_secretary_endorsements(user: User | None) -> bool:
+    """The Secretary General and explicitly authorized users share this tool."""
+    if not user:
+        return False
+    try:
+        return bool(
+            user.has_perm(SECRETARY_ENDORSEMENTS_PERMISSION)
+            or user.has_role("GENERAL-SECRETARY")
+            or user.has_role("GENERAL_SECRETARY")
+        )
+    except Exception:
+        return False
+
+
+def _get_secretary_endorsements() -> list[WorkflowQuickEndorsement]:
+    """Return shared active endorsements, seeding the initial set once."""
+    try:
+        if WorkflowQuickEndorsement.query.count() == 0:
+            db.session.add_all(
+                WorkflowQuickEndorsement(text=text, sort_order=index)
+                for index, text in enumerate(_DEFAULT_SECRETARY_ENDORSEMENTS, start=1)
+            )
+            db.session.commit()
+        return (
+            WorkflowQuickEndorsement.query
+            .filter_by(is_active=True)
+            .order_by(WorkflowQuickEndorsement.sort_order.asc(), WorkflowQuickEndorsement.id.asc())
+            .all()
+        )
+    except Exception:
+        db.session.rollback()
+        return []
+
+
+def _secretary_endorsement_note(endorsement_id: str | int | None) -> str | None:
+    """Return an active configured endorsement by its trusted database ID."""
+    try:
+        identifier = int(endorsement_id)
+    except (TypeError, ValueError):
+        return None
+    row = WorkflowQuickEndorsement.query.filter_by(id=identifier, is_active=True).first()
+    return (row.text or "").strip() if row else None
+
+
+def _endorsement_redirect(request_id: str | int | None):
+    try:
+        return redirect(url_for("workflow.view_request", request_id=int(request_id)))
+    except (TypeError, ValueError):
+        return redirect(url_for("workflow.dashboard"))
 
 
 def _complete_mention_task_after_contribution(
@@ -5346,6 +5405,12 @@ def view_request(request_id):
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
+        secretary_endorsements=(
+            _get_secretary_endorsements()
+            if _can_use_secretary_endorsements(current_user)
+            else ()
+        ),
+        can_manage_secretary_endorsements=_can_use_secretary_endorsements(current_user),
     )
 
 
@@ -6665,6 +6730,84 @@ def remove_request_mention(request_id: int, mentioned_user_id: int):
 # =========================
 # Add Note / Comment (without decision)
 # =========================
+@workflow_bp.route("/endorsements/manage", methods=["POST"])
+@login_required
+def manage_secretary_endorsements():
+    """Add or remove the shared endorsement choices for authorized users."""
+    if not _can_use_secretary_endorsements(current_user):
+        abort(403)
+
+    action = (request.form.get("action") or "").strip().upper()
+    request_id = request.form.get("request_id")
+    try:
+        if action == "ADD":
+            text = " ".join((request.form.get("endorsement_text") or "").split())
+            if not text or len(text) > 160:
+                flash("اكتب تأشيرة بين حرف واحد و160 حرفًا.", "warning")
+                return _endorsement_redirect(request_id)
+
+            row = WorkflowQuickEndorsement.query.filter(
+                func.lower(WorkflowQuickEndorsement.text) == text.casefold()
+            ).first()
+            if row and row.is_active:
+                flash("هذه التأشيرة موجودة بالفعل.", "info")
+                return _endorsement_redirect(request_id)
+            if row:
+                row.is_active = True
+                row.sort_order = (
+                    db.session.query(func.max(WorkflowQuickEndorsement.sort_order)).scalar() or 0
+                ) + 1
+                audit_action = "WORKFLOW_ENDORSEMENT_RESTORED"
+            else:
+                row = WorkflowQuickEndorsement(
+                    text=text,
+                    sort_order=(
+                        db.session.query(func.max(WorkflowQuickEndorsement.sort_order)).scalar() or 0
+                    ) + 1,
+                    created_by_id=current_user.id,
+                )
+                db.session.add(row)
+                db.session.flush()
+                audit_action = "WORKFLOW_ENDORSEMENT_CREATED"
+
+            db.session.add(AuditLog(
+                user_id=current_user.id,
+                action=audit_action,
+                note=text,
+                target_type="WORKFLOW_ENDORSEMENT",
+                target_id=row.id,
+            ))
+            db.session.commit()
+            flash("تمت إضافة التأشيرة.", "success")
+
+        elif action == "REMOVE":
+            try:
+                endorsement_id = int(request.form.get("endorsement_id"))
+            except (TypeError, ValueError):
+                abort(400)
+            row = WorkflowQuickEndorsement.query.filter_by(id=endorsement_id, is_active=True).first()
+            if not row:
+                abort(404)
+            row.is_active = False
+            db.session.add(AuditLog(
+                user_id=current_user.id,
+                action="WORKFLOW_ENDORSEMENT_REMOVED",
+                note=row.text,
+                target_type="WORKFLOW_ENDORSEMENT",
+                target_id=row.id,
+            ))
+            db.session.commit()
+            flash("تمت إزالة التأشيرة.", "success")
+        else:
+            abort(400)
+    except Exception:
+        db.session.rollback()
+        logger.exception("Failed to update workflow quick endorsements")
+        flash("تعذر تحديث التأشيرات.", "danger")
+
+    return _endorsement_redirect(request_id)
+
+
 @workflow_bp.route("/request/<int:request_id>/note", methods=["POST"])
 @login_required
 def add_request_note(request_id):
@@ -6691,7 +6834,15 @@ def add_request_note(request_id):
     if not can_view:
         abort(403)
 
-    note = _strip_workflow_operation_source(request.form.get("note"))
+    endorsement_id = request.form.get("endorsement_id")
+    endorsement_note = _secretary_endorsement_note(endorsement_id)
+    if endorsement_id:
+        if not _can_use_secretary_endorsements(current_user):
+            abort(403)
+        if not endorsement_note:
+            abort(400)
+
+    note = endorsement_note or _strip_workflow_operation_source(request.form.get("note"))
     # A note never changes the workflow state. Keep one unified action for
     # all users; legacy WORKFLOW_REPLY audit entries remain readable.
     kind = "COMMENT"

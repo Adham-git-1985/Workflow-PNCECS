@@ -28355,6 +28355,7 @@ def _portal_perm_presets_defaults():
                 PORTAL_READ,
                 PORTAL_ADMIN_READ,
                 "WORKFLOW_DASHBOARD_READ",
+                "WORKFLOW_SECRETARY_ENDORSEMENTS",
                 HR_READ,
                 HR_ATT_READ,
                 HR_REQUESTS_READ,
