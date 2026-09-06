@@ -32,6 +32,12 @@
     <div class="d-flex align-items-center gap-2">
       <span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.followups_export_docx', report_id=report.id) }}"><i class="bi bi-file-earmark-word"></i> تنزيل Word</a>
+      {% if can_delete_followup_reports %}
+      <form method="post" action="{{ url_for('portal.followups_delete_report', report_id=report.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn btn-outline-danger" type="submit" onclick="return confirm('هل تريد حذف تقرير الإنجاز نهائياً؟');"><i class="bi bi-trash"></i> حذف</button>
+      </form>
+      {% endif %}
     </div>
   </div>
 

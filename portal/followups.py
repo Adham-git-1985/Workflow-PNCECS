@@ -150,11 +150,8 @@ def _employee_can_edit(report: EmployeeFollowupReport) -> bool:
     )
 
 
-def _can_delete_own_report(report: EmployeeFollowupReport, access_level: str) -> bool:
-    return (
-        access_level == "employee"
-        and int(report.employee_user_id) == int(current_user.id)
-    )
+def _can_delete_followup_reports() -> bool:
+    return _has_permission(FOLLOWUPS_READ)
 
 
 def _remove_report_storage(report_id: int) -> None:
@@ -499,7 +496,7 @@ def followups_dashboard():
         metric_scope_label=metric_scope_label,
         can_create=_can_create(),
         can_review=_can_review(),
-        can_delete_own_reports=True,
+        can_delete_followup_reports=_can_delete_followup_reports(),
     )
 
 
@@ -558,6 +555,7 @@ def followups_view(report_id: int):
         access_level=access_level,
         can_edit=can_edit,
         can_review=can_review,
+        can_delete_followup_reports=_can_delete_followup_reports(),
         users=User.query.order_by(func.coalesce(User.name, User.email).asc()).all(),
         report_status_labels=REPORT_STATUS_LABELS,
         item_status_labels=ITEM_STATUS_LABELS,
@@ -569,9 +567,9 @@ def followups_view(report_id: int):
 @login_required
 def followups_delete_report(report_id: int):
     _require_followups_access()
-    report, access_level = _get_report_or_abort(report_id)
-    if not _can_delete_own_report(report, access_level):
+    if not _can_delete_followup_reports():
         abort(403)
+    report = EmployeeFollowupReport.query.get_or_404(report_id)
 
     report_id_value = int(report.id)
     try:
