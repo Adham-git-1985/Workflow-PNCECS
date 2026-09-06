@@ -5000,15 +5000,19 @@ def view_request(request_id):
     )
     detailed_audit = [
         {
+            "id": log.id,
             "action": log.action,
             "user": log.user,
             "on_behalf_of_user": log.on_behalf_of_user,
             "created_at": log.created_at,
             "note": _strip_workflow_operation_source(log.note),
+            "is_workflow_comment": (log.action or "").upper()
+            in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
         }
         for log in audit
     ]
     simple_audit = _workflow_user_summary(req, current_step)
+    can_delete_workflow_comments = is_super_admin(current_user)
     simple_comments = [
         {
             "kind": "تعليق" if log.action == "WORKFLOW_COMMENT" else "رد",
@@ -5026,6 +5030,7 @@ def view_request(request_id):
         "REQUEST_VIEWED",
         "USER_ACTION",
         "USER_ACTION_FAILED",
+        "WORKFLOW_COMMENT_DELETED",
     }
     action_labels = {
         "WORKFLOW_STARTED": "تم بدء المسار",
@@ -5048,10 +5053,12 @@ def view_request(request_id):
         if action in technical_actions:
             continue
         user_audit.append({
+            "id": log.id,
             "action": action_labels.get(action, ui_label(log.action)),
             "author": log.user.full_name if log.user else "النظام",
             "created_at": log.created_at,
             "note": _user_facing_audit_note(log, action, files_map),
+            "is_workflow_comment": action in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
         })
     if not audit:
         decided_steps = [row for row in steps if getattr(row, "decided_at", None)]
@@ -5416,8 +5423,9 @@ def view_request(request_id):
         simple_audit=simple_audit,
         simple_comments=simple_comments,
         user_audit=user_audit,
+        can_delete_workflow_comments=can_delete_workflow_comments,
         show_detailed_audit=bool(template) and (
-            current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN")
+            current_user.has_role("ADMIN") or can_delete_workflow_comments
         ),
         users_map=users_map,
         user_org_path_map=user_org_path_map,
@@ -6780,6 +6788,49 @@ def remove_request_mention(request_id: int, mentioned_user_id: int):
 # =========================
 # Add Note / Comment (without decision)
 # =========================
+@workflow_bp.route(
+    "/request/<int:request_id>/comments/<int:audit_log_id>/delete",
+    methods=["POST"],
+)
+@login_required
+def delete_workflow_comment(request_id, audit_log_id):
+    """Allow only super admins to remove a workflow comment or legacy reply."""
+    if not is_super_admin(current_user):
+        abort(403)
+
+    req = WorkflowRequest.query.get_or_404(request_id)
+    comment = AuditLog.query.filter_by(id=audit_log_id, request_id=req.id).first_or_404()
+    if (comment.action or "").upper() not in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}:
+        abort(404)
+
+    try:
+        db.session.delete(comment)
+        db.session.add(
+            AuditLog(
+                request_id=req.id,
+                user_id=current_user.id,
+                action="WORKFLOW_COMMENT_DELETED",
+                old_status=req.status,
+                new_status=req.status,
+                note="تم حذف تعليق من سجل المسار.",
+                target_type="AuditLog",
+                target_id=audit_log_id,
+            )
+        )
+        db.session.commit()
+        flash("تم حذف التعليق من المسار.", "success")
+    except Exception:
+        db.session.rollback()
+        logger.exception(
+            "Failed to delete workflow comment %s from request %s",
+            audit_log_id,
+            req.id,
+        )
+        flash("تعذر حذف التعليق.", "danger")
+
+    return redirect(url_for("workflow.view_request", request_id=req.id))
+
+
 @workflow_bp.route("/endorsements/manage", methods=["POST"])
 @login_required
 def manage_secretary_endorsements():
