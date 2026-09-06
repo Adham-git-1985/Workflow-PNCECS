@@ -10,6 +10,7 @@ from models import (
     OrgNodeAssignment,
     OrgNodeManager,
     OrgNodeType,
+    MessageRecipient,
     User,
     WorkflowInstance,
     WorkflowInstanceStep,
@@ -20,11 +21,11 @@ from workflow import workflow_bp
 from workflow.routes import (
     MENTION_ACCESS_ACTION,
     MENTION_ACCESS_REVOKED_ACTION,
-    MENTION_HIERARCHY_DENIED,
     _can_mention_user_by_hierarchy,
     _filter_mention_users_by_hierarchy,
     _grant_mention_access,
     _mentioned_user_ids_for_request,
+    _send_workflow_step_update,
     _user_can_view_request,
     mention_search,
     remove_request_mention,
@@ -163,7 +164,7 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         db.session.add(user)
         return user
 
-    def test_same_and_lower_levels_are_allowed_but_higher_is_blocked(self):
+    def test_all_administrative_levels_are_allowed_for_mentions(self):
         allowed, blocked = _filter_mention_users_by_hierarchy(
             self.department_user,
             [self.peer_user, self.lower_user, self.higher_user],
@@ -172,23 +173,24 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         self.assertEqual({user.id for user in allowed}, {
             self.peer_user.id,
             self.lower_user.id,
+            self.higher_user.id,
         })
-        self.assertEqual({user.id for user in blocked}, {self.higher_user.id})
+        self.assertEqual(blocked, [])
 
-    def test_manager_position_uses_its_higher_node(self):
+    def test_both_directions_are_allowed_across_the_organisation_chart(self):
         self.assertTrue(
             _can_mention_user_by_hierarchy(self.manager_user, self.department_user)
         )
-        self.assertFalse(
+        self.assertTrue(
             _can_mention_user_by_hierarchy(self.department_user, self.manager_user)
         )
 
-    def test_user_without_org_assignment_cannot_be_a_cross_hierarchy_target(self):
-        self.assertFalse(
+    def test_user_without_org_assignment_can_be_mentioned(self):
+        self.assertTrue(
             _can_mention_user_by_hierarchy(self.department_user, self.unassigned_user)
         )
 
-    def test_manual_mention_cannot_grant_access_to_a_higher_level(self):
+    def test_manual_mention_grants_access_to_every_selected_level(self):
         request_row = WorkflowRequest(
             requester_id=self.department_user.id,
             title="طلب اختبار المنشن",
@@ -210,8 +212,11 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
                 step_order=None,
             )
 
-        self.assertEqual([user.id for user in added], [self.lower_user.id])
-        self.assertTrue(any(MENTION_HIERARCHY_DENIED in item for item in unresolved))
+        self.assertEqual(
+            {user.id for user in added},
+            {self.higher_user.id, self.lower_user.id},
+        )
+        self.assertEqual(unresolved, [])
         granted_user_ids = {
             user_id
             for (user_id,) in db.session.query(AuditLog.target_id)
@@ -221,23 +226,104 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
             )
             .all()
         }
-        self.assertEqual(granted_user_ids, {self.lower_user.id})
+        self.assertEqual(granted_user_ids, {self.higher_user.id, self.lower_user.id})
 
-    def test_mention_search_excludes_users_at_higher_levels(self):
+    def test_mention_search_includes_users_at_higher_levels(self):
         search = _unwrapped(mention_search)
 
         with self.app.test_request_context(
             f"/workflow/mentions/search?q={self.higher_user.email}"
         ), patch("workflow.routes.current_user", self.department_user):
-            blocked_results = search().get_json()["results"]
+            higher_results = search().get_json()["results"]
 
         with self.app.test_request_context(
             f"/workflow/mentions/search?q={self.lower_user.email}"
         ), patch("workflow.routes.current_user", self.department_user):
             allowed_results = search().get_json()["results"]
 
-        self.assertEqual(blocked_results, [])
+        self.assertEqual([item["label"] for item in higher_results], [self.higher_user.name])
         self.assertEqual([item["label"] for item in allowed_results], [self.lower_user.name])
+
+    def test_step_update_reaches_requester_follower_next_assignee_and_mention(self):
+        request_row = WorkflowRequest(
+            requester_id=self.peer_user.id,
+            title="طلب تحديث المرفقات",
+            status="IN_PROGRESS",
+            confidentiality="NORMAL",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=2,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                mode="SEQUENTIAL",
+                approver_kind="USER",
+                approver_user_id=self.lower_user.id,
+                status="APPROVED",
+                decided_by_id=self.lower_user.id,
+            ),
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=2,
+                mode="SEQUENTIAL",
+                approver_kind="USER",
+                approver_user_id=self.higher_user.id,
+                status="PENDING",
+            ),
+            WorkflowStepTask(
+                instance_id=instance.id,
+                request_id=request_row.id,
+                step_order=2,
+                assignee_user_id=self.manager_user.id,
+                status="PENDING",
+                response="NONE",
+                note="MENTION_TASK",
+            ),
+            AuditLog(
+                request_id=request_row.id,
+                user_id=self.department_user.id,
+                action=MENTION_ACCESS_ACTION,
+                target_type="USER",
+                target_id=self.manager_user.id,
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(f"/workflow/request/{request_row.id}/step/1/decide"), patch(
+            "workflow.routes.emit_event"
+        ) as emit:
+            recipients = _send_workflow_step_update(
+                request_row,
+                instance,
+                note="يرجى مراجعة الملف المرفق.",
+                attached_count=1,
+                decision="APPROVED",
+                actor_id=self.department_user.id,
+            )
+
+        self.assertEqual(
+            set(recipients),
+            {
+                self.peer_user.id,
+                self.lower_user.id,
+                self.higher_user.id,
+                self.manager_user.id,
+            },
+        )
+        self.assertEqual(emit.call_count, 4)
+        message_recipients = {
+            recipient_id
+            for (recipient_id,) in db.session.query(MessageRecipient.recipient_user_id).all()
+        }
+        self.assertEqual(message_recipients, set(recipients))
 
     def test_removed_mention_can_be_added_again_as_pending_task(self):
         request_row = WorkflowRequest(

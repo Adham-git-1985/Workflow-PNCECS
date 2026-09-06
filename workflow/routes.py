@@ -47,6 +47,7 @@ from utils.file_uploads import (
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
 from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
+    filter_confidential_workflow_user_ids,
     is_confidential_workflow,
 )
 from services.correspondence_workflow import (
@@ -117,7 +118,6 @@ from models import (
 
 from utils.org_dynamic import (
     get_node_ancestor_ids,
-    get_user_org_hierarchy_level,
     resolve_user_org_node_id,
 )
 from workflow.dynamic_paths import (
@@ -343,20 +343,16 @@ def _mention_task_user_ids(
 
 
 def _can_mention_user_by_hierarchy(actor: User, target: User) -> bool:
-    """Allow mentions only to the same or a lower administrative level."""
+    """Return whether a user can be added to a workflow comment.
+
+    A mention is an explicit workflow participant, so it must work for every
+    account type and organisational level.  Confidential workflows still use
+    their separate gate in ``_grant_mention_access``.
+    """
     try:
-        if int(actor.id) == int(target.id):
-            return True
+        return bool(int(actor.id) and int(target.id))
     except (AttributeError, TypeError, ValueError):
         return False
-
-    actor_level = get_user_org_hierarchy_level(actor)
-    target_level = get_user_org_hierarchy_level(target)
-    return (
-        actor_level is not None
-        and target_level is not None
-        and actor_level <= target_level
-    )
 
 
 def _filter_mention_users_by_hierarchy(actor: User, users: list[User]) -> tuple[list[User], list[User]]:
@@ -482,6 +478,7 @@ def _resolve_user_mention_users(token: str) -> list[User]:
         User.query
         .filter(or_(
             func.lower(User.email) == low,
+            func.lower(User.username) == low,
             func.lower(User.name) == low,
         ))
         .first()
@@ -560,6 +557,7 @@ def mention_search():
             like = f"%{q}%"
             user_query = user_query.filter(or_(
                 User.email.ilike(like),
+                User.username.ilike(like),
                 User.name.ilike(like),
                 User.role.ilike(like),
                 User.job_title.ilike(like),
@@ -691,7 +689,14 @@ def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str |
     ))
 
 
-def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, note: str, *, step_order: int | None) -> tuple[list[User], list[str]]:
+def _grant_mention_access(
+    req: WorkflowRequest,
+    inst: WorkflowInstance | None,
+    note: str,
+    *,
+    step_order: int | None,
+    send_notifications: bool = True,
+) -> tuple[list[User], list[str]]:
     """Grant request visibility to users mentioned in a comment.
 
     Mentions are intentionally modeled as audit-backed participants instead of
@@ -797,24 +802,180 @@ def _grant_mention_access(req: WorkflowRequest, inst: WorkflowInstance | None, n
                 task.bypassed_at = None
                 task_created = True
 
-        _send_mention_internal_message(req, user, note, step_order=step_order)
+        if send_notifications:
+            _send_mention_internal_message(req, user, note, step_order=step_order)
 
-        emit_event(
-            actor_id=current_user.id,
-            action=MENTION_ACCESS_ACTION,
-            message=f"تمت إضافتك إلى متابعة المسار #{req.id} بواسطة {current_user.full_name or current_user.email}.",
-            target_type="WorkflowRequest",
-            target_id=req.id,
-            notify_user_id=uid,
-            level="WORKFLOW",
-            track_for_actor=True,
-            auto_commit=False,
-        )
+            emit_event(
+                actor_id=current_user.id,
+                action=MENTION_ACCESS_ACTION,
+                message=f"تمت إضافتك إلى متابعة المسار #{req.id} بواسطة {current_user.full_name or current_user.email}.",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                notify_user_id=uid,
+                level="WORKFLOW",
+                track_for_actor=True,
+                auto_commit=False,
+            )
 
         if task_created and user not in added:
             added.append(user)
 
     return added, unresolved
+
+
+def _workflow_update_recipient_ids(
+    req: WorkflowRequest,
+    inst: WorkflowInstance | None,
+) -> set[int]:
+    """Return every active participant who must receive a step update.
+
+    The regular next-step resolver covers users, roles and organisation nodes;
+    pending step tasks cover selected parallel assignees; audit-backed mentions
+    cover people explicitly added from a comment.  This keeps a note and its
+    attachments visible regardless of how that participant entered the path.
+    """
+    recipient_ids: set[int] = set()
+    if getattr(req, "requester_id", None):
+        recipient_ids.add(int(req.requester_id))
+
+    recipient_ids.update(_mentioned_user_ids_for_request(req.id))
+    recipient_ids.update(_get_request_followers_user_ids(req.id))
+
+    if inst and not getattr(inst, "is_completed", False):
+        current_step = WorkflowInstanceStep.query.filter_by(
+            instance_id=inst.id,
+            step_order=inst.current_step_order,
+        ).first()
+        if current_step and current_step.status == "PENDING":
+            recipient_ids.update(resolve_step_approver_user_ids(current_step))
+            pending_task_ids = (
+                db.session.query(WorkflowStepTask.assignee_user_id)
+                .filter(
+                    WorkflowStepTask.instance_id == inst.id,
+                    WorkflowStepTask.step_order == current_step.step_order,
+                    WorkflowStepTask.status == "PENDING",
+                    WorkflowStepTask.assignee_user_id.isnot(None),
+                )
+                .all()
+            )
+            recipient_ids.update(
+                int(user_id)
+                for (user_id,) in pending_task_ids
+                if user_id
+            )
+
+    recipient_ids = filter_confidential_workflow_user_ids(req, recipient_ids)
+    if not recipient_ids:
+        return set()
+
+    return {
+        int(user_id)
+        for (user_id,) in (
+            db.session.query(User.id)
+            .filter(User.id.in_(recipient_ids))
+            .all()
+        )
+        if user_id
+    }
+
+
+def _send_workflow_step_update(
+    req: WorkflowRequest,
+    inst: WorkflowInstance | None,
+    *,
+    note: str | None,
+    attached_count: int,
+    decision: str,
+    actor_id: int,
+    excluded_user_ids=None,
+) -> list[int]:
+    """Deliver a decision note and attachment summary to all participants.
+
+    This is intentionally in-app only: each recipient gets an inbox message
+    and a workflow notification, while task-email delivery remains unchanged.
+    """
+    note_text = (note or "").strip()
+    if not note_text and not attached_count:
+        return []
+
+    excluded_ids = {
+        int(user_id)
+        for user_id in (excluded_user_ids or [])
+        if user_id
+    }
+    excluded_ids.add(int(actor_id))
+    recipient_ids = _workflow_update_recipient_ids(req, inst).difference(excluded_ids)
+    if not recipient_ids:
+        return []
+
+    actor = db.session.get(User, int(actor_id))
+    actor_label = (
+        getattr(actor, "full_name", None)
+        or getattr(actor, "username", None)
+        or getattr(actor, "email", None)
+        or f"#{actor_id}"
+    )
+    action_label = "تابع الطلب" if decision == "APPROVED" else "أوقف المسار"
+    display_note = note_text
+    if len(display_note) > 1200:
+        display_note = display_note[:1200].rstrip() + "..."
+
+    step_order = getattr(inst, "current_step_order", None) if inst else None
+    link = _build_absolute_url(url_for("workflow.view_request", request_id=req.id))
+    body_lines = [
+        f"قام {actor_label} بـ{action_label} في الطلب #{req.id}.",
+        "",
+        f"العنوان: {req.title or '-'}",
+    ]
+    if display_note:
+        body_lines.extend(["", "التعليق:", display_note])
+    if attached_count:
+        body_lines.extend(["", f"📎 تمت إضافة {attached_count} مرفق/مرفقات مع هذا التحديث."])
+    body_lines.extend(["", "رابط فتح المسار:", link])
+    body = "\n".join(body_lines)
+
+    notification_parts = [f"تحديث على الطلب #{req.id} من {actor_label}"]
+    if display_note:
+        notification_parts.append(display_note)
+    if attached_count:
+        notification_parts.append(f"📎 مرفقات جديدة: {attached_count}")
+    notification_message = " | ".join(notification_parts)
+    if len(notification_message) > 1500:
+        notification_message = notification_message[:1497].rstrip() + "..."
+
+    for user_id in sorted(recipient_ids):
+        message = Message(
+            sender_id=int(actor_id),
+            subject=f"تحديث على مسار الطلب #{req.id}",
+            body=body,
+            target_kind="USER",
+            target_id=int(user_id),
+            created_at=datetime.utcnow(),
+            reply_to_id=None,
+            is_system_generated=True,
+        )
+        db.session.add(message)
+        db.session.flush()
+        db.session.add(MessageRecipient(
+            message_id=message.id,
+            recipient_user_id=int(user_id),
+            is_read=False,
+            read_at=None,
+            is_deleted=False,
+            deleted_at=None,
+        ))
+        emit_event(
+            actor_id=int(actor_id),
+            action="WORKFLOW_STEP_UPDATE",
+            message=notification_message,
+            target_type="WorkflowRequest",
+            target_id=req.id,
+            notify_user_id=int(user_id),
+            level="WORKFLOW",
+            auto_commit=False,
+        )
+
+    return sorted(recipient_ids)
 
 
 def _get_effective_directorate_id(user) -> int | None:
@@ -6010,6 +6171,9 @@ def decide_request_step(request_id, step_order):
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
     saved_paths = []
+    attached_count = 0
+    mentioned_users = []
+    unresolved_mentions = []
 
     delegation = used_delegation
 
@@ -6053,9 +6217,39 @@ def decide_request_step(request_id, step_order):
                     original_name=archived.original_name,
                     uploaded_by_id=current_user.id,
                 )
+                attached_count += 1
+
+        # A comment entered with the action may include mentions.  Create
+        # their access/task before distributing the update, so they receive
+        # the exact same comment and attachment information as every other
+        # active participant.
+        mentioned_users, unresolved_mentions = _grant_mention_access(
+            req,
+            inst,
+            note,
+            step_order=(getattr(inst, "current_step_order", None) if inst else None),
+            send_notifications=False,
+        )
+        _send_workflow_step_update(
+            req,
+            inst,
+            note=note,
+            attached_count=attached_count,
+            decision=decision,
+            actor_id=current_user.id,
+        )
 
         db.session.commit()
         flash("تم حفظ الإجراء بنجاح.", "success")
+        if mentioned_users:
+            labels = ", ".join(
+                (user.full_name or user.username or user.email or f"#{user.id}")
+                for user in mentioned_users[:5]
+            )
+            extra = "" if len(mentioned_users) <= 5 else f" +{len(mentioned_users) - 5}"
+            flash(f"تمت إضافة المذكورين إلى المسار: {labels}{extra}", "info")
+        if unresolved_mentions:
+            flash(f"لم يتم العثور على: {', '.join(unresolved_mentions[:5])}", "warning")
     except Exception as e:
         db.session.rollback()
         for sp in saved_paths:

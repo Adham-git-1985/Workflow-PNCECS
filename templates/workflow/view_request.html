@@ -702,7 +702,20 @@
               action="{{ url_for('workflow.decide_request_step', request_id=req.id, step_order=current_step.step_order) }}">
           <div class="mb-3">
             <label class="form-label">الملاحظة</label>
-            <textarea class="form-control" name="note" rows="3" placeholder="ملاحظة اختيارية"></textarea>
+            <div class="mention-field position-relative" data-mention-root>
+              <textarea class="form-control"
+                        name="note"
+                        rows="3"
+                        placeholder="ملاحظة اختيارية"
+                        autocomplete="off"
+                        data-mention-input
+                        data-mention-url="{{ url_for('workflow.mention_search') }}"></textarea>
+              <div class="workflow-mention-menu list-group shadow-sm d-none" data-mention-menu></div>
+            </div>
+            <div class="form-text">
+              يمكنك إضافة أي مستخدم إلى المتابعة بالمنشن، مثل
+              <code>@username</code> أو <code>@email@example.com</code> أو <code>@role:ROLE_CODE</code>.
+            </div>
           </div>
 
           {% if next_parallel_step %}
@@ -819,7 +832,7 @@
             <div class="form-text">
               يمكنك إدخال مستخدمين أو أدوار إلى المسار بالمنشن داخل التعليق:
               <code>@email@example.com</code> أو <code>@[اسم المستخدم]</code> أو <code>@role:ROLE_CODE</code>.
-              يُسمح بالمنشن للمستوى الإداري نفسه أو للمستويات الأدنى فقط.
+              يصل المنشن إلى جميع المستخدمين المخولين بالاطلاع على المعاملة.
             </div>
           </div>
 
@@ -935,8 +948,10 @@
   });
 
   document.addEventListener('DOMContentLoaded', function () {
-    var input = document.querySelector('[data-mention-input]');
-    if (!input) return;
+    var inputs = document.querySelectorAll('[data-mention-input]');
+    if (!inputs.length) return;
+
+    Array.prototype.forEach.call(inputs, function (input) {
 
     var root = input.closest('[data-mention-root]');
     var menu = root ? root.querySelector('[data-mention-menu]') : null;
@@ -1102,6 +1117,7 @@
     });
     input.addEventListener('blur', function () {
       setTimeout(closeMenu, 120);
+    });
     });
   });
 </script>
