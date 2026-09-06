@@ -92,6 +92,33 @@ class AssistantAuditTimelineTests(unittest.TestCase):
         local_ai.assert_not_called()
         external_ai.assert_not_called()
 
+    def test_circular_issuer_wording_uses_the_audit_timeline(self):
+        circular = PortalCircular(
+            title="تعميم البرامج والورش التدريبية الافتراضية",
+            body="تفاصيل التعميم",
+            target_scope="ALL",
+            is_active=True,
+            created_by_user_id=self.issuer.id,
+        )
+        db.session.add(circular)
+        db.session.flush()
+        db.session.add(AuditLog(
+            user_id=self.issuer.id,
+            action="PORTAL_CIRCULAR_CREATE",
+            target_type="PORTAL_CIRCULAR",
+            target_id=circular.id,
+            created_at=datetime(2026, 9, 3, 8, 30),
+        ))
+        db.session.commit()
+
+        result = collect_knowledge(
+            self.employee,
+            "من أصدر التعميم: تعميم البرامج والورش التدريبية الافتراضية؟",
+        )
+
+        self.assertIn("audit_timeline", result["intents"])
+        self.assertIn("مدير التعميم", result["reply"])
+
     def test_hidden_circular_audit_is_not_disclosed_to_an_unprivileged_user(self):
         circular = PortalCircular(
             title="تعميم غير ظاهر لا يجب كشفه",
