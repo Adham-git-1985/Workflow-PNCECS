@@ -290,6 +290,7 @@ def _role_variants(role: str | None) -> list[str]:
 
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
 MENTION_ACCESS_REVOKED_ACTION = "WORKFLOW_MENTION_ACCESS_REVOKED"
+MENTION_TASK_COMPLETED_ACTION = "WORKFLOW_MENTION_TASK_COMPLETED"
 # Store a stable marker on the runtime task. The task is kept separate from
 # the template's candidate list, while the user-facing label is rendered by
 # the UI as "بالمنشن".
@@ -340,6 +341,61 @@ def _mention_task_user_ids(
         for (user_id,) in query.with_entities(WorkflowStepTask.assignee_user_id).all()
         if user_id
     }
+
+
+def _complete_mention_task_after_contribution(
+    req: WorkflowRequest,
+    inst: WorkflowInstance | None,
+    *,
+    user_id: int | None,
+    step_order: int | None,
+    contribution: str,
+) -> bool:
+    """Complete only the actor's active mention task after contributing.
+
+    Mention tasks are a lightweight inbox prompt, not an approval action.  A
+    comment or attachment moves the actor to the request's follow-up list
+    while leaving the request and its current workflow step unchanged.
+    """
+    if not inst or not user_id or step_order is None:
+        return False
+
+    task = (
+        WorkflowStepTask.query
+        .filter(
+            WorkflowStepTask.instance_id == int(inst.id),
+            WorkflowStepTask.step_order == int(step_order),
+            WorkflowStepTask.assignee_user_id == int(user_id),
+            WorkflowStepTask.status == "PENDING",
+            _mention_task_note_filter(),
+        )
+        .first()
+    )
+    if not task:
+        return False
+
+    now = datetime.utcnow()
+    task.status = "RESPONDED"
+    # The user contributed a comment or file; this is deliberately not an
+    # approval/rejection and therefore must not change the workflow route.
+    task.response = "NONE"
+    task.responded_at = now
+    task.bypassed_by_id = None
+    task.bypass_reason = None
+    task.bypassed_at = None
+
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=int(user_id),
+        action=MENTION_TASK_COMPLETED_ACTION,
+        old_status=req.status,
+        new_status=req.status,
+        note=f"الخطوة={task.step_order} | تمت المتابعة عبر المنشن بعد إضافة {contribution}",
+        target_type="WorkflowRequest",
+        target_id=req.id,
+        created_at=now,
+    ))
+    return True
 
 
 def _can_mention_user_by_hierarchy(actor: User, target: User) -> bool:
@@ -2078,6 +2134,14 @@ def upload_attachment(request_id):
                     original_name=archived.original_name,
                     uploaded_by_id=current_user.id,
                 )
+
+        _complete_mention_task_after_contribution(
+            req,
+            inst,
+            user_id=current_user.id,
+            step_order=step_order,
+            contribution="مرفق",
+        )
 
         # optional admin notification
         try:
@@ -4872,6 +4936,7 @@ def view_request(request_id):
         "WORKFLOW_REPLY": "تمت إضافة رد",
         MENTION_ACCESS_ACTION: "تمت إضافة مستخدم بالمنشن",
         MENTION_ACCESS_REVOKED_ACTION: "تمت إزالة مستخدم من المنشن",
+        MENTION_TASK_COMPLETED_ACTION: "اكتملت متابعة المنشن",
         "DYNAMIC_BRANCH_SELECTED": "تم توجيه المسار إلى دائرة مختارة",
         "PARALLEL_SYNC_AUTHORIZED": "تم توجيه الخطوة المتزامنة",
         "PARALLEL_SYNC_RESPONDED": "تمت متابعة الخطوة المتزامنة",
@@ -6681,6 +6746,15 @@ def add_request_note(request_id):
                     uploaded_by_id=current_user.id,
                 )
                 attached_count += 1
+
+        contribution = "تعليق ومرفق" if note and attached_count else ("تعليق" if note else "مرفق")
+        _complete_mention_task_after_contribution(
+            req,
+            inst,
+            user_id=current_user.id,
+            step_order=step_order,
+            contribution=contribution,
+        )
 
         # 3) Mentions: grant access + notify mentioned users/roles.
         mentioned_users, unresolved_mentions = _grant_mention_access(

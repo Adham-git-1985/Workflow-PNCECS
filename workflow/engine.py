@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta
 import uuid
 
+from sqlalchemy import and_, or_
 from sqlalchemy.exc import IntegrityError
 
 from extensions import db
@@ -49,6 +50,17 @@ def is_mention_task(task: WorkflowStepTask | None) -> bool:
             (getattr(task, "note", None) or "").strip() in MENTION_TASK_MARKERS
             or (getattr(task, "note", None) or "").strip().startswith("MENTION_TASK")
         )
+    )
+
+
+def _non_mention_task_filter():
+    """SQL predicate for tasks that belong to the actual parallel quorum."""
+    return or_(
+        WorkflowStepTask.note.is_(None),
+        and_(
+            ~WorkflowStepTask.note.in_(MENTION_TASK_MARKERS),
+            ~WorkflowStepTask.note.like("MENTION_TASK%"),
+        ),
     )
 
 # =========================
@@ -1091,6 +1103,7 @@ def _parallel_is_complete(inst_id: int, step_order: int) -> bool:
     pending = (
         WorkflowStepTask.query
         .filter_by(instance_id=inst_id, step_order=step_order, status="PENDING")
+        .filter(_non_mention_task_filter())
         .count()
     )
     return pending == 0
@@ -1100,6 +1113,7 @@ def _parallel_total(inst_id: int, step_order: int) -> int:
     return (
         WorkflowStepTask.query
         .filter_by(instance_id=inst_id, step_order=step_order)
+        .filter(_non_mention_task_filter())
         .count()
     )
 

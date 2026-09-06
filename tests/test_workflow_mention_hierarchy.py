@@ -18,15 +18,21 @@ from models import (
     WorkflowStepTask,
 )
 from workflow import workflow_bp
+from workflow.engine import _parallel_is_complete
 from workflow.routes import (
     MENTION_ACCESS_ACTION,
     MENTION_ACCESS_REVOKED_ACTION,
+    MENTION_TASK_COMPLETED_ACTION,
     _can_mention_user_by_hierarchy,
+    _complete_mention_task_after_contribution,
     _filter_mention_users_by_hierarchy,
     _grant_mention_access,
+    _get_request_followers_user_ids,
+    _mention_task_user_ids,
     _mentioned_user_ids_for_request,
     _send_workflow_step_update,
     _user_can_view_request,
+    add_request_note,
     mention_search,
     remove_request_mention,
 )
@@ -405,6 +411,175 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         self.assertTrue(_user_can_view_request(self.lower_user, request_row))
         self.assertEqual(task.status, "PENDING")
         self.assertEqual(task.response, "NONE")
+
+    def test_mentioned_user_contribution_completes_only_the_mention_task(self):
+        request_row = WorkflowRequest(
+            requester_id=self.department_user.id,
+            title="طلب متابعة المنشن",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(request_id=request_row.id, current_step_order=1, is_completed=False)
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                mode="SEQUENTIAL",
+                approver_kind="USER",
+                approver_user_id=self.department_user.id,
+                status="PENDING",
+            ),
+            WorkflowStepTask(
+                instance_id=instance.id,
+                request_id=request_row.id,
+                step_order=1,
+                assignee_user_id=self.manager_user.id,
+                status="PENDING",
+                response="NONE",
+                note="MENTION_TASK",
+            ),
+            AuditLog(
+                request_id=request_row.id,
+                user_id=self.department_user.id,
+                action=MENTION_ACCESS_ACTION,
+                target_type="USER",
+                target_id=self.manager_user.id,
+            ),
+        ))
+        db.session.flush()
+
+        completed = _complete_mention_task_after_contribution(
+            request_row,
+            instance,
+            user_id=self.manager_user.id,
+            step_order=1,
+            contribution="مرفق",
+        )
+        db.session.commit()
+
+        task = WorkflowStepTask.query.filter_by(
+            instance_id=instance.id,
+            step_order=1,
+            assignee_user_id=self.manager_user.id,
+        ).one()
+        self.assertTrue(completed)
+        self.assertEqual(task.status, "RESPONDED")
+        self.assertEqual(task.response, "NONE")
+        self.assertIsNotNone(task.responded_at)
+        self.assertEqual(request_row.status, "IN_PROGRESS")
+        self.assertEqual(instance.current_step_order, 1)
+        self.assertNotIn(
+            self.manager_user.id,
+            _mention_task_user_ids(instance.id, step_order=1, pending_only=True),
+        )
+        self.assertIn(self.manager_user.id, _get_request_followers_user_ids(request_row.id))
+        self.assertEqual(
+            AuditLog.query.filter_by(
+                request_id=request_row.id,
+                action=MENTION_TASK_COMPLETED_ACTION,
+                user_id=self.manager_user.id,
+            ).count(),
+            1,
+        )
+
+    def test_pending_mention_is_not_part_of_the_parallel_workflow_quorum(self):
+        request_row = WorkflowRequest(
+            requester_id=self.department_user.id,
+            title="طلب خطوة متزامنة",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(request_id=request_row.id, current_step_order=1, is_completed=False)
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add(WorkflowStepTask(
+            instance_id=instance.id,
+            request_id=request_row.id,
+            step_order=1,
+            assignee_user_id=self.manager_user.id,
+            status="PENDING",
+            response="NONE",
+            note="MENTION_TASK",
+        ))
+        db.session.flush()
+
+        self.assertTrue(_parallel_is_complete(instance.id, 1))
+
+        db.session.add(WorkflowStepTask(
+            instance_id=instance.id,
+            request_id=request_row.id,
+            step_order=1,
+            assignee_user_id=self.lower_user.id,
+            status="PENDING",
+            response="NONE",
+        ))
+        db.session.flush()
+
+        self.assertFalse(_parallel_is_complete(instance.id, 1))
+
+    def test_comment_from_mentioned_user_moves_it_to_follow_up(self):
+        request_row = WorkflowRequest(
+            requester_id=self.department_user.id,
+            title="طلب تعليق من المنشن",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(request_id=request_row.id, current_step_order=1, is_completed=False)
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                mode="SEQUENTIAL",
+                approver_kind="USER",
+                approver_user_id=self.department_user.id,
+                status="PENDING",
+            ),
+            WorkflowStepTask(
+                instance_id=instance.id,
+                request_id=request_row.id,
+                step_order=1,
+                assignee_user_id=self.manager_user.id,
+                status="PENDING",
+                response="NONE",
+                note="MENTION_TASK",
+            ),
+            AuditLog(
+                request_id=request_row.id,
+                user_id=self.department_user.id,
+                action=MENTION_ACCESS_ACTION,
+                target_type="USER",
+                target_id=self.manager_user.id,
+            ),
+        ))
+        db.session.commit()
+
+        add_note = _unwrapped(add_request_note)
+        with self.app.test_request_context(
+            f"/workflow/request/{request_row.id}/note",
+            method="POST",
+            data={"note": "تمت المراجعة وإضافة الملاحظة."},
+        ), patch("workflow.routes.current_user", self.manager_user), patch(
+            "workflow.routes.emit_event"
+        ):
+            response = add_note(request_row.id)
+
+        task = WorkflowStepTask.query.filter_by(
+            instance_id=instance.id,
+            step_order=1,
+            assignee_user_id=self.manager_user.id,
+        ).one()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(task.status, "RESPONDED")
+        self.assertIn(self.manager_user.id, _get_request_followers_user_ids(request_row.id))
+        self.assertEqual(request_row.status, "IN_PROGRESS")
+        self.assertEqual(instance.current_step_order, 1)
 
 
 if __name__ == "__main__":

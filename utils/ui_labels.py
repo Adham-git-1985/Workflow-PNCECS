@@ -185,6 +185,7 @@ UI_LABELS_AR = {
     "WORKFLOW_STARTED": "بدء المسار",
     "WORKFLOW_REPLY": "رد على المسار",
     "WORKFLOW_MENTION_ACCESS": "إضافة مستخدم إلى المسار بالمنشن",
+    "WORKFLOW_MENTION_TASK_COMPLETED": "اكتمال متابعة المنشن",
     "WORKFLOW_ATTACHMENT_UPLOADED": "رفع مرفق مسار",
     "MEETING_WORKFLOW_START": "بدء مسار الاجتماع",
     "STEP_APPROVED": "تمت الموافقة على الخطوة",
