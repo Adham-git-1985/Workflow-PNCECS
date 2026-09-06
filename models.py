@@ -4733,6 +4733,141 @@ class PortalMeetingTask(db.Model):
     meeting = db.relationship("PortalMeeting", back_populates="tasks", lazy="joined")
     assignee = db.relationship("User", foreign_keys=[assignee_user_id], lazy="joined")
     created_by = db.relationship("User", foreign_keys=[created_by_user_id], lazy="joined")
+
+
+# ======================
+# Employee follow-up reports
+# ======================
+class EmployeeFollowupReport(db.Model):
+    """Employee accomplishment report reviewed by the direct manager only."""
+
+    __tablename__ = "employee_followup_reports"
+
+    __table_args__ = (
+        db.Index("ix_followup_employee_period", "employee_user_id", "period_start", "period_end"),
+        db.Index("ix_followup_manager_status", "manager_user_id", "status"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    employee_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+
+    period_start = db.Column(db.Date, nullable=False, index=True)
+    period_end = db.Column(db.Date, nullable=False, index=True)
+    status = db.Column(db.String(30), nullable=False, default="DRAFT", index=True)
+
+    challenges = db.Column(db.Text, nullable=True)
+    manager_request = db.Column(db.Text, nullable=True)
+    employee_summary = db.Column(db.Text, nullable=True)
+    ai_summary = db.Column(db.Text, nullable=True)
+    ai_notes = db.Column(db.Text, nullable=True)
+
+    manager_comment = db.Column(db.Text, nullable=True)
+    manager_rating = db.Column(db.String(20), nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True, index=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True, index=True)
+    last_employee_reminder_at = db.Column(db.DateTime, nullable=True)
+    last_manager_reminder_at = db.Column(db.DateTime, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    employee = db.relationship("User", foreign_keys=[employee_user_id], lazy="joined")
+    manager = db.relationship("User", foreign_keys=[manager_user_id], lazy="joined")
+    items = db.relationship(
+        "EmployeeFollowupItem",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="EmployeeFollowupItem.completed_on.desc(), EmployeeFollowupItem.id.desc()",
+    )
+    attachments = db.relationship(
+        "EmployeeFollowupAttachment",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="EmployeeFollowupAttachment.uploaded_at.desc()",
+    )
+    copy_recipients = db.relationship(
+        "EmployeeFollowupCopyRecipient",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class EmployeeFollowupItem(db.Model):
+    """One accomplishment or unfinished item within an employee follow-up."""
+
+    __tablename__ = "employee_followup_items"
+
+    __table_args__ = (
+        db.Index("ix_followup_item_report_status", "report_id", "status"),
+        db.UniqueConstraint("report_id", "source_type", "source_id", name="uq_followup_item_source"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("employee_followup_reports.id"), nullable=False, index=True)
+    source_type = db.Column(db.String(40), nullable=False, default="MANUAL")
+    source_id = db.Column(db.Integer, nullable=True)
+
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    completed_on = db.Column(db.Date, nullable=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default="COMPLETED")
+    is_included = db.Column(db.Boolean, nullable=False, default=True)
+
+    ai_suggestion = db.Column(db.Text, nullable=True)
+    duplicate_hint = db.Column(db.String(255), nullable=True)
+    manager_comment = db.Column(db.Text, nullable=True)
+    manager_rating = db.Column(db.String(20), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    report = db.relationship("EmployeeFollowupReport", back_populates="items", lazy="joined")
+
+
+class EmployeeFollowupAttachment(db.Model):
+    """A Word report, letterhead, or supporting file belonging to a follow-up."""
+
+    __tablename__ = "employee_followup_attachments"
+
+    __table_args__ = (
+        db.Index("ix_followup_attachment_report_kind", "report_id", "kind"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("employee_followup_reports.id"), nullable=False, index=True)
+    kind = db.Column(db.String(30), nullable=False, default="OTHER")
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    uploaded_by_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    report = db.relationship("EmployeeFollowupReport", back_populates="attachments", lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_user_id], lazy="joined")
+
+
+class EmployeeFollowupCopyRecipient(db.Model):
+    """Additional project or department managers copied on a report."""
+
+    __tablename__ = "employee_followup_copy_recipients"
+
+    __table_args__ = (
+        db.UniqueConstraint("report_id", "user_id", name="uq_followup_copy_recipient"),
+        db.Index("ix_followup_copy_recipient_user", "user_id", "report_id"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(db.Integer, db.ForeignKey("employee_followup_reports.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    report = db.relationship("EmployeeFollowupReport", back_populates="copy_recipients", lazy="joined")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+
 # ======================
 # Portal: Saved Filters
 # ======================

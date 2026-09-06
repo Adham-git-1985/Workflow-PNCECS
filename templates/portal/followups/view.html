@@ -1,0 +1,72 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}تقرير الإنجاز{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4" dir="rtl">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+    <div>
+      <a class="btn btn-sm btn-outline-secondary mb-2" href="{{ url_for('portal.followups_dashboard') }}"><i class="bi bi-arrow-right"></i> متابعاتي</a>
+      <h1 class="h4 mb-1">تقرير إنجاز: {{ report.employee.full_name }}</h1>
+      <div class="text-muted">{{ report.period_start }} إلى {{ report.period_end }} · المدير المباشر: {{ report.manager.full_name if report.manager else 'غير محدد' }}</div>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.followups_export_docx', report_id=report.id) }}"><i class="bi bi-file-earmark-word"></i> تنزيل Word</a>
+    </div>
+  </div>
+
+  {% if can_edit %}
+  <form method="post" action="{{ url_for('portal.followups_update', report_id=report.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row g-4">
+      <div class="col-xl-8">
+        <div class="card border-0 shadow-sm mb-4">
+          <div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div>
+          <div class="card-body p-0">
+            {% for item in report.items %}
+            <div class="border-bottom p-3">
+              <div class="row g-2">
+                <div class="col-md-5"><label class="form-label small">الإنجاز</label><input class="form-control" name="title_{{ item.id }}" maxlength="255" value="{{ item.title }}"></div>
+                <div class="col-md-3"><label class="form-label small">التاريخ</label><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></div>
+                <div class="col-md-3"><label class="form-label small">الحالة</label><select class="form-select" name="status_{{ item.id }}">{% for key, label in item_status_labels.items() %}<option value="{{ key }}" {% if item.status == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+                <div class="col-md-1 d-flex align-items-end"><div class="form-check mb-2"><input class="form-check-input" id="included_{{ item.id }}" type="checkbox" name="included_{{ item.id }}" value="1" {% if item.is_included %}checked{% endif %}><label class="form-check-label small" for="included_{{ item.id }}">إدراج</label></div></div>
+                <div class="col-12"><label class="form-label small">التفاصيل</label><textarea class="form-control" name="description_{{ item.id }}" rows="2">{{ item.description or '' }}</textarea></div>
+                {% if item.ai_suggestion or item.duplicate_hint %}<div class="col-12"><div class="small alert alert-info py-2 mb-0"><i class="bi bi-stars"></i> {{ item.ai_suggestion or '' }} {% if item.duplicate_hint %}<br>{{ item.duplicate_hint }}{% endif %}</div></div>{% endif %}
+              </div>
+              <div class="text-start mt-2"><button class="btn btn-sm btn-outline-danger" type="submit" form="delete-item-{{ item.id }}"><i class="bi bi-trash"></i> حذف</button></div>
+            </div>
+            {% else %}<div class="p-4 text-muted">لا توجد بنود بعد. أضف إنجازاً يدوياً أدناه.</div>{% endfor %}
+          </div>
+        </div>
+
+        <div class="card border-0 shadow-sm mb-4"><div class="card-body">
+          <h2 class="h6 mb-3">ملخص وتفاصيل التقرير</h2>
+          <div class="mb-3"><label class="form-label">ملخص الإنجازات</label><textarea class="form-control" name="employee_summary" rows="3">{{ report.employee_summary or report.ai_summary or '' }}</textarea></div>
+          {% if report.ai_notes %}<div class="alert alert-info" style="white-space: pre-line"><i class="bi bi-stars"></i> <strong>ملاحظات المساعد المحلي:</strong><br>{{ report.ai_notes }}</div>{% endif %}
+          <div class="mb-3"><label class="form-label">التحديات أو الاحتياجات</label><textarea class="form-control" name="challenges" rows="3">{{ report.challenges or '' }}</textarea></div>
+          <div class="mb-3"><label class="form-label">المطلوب من المدير</label><textarea class="form-control" name="manager_request" rows="2">{{ report.manager_request or '' }}</textarea></div>
+          <div><label class="form-label">إرسال نسخة إلى مدير مشروع أو إدارة أخرى</label><select class="form-select" name="copy_user_ids" multiple size="5">{% set copy_ids = report.copy_recipients|map(attribute='user_id')|list %}{% for user in users %}{% if user.id not in [report.employee_user_id, report.manager_user_id] %}<option value="{{ user.id }}" {% if user.id in copy_ids %}selected{% endif %}>{{ user.full_name }}</option>{% endif %}{% endfor %}</select><div class="form-text">اضغط Ctrl لاختيار أكثر من مستخدم.</div></div>
+        </div></div>
+      </div>
+      <div class="col-xl-4">
+        <div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h6">إجراءات التقرير</h2><p class="small text-muted">اقتراحات الذكاء الاصطناعي محلية وقابلة للتعديل ولا ترسل التقرير تلقائياً.</p><div class="d-grid gap-2"><button class="btn btn-outline-primary" type="submit" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button><button class="btn btn-outline-info" type="submit" name="action" value="ai"><i class="bi bi-stars"></i> اقتراح صياغة وتحليل</button><button class="btn btn-success" type="submit" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button></div></div></div>
+        <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6">ملفات التقرير</h2><div class="small text-muted">يمكن تنزيل التقرير Word ثم رفع النسخة المعدلة لاحقاً.</div>{% for attachment in report.attachments %}<div class="d-flex justify-content-between gap-2 align-items-center border-bottom py-2"><span class="text-truncate">{{ attachment.original_name }}</span><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_download_attachment', report_id=report.id, attachment_id=attachment.id) }}">تنزيل</a></div>{% else %}<div class="small text-muted mt-2">لا توجد مرفقات.</div>{% endfor %}</div></div>
+      </div>
+    </div>
+  </form>
+  {% for item in report.items %}<form id="delete-item-{{ item.id }}" method="post" action="{{ url_for('portal.followups_delete_item', report_id=report.id, item_id=item.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"></form>{% endfor %}
+
+  <div class="card border-0 shadow-sm mt-4"><div class="card-body"><h2 class="h6 mb-3">إضافة إنجاز يدوي</h2><form method="post" action="{{ url_for('portal.followups_add_item', report_id=report.id) }}" class="row g-2"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-4"><input class="form-control" name="title" required maxlength="255" placeholder="عنوان الإنجاز"></div><div class="col-md-3"><input class="form-control" name="completed_on" type="date"></div><div class="col-md-3"><select class="form-select" name="status">{% for key, label in item_status_labels.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select></div><div class="col-md-2"><button class="btn btn-outline-primary w-100">إضافة</button></div><div class="col-12"><textarea class="form-control" name="description" rows="2" placeholder="تفاصيل مختصرة"></textarea></div></form></div></div>
+  <div class="card border-0 shadow-sm mt-4"><div class="card-body"><h2 class="h6 mb-3">رفع ترويسة ومرفقات</h2><form method="post" action="{{ url_for('portal.followups_upload_attachments', report_id=report.id) }}" enctype="multipart/form-data" class="row g-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="col-md-4"><label class="form-label">ترويسة Word (DOCX)</label><input class="form-control" type="file" name="letterhead_docx" accept=".docx"></div><div class="col-md-4"><label class="form-label">نسخة التقرير المعدلة (DOCX)</label><input class="form-control" type="file" name="report_docx" accept=".docx"></div><div class="col-md-4"><label class="form-label">مرفقات داعمة</label><input class="form-control" type="file" name="supporting_files" multiple></div><div class="col-12 text-start"><button class="btn btn-outline-primary">رفع الملفات</button></div></form></div></div>
+  {% elif can_review %}
+  <form method="post" action="{{ url_for('portal.followups_review', report_id=report.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="card border-0 shadow-sm mb-4"><div class="card-header bg-white"><h2 class="h6 mb-0">الإنجازات</h2></div><div class="table-responsive"><table class="table mb-0 align-middle"><thead><tr><th>الإنجاز</th><th>التاريخ</th><th>الحالة</th><th>ملاحظة المدير</th><th>التقييم</th></tr></thead><tbody>{% for item in report.items if item.is_included %}<tr><td><strong>{{ item.title }}</strong><div class="small text-muted">{{ item.description or item.ai_suggestion or '' }}</div></td><td>{{ item.completed_on or '-' }}</td><td>{{ item_status_labels[item.status] }}</td><td><input class="form-control form-control-sm" name="manager_comment_{{ item.id }}" value="{{ item.manager_comment or '' }}"></td><td><select class="form-select form-select-sm" name="manager_rating_{{ item.id }}"><option value="">-</option>{% for key, label in rating_labels.items() %}<option value="{{ key }}" {% if item.manager_rating == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">لا توجد بنود مدرجة.</td></tr>{% endfor %}</tbody></table></div></div>
+    <div class="row g-4"><div class="col-lg-7"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6">تفاصيل الموظف</h2><p><strong>ملخص الإنجازات:</strong><br>{{ report.employee_summary or report.ai_summary or '-' }}</p><p><strong>التحديات:</strong><br>{{ report.challenges or '-' }}</p><p class="mb-0"><strong>المطلوب من المدير:</strong><br>{{ report.manager_request or '-' }}</p></div></div></div><div class="col-lg-5"><div class="card border-0 shadow-sm h-100"><div class="card-body"><h2 class="h6">مراجعة المدير</h2><div class="mb-3"><label class="form-label">التقييم المختصر</label><select class="form-select" name="manager_rating"><option value="">-</option>{% for key, label in rating_labels.items() %}<option value="{{ key }}" {% if report.manager_rating == key %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="mb-3"><label class="form-label">ملاحظات المدير</label><textarea class="form-control" name="manager_comment" rows="4">{{ report.manager_comment or '' }}</textarea></div><div class="d-flex gap-2"><button class="btn btn-success" name="action" value="review"><i class="bi bi-patch-check"></i> اعتماد إلكتروني</button><button class="btn btn-outline-warning" name="action" value="return"><i class="bi bi-arrow-return-right"></i> إعادة للتعديل</button></div></div></div></div></div>
+  </form>
+  {% else %}
+  <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6">تفاصيل التقرير</h2><p><strong>الملخص:</strong><br>{{ report.employee_summary or report.ai_summary or '-' }}</p><p><strong>التحديات:</strong><br>{{ report.challenges or '-' }}</p><p><strong>ملاحظات المدير:</strong><br>{{ report.manager_comment or '-' }}</p></div></div>
+  {% endif %}
+</div>
+{% endblock %}

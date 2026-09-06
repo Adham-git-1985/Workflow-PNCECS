@@ -16,7 +16,7 @@ def _is_portal_key(k: str) -> bool:
         ku = (k or "").strip().upper()
     except Exception:
         return False
-    return ku.startswith(("PORTAL_", "HR_", "CORR_", "STORE_", "TRANSPORT_"))
+    return ku.startswith(("PORTAL_", "HR_", "CORR_", "STORE_", "TRANSPORT_", "FOLLOWUPS_"))
 
 
 def perm_required(*keys):

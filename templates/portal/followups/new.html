@@ -1,0 +1,22 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}تقرير إنجاز جديد{% endblock %}
+
+{% block content %}
+<div class="container py-4" dir="rtl" style="max-width: 760px">
+  <a class="btn btn-sm btn-outline-secondary mb-3" href="{{ url_for('portal.followups_dashboard') }}"><i class="bi bi-arrow-right"></i> العودة إلى متابعاتي</a>
+  <div class="card border-0 shadow-sm">
+    <div class="card-body p-4">
+      <h1 class="h4 mb-2">تقرير إنجاز جديد</h1>
+      <p class="text-muted">سيتم استخراج المهام المنجزة المرتبطة باجتماعاتك ضمن الفترة المحددة، ويمكنك إضافة أو تعديل البنود لاحقاً.</p>
+      <form method="post" class="row g-3">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="col-md-6"><label class="form-label">من تاريخ</label><input class="form-control" name="period_start" type="date" required value="{{ form.period_start }}"></div>
+        <div class="col-md-6"><label class="form-label">إلى تاريخ</label><input class="form-control" name="period_end" type="date" required value="{{ form.period_end }}"></div>
+        <div class="col-12"><div class="alert alert-light border mb-0"><i class="bi bi-diagram-3"></i> المدير المباشر: <strong>{{ manager.full_name if manager else 'غير محدد في الهيكل التنظيمي' }}</strong></div></div>
+        <div class="col-12 d-flex justify-content-end"><button class="btn btn-primary" type="submit">إنشاء التقرير <i class="bi bi-arrow-left"></i></button></div>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "portal/layout.html" %}
+
+{% block title %}متابعاتي{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4" dir="rtl">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-4">
+    <div>
+      <h2 class="h4 mb-1"><i class="bi bi-clipboard-check"></i> متابعاتي</h2>
+      <p class="text-muted mb-0">تقارير الإنجاز بين الموظف والمدير المباشر.</p>
+    </div>
+    {% if can_create %}
+      <a class="btn btn-primary" href="{{ url_for('portal.followups_new') }}"><i class="bi bi-plus-lg"></i> تقرير إنجاز جديد</a>
+    {% endif %}
+  </div>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body"><div class="text-muted small">{{ metric_scope_label }} المنجزة</div><div class="display-6 fw-bold text-success">{{ completed_count }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body"><div class="text-muted small">{% if can_review %}بنود {{ metric_scope_label }} تحتاج متابعة{% else %}المهام المتأخرة{% endif %}</div><div class="display-6 fw-bold text-danger">{{ overdue_count }}</div></div></div></div>
+    <div class="col-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body"><div class="text-muted small">نسبة إنجاز {{ metric_scope_label }}</div><div class="display-6 fw-bold text-primary">{{ completion_rate }}%</div></div></div></div>
+    {% if can_review %}<div class="col-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body"><div class="text-muted small">تقارير غير مقدمة</div><div class="display-6 fw-bold text-warning">{{ missing_reports }}</div></div></div></div>{% endif %}
+  </div>
+
+  <div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <h3 class="h6 mb-0">تقاريري</h3>
+      <span class="text-muted small">{{ own_reports|length }} تقرير</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead><tr><th>الفترة</th><th>المدير</th><th>الحالة</th><th>آخر تحديث</th><th></th></tr></thead>
+        <tbody>
+          {% for report in own_reports %}
+          <tr>
+            <td>{{ report.period_start }} <span class="text-muted">إلى</span> {{ report.period_end }}</td>
+            <td>{{ report.manager.full_name if report.manager else 'غير محدد' }}</td>
+            <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
+            <td>{{ report.updated_at.strftime('%Y-%m-%d %H:%M') if report.updated_at else '-' }}</td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير بعد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if can_review %}
+  <div class="card border-0 shadow-sm">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <h3 class="h6 mb-0">تقارير بانتظار مراجعتي</h3>
+      <span class="text-muted small">{{ review_reports|length }} تقرير</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead><tr><th>الموظف</th><th>الفترة</th><th>الحالة</th><th>تاريخ الإرسال</th><th></th></tr></thead>
+        <tbody>
+          {% for report in review_reports %}
+          <tr>
+            <td>{{ report.employee.full_name }}</td>
+            <td>{{ report.period_start }} إلى {{ report.period_end }}</td>
+            <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
+            <td>{{ report.submitted_at.strftime('%Y-%m-%d %H:%M') if report.submitted_at else '-' }}</td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير موجهة إليك.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

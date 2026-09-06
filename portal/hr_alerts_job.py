@@ -10,8 +10,22 @@ _HR_ALERTS_STARTED = False
 
 def _check_pending_leave_requests():
     result = process_pending_approvals(send_notifications=True)
+    followup_reminders = 0
+    try:
+        from portal.followups import send_followup_reminders
+
+        enabled = (_setting_get("FOLLOWUPS_ALERTS_JOB_ENABLED", "1") or "1").strip().lower()
+        if enabled in {"1", "true", "yes", "on"}:
+            followup_reminders = send_followup_reminders()
+    except Exception:
+        # Reporting reminders must not prevent employee-request reminders.
+        pass
     db.session.commit()
-    return int(result.get("reminded", 0)) + int(result.get("escalated", 0))
+    return (
+        int(result.get("reminded", 0))
+        + int(result.get("escalated", 0))
+        + int(followup_reminders)
+    )
 
 
 def _worker(app):
