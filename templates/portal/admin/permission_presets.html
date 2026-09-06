@@ -57,10 +57,10 @@
 
       <div class="row g-2 align-items-end mb-3">
         <div class="col-md-6">
-          <label class="form-label">{{ 'البحث داخل الاختصار المفتوح' if editing_preset else 'البحث في الصلاحيات' }}</label>
+          <label class="form-label">{{ 'البحث في صلاحيات الاختصار المفتوح' if editing_preset else 'البحث في الصلاحيات' }}</label>
           <input class="form-control" id="presetPermissionSearch" placeholder="ابحث بالاسم أو رمز الصلاحية...">
           {% if editing_preset %}
-          <div class="form-text">يعرض البحث صلاحيات هذا الاختصار فقط. استخدم «إظهار الكل» لإضافة صلاحية جديدة.</div>
+          <div class="form-text">يعرض صلاحيات الاختصار المفتوح والصلاحيات المتاحة لإضافتها فقط؛ ولا يبحث في الاختصارات الأخرى.</div>
           {% endif %}
         </div>
         <div class="col-md-6">
@@ -90,7 +90,6 @@
               {% for permission in permissions %}
               <div class="form-check preset-perm-item"
                    data-group="{{ group_index }}"
-                   data-preset-member="{{ '1' if permission.key in editing_keys else '0' }}"
                    data-search="{{ (permission.label ~ ' ' ~ permission.key ~ ' ' ~ permission.desc)|lower }}">
                 <input class="form-check-input preset-permission-box" type="checkbox" name="permissions" value="{{ permission.key }}" id="presetPerm{{ permission.key }}" {% if permission.key in editing_keys %}checked{% endif %}>
                 <label class="form-check-label w-100" for="presetPerm{{ permission.key }}">
@@ -171,7 +170,6 @@
 <script>
   const presetSearch = document.getElementById('presetPermissionSearch');
   const presetBoxes = Array.from(document.querySelectorAll('.preset-permission-box'));
-  const restrictPresetSearchToOpenPreset = {{ 'true' if editing_preset else 'false' }};
 
   function updateSelectedPermissionCount() {
     document.getElementById('selectedPermissionCount').textContent = presetBoxes.filter(box => box.checked).length;
@@ -200,11 +198,8 @@
     document.querySelectorAll('.preset-permission-group').forEach(group => {
       let visibleCount = 0;
       group.querySelectorAll('.preset-perm-item').forEach(item => {
-        const belongsToOpenPreset = item.dataset.presetMember === '1';
         const matchesQuery = !query || (item.dataset.search || '').includes(query);
-        const visible = matchesQuery && (
-          !query || !restrictPresetSearchToOpenPreset || belongsToOpenPreset
-        );
+        const visible = matchesQuery;
         item.style.display = visible ? '' : 'none';
         if (visible) visibleCount += 1;
       });

@@ -3609,6 +3609,38 @@ def _clean_workflow_note(note: str | None) -> str:
     return cleaned.replace("موافق عليه", "تم الاطلاع والمتابعة").replace("مرفوض", "تم توقيف المسار")
 
 
+_AUDIT_ATTACHMENT_NAME_RE = re.compile(r"(?:^|\|)\s*(?:attachment|المرفق)\s*:\s*([^|]+)", re.IGNORECASE)
+_AUDIT_MENTION_NAME_RE = re.compile(r"المستخدم\s+المشار\s+إليه\s*=\s*([^|]+)")
+
+
+def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, ArchivedFile]) -> str:
+    """Return the useful, non-technical detail for the request activity feed."""
+    raw_note = str(getattr(log, "note", None) or "").strip()
+
+    if action == "WORKFLOW_ATTACHMENT_UPLOADED":
+        file_item = files_map.get(int(getattr(log, "target_id", 0) or 0))
+        filename = (
+            getattr(file_item, "original_name", None)
+            or getattr(file_item, "stored_name", None)
+            or ""
+        ).strip()
+        if not filename:
+            match = _AUDIT_ATTACHMENT_NAME_RE.search(raw_note)
+            filename = (match.group(1).strip() if match else "")
+        return f"اسم المرفق: {filename}" if filename else ""
+
+    if action in {MENTION_ACCESS_ACTION, MENTION_ACCESS_REVOKED_ACTION}:
+        match = _AUDIT_MENTION_NAME_RE.search(raw_note)
+        mentioned_name = (match.group(1).strip() if match else "")
+        return f"المستخدم المذكور: {mentioned_name}" if mentioned_name else ""
+
+    return _clean_workflow_note(raw_note) if action in {
+        "WORKFLOW_COMMENT",
+        "WORKFLOW_REPLY",
+        "DYNAMIC_BRANCH_SELECTED",
+    } else ""
+
+
 @workflow_bp.route("/inbox")
 @login_required
 def inbox():
@@ -4811,7 +4843,6 @@ def view_request(request_id):
         "USER_ACTION",
         "USER_ACTION_FAILED",
     }
-    note_actions = {"WORKFLOW_COMMENT", "WORKFLOW_REPLY", "DYNAMIC_BRANCH_SELECTED"}
     action_labels = {
         "WORKFLOW_STARTED": "تم بدء المسار",
         "WORKFLOW_COMPLETED": "اكتمل المسار",
@@ -4835,7 +4866,7 @@ def view_request(request_id):
             "action": action_labels.get(action, ui_label(log.action)),
             "author": log.user.full_name if log.user else "النظام",
             "created_at": log.created_at,
-            "note": _clean_workflow_note(log.note) if action in note_actions else "",
+            "note": _user_facing_audit_note(log, action, files_map),
         })
     if not audit:
         decided_steps = [row for row in steps if getattr(row, "decided_at", None)]

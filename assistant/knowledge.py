@@ -16,22 +16,27 @@ from flask import current_app, url_for
 from sqlalchemy import or_
 
 from models import (
+    AuditLog,
     Department,
     InboundMail,
     Notification,
     OutboundMail,
+    PortalCircular,
     User,
     WorkflowRequest,
     WorkflowTemplate,
 )
+from services.circulars import can_user_view_circular, visible_circulars_query
 from services.correspondence_workflow import correspondence_target_user_ids
 from services.workflow_confidentiality import can_user_access_correspondence_item
+from utils.audit_story import build_audit_story_entries
 from .project_knowledge import collect_internal_knowledge
 
 
 _AR_DIACRITICS = re.compile(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]")
 _SPACE = re.compile(r"\s+")
 _RECORD_ID = re.compile(r"(?:#\s*|رقم\s+)(\d+)")
+_AUDIT_EVENT_LIMIT = 18
 
 _STATUS_LABELS = {
     "DRAFT": "مسودة",
@@ -61,6 +66,15 @@ _STOP_WORDS = {
     "الصادر", "صادر", "المراسلات", "مراسلات", "رقم",
 }
 
+_AUDIT_STOP_WORDS = _STOP_WORDS | {
+    "سجل", "السجل", "تدقيق", "التدقيق", "زمني", "الزمني", "خط", "الخط",
+    "اعمال", "الأعمال", "عمل", "قام", "نفذ", "نفذوا", "منفذ", "ماذا",
+    "اخر", "آخر", "اجراء", "الإجراء", "اجراءات", "الإجراءات", "تاريخ",
+    "تعميم", "التعميم", "تعاميم", "التعاميم", "مسار", "المسار",
+    "مراسلة", "المراسلة", "مراسلات", "المراسلات", "خطاب", "الخطاب",
+    "كتاب", "الكتاب", "طلب", "الطلب", "طلبات", "الطلبات",
+}
+
 
 def _norm(value: Any) -> str:
     text = unicodedata.normalize("NFKC", str(value or "")).strip()
@@ -68,6 +82,9 @@ def _norm(value: Any) -> str:
     text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
     text = text.replace("ى", "ي").replace("ؤ", "و").replace("ئ", "ي").replace("ة", "ه")
     return _SPACE.sub(" ", text).casefold().strip()
+
+
+_AUDIT_STOP_WORDS_NORMALIZED = {_norm(word) for word in _AUDIT_STOP_WORDS}
 
 
 def _contains(text: str, *phrases: str) -> bool:
@@ -237,6 +254,10 @@ def _visible_workflows(user, *, limit: int = 300) -> list[WorkflowRequest]:
 
 def _workflow_section(user, message: str, *, broad: bool) -> tuple[str, list[str], list[dict[str, str]]]:
     normalized = _norm(message)
+    if _is_audit_question(normalized):
+        # The audit loader below owns temporal questions so a circular/request
+        # number is never accidentally resolved as a different record type.
+        return "", [], []
     record_id = _extract_record_id(message)
     explicit = _contains(
         normalized,
@@ -376,6 +397,8 @@ def _correspondence_visible_to_user(user, item) -> bool:
 
 def _correspondence_section(user, message: str, *, broad: bool) -> tuple[str, list[str], list[dict[str, str]]]:
     normalized = _norm(message)
+    if _is_audit_question(normalized):
+        return "", [], []
     explicit = _contains(
         normalized,
         "وارد", "صادر", "مراسلات", "مراسله", "كتاب", "كتب", "خطاب", "اجراء", "إجراء", "اعتماد", "تحويل",
@@ -434,6 +457,281 @@ def _correspondence_section(user, message: str, *, broad: bool) -> tuple[str, li
         else:
             lines.append("لم أجد مراسلة مطابقة ضمن البيانات التي تسمح لك صلاحياتك برؤيتها.")
     return "المراسلات\n" + "\n".join(lines), lines, links
+
+
+def _is_audit_question(normalized: str) -> bool:
+    """Whether the user is asking for recorded actions, not general help."""
+    return _contains(
+        normalized,
+        "سجل التدقيق", "سجل تدقيق", "السجل الزمني", "سجل زمني",
+        "الخط الزمني", "خط زمني", "التايم لاين", "timeline", "audit log",
+        "من عمل على", "من قام على", "من قام بالعمل", "من نفذ", "من تابع",
+        "من عدل", "من حوّل", "من حول", "اخر اجراء", "آخر إجراء",
+        "اخر نشاط", "آخر نشاط",
+    )
+
+
+def _audit_tokens(message: str) -> list[str]:
+    """Return the object title/reference terms from an audit question only."""
+    tokens: list[str] = []
+    for token in re.findall(r"[0-9A-Za-z\u0600-\u06FF@._-]+", _norm(message)):
+        token = token.strip("،؛؟!.,:;()[]{}\"'")
+        # Ignore Arabic prepositions attached to known audit/object terms,
+        # e.g. "للتعميم" and "بالمعاملة", without altering real title words.
+        for prefix in ("بال", "لل", "ب", "ل"):
+            if token.startswith(prefix) and token[len(prefix):] in _AUDIT_STOP_WORDS_NORMALIZED:
+                token = token[len(prefix):]
+                break
+        if len(token) < 2 or token in _AUDIT_STOP_WORDS_NORMALIZED or token.isdigit():
+            continue
+        if token not in tokens:
+            tokens.append(token)
+    return tokens[:5]
+
+
+def _audit_matches(item, tokens: list[str], record_id: int | None, *fields: str) -> bool:
+    if record_id is not None:
+        return int(getattr(item, "id", 0) or 0) == record_id
+    if not tokens:
+        return False
+    haystack = _norm(" ".join(str(getattr(item, field, None) or "") for field in fields))
+    return all(
+        token in haystack
+        or (len(token) > 3 and token[0] in {"ل", "ب"} and token[1:] in haystack)
+        for token in tokens
+    )
+
+
+def _audit_target_kinds(normalized: str) -> tuple[str, ...]:
+    """Limit the lookup to the record family the user explicitly named."""
+    if _contains(normalized, "تعميم", "تعاميم", "circular"):
+        return ("circular",)
+    if _contains(normalized, "وارد", "inbound"):
+        return ("inbound",)
+    if _contains(normalized, "صادر", "outbound"):
+        return ("outbound",)
+    if _contains(normalized, "مراسلة", "مراسلات", "خطاب", "كتاب"):
+        return ("inbound", "outbound")
+    if _contains(normalized, "طلب", "معاملة", "مسار", "workflow", "request"):
+        return ("workflow",)
+    return ("workflow", "circular", "inbound", "outbound")
+
+
+def _audit_item_link(kind: str, item) -> dict[str, str] | None:
+    if kind == "workflow":
+        title = _compact(getattr(item, "title", None) or f"معاملة #{item.id}", 110)
+        return _safe_link(
+            "workflow.view_request",
+            f"فتح المعاملة #{item.id}",
+            title,
+            request_id=item.id,
+        )
+    if kind == "circular":
+        title = _compact(getattr(item, "title", None) or f"تعميم #{item.id}", 110)
+        return _safe_link(
+            "workflow.circulars_view",
+            f"فتح التعميم #{item.id}",
+            title,
+            circular_id=item.id,
+        )
+    if kind == "inbound":
+        reference = _compact(getattr(item, "ref_no", None) or f"#{item.id}", 60)
+        return _safe_link(
+            "portal.inbound_view",
+            f"فتح الوارد {reference}",
+            _compact(getattr(item, "subject", None), 140),
+            inbound_id=item.id,
+        )
+    if kind == "outbound":
+        reference = _compact(getattr(item, "ref_no", None) or f"#{item.id}", 60)
+        return _safe_link(
+            "portal.outbound_view",
+            f"فتح الصادر {reference}",
+            _compact(getattr(item, "subject", None), 140),
+            outbound_id=item.id,
+        )
+    return None
+
+
+def _audit_item_title(kind: str, item) -> str:
+    if kind == "workflow":
+        return _compact(getattr(item, "title", None) or f"معاملة #{item.id}", 160)
+    if kind == "circular":
+        return _compact(getattr(item, "title", None) or f"تعميم #{item.id}", 160)
+    return _compact(getattr(item, "subject", None) or getattr(item, "ref_no", None) or f"#{item.id}", 160)
+
+
+def _audit_item_label(kind: str) -> str:
+    return {
+        "workflow": "المعاملة",
+        "circular": "التعميم",
+        "inbound": "الوارد",
+        "outbound": "الصادر",
+    }.get(kind, "السجل")
+
+
+def _audit_candidates(user, message: str) -> list[tuple[str, Any]]:
+    """Find only records the requesting user is already allowed to open."""
+    normalized = _norm(message)
+    record_id = _extract_record_id(message)
+    tokens = _audit_tokens(message)
+    candidates: list[tuple[str, Any]] = []
+
+    for kind in _audit_target_kinds(normalized):
+        if kind == "circular":
+            try:
+                query = visible_circulars_query(
+                    PortalCircular.query,
+                    user,
+                    include_inactive_for_managers=True,
+                )
+                rows = (
+                    query.filter(PortalCircular.id == record_id).all()
+                    if record_id is not None
+                    else query.order_by(PortalCircular.created_at.desc(), PortalCircular.id.desc()).limit(300).all()
+                )
+                candidates.extend(
+                    (kind, item)
+                    for item in rows
+                    if _audit_matches(item, tokens, record_id, "title", "body")
+                    and can_user_view_circular(item, user)
+                )
+            except Exception:
+                current_app.logger.exception("Aref circular audit lookup failed")
+        elif kind == "workflow":
+            try:
+                candidates.extend(
+                    (kind, item)
+                    for item in _visible_workflows(user)
+                    if _audit_matches(item, tokens, record_id, "title", "description")
+                )
+            except Exception:
+                current_app.logger.exception("Aref workflow audit lookup failed")
+        else:
+            try:
+                model = InboundMail if kind == "inbound" else OutboundMail
+                rows = (
+                    model.query.filter(model.id == record_id).all()
+                    if record_id is not None
+                    else model.query.order_by(model.id.desc()).limit(300).all()
+                )
+                candidates.extend(
+                    (kind, item)
+                    for item in rows
+                    if _correspondence_visible_to_user(user, item)
+                    and _audit_matches(
+                        item,
+                        tokens,
+                        record_id,
+                        "ref_no",
+                        "subject",
+                        "sender",
+                        "recipient",
+                        "competence_label",
+                    )
+                )
+            except Exception:
+                current_app.logger.exception("Aref correspondence audit lookup failed")
+
+    return candidates[:7]
+
+
+def _audit_logs_for(kind: str, item) -> list[AuditLog]:
+    query = AuditLog.query
+    if kind == "workflow":
+        query = query.filter(AuditLog.request_id == int(item.id))
+    else:
+        target_type = {
+            "circular": "PORTAL_CIRCULAR",
+            "inbound": "CORR_INBOUND",
+            "outbound": "CORR_OUTBOUND",
+        }[kind]
+        query = query.filter(
+            AuditLog.target_type == target_type,
+            AuditLog.target_id == int(item.id),
+        )
+    return query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(_AUDIT_EVENT_LIMIT).all()
+
+
+def _audit_actor_name(log: AuditLog) -> str:
+    user = getattr(log, "user", None)
+    return _compact(
+        getattr(user, "full_name", None) or getattr(user, "email", None) or "النظام تلقائيًا",
+        100,
+    )
+
+
+def _audit_section(user, message: str, *, broad: bool) -> tuple[str, list[str], list[dict[str, str]]]:
+    normalized = _norm(message)
+    if not _is_audit_question(normalized):
+        return "", [], []
+
+    record_id = _extract_record_id(message)
+    tokens = _audit_tokens(message)
+    if record_id is None and not tokens:
+        return (
+            "سجل التدقيق والخط الزمني\n"
+            "اكتب رقم المعاملة أو التعميم، أو جزءًا مميزًا من عنوانه، لأعرض من قام بالإجراءات ومتى.",
+            ["يلزم رقم أو عنوان مميز للبحث في السجل."],
+            [],
+        )
+
+    matches = _audit_candidates(user, message)
+    if not matches:
+        return (
+            "سجل التدقيق والخط الزمني\n"
+            "لم أجد سجلاً مطابقًا ضمن العناصر التي تسمح لك صلاحياتك برؤيتها. جرّب رقم العنصر أو جزءًا أكثر تمييزًا من عنوانه.",
+            ["لا توجد نتيجة تدقيق مرئية ومطابقة."],
+            [],
+        )
+
+    if len(matches) > 1:
+        lines = ["وجدت أكثر من نتيجة. اختر التعميم أو المعاملة المقصودة من القائمة:"]
+        links: list[dict[str, str]] = []
+        for kind, item in matches:
+            label = _audit_item_label(kind)
+            title = _audit_item_title(kind, item)
+            lines.append(f"{label} #{item.id}: {title}")
+            link = _audit_item_link(kind, item)
+            if link:
+                links.append(link)
+        return "سجل التدقيق والخط الزمني\n" + "\n".join(lines), lines, links
+
+    kind, item = matches[0]
+    label = _audit_item_label(kind)
+    title = _audit_item_title(kind, item)
+    logs = _audit_logs_for(kind, item)
+    link = _audit_item_link(kind, item)
+    links = [link] if link else []
+    if not logs:
+        lines = [
+            f"{label} #{item.id}: {title}.",
+            "لا توجد أحداث تدقيق مسجلة لهذا العنصر حتى الآن.",
+        ]
+        return "سجل التدقيق والخط الزمني\n" + "\n".join(lines), lines, links
+
+    actor_names: list[str] = []
+    for log in logs:
+        actor = _audit_actor_name(log)
+        if actor not in actor_names:
+            actor_names.append(actor)
+
+    entries = build_audit_story_entries(logs)
+    lines = [
+        f"{label} #{item.id}: {title}.",
+        f"المستخدمون الذين نفذوا إجراءات ضمن السجل المعروض: {('، '.join(actor_names)) or 'النظام تلقائيًا'}.",
+        f"الأحداث المعروضة: {len(entries)} (أحدث الأحداث، بحد أقصى {_AUDIT_EVENT_LIMIT}).",
+    ]
+    for entry in entries:
+        detail = _compact(entry.get("detail"), 260)
+        status = _compact(entry.get("status_sentence"), 180)
+        text = f"{entry['day_label']} {entry['time_label']} — {entry['sentence']}"
+        if status:
+            text += f" {status}"
+        if detail:
+            text += f" ملاحظة: {detail}."
+        lines.append(text)
+    return "سجل التدقيق والخط الزمني\n" + "\n".join(lines), lines, links
 
 
 def _directory_scope_query(user, profile: dict[str, str]):
@@ -593,6 +891,7 @@ def collect_knowledge(user, message: str, context: dict[str, Any] | None = None)
     knowledge_loaders = (
         ("account", lambda: _account_section(user, message, profile, broad=broad)),
         ("system", lambda: _system_section(user, message, profile, broad=broad)),
+        ("audit_timeline", lambda: _audit_section(user, message, broad=broad)),
         ("workflow", lambda: _workflow_section(user, message, broad=broad)),
         ("notifications", lambda: _notification_section(user, message, broad=broad)),
         ("correspondence", lambda: _correspondence_section(user, message, broad=broad)),

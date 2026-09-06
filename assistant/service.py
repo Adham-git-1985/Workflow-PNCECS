@@ -1430,9 +1430,13 @@ def answer(
     navigation = navigation_results(user, message, context)
     results = _merge_links(knowledge.get("links") or [], navigation)
     local = build_local_reply(message, results, context, knowledge, history)
+    is_audit_timeline = "audit_timeline" in set(knowledge.get("intents") or [])
     local_ai_reply = None
     local_ai_tried = False
-    if not _web_search_requested(message):
+    # Audit answers are a direct rendering of permission-scoped database
+    # events.  Keep the source wording intact instead of asking a model to
+    # summarize, omit, or reinterpret an actor/action/time sequence.
+    if not is_audit_timeline and not _web_search_requested(message):
         local_ai_reply = _try_local_ai(message, history, context, knowledge)
         local_ai_tried = True
 
@@ -1441,7 +1445,7 @@ def answer(
         local["mode"] = "local_ai"
 
     external_sources: list[dict[str, str]] = []
-    if not local_ai_reply:
+    if not local_ai_reply and not is_audit_timeline:
         ai_reply = _try_external_ai(
             user,
             message,

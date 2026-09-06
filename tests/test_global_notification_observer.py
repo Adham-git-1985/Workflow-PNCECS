@@ -4,6 +4,7 @@ from flask import Flask
 
 from extensions import db
 from models import Notification, Role, RolePermission, User, UserPermission
+from portal.perm_defs import ALL_KEYS as PORTAL_ALL_KEYS, PERMS as PORTAL_PERMS
 
 
 OBSERVER_PERMISSION = "NOTIFICATIONS_GLOBAL_OBSERVER"
@@ -132,6 +133,12 @@ class GlobalNotificationObserverTests(unittest.TestCase):
             ).count(),
             1,
         )
+
+    def test_observer_permission_is_available_in_the_portal_permission_editor(self):
+        self.assertIn(OBSERVER_PERMISSION, PORTAL_ALL_KEYS)
+        definitions = [perm for group in PORTAL_PERMS.values() for perm in group]
+        definition = next(perm for perm in definitions if perm.key == OBSERVER_PERMISSION)
+        self.assertEqual(definition.label, "مراقب عام للإشعارات")
 
 
 if __name__ == "__main__":

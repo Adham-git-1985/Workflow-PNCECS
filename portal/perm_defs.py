@@ -33,6 +33,12 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("WORKFLOW_DASHBOARD_READ", "عرض لوحة عمل مسار", "الوصول إلى لوحة عمل مسار لمتابعة المهام والطلبات والمسارات.", module="WORKFLOW"),
         PermDef("WORKFLOW_NOTIFICATIONS_DASHBOARD_READ", "عرض لوحة إشعارات مسار", "عرض إحصاءات وإجماليات إشعارات نظام مسار.", module="WORKFLOW_NOTIFICATIONS"),
         PermDef(
+            "NOTIFICATIONS_GLOBAL_OBSERVER",
+            "مراقب عام للإشعارات",
+            "يتلقى نسخة من كل إشعار داخل مركز إشعارات مسار أو البوابة بحسب مصدره، دون منحه صلاحية فتح السجل المرتبط تلقائيًا.",
+            module="WORKFLOW_NOTIFICATIONS",
+        ),
+        PermDef(
             "WORKFLOW_TEMPORARY_DELETE",
             "حذف المسارات والطلبات لمدة ساعة",
             "يسمح لمنشئ المسار أو الطلب بحذفه خلال أول ساعة فقط. يمنح لمستخدم محدد ولا ينتقل عبر الدور أو التفويض.",
