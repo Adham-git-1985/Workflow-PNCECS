@@ -72,11 +72,6 @@ class FollowupFlowTests(unittest.TestCase):
                     is_allowed=True,
                 ),
                 UserPermission(
-                    user_id=self.employee_id,
-                    key="FOLLOWUPS_READ",
-                    is_allowed=True,
-                ),
-                UserPermission(
                     user_id=self.manager_id,
                     key="FOLLOWUPS_REVIEW",
                     is_allowed=True,
@@ -145,7 +140,7 @@ class FollowupFlowTests(unittest.TestCase):
             self.assertEqual(report.status, "REVIEWED")
             self.assertEqual(report.manager_comment, "Reviewed")
 
-    def test_user_with_followups_read_can_delete_own_report(self):
+    def test_user_with_followups_access_can_delete_own_report(self):
         response = self.employee_client.post(
             "/portal/followups/new",
             data={"period_start": "2026-09-01", "period_end": "2026-09-05"},

@@ -146,7 +146,6 @@ def _can_delete_own_report(report: EmployeeFollowupReport, access_level: str) ->
     return (
         access_level == "employee"
         and int(report.employee_user_id) == int(current_user.id)
-        and _has_permission(FOLLOWUPS_READ)
     )
 
 
@@ -445,7 +444,7 @@ def followups_dashboard():
         metric_scope_label=metric_scope_label,
         can_create=_can_create(),
         can_review=_can_review(),
-        can_delete_own_reports=_has_permission(FOLLOWUPS_READ),
+        can_delete_own_reports=True,
     )
 
 
