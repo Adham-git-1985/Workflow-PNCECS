@@ -8,6 +8,8 @@ from pathlib import Path
 
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+ARABIC_FONT = "Sakkal Majalla"
+DOCUMENT_FONT_SIZE = 16
 
 
 def is_valid_docx(path: str | Path) -> bool:
@@ -22,15 +24,16 @@ def _set_rtl(
     paragraph,
     *,
     bold: bool = False,
-    size: int = 12,
+    size: int = DOCUMENT_FONT_SIZE,
     color: str | None = None,
+    center: bool = False,
 ) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Pt, RGBColor
 
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.RIGHT
     paragraph.paragraph_format.space_after = Pt(6)
     p_pr = paragraph._p.get_or_add_pPr()
     bidi = p_pr.find(qn("w:bidi"))
@@ -39,16 +42,17 @@ def _set_rtl(
         p_pr.append(bidi)
     bidi.set(qn("w:val"), "1")
     for run in paragraph.runs:
-        run.font.name = "Arial"
+        run.font.name = ARABIC_FONT
         run.font.size = Pt(size)
         run.bold = bold
         if color:
             run.font.color.rgb = RGBColor.from_string(color)
         r_pr = run._element.get_or_add_rPr()
         fonts = r_pr.get_or_add_rFonts()
-        fonts.set(qn("w:ascii"), "Arial")
-        fonts.set(qn("w:hAnsi"), "Arial")
-        fonts.set(qn("w:cs"), "Arial")
+        fonts.set(qn("w:ascii"), ARABIC_FONT)
+        fonts.set(qn("w:hAnsi"), ARABIC_FONT)
+        fonts.set(qn("w:cs"), ARABIC_FONT)
+        fonts.set(qn("w:eastAsia"), ARABIC_FONT)
         rtl = r_pr.find(qn("w:rtl"))
         if rtl is None:
             rtl = OxmlElement("w:rtl")
@@ -56,9 +60,22 @@ def _set_rtl(
         rtl.set(qn("w:val"), "1")
 
 
-def _paragraph(document, value: str, *, bold: bool = False, size: int = 12):
+def _paragraph(
+    document,
+    value: str,
+    *,
+    bold: bool = False,
+    size: int = DOCUMENT_FONT_SIZE,
+    center: bool = False,
+):
     paragraph = document.add_paragraph(value or "-")
-    _set_rtl(paragraph, bold=bold, size=size, color="000000" if bold else None)
+    _set_rtl(
+        paragraph,
+        bold=bold,
+        size=size,
+        color="000000" if bold else None,
+        center=center,
+    )
     return paragraph
 
 
@@ -113,7 +130,12 @@ def _set_cell(cell, value: str, *, header: bool = False) -> None:
     if header:
         _set_cell_shading(cell, "1F4E78")
     for paragraph in cell.paragraphs:
-        _set_rtl(paragraph, bold=header, size=11, color="FFFFFF" if header else None)
+        _set_rtl(
+            paragraph,
+            bold=header,
+            size=DOCUMENT_FONT_SIZE,
+            color="FFFFFF" if header else None,
+        )
 
 
 def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
@@ -173,17 +195,23 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
     document = Document(str(path)) if path and path.is_file() else Document()
     try:
         normal = document.styles["Normal"]
-        normal.font.name = "Arial"
-        normal.font.size = Pt(12)
+        normal.font.name = ARABIC_FONT
+        normal.font.size = Pt(DOCUMENT_FONT_SIZE)
     except KeyError:
         pass
 
-    title = document.add_paragraph("تقرير إنجاز الموظف")
+    title = document.add_paragraph("ملخص الإنجازات")
     try:
         title.style = document.styles["Title"]
     except KeyError:
         pass
-    _set_rtl(title, bold=True, size=18, color="000000")
+    _set_rtl(
+        title,
+        bold=True,
+        size=DOCUMENT_FONT_SIZE,
+        color="000000",
+        center=True,
+    )
 
     details_rows = []
     for label, value in (
@@ -195,7 +223,6 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         details_rows.append((label, value))
     _add_rtl_table(document, ("البيان", "التفاصيل"), details_rows, (1.7, 4.8))
 
-    _paragraph(document, "ملخص الإنجازات", bold=True, size=15)
     completed_items = [
         item
         for item in (report.items or [])
@@ -208,15 +235,15 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
     ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-")]
     _add_rtl_table(document, ("المهمة", "التاريخ"), accomplishment_rows, (5.0, 1.5))
 
-    _paragraph(document, "ملخص الموظف", bold=True, size=15)
+    _paragraph(document, "ملخص الموظف", bold=True)
     _paragraph(document, report.employee_summary or report.ai_summary or "-")
-    _paragraph(document, "التحديات أو الاحتياجات", bold=True, size=15)
+    _paragraph(document, "التحديات أو الاحتياجات", bold=True)
     _paragraph(document, report.challenges or "-")
-    _paragraph(document, "المطلوب من المدير", bold=True, size=15)
+    _paragraph(document, "المطلوب من المدير", bold=True)
     _paragraph(document, report.manager_request or "-")
 
     if report.manager_comment or report.manager_rating:
-        _paragraph(document, "مراجعة المدير", bold=True, size=15)
+        _paragraph(document, "مراجعة المدير", bold=True)
         _paragraph(document, report.manager_comment or "-")
         _paragraph(document, f"التقييم المختصر: {report.manager_rating or '-'}")
 

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 
 from services.followup_assistant import build_followup_analysis
@@ -55,8 +56,17 @@ class FollowupServicesTests(unittest.TestCase):
         text = " ".join(paragraph.text for paragraph in document.paragraphs)
         table_text = " ".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
         accomplishments_table = document.tables[-1]
+        title = document.paragraphs[0]
 
-        self.assertIn("تقرير إنجاز الموظف", text)
+        self.assertEqual(title.text, "ملخص الإنجازات")
+        self.assertEqual(title.alignment, WD_ALIGN_PARAGRAPH.CENTER)
+        self.assertTrue(title.runs[0].bold)
+        self.assertEqual(title.runs[0].font.size.pt, 16)
+        self.assertEqual(
+            title.runs[0]._element.rPr.rFonts.get(qn("w:cs")),
+            "Sakkal Majalla",
+        )
+        self.assertNotIn("تقرير إنجاز الموظف", text)
         self.assertIn("موظف تجريبي", table_text)
         self.assertIn("إنجاز التقرير", table_text)
         self.assertIn("تمت المراجعة", text)
@@ -69,6 +79,17 @@ class FollowupServicesTests(unittest.TestCase):
             ["إنجاز التقرير", "2026-09-01"],
         )
         self.assertIsNotNone(accomplishments_table._tbl.tblPr.find(qn("w:bidiVisual")))
+        for paragraph in document.paragraphs[1:]:
+            self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+            self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
+            self.assertEqual(paragraph.runs[0].font.size.pt, 16)
+        for table in document.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    paragraph = cell.paragraphs[0]
+                    self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
+                    self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
+                    self.assertEqual(paragraph.runs[0].font.size.pt, 16)
 
     def test_docx_export_keeps_an_empty_accomplishments_table(self):
         report = SimpleNamespace(
