@@ -71,6 +71,22 @@
             {% endfor %}
           </select>
         </div>
+        <div class="mb-3">
+          <label class="form-label" for="reopen_sla_mode">إدارة SLA بعد إعادة الفتح</label>
+          <select class="form-select" id="reopen_sla_mode" name="sla_mode">
+            <option value="PRESERVE">الإبقاء على SLA الحالي</option>
+            <option value="SUSPEND">تعليق SLA للخطوات المعاد فتحها</option>
+            <option value="CUSTOM">تعيين SLA جديد</option>
+          </select>
+          <div class="form-text">يُطبّق الخيار على الخطوة المختارة وكل الخطوات التي بعدها.</div>
+        </div>
+        <div class="mb-3 d-none" id="reopen_custom_sla_days_group">
+          <label class="form-label" for="reopen_sla_days">مدة SLA الجديدة لكل خطوة</label>
+          <div class="input-group">
+            <input class="form-control" id="reopen_sla_days" name="sla_days" type="number" min="1" max="365" disabled>
+            <span class="input-group-text">يوم</span>
+          </div>
+        </div>
         <div>
           <label class="form-label" for="reopen_reason">سبب إعادة الفتح</label>
           <textarea class="form-control" id="reopen_reason" name="reason" rows="3" required></textarea>
@@ -83,6 +99,23 @@
     </form>
   </div>
 </div>
+<script>
+(() => {
+  const mode = document.getElementById('reopen_sla_mode');
+  const group = document.getElementById('reopen_custom_sla_days_group');
+  const days = document.getElementById('reopen_sla_days');
+  if (!mode || !group || !days) return;
+
+  const syncCustomSla = () => {
+    const isCustom = mode.value === 'CUSTOM';
+    group.classList.toggle('d-none', !isCustom);
+    days.disabled = !isCustom;
+    days.required = isCustom;
+  };
+  mode.addEventListener('change', syncCustomSla);
+  syncCustomSla();
+})();
+</script>
 {% endif %}
 
 {% if req.status == 'CLOSED' %}
@@ -481,6 +514,10 @@
                     <i class="bi bi-person-check"></i>
                     نُفذت بواسطة <strong>{{ decision_user.full_name if decision_user else ('#' ~ s.decided_by_id) }}</strong>
                     بتاريخ {{ s.decided_at.strftime('%Y-%m-%d %H:%M') }}
+                  </div>
+                {% elif s.sla_days == -1 %}
+                  <div class="small text-secondary">
+                    <i class="bi bi-pause-circle"></i> SLA معلّق بعد إعادة الفتح
                   </div>
                 {% endif %}
                 {% if s.note %}

@@ -152,6 +152,7 @@ from workflow.engine import (
     resolve_hierarchy_bypass_step,
     resolve_step_approver_user_ids,
     reopen_workflow_to_step,
+    is_sla_suspended,
     can_committee_chair_bypass_parallel_step,
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
 )
@@ -4721,6 +4722,8 @@ def following():
                     instance_id=inst.id,
                     step_order=inst.current_step_order,
                 ).first()
+                if current_step_row and is_sla_suspended(current_step_row.sla_days):
+                    return False
                 if current_step_row and current_step_row.due_at:
                     return now > current_step_row.due_at
             days = int(getattr(tpl, "sla_days_default", 0) or 0)
@@ -5619,6 +5622,8 @@ def reopen_request_to_step(request_id):
 
     target_step_order = request.form.get("target_step_order")
     reason = _strip_workflow_operation_source(request.form.get("reason"))
+    sla_mode = request.form.get("sla_mode")
+    sla_days = request.form.get("sla_days")
     try:
         target_step = reopen_workflow_to_step(
             req.id,
@@ -5626,17 +5631,28 @@ def reopen_request_to_step(request_id):
             current_user.id,
             reason,
             auto_commit=False,
+            sla_mode=sla_mode,
+            sla_days=sla_days,
         )
+        if is_sla_suspended(target_step.sla_days):
+            sla_message = "تم تعليق SLA للخطوات المعاد فتحها."
+        elif (sla_mode or "").strip().upper() == "CUSTOM":
+            sla_message = f"تم ضبط SLA على {target_step.sla_days} يومًا لكل خطوة معاد فتحها."
+        else:
+            sla_message = "تم الإبقاء على SLA الحالي للخطوات المعاد فتحها."
         sync_correspondence_from_workflow(
             req,
             actor_user_id=current_user.id,
             note=(
                 f"إعادة فتح مسار الطلب #{req.id} والعودة إلى الخطوة "
-                f"{target_step.step_order}: {reason}"
+                f"{target_step.step_order}: {reason}. {sla_message}"
             ),
         )
         db.session.commit()
-        flash(f"تمت إعادة فتح المسار والعودة إلى الخطوة {target_step.step_order}.", "success")
+        flash(
+            f"تمت إعادة فتح المسار والعودة إلى الخطوة {target_step.step_order}. {sla_message}",
+            "success",
+        )
     except (TypeError, ValueError) as error:
         db.session.rollback()
         flash(str(error), "danger")

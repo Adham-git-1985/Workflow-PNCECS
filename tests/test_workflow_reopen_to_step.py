@@ -12,7 +12,7 @@ from models import (
     WorkflowRequest,
     WorkflowStepTask,
 )
-from workflow.engine import reopen_workflow_to_step
+from workflow.engine import decide_step, reopen_workflow_to_step
 
 
 class WorkflowReopenToStepTests(unittest.TestCase):
@@ -137,6 +137,70 @@ class WorkflowReopenToStepTests(unittest.TestCase):
             )
         db.session.rollback()
         self.assertEqual(Notification.query.count(), 0)
+
+    def test_reopen_can_suspend_sla_for_all_remaining_steps(self):
+        reopen_workflow_to_step(
+            self.request_row.id,
+            1,
+            self.actor.id,
+            "سيبقى الطلب مفتوحًا للمراجعة.",
+            sla_mode="SUSPEND",
+        )
+        db.session.commit()
+
+        db.session.refresh(self.first_step)
+        db.session.refresh(self.second_step)
+        self.assertEqual(self.first_step.sla_days, -1)
+        self.assertEqual(self.second_step.sla_days, -1)
+        self.assertIsNone(self.first_step.due_at)
+        self.assertIsNone(self.second_step.due_at)
+        self.assertIn(
+            "تعليق SLA",
+            AuditLog.query.filter_by(
+                request_id=self.request_row.id,
+                action="WORKFLOW_REOPENED_TO_STEP",
+            ).one().note,
+        )
+
+        decide_step(
+            self.request_row.id,
+            1,
+            self.first_approver.id,
+            "APPROVED",
+            auto_commit=True,
+            authorized_parallel_user_ids=[self.second_approver.id],
+        )
+        db.session.refresh(self.second_step)
+        self.assertEqual(self.second_step.sla_days, -1)
+        self.assertIsNone(self.second_step.due_at)
+
+    def test_reopen_can_assign_a_new_sla_to_all_remaining_steps(self):
+        reopen_workflow_to_step(
+            self.request_row.id,
+            1,
+            self.actor.id,
+            "يحتاج المسار إلى مهلة جديدة.",
+            sla_mode="CUSTOM",
+            sla_days=14,
+        )
+        db.session.commit()
+
+        db.session.refresh(self.first_step)
+        db.session.refresh(self.second_step)
+        self.assertEqual(self.first_step.sla_days, 14)
+        self.assertEqual(self.second_step.sla_days, 14)
+        self.assertIsNotNone(self.first_step.due_at)
+        self.assertIsNone(self.second_step.due_at)
+
+        with self.assertRaisesRegex(ValueError, "بين 1 و365"):
+            reopen_workflow_to_step(
+                self.request_row.id,
+                1,
+                self.actor.id,
+                "مدة غير صالحة.",
+                sla_mode="CUSTOM",
+                sla_days=0,
+            )
 
 
 if __name__ == "__main__":

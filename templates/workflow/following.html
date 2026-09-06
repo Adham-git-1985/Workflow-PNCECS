@@ -261,7 +261,9 @@
           </td>
           <td>
             {% set current_report_step = current_step_map.get(inst.id) if inst and current_step_map else None %}
-            {% if current_report_step and current_report_step.due_at %}
+            {% if current_report_step and current_report_step.sla_days == -1 %}
+              <span class="badge bg-secondary-subtle text-secondary border">SLA معلّق</span>
+            {% elif current_report_step and current_report_step.due_at %}
               <div class="small {% if not is_closed and now and now > current_report_step.due_at %}text-danger fw-semibold{% else %}text-muted{% endif %}">
                 {{ current_report_step.due_at.strftime("%Y-%m-%d %H:%M") }}
               </div>

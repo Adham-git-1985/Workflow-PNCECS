@@ -1,7 +1,13 @@
 from datetime import datetime, timedelta
 from app import create_app
 from extensions import db
-from models import WorkflowRequest, SystemSetting, AuditLog
+from models import (
+    AuditLog,
+    SystemSetting,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowRequest,
+)
 
 FINAL_STATUSES = ["APPROVED", "REJECTED"]
 
@@ -11,6 +17,20 @@ ESCALATION_ROLE_MAP = {
 }
 
 SYSTEM_USER_ID = None
+
+
+def _has_suspended_current_step(request_row) -> bool:
+    instance = WorkflowInstance.query.filter_by(request_id=request_row.id).first()
+    if not instance:
+        return False
+    step = WorkflowInstanceStep.query.filter_by(
+        instance_id=instance.id,
+        step_order=instance.current_step_order,
+    ).first()
+    try:
+        return int(getattr(step, "sla_days", None)) == -1
+    except (TypeError, ValueError):
+        return False
 
 
 def get_setting(key, default):
@@ -41,7 +61,10 @@ def run_escalation():
             .all()
         )
 
+        escalated_count = 0
         for req in escalated_requests:
+            if _has_suspended_current_step(req):
+                continue
             old_status = req.status
             old_role = req.current_role or "dept_head"
 
@@ -67,10 +90,11 @@ def run_escalation():
                 )
             )
             db.session.add(log)
+            escalated_count += 1
 
-        if escalated_requests:
+        if escalated_count:
             db.session.commit()
-            print(f"✔ Escalated {len(escalated_requests)} requests")
+            print(f"✔ Escalated {escalated_count} requests")
         else:
             print("ℹ No requests to escalate")
 

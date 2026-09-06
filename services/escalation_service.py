@@ -1,10 +1,30 @@
 from datetime import datetime, timedelta
-from models import WorkflowRequest, AuditLog, SystemSetting
+from models import (
+    AuditLog,
+    SystemSetting,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowRequest,
+)
 from extensions import db
 from filters.request_filters import get_sla_days, get_escalation_days
 
 FINAL_STATUSES = ["APPROVED", "REJECTED"]
 THROTTLE_MINUTES = 10
+
+
+def _has_suspended_current_step(request_row) -> bool:
+    instance = WorkflowInstance.query.filter_by(request_id=request_row.id).first()
+    if not instance:
+        return False
+    step = WorkflowInstanceStep.query.filter_by(
+        instance_id=instance.id,
+        step_order=instance.current_step_order,
+    ).first()
+    try:
+        return int(getattr(step, "sla_days", None)) == -1
+    except (TypeError, ValueError):
+        return False
 
 
 def _get_setting(key):
@@ -49,6 +69,8 @@ def run_escalation_if_needed():
     )
 
     for req in escalated_requests:
+        if _has_suspended_current_step(req):
+            continue
         req.status = "ESCALATED"
         req.escalated_at = now
 

@@ -33,6 +33,7 @@ from services.workflow_confidentiality import filter_confidential_workflow_user_
 
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 HIERARCHY_BYPASS_FOLLOWER_ACTION = "HIERARCHY_BYPASS_FOLLOWER"
+SLA_SUSPENDED = -1
 # A mention task is intentionally allowed to add someone outside the original
 # parallel-step candidate list. Keep the legacy Arabic marker so tasks created
 # before this marker was standardized are not incorrectly bypassed on reload.
@@ -92,9 +93,20 @@ def _step_due_at(template_sla_days=None, step_sla_days=None, started_at=None):
     return (started_at or datetime.utcnow()) + timedelta(days=days)
 
 
+def is_sla_suspended(value) -> bool:
+    """Return whether a runtime SLA was explicitly suspended."""
+    try:
+        return int(value) == SLA_SUSPENDED
+    except (TypeError, ValueError):
+        return False
+
+
 def _activate_step_sla(step, started_at=None, reset=True):
     """Start the SLA clock when a pending step becomes the active step."""
     if not step or getattr(step, "status", None) != "PENDING":
+        return None
+    if is_sla_suspended(getattr(step, "sla_days", None)):
+        step.due_at = None
         return None
     days = _effective_sla_days(None, getattr(step, "sla_days", None))
     step.sla_days = days
@@ -1320,11 +1332,36 @@ def reopen_workflow_to_step(
     actor_user_id: int,
     reason: str,
     auto_commit: bool = False,
+    sla_mode: str | None = "PRESERVE",
+    sla_days: int | None = None,
 ) -> WorkflowInstanceStep:
     """Reopen a workflow and resume it from an existing step."""
     reason = (reason or "").strip()
     if not reason:
         raise ValueError("سبب إعادة الفتح مطلوب.")
+
+    normalized_sla_mode = (sla_mode or "PRESERVE").strip().upper()
+    sla_mode_aliases = {
+        "KEEP": "PRESERVE",
+        "CURRENT": "PRESERVE",
+        "DISABLE": "SUSPEND",
+        "PAUSE": "SUSPEND",
+        "CUSTOM": "CUSTOM",
+        "PRESERVE": "PRESERVE",
+        "SUSPEND": "SUSPEND",
+    }
+    normalized_sla_mode = sla_mode_aliases.get(normalized_sla_mode)
+    if not normalized_sla_mode:
+        raise ValueError("خيار SLA لإعادة الفتح غير صالح.")
+
+    custom_sla_days = None
+    if normalized_sla_mode == "CUSTOM":
+        try:
+            custom_sla_days = int(sla_days)
+        except (TypeError, ValueError):
+            raise ValueError("حدد مدة SLA جديدة بين 1 و365 يومًا.")
+        if not 1 <= custom_sla_days <= 365:
+            raise ValueError("حدد مدة SLA جديدة بين 1 و365 يومًا.")
 
     req = WorkflowRequest.query.get_or_404(request_id)
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
@@ -1364,6 +1401,10 @@ def reopen_workflow_to_step(
         step.note = None
         step.due_at = None
         step.parallel_notified_at = None
+        if normalized_sla_mode == "SUSPEND":
+            step.sla_days = SLA_SUSPENDED
+        elif normalized_sla_mode == "CUSTOM":
+            step.sla_days = custom_sla_days
 
     (
         WorkflowStepTask.query
@@ -1380,13 +1421,22 @@ def reopen_workflow_to_step(
     inst.last_step_actor_id = int(actor_user_id)
     _activate_step_sla(target_step, started_at=now, reset=True)
 
+    sla_note = {
+        "PRESERVE": "تم الإبقاء على إعداد SLA الحالي للخطوات المعاد فتحها.",
+        "SUSPEND": "تم تعليق SLA للخطوات المعاد فتحها؛ لن تُحتسب متأخرة أو تُصعّد تلقائيًا.",
+        "CUSTOM": f"تم ضبط SLA للخطوات المعاد فتحها على {custom_sla_days} يومًا لكل خطوة.",
+    }[normalized_sla_mode]
+
     db.session.add(AuditLog(
         request_id=req.id,
         user_id=int(actor_user_id),
         action="WORKFLOW_REOPENED_TO_STEP",
         old_status=old_status,
         new_status=req.status,
-        note=f"أُعيد فتح المسار والعودة إلى الخطوة {target_order}. السبب: {reason}",
+        note=(
+            f"أُعيد فتح المسار والعودة إلى الخطوة {target_order}. "
+            f"السبب: {reason} {sla_note}"
+        ),
         target_type="WORKFLOW_INSTANCE_STEP",
         target_id=target_step.id,
         created_at=now,
