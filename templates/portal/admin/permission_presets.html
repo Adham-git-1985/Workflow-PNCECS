@@ -57,8 +57,11 @@
 
       <div class="row g-2 align-items-end mb-3">
         <div class="col-md-6">
-          <label class="form-label">البحث في الصلاحيات</label>
+          <label class="form-label">{{ 'البحث داخل الاختصار المفتوح' if editing_preset else 'البحث في الصلاحيات' }}</label>
           <input class="form-control" id="presetPermissionSearch" placeholder="ابحث بالاسم أو رمز الصلاحية...">
+          {% if editing_preset %}
+          <div class="form-text">يعرض البحث صلاحيات هذا الاختصار فقط. استخدم «إظهار الكل» لإضافة صلاحية جديدة.</div>
+          {% endif %}
         </div>
         <div class="col-md-6">
           <div class="d-flex flex-wrap gap-2">
@@ -85,7 +88,10 @@
                 <button class="btn btn-sm btn-outline-secondary" type="button" onclick="setPresetGroup({{ group_index }}, false)">إلغاء المجموعة</button>
               </div>
               {% for permission in permissions %}
-              <div class="form-check preset-perm-item" data-group="{{ group_index }}" data-search="{{ (permission.label ~ ' ' ~ permission.key ~ ' ' ~ permission.desc)|lower }}">
+              <div class="form-check preset-perm-item"
+                   data-group="{{ group_index }}"
+                   data-preset-member="{{ '1' if permission.key in editing_keys else '0' }}"
+                   data-search="{{ (permission.label ~ ' ' ~ permission.key ~ ' ' ~ permission.desc)|lower }}">
                 <input class="form-check-input preset-permission-box" type="checkbox" name="permissions" value="{{ permission.key }}" id="presetPerm{{ permission.key }}" {% if permission.key in editing_keys %}checked{% endif %}>
                 <label class="form-check-label w-100" for="presetPerm{{ permission.key }}">
                   <span class="fw-semibold">{{ permission.label }}</span>
@@ -165,6 +171,7 @@
 <script>
   const presetSearch = document.getElementById('presetPermissionSearch');
   const presetBoxes = Array.from(document.querySelectorAll('.preset-permission-box'));
+  const restrictPresetSearchToOpenPreset = {{ 'true' if editing_preset else 'false' }};
 
   function updateSelectedPermissionCount() {
     document.getElementById('selectedPermissionCount').textContent = presetBoxes.filter(box => box.checked).length;
@@ -193,7 +200,11 @@
     document.querySelectorAll('.preset-permission-group').forEach(group => {
       let visibleCount = 0;
       group.querySelectorAll('.preset-perm-item').forEach(item => {
-        const visible = !query || (item.dataset.search || '').includes(query);
+        const belongsToOpenPreset = item.dataset.presetMember === '1';
+        const matchesQuery = !query || (item.dataset.search || '').includes(query);
+        const visible = matchesQuery && (
+          !query || !restrictPresetSearchToOpenPreset || belongsToOpenPreset
+        );
         item.style.display = visible ? '' : 'none';
         if (visible) visibleCount += 1;
       });
