@@ -3603,9 +3603,19 @@ def _workflow_user_summary(req, step):
     return {"last_action": last_action, "waiting_for": waiting_for}
 
 
+_WORKFLOW_OPERATION_SOURCE_RE = re.compile(
+    r"(?im)^[ \t]*مصدر[ \t]+العملية[ \t]*:[^\r\n]*(?:\r?\n|$)"
+)
+
+
+def _strip_workflow_operation_source(note: str | None) -> str:
+    """Remove the internal operation-source line from a user comment."""
+    return _WORKFLOW_OPERATION_SOURCE_RE.sub("", str(note or "")).strip()
+
+
 def _clean_workflow_note(note: str | None) -> str:
-    """Remove audit-instrumentation metadata from comments shown to users."""
-    cleaned = (note or "").split("\nمصدر العملية:", 1)[0].strip()
+    """Return a user-facing workflow comment without internal metadata."""
+    cleaned = _strip_workflow_operation_source(note)
     return cleaned.replace("موافق عليه", "تم الاطلاع والمتابعة").replace("مرفوض", "تم توقيف المسار")
 
 
@@ -4824,6 +4834,16 @@ def view_request(request_id):
         .limit(200)
         .all()
     )
+    detailed_audit = [
+        {
+            "action": log.action,
+            "user": log.user,
+            "on_behalf_of_user": log.on_behalf_of_user,
+            "created_at": log.created_at,
+            "note": _strip_workflow_operation_source(log.note),
+        }
+        for log in audit
+    ]
     simple_audit = _workflow_user_summary(req, current_step)
     simple_comments = [
         {
@@ -5219,7 +5239,7 @@ def view_request(request_id):
         can_delete_request=can_delete_request,
         attachments=atts,
         files_map=files_map,
-        audit=audit,
+        audit=detailed_audit,
         simple_audit=simple_audit,
         simple_comments=simple_comments,
         user_audit=user_audit,
@@ -6189,7 +6209,9 @@ def decide_request_step(request_id, step_order):
         abort(403)
 
     decision = (request.form.get("decision") or "").strip().upper()
-    note = (request.form.get("note") or "").strip()
+    # This line used to be added by request instrumentation. It is not part of
+    # the user's comment and must neither be saved nor sent in notifications.
+    note = _strip_workflow_operation_source(request.form.get("note"))
     authorized_parallel_user_ids = request.form.getlist("parallel_assignee_ids")
     selected_dynamic_branch_step_orders = request.form.getlist("dynamic_branch_step_orders")
     if not selected_dynamic_branch_step_orders:
@@ -6604,7 +6626,7 @@ def add_request_note(request_id):
     if not can_view:
         abort(403)
 
-    note = (request.form.get("note") or "").strip()
+    note = _strip_workflow_operation_source(request.form.get("note"))
     # A note never changes the workflow state. Keep one unified action for
     # all users; legacy WORKFLOW_REPLY audit entries remain readable.
     kind = "COMMENT"

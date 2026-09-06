@@ -4,11 +4,26 @@ from types import SimpleNamespace
 from workflow.routes import (
     MENTION_ACCESS_ACTION,
     MENTION_ACCESS_REVOKED_ACTION,
+    _clean_workflow_note,
+    _strip_workflow_operation_source,
     _user_facing_audit_note,
 )
 
 
 class WorkflowActivityDetailsTests(unittest.TestCase):
+    def test_operation_source_line_is_removed_without_losing_comment_text(self):
+        note = "يرجى المتابعة.\nمصدر العملية: IP=127.0.0.1\nمع الشكر"
+
+        self.assertEqual(
+            _strip_workflow_operation_source(note),
+            "يرجى المتابعة.\nمع الشكر",
+        )
+
+    def test_clean_comment_hides_operation_source_line(self):
+        note = "يرجى المتابعة.\nمصدر العملية: IP=127.0.0.1"
+
+        self.assertEqual(_clean_workflow_note(note), "يرجى المتابعة.")
+
     def test_attachment_activity_shows_original_filename(self):
         log = SimpleNamespace(
             target_id=18,
