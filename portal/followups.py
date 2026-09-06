@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 import mimetypes
 from pathlib import Path
+import shutil
 import uuid
 
 from flask import abort, current_app, flash, redirect, render_template, request, send_from_directory, url_for
@@ -139,6 +140,27 @@ def _employee_can_edit(report: EmployeeFollowupReport) -> bool:
         and report.status in {"DRAFT", "NEEDS_REVISION"}
         and _can_create()
     )
+
+
+def _can_delete_own_report(report: EmployeeFollowupReport, access_level: str) -> bool:
+    return (
+        access_level == "employee"
+        and int(report.employee_user_id) == int(current_user.id)
+        and _has_permission(FOLLOWUPS_READ)
+    )
+
+
+def _remove_report_storage(report_id: int) -> None:
+    storage_root = (
+        Path(current_app.instance_path) / "uploads" / "employee_followups"
+    ).resolve()
+    storage_directory = (storage_root / str(int(report_id))).resolve()
+    if storage_directory.parent != storage_root or not storage_directory.is_dir():
+        return
+    try:
+        shutil.rmtree(storage_directory)
+    except OSError:
+        current_app.logger.warning("Failed to remove followup storage for report %s", report_id)
 
 
 def _extract_completed_meeting_tasks(report: EmployeeFollowupReport) -> int:
@@ -423,6 +445,7 @@ def followups_dashboard():
         metric_scope_label=metric_scope_label,
         can_create=_can_create(),
         can_review=_can_review(),
+        can_delete_own_reports=_has_permission(FOLLOWUPS_READ),
     )
 
 
@@ -483,6 +506,32 @@ def followups_view(report_id: int):
         item_status_labels=ITEM_STATUS_LABELS,
         rating_labels=RATING_LABELS,
     )
+
+
+@portal_bp.route("/followups/<int:report_id>/delete", methods=["POST"])
+@login_required
+def followups_delete_report(report_id: int):
+    _require_followups_access()
+    report, access_level = _get_report_or_abort(report_id)
+    if not _can_delete_own_report(report, access_level):
+        abort(403)
+
+    report_id_value = int(report.id)
+    try:
+        Notification.query.filter_by(
+            link_url=notification_target_path("EMPLOYEE_FOLLOWUP_REPORT", report_id_value)
+        ).delete(synchronize_session=False)
+        db.session.delete(report)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Failed to delete followup report %s", report_id_value)
+        flash("تعذر حذف تقرير الإنجاز حالياً.", "danger")
+    else:
+        _remove_report_storage(report_id_value)
+        flash("تم حذف تقرير الإنجاز.", "success")
+
+    return redirect(url_for("portal.followups_dashboard"))
 
 
 @portal_bp.route("/followups/<int:report_id>/update", methods=["POST"])

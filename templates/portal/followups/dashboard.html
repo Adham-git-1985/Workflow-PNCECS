@@ -36,7 +36,15 @@
             <td>{{ report.manager.full_name if report.manager else 'غير محدد' }}</td>
             <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
             <td>{{ report.updated_at.strftime('%Y-%m-%d %H:%M') if report.updated_at else '-' }}</td>
-            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a></td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a>
+              {% if can_delete_own_reports %}
+              <form method="post" action="{{ url_for('portal.followups_delete_report', report_id=report.id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('هل تريد حذف تقرير الإنجاز نهائياً؟');">حذف</button>
+              </form>
+              {% endif %}
+            </td>
           </tr>
           {% else %}
           <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير بعد.</td></tr>
