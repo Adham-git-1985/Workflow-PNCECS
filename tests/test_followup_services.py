@@ -64,6 +64,10 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertTrue(title.runs[0].bold)
         self.assertEqual(title.runs[0].font.size.pt, 16)
         self.assertEqual(
+            title.runs[0]._element.rPr.find(qn("w:szCs")).get(qn("w:val")),
+            "32",
+        )
+        self.assertEqual(
             title.runs[0]._element.rPr.rFonts.get(qn("w:cs")),
             "Sakkal Majalla",
         )
@@ -73,11 +77,11 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertIn("تمت المراجعة", text)
         self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[0].cells],
-            ["المهمة", "التاريخ"],
+            ["المهمة", "التفاصيل", "التاريخ"],
         )
         self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[1].cells],
-            ["إنجاز التقرير", "2026-09-01"],
+            ["إنجاز التقرير", "تفاصيل البند", "2026-09-01"],
         )
         self.assertIsNotNone(accomplishments_table._tbl.tblPr.find(qn("w:bidiVisual")))
         for table in document.tables:
@@ -86,7 +90,7 @@ class FollowupServicesTests(unittest.TestCase):
                 for cell in table.rows[0].cells
             ]
             self.assertLessEqual(sum(widths), int(5.7 * 1440))
-            self.assertEqual(table.alignment, WD_TABLE_ALIGNMENT.CENTER)
+            self.assertEqual(table.alignment, WD_TABLE_ALIGNMENT.RIGHT)
             self.assertEqual(
                 table._tbl.tblPr.find(qn("w:tblLayout")).get(qn("w:type")),
                 "fixed",
@@ -95,6 +99,10 @@ class FollowupServicesTests(unittest.TestCase):
             self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
             self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
             self.assertEqual(paragraph.runs[0].font.size.pt, 16)
+            self.assertEqual(
+                paragraph.runs[0]._element.rPr.find(qn("w:szCs")).get(qn("w:val")),
+                "32",
+            )
         for table in document.tables:
             for row in table.rows:
                 for cell in row.cells:
@@ -102,6 +110,10 @@ class FollowupServicesTests(unittest.TestCase):
                     self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
                     self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
                     self.assertEqual(paragraph.runs[0].font.size.pt, 16)
+                    self.assertEqual(
+                        paragraph.runs[0]._element.rPr.find(qn("w:szCs")).get(qn("w:val")),
+                        "32",
+                    )
 
     def test_docx_export_keeps_an_empty_accomplishments_table(self):
         report = SimpleNamespace(
@@ -124,7 +136,7 @@ class FollowupServicesTests(unittest.TestCase):
 
         self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[0].cells],
-            ["المهمة", "التاريخ"],
+            ["المهمة", "التفاصيل", "التاريخ"],
         )
         self.assertIn("لا توجد مهام منجزة", accomplishments_table.rows[1].cells[0].text)
 

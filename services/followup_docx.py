@@ -54,6 +54,11 @@ def _set_rtl(
         fonts.set(qn("w:hAnsi"), ARABIC_FONT)
         fonts.set(qn("w:cs"), ARABIC_FONT)
         fonts.set(qn("w:eastAsia"), ARABIC_FONT)
+        size_cs = r_pr.find(qn("w:szCs"))
+        if size_cs is None:
+            size_cs = OxmlElement("w:szCs")
+            r_pr.append(size_cs)
+        size_cs.set(qn("w:val"), str(size * 2))
         rtl = r_pr.find(qn("w:rtl"))
         if rtl is None:
             rtl = OxmlElement("w:rtl")
@@ -145,7 +150,7 @@ def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
     from docx.oxml.ns import qn
     from docx.shared import Inches
 
-    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
     table.autofit = False
     table_pr = table._tbl.tblPr
     layout = table_pr.find(qn("w:tblLayout"))
@@ -254,14 +259,18 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         and (getattr(item, "status", "") or "").upper() == "COMPLETED"
     ]
     accomplishment_rows = [
-        (getattr(item, "title", None) or "مهمة منجزة", _date_label(getattr(item, "completed_on", None)))
+        (
+            getattr(item, "title", None) or "مهمة منجزة",
+            getattr(item, "description", None) or "-",
+            _date_label(getattr(item, "completed_on", None)),
+        )
         for item in completed_items
-    ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-")]
+    ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-", "-")]
     _add_rtl_table(
         document,
-        ("المهمة", "التاريخ"),
+        ("المهمة", "التفاصيل", "التاريخ"),
         accomplishment_rows,
-        _fit_table_widths(document, (4.0, 1.7)),
+        _fit_table_widths(document, (2.0, 2.5, 1.2)),
     )
 
     _paragraph(document, "ملخص الموظف", bold=True)
