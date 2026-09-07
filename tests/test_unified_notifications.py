@@ -196,6 +196,40 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertTrue(all(row.is_read for row in own_rows))
         self.assertFalse(Notification.query.filter_by(user_id=self.other_user.id).one().is_read)
 
+    def test_portal_user_can_delete_own_notification(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="Portal notification to delete",
+            source="portal",
+            is_read=False,
+        )
+        other_notification = Notification(
+            user_id=self.other_user.id,
+            message="Other user's notification",
+            source="portal",
+            is_read=False,
+        )
+        db.session.add_all((notification, other_notification))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.post(
+                "/portal/notifications",
+                data={"action": "DELETE_ONE", "id": notification.id},
+            )
+            other_response = client.post(
+                "/portal/notifications",
+                data={"action": "DELETE_ONE", "id": other_notification.id},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(db.session.get(Notification, notification.id).is_visible)
+        self.assertTrue(db.session.get(Notification, notification.id).is_read)
+        self.assertTrue(db.session.get(Notification, other_notification.id).is_visible)
+        self.assertFalse(db.session.get(Notification, other_notification.id).is_read)
+        self.assertEqual(other_response.status_code, 302)
+
     def test_opening_circular_clears_its_portal_notification(self):
         circular = PortalCircular(
             title="تعميم موحد",

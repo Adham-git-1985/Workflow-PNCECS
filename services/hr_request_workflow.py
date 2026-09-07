@@ -96,15 +96,55 @@ def _request_notification_recipient_ids(kind: str, request_id: int) -> set[int]:
         ):
             if user_id:
                 recipient_ids.add(int(user_id))
-    recipient_ids.update(
-        int(observer.user_id)
-        for observer in HRRequestObserver.query.filter_by(
-            request_kind=kind,
-            request_id=int(request_id),
-        ).all()
-        if observer.user_id
-    )
+    recipient_ids.update(_trusted_request_observer_ids(kind, row))
     return recipient_ids
+
+
+def _trusted_request_observer_ids(kind: str, row) -> set[int]:
+    """Return observers whose current role still entitles them to updates.
+
+    Older requests can contain broad observer rows created before request
+    notifications were scoped.  Those rows must not make unrelated employees
+    recipients of new leave or departure updates.
+    """
+    if not row:
+        return set()
+
+    hr_user_ids = set(hr_notification_user_ids())
+    direct_manager_ids = {
+        int(manager.id)
+        for manager in resolve_responsible_managers(int(row.user_id))
+    }
+    general_director = resolve_general_director(int(row.user_id))
+    general_director_id = int(general_director.id) if general_director else None
+    secretary_ids = set(secretary_general_user_ids())
+    trusted_ids: set[int] = set()
+
+    for observer in HRRequestObserver.query.filter_by(
+        request_kind=kind,
+        request_id=int(row.id),
+    ).all():
+        if not observer.user_id:
+            continue
+        user_id = int(observer.user_id)
+        scope = _normalize(getattr(observer, "observer_scope", None))
+
+        if scope == "HR" and user_id in hr_user_ids:
+            trusted_ids.add(user_id)
+        elif scope == "DIRECTMANAGER" and user_id in direct_manager_ids:
+            trusted_ids.add(user_id)
+        elif scope == "GENERALDIRECTOR" and user_id == general_director_id:
+            trusted_ids.add(user_id)
+        elif scope == "SECRETARYGENERAL" and user_id in secretary_ids:
+            trusted_ids.add(user_id)
+        elif scope == "SECRETARIAT":
+            user = db.session.get(User, user_id)
+            if _is_secretariat(user):
+                trusted_ids.add(user_id)
+        elif scope == "ROUTINGERROR" and (user_id in hr_user_ids or user_id in secretary_ids):
+            trusted_ids.add(user_id)
+
+    return trusted_ids
 
 
 def _notify(user_ids: Iterable[int], message: str, *, kind: str, request_id: int, ntype: str = "HR_APPROVAL") -> None:
@@ -494,7 +534,12 @@ def _is_hr_approver(user: User) -> bool:
 
 
 def hr_observer_user_ids() -> list[int]:
-    return sorted({int(user.id) for user in User.query.all() if _is_hr_approver(user)})
+    """Return HR staff eligible for leave-request updates.
+
+    Management permissions are assigned to some department heads for their
+    work, but that must not make them recipients of all employee absences.
+    """
+    return hr_notification_user_ids()
 
 
 def hr_notification_user_ids() -> list[int]:

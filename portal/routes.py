@@ -6421,6 +6421,14 @@ def portal_notifications():
                     n.is_read = True
                     db.session.commit()
                 return redirect(url_for("portal.portal_notifications"))
+            elif action == "DELETE_ONE":
+                nid = int(request.form.get("id") or 0)
+                n = Notification.query.get(nid)
+                if n and n.user_id == current_user.id and (getattr(n, 'source', None) == 'portal') and getattr(n, 'is_visible', True) and (not getattr(n, 'is_mirror', False)):
+                    n.is_read = True
+                    n.is_visible = False
+                    db.session.commit()
+                return redirect(url_for("portal.portal_notifications", unread=request.args.get("unread")))
         except Exception:
             try:
                 db.session.rollback()

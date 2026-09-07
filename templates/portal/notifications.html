@@ -60,6 +60,11 @@
                 <button class="btn btn-sm btn-outline-secondary" type="submit">تم</button>
               </form>
             {% endif %}
+            <form method="post" class="d-inline">
+              <input type="hidden" name="action" value="DELETE_ONE" />
+              <input type="hidden" name="id" value="{{ n.id }}" />
+              <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+            </form>
           </div>
         </div>
       {% endfor %}

@@ -186,6 +186,27 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertNotIn(self.general_director.id, cc_ids)
         self.assertNotIn(self.secretary.id, cc_ids)
 
+    def test_hr_management_permission_does_not_subscribe_to_all_leave_updates(self):
+        db.session.add(UserPermission(
+            user_id=self.general_director.id,
+            key="HR_EMPLOYEE_MANAGE",
+            is_allowed=True,
+        ))
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        decide_request(KIND_LEAVE, row, self.manager, "APPROVE")
+        db.session.commit()
+
+        cc_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="HR_REQUEST_CC",
+                link_url=f"/portal/hr/approvals/leaves/{row.id}",
+            ).all()
+        }
+        self.assertIn(self.hr.id, cc_ids)
+        self.assertNotIn(self.general_director.id, cc_ids)
+
     def test_leave_goes_to_all_hierarchy_managers_and_one_approval_is_enough(self):
         self.manager.name = "خلود"
         irene = User(email="irene@example.test", name="إيرين", password_hash="x", role="dept_head")
@@ -775,6 +796,50 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(
             {notification.user_id for notification in Notification.query.all()},
             {self.manager.id},
+        )
+
+    def test_legacy_unrelated_observer_cannot_receive_request_updates(self):
+        outsider = User(
+            email="legacy-observer@example.test",
+            name="Legacy Observer",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add(outsider)
+        db.session.flush()
+
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        db.session.add_all((
+            HRRequestObserver(
+                request_kind=KIND_LEAVE,
+                request_id=row.id,
+                user_id=self.hr.id,
+                observer_scope="HR",
+            ),
+            HRRequestObserver(
+                request_kind=KIND_LEAVE,
+                request_id=row.id,
+                user_id=outsider.id,
+                observer_scope="HR",
+            ),
+        ))
+        db.session.flush()
+
+        _notify(
+            [self.manager.id, self.hr.id, outsider.id],
+            "تحديث خاص بطلب إجازة.",
+            kind=KIND_LEAVE,
+            request_id=row.id,
+        )
+        db.session.commit()
+
+        self.assertEqual(
+            {
+                notification.user_id
+                for notification in Notification.query.filter_by(type="HR_APPROVAL").all()
+            },
+            {self.manager.id, self.hr.id},
         )
 
     def test_general_director_board_scope_contains_directorate_employee(self):
