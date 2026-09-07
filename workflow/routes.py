@@ -2479,18 +2479,21 @@ def preview_workflow_attachment(file_id):
 
     mime = _guess_mime_for_file(file)
 
-    # EML messages are not safe to send inline: they can contain active HTML,
-    # remote images, and tracking links. Render only the decoded text and
-    # attachment metadata, as the correspondence module does.
+    # EML messages are rendered as cleaned HTML inside a sandboxed iframe.
+    # External images stay blocked unless the viewer explicitly requests them.
     if _is_eml_attachment(file, mime):
         max_preview_bytes = 15 * 1024 * 1024
+        show_external_images = request.args.get("external_images") == "1"
         try:
             if os.path.getsize(file.file_path) > max_preview_bytes:
                 flash("ملف البريد كبير للمعاينة؛ يمكنك تنزيله وفتحه ببرنامج البريد.", "warning")
                 return redirect(url_for("workflow.download_workflow_attachment", file_id=file.id))
 
             with open(file.file_path, "rb") as email_file:
-                preview = preview_eml(email_file.read())
+                preview = preview_eml(
+                    email_file.read(),
+                    allow_external_images=show_external_images,
+                )
         except (OSError, CorrespondenceIntakeError):
             flash("تعذرت قراءة ملف البريد الإلكتروني للمعاينة.", "danger")
             return redirect(url_for("workflow.download_workflow_attachment", file_id=file.id))

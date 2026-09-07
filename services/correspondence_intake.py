@@ -8,6 +8,7 @@ external AI service or persists the uploaded file.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from datetime import date, datetime
 from email import policy
@@ -126,15 +127,19 @@ class EmailPreviewAttachment:
 
 @dataclass(frozen=True)
 class EmailPreview:
-    """Headers and text-only content rendered by the EML preview page."""
+    """Headers and isolated rich content rendered by the EML preview page."""
 
     subject: str
     sender: str
     recipients: tuple[str, ...]
     cc: tuple[str, ...]
+    bcc: tuple[str, ...]
     reply_to: tuple[str, ...]
     message_date: str
     body: str
+    html_body: str
+    has_external_images: bool
+    external_images_loaded: bool
     attachments: tuple[EmailPreviewAttachment, ...]
     warnings: tuple[str, ...]
 
@@ -1196,21 +1201,251 @@ def extract_eml_attachments(
     return EmailAttachmentExtraction(tuple(attachments), tuple(warnings))
 
 
+_EMAIL_PREVIEW_REMOVED_TAGS = frozenset({
+    "applet",
+    "audio",
+    "embed",
+    "form",
+    "frame",
+    "frameset",
+    "iframe",
+    "object",
+    "script",
+    "video",
+})
+_EMAIL_PREVIEW_SAFE_IMAGE_TYPES = frozenset({
+    "image/bmp",
+    "image/gif",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+})
+
+
+def _email_part_content(part) -> str:
+    try:
+        return str(part.get_content())
+    except Exception:
+        return _decode_text(part.get_payload(decode=True) or b"")
+
+
+def _email_preview_address(name: str, address: str) -> str:
+    name = str(name or "").strip()
+    address = str(address or "").strip()
+    if name and address:
+        return f"{name} <{address}>"
+    return name or address
+
+
+def _email_preview_addresses(message, header_name: str) -> tuple[str, ...]:
+    values = getaddresses(message.get_all(header_name, []))
+    return tuple(
+        formatted
+        for name, address in values
+        if (formatted := _email_preview_address(name, address))
+    )
+
+
+def _email_preview_body_part(message, *content_types: str):
+    try:
+        body_part = message.get_body(preferencelist=content_types)
+    except (AttributeError, KeyError, TypeError, ValueError):
+        body_part = None
+    if body_part is not None:
+        return body_part
+
+    expected_mimetypes = {
+        content_type if "/" in content_type else f"text/{content_type}"
+        for content_type in content_types
+    }
+    for part in message.walk() if message.is_multipart() else [message]:
+        if part.get_content_disposition() == "attachment" or part.get_filename():
+            continue
+        if (part.get_content_type() or "").lower() in expected_mimetypes:
+            return part
+    return None
+
+
+def _email_preview_inline_images(
+    message,
+    warnings: list[str],
+    *,
+    max_total_bytes: int = 8 * 1024 * 1024,
+) -> dict[str, str]:
+    images: dict[str, str] = {}
+    total_bytes = 0
+    skipped = False
+    for part in message.walk() if message.is_multipart() else [message]:
+        content_id = str(part.get("Content-ID") or "").strip().strip("<>")
+        mimetype = str(part.get_content_type() or "").strip().lower()
+        if not content_id or mimetype not in _EMAIL_PREVIEW_SAFE_IMAGE_TYPES:
+            continue
+        try:
+            image_payload = part.get_payload(decode=True) or b""
+        except Exception:
+            image_payload = b""
+        if not image_payload or total_bytes + len(image_payload) > max_total_bytes:
+            skipped = True
+            continue
+        images[content_id.lower()] = (
+            f"data:{mimetype};base64,{base64.b64encode(image_payload).decode('ascii')}"
+        )
+        total_bytes += len(image_payload)
+    if skipped:
+        warnings.append("لم تُعرض بعض الصور المضمنة داخل البريد لتجاوز الحد الآمن للمعاينة.")
+    return images
+
+
+def _safe_email_link(value: str) -> bool:
+    normalized = re.sub(r"[\x00-\x20]+", "", html.unescape(str(value or ""))).lower()
+    return normalized.startswith(("#", "http://", "https://", "mailto:", "tel:"))
+
+
+def _build_email_preview_html(
+    message,
+    raw_html: str,
+    warnings: list[str],
+    *,
+    allow_external_images: bool,
+    max_html_chars: int,
+) -> tuple[str, bool]:
+    try:
+        from bs4 import BeautifulSoup
+    except Exception:
+        escaped = html.escape(_clean_text(raw_html, max_html_chars))
+        return (
+            "<!doctype html><html><head><meta charset=\"utf-8\"></head>"
+            f"<body><pre>{escaped}</pre></body></html>",
+            False,
+        )
+
+    if len(raw_html) > max_html_chars:
+        raw_html = raw_html[:max_html_chars]
+        warnings.append("تم اختصار تنسيق البريد إلى الحد الآمن للمعاينة.")
+
+    source = BeautifulSoup(raw_html, "html.parser")
+    inline_images = _email_preview_inline_images(message, warnings)
+    has_external_images = False
+
+    for tag in source.find_all(_EMAIL_PREVIEW_REMOVED_TAGS):
+        tag.decompose()
+    for tag in source.find_all(("base", "meta")):
+        tag.decompose()
+
+    for tag in source.find_all(True):
+        for attribute in list(tag.attrs):
+            attribute_name = str(attribute).lower()
+            if (
+                attribute_name.startswith("on")
+                or attribute_name in {
+                    "action",
+                    "formaction",
+                    "ping",
+                    "poster",
+                    "srcdoc",
+                    "xlink:href",
+                }
+            ):
+                del tag.attrs[attribute]
+
+        style = str(tag.get("style") or "")
+        if re.search(r"(?:expression\s*\(|javascript\s*:|vbscript\s*:)", style, re.I):
+            del tag.attrs["style"]
+
+        if tag.name == "a":
+            href = str(tag.get("href") or "").strip()
+            if href and _safe_email_link(href):
+                tag["target"] = "_blank"
+                tag["rel"] = "noopener noreferrer"
+                tag["referrerpolicy"] = "no-referrer"
+            else:
+                tag.attrs.pop("href", None)
+            continue
+
+        if tag.name != "img":
+            continue
+
+        tag.attrs.pop("srcset", None)
+        tag["referrerpolicy"] = "no-referrer"
+        image_source = str(tag.get("src") or "").strip()
+        normalized_source = re.sub(r"[\x00-\x20]+", "", image_source).lower()
+        if normalized_source.startswith("cid:"):
+            content_id = html.unescape(image_source[4:]).strip().strip("<>").lower()
+            embedded_source = inline_images.get(content_id)
+            if embedded_source:
+                tag["src"] = embedded_source
+            else:
+                tag.attrs.pop("src", None)
+        elif normalized_source.startswith("data:"):
+            if not any(
+                normalized_source.startswith(f"data:{mimetype};base64,")
+                for mimetype in _EMAIL_PREVIEW_SAFE_IMAGE_TYPES
+            ):
+                tag.attrs.pop("src", None)
+        elif normalized_source.startswith(("https://", "http://")):
+            has_external_images = True
+        else:
+            tag.attrs.pop("src", None)
+
+    document = BeautifulSoup(
+        "<!doctype html><html><head></head><body></body></html>",
+        "html.parser",
+    )
+    source_head = source.head
+    source_body = source.body
+    if source_head is not None:
+        for node in list(source_head.contents):
+            document.head.append(node.extract())
+    content_root = source_body or source.html or source
+    nodes = list(content_root.contents)
+    for node in nodes:
+        if getattr(node, "name", None) in {"html", "head", "body"}:
+            continue
+        document.body.append(node.extract())
+    if source_body is not None:
+        for attribute, value in source_body.attrs.items():
+            document.body.attrs[attribute] = value
+    if source.html is not None:
+        for attribute, value in source.html.attrs.items():
+            document.html.attrs[attribute] = value
+
+    charset = document.new_tag("meta")
+    charset["charset"] = "utf-8"
+    document.head.insert(0, charset)
+    content_policy = document.new_tag("meta")
+    content_policy["http-equiv"] = "Content-Security-Policy"
+    image_sources = "data: https: http:" if allow_external_images else "data:"
+    content_policy["content"] = (
+        "default-src 'none'; "
+        f"img-src {image_sources}; "
+        "style-src 'unsafe-inline'; font-src data:; media-src 'none'; "
+        "object-src 'none'; frame-src 'none'; connect-src 'none'; "
+        "base-uri 'none'; form-action 'none'"
+    )
+    document.head.insert(1, content_policy)
+    preview_style = document.new_tag("style")
+    preview_style.string = (
+        "html{background:#fff;}body{overflow-wrap:anywhere;}"
+        "img{max-width:100%;}table{max-width:100%;}"
+    )
+    document.head.append(preview_style)
+    return str(document), has_external_images
+
+
 def preview_eml(
     payload: bytes,
     *,
     max_chars: int = 80_000,
     max_attachments: int = 100,
+    allow_external_images: bool = False,
 ) -> EmailPreview:
-    """Build a safe, text-only preview of a stored RFC 822 email message.
+    """Build an isolated, format-preserving preview of an RFC 822 message.
 
-    EML content must not be sent straight to the browser because it can contain
-    active HTML and tracking resources.  This function shows only decoded
-    headers, a plain-text rendition of the message, and attachment metadata.
+    The original HTML is cleaned and intended for a sandboxed iframe. Inline
+    CID images are embedded locally. Remote images remain blocked unless the
+    caller explicitly enables them.
     """
     message = _parse_eml_message(payload)
-    plain_parts: list[str] = []
-    html_parts: list[str] = []
     attachments: list[EmailPreviewAttachment] = []
     warnings: list[str] = []
     max_chars = max(1, min(int(max_chars or 1), 250_000))
@@ -1238,45 +1473,50 @@ def preview_eml(
             ))
             continue
 
-        content_type = (part.get_content_type() or "").lower()
-        if content_type not in {"text/plain", "text/html"}:
-            continue
-        try:
-            content = str(part.get_content())
-        except Exception:
-            content = _decode_text(part.get_payload(decode=True) or b"")
-        if content_type == "text/html":
+    text_part = _email_preview_body_part(message, "plain", "html")
+    body = ""
+    if text_part is not None:
+        body = _email_part_content(text_part)
+        if (text_part.get_content_type() or "").lower() == "text/html":
             try:
                 from bs4 import BeautifulSoup
 
-                content = BeautifulSoup(content, "html.parser").get_text("\n")
+                body = BeautifulSoup(body, "html.parser").get_text("\n")
             except Exception:
-                content = re.sub(r"<[^>]+>", " ", content)
-            html_parts.append(content)
-        else:
-            plain_parts.append(content)
-
-    def _addresses(header_name: str) -> tuple[str, ...]:
-        values = getaddresses(message.get_all(header_name, []))
-        return tuple(
-            (name or address or "").strip()
-            for name, address in values
-            if (name or address or "").strip()
-        )
-
-    sender_name, sender_address = parseaddr(str(message.get("From") or ""))
-    body_source = plain_parts or html_parts
-    body = _clean_text("\n\n".join(body_source), max_chars)
+                body = re.sub(r"<[^>]+>", " ", body)
+    body = _clean_text(body, max_chars)
     if not body:
         body = "لا يحتوي البريد على نص قابل للمعاينة."
+
+    rich_part = _email_preview_body_part(message, "html", "plain")
+    if rich_part is not None and (rich_part.get_content_type() or "").lower() == "text/html":
+        rich_source = _email_part_content(rich_part)
+    else:
+        rich_source = (
+            '<pre dir="auto" style="font-family:Arial,sans-serif;white-space:pre-wrap;'
+            f'margin:0">{html.escape(body)}</pre>'
+        )
+    html_body, has_external_images = _build_email_preview_html(
+        message,
+        rich_source,
+        warnings,
+        allow_external_images=bool(allow_external_images),
+        max_html_chars=max(100_000, min(max_chars * 10, 1_000_000)),
+    )
+
+    senders = _email_preview_addresses(message, "From")
     return EmailPreview(
         subject=str(message.get("Subject") or "").strip() or "(بدون موضوع)",
-        sender=(sender_name or sender_address or "").strip() or "-",
-        recipients=_addresses("To"),
-        cc=_addresses("Cc"),
-        reply_to=_addresses("Reply-To"),
+        sender="، ".join(senders) or "-",
+        recipients=_email_preview_addresses(message, "To"),
+        cc=_email_preview_addresses(message, "Cc"),
+        bcc=_email_preview_addresses(message, "Bcc"),
+        reply_to=_email_preview_addresses(message, "Reply-To"),
         message_date=str(message.get("Date") or "").strip() or "-",
         body=body,
+        html_body=html_body,
+        has_external_images=has_external_images,
+        external_images_loaded=bool(allow_external_images),
         attachments=tuple(attachments),
         warnings=tuple(warnings),
     )

@@ -18,49 +18,10 @@
   </div>
 </div>
 
-<div class="alert alert-info small">
-  🛡️ تُعرض الرسالة كنص آمن فقط؛ لا تُشغَّل صور أو روابط أو HTML داخل ملف البريد.
-</div>
-
-<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
-  <div class="row g-3">
-    <div class="col-12 col-md-6"><div class="text-muted small">الموضوع</div><div class="fw-semibold" dir="auto">{{ preview.subject }}</div></div>
-    <div class="col-12 col-md-6"><div class="text-muted small">المرسل</div><div dir="auto">{{ preview.sender }}</div></div>
-    <div class="col-12 col-md-6"><div class="text-muted small">إلى</div><div dir="auto">{{ preview.recipients|join('، ') or '-' }}</div></div>
-    <div class="col-12 col-md-6"><div class="text-muted small">نسخة</div><div dir="auto">{{ preview.cc|join('، ') or '-' }}</div></div>
-    <div class="col-12 col-md-6"><div class="text-muted small">الرد إلى</div><div dir="auto">{{ preview.reply_to|join('، ') or '-' }}</div></div>
-    <div class="col-12 col-md-6"><div class="text-muted small">التاريخ</div><div dir="ltr">{{ preview.message_date }}</div></div>
-  </div>
-</div>
-
-<div class="bg-white rounded-3 shadow-sm p-4 mb-3">
-  <h5 class="mb-3">📄 نص الرسالة</h5>
-  <pre class="mb-0 text-wrap" dir="auto" style="font-family: inherit; white-space: pre-wrap; overflow-wrap: anywhere;">{{ preview.body }}</pre>
-</div>
-
-<div class="bg-white rounded-3 shadow-sm p-4">
-  <h5 class="mb-3">📎 مرفقات داخل الرسالة ({{ preview.attachments|length }})</h5>
-  {% if preview.attachments %}
-    <div class="table-responsive">
-      <table class="table table-sm align-middle mb-0">
-        <thead><tr><th>الاسم</th><th>النوع</th><th>الحجم</th></tr></thead>
-        <tbody>
-          {% for item in preview.attachments %}
-            <tr>
-              <td dir="auto">{{ item.filename }}</td>
-              <td class="text-muted" dir="ltr">{{ item.mimetype }}</td>
-              <td>{{ ((item.size_bytes or 0) / 1024)|round(1) }} KB{% if item.size_bytes is none %}—{% endif %}</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  {% else %}
-    <div class="text-muted">لا توجد مرفقات داخل الرسالة.</div>
-  {% endif %}
-
-  {% for warning in preview.warnings %}
-    <div class="alert alert-warning small mt-3 mb-0">{{ warning }}</div>
-  {% endfor %}
-</div>
+{% set external_images_url = url_for(
+  'workflow.preview_workflow_attachment',
+  file_id=file.id,
+  external_images=0 if preview.external_images_loaded else 1
+) %}
+{% include '_eml_preview_panel.html' %}
 {% endblock %}

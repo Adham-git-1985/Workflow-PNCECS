@@ -207,7 +207,7 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         self.assertEqual([attachment.filename for attachment in result.attachments], ["first.txt"])
         self.assertTrue(any("الحجم الإجمالي" in warning for warning in result.warnings))
 
-    def test_eml_preview_is_text_only_and_includes_attachment_metadata(self):
+    def test_eml_preview_preserves_safe_html_and_full_addresses(self):
         message = EmailMessage()
         message["From"] = "Sender <sender@example.test>"
         message["To"] = "Recipient <recipient@example.test>"
@@ -225,14 +225,57 @@ class CorrespondenceIntakeTests(unittest.TestCase):
         preview = preview_eml(message.as_bytes())
 
         self.assertEqual(preview.subject, "Preview subject")
-        self.assertEqual(preview.sender, "Sender")
-        self.assertEqual(preview.recipients, ("Recipient",))
-        self.assertEqual(preview.cc, ("Copy",))
+        self.assertEqual(preview.sender, "Sender <sender@example.test>")
+        self.assertEqual(preview.recipients, ("Recipient <recipient@example.test>",))
+        self.assertEqual(preview.cc, ("Copy <copy@example.test>",))
         self.assertIn("Plain preview body", preview.body)
+        self.assertIn("HTML preview body", preview.html_body)
+        self.assertNotIn("<script", preview.html_body.lower())
+        self.assertFalse(preview.external_images_loaded)
         self.assertEqual(len(preview.attachments), 1)
         self.assertEqual(preview.attachments[0].filename, "report.pdf")
         self.assertEqual(preview.attachments[0].mimetype, "application/pdf")
         self.assertEqual(preview.attachments[0].size_bytes, len(b"document payload"))
+
+    def test_eml_preview_embeds_cid_images_and_controls_external_images(self):
+        message = EmailMessage()
+        message["Subject"] = "Rich preview"
+        message.set_content("Plain fallback")
+        message.add_alternative(
+            '<div style="font-family:Arial"><p>First message</p>'
+            '<blockquote><p>Earlier message</p></blockquote>'
+            '<img src="cid:logo"><img src="https://example.test/tracker.png" '
+            'onerror="alert(1)"></div>',
+            subtype="html",
+        )
+        message.get_payload()[1].add_related(
+            b"png payload",
+            maintype="image",
+            subtype="png",
+            cid="<logo>",
+            filename="logo.png",
+        )
+
+        preview = preview_eml(message.as_bytes())
+
+        self.assertLess(
+            preview.html_body.index("First message"),
+            preview.html_body.index("Earlier message"),
+        )
+        self.assertIn("font-family:Arial", preview.html_body)
+        self.assertIn("data:image/png;base64,", preview.html_body)
+        self.assertNotIn("cid:logo", preview.html_body)
+        self.assertNotIn("onerror", preview.html_body.lower())
+        self.assertIn("img-src data:;", preview.html_body)
+        self.assertTrue(preview.has_external_images)
+
+        external_preview = preview_eml(
+            message.as_bytes(),
+            allow_external_images=True,
+        )
+
+        self.assertIn("img-src data: https: http:;", external_preview.html_body)
+        self.assertTrue(external_preview.external_images_loaded)
 
     def test_image_returns_manual_ocr_warning_and_filename_subject(self):
         result = analyze_correspondence_attachment(b"not-a-real-image", "scan.jpg")

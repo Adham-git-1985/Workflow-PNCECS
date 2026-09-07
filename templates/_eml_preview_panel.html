@@ -1,0 +1,182 @@
+<style>
+  .eml-message-card {
+    overflow: hidden;
+    border: 1px solid rgba(0, 0, 0, .08);
+  }
+  .eml-subject {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid rgba(0, 0, 0, .08);
+    font-size: 1.1rem;
+    font-weight: 700;
+    line-height: 1.7;
+  }
+  .eml-header-list {
+    margin: 0;
+    padding: .5rem 1.5rem;
+  }
+  .eml-header-row {
+    display: grid;
+    grid-template-columns: 6.5rem minmax(0, 1fr);
+    gap: 1rem;
+    padding: .65rem 0;
+    border-bottom: 1px solid rgba(0, 0, 0, .06);
+  }
+  .eml-header-row:last-child {
+    border-bottom: 0;
+  }
+  .eml-header-label {
+    color: #6c757d;
+    font-weight: 600;
+  }
+  .eml-header-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    unicode-bidi: plaintext;
+    user-select: text;
+  }
+  .eml-address-list {
+    display: grid;
+    gap: .3rem;
+  }
+  .eml-address {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    unicode-bidi: plaintext;
+  }
+  .eml-body-frame {
+    display: block;
+    width: 100%;
+    height: clamp(640px, 75vh, 1000px);
+    border: 1px solid rgba(0, 0, 0, .12);
+    border-radius: .6rem;
+    background: #fff;
+  }
+  @media (max-width: 575.98px) {
+    .eml-subject,
+    .eml-header-list {
+      padding-right: 1rem;
+      padding-left: 1rem;
+    }
+    .eml-header-row {
+      grid-template-columns: 1fr;
+      gap: .2rem;
+    }
+    .eml-body-frame {
+      height: 72vh;
+      min-height: 520px;
+    }
+  }
+</style>
+
+<div class="alert alert-info small">
+  <i class="bi bi-shield-check"></i>
+  تُعرض الرسالة بتنسيقها الأصلي داخل إطار معزول، مع الحفاظ على الخطوط والمحاذاة والجداول وتسلسل المحادثة.
+  {% if preview.has_external_images and not preview.external_images_loaded %}
+    الصور الخارجية محجوبة لحماية الخصوصية، ويمكن تحميلها يدويًا.
+  {% endif %}
+</div>
+
+<section class="eml-message-card bg-white rounded-3 shadow-sm mb-3" aria-label="بيانات رسالة البريد">
+  <div class="eml-subject" dir="auto">{{ preview.subject }}</div>
+  <dl class="eml-header-list">
+    <div class="eml-header-row">
+      <dt class="eml-header-label">من</dt>
+      <dd class="eml-header-value mb-0" dir="auto">{{ preview.sender }}</dd>
+    </div>
+    <div class="eml-header-row">
+      <dt class="eml-header-label">إلى</dt>
+      <dd class="eml-header-value eml-address-list mb-0">
+        {% for address in preview.recipients %}
+          <span class="eml-address" dir="auto">{{ address }}</span>
+        {% else %}
+          <span class="eml-address">-</span>
+        {% endfor %}
+      </dd>
+    </div>
+    {% if preview.cc %}
+      <div class="eml-header-row">
+        <dt class="eml-header-label">نسخة</dt>
+        <dd class="eml-header-value eml-address-list mb-0">
+          {% for address in preview.cc %}
+            <span class="eml-address" dir="auto">{{ address }}</span>
+          {% endfor %}
+        </dd>
+      </div>
+    {% endif %}
+    {% if preview.bcc %}
+      <div class="eml-header-row">
+        <dt class="eml-header-label">نسخة مخفية</dt>
+        <dd class="eml-header-value eml-address-list mb-0">
+          {% for address in preview.bcc %}
+            <span class="eml-address" dir="auto">{{ address }}</span>
+          {% endfor %}
+        </dd>
+      </div>
+    {% endif %}
+    {% if preview.reply_to %}
+      <div class="eml-header-row">
+        <dt class="eml-header-label">الرد إلى</dt>
+        <dd class="eml-header-value eml-address-list mb-0">
+          {% for address in preview.reply_to %}
+            <span class="eml-address" dir="auto">{{ address }}</span>
+          {% endfor %}
+        </dd>
+      </div>
+    {% endif %}
+    <div class="eml-header-row">
+      <dt class="eml-header-label">التاريخ</dt>
+      <dd class="eml-header-value mb-0" dir="ltr">{{ preview.message_date }}</dd>
+    </div>
+  </dl>
+</section>
+
+<section class="bg-white rounded-3 shadow-sm p-3 p-md-4 mb-3" aria-label="محتوى رسالة البريد">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+    <h5 class="mb-0"><i class="bi bi-envelope-paper"></i> محتوى الرسالة الأصلي</h5>
+    {% if preview.has_external_images %}
+      <a class="btn btn-sm btn-outline-secondary" href="{{ external_images_url }}">
+        <i class="bi bi-images"></i>
+        {% if preview.external_images_loaded %}حجب الصور الخارجية{% else %}تحميل الصور الخارجية{% endif %}
+      </a>
+    {% endif %}
+  </div>
+  <iframe
+    class="eml-body-frame"
+    title="محتوى رسالة البريد الأصلية"
+    sandbox="allow-popups allow-popups-to-escape-sandbox"
+    referrerpolicy="no-referrer"
+    srcdoc="{{ preview.html_body }}"
+  ></iframe>
+</section>
+
+<section class="bg-white rounded-3 shadow-sm p-4">
+  <h5 class="mb-3"><i class="bi bi-paperclip"></i> مرفقات داخل الرسالة ({{ preview.attachments|length }})</h5>
+  {% if preview.attachments %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>الاسم</th><th>النوع</th><th>الحجم</th></tr></thead>
+        <tbody>
+          {% for item in preview.attachments %}
+            <tr>
+              <td dir="auto">{{ item.filename }}</td>
+              <td class="text-muted" dir="ltr">{{ item.mimetype }}</td>
+              <td>
+                {% if item.size_bytes is none %}
+                  —
+                {% else %}
+                  {{ (item.size_bytes / 1024)|round(1) }} KB
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="text-muted">لا توجد مرفقات داخل الرسالة.</div>
+  {% endif %}
+  {% for warning in preview.warnings %}
+    <div class="alert alert-warning small mt-3 mb-0">{{ warning }}</div>
+  {% endfor %}
+</section>

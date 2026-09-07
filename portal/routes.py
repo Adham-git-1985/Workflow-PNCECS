@@ -26504,7 +26504,7 @@ def corr_attachment_view(att_id: int):
 @portal_bp.route("/corr/attachment/<int:att_id>/eml-preview")
 @login_required
 def corr_attachment_eml_preview(att_id: int):
-    """Render an EML as inert text instead of opening email HTML inline."""
+    """Render cleaned EML HTML inside an isolated preview frame."""
     att = CorrAttachment.query.get_or_404(att_id)
     item = _corr_item_for_attachment(att)
     _corr_require_access(item)
@@ -26526,9 +26526,13 @@ def corr_attachment_eml_preview(att_id: int):
         flash("ملف البريد كبير للمعاينة؛ يمكنك تنزيله وفتحه ببرنامج البريد.", "warning")
         return redirect(url_for("portal.corr_attachment_download", att_id=att.id))
 
+    show_external_images = request.args.get("external_images") == "1"
     try:
         with open(file_path, "rb") as email_file:
-            preview = preview_eml(email_file.read())
+            preview = preview_eml(
+                email_file.read(),
+                allow_external_images=show_external_images,
+            )
     except (OSError, CorrespondenceIntakeError):
         flash("تعذر قراءة ملف البريد الإلكتروني للمعاينة.", "danger")
         return redirect(url_for("portal.corr_attachment_download", att_id=att.id))

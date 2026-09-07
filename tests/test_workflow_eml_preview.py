@@ -104,7 +104,7 @@ class WorkflowEmlPreviewRouteTests(unittest.TestCase):
             session["_user_id"] = str(self.user.id)
             session["_fresh"] = True
 
-    def test_eml_attachment_uses_safe_text_preview(self):
+    def test_eml_attachment_uses_isolated_rich_preview(self):
         with patch("workflow.routes.render_template", return_value="preview") as render:
             with self.app.test_client() as client:
                 self._login(client)
@@ -116,6 +116,8 @@ class WorkflowEmlPreviewRouteTests(unittest.TestCase):
         preview = render.call_args.kwargs["preview"]
         self.assertEqual(preview.subject, "Safe message preview")
         self.assertIn("Plain preview body", preview.body)
+        self.assertIn("<pre", preview.html_body)
+        self.assertEqual(preview.sender, "Sender <sender@example.test>")
         self.assertEqual(preview.attachments[0].filename, "photo.jpg")
 
 
