@@ -366,6 +366,21 @@ class TransportReadyFormsTests(unittest.TestCase):
             )
             self.assertEqual(forbidden_docx.status_code, 403)
 
+    def test_requester_does_not_see_movement_decision_controls(self):
+        self.employee_permit.status = "SUBMITTED"
+        self.employee_permit.approval_stage = "TRANSPORT"
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.employee.id)
+            page = client.get(f"/portal/transport/permits/{self.employee_permit.id}")
+
+        self.assertEqual(page.status_code, 200)
+        body = page.get_data(as_text=True)
+        self.assertNotIn('name="driver_id"', body)
+        self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/approve", body)
+        self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/reject", body)
+
     def test_vehicle_and_driver_license_expiry_fields_are_shown(self):
         with self.app.test_client() as client:
             self._login(client, self.admin.id)

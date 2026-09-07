@@ -150,6 +150,8 @@ def _has_transport_manager() -> bool:
 def _can_process_movement(row: TransportPermit) -> bool:
     if row.status != "SUBMITTED":
         return False
+    if row.requester_user_id == current_user.id:
+        return False
     if row.approval_stage == "MANAGER":
         return row.manager_user_id == current_user.id or current_user.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "TRANSPORT":
@@ -1288,8 +1290,11 @@ def transport_permit_view(permit_id: int):
         abort(403)
     can_approve = _can_process_movement(row)
     can_update = _can_edit_movement(row)
-    vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
-    drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
+    vehicles = []
+    drivers = []
+    if can_approve and row.approval_stage == "TRANSPORT":
+        vehicles = TransportVehicle.query.filter(TransportVehicle.status == "ACTIVE").order_by(TransportVehicle.plate_no.asc()).all()
+        drivers = TransportDriver.query.filter(TransportDriver.status == "ACTIVE").order_by(TransportDriver.name.asc()).all()
     return render_template("portal/transport/permit_view.html", item=row, can_approve=can_approve, can_update=can_update, vehicles=vehicles, drivers=drivers, stage_labels=_MOVEMENT_STAGES)
 
 

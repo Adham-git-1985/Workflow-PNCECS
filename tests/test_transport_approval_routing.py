@@ -2,10 +2,11 @@ import tempfile
 import unittest
 
 from flask import Flask
+from flask_login import LoginManager, login_user, logout_user
 
 from extensions import db
 from models import SystemSetting, TransportPermit, User, UserPermission
-from portal.transport import _movement_recipient_ids
+from portal.transport import _can_process_movement, _movement_recipient_ids
 
 
 class TransportApprovalRoutingTests(unittest.TestCase):
@@ -20,6 +21,17 @@ class TransportApprovalRoutingTests(unittest.TestCase):
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
         )
         db.init_app(cls.app)
+
+        login_manager = LoginManager()
+        login_manager.init_app(cls.app)
+
+        @login_manager.user_loader
+        def load_user(user_id):
+            try:
+                return db.session.get(User, int(user_id))
+            except (TypeError, ValueError):
+                return None
+
         cls.context = cls.app.app_context()
         cls.context.push()
         db.create_all()
@@ -104,3 +116,16 @@ class TransportApprovalRoutingTests(unittest.TestCase):
 
         self.permit.approval_stage = "ADMIN"
         self.assertEqual(_movement_recipient_ids(self.permit), [])
+
+    def test_requester_cannot_process_own_permit(self):
+        db.session.add(UserPermission(
+            user_id=self.requester.id,
+            key="TRANSPORT_APPROVE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context():
+            login_user(self.requester)
+            self.assertFalse(_can_process_movement(self.permit))
+            logout_user()
