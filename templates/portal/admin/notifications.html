@@ -1,0 +1,72 @@
+{% extends "portal/layout.html" %}
+{% block title %}إدارة إشعارات الموظفين{% endblock %}
+
+{% block content %}
+<div class="p-4 bg-white rounded-3 shadow-sm">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-bell-slash"></i> إدارة إشعارات الموظفين</h4>
+      <div class="text-muted">اختر الموظفين ثم احذف جميع إشعاراتهم الظاهرة. لا يمكن تنفيذ هذه العملية إلا من السوبر أدمن.</div>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>
+  </div>
+
+  <form method="get" class="row g-2 mb-3">
+    <div class="col-md-8">
+      <label class="form-label" for="q">بحث عن موظف</label>
+      <input id="q" name="q" class="form-control" value="{{ q }}" placeholder="الاسم أو البريد الإلكتروني أو اسم المستخدم" />
+    </div>
+    <div class="col-md-4 d-flex align-items-end gap-2">
+      <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+      {% if q %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_notifications') }}">إلغاء</a>{% endif %}
+    </div>
+  </form>
+
+  <form method="post" id="notification-delete-form" onsubmit="return confirm('سيتم حذف جميع الإشعارات الظاهرة من حسابات الموظفين المحددين. هل تريد المتابعة؟');">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <div class="text-muted small">يعرض الجدول الموظفين الذين لديهم إشعارات ظاهرة فقط.</div>
+      <button class="btn btn-danger" type="submit"><i class="bi bi-trash"></i> حذف إشعارات الموظفين المحددين</button>
+    </div>
+
+    {% if users %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle">
+          <thead>
+            <tr>
+              <th scope="col" style="width: 48px;"><input class="form-check-input" type="checkbox" id="select-all" aria-label="تحديد الكل" /></th>
+              <th scope="col">الموظف</th>
+              <th scope="col">البريد الإلكتروني</th>
+              <th scope="col">الدور</th>
+              <th scope="col">الإشعارات الظاهرة</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for user, notification_count in users %}
+              <tr>
+                <td><input class="form-check-input employee-selector" type="checkbox" name="user_ids" value="{{ user.id }}" aria-label="تحديد {{ user.full_name }}" /></td>
+                <td>{{ user.full_name }}</td>
+                <td>{{ user.email or '-' }}</td>
+                <td>{{ user.role or '-' }}</td>
+                <td><span class="badge text-bg-secondary">{{ notification_count }}</span></td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="alert alert-light border mb-0">لا توجد إشعارات ظاهرة مطابقة للبحث.</div>
+    {% endif %}
+  </form>
+</div>
+
+<script>
+  const selectAll = document.getElementById('select-all');
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.employee-selector').forEach((checkbox) => {
+        checkbox.checked = selectAll.checked;
+      });
+    });
+  }
+</script>
+{% endblock %}

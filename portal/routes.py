@@ -6464,6 +6464,81 @@ def portal_notifications():
     )
 
 
+@portal_bp.route("/admin/notifications", methods=["GET", "POST"])
+@login_required
+def portal_admin_notifications():
+    """Let super administrators clear selected users' notifications."""
+    if not _is_super_admin():
+        abort(403)
+
+    if request.method == "POST":
+        selected_ids: set[int] = set()
+        for value in request.form.getlist("user_ids"):
+            try:
+                selected_ids.add(int(value))
+            except (TypeError, ValueError):
+                continue
+
+        if not selected_ids:
+            flash("اختر موظفاً واحداً على الأقل.", "warning")
+            return redirect(url_for("portal.portal_admin_notifications"))
+
+        target_ids = {
+            int(user_id)
+            for (user_id,) in User.query.with_entities(User.id).filter(User.id.in_(selected_ids)).all()
+        }
+        if not target_ids:
+            abort(400)
+
+        hidden_count = (
+            Notification.query
+            .filter(Notification.user_id.in_(target_ids))
+            .filter(Notification.is_mirror.is_(False))
+            .filter(Notification.is_visible.is_(True))
+            .update({"is_visible": False, "is_read": True}, synchronize_session=False)
+        )
+        _portal_audit(
+            "SUPER_ADMIN_NOTIFICATIONS_DELETE",
+            f"users={len(target_ids)} notifications={hidden_count}",
+            target_type="NOTIFICATION",
+            target_id=0,
+        )
+        db.session.commit()
+        flash(f"تم حذف {hidden_count} إشعاراً من حسابات {len(target_ids)} موظف.", "success")
+        return redirect(url_for("portal.portal_admin_notifications"))
+
+    q = (request.args.get("q") or "").strip()
+    users_query = (
+        db.session.query(
+            User,
+            func.count(Notification.id).label("notification_count"),
+        )
+        .join(Notification, Notification.user_id == User.id)
+        .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.is_visible.is_(True))
+    )
+    if q:
+        needle = f"%{q}%"
+        users_query = users_query.filter(or_(
+            User.name.ilike(needle),
+            User.email.ilike(needle),
+            User.username.ilike(needle),
+        ))
+
+    users = (
+        users_query
+        .group_by(User.id)
+        .order_by(User.name.asc(), User.email.asc())
+        .limit(500)
+        .all()
+    )
+    return render_template(
+        "portal/admin/notifications.html",
+        users=users,
+        q=q,
+    )
+
+
 @portal_bp.route("/access/requests/<int:req_id>/cancel", methods=["POST"])
 @login_required
 def my_access_request_cancel(req_id: int):
@@ -26820,6 +26895,13 @@ def portal_admin_dashboard():
         pending_access = 0
 
     # Core admin cards
+    if _is_super_admin():
+        cards.append({
+            "title": "إدارة إشعارات الموظفين",
+            "desc": "اختيار الموظفين وحذف الإشعارات من حساباتهم.",
+            "icon": "bi-bell-slash",
+            "url": url_for("portal.portal_admin_notifications"),
+        })
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "طلبات الصلاحيات", "مراجعة طلبات الموظفين لتفعيل خدمات البوابة.", "bi-inboxes", "portal.admin_access_requests")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "صلاحيات البوابة", "تعديل الصلاحيات للأدوار أو للمستخدمين.", "bi-person-gear", "portal.portal_admin_permissions")
     add_card(PORTAL_ADMIN_PERMISSIONS_MANAGE, "اعتماد طلبات الحركة", "تعيين مسؤول الحركة ومدير النقل البديل ومدير الشؤون الإدارية.", "bi-car-front", "portal.transport_approval_settings")

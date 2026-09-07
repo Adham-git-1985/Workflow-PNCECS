@@ -7,7 +7,7 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import Notification, PortalCircular, TroubleTicket, User, UserPermission
+from models import AuditLog, Notification, PortalCircular, TroubleTicket, User, UserPermission
 from portal import portal_bp
 from utils.events import emit_event
 from utils.notification_links import notification_target_path, safe_local_notification_url
@@ -229,6 +229,74 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertTrue(db.session.get(Notification, other_notification.id).is_visible)
         self.assertFalse(db.session.get(Notification, other_notification.id).is_read)
         self.assertEqual(other_response.status_code, 302)
+
+    def test_super_admin_can_delete_notifications_for_selected_employees(self):
+        portal_notification = Notification(
+            user_id=self.other_user.id,
+            message="Portal notification to remove",
+            source="portal",
+            is_read=False,
+        )
+        workflow_notification = Notification(
+            user_id=self.other_user.id,
+            message="Workflow notification to remove",
+            source="workflow",
+            is_read=False,
+        )
+        sent_tracking_notification = Notification(
+            user_id=self.other_user.id,
+            message="Sent tracking notification",
+            source="workflow",
+            is_mirror=True,
+            is_read=False,
+        )
+        own_notification = Notification(
+            user_id=self.user.id,
+            message="Super admin notification",
+            source="portal",
+            is_read=False,
+        )
+        db.session.add_all((
+            portal_notification,
+            workflow_notification,
+            sent_tracking_notification,
+            own_notification,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            page = client.get("/portal/admin/notifications")
+            response = client.post(
+                "/portal/admin/notifications",
+                data={"user_ids": str(self.other_user.id)},
+            )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(self.other_user.email.encode("utf-8"), page.data)
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(db.session.get(Notification, portal_notification.id).is_visible)
+        self.assertFalse(db.session.get(Notification, workflow_notification.id).is_visible)
+        self.assertTrue(db.session.get(Notification, portal_notification.id).is_read)
+        self.assertTrue(db.session.get(Notification, workflow_notification.id).is_read)
+        self.assertTrue(db.session.get(Notification, sent_tracking_notification.id).is_visible)
+        self.assertTrue(db.session.get(Notification, own_notification.id).is_visible)
+        self.assertIsNotNone(AuditLog.query.filter_by(
+            action="SUPER_ADMIN_NOTIFICATIONS_DELETE",
+            user_id=self.user.id,
+        ).first())
+
+    def test_non_super_admin_cannot_manage_employee_notifications(self):
+        with self.app.test_client() as client:
+            self._login(client, self.other_user.id)
+            get_response = client.get("/portal/admin/notifications")
+            post_response = client.post(
+                "/portal/admin/notifications",
+                data={"user_ids": str(self.user.id)},
+            )
+
+        self.assertEqual(get_response.status_code, 403)
+        self.assertEqual(post_response.status_code, 403)
 
     def test_opening_circular_clears_its_portal_notification(self):
         circular = PortalCircular(
