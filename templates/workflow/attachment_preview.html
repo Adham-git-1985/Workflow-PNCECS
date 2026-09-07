@@ -32,7 +32,7 @@
             <span class="badge bg-info text-dark">{{ (file.file_size / 1024) | round(1) }} KB</span>
           {% endif %}
           {% if file.upload_date %}
-            <span class="badge bg-light text-dark">{{ file.upload_date.strftime('%Y-%m-%d %H:%M') }}</span>
+            <span class="badge bg-light text-dark">{{ file.upload_date|local_datetime }}</span>
           {% endif %}
         </div>
 

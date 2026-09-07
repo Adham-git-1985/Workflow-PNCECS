@@ -79,7 +79,7 @@
               <div class="flex-grow-1">
                 <div class="fw-bold">{{ c.title }}</div>
                 <div class="small text-muted">
-                  {{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}
+                  {{ c.created_at|local_datetime if c.created_at else '' }}
                   · {{ c.audience_label }}
                   {% if c.attachments %} · <i class="bi bi-paperclip"></i> {{ c.attachments|length }}{% endif %}
                 </div>

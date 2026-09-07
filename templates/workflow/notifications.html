@@ -156,7 +156,7 @@
         </div>
 
         <div class="text-muted small">
-            {{ n.created_at.strftime("%Y-%m-%d %H:%M") }}
+            {{ n.created_at|local_datetime }}
         </div>
     </div>
 

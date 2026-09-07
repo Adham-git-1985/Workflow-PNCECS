@@ -35,7 +35,7 @@
             <td>{{ report.period_start }} <span class="text-muted">إلى</span> {{ report.period_end }}</td>
             <td>{{ report.manager.full_name if report.manager else 'غير محدد' }}</td>
             <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
-            <td>{{ report.updated_at.strftime('%Y-%m-%d %H:%M') if report.updated_at else '-' }}</td>
+            <td>{{ report.updated_at|local_datetime if report.updated_at else '-' }}</td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a>
               {% if can_delete_followup_reports %}
@@ -69,7 +69,7 @@
             <td>{{ report.employee.full_name }}</td>
             <td>{{ report.period_start }} إلى {{ report.period_end }}</td>
             <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels[report.status] }}</span></td>
-            <td>{{ report.submitted_at.strftime('%Y-%m-%d %H:%M') if report.submitted_at else '-' }}</td>
+            <td>{{ report.submitted_at|local_datetime if report.submitted_at else '-' }}</td>
             <td class="text-nowrap">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.id) }}">فتح</a>
               {% if can_delete_followup_reports %}

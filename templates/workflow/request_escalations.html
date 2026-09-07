@@ -57,7 +57,7 @@
             <tbody>
               {% for e in escalations %}
                 <tr>
-                  <td class="text-nowrap">{{ e.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                  <td class="text-nowrap">{{ e.created_at|local_datetime }}</td>
                   <td class="text-nowrap">{{ e.step_order if e.step_order else '-' }}</td>
                   <td class="text-nowrap">التنبيه {{ e.alert_level or 1 }}</td>
                   <td>{{ e.category|esc_category_ar }}</td>

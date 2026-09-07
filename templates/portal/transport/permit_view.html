@@ -10,7 +10,7 @@
     <h5 class="mb-1"><i class="bi bi-file-earmark-check"></i> إذن حركة #{{ item.id }}</h5>
     <div class="text-muted small">
       مقدم الطلب: <b>{{ item.requester.name or item.requester.email }}</b> —
-      تاريخ الإنشاء: {{ item.created_at.strftime('%Y-%m-%d %H:%M') }}
+      تاريخ الإنشاء: {{ item.created_at|local_datetime }}
     </div>
   </div>
   <div class="d-flex gap-2">
@@ -103,12 +103,12 @@
       {% elif item.status == 'APPROVED' %}
         <div class="text-muted small mb-2">
           معتمد بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
-          {% if item.decided_at %}— {{ item.decided_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+          {% if item.decided_at %}— {{ item.decided_at|local_datetime }}{% endif %}
         </div>
       {% elif item.status == 'REJECTED' %}
         <div class="text-muted small mb-2">
           مرفوض بواسطة: <b>{{ item.approver.name or item.approver.email }}</b>
-          {% if item.decided_at %}— {{ item.decided_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+          {% if item.decided_at %}— {{ item.decided_at|local_datetime }}{% endif %}
         </div>
       {% endif %}
 
@@ -145,7 +145,7 @@
         {% for action in item.actions|sort(attribute='created_at') %}
           <div class="border rounded p-2 mb-2 small">
             <div class="fw-semibold">{{ stage_labels.get(action.stage, action.stage) }} — {{ 'تمت المتابعة' if action.action == 'APPROVED' else ('تم التعليق/الرفض' if action.action == 'REJECTED' else 'تم إرسال الطلب') }}</div>
-            <div class="text-muted">{{ action.actor.name or action.actor.email }} · {{ action.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+            <div class="text-muted">{{ action.actor.name or action.actor.email }} · {{ action.created_at|local_datetime }}</div>
             {% if action.note %}<div class="mt-1">{{ action.note }}</div>{% endif %}
           </div>
         {% endfor %}

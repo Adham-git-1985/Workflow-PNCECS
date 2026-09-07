@@ -186,7 +186,7 @@
             <tbody>
               {% for movement in corr_source.movements %}
                 <tr>
-                  <td class="text-nowrap">{{ movement.created_at.strftime('%Y-%m-%d %H:%M') if movement.created_at else '-' }}</td>
+                  <td class="text-nowrap">{{ movement.created_at|local_datetime if movement.created_at else '-' }}</td>
                   <td>{{ corr_action_labels.get(movement.action, movement.action) }}</td>
                   <td>{{ corr_status_labels.get(movement.to_status, movement.to_status or '-') }}</td>
                   <td>{{ movement.target_label or '-' }}</td>
@@ -273,7 +273,7 @@
                 <span class="badge bg-danger-subtle text-danger border ms-2">التنبيه {{ e.alert_level or 1 }}</span>
                 {% if e.step_order %}<span class="badge bg-danger ms-2">الخطوة {{ e.step_order }}</span>{% endif %}
               </div>
-              <span class="small text-muted">{{ e.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+              <span class="small text-muted">{{ e.created_at|local_datetime }}</span>
             </div>
             <div class="small text-muted mt-1">
               من: {{ e.from_user.email if e.from_user else ('#' ~ e.from_user_id) }}
@@ -313,7 +313,7 @@
                     </div>
                   </div>
                   <div class="d-flex align-items-center gap-2">
-                    <span class="small text-muted">{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</span>
+                    <span class="small text-muted">{{ log.created_at|local_datetime }}</span>
                     {% if can_delete_workflow_comments and log.is_workflow_comment %}
                       <form method="post" action="{{ url_for('workflow.delete_workflow_comment', request_id=req.id, audit_log_id=log.id) }}">
                         <button class="btn btn-sm btn-outline-danger py-0" type="submit" title="حذف التعليق" onclick="return confirm('هل تريد حذف هذا التعليق؟');">
@@ -335,7 +335,7 @@
             <div class="d-flex justify-content-between gap-2">
               <strong>{{ item.action }} بواسطة {{ item.author }}</strong>
               <div class="d-flex align-items-center gap-2">
-                <span class="small text-muted text-nowrap">{{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                <span class="small text-muted text-nowrap">{{ item.created_at|local_datetime }}</span>
                 {% if can_delete_workflow_comments and item.is_workflow_comment %}
                   <form method="post" action="{{ url_for('workflow.delete_workflow_comment', request_id=req.id, audit_log_id=item.id) }}">
                     <button class="btn btn-sm btn-outline-danger py-0" type="submit" title="حذف التعليق" onclick="return confirm('هل تريد حذف هذا التعليق؟');">
@@ -503,7 +503,7 @@
                        data-bs-toggle="modal" data-bs-target="#slaInfoModal"
                        data-sla-label="SLA لهذه الخطوة (الخطوة {{ s.step_order }})"
                        data-sla-value="{{ sla_val if sla_val is not none else '-' }}">
-                      SLA: {{ s.due_at.strftime("%Y-%m-%d %H:%M") }}{% if rem is not none %} ({{ rem }} يوم){% endif %}
+                      SLA: {{ s.due_at|local_datetime }}{% if rem is not none %} ({{ rem }} يوم){% endif %}
                     </a>
                   </div>
                 {% endif %}
@@ -513,7 +513,7 @@
                   <div class="small mt-2">
                     <i class="bi bi-person-check"></i>
                     نُفذت بواسطة <strong>{{ decision_user.full_name if decision_user else ('#' ~ s.decided_by_id) }}</strong>
-                    بتاريخ {{ s.decided_at.strftime('%Y-%m-%d %H:%M') }}
+                    بتاريخ {{ s.decided_at|local_datetime }}
                   </div>
                 {% elif s.sla_days == -1 %}
                   <div class="small text-secondary">
@@ -673,9 +673,9 @@
                       </td>
                       <td class="small text-muted">
                         {% if t.responded_at %}
-                          {{ t.responded_at.strftime('%Y-%m-%d %H:%M') }}
+                          {{ t.responded_at|local_datetime }}
                         {% elif t.bypassed_at %}
-                          {{ t.bypassed_at.strftime('%Y-%m-%d %H:%M') }}
+                          {{ t.bypassed_at|local_datetime }}
                         {% else %}
                           -
                         {% endif %}

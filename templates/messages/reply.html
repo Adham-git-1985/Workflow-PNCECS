@@ -23,7 +23,7 @@
         <div class="card-body">
           <div class="mb-2"><span class="text-muted small">من:</span> <strong>{{ original.sender.email }}</strong></div>
           <div class="mb-2"><span class="text-muted small">الموضوع:</span> <strong>{{ original.subject or 'بدون موضوع' }}</strong></div>
-          <div class="mb-2"><span class="text-muted small">التاريخ:</span> {{ original.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+          <div class="mb-2"><span class="text-muted small">التاريخ:</span> {{ original.created_at|local_datetime }}</div>
           <hr>
           <div style="white-space:pre-wrap; line-height:1.8">{{ original.body }}</div>
         </div>

@@ -45,7 +45,7 @@
                   <span class="badge text-bg-light border">{{ n.type }}</span>
                 {% endif %}
               {% endif %}
-              <span class="text-muted small">{{ (n.created_at or "") }}</span>
+              <span class="text-muted small">{{ n.created_at|local_datetime }}</span>
             </div>
             <div class="mt-2">
               <a class="text-decoration-none" href="{{ url_for('workflow.open_notification', notif_id=n.id) }}">{{ n.message }}</a>

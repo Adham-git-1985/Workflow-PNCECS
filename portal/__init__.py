@@ -1,7 +1,10 @@
 from flask import Blueprint, request, url_for
 from markupsafe import Markup, escape
 
+from utils.timezone import format_local_datetime
+
 portal_bp = Blueprint("portal", __name__, url_prefix="/portal")
+portal_bp.add_app_template_filter(format_local_datetime, "local_datetime")
 
 
 @portal_bp.app_context_processor

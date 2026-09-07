@@ -265,7 +265,7 @@
               <span class="badge bg-secondary-subtle text-secondary border">SLA معلّق</span>
             {% elif current_report_step and current_report_step.due_at %}
               <div class="small {% if not is_closed and now and now > current_report_step.due_at %}text-danger fw-semibold{% else %}text-muted{% endif %}">
-                {{ current_report_step.due_at.strftime("%Y-%m-%d %H:%M") }}
+                {{ current_report_step.due_at|local_datetime }}
               </div>
               {% if not is_closed and now and now > current_report_step.due_at %}
                 <span class="badge bg-danger">متأخر</span>
@@ -282,7 +282,7 @@
               —
             {% endif %}
           </td>
-          <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") if req.created_at else '—' }}</td>
+          <td>{{ req.created_at|local_datetime if req.created_at else '—' }}</td>
           <td class="text-end">
             <a class="btn btn-sm btn-outline-primary"
                href="{{ url_for('workflow.view_request', request_id=req.id) }}">

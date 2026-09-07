@@ -45,6 +45,7 @@ from utils.file_uploads import (
     random_storage_name,
 )
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
+from utils.timezone import local_day_start_utc
 from utils.committee_display import build_committee_summaries
 from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
@@ -2600,11 +2601,13 @@ def notifications():
         query = query.filter(Notification.role == role)
 
     if date_from:
-        start = datetime.strptime(date_from, "%Y-%m-%d")
+        start = local_day_start_utc(datetime.strptime(date_from, "%Y-%m-%d").date())
         query = query.filter(Notification.created_at >= start)
 
     if date_to:
-        end = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+        end = local_day_start_utc(
+            datetime.strptime(date_to, "%Y-%m-%d").date() + timedelta(days=1)
+        )
         query = query.filter(Notification.created_at < end)
 
     pagination = query.order_by(Notification.created_at.desc()).paginate(

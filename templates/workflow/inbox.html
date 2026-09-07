@@ -45,7 +45,7 @@
             <div class="flex-grow-1">
               <div class="fw-bold">{{ c.title }}</div>
               <div class="small text-muted">
-                {{ c.created_at.strftime('%Y-%m-%d %H:%M') if c.created_at else '' }}
+                {{ c.created_at|local_datetime if c.created_at else '' }}
                 · {{ c.audience_label }}
                 {% if c.attachments %} · <i class="bi bi-paperclip"></i> {{ c.attachments|length }}{% endif %}
               </div>
@@ -101,7 +101,7 @@
           <td>
             {% if task.assigned_by %}
               {{ task.assigned_by.full_name or task.assigned_by.email }}
-              {% if task.assigned_at %}<div class="small text-muted">{{ task.assigned_at.strftime('%Y-%m-%d %H:%M') }}</div>{% endif %}
+              {% if task.assigned_at %}<div class="small text-muted">{{ task.assigned_at|local_datetime }}</div>{% endif %}
             {% else %}—{% endif %}
           </td>
           <td><span class="badge text-bg-primary">{{ task.status_label }}</span></td>
@@ -199,7 +199,7 @@
             <div>{{ summary.last_action }}</div>
             <div class="small text-muted">{{ summary.waiting_for }}</div>
           </td>
-          <td>{{ req.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+          <td>{{ req.created_at|local_datetime }}</td>
           <td class="text-end">
             <a class="btn btn-sm btn-outline-primary"
                href="{{ url_for('workflow.view_request', request_id=req.id) }}">

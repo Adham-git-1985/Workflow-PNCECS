@@ -30,7 +30,7 @@
         </div>
         <div class="col-md-6">
           <div class="text-muted small">التاريخ</div>
-          <div>{{ msg.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+          <div>{{ msg.created_at|local_datetime }}</div>
         </div>
 
         <div class="col-12">
@@ -130,7 +130,7 @@
           {% if rec.is_read %}
             <span class="badge bg-success">مقروء</span>
             {% if rec.read_at %}
-              <span class="text-muted ms-2">{{ rec.read_at.strftime('%Y-%m-%d %H:%M') }}</span>
+              <span class="text-muted ms-2">{{ rec.read_at|local_datetime }}</span>
             {% endif %}
           {% else %}
             <span class="badge bg-warning text-dark">غير مقروء</span>
@@ -153,7 +153,7 @@
                 <span class="fw-bold">{{ r.recipient.full_name }}</span>
                 <span class="text-muted">({{ r.recipient.email }})</span>
                 {% if r.is_read and r.read_at %}
-                  <span class="text-muted">— {{ r.read_at.strftime('%Y-%m-%d %H:%M') }}</span>
+                  <span class="text-muted">— {{ r.read_at|local_datetime }}</span>
                 {% endif %}
               </div>
               {% endif %}

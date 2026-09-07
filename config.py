@@ -9,6 +9,9 @@ class BaseConfig:
     # should still provide a persistent value so sessions survive restarts.
     SECRET_KEY = os.getenv("SECRET_KEY") or secrets.token_urlsafe(48)
 
+    # All operational timestamps are stored in UTC and rendered in this zone.
+    APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Jerusalem")
+
     # 🗄Database
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 

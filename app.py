@@ -66,6 +66,7 @@ from filters.request_filters import apply_request_filters
 from utils.permissions import get_effective_user
 from utils.request_audit import register_request_audit
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
+from utils.timezone import format_local_datetime
 from filters.request_filters import get_sla_state
 from services.escalation_service import run_escalation_if_needed
 
@@ -167,6 +168,7 @@ app.jinja_env.filters["esc_category_ar"] = esc_category_ar
 app.jinja_env.filters["ui_label"] = ui_label
 app.jinja_env.filters["ui_text"] = ui_text
 app.jinja_env.filters["workflow_status_label"] = workflow_status_label
+app.jinja_env.filters["local_datetime"] = format_local_datetime
 
 # Cache func
 def get_unread_count(user_id, source="workflow"):

@@ -192,7 +192,7 @@
         {% if corr_assignment_task.assigned_by %}
           <div class="small text-muted">
             من {{ corr_assignment_task.assigned_by.full_name or corr_assignment_task.assigned_by.email }}
-            {% if corr_assignment_task.assigned_at %}<br>{{ corr_assignment_task.assigned_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+            {% if corr_assignment_task.assigned_at %}<br>{{ corr_assignment_task.assigned_at|local_datetime }}{% endif %}
           </div>
         {% endif %}
       </div>
@@ -276,7 +276,7 @@
         <tbody>
           {% for movement in corr_movements %}
             <tr>
-              <td class="text-nowrap">{{ movement.created_at.strftime('%Y-%m-%d %H:%M') if movement.created_at else '-' }}</td>
+              <td class="text-nowrap">{{ movement.created_at|local_datetime if movement.created_at else '-' }}</td>
               <td>{{ movement.actor.full_name if movement.actor and movement.actor.full_name else (movement.actor.email if movement.actor else '-') }}</td>
               <td>{{ corr_action_labels.get(movement.action, movement.action) }}</td>
               <td>

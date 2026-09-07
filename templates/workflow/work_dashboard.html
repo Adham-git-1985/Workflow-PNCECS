@@ -107,7 +107,7 @@
               {% else %}-{% endif %}
             </td>
             <td class="text-nowrap">
-              {{ row.step.due_at.strftime('%Y-%m-%d') if row.step and row.step.due_at else '-' }}
+              {{ row.step.due_at|local_datetime('%Y-%m-%d') if row.step and row.step.due_at else '-' }}
               {% if row.overdue %}<span class="badge text-bg-danger">متأخر</span>{% endif %}
             </td>
             <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=row.req.id) }}">فتح</a></td>
