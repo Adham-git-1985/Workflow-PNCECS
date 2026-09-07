@@ -21,7 +21,7 @@ from io import BytesIO
 
 from flask import (
     render_template, request, redirect, url_for, flash, abort, current_app,
-    send_file, send_from_directory, has_request_context, jsonify
+    send_file, send_from_directory, has_request_context, jsonify, g
 )
 
 from utils.portal_search import apply_search_all_columns
@@ -730,8 +730,8 @@ def _portal_flags():
     assigned_hr_request = False
     try:
         assigned_hr_request = bool(
-            request_ids_user_can_act_on(current_user, KIND_LEAVE)
-            or request_ids_user_can_act_on(current_user, KIND_PERMISSION)
+            _current_user_approvable_request_ids(KIND_LEAVE)
+            or _current_user_approvable_request_ids(KIND_PERMISSION)
         )
     except Exception:
         pass
@@ -758,6 +758,19 @@ def _portal_flags():
         'can_corr_create': has(CORR_CREATE),
         'can_hr_req_create': has(HR_REQUESTS_CREATE),
     }
+
+
+def _current_user_approvable_request_ids(kind: str) -> list[int]:
+    """Return the current user's pending approval ids once per request."""
+    normalized_kind = (kind or "").upper()
+    cache = getattr(g, "_portal_approvable_request_ids", None)
+    if cache is None:
+        cache = {}
+        g._portal_approvable_request_ids = cache
+    cache_key = (int(current_user.id), normalized_kind)
+    if cache_key not in cache:
+        cache[cache_key] = request_ids_user_can_act_on(current_user, normalized_kind)
+    return cache[cache_key]
 
 
 
@@ -1002,8 +1015,8 @@ def _inject_portal_context():
                 )
             else:
                 approvals_pending = (
-                    len(request_ids_user_can_act_on(current_user, KIND_LEAVE))
-                    + len(request_ids_user_can_act_on(current_user, KIND_PERMISSION))
+                    len(_current_user_approvable_request_ids(KIND_LEAVE))
+                    + len(_current_user_approvable_request_ids(KIND_PERMISSION))
                 )
         except Exception:
             approvals_pending = 0
@@ -3595,8 +3608,8 @@ def index():
                 )
             else:
                 stats['approvals_pending'] = (
-                    len(request_ids_user_can_act_on(current_user, KIND_LEAVE))
-                    + len(request_ids_user_can_act_on(current_user, KIND_PERMISSION))
+                    len(_current_user_approvable_request_ids(KIND_LEAVE))
+                    + len(_current_user_approvable_request_ids(KIND_PERMISSION))
                 )
         except Exception:
             pass
@@ -14000,8 +14013,8 @@ def hr_approvals():
     except Exception:
         pass
 
-    assigned_leave_ids = request_ids_user_can_act_on(current_user, KIND_LEAVE)
-    assigned_permission_ids = request_ids_user_can_act_on(current_user, KIND_PERMISSION)
+    assigned_leave_ids = _current_user_approvable_request_ids(KIND_LEAVE)
+    assigned_permission_ids = _current_user_approvable_request_ids(KIND_PERMISSION)
     participated_leave_ids = set(request_ids_user_participated_in(current_user, KIND_LEAVE))
     participated_permission_ids = set(request_ids_user_participated_in(current_user, KIND_PERMISSION))
     has_request_history = bool(

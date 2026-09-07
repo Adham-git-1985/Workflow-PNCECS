@@ -187,49 +187,65 @@ class User(db.Model, UserMixin):
         # Merge ROLE permissions (RolePermission) so role-based permissions are honored
         # This keeps template checks (current_user.has_perm) and perm_required consistent with /admin/permissions.
         try:
-            from sqlalchemy import func
             role_raw = (getattr(self, "role", "") or "").strip()
             role = role_raw.lower()
             if role:
-                role_rows = (
-                    RolePermission.query
-                    .filter(func.lower(RolePermission.role) == role)
-                    .all()
-                )
+                role_permission_cache = None
+                try:
+                    from flask import g, has_request_context
+                    if has_request_context():
+                        role_permission_cache = getattr(g, "_role_permission_keys", None)
+                        if role_permission_cache is None:
+                            role_permission_cache = {}
+                            g._role_permission_keys = role_permission_cache
+                except Exception:
+                    role_permission_cache = None
 
-                # If role-perms not found, try resolving role string via Role masterdata
-                # (helps when users store role as Arabic/English name instead of code).
-                if not role_rows:
-                    try:
-                        _r = (
-                            Role.query
-                            .filter(func.lower(Role.code) == role)
-                            .first()
-                        )
-                        if not _r and role_raw:
-                            _r = (
+                role_perms = (
+                    role_permission_cache.get(role)
+                    if role_permission_cache is not None
+                    else None
+                )
+                if role_perms is None:
+                    role_rows = (
+                        RolePermission.query
+                        .filter(func.lower(RolePermission.role) == role)
+                        .all()
+                    )
+                    if not role_rows:
+                        try:
+                            resolved_role = (
                                 Role.query
-                                .filter(func.lower(Role.name_en) == role)
+                                .filter(func.lower(Role.code) == role)
                                 .first()
                             )
-                        if not _r and role_raw:
-                            _r = Role.query.filter(Role.name_ar == role_raw).first()
-                        if _r and (_r.code or "").strip():
-                            role2 = (_r.code or "").strip().lower()
-                            if role2 and role2 != role:
-                                role_rows = (
-                                    RolePermission.query
-                                    .filter(func.lower(RolePermission.role) == role2)
-                                    .all()
+                            if not resolved_role and role_raw:
+                                resolved_role = (
+                                    Role.query
+                                    .filter(func.lower(Role.name_en) == role)
+                                    .first()
                                 )
-                    except Exception:
-                        pass
-                role_perms = [
-                    (rp.permission or "").strip().upper()
-                    for rp in role_rows
-                ]
+                            if not resolved_role and role_raw:
+                                resolved_role = Role.query.filter(Role.name_ar == role_raw).first()
+                            if resolved_role and (resolved_role.code or "").strip():
+                                resolved_code = (resolved_role.code or "").strip().lower()
+                                if resolved_code and resolved_code != role:
+                                    role_rows = (
+                                        RolePermission.query
+                                        .filter(func.lower(RolePermission.role) == resolved_code)
+                                        .all()
+                                    )
+                        except Exception:
+                            pass
+                    role_perms = tuple(
+                        (role_permission.permission or "").strip().upper()
+                        for role_permission in role_rows
+                    )
+                    if role_permission_cache is not None:
+                        role_permission_cache[role] = role_perms
+
                 if role_perms:
-                    perms = list(set(perms + role_perms))
+                    perms = list(set(perms + list(role_perms)))
         except Exception:
             pass
         # Backward-compatibility aliases for Portal permissions (old keys -> new CRUD-like keys)
