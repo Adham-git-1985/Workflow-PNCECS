@@ -155,6 +155,7 @@ from workflow.engine import (
     is_sla_suspended,
     can_committee_chair_bypass_parallel_step,
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
+    ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
 )
 
 logger = logging.getLogger(__name__)
@@ -1354,6 +1355,139 @@ def _normalized_org_lookup_text(value: str | None) -> str:
     ):
         text = text.replace(source, replacement)
     return "".join(character for character in text if character.isalnum())
+
+
+ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION = "ASSISTANT_SECRETARY_STEP_REDIRECTED"
+_ASSISTANT_SECRETARY_ROLE_CODES = {
+    "ASSISTANT_SECRETARY_GENERAL",
+    "ASSISTANT_TO_SECRETARY_GENERAL",
+    "SECRETARY_GENERAL_ASSISTANT",
+}
+_GENERAL_MANAGER_NODE_TYPE_CODES = {
+    "GENERAL_DIRECTOR",
+    "GENERAL_ADMINISTRATION",
+    "GENERAL_DIRECTORATE",
+}
+
+
+def _node_is_assistant_secretary_general(node: OrgNode | None) -> bool:
+    if not node:
+        return False
+    node_type_code = (getattr(getattr(node, "type", None), "code", "") or "").strip().upper()
+    node_text = _normalized_org_lookup_text(
+        " ".join(filter(None, (getattr(node, "name_ar", None), getattr(node, "name_en", None))))
+    )
+    return node_type_code == "SEC_GEN_ASSIST" or "مساعدالامينالعام" in node_text
+
+
+def _node_is_general_manager_target(node: OrgNode | None) -> bool:
+    if not node:
+        return False
+    node_type_code = (getattr(getattr(node, "type", None), "code", "") or "").strip().upper()
+    node_text = _normalized_org_lookup_text(
+        " ".join(filter(None, (getattr(node, "name_ar", None), getattr(node, "name_en", None))))
+    )
+    return (
+        node_type_code in _GENERAL_MANAGER_NODE_TYPE_CODES
+        or "مديرعام" in node_text
+        or "الادارهالعامه" in node_text
+    )
+
+
+def _assistant_secretary_general_node_ids(user: User, step: WorkflowInstanceStep | None) -> set[int]:
+    node_ids: set[int] = set()
+    user_id = int(getattr(user, "id", 0) or 0)
+    if not user_id:
+        return node_ids
+
+    manager_rows = OrgNodeManager.query.filter(
+        or_(
+            OrgNodeManager.manager_user_id == user_id,
+            OrgNodeManager.deputy_user_id == user_id,
+        )
+    ).all()
+    for manager_row in manager_rows:
+        node = db.session.get(OrgNode, manager_row.node_id)
+        if _node_is_assistant_secretary_general(node):
+            node_ids.add(int(node.id))
+
+    assigned_node_id = resolve_user_org_node_id(user)
+    assigned_node = db.session.get(OrgNode, assigned_node_id) if assigned_node_id else None
+    if _node_is_assistant_secretary_general(assigned_node):
+        node_ids.add(int(assigned_node.id))
+
+    step_node_id = getattr(step, "approver_org_node_id", None) if step else None
+    step_node = db.session.get(OrgNode, step_node_id) if step_node_id else None
+    if _node_is_assistant_secretary_general(step_node):
+        node_ids.add(int(step_node.id))
+    return node_ids
+
+
+def _is_assistant_secretary_general(user: User, step: WorkflowInstanceStep | None) -> bool:
+    role = (getattr(user, "role", "") or "").strip().upper()
+    return role in _ASSISTANT_SECRETARY_ROLE_CODES or bool(
+        _assistant_secretary_general_node_ids(user, step)
+    )
+
+
+def _assistant_secretary_redirect_targets(
+    user: User,
+    step: WorkflowInstanceStep,
+) -> list[dict]:
+    if not _is_assistant_secretary_general(user, step):
+        return []
+
+    assistant_node_ids = _assistant_secretary_general_node_ids(user, step)
+    nodes = OrgNode.query.filter(OrgNode.is_active.is_(True)).order_by(OrgNode.name_ar.asc(), OrgNode.id.asc()).all()
+    general_nodes = [node for node in nodes if _node_is_general_manager_target(node)]
+    if assistant_node_ids:
+        general_nodes = [
+            node for node in general_nodes
+            if assistant_node_ids.intersection(
+                {int(node.id), *get_node_ancestor_ids(int(node.id))}
+            )
+        ]
+
+    manager_rows = {
+        int(row.node_id): row
+        for row in OrgNodeManager.query.filter(
+            OrgNodeManager.node_id.in_([int(node.id) for node in general_nodes])
+        ).all()
+    } if general_nodes else {}
+    manager_user_ids = {
+        int(user_id)
+        for row in manager_rows.values()
+        for user_id in (row.manager_user_id, row.deputy_user_id)
+        if user_id
+    }
+    users_by_id = {
+        int(candidate.id): candidate
+        for candidate in User.query.filter(User.id.in_(manager_user_ids)).all()
+    } if manager_user_ids else {}
+
+    targets = []
+    for node in general_nodes:
+        manager_row = manager_rows.get(int(node.id))
+        if not manager_row:
+            continue
+        target_user_ids = [
+            int(user_id)
+            for user_id in (manager_row.manager_user_id, manager_row.deputy_user_id)
+            if user_id and int(user_id) in users_by_id
+        ]
+        if not target_user_ids:
+            continue
+        manager_names = [
+            users_by_id[user_id].full_name or users_by_id[user_id].email or f"#{user_id}"
+            for user_id in target_user_ids
+        ]
+        targets.append({
+            "node_id": int(node.id),
+            "label": f"مدير عام {node.name_ar}",
+            "node_label": node_path_label(node),
+            "manager_names": manager_names,
+        })
+    return targets
 
 
 def _canonical_node_for_legacy_target(kind: str, legacy_id: int | None) -> OrgNode | None:
@@ -3042,10 +3176,15 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
             AuditLog.query
             .filter_by(
                 request_id=req.id,
-                action=HIERARCHY_BYPASS_FOLLOWER_ACTION,
                 target_type="USER",
                 target_id=user.id,
             )
+            .filter(AuditLog.action.in_(
+                (
+                    HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                    ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+                )
+            ))
             .first()
             is not None
         ):
@@ -3128,6 +3267,26 @@ def _get_request_followers_user_ids(req_id: int) -> set[int]:
                     ids.add(int(uid2))
             except Exception:
                 pass
+    except Exception:
+        pass
+
+    try:
+        retained_followers = (
+            db.session.query(AuditLog.target_id)
+            .filter(
+                AuditLog.request_id == req_id,
+                AuditLog.action.in_(
+                    (
+                        HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                        ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+                    )
+                ),
+                AuditLog.target_type == "USER",
+                AuditLog.target_id.isnot(None),
+            )
+            .all()
+        )
+        ids.update(int(user_id) for (user_id,) in retained_followers if user_id)
     except Exception:
         pass
 
@@ -4971,6 +5130,7 @@ def view_request(request_id):
     next_parallel_candidates = []
     next_dynamic_branch_steps = []
     hierarchy_bypass_step = None
+    assistant_secretary_redirect_targets = []
     parallel_candidates = []
     parallel_awaiting_authorization = False
     can_authorize_parallel = False
@@ -4989,6 +5149,11 @@ def view_request(request_id):
                 hierarchy_bypass_step = resolve_hierarchy_bypass_step(
                     inst,
                     [getattr(user, "id", None) for user in actor_users],
+                )
+            elif (getattr(current_step, "mode", "") or "").strip().upper() != "PARALLEL_SYNC":
+                assistant_secretary_redirect_targets = _assistant_secretary_redirect_targets(
+                    current_user,
+                    current_step,
                 )
 
         # A sequential approver must select the recipients of an immediately
@@ -5126,11 +5291,13 @@ def view_request(request_id):
         "USER_ACTION",
         "USER_ACTION_FAILED",
         "WORKFLOW_COMMENT_DELETED",
+        ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
     }
     action_labels = {
         "WORKFLOW_STARTED": "تم بدء المسار",
         "WORKFLOW_COMPLETED": "اكتمل المسار",
         "WORKFLOW_REOPENED_TO_STEP": "تمت إعادة فتح المسار",
+        ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION: "تمت إعادة التوجيه من مساعد الأمين العام",
         "STEP_APPROVED": "تم الاطلاع والمتابعة",
         "STEP_REJECTED": "تم توقيف المسار",
         "WORKFLOW_COMMENT": "تمت إضافة تعليق",
@@ -5572,6 +5739,7 @@ def view_request(request_id):
         next_parallel_candidates=next_parallel_candidates,
         next_dynamic_branch_steps=next_dynamic_branch_steps,
         hierarchy_bypass_step=hierarchy_bypass_step,
+        assistant_secretary_redirect_targets=assistant_secretary_redirect_targets,
         mentioned_users=mentioned_users,
         mentioned_task_statuses=mentioned_task_statuses,
         mention_removable_user_ids=mention_removable_user_ids,
@@ -6518,6 +6686,124 @@ def escalate_request(request_id):
         target_label=target_label,
         template=template,
     )
+
+# =========================
+# Assistant Secretary General Redirect
+# =========================
+@workflow_bp.route(
+    "/request/<int:request_id>/step/<int:step_order>/redirect-to-general-manager",
+    methods=["POST"],
+)
+@login_required
+def redirect_assistant_secretary_step(request_id, step_order):
+    req = WorkflowRequest.query.get_or_404(request_id)
+    inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    if not inst or int(inst.current_step_order or 0) != int(step_order):
+        abort(403)
+
+    step = WorkflowInstanceStep.query.filter_by(
+        instance_id=inst.id,
+        step_order=step_order,
+        status="PENDING",
+    ).first()
+    if not step or (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+        abort(403)
+    if not _user_can_act_on_step(current_user, step) or not _is_assistant_secretary_general(current_user, step):
+        abort(403)
+
+    targets = _assistant_secretary_redirect_targets(current_user, step)
+    target_ids = {int(target["node_id"]) for target in targets}
+    try:
+        target_node_id = int(request.form.get("target_node_id") or 0)
+    except (TypeError, ValueError):
+        target_node_id = 0
+    if target_node_id not in target_ids:
+        abort(403)
+
+    target_node = db.session.get(OrgNode, target_node_id)
+    if not target_node:
+        abort(404)
+
+    note = _strip_workflow_operation_source(request.form.get("note"))
+    target_label = f"مدير عام {target_node.name_ar}"
+    old_target_label = step.routing_label or _step_target_label(step) or "الجهة الحالية"
+
+    step.approver_kind = "ORG_NODE"
+    step.approver_user_id = None
+    step.approver_role = None
+    step.approver_department_id = None
+    step.approver_directorate_id = None
+    step.approver_unit_id = None
+    step.approver_section_id = None
+    step.approver_division_id = None
+    step.approver_org_node_id = target_node.id
+    step.approver_committee_id = None
+    step.committee_delivery_mode = None
+    step.routing_label = target_label
+    step.routing_job_title = "مدير عام"
+    step.routing_node_label = node_path_label(target_node)
+    step.routing_reason = "أعيد التوجيه من مساعد الأمين العام" + (
+        f": {note}" if note else ""
+    )
+    db.session.add(step)
+
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=current_user.id,
+        action=ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION,
+        old_status="PENDING",
+        new_status="PENDING",
+        note=(
+            f"أعاد مساعد الأمين العام توجيه الخطوة {step_order} "
+            f"من «{old_target_label}» إلى «{target_label}»"
+            + (f" — {note}" if note else "")
+        ),
+        target_type="WORKFLOW_STEP",
+        target_id=step.id,
+    ))
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=current_user.id,
+        action=ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+        note="احتُفظ بمساعد الأمين العام ضمن متابعي الطلب بعد إعادة التوجيه.",
+        target_type="USER",
+        target_id=current_user.id,
+    ))
+
+    target_user_ids = resolve_step_approver_user_ids(step)
+    if not target_user_ids:
+        db.session.rollback()
+        flash("لا يوجد مدير عام مكلّف على الجهة المختارة.", "danger")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    actor_label = current_user.full_name or current_user.email or "مساعد الأمين العام"
+    for target_user_id in target_user_ids:
+        emit_event(
+            actor_id=current_user.id,
+            action=ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION,
+            message=(
+                f"أعاد {actor_label} توجيه الطلب #{req.id} إليك لاتخاذ الإجراء "
+                f"بصفتك {target_label}."
+            ),
+            target_type="WorkflowRequest",
+            target_id=req.id,
+            notify_user_id=target_user_id,
+            level="WORKFLOW",
+            auto_commit=False,
+        )
+
+    sync_correspondence_from_workflow(
+        req,
+        actor_user_id=current_user.id,
+        note=(
+            f"إعادة توجيه الخطوة {step_order} من مساعد الأمين العام إلى {target_label}"
+            + (f" — {note}" if note else "")
+        ),
+    )
+    db.session.commit()
+    flash(f"تمت إعادة توجيه المسار إلى {target_label}.", "success")
+    return redirect(url_for("workflow.view_request", request_id=req.id))
+
 
 # =========================
 # Decide Step (Approve/Reject)

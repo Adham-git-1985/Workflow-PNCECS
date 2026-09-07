@@ -33,6 +33,11 @@ from services.workflow_confidentiality import filter_confidential_workflow_user_
 
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
 HIERARCHY_BYPASS_FOLLOWER_ACTION = "HIERARCHY_BYPASS_FOLLOWER"
+ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION = "ASSISTANT_SECRETARY_REDIRECT_FOLLOWER"
+RETAINED_FOLLOWER_ACTIONS = (
+    HIERARCHY_BYPASS_FOLLOWER_ACTION,
+    ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+)
 SLA_SUSPENDED = -1
 # A mention task is intentionally allowed to add someone outside the original
 # parallel-step candidate list. Keep the legacy Arabic marker so tasks created
@@ -1158,7 +1163,7 @@ def _resolve_followers_user_ids(inst_id: int) -> list[int]:
             db.session.query(AuditLog.target_id)
             .filter(
                 AuditLog.request_id == int(inst.request_id),
-                AuditLog.action == HIERARCHY_BYPASS_FOLLOWER_ACTION,
+                AuditLog.action.in_(RETAINED_FOLLOWER_ACTIONS),
                 AuditLog.target_type == "USER",
                 AuditLog.target_id.isnot(None),
             )

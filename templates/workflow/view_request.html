@@ -789,6 +789,33 @@
     </div>
     {% endif %}
 
+    {% if assistant_secretary_redirect_targets and current_step %}
+    <div class="card border-primary shadow-sm mb-3">
+      <div class="card-header bg-primary-subtle">
+        <strong><i class="bi bi-sign-turn-right"></i> إعادة توجيه إلى مدير عام</strong>
+      </div>
+      <div class="card-body">
+        <p class="small text-muted mb-3">
+          يحوّل هذا الإجراء مسؤولية الخطوة الحالية إلى المدير العام المختار، ثم يستمر المسار المعتاد بعد قراره.
+        </p>
+        <form method="post" action="{{ url_for('workflow.redirect_assistant_secretary_step', request_id=req.id, step_order=current_step.step_order) }}">
+          <label class="form-label" for="generalManagerTarget">المدير العام</label>
+          <select class="form-select mb-3" id="generalManagerTarget" name="target_node_id" required>
+            <option value="">اختر المدير العام</option>
+            {% for target in assistant_secretary_redirect_targets %}
+              <option value="{{ target.node_id }}">{{ target.label }}{% if target.manager_names %} — {{ target.manager_names|join('، ') }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <label class="form-label">ملاحظة التحويل (اختيارية)</label>
+          <textarea class="form-control mb-3" name="note" rows="2" placeholder="سبب أو توضيح إعادة التوجيه"></textarea>
+          <button class="btn btn-primary w-100" type="submit" onclick="return confirm('هل تريد إعادة توجيه الخطوة إلى المدير العام المختار؟');">
+            إعادة توجيه المسار
+          </button>
+        </form>
+      </div>
+    </div>
+    {% endif %}
+
     {% if can_decide and current_step %}
     <div class="card shadow-sm">
       <div class="card-header bg-white">
