@@ -4,22 +4,22 @@ from email.message import EmailMessage
 from pathlib import Path
 from unittest.mock import patch
 
-from flask import Flask
+from flask import Flask, g
 from flask_login import LoginManager
 
 from extensions import db
-from models import ArchivedFile, RequestAttachment, User, WorkflowRequest
-from workflow import workflow_bp
+from models import CorrAttachment, InboundMail, User
+from portal import portal_bp
 
 
-class WorkflowEmlPreviewRouteTests(unittest.TestCase):
+class PortalEmlPreviewRouteTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp_dir = tempfile.TemporaryDirectory()
-        cls.app = Flask(__name__)
+        cls.app = Flask(__name__, instance_path=cls.temp_dir.name)
         cls.app.config.update(
             TESTING=True,
-            SECRET_KEY="workflow-eml-preview-test",
+            SECRET_KEY="portal-eml-preview-test",
             SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
         )
@@ -35,7 +35,7 @@ class WorkflowEmlPreviewRouteTests(unittest.TestCase):
             except (TypeError, ValueError):
                 return None
 
-        cls.app.register_blueprint(workflow_bp)
+        cls.app.register_blueprint(portal_bp)
         cls.context = cls.app.app_context()
         cls.context.push()
         db.create_all()
@@ -60,89 +60,85 @@ class WorkflowEmlPreviewRouteTests(unittest.TestCase):
         db.session.add(self.user)
         db.session.flush()
 
-        request = WorkflowRequest(
-            title="EML preview test",
-            status="IN_PROGRESS",
-            requester_id=self.user.id,
+        inbound = InboundMail(
+            ref_no="IN-EML-PREVIEW",
+            category="GENERAL",
+            sender="Test Sender",
+            subject="EML preview test",
+            received_date="2026-09-07",
             confidentiality="NORMAL",
+            status="IN_PROGRESS",
+            created_by_id=self.user.id,
         )
-        db.session.add(request)
+        db.session.add(inbound)
         db.session.flush()
 
         message = EmailMessage()
         message["From"] = "Sender <sender@example.test>"
-        message["Subject"] = "Safe message preview"
-        message.set_content("Plain preview body")
+        message["Subject"] = "Portal message preview"
+        message.set_content("Message body")
         message.add_attachment(
-            b"image bytes",
-            maintype="image",
-            subtype="jpeg",
-            filename="photo.jpg",
+            b"pdf payload",
+            maintype="application",
+            subtype="pdf",
+            filename="report.pdf",
         )
-        self.message_path = Path(self.temp_dir.name) / "message.eml"
+        storage = Path(self.temp_dir.name) / "uploads" / "correspondence"
+        storage.mkdir(parents=True, exist_ok=True)
+        self.message_path = storage / "message.eml"
         self.message_path.write_bytes(message.as_bytes())
 
-        attachment = ArchivedFile(
+        attachment = CorrAttachment(
+            inbound_id=inbound.id,
             original_name="message.eml",
-            stored_name="message.eml",
-            file_path=str(self.message_path),
-            mime_type="message/rfc822",
-            file_size=self.message_path.stat().st_size,
-            owner_id=self.user.id,
+            stored_name=self.message_path.name,
+            uploaded_by_id=self.user.id,
         )
         db.session.add(attachment)
-        db.session.flush()
-        db.session.add(RequestAttachment(
-            request_id=request.id,
-            archived_file_id=attachment.id,
-        ))
         db.session.commit()
         self.attachment_id = attachment.id
 
     def _login(self, client):
+        g.pop("_login_user", None)
         with client.session_transaction() as session:
+            session.clear()
             session["_user_id"] = str(self.user.id)
             session["_fresh"] = True
 
-    def test_eml_attachment_uses_isolated_rich_preview(self):
-        with patch("workflow.routes.render_template", return_value="preview") as render:
+    def test_preview_lists_embedded_email_attachment_actions(self):
+        with patch("portal.routes.render_template", return_value="preview") as render:
             with self.app.test_client() as client:
                 self._login(client)
-                response = client.get(f"/workflow/attachment/{self.attachment_id}/preview")
+                response = client.get(
+                    f"/portal/corr/attachment/{self.attachment_id}/eml-preview"
+                )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_data(as_text=True), "preview")
-        self.assertEqual(render.call_args.args[0], "workflow/eml_preview.html")
-        preview = render.call_args.kwargs["preview"]
+        self.assertEqual(render.call_args.args[0], "portal/corr/eml_preview.html")
         embedded = render.call_args.kwargs["eml_attachments"]
-        self.assertEqual(preview.subject, "Safe message preview")
-        self.assertIn("Plain preview body", preview.body)
-        self.assertIn("<pre", preview.html_body)
-        self.assertEqual(preview.sender, "Sender <sender@example.test>")
-        self.assertEqual(preview.attachments[0].filename, "photo.jpg")
-        self.assertEqual(embedded[0]["filename"], "photo.jpg")
-        self.assertIn("/eml-attachment/1/preview", embedded[0]["preview_url"])
+        self.assertEqual(embedded[0]["filename"], "report.pdf")
+        self.assertIn("/eml-attachment/1/view", embedded[0]["preview_url"])
         self.assertIn("/eml-attachment/1/download", embedded[0]["download_url"])
 
-    def test_eml_embedded_attachment_supports_preview_and_download(self):
+    def test_embedded_email_attachment_supports_preview_and_download(self):
         with self.app.test_client() as client:
             self._login(client)
             preview_response = client.get(
-                f"/workflow/attachment/{self.attachment_id}/eml-attachment/1/preview"
+                f"/portal/corr/attachment/{self.attachment_id}/eml-attachment/1/view"
             )
             download_response = client.get(
-                f"/workflow/attachment/{self.attachment_id}/eml-attachment/1/download"
+                f"/portal/corr/attachment/{self.attachment_id}/eml-attachment/1/download"
             )
             missing_response = client.get(
-                f"/workflow/attachment/{self.attachment_id}/eml-attachment/2/preview"
+                f"/portal/corr/attachment/{self.attachment_id}/eml-attachment/2/view"
             )
 
         self.assertEqual(preview_response.status_code, 200)
-        self.assertEqual(preview_response.data, b"image bytes")
-        self.assertEqual(preview_response.mimetype, "image/jpeg")
+        self.assertEqual(preview_response.data, b"pdf payload")
+        self.assertEqual(preview_response.mimetype, "application/pdf")
         self.assertIn("inline", preview_response.headers["Content-Disposition"])
         self.assertEqual(download_response.status_code, 200)
-        self.assertEqual(download_response.data, b"image bytes")
+        self.assertEqual(download_response.data, b"pdf payload")
         self.assertIn("attachment", download_response.headers["Content-Disposition"])
         self.assertEqual(missing_response.status_code, 404)
 

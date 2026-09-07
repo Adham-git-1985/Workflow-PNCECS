@@ -1123,13 +1123,83 @@ def _parse_eml_message(payload: bytes):
 
 def _email_attachment_filename(part, ordinal: int) -> str:
     filename = str(part.get_filename() or "").strip()
-    filename = filename.replace("\x00", "").replace("\\", "/").rsplit("/", 1)[-1].strip()
+    filename = re.sub(r"[\x00-\x1f\x7f]", "", filename)
+    filename = filename.replace("\\", "/").rsplit("/", 1)[-1].strip()
     if filename:
         return filename
 
     mimetype = str(part.get_content_type() or "").strip().lower()
     suffix = mimetypes.guess_extension(mimetype) or ""
     return f"مرفق البريد {ordinal}{suffix}"
+
+
+def _email_attachment_payload(part) -> bytes | None:
+    try:
+        if part.is_multipart():
+            return part.as_bytes(policy=policy.default)
+        return part.get_payload(decode=True)
+    except Exception:
+        return None
+
+
+def get_eml_attachment(
+    payload: bytes,
+    attachment_index: int,
+    *,
+    max_attachment_bytes: int = 25 * 1024 * 1024,
+) -> ExtractedEmailAttachment:
+    """Return one attachment-like EML part by its one-based preview position."""
+    try:
+        attachment_index = int(attachment_index)
+    except (TypeError, ValueError) as exc:
+        raise CorrespondenceIntakeError(
+            "رقم مرفق البريد غير صالح.",
+            code="INVALID_EML_ATTACHMENT_INDEX",
+            status_code=404,
+        ) from exc
+    if attachment_index < 1 or attachment_index > 200:
+        raise CorrespondenceIntakeError(
+            "مرفق البريد غير موجود.",
+            code="EML_ATTACHMENT_NOT_FOUND",
+            status_code=404,
+        )
+
+    message = _parse_eml_message(payload)
+    max_attachment_bytes = max(1, int(max_attachment_bytes or 1))
+    ordinal = 0
+    for part in message.walk() if message.is_multipart() else [message]:
+        disposition = (part.get_content_disposition() or "").lower()
+        if disposition != "attachment" and not part.get_filename():
+            continue
+        ordinal += 1
+        if ordinal != attachment_index:
+            continue
+
+        filename = _email_attachment_filename(part, ordinal)
+        attachment_payload = _email_attachment_payload(part)
+        if attachment_payload is None:
+            raise CorrespondenceIntakeError(
+                "تعذر قراءة مرفق البريد.",
+                code="INVALID_EML_ATTACHMENT",
+                status_code=422,
+            )
+        if len(attachment_payload) > max_attachment_bytes:
+            raise CorrespondenceIntakeError(
+                "مرفق البريد كبير جدًا للفتح من المعاينة.",
+                code="EML_ATTACHMENT_TOO_LARGE",
+                status_code=413,
+            )
+        return ExtractedEmailAttachment(
+            filename=filename,
+            payload=attachment_payload,
+            mimetype=str(part.get_content_type() or "").strip() or None,
+        )
+
+    raise CorrespondenceIntakeError(
+        "مرفق البريد غير موجود.",
+        code="EML_ATTACHMENT_NOT_FOUND",
+        status_code=404,
+    )
 
 
 def extract_eml_attachments(
@@ -1162,13 +1232,7 @@ def extract_eml_attachments(
 
         ordinal = len(attachments) + 1
         filename = _email_attachment_filename(part, ordinal)
-        try:
-            if part.is_multipart():
-                attachment_payload = part.as_bytes(policy=policy.default)
-            else:
-                attachment_payload = part.get_payload(decode=True)
-        except Exception:
-            attachment_payload = None
+        attachment_payload = _email_attachment_payload(part)
 
         if attachment_payload is None:
             warnings.append(f"تعذر استخراج مرفق البريد: {filename}.")

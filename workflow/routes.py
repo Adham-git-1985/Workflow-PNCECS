@@ -71,6 +71,7 @@ from services.correspondence_intake import (
     OcrConfig,
     analyze_workflow_attachment,
     extract_eml_attachments,
+    get_eml_attachment,
     preview_eml,
     read_limited_upload,
 )
@@ -2423,17 +2424,13 @@ def upload_attachment(request_id):
 # =========================
 # Download workflow attachment
 # =========================
-@workflow_bp.route("/attachment/<int:file_id>/download")
-@login_required
-def download_workflow_attachment(file_id):
+def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRequest]:
     file = ArchivedFile.query.filter(
         ArchivedFile.id == file_id,
-        ArchivedFile.is_deleted.is_(False)
+        ArchivedFile.is_deleted.is_(False),
     ).first_or_404()
 
     req = None
-
-    # Optional legacy
     if hasattr(file, "workflow_request_id") and getattr(file, "workflow_request_id", None):
         req = WorkflowRequest.query.get_or_404(file.workflow_request_id)
     else:
@@ -2443,11 +2440,83 @@ def download_workflow_attachment(file_id):
 
     if not req or not _user_can_view_request(current_user, req):
         abort(403)
+    return file, req
+
+
+@workflow_bp.route("/attachment/<int:file_id>/download")
+@login_required
+def download_workflow_attachment(file_id):
+    file, _ = _workflow_attachment_context(file_id)
 
     return send_file(
         file.file_path,
         as_attachment=True,
         download_name=file.original_name
+    )
+
+
+def _workflow_eml_attachment_response(
+    file_id: int,
+    attachment_index: int,
+    *,
+    force_download: bool,
+):
+    file, _ = _workflow_attachment_context(file_id)
+    if not _is_eml_attachment(file, _guess_mime_for_file(file)):
+        abort(404)
+
+    try:
+        if os.path.getsize(file.file_path) > 15 * 1024 * 1024:
+            abort(413)
+        _, _, max_attachment_bytes = _workflow_email_attachment_limits()
+        with open(file.file_path, "rb") as email_file:
+            embedded = get_eml_attachment(
+                email_file.read(),
+                attachment_index,
+                max_attachment_bytes=max_attachment_bytes,
+            )
+    except CorrespondenceIntakeError as exc:
+        abort(exc.status_code)
+    except OSError:
+        abort(404)
+
+    mimetype = embedded.mimetype or mimetypes.guess_type(embedded.filename)[0]
+    mimetype = mimetype or "application/octet-stream"
+    as_attachment = force_download or not is_safe_inline_mimetype(mimetype)
+    response = send_file(
+        BytesIO(embedded.payload),
+        mimetype=mimetype,
+        as_attachment=as_attachment,
+        download_name=embedded.filename,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@workflow_bp.route(
+    "/attachment/<int:file_id>/eml-attachment/<int:attachment_index>/preview"
+)
+@login_required
+def preview_workflow_eml_attachment(file_id, attachment_index):
+    return _workflow_eml_attachment_response(
+        file_id,
+        attachment_index,
+        force_download=False,
+    )
+
+
+@workflow_bp.route(
+    "/attachment/<int:file_id>/eml-attachment/<int:attachment_index>/download"
+)
+@login_required
+def download_workflow_eml_attachment(file_id, attachment_index):
+    return _workflow_eml_attachment_response(
+        file_id,
+        attachment_index,
+        force_download=True,
     )
 
 
@@ -2461,21 +2530,7 @@ def preview_workflow_attachment(file_id):
 
     This prevents the UX confusion where "Preview" triggers a download for unsupported types.
     """
-    file = ArchivedFile.query.filter(
-        ArchivedFile.id == file_id,
-        ArchivedFile.is_deleted.is_(False)
-    ).first_or_404()
-
-    req = None
-    if hasattr(file, "workflow_request_id") and getattr(file, "workflow_request_id", None):
-        req = WorkflowRequest.query.get_or_404(file.workflow_request_id)
-    else:
-        att = RequestAttachment.query.filter_by(archived_file_id=file.id).first()
-        if att:
-            req = WorkflowRequest.query.get_or_404(att.request_id)
-
-    if not req or not _user_can_view_request(current_user, req):
-        abort(403)
+    file, req = _workflow_attachment_context(file_id)
 
     mime = _guess_mime_for_file(file)
 
@@ -2498,10 +2553,29 @@ def preview_workflow_attachment(file_id):
             flash("تعذرت قراءة ملف البريد الإلكتروني للمعاينة.", "danger")
             return redirect(url_for("workflow.download_workflow_attachment", file_id=file.id))
 
+        eml_attachments = [
+            {
+                "filename": item.filename,
+                "mimetype": item.mimetype,
+                "size_bytes": item.size_bytes,
+                "preview_url": url_for(
+                    "workflow.preview_workflow_eml_attachment",
+                    file_id=file.id,
+                    attachment_index=index,
+                ),
+                "download_url": url_for(
+                    "workflow.download_workflow_eml_attachment",
+                    file_id=file.id,
+                    attachment_index=index,
+                ),
+            }
+            for index, item in enumerate(preview.attachments, start=1)
+        ]
         return render_template(
             "workflow/eml_preview.html",
             file=file,
             preview=preview,
+            eml_attachments=eml_attachments,
             request_obj=req,
             download_url=url_for("workflow.download_workflow_attachment", file_id=file.id),
             back_url=url_for("workflow.request_attachments", request_id=req.id),

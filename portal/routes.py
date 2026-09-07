@@ -70,6 +70,7 @@ from services.correspondence_intake import (
     OcrConfig,
     analyze_correspondence_attachment,
     extract_eml_attachments,
+    get_eml_attachment,
     preview_eml,
     read_limited_upload,
 )
@@ -26443,6 +26444,73 @@ def _corr_item_for_attachment(att: CorrAttachment):
     abort(404)
 
 
+def _corr_eml_attachment_response(
+    att_id: int,
+    attachment_index: int,
+    *,
+    force_download: bool,
+):
+    att = CorrAttachment.query.get_or_404(att_id)
+    _corr_require_access(_corr_item_for_attachment(att))
+    if Path(att.original_name or att.stored_name).suffix.lower() != ".eml":
+        abort(404)
+
+    file_path = os.path.join(_corr_storage_dir(), att.stored_name)
+    try:
+        if os.path.getsize(file_path) > 15 * 1024 * 1024:
+            abort(413)
+        _, _, max_attachment_bytes = _corr_email_attachment_limits()
+        with open(file_path, "rb") as email_file:
+            embedded = get_eml_attachment(
+                email_file.read(),
+                attachment_index,
+                max_attachment_bytes=max_attachment_bytes,
+            )
+    except CorrespondenceIntakeError as exc:
+        abort(exc.status_code)
+    except OSError:
+        abort(404)
+
+    mimetype = embedded.mimetype or mimetypes.guess_type(embedded.filename)[0]
+    mimetype = mimetype or "application/octet-stream"
+    as_attachment = force_download or not is_safe_inline_mimetype(mimetype)
+    response = send_file(
+        BytesIO(embedded.payload),
+        mimetype=mimetype,
+        as_attachment=as_attachment,
+        download_name=embedded.filename,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@portal_bp.route(
+    "/corr/attachment/<int:att_id>/eml-attachment/<int:attachment_index>/view"
+)
+@login_required
+def corr_eml_attachment_view(att_id, attachment_index):
+    return _corr_eml_attachment_response(
+        att_id,
+        attachment_index,
+        force_download=False,
+    )
+
+
+@portal_bp.route(
+    "/corr/attachment/<int:att_id>/eml-attachment/<int:attachment_index>/download"
+)
+@login_required
+def corr_eml_attachment_download(att_id, attachment_index):
+    return _corr_eml_attachment_response(
+        att_id,
+        attachment_index,
+        force_download=True,
+    )
+
+
 @portal_bp.route("/corr/attachment/<int:att_id>/download")
 @login_required
 def corr_attachment_download(att_id: int):
@@ -26537,6 +26605,24 @@ def corr_attachment_eml_preview(att_id: int):
         flash("تعذر قراءة ملف البريد الإلكتروني للمعاينة.", "danger")
         return redirect(url_for("portal.corr_attachment_download", att_id=att.id))
 
+    eml_attachments = [
+        {
+            "filename": item.filename,
+            "mimetype": item.mimetype,
+            "size_bytes": item.size_bytes,
+            "preview_url": url_for(
+                "portal.corr_eml_attachment_view",
+                att_id=att.id,
+                attachment_index=index,
+            ),
+            "download_url": url_for(
+                "portal.corr_eml_attachment_download",
+                att_id=att.id,
+                attachment_index=index,
+            ),
+        }
+        for index, item in enumerate(preview.attachments, start=1)
+    ]
     if att.inbound_id:
         back_url = url_for("portal.inbound_view", inbound_id=att.inbound_id)
     elif att.outbound_id:
@@ -26547,6 +26633,7 @@ def corr_attachment_eml_preview(att_id: int):
         "portal/corr/eml_preview.html",
         attachment=att,
         preview=preview,
+        eml_attachments=eml_attachments,
         back_url=back_url,
     )
 

@@ -14,6 +14,7 @@ from services.correspondence_intake import (
     analyze_workflow_attachment,
     extract_eml_attachments,
     extract_attachment_text,
+    get_eml_attachment,
     preview_eml,
     read_limited_upload,
 )
@@ -206,6 +207,32 @@ class CorrespondenceIntakeTests(unittest.TestCase):
 
         self.assertEqual([attachment.filename for attachment in result.attachments], ["first.txt"])
         self.assertTrue(any("الحجم الإجمالي" in warning for warning in result.warnings))
+
+    def test_eml_attachment_can_be_loaded_by_preview_position(self):
+        message = EmailMessage()
+        message.set_content("Email body")
+        message.add_attachment(
+            b"first payload",
+            maintype="image",
+            subtype="png",
+            filename="first.png",
+        )
+        message.add_attachment(
+            b"second payload",
+            maintype="application",
+            subtype="pdf",
+            filename="second.pdf",
+        )
+
+        attachment = get_eml_attachment(message.as_bytes(), 2)
+
+        self.assertEqual(attachment.filename, "second.pdf")
+        self.assertEqual(attachment.mimetype, "application/pdf")
+        self.assertEqual(attachment.payload, b"second payload")
+        with self.assertRaises(CorrespondenceIntakeError) as missing:
+            get_eml_attachment(message.as_bytes(), 3)
+        self.assertEqual(missing.exception.code, "EML_ATTACHMENT_NOT_FOUND")
+        self.assertEqual(missing.exception.status_code, 404)
 
     def test_eml_preview_preserves_safe_html_and_full_addresses(self):
         message = EmailMessage()

@@ -150,7 +150,12 @@
           <li class="list-group-item">
             <div class="d-flex justify-content-between align-items-start gap-2">
               <div class="flex-grow-1">
-                <div class="small fw-semibold">{{ a.original_name }}</div>
+                <div class="small fw-semibold">
+                  {{ a.original_name }}
+                  {% if (a.original_name or '').lower().endswith('.eml') %}
+                    <span class="badge rounded-pill text-bg-warning ms-1">الإيميل الأصلي</span>
+                  {% endif %}
+                </div>
                 <div class="d-flex flex-wrap gap-1 mt-1">
                   {% if a.stamp_applied %}
                     <span class="badge text-bg-light border">مختوم {{ a.stamp_date or '' }}</span>
