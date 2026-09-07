@@ -88,7 +88,16 @@ def _request_notification_recipient_ids(kind: str, request_id: int) -> set[int]:
         return set()
 
     recipient_ids = {int(row.user_id)}
-    for step in approval_steps(kind, request_id):
+    steps = approval_steps(kind, request_id)
+    if kind == KIND_LEAVE:
+        active_step = next((step for step in steps if step.status == "PENDING"), None)
+        if active_step:
+            recipient_ids.update(_step_approver_ids(active_step))
+            if active_step.escalated_from_user_id:
+                recipient_ids.add(int(active_step.escalated_from_user_id))
+        return recipient_ids
+
+    for step in steps:
         recipient_ids.update(_step_approver_ids(step))
         for user_id in (
             getattr(step, "decided_by_id", None),
@@ -678,9 +687,14 @@ def start_request_flow(
         if stage_code == STAGE_DIRECT_MANAGER:
             approver_user_id = first_approver_id
             approver_user_ids = _serialize_approver_ids(effective_approver_ids)
+        elif stage_code == STAGE_HR:
+            hr_approver_ids = hr_notification_user_ids()
+            approver_user_id = hr_approver_ids[0] if hr_approver_ids else None
+            approver_user_ids = _serialize_approver_ids(hr_approver_ids)
         elif stage_code == STAGE_SECRETARY_GENERAL:
             secretary_ids = secretary_general_user_ids()
-            approver_user_id = secretary_ids[0] if len(secretary_ids) == 1 else None
+            approver_user_id = secretary_ids[0] if secretary_ids else None
+            approver_user_ids = _serialize_approver_ids(secretary_ids)
 
         active = index == 0
         step = HRRequestApprovalStep(
@@ -868,17 +882,21 @@ def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetim
             return True
     except Exception:
         pass
-    scope = (step.approver_scope or SCOPE_USER).upper()
-    if scope == SCOPE_HR:
-        return _is_hr_approver(user)
-    if scope == SCOPE_SECRETARY_GENERAL:
-        return _is_secretary_general(user)
-    for approver_user_id in _step_approver_ids(step):
+    approver_ids = _step_approver_ids(step)
+    for approver_user_id in approver_ids:
         if approver_user_id == user.id:
             return True
         delegation = _active_delegation_for(approver_user_id, now)
         if delegation and delegation.to_user_id == user.id:
             return True
+    if approver_ids:
+        return False
+
+    scope = (step.approver_scope or SCOPE_USER).upper()
+    if scope == SCOPE_HR:
+        return int(user.id) in set(hr_notification_user_ids())
+    if scope == SCOPE_SECRETARY_GENERAL:
+        return int(user.id) in set(secretary_general_user_ids())
     return False
 
 
@@ -964,6 +982,9 @@ def _observer_groups(kind: str, row) -> dict[str, set[int]]:
 
 
 def _record_final_observers(kind: str, row, now: datetime) -> None:
+    if kind == KIND_LEAVE:
+        return
+
     seen: set[int] = set()
     cc_ids: set[int] = set()
     for scope, user_ids in _observer_groups(kind, row).items():
@@ -1073,6 +1094,8 @@ def cancel_request_flow(kind: str, request_id: int, *, now: datetime | None = No
         if step.status in ACTIVE_STEP_STATUSES:
             step.status = "CANCELLED"
             step.updated_at = now
+    if kind == KIND_LEAVE:
+        return
     observer_ids = [
         row.user_id
         for row in HRRequestObserver.query.filter_by(

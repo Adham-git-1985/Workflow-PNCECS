@@ -134,6 +134,30 @@ class GlobalNotificationObserverTests(unittest.TestCase):
             1,
         )
 
+    def test_leave_request_notifications_are_not_copied_to_global_observers(self):
+        observer = self._user("leave-observer@example.test")
+        recipient = self._user("leave-recipient@example.test")
+        db.session.add(UserPermission(
+            user_id=observer.id,
+            key=OBSERVER_PERMISSION,
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        db.session.add(Notification(
+            user_id=recipient.id,
+            message="طلب إجازة بانتظار الاعتماد",
+            type="HR_APPROVAL",
+            source="portal",
+            link_url="/portal/hr/approvals/leaves/99",
+        ))
+        db.session.commit()
+
+        self.assertEqual(Notification.query.filter_by(
+            user_id=observer.id,
+            is_mirror=False,
+        ).count(), 0)
+
     def test_observer_permission_is_available_in_the_portal_permission_editor(self):
         self.assertIn(OBSERVER_PERMISSION, PORTAL_ALL_KEYS)
         definitions = [perm for group in PORTAL_PERMS.values() for perm in group]

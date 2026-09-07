@@ -165,7 +165,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         db.session.flush()
         return row
 
-    def test_normal_leave_is_final_after_direct_manager_and_creates_cc(self):
+    def test_normal_leave_is_final_after_direct_manager_without_observer_cc(self):
         row = self._leave(self.normal_type)
         steps = start_request_flow(KIND_LEAVE, row)
         self.assertEqual(len(steps), 1)
@@ -177,14 +177,15 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(result, "APPROVED")
         self.assertEqual(row.status, "APPROVED")
         observer_ids = {observer.user_id for observer in HRRequestObserver.query.filter_by(request_kind=KIND_LEAVE, request_id=row.id).all()}
-        self.assertTrue({self.hr.id, self.general_director.id, self.secretary.id}.issubset(observer_ids))
+        self.assertFalse(observer_ids)
         cc_ids = {
             notification.user_id
-            for notification in Notification.query.filter_by(type="HR_REQUEST_CC").all()
+            for notification in Notification.query.filter_by(
+                type="HR_REQUEST_CC",
+                link_url=f"/portal/hr/approvals/leaves/{row.id}",
+            ).all()
         }
-        self.assertIn(self.hr.id, cc_ids)
-        self.assertNotIn(self.general_director.id, cc_ids)
-        self.assertNotIn(self.secretary.id, cc_ids)
+        self.assertFalse(cc_ids)
 
     def test_hr_management_permission_does_not_subscribe_to_all_leave_updates(self):
         db.session.add(UserPermission(
@@ -204,8 +205,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
                 link_url=f"/portal/hr/approvals/leaves/{row.id}",
             ).all()
         }
-        self.assertIn(self.hr.id, cc_ids)
-        self.assertNotIn(self.general_director.id, cc_ids)
+        self.assertFalse(cc_ids)
 
     def test_leave_goes_to_all_hierarchy_managers_and_one_approval_is_enough(self):
         self.manager.name = "خلود"
@@ -323,9 +323,21 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertFalse(can_user_act(expired_manager, steps[0]))
 
     def test_external_leave_requires_manager_then_hr_then_secretary_general(self):
+        outsider = User(email="leave-observer@example.test", name="Leave Observer", password_hash="x", role="employee")
+        db.session.add(outsider)
+        db.session.flush()
+        db.session.add(UserPermission(
+            user_id=outsider.id,
+            key="NOTIFICATIONS_GLOBAL_OBSERVER",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
         row = self._leave(self.external_type)
         steps = start_request_flow(KIND_LEAVE, row)
         self.assertEqual([step.stage_code for step in steps], ["DIRECT_MANAGER", "HR", "SECRETARY_GENERAL"])
+        self.assertEqual(json.loads(steps[1].approver_user_ids), [self.hr.id])
+        self.assertEqual(json.loads(steps[2].approver_user_ids), [self.secretary.id])
 
         self.assertEqual(decide_request(KIND_LEAVE, row, self.manager, "APPROVE"), "NEXT")
         self.assertEqual(row.status, "SUBMITTED")
@@ -337,6 +349,25 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(current_step(KIND_LEAVE, row.id).stage_code, "SECRETARY_GENERAL")
         self.assertEqual(decide_request(KIND_LEAVE, row, self.secretary, "APPROVE"), "APPROVED")
         self.assertEqual(row.status, "APPROVED")
+        db.session.commit()
+
+        recipient_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                link_url=f"/portal/hr/approvals/leaves/{row.id}",
+                is_mirror=False,
+            ).all()
+        }
+        self.assertEqual(
+            recipient_ids,
+            {self.employee.id, self.manager.id, self.hr.id, self.secretary.id},
+        )
+        self.assertNotIn(outsider.id, recipient_ids)
+        self.assertFalse(can_user_act(outsider, current_step(KIND_LEAVE, row.id)))
+        self.assertEqual(Notification.query.filter_by(
+            type="HR_REQUEST_CC",
+            link_url=f"/portal/hr/approvals/leaves/{row.id}",
+        ).count(), 0)
 
     def test_overdue_manager_step_escalates_without_auto_approval(self):
         row = self._leave(self.normal_type)
@@ -839,7 +870,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
                 notification.user_id
                 for notification in Notification.query.filter_by(type="HR_APPROVAL").all()
             },
-            {self.manager.id, self.hr.id},
+            {self.manager.id},
         )
 
     def test_general_director_board_scope_contains_directorate_employee(self):

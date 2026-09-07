@@ -230,7 +230,7 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertFalse(db.session.get(Notification, other_notification.id).is_read)
         self.assertEqual(other_response.status_code, 302)
 
-    def test_super_admin_can_delete_notifications_for_selected_employees(self):
+    def test_super_admin_can_delete_a_selected_notification_for_an_employee(self):
         portal_notification = Notification(
             user_id=self.other_user.id,
             message="Portal notification to remove",
@@ -266,19 +266,25 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
 
         with self.app.test_client() as client:
             self._login(client, self.user.id)
-            page = client.get("/portal/admin/notifications")
+            page = client.get(f"/portal/admin/notifications?user_id={self.other_user.id}")
             response = client.post(
                 "/portal/admin/notifications",
-                data={"user_ids": str(self.other_user.id)},
+                data={
+                    "target_user_id": str(self.other_user.id),
+                    "notification_ids": [
+                        str(portal_notification.id),
+                        str(own_notification.id),
+                    ],
+                },
             )
 
         self.assertEqual(page.status_code, 200)
         self.assertIn(self.other_user.email.encode("utf-8"), page.data)
         self.assertEqual(response.status_code, 302)
         self.assertFalse(db.session.get(Notification, portal_notification.id).is_visible)
-        self.assertFalse(db.session.get(Notification, workflow_notification.id).is_visible)
+        self.assertTrue(db.session.get(Notification, workflow_notification.id).is_visible)
         self.assertTrue(db.session.get(Notification, portal_notification.id).is_read)
-        self.assertTrue(db.session.get(Notification, workflow_notification.id).is_read)
+        self.assertFalse(db.session.get(Notification, workflow_notification.id).is_read)
         self.assertTrue(db.session.get(Notification, sent_tracking_notification.id).is_visible)
         self.assertTrue(db.session.get(Notification, own_notification.id).is_visible)
         self.assertIsNotNone(AuditLog.query.filter_by(

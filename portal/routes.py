@@ -6467,47 +6467,62 @@ def portal_notifications():
 @portal_bp.route("/admin/notifications", methods=["GET", "POST"])
 @login_required
 def portal_admin_notifications():
-    """Let super administrators clear selected users' notifications."""
+    """Let super administrators hide selected notifications for one employee."""
     if not _is_super_admin():
         abort(403)
 
     if request.method == "POST":
+        try:
+            target_user_id = int(request.form.get("target_user_id") or 0)
+        except (TypeError, ValueError):
+            target_user_id = 0
+        target_user = db.session.get(User, target_user_id)
+        if not target_user:
+            abort(400)
+
         selected_ids: set[int] = set()
-        for value in request.form.getlist("user_ids"):
+        for value in request.form.getlist("notification_ids"):
             try:
                 selected_ids.add(int(value))
             except (TypeError, ValueError):
                 continue
 
         if not selected_ids:
-            flash("اختر موظفاً واحداً على الأقل.", "warning")
-            return redirect(url_for("portal.portal_admin_notifications"))
-
-        target_ids = {
-            int(user_id)
-            for (user_id,) in User.query.with_entities(User.id).filter(User.id.in_(selected_ids)).all()
-        }
-        if not target_ids:
-            abort(400)
+            flash("اختر إشعاراً واحداً على الأقل.", "warning")
+            return redirect(url_for(
+                "portal.portal_admin_notifications",
+                user_id=target_user.id,
+            ))
 
         hidden_count = (
             Notification.query
-            .filter(Notification.user_id.in_(target_ids))
+            .filter(Notification.id.in_(selected_ids))
+            .filter(Notification.user_id == target_user.id)
             .filter(Notification.is_mirror.is_(False))
             .filter(Notification.is_visible.is_(True))
             .update({"is_visible": False, "is_read": True}, synchronize_session=False)
         )
         _portal_audit(
             "SUPER_ADMIN_NOTIFICATIONS_DELETE",
-            f"users={len(target_ids)} notifications={hidden_count}",
+            f"user_id={target_user.id} notifications={hidden_count}",
             target_type="NOTIFICATION",
             target_id=0,
         )
         db.session.commit()
-        flash(f"تم حذف {hidden_count} إشعاراً من حسابات {len(target_ids)} موظف.", "success")
-        return redirect(url_for("portal.portal_admin_notifications"))
+        flash(f"تم حذف {hidden_count} إشعاراً محدداً من حساب {target_user.full_name}.", "success")
+        return redirect(url_for(
+            "portal.portal_admin_notifications",
+            user_id=target_user.id,
+        ))
 
     q = (request.args.get("q") or "").strip()
+    try:
+        selected_user_id = int(request.args.get("user_id") or 0)
+    except (TypeError, ValueError):
+        selected_user_id = 0
+    selected_user = db.session.get(User, selected_user_id) if selected_user_id else None
+    if selected_user_id and not selected_user:
+        abort(404)
     users_query = (
         db.session.query(
             User,
@@ -6532,10 +6547,23 @@ def portal_admin_notifications():
         .limit(500)
         .all()
     )
+    notifications = []
+    if selected_user:
+        notifications = (
+            Notification.query
+            .filter(Notification.user_id == selected_user.id)
+            .filter(Notification.is_mirror.is_(False))
+            .filter(Notification.is_visible.is_(True))
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(500)
+            .all()
+        )
     return render_template(
         "portal/admin/notifications.html",
         users=users,
         q=q,
+        selected_user=selected_user,
+        notifications=notifications,
     )
 
 
@@ -26898,7 +26926,7 @@ def portal_admin_dashboard():
     if _is_super_admin():
         cards.append({
             "title": "إدارة إشعارات الموظفين",
-            "desc": "اختيار الموظفين وحذف الإشعارات من حساباتهم.",
+            "desc": "اختيار موظف ثم حذف إشعارات محددة من حسابه.",
             "icon": "bi-bell-slash",
             "url": url_for("portal.portal_admin_notifications"),
         })

@@ -6,7 +6,7 @@
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
     <div>
       <h4 class="mb-1"><i class="bi bi-bell-slash"></i> إدارة إشعارات الموظفين</h4>
-      <div class="text-muted">اختر الموظفين ثم احذف جميع إشعاراتهم الظاهرة. لا يمكن تنفيذ هذه العملية إلا من السوبر أدمن.</div>
+      <div class="text-muted">اختر موظفاً ثم حدّد الإشعار المطلوب حذفه من حسابه. لا يمكن تنفيذ هذه العملية إلا من السوبر أدمن.</div>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_dashboard') }}"><i class="bi bi-arrow-right"></i> رجوع للإدارة</a>
   </div>
@@ -22,48 +22,84 @@
     </div>
   </form>
 
-  <form method="post" id="notification-delete-form" onsubmit="return confirm('سيتم حذف جميع الإشعارات الظاهرة من حسابات الموظفين المحددين. هل تريد المتابعة؟');">
-    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-      <div class="text-muted small">يعرض الجدول الموظفين الذين لديهم إشعارات ظاهرة فقط.</div>
-      <button class="btn btn-danger" type="submit"><i class="bi bi-trash"></i> حذف إشعارات الموظفين المحددين</button>
-    </div>
-
-    {% if users %}
-      <div class="table-responsive">
-        <table class="table table-hover align-middle">
-          <thead>
-            <tr>
-              <th scope="col" style="width: 48px;"><input class="form-check-input" type="checkbox" id="select-all" aria-label="تحديد الكل" /></th>
-              <th scope="col">الموظف</th>
-              <th scope="col">البريد الإلكتروني</th>
-              <th scope="col">الدور</th>
-              <th scope="col">الإشعارات الظاهرة</th>
+  <div class="text-muted small mb-3">يعرض الجدول الموظفين الذين لديهم إشعارات ظاهرة فقط.</div>
+  {% if users %}
+    <div class="table-responsive mb-4">
+      <table class="table table-hover align-middle">
+        <thead>
+          <tr>
+            <th scope="col">الموظف</th>
+            <th scope="col">البريد الإلكتروني</th>
+            <th scope="col">الدور</th>
+            <th scope="col">الإشعارات الظاهرة</th>
+            <th scope="col"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user, notification_count in users %}
+            <tr{% if selected_user and user.id == selected_user.id %} class="table-primary"{% endif %}>
+              <td>{{ user.full_name }}</td>
+              <td>{{ user.email or '-' }}</td>
+              <td>{{ user.role or '-' }}</td>
+              <td><span class="badge text-bg-secondary">{{ notification_count }}</span></td>
+              <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.portal_admin_notifications', q=q, user_id=user.id) }}"><i class="bi bi-bell"></i> إدارة الإشعارات</a></td>
             </tr>
-          </thead>
-          <tbody>
-            {% for user, notification_count in users %}
-              <tr>
-                <td><input class="form-check-input employee-selector" type="checkbox" name="user_ids" value="{{ user.id }}" aria-label="تحديد {{ user.full_name }}" /></td>
-                <td>{{ user.full_name }}</td>
-                <td>{{ user.email or '-' }}</td>
-                <td>{{ user.role or '-' }}</td>
-                <td><span class="badge text-bg-secondary">{{ notification_count }}</span></td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <div class="alert alert-light border mb-4">لا توجد إشعارات ظاهرة مطابقة للبحث.</div>
+  {% endif %}
+
+  {% if selected_user %}
+    <div class="border-top pt-4">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+        <div>
+          <h5 class="mb-1">إشعارات {{ selected_user.full_name }}</h5>
+          <div class="text-muted small">حدّد الإشعار أو الإشعارات المطلوبة فقط.</div>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.portal_admin_notifications', q=q) }}">إلغاء اختيار الموظف</a>
       </div>
-    {% else %}
-      <div class="alert alert-light border mb-0">لا توجد إشعارات ظاهرة مطابقة للبحث.</div>
-    {% endif %}
-  </form>
+      <form method="post" id="notification-delete-form" onsubmit="return confirm('سيتم حذف الإشعارات المحددة فقط من حساب هذا الموظف. هل تريد المتابعة؟');">
+        <input type="hidden" name="target_user_id" value="{{ selected_user.id }}" />
+        {% if notifications %}
+          <div class="table-responsive">
+            <table class="table table-hover align-middle">
+              <thead>
+                <tr>
+                  <th scope="col" style="width: 48px;"><input class="form-check-input" type="checkbox" id="select-all-notifications" aria-label="تحديد الكل" /></th>
+                  <th scope="col">الإشعار</th>
+                  <th scope="col">النوع</th>
+                  <th scope="col">التاريخ</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for notification in notifications %}
+                  <tr>
+                    <td><input class="form-check-input notification-selector" type="checkbox" name="notification_ids" value="{{ notification.id }}" aria-label="تحديد الإشعار {{ notification.id }}" /></td>
+                    <td>{{ notification.message }}</td>
+                    <td>{{ notification.type or '-' }}</td>
+                    <td>{{ notification.created_at.strftime('%Y-%m-%d %H:%M') if notification.created_at else '-' }}</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          <button class="btn btn-danger" type="submit"><i class="bi bi-trash"></i> حذف الإشعارات المحددة</button>
+        {% else %}
+          <div class="alert alert-light border mb-0">لا توجد إشعارات ظاهرة لهذا الموظف.</div>
+        {% endif %}
+      </form>
+    </div>
+  {% endif %}
 </div>
 
 <script>
-  const selectAll = document.getElementById('select-all');
+  const selectAll = document.getElementById('select-all-notifications');
   if (selectAll) {
     selectAll.addEventListener('change', () => {
-      document.querySelectorAll('.employee-selector').forEach((checkbox) => {
+      document.querySelectorAll('.notification-selector').forEach((checkbox) => {
         checkbox.checked = selectAll.checked;
       });
     });
