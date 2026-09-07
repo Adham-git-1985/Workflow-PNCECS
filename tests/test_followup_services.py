@@ -13,11 +13,12 @@ from services.followup_docx import build_followup_docx
 
 
 class FollowupServicesTests(unittest.TestCase):
-    def _item(self, item_id, title, status="COMPLETED", included=True):
+    def _item(self, item_id, title, status="COMPLETED", included=True, source_type="MANUAL"):
         return SimpleNamespace(
             id=item_id,
             title=title,
             description="تفاصيل البند",
+            source_type=source_type,
             status=status,
             is_included=included,
             completed_on=date(2026, 9, 1),
@@ -36,6 +37,32 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertIn("يحتاج متابعة", analysis["summary"])
         self.assertIn("غير مكتملة", analysis["notes"])
         self.assertIn("تم إنجاز", analysis["suggestions"][1])
+
+    def test_analysis_shortens_and_rephrases_manual_and_system_items(self):
+        manual = self._item(
+            1,
+            "إعداد التقرير الشهري ومراجعة جميع البيانات والتأكد من اكتمالها " * 20,
+        )
+        automatic = self._item(
+            2,
+            "متابعة واعتماد خطوة: طلب توريد أجهزة\n"
+            "تفاصيل المعاملة: استكمال مراجعة المواصفات الفنية\n"
+            "ملاحظة الإجراء: تم التنسيق مع الوحدة المختصة",
+            source_type="WORKFLOW_AUDIT",
+        )
+        automatic.description = None
+
+        analysis = build_followup_analysis([manual, automatic])
+
+        self.assertLess(len(analysis["suggestions"][1]), len(manual.title))
+        self.assertLessEqual(len(analysis["suggestions"][1]), 421)
+        self.assertIn(
+            "تمت متابعة واعتماد خطوة في «طلب توريد أجهزة»",
+            analysis["suggestions"][2],
+        )
+        self.assertNotIn("تفاصيل المعاملة:", analysis["suggestions"][2])
+        self.assertIn("استكمال مراجعة المواصفات الفنية", analysis["suggestions"][2])
+        self.assertIn("شملت أبرز الأعمال خلال الفترة", analysis["summary"])
 
     def test_docx_export_contains_report_details(self):
         report = SimpleNamespace(

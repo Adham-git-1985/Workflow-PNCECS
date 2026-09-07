@@ -352,6 +352,9 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
 
     for item in report.items or []:
         item.title = (request.form.get(f"title_{item.id}") or "").strip() or item.title
+        suggestion_field = f"ai_suggestion_{item.id}"
+        if suggestion_field in request.form:
+            item.ai_suggestion = (request.form.get(suggestion_field) or "").strip() or None
         description_field = f"description_{item.id}"
         if description_field in request.form:
             item.description = (request.form.get(description_field) or "").strip() or None
@@ -374,6 +377,19 @@ def _run_local_assistant(report: EmployeeFollowupReport) -> None:
     for item in report.items or []:
         item.ai_suggestion = suggestions.get(item.id)
         item.duplicate_hint = "قد يكون هذا البند مكرراً." if item.id in duplicate_ids else None
+
+
+def _apply_assistant_suggestions(report: EmployeeFollowupReport) -> int:
+    applied = 0
+    for item in report.items or []:
+        suggestion = (item.ai_suggestion or "").strip()
+        if not suggestion:
+            continue
+        item.title = suggestion
+        item.ai_suggestion = None
+        item.duplicate_hint = None
+        applied += 1
+    return applied
 
 
 def _followup_attachment_for_kind(report: EmployeeFollowupReport, kind: str) -> EmployeeFollowupAttachment | None:
@@ -561,6 +577,10 @@ def followups_view(report_id: int):
         access_level=access_level,
         can_edit=can_edit,
         can_review=can_review,
+        has_ai_suggestions=any(
+            (item.ai_suggestion or "").strip()
+            for item in (report.items or [])
+        ),
         can_delete_followup_reports=_can_delete_followup_reports(),
         report_status_labels=REPORT_STATUS_LABELS,
         item_status_labels=ITEM_STATUS_LABELS,
@@ -607,7 +627,14 @@ def followups_update(report_id: int):
         if action == "ai":
             _run_local_assistant(report)
             db.session.commit()
-            flash("تم إعداد اقتراحات محلية للمراجعة؛ لن تُرسل تلقائياً.", "success")
+            flash("تم اختصار المهام وإعداد صياغات محسّنة. عدّلها إن رغبت، ثم اضغط تفريغ الصياغات على المهام.", "success")
+        elif action == "apply_ai":
+            applied_count = _apply_assistant_suggestions(report)
+            db.session.commit()
+            if applied_count:
+                flash(f"تم تفريغ {applied_count} صياغة معتمدة على المهام وحفظها.", "success")
+            else:
+                flash("لا توجد صياغات مقترحة لتفريغها.", "info")
         elif action == "submit":
             manager = _selected_direct_manager(
                 report.manager_user_id,

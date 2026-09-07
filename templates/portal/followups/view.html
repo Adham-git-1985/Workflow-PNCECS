@@ -65,8 +65,18 @@
                   <td>
                     <label class="visually-hidden" for="title_{{ item.id }}">الإنجاز</label>
                     <textarea id="title_{{ item.id }}" class="form-control" name="title_{{ item.id }}" rows="5" placeholder="اكتب الإنجاز بالتفصيل">{{ item.title }}</textarea>
-                    {% if item.ai_suggestion or item.duplicate_hint %}
-                    <div class="small alert alert-info py-2 mt-2 mb-0"><i class="bi bi-stars"></i> {{ item.ai_suggestion or '' }} {% if item.duplicate_hint %}<br>{{ item.duplicate_hint }}{% endif %}</div>
+                    {% if item.ai_suggestion %}
+                    <div class="alert alert-info py-2 mt-2 mb-0">
+                      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                        <label class="small fw-bold mb-0" for="ai_suggestion_{{ item.id }}"><i class="bi bi-stars"></i> الصياغة المختصرة المقترحة</label>
+                        <span class="badge text-bg-light border">قابلة للتعديل</span>
+                      </div>
+                      <textarea id="ai_suggestion_{{ item.id }}" class="form-control form-control-sm" name="ai_suggestion_{{ item.id }}" rows="4" aria-describedby="ai_suggestion_help_{{ item.id }}">{{ item.ai_suggestion }}</textarea>
+                      <div class="form-text" id="ai_suggestion_help_{{ item.id }}">عدّل الصياغة كما تريد؛ لن تستبدل المهمة الأصلية قبل الضغط على زر التفريغ.</div>
+                      {% if item.duplicate_hint %}<div class="small text-warning-emphasis mt-1"><i class="bi bi-exclamation-triangle"></i> {{ item.duplicate_hint }}</div>{% endif %}
+                    </div>
+                    {% elif item.duplicate_hint %}
+                    <div class="small alert alert-warning py-2 mt-2 mb-0"><i class="bi bi-exclamation-triangle"></i> {{ item.duplicate_hint }}</div>
                     {% endif %}
                   </td>
                   <td><input class="form-control" name="completed_on_{{ item.id }}" type="date" value="{{ item.completed_on.isoformat() if item.completed_on else '' }}"></td>
@@ -89,7 +99,22 @@
         </div></div>
       </div>
       <div class="col-xl-4">
-        <div class="card border-0 shadow-sm mb-4"><div class="card-body"><h2 class="h6">إجراءات التقرير</h2><p class="small text-muted">اقتراحات الذكاء الاصطناعي محلية وقابلة للتعديل ولا ترسل التقرير تلقائياً.</p><div class="d-grid gap-2"><button class="btn btn-outline-primary" type="submit" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button><button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث من مسار</button><button class="btn btn-outline-info" type="submit" name="action" value="ai"><i class="bi bi-stars"></i> اقتراح صياغة وتحليل</button><button class="btn btn-success" type="submit" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button></div></div></div>
+        <div class="card border-0 shadow-sm mb-4">
+          <div class="card-body">
+            <h2 class="h6">إجراءات التقرير</h2>
+            <p class="small text-muted">يختصر المساعد المحلي جميع المهام المدرجة، سواء أضيفت من النظام أو يدوياً، ويعرض الصياغة للمراجعة دون استبدال النص تلقائياً.</p>
+            <div class="d-grid gap-2">
+              <button class="btn btn-outline-primary" type="submit" name="action" value="save"><i class="bi bi-save"></i> حفظ مسودة</button>
+              <button class="btn btn-outline-secondary" type="submit" form="import-workflow-{{ report.id }}"><i class="bi bi-arrow-repeat"></i> تحديث من مسار</button>
+              <button class="btn btn-outline-info" type="submit" name="action" value="ai"><i class="bi bi-stars"></i> اقتراح صياغة وتحليل</button>
+              {% if has_ai_suggestions %}
+              <button class="btn btn-info" type="submit" name="action" value="apply_ai" onclick="return confirm('سيتم استبدال نصوص المهام بالصياغات المقترحة بعد تعديلاتك. هل تريد المتابعة؟');"><i class="bi bi-box-arrow-in-down"></i> تفريغ الصياغات على المهام</button>
+              <div class="small text-muted">يمكنك تعديل كل صياغة مقترحة في جدول الإنجازات قبل التفريغ.</div>
+              {% endif %}
+              <button class="btn btn-success" type="submit" name="action" value="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
+            </div>
+          </div>
+        </div>
         <div class="card border-0 shadow-sm"><div class="card-body"><h2 class="h6">ملفات التقرير</h2><div class="small text-muted">يمكن تنزيل التقرير Word ثم رفع النسخة المعدلة لاحقاً.</div>{% for attachment in report.attachments %}<div class="d-flex justify-content-between gap-2 align-items-center border-bottom py-2"><span class="text-truncate">{{ attachment.original_name }}</span><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_download_attachment', report_id=report.id, attachment_id=attachment.id) }}">تنزيل</a></div>{% else %}<div class="small text-muted mt-2">لا توجد مرفقات.</div>{% endfor %}</div></div>
       </div>
     </div>

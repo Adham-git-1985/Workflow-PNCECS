@@ -13,6 +13,7 @@ from models import (
     EmployeeFile,
     EmployeeSecondment,
     EmployeeFollowupCopyRecipient,
+    EmployeeFollowupItem,
     EmployeeFollowupReport,
     Notification,
     User,
@@ -293,6 +294,90 @@ class FollowupFlowTests(unittest.TestCase):
         with self.app.app_context():
             item = EmployeeFollowupReport.query.get(report_id).items[0]
             self.assertEqual(item.title, long_title.strip())
+
+    def test_employee_can_edit_and_apply_suggestions_to_manual_and_system_items(self):
+        with self.app.app_context():
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="DRAFT",
+            )
+            db.session.add(report)
+            db.session.flush()
+            manual_item = EmployeeFollowupItem(
+                report_id=report.id,
+                source_type="MANUAL",
+                title="قمت بإعداد تقرير مطول عن الأعمال المنجزة",
+                status="COMPLETED",
+                is_included=True,
+            )
+            system_item = EmployeeFollowupItem(
+                report_id=report.id,
+                source_type="WORKFLOW_AUDIT",
+                source_id=91,
+                title="متابعة واعتماد خطوة: طلب شراء أجهزة\nتفاصيل المعاملة: مراجعة المواصفات",
+                status="COMPLETED",
+                is_included=True,
+            )
+            db.session.add_all([manual_item, system_item])
+            db.session.commit()
+            report_id = report.id
+            manual_item_id = manual_item.id
+            system_item_id = system_item.id
+            manual_title = manual_item.title
+            system_title = system_item.title
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={
+                "action": "ai",
+                f"title_{manual_item_id}": manual_title,
+                f"included_{manual_item_id}": "1",
+                f"title_{system_item_id}": system_title,
+                f"included_{system_item_id}": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, report_id)
+            by_id = {item.id: item for item in report.items}
+            self.assertTrue(by_id[manual_item_id].ai_suggestion)
+            self.assertTrue(by_id[system_item_id].ai_suggestion)
+            self.assertEqual(by_id[manual_item_id].title, manual_title)
+            self.assertEqual(by_id[system_item_id].title, system_title)
+
+        view = self.employee_client.get(f"/portal/followups/{report_id}")
+        self.assertEqual(view.status_code, 200)
+        self.assertIn(f'name="ai_suggestion_{manual_item_id}"'.encode(), view.data)
+        self.assertIn(f'name="ai_suggestion_{system_item_id}"'.encode(), view.data)
+        self.assertIn('value="apply_ai"'.encode(), view.data)
+
+        edited_manual = "تم إعداد تقرير الإنجازات الشهري ومراجعته."
+        edited_system = "تمت مراجعة واعتماد طلب شراء الأجهزة."
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={
+                "action": "apply_ai",
+                f"title_{manual_item_id}": manual_title,
+                f"ai_suggestion_{manual_item_id}": edited_manual,
+                f"included_{manual_item_id}": "1",
+                f"title_{system_item_id}": system_title,
+                f"ai_suggestion_{system_item_id}": edited_system,
+                f"included_{system_item_id}": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, report_id)
+            by_id = {item.id: item for item in report.items}
+            self.assertEqual(by_id[manual_item_id].title, edited_manual)
+            self.assertEqual(by_id[system_item_id].title, edited_system)
+            self.assertIsNone(by_id[manual_item_id].ai_suggestion)
+            self.assertIsNone(by_id[system_item_id].ai_suggestion)
 
     def test_copied_employee_cannot_view_another_employees_report(self):
         with self.app.app_context():
