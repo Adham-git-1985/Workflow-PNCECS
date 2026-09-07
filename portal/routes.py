@@ -14255,7 +14255,7 @@ def hr_approval_leave(req_id: int):
             flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
         else:
             flash("تم رفض الطلب وإيقاف المسار.", "success")
-        return redirect(url_for("portal.hr_approvals"))
+        return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
 
     today_str = date.today().strftime("%Y-%m-%d")
     started = bool(r.start_date and r.start_date <= today_str)
@@ -14462,7 +14462,7 @@ def hr_approval_permission(req_id: int):
             flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
         else:
             flash("تم رفض الطلب وإيقاف المسار.", "success")
-        return redirect(url_for("portal.hr_approvals"))
+        return redirect(url_for("portal.hr_approval_permission", req_id=req_id))
 
     approval_rows = hr_request_approval_steps(KIND_PERMISSION, r.id)
     revisions = (

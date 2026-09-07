@@ -461,20 +461,28 @@ def _complete_mention_task_after_contribution(
     comment or attachment moves the actor to the request's follow-up list
     while leaving the request and its current workflow step unchanged.
     """
-    if not inst or not user_id or step_order is None:
+    if not inst or not user_id:
         return False
 
-    task = (
+    task_query = (
         WorkflowStepTask.query
         .filter(
             WorkflowStepTask.instance_id == int(inst.id),
-            WorkflowStepTask.step_order == int(step_order),
             WorkflowStepTask.assignee_user_id == int(user_id),
             WorkflowStepTask.status == "PENDING",
             _mention_task_note_filter(),
         )
-        .first()
     )
+    task = None
+    if step_order is not None:
+        task = task_query.filter(
+            WorkflowStepTask.step_order == int(step_order),
+        ).first()
+    if not task:
+        task = task_query.order_by(
+            WorkflowStepTask.step_order.desc(),
+            WorkflowStepTask.id.desc(),
+        ).first()
     if not task:
         return False
 
@@ -4163,6 +4171,30 @@ def inbox():
 
     rows = q.order_by(WorkflowRequest.id.desc()).all()
 
+    if actor_ids:
+        pending_mention_rows = (
+            db.session.query(WorkflowRequest, WorkflowInstance, WorkflowInstanceStep)
+            .join(WorkflowInstance, WorkflowInstance.request_id == WorkflowRequest.id)
+            .join(WorkflowInstanceStep, WorkflowInstanceStep.instance_id == WorkflowInstance.id)
+            .join(
+                WorkflowStepTask,
+                db.and_(
+                    WorkflowStepTask.instance_id == WorkflowInstance.id,
+                    WorkflowStepTask.assignee_user_id.in_(actor_ids),
+                    WorkflowStepTask.status == "PENDING",
+                    _mention_task_note_filter(),
+                ),
+            )
+            .filter(WorkflowInstanceStep.step_order == WorkflowInstance.current_step_order)
+            .all()
+        )
+        existing_instance_ids = {int(inst.id) for _req, inst, _step in rows}
+        for mention_row in pending_mention_rows:
+            if int(mention_row[1].id) not in existing_instance_ids:
+                rows.append(mention_row)
+                existing_instance_ids.add(int(mention_row[1].id))
+        rows.sort(key=lambda row: int(row[0].id), reverse=True)
+
     # Future higher-level approvers in a dynamic hierarchy can act before the
     # current lower step.  Surface those requests in the same inbox so the
     # capability is discoverable instead of requiring a crafted direct URL.
@@ -4253,7 +4285,6 @@ def inbox():
         summary = _workflow_user_summary(req, step)
         if _mention_task_user_ids(
             inst.id,
-            step_order=step.step_order,
             pending_only=True,
         ).intersection(actor_ids):
             summary["waiting_for"] = "بانتظار متابعتك عبر المنشن"
@@ -4375,7 +4406,6 @@ def work_dashboard():
 
         mentioned_task_user_ids = _mention_task_user_ids(
             getattr(inst, "id", None),
-            step_order=(getattr(current_step, "step_order", None) if current_step else None),
             pending_only=True,
         )
         mentioned_task_for_actor = bool(actor_ids.intersection(mentioned_task_user_ids))
@@ -4387,7 +4417,7 @@ def work_dashboard():
         )
         needs_action = needs_action or mentioned_task_for_actor
         if current_step and (current_step.mode or "").upper() == "PARALLEL_SYNC" and inst:
-            needs_action = (
+            needs_action = needs_action or (
                 WorkflowStepTask.query
                 .filter(
                     WorkflowStepTask.instance_id == inst.id,

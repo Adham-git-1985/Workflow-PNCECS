@@ -369,6 +369,35 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             link_url=f"/portal/hr/approvals/leaves/{row.id}",
         ).count(), 0)
 
+    def test_secretary_general_returns_to_the_leave_after_final_approval(self):
+        db.session.add(UserPermission(
+            user_id=self.secretary.id,
+            key="PORTAL_READ",
+            is_allowed=True,
+        ))
+        row = self._leave(self.external_type)
+        start_request_flow(KIND_LEAVE, row)
+        decide_request(KIND_LEAVE, row, self.manager, "APPROVE")
+        decide_request(KIND_LEAVE, row, self.hr, "APPROVE")
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.secretary.id)
+        response = client.post(
+            f"/portal/hr/approvals/leaves/{row.id}",
+            data={"action": "APPROVE"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response.headers["Location"],
+            f"/portal/hr/approvals/leaves/{row.id}",
+        )
+        self.assertEqual(
+            client.get(response.headers["Location"]).status_code,
+            200,
+        )
+
     def test_overdue_manager_step_escalates_without_auto_approval(self):
         row = self._leave(self.normal_type)
         start_request_flow(KIND_LEAVE, row)

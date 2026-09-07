@@ -8,6 +8,7 @@ from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
 from models import (
+    AuditLog,
     OrgNode,
     OrgNodeManager,
     OrgNodeType,
@@ -16,8 +17,10 @@ from models import (
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowRequest,
+    WorkflowStepTask,
 )
 from workflow import workflow_bp
+from workflow.routes import MENTION_ACCESS_ACTION
 
 
 class WorkflowDashboardPermissionTests(unittest.TestCase):
@@ -216,6 +219,79 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(request_row.title.encode("utf-8"), response.data)
+
+    def test_pending_mention_from_an_earlier_step_stays_in_my_tasks(self):
+        approver = User(
+            email="workflow-next-approver@example.test",
+            name="Workflow Next Approver",
+            password_hash="not-used-in-test",
+            role="MANAGER",
+        )
+        db.session.add(approver)
+        db.session.flush()
+        request_row = WorkflowRequest(
+            requester_id=approver.id,
+            title="Mention follow-up after workflow progression",
+            description="",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=2,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                approver_kind="USER",
+                approver_user_id=approver.id,
+                status="APPROVED",
+            ),
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=2,
+                approver_kind="USER",
+                approver_user_id=approver.id,
+                status="PENDING",
+            ),
+            WorkflowStepTask(
+                instance_id=instance.id,
+                request_id=request_row.id,
+                step_order=1,
+                assignee_user_id=self.employee.id,
+                status="PENDING",
+                response="NONE",
+                note="MENTION_TASK",
+            ),
+            AuditLog(
+                request_id=request_row.id,
+                user_id=approver.id,
+                action=MENTION_ACCESS_ACTION,
+                target_type="USER",
+                target_id=self.employee.id,
+            ),
+            UserPermission(
+                user_id=self.employee.id,
+                key="WORKFLOW_DASHBOARD_READ",
+                is_allowed=True,
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            inbox = client.get("/workflow/inbox")
+            dashboard = client.get("/workflow/work?queue=my_action")
+
+        self.assertEqual(inbox.status_code, 200)
+        self.assertIn(request_row.title.encode("utf-8"), inbox.data)
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(request_row.title.encode("utf-8"), dashboard.data)
 
 
 if __name__ == "__main__":

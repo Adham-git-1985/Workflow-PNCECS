@@ -339,7 +339,7 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         )
         db.session.add(request_row)
         db.session.flush()
-        instance = WorkflowInstance(request_id=request_row.id, current_step_order=1, is_completed=False)
+        instance = WorkflowInstance(request_id=request_row.id, current_step_order=2, is_completed=False)
         db.session.add(instance)
         db.session.flush()
         db.session.add(WorkflowInstanceStep(
@@ -529,13 +529,21 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         )
         db.session.add(request_row)
         db.session.flush()
-        instance = WorkflowInstance(request_id=request_row.id, current_step_order=1, is_completed=False)
+        instance = WorkflowInstance(request_id=request_row.id, current_step_order=2, is_completed=False)
         db.session.add(instance)
         db.session.flush()
         db.session.add_all((
             WorkflowInstanceStep(
                 instance_id=instance.id,
                 step_order=1,
+                mode="SEQUENTIAL",
+                approver_kind="USER",
+                approver_user_id=self.department_user.id,
+                status="APPROVED",
+            ),
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=2,
                 mode="SEQUENTIAL",
                 approver_kind="USER",
                 approver_user_id=self.department_user.id,
@@ -579,7 +587,7 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         self.assertEqual(task.status, "RESPONDED")
         self.assertIn(self.manager_user.id, _get_request_followers_user_ids(request_row.id))
         self.assertEqual(request_row.status, "IN_PROGRESS")
-        self.assertEqual(instance.current_step_order, 1)
+        self.assertEqual(instance.current_step_order, 2)
 
 
 if __name__ == "__main__":
