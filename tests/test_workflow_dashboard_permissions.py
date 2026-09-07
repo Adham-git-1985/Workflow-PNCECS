@@ -7,7 +7,16 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import User, UserPermission, WorkflowInstance, WorkflowInstanceStep, WorkflowRequest
+from models import (
+    OrgNode,
+    OrgNodeManager,
+    OrgNodeType,
+    User,
+    UserPermission,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowRequest,
+)
 from workflow import workflow_bp
 
 
@@ -76,12 +85,13 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
         db.session.add(self.employee)
         db.session.commit()
 
-    def _login(self, client):
+    def _login(self, client, user=None):
+        user = user or self.employee
         for key in ("_login_user", "delegation_checked", "delegations", "delegation", "effective_user"):
             g.pop(key, None)
         with client.session_transaction() as session:
             session.clear()
-            session["_user_id"] = str(self.employee.id)
+            session["_user_id"] = str(user.id)
             session["_fresh"] = True
 
     def test_dashboard_requires_explicit_permission(self):
@@ -150,6 +160,62 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("The specifically selected recipient", response.get_data(as_text=True))
+
+    def test_org_node_manager_sees_pending_step_in_inbox(self):
+        assistant = User(
+            email="assistant-secretary@example.test",
+            name="Assistant Secretary General",
+            password_hash="not-used-in-test",
+            role="ASSISTANT_SECRETARY_GENERAL",
+        )
+        node_type = OrgNodeType(
+            code="SEC_GEN_ASSIST",
+            name_ar="مساعد الأمين العام",
+            is_active=True,
+        )
+        db.session.add_all((assistant, node_type))
+        db.session.flush()
+        assistant_node = OrgNode(
+            type_id=node_type.id,
+            name_ar="مساعد الأمين العام للتخطيط والخدمات المساندة",
+            is_active=True,
+        )
+        db.session.add(assistant_node)
+        db.session.flush()
+        db.session.add(OrgNodeManager(
+            node_id=assistant_node.id,
+            manager_user_id=assistant.id,
+        ))
+
+        request_row = WorkflowRequest(
+            requester_id=self.employee.id,
+            title="طلب بانتظار مساعد الأمين العام",
+            description="",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=1,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add(WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            approver_kind="ORG_NODE",
+            approver_org_node_id=assistant_node.id,
+            status="PENDING",
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, assistant)
+            response = client.get("/workflow/inbox")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(request_row.title.encode("utf-8"), response.data)
 
 
 if __name__ == "__main__":

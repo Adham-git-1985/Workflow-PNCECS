@@ -3909,6 +3909,24 @@ def inbox():
 
 
 
+            org_node_manager_exists = (
+                db.session.query(OrgNodeManager.id)
+                .filter(
+                    OrgNodeManager.node_id == WorkflowInstanceStep.approver_org_node_id,
+                    or_(
+                        OrgNodeManager.manager_user_id == u.id,
+                        OrgNodeManager.deputy_user_id == u.id,
+                    ),
+                )
+                .exists()
+            )
+            clauses.append(
+                db.and_(
+                    WorkflowInstanceStep.approver_kind == "ORG_NODE",
+                    org_node_manager_exists,
+                )
+            )
+
             # COMMITTEE (sequential steps): show request if user is a member of the committee for this step.
             # Note: PARALLEL_SYNC committee steps are already covered by WorkflowStepTask exists-clause below.
             try:
