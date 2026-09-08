@@ -66,6 +66,29 @@ class RequestPerformanceCachingTests(unittest.TestCase):
 
         self.assertEqual(role_permission_queries, 1)
 
+    def test_general_secretary_role_aliases_share_permissions(self):
+        user = User(
+            email="secretary-role-alias@example.test",
+            password_hash="not-used-in-test",
+            role="General_secretary",
+        )
+        db.session.add_all((
+            user,
+            RolePermission(
+                role="GENERAL-SECRETARY",
+                permission="HR_REQUESTS_APPROVE",
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context("/"):
+            request_user = db.session.get(User, user.id)
+            self.assertTrue(request_user.has_perm("HR_REQUESTS_APPROVE"))
+            self.assertTrue(request_user.has_role_perm("hr_requests_approve"))
+            self.assertTrue(request_user.has_role("GENERAL_SECRETARY"))
+            self.assertTrue(request_user.has_role("SECRETARY_GENERAL"))
+            self.assertTrue(request_user.has_role("الأمين العام"))
+
     def test_current_user_approval_ids_are_cached_per_request(self):
         user = SimpleNamespace(id=42)
         with self.app.test_request_context("/"):

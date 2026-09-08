@@ -4,7 +4,7 @@ from io import BytesIO
 from datetime import datetime
 
 from flask_login import login_required
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import selectinload
 from extensions import db
 from utils.perms import perm_required
@@ -12,8 +12,9 @@ from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
 from utils.importer import read_excel_rows, pick, to_str, to_int, to_bool, upsert_by_code, replace_all
 from utils.org_dynamic import ensure_dynamic_org_seed
 from utils.approved_org_structure import apply_approved_org_structure
+from utils.role_codes import role_storage_variants
 
-from models import Organization, Directorate, Unit, Department, Section, Division, Role, User, UserPermission, RequestType, WorkflowRoutingRule, WorkflowRequest, Committee, CommitteeAssignee, WorkflowTemplateStep, WorkflowTemplateParallelAssignee, WorkflowInstanceStep, OrgNodeType, OrgNode, SystemSetting
+from models import Organization, Directorate, Unit, Department, Section, Division, Role, RolePermission, User, UserPermission, RequestType, WorkflowRoutingRule, WorkflowRequest, Committee, CommitteeAssignee, WorkflowTemplateStep, WorkflowTemplateParallelAssignee, WorkflowInstanceStep, OrgNodeType, OrgNode, SystemSetting
 
 masterdata_bp = Blueprint("masterdata", __name__, url_prefix="/admin/masterdata")
 
@@ -43,6 +44,26 @@ PERM_ACTIONS = [
     ("UPDATE", "تعديل"),
     ("DELETE", "حذف"),
 ]
+
+
+def _expanded_managed_permission_keys(keys) -> set[str]:
+    normalized = {
+        (key or "").strip().upper()
+        for key in keys or []
+        if (key or "").strip()
+    }
+    expanded = set()
+    for prefix, _label, legacy in PERM_MODULES:
+        if legacy and legacy.upper() in normalized:
+            expanded.update(f"{prefix}_{action}" for action, _label in PERM_ACTIONS)
+        for action, _label in PERM_ACTIONS:
+            key = f"{prefix}_{action}"
+            if key.upper() in normalized:
+                expanded.add(key)
+    for key, _label in PERM_EXTRA_KEYS:
+        if key.upper() in normalized:
+            expanded.add(key)
+    return expanded
 
 
 def _clean(s): return (s or "").strip()
@@ -1506,6 +1527,7 @@ def permissions_manage():
     selected = None
     checked_keys = set()
     current_keys = set()
+    role_checked_keys = set()
 
     if selected_user_id and str(selected_user_id).isdigit():
         uid = int(selected_user_id)
@@ -1521,28 +1543,19 @@ def permissions_manage():
                 for p in rows
                 if p.is_allowed
             }
-
-            # CRUD keys (+ legacy mapping)
-            for prefix, _label, legacy in PERM_MODULES:
-                # legacy -> all CRUD enabled
-                if legacy and legacy.upper() in current_keys:
-                    for act in action_codes:
-                        checked_keys.add(f"{prefix}_{act}")
-                    checked_keys.add(legacy)
-                    continue
-
-                for act in action_codes:
-                    k = f"{prefix}_{act}".upper()
-                    if k in current_keys:
-                        checked_keys.add(f"{prefix}_{act}")
-
-                if legacy and legacy.upper() in current_keys:
-                    checked_keys.add(legacy)
-
-            # Extra keys
-            for k, _lbl in PERM_EXTRA_KEYS:
-                if k.upper() in current_keys:
-                    checked_keys.add(k)
+            role_variants = role_storage_variants(selected.role)
+            role_keys = {
+                (row.permission or "").strip().upper()
+                for row in (
+                    RolePermission.query
+                    .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
+                    .all()
+                    if role_variants else []
+                )
+                if row.permission
+            }
+            checked_keys = _expanded_managed_permission_keys(current_keys | role_keys)
+            role_checked_keys = _expanded_managed_permission_keys(role_keys)
 
     return render_template(
         "admin/masterdata/permissions.html",
@@ -1552,6 +1565,7 @@ def permissions_manage():
         perm_actions=PERM_ACTIONS,
         checked_keys=checked_keys,
         current_keys=current_keys,
+        role_checked_keys=role_checked_keys,
         extra_keys=PERM_EXTRA_KEYS,
     )
 @masterdata_bp.route("/roles")

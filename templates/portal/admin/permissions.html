@@ -249,7 +249,8 @@
                        data-group="{{ group_idx }}"
                        data-module="{{ p.module }}"
                        {% if p.user_only and scope == 'role' %}disabled{% endif %}
-                       {% if in_user %}checked{% endif %}>
+                       {% if in_user or in_role %}checked{% endif %}
+                       {% if in_role and not in_user %}disabled{% endif %}>
 
                 <label class="form-check-label" for="perm_{{ scope }}_{{ p.key }}">
                   <span class="fw-semibold">{{ p.label }}</span>
@@ -306,11 +307,15 @@
   }
 
   function selectGroup(groupId, checked) {
-    document.querySelectorAll('#permForm .perm-box[data-group="'+groupId+'"]').forEach(cb => cb.checked = checked);
+    document.querySelectorAll('#permForm .perm-box[data-group="'+groupId+'"]').forEach(function(cb) {
+      if (!cb.disabled) cb.checked = checked;
+    });
   }
 
   function clearAll() {
-    document.querySelectorAll('#permForm .perm-box').forEach(cb => cb.checked = false);
+    document.querySelectorAll('#permForm .perm-box').forEach(function(cb) {
+      if (!cb.disabled) cb.checked = false;
+    });
   }
 
   function applyPreset(code) {
@@ -321,7 +326,7 @@
     clearAll();
     pr.keys.forEach(function(k){
       const cb = document.querySelector('#permForm .perm-box[value="' + k + '"]');
-      if (cb) cb.checked = true;
+      if (cb && !cb.disabled) cb.checked = true;
     });
 
     // open first group for quick visibility

@@ -49,6 +49,7 @@ from sqlalchemy import or_, and_, text, func
 from sqlalchemy.sql import exists
 from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
+from utils.role_codes import canonical_role_key, role_storage_variants
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
 from utils.corr_refs import correspondence_reference_label
 from utils.file_uploads import (
@@ -3869,11 +3870,15 @@ def _portal_admin_user_ids() -> list[int]:
             .filter(RolePermission.permission == PORTAL_ADMIN_PERMISSIONS_MANAGE)
             .all()
         )
-        role_codes = { (r.role or "").strip().upper() for r in roles if (r.role or "").strip() }
-        if role_codes:
+        role_variants = {
+            variant
+            for role_permission in roles
+            for variant in role_storage_variants(role_permission.role)
+        }
+        if role_variants:
             urows = (
                 db.session.query(User.id)
-                .filter(func.upper(User.role).in_(list(role_codes)))
+                .filter(func.lower(User.role).in_(sorted(role_variants)))
                 .all()
             )
             for (uid,) in urows:
@@ -10641,11 +10646,11 @@ def _attendance_edit_approver_user_ids() -> list[int]:
 
     try:
         permitted_roles = {
-            (row.role or '').strip().upper()
+            canonical_role_key(row.role)
             for row in RolePermission.query
             .filter(RolePermission.permission == HR_ATT_EDIT_APPROVE)
             .all()
-            if (row.role or '').strip()
+            if canonical_role_key(row.role)
         }
         role_name_to_code = {}
         for role in Role.query.all():
@@ -10659,11 +10664,12 @@ def _attendance_edit_approver_user_ids() -> list[int]:
 
         for user in User.query.all():
             raw_role = (user.role or '').strip()
-            role_code = role_name_to_code.get(raw_role.lower(), raw_role.upper())
+            role_code = role_name_to_code.get(raw_role.lower(), raw_role)
+            role_key = canonical_role_key(role_code)
             if (
-                role_code in permitted_roles
-                or role_code == 'ADMIN'
-                or role_code.startswith('SUPER')
+                role_key in permitted_roles
+                or role_key == 'ADMIN'
+                or role_key.startswith('SUPER')
             ):
                 ids.add(int(user.id))
     except Exception:
@@ -29602,15 +29608,15 @@ def portal_admin_permissions():
     role_items = []
     try:
         _counts_rows = (
-            db.session.query(func.lower(User.role), func.count(User.id))
-            .group_by(func.lower(User.role))
+            db.session.query(User.role, func.count(User.id))
+            .group_by(User.role)
             .all()
         )
-        role_user_counts = {
-            ((r or "").strip().lower()): int(c or 0)
-            for (r, c) in (_counts_rows or [])
-            if (r or "").strip()
-        }
+        role_user_counts = {}
+        for raw_role, count in _counts_rows or []:
+            role_key = canonical_role_key(raw_role)
+            if role_key:
+                role_user_counts[role_key] = role_user_counts.get(role_key, 0) + int(count or 0)
     except Exception:
         role_user_counts = {}
 
@@ -29623,7 +29629,7 @@ def portal_admin_permissions():
                 "code": _code,
                 "name_ar": (getattr(_r, "name_ar", "") or "").strip(),
                 "name_en": (getattr(_r, "name_en", "") or "").strip(),
-                "count": role_user_counts.get(_code.lower(), 0),
+                "count": role_user_counts.get(canonical_role_key(_code), 0),
             })
     else:
         for _code in role_codes:
@@ -29634,7 +29640,7 @@ def portal_admin_permissions():
                 "code": _c,
                 "name_ar": "",
                 "name_en": "",
-                "count": role_user_counts.get(_c.lower(), 0),
+                "count": role_user_counts.get(canonical_role_key(_c), 0),
             })
 
     # -------------------------
@@ -29772,9 +29778,11 @@ def portal_admin_permissions():
                 flash("اختر الدور.", "danger")
                 return redirect(url_for("portal.portal_admin_permissions", scope="role"))
 
+            selected_role_variants = role_storage_variants(selected_role) or {selected_role.casefold()}
+
             # Delete only portal permissions (leave other permissions intact)
             RolePermission.query \
-                .filter(func.lower(RolePermission.role) == selected_role.lower()) \
+                .filter(func.lower(RolePermission.role).in_(sorted(selected_role_variants))) \
                 .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS)) \
                 .delete(synchronize_session=False)
 
@@ -29788,7 +29796,7 @@ def portal_admin_permissions():
             try:
                 saved_count = (
                     RolePermission.query
-                    .filter(func.lower(RolePermission.role) == selected_role.lower())
+                    .filter(func.lower(RolePermission.role).in_(sorted(selected_role_variants)))
                     .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
                     .count()
                 )
@@ -29796,7 +29804,7 @@ def portal_admin_permissions():
                 saved_count = None
 
             try:
-                role_uc = role_user_counts.get(selected_role.lower(), None)
+                role_uc = role_user_counts.get(canonical_role_key(selected_role), None)
             except Exception:
                 role_uc = None
 
@@ -29878,9 +29886,10 @@ def portal_admin_permissions():
     role_checked_for_user = set()  # for user scope: role-derived permissions (for badges)
 
     if scope == "role" and selected_role:
+        selected_role_variants = role_storage_variants(selected_role) or {selected_role.casefold()}
         rows = (
             RolePermission.query
-            .filter(func.lower(RolePermission.role) == selected_role.lower())
+            .filter(func.lower(RolePermission.role).in_(sorted(selected_role_variants)))
             .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
             .all()
         )
@@ -29898,11 +29907,11 @@ def portal_admin_permissions():
         checked = { (r.key or "").strip().upper() for r in urows if r.key }
 
         # role permissions (badges only)
-        role_norm = (selected_user.role or "").strip().lower()
-        if role_norm:
+        role_variants = role_storage_variants(selected_user.role)
+        if role_variants:
             rrows = (
                 RolePermission.query
-                .filter(func.lower(RolePermission.role) == role_norm)
+                .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
                 .filter(RolePermission.permission.in_(PORTAL_ALL_KEYS))
                 .all()
             )

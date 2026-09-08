@@ -542,6 +542,18 @@ def _is_hr_approver(user: User) -> bool:
         return False
 
 
+def _can_approve_all_requests(user: User) -> bool:
+    if not user:
+        return False
+    try:
+        return bool(
+            user.has_perm("HR_REQUESTS_APPROVE")
+            and user.has_perm("HR_REQUESTS_VIEW_ALL")
+        )
+    except Exception:
+        return False
+
+
 def hr_observer_user_ids() -> list[int]:
     """Return HR staff eligible for leave-request updates.
 
@@ -882,6 +894,8 @@ def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetim
             return True
     except Exception:
         pass
+    if _can_approve_all_requests(user):
+        return True
     approver_ids = _step_approver_ids(step)
     for approver_user_id in approver_ids:
         if approver_user_id == user.id:
@@ -1264,6 +1278,18 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
 
 
 def request_ids_user_can_act_on(user: User, kind: str) -> list[int]:
+    kind = (kind or "").upper()
+    if _can_approve_all_requests(user):
+        return [
+            int(request_id)
+            for (request_id,) in (
+                db.session.query(HRRequestApprovalStep.request_id)
+                .filter_by(request_kind=kind, status="PENDING")
+                .distinct()
+                .order_by(HRRequestApprovalStep.request_id.asc())
+                .all()
+            )
+        ]
     ids: list[int] = []
     for step in HRRequestApprovalStep.query.filter_by(request_kind=kind, status="PENDING").all():
         if can_user_act(user, step):

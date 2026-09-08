@@ -35,6 +35,7 @@ from sqlalchemy.orm import joinedload
 from . import workflow_bp
 from extensions import db
 from utils.perms import perm_required
+from utils.role_codes import role_storage_variants, roles_equivalent
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
 from utils.audit_helpers import delegation_audit_fields
 from utils.events import emit_event
@@ -281,34 +282,7 @@ def _norm_role(value: str | None) -> str:
 
 def _role_variants(role: str | None) -> list[str]:
     """Generate a small set of acceptable string variants for SQL filters."""
-    raw = (role or "").strip()
-    if not raw:
-        return []
-
-    base = _norm_role(raw)
-    variants = {
-        raw,
-        raw.lower(),
-        raw.upper(),
-        base,
-        base.replace("_", " "),
-        base.replace("_", "-"),
-        base.replace("_", ""),
-    }
-
-    # Common: stored value might be with spaces while user role is with underscores
-    if "_" in raw:
-        variants.add(raw.replace("_", " "))
-        variants.add(raw.replace("_", "-"))
-    if "-" in raw:
-        variants.add(raw.replace("-", "_"))
-        variants.add(raw.replace("-", " "))
-    if " " in raw:
-        variants.add(raw.replace(" ", "_"))
-        variants.add(raw.replace(" ", "-"))
-
-    cleaned = [v for v in {str(v).strip() for v in variants} if v]
-    return cleaned
+    return sorted(role_storage_variants(role))
 
 
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
@@ -2022,7 +1996,7 @@ def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
         return step.approver_user_id == user.id
 
     if kind == "ROLE" and step.approver_role:
-        return (user.role or "").strip().lower() == (step.approver_role or "").strip().lower()
+        return roles_equivalent(user.role, step.approver_role)
 
     if kind == "DEPARTMENT" and step.approver_department_id:
         return (
@@ -3151,7 +3125,7 @@ def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
                 return True
 
         elif kind == "ROLE" and step.approver_role:
-            if (u.role or "").strip().lower() == (step.approver_role or "").strip().lower():
+            if roles_equivalent(u.role, step.approver_role):
                 return True
 
         elif kind == "DEPARTMENT" and step.approver_department_id:

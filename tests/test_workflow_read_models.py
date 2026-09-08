@@ -8,7 +8,7 @@ from sqlalchemy import event, inspect as sa_inspect
 from extensions import db
 from models import AuditLog, User, WorkflowInstance, WorkflowInstanceStep, WorkflowRequest
 from workflow.read_models import load_workflow_access_snapshot
-from workflow.routes import work_dashboard
+from workflow.routes import _user_can_act_on_step, work_dashboard
 
 
 MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
@@ -236,6 +236,50 @@ class WorkflowReadModelTests(unittest.TestCase):
 
         self.assertNotIn(actor.id, snapshot.active_mentions_by_request.get(workflow_request.id, set()))
         self.assertFalse(snapshot.can_view(actor, workflow_request))
+
+    def test_general_secretary_alias_can_act_on_role_step(self):
+        actor = User(
+            email="secretary@example.test",
+            password_hash="not-used-in-test",
+            role="General_secretary",
+        )
+        requester = User(
+            email="secretary-requester@example.test",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add_all((actor, requester))
+        db.session.flush()
+        workflow_request = WorkflowRequest(
+            title="Secretary alias request",
+            status="IN_PROGRESS",
+            requester_id=requester.id,
+        )
+        db.session.add(workflow_request)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=workflow_request.id,
+            current_step_order=1,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        step = WorkflowInstanceStep(
+            instance_id=instance.id,
+            step_order=1,
+            mode="SEQUENTIAL",
+            approver_kind="ROLE",
+            approver_role="SECRETARY_GENERAL",
+            status="PENDING",
+        )
+        db.session.add(step)
+        db.session.commit()
+
+        snapshot = self._snapshot([workflow_request], actor)
+
+        self.assertTrue(snapshot.can_act(actor, step))
+        self.assertTrue(snapshot.can_view(actor, workflow_request))
+        self.assertTrue(_user_can_act_on_step(actor, step))
 
     def test_high_traffic_indexes_are_declared(self):
         inspector = sa_inspect(db.engine)

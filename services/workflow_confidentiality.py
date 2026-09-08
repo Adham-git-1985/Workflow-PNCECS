@@ -21,6 +21,7 @@ from models import (
     WorkflowRequest,
 )
 from services.correspondence_procedure import can_access_correspondence
+from utils.role_codes import role_storage_variants
 
 
 CONFIDENTIAL_READ_PERMISSION = "CORR_CONFIDENTIAL_READ"
@@ -85,7 +86,7 @@ def _has_permission(user: User, permission: str) -> bool:
                 return True
 
         if role:
-            role_keys = {role.lower()}
+            role_keys = role_storage_variants(role)
             resolved_role = (
                 Role.query
                 .filter(or_(
@@ -96,7 +97,7 @@ def _has_permission(user: User, permission: str) -> bool:
                 .first()
             )
             if resolved_role and (resolved_role.code or "").strip():
-                role_keys.add(resolved_role.code.strip().lower())
+                role_keys.update(role_storage_variants(resolved_role.code))
             return (
                 RolePermission.query
                 .filter(db.func.lower(RolePermission.role).in_(role_keys))

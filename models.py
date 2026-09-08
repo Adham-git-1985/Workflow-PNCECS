@@ -3,6 +3,7 @@ import json
 import unicodedata
 
 from extensions import db
+from utils.role_codes import canonical_role_key, role_storage_variants, roles_equivalent
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from sqlalchemy import event, func
@@ -190,6 +191,8 @@ class User(db.Model, UserMixin):
             role_raw = (getattr(self, "role", "") or "").strip()
             role = role_raw.lower()
             if role:
+                role_variants = role_storage_variants(role_raw) or {role}
+                role_cache_key = canonical_role_key(role_raw) or role
                 role_permission_cache = None
                 try:
                     from flask import g, has_request_context
@@ -202,14 +205,14 @@ class User(db.Model, UserMixin):
                     role_permission_cache = None
 
                 role_perms = (
-                    role_permission_cache.get(role)
+                    role_permission_cache.get(role_cache_key)
                     if role_permission_cache is not None
                     else None
                 )
                 if role_perms is None:
                     role_rows = (
                         RolePermission.query
-                        .filter(func.lower(RolePermission.role) == role)
+                        .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
                         .all()
                     )
                     if not role_rows:
@@ -228,11 +231,12 @@ class User(db.Model, UserMixin):
                             if not resolved_role and role_raw:
                                 resolved_role = Role.query.filter(Role.name_ar == role_raw).first()
                             if resolved_role and (resolved_role.code or "").strip():
-                                resolved_code = (resolved_role.code or "").strip().lower()
-                                if resolved_code and resolved_code != role:
+                                resolved_variants = role_storage_variants(resolved_role.code)
+                                if resolved_variants and not resolved_variants.issubset(role_variants):
+                                    role_variants.update(resolved_variants)
                                     role_rows = (
                                         RolePermission.query
-                                        .filter(func.lower(RolePermission.role) == resolved_code)
+                                        .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
                                         .all()
                                     )
                         except Exception:
@@ -242,7 +246,7 @@ class User(db.Model, UserMixin):
                         for role_permission in role_rows
                     )
                     if role_permission_cache is not None:
-                        role_permission_cache[role] = role_perms
+                        role_permission_cache[role_cache_key] = role_perms
 
                 if role_perms:
                     perms = list(set(perms + list(role_perms)))
@@ -404,7 +408,7 @@ class User(db.Model, UserMixin):
             return True
 
         # Direct match
-        if mine == want:
+        if mine == want or roles_equivalent(mine, want):
             return True
 
         # If delegation is active, OR with effective user's role.
@@ -455,13 +459,14 @@ class User(db.Model, UserMixin):
         except Exception:
             role_norm = None
 
-        if not role_norm:
-            role_norm = raw_role.lower()
+        role_variants = role_storage_variants(role_norm or raw_role)
+        if not role_variants:
+            return False
 
         return (
             RolePermission.query
-            .filter(func.lower(RolePermission.role) == role_norm)
-            .filter(RolePermission.permission == perm)
+            .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
+            .filter(func.upper(RolePermission.permission) == perm)
             .first()
             is not None
         )

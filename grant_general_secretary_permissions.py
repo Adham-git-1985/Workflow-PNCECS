@@ -6,15 +6,19 @@ from app import app
 from extensions import db
 from models import PortalPermissionPreset, Role, RolePermission, User, UserPermission
 from sqlalchemy import func
+from utils.role_codes import role_storage_variants
 
 
-ROLE_CODE = "GENERAL-SECRETARY"
+ROLE_CODE = "General_secretary"
+PRESET_CODE = "GENERAL-SECRETARY"
 ROLE_LABEL_AR = "الأمين العام"
 ROLE_LABEL_EN = "General Secretary"
 
 GENERAL_SECRETARY_KEYS = [
     "PORTAL_READ",
     "PORTAL_ADMIN_READ",
+    "WORKFLOW_DASHBOARD_READ",
+    "WORKFLOW_SECRETARY_ENDORSEMENTS",
     "HR_READ",
     "HR_ATTENDANCE_READ",
     "HR_REQUESTS_READ",
@@ -61,9 +65,14 @@ def utcnow_naive() -> datetime:
 def upsert_role() -> Role:
     role = Role.query.filter(func.lower(Role.code) == ROLE_CODE.lower()).first()
     if role is None:
+        role = Role.query.filter(
+            func.lower(Role.code).in_(sorted(role_storage_variants(ROLE_CODE)))
+        ).first()
+    if role is None:
         role = Role(code=ROLE_CODE, name_ar=ROLE_LABEL_AR, name_en=ROLE_LABEL_EN, is_active=True)
         db.session.add(role)
     else:
+        role.code = ROLE_CODE
         role.name_ar = role.name_ar or ROLE_LABEL_AR
         role.name_en = role.name_en or ROLE_LABEL_EN
         role.is_active = True
@@ -71,9 +80,9 @@ def upsert_role() -> Role:
 
 
 def upsert_preset() -> PortalPermissionPreset:
-    preset = PortalPermissionPreset.query.filter_by(code=ROLE_CODE).first()
+    preset = PortalPermissionPreset.query.filter_by(code=PRESET_CODE).first()
     if preset is None:
-        preset = PortalPermissionPreset(code=ROLE_CODE, category="main", sort_order=40, is_active=True)
+        preset = PortalPermissionPreset(code=PRESET_CODE, category="main", sort_order=40, is_active=True)
         db.session.add(preset)
     preset.label = ROLE_LABEL_AR
     preset.category = "main"
@@ -85,9 +94,12 @@ def upsert_preset() -> PortalPermissionPreset:
 
 def grant_role_permissions() -> int:
     count = 0
+    role_variants = role_storage_variants(ROLE_CODE) or {ROLE_CODE.casefold()}
     existing = {
         (row.permission or "").strip().upper()
-        for row in RolePermission.query.filter(func.lower(RolePermission.role) == ROLE_CODE.lower()).all()
+        for row in RolePermission.query.filter(
+            func.lower(RolePermission.role).in_(sorted(role_variants))
+        ).all()
     }
     for key in GENERAL_SECRETARY_KEYS:
         if key not in existing:
@@ -113,8 +125,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Grant General Secretary portal/Masar permissions.")
     parser.add_argument("--email", help="Grant permissions to this user email.")
     parser.add_argument("--user-id", type=int, help="Grant permissions to this user id.")
-    parser.add_argument("--assign-role", action="store_true", help="Also set the user's role to GENERAL-SECRETARY.")
-    parser.add_argument("--role-permissions", action="store_true", help="Grant permissions to the GENERAL-SECRETARY role.")
+    parser.add_argument("--assign-role", action="store_true", help=f"Also set the user's role to {ROLE_CODE}.")
+    parser.add_argument("--role-permissions", action="store_true", help=f"Grant permissions to the {ROLE_CODE} role.")
     parser.add_argument("--execute", action="store_true", help="Apply changes. Without this flag, only prints a dry run.")
     args = parser.parse_args()
 
@@ -136,7 +148,8 @@ def main() -> int:
         if user and args.assign_role:
             user.role = ROLE_CODE
 
-        print(f"Preset: {ROLE_CODE} ({len(GENERAL_SECRETARY_KEYS)} keys)")
+        print(f"Preset: {PRESET_CODE} ({len(GENERAL_SECRETARY_KEYS)} keys)")
+        print(f"Role: {ROLE_CODE}")
         print(f"Role permissions to add: {role_added}")
         print(f"User permissions to add: {user_added}")
         if user:

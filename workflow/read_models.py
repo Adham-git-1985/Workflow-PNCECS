@@ -23,6 +23,7 @@ from models import (
     WorkflowRequest,
     WorkflowStepTask,
 )
+from utils.role_codes import role_storage_variants, roles_equivalent
 
 
 _IN_QUERY_CHUNK_SIZE = 400
@@ -35,20 +36,7 @@ def _id_chunks(values: Iterable[int], size: int = _IN_QUERY_CHUNK_SIZE):
 
 
 def _role_variants(role: str | None) -> set[str]:
-    raw = (role or "").strip()
-    if not raw:
-        return set()
-    normalized = raw.upper().replace("-", "_").replace(" ", "_")
-    variants = {
-        raw,
-        raw.lower(),
-        raw.upper(),
-        normalized,
-        normalized.replace("_", " "),
-        normalized.replace("_", "-"),
-        normalized.replace("_", ""),
-    }
-    return {value.strip().casefold() for value in variants if value.strip()}
+    return role_storage_variants(role)
 
 
 def _is_mention_note(note: str | None, notes: frozenset[str], prefix: str) -> bool:
@@ -109,7 +97,7 @@ class WorkflowAccessSnapshot:
         if kind == "USER" and step.approver_user_id:
             return user_id == int(step.approver_user_id)
         if kind == "ROLE" and step.approver_role:
-            return role.casefold() == (step.approver_role or "").strip().casefold()
+            return roles_equivalent(role, step.approver_role)
 
         target_by_kind = {
             "DEPARTMENT": getattr(step, "approver_department_id", None),

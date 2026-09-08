@@ -2,6 +2,7 @@ import json
 import unittest
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask, g
 from flask_login import LoginManager
@@ -26,6 +27,7 @@ from models import (
     OrgNodeManager,
     OrgNodeType,
     OrgUnitManager,
+    RolePermission,
     User,
     UserPermission,
 )
@@ -39,6 +41,7 @@ from services.hr_request_workflow import (
     decide_request,
     _notify,
     process_pending_approvals,
+    request_ids_user_can_act_on,
     start_request_flow,
 )
 
@@ -131,7 +134,12 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         db.session.commit()
 
     def _login(self, client, user_id):
-        g.pop("_login_user", None)
+        for key in (
+            "_login_user",
+            "_role_permission_keys",
+            "_portal_approvable_request_ids",
+        ):
+            g.pop(key, None)
         with client.session_transaction() as session:
             session.clear()
             session["_user_id"] = str(user_id)
@@ -368,6 +376,63 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             type="HR_REQUEST_CC",
             link_url=f"/portal/hr/approvals/leaves/{row.id}",
         ).count(), 0)
+
+    def test_view_all_and_approve_grant_global_leave_and_permission_approval(self):
+        db.session.add_all([
+            RolePermission(role="GENERAL-SECRETARY", permission=permission)
+            for permission in (
+                "PORTAL_READ",
+                "HR_READ",
+                "HR_REQUESTS_APPROVE",
+                "HR_REQUESTS_VIEW_ALL",
+            )
+        ])
+        limited_approver = User(
+            email="limited-approver@example.test",
+            name="Limited Approver",
+            password_hash="x",
+            role="LIMITED_APPROVER",
+        )
+        db.session.add(limited_approver)
+        db.session.flush()
+        db.session.add(RolePermission(
+            role="LIMITED_APPROVER",
+            permission="HR_REQUESTS_APPROVE",
+        ))
+
+        leave = self._leave(self.normal_type)
+        permission_request = self._permission()
+        leave_step = start_request_flow(KIND_LEAVE, leave)[0]
+        permission_step = start_request_flow(KIND_PERMISSION, permission_request)[0]
+        db.session.commit()
+
+        self.assertTrue(can_user_act(self.secretary, leave_step))
+        self.assertTrue(can_user_act(self.secretary, permission_step))
+        self.assertFalse(can_user_act(limited_approver, leave_step))
+        self.assertEqual(
+            request_ids_user_can_act_on(self.secretary, KIND_LEAVE),
+            [leave.id],
+        )
+        self.assertEqual(
+            request_ids_user_can_act_on(self.secretary, KIND_PERMISSION),
+            [permission_request.id],
+        )
+
+        client = self.app.test_client()
+        self._login(client, self.secretary.id)
+        with patch("portal.routes.render_template", return_value="ok") as render:
+            detail = client.get(
+                f"/portal/hr/approvals/permissions/{permission_request.id}"
+            )
+        self.assertEqual(detail.status_code, 200)
+        self.assertTrue(render.call_args.kwargs["can_act"])
+
+        response = client.post(
+            f"/portal/hr/approvals/permissions/{permission_request.id}",
+            data={"action": "APPROVE"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(permission_request.status, "APPROVED")
 
     def test_secretary_general_returns_to_the_leave_after_final_approval(self):
         db.session.add(UserPermission(

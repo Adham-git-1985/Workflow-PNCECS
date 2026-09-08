@@ -3,6 +3,7 @@ from datetime import datetime
 
 from flask import abort, g
 from flask_login import current_user
+from utils.role_codes import roles_equivalent
 
 
 def is_admin_like(user) -> bool:
@@ -108,7 +109,7 @@ def can_access_request(request_obj, user):
     if request_obj.requester_id == user.id:
         return True
 
-    if request_obj.current_role == user.role:
+    if roles_equivalent(request_obj.current_role, user.role):
         return True
 
     if is_admin_like(user):
@@ -123,16 +124,10 @@ def can_access_request(request_obj, user):
 def has_permission(user, permission):
     if is_admin_like(user):
         return True
-
-    from models import RolePermission
-    from extensions import db
-
-    return (
-        db.session.query(RolePermission)
-        .filter_by(role=user.role, permission=permission)
-        .first()
-        is not None
-    )
+    try:
+        return bool(user and user.has_perm(permission))
+    except Exception:
+        return False
 
 
 def permission_required(permission):

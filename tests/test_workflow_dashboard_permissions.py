@@ -12,6 +12,7 @@ from models import (
     OrgNode,
     OrgNodeManager,
     OrgNodeType,
+    RolePermission,
     User,
     UserPermission,
     WorkflowInstance,
@@ -118,6 +119,55 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
             response = client.get("/workflow/work")
 
         self.assertEqual(response.status_code, 200)
+
+    def test_general_secretary_alias_inherits_access_and_role_tasks(self):
+        secretary = User(
+            email="general-secretary-dashboard@example.test",
+            name="General Secretary",
+            password_hash="not-used-in-test",
+            role="General_secretary",
+        )
+        db.session.add(secretary)
+        db.session.flush()
+        request_row = WorkflowRequest(
+            requester_id=self.employee.id,
+            title="General Secretary role alias task",
+            description="",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=1,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                approver_kind="ROLE",
+                approver_role="SECRETARY_GENERAL",
+                status="PENDING",
+            ),
+            RolePermission(
+                role="GENERAL-SECRETARY",
+                permission="WORKFLOW_DASHBOARD_READ",
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, secretary)
+            dashboard = client.get("/workflow/work?queue=my_action")
+            inbox = client.get("/workflow/inbox")
+
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertEqual(inbox.status_code, 200)
+        self.assertIn(request_row.title.encode("utf-8"), dashboard.data)
+        self.assertIn(request_row.title.encode("utf-8"), inbox.data)
 
     def test_dashboard_prefers_the_saved_selected_recipient_name(self):
         selected_recipient = User(

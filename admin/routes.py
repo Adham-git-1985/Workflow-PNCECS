@@ -16,6 +16,7 @@ from flask import (
 )
 from flask_login import login_required, current_user, logout_user
 from utils.perms import perm_required
+from utils.role_codes import role_storage_variants
 from permissions import roles_required, role_perm_required
 from models import WorkflowRequest, SystemSetting, AuditLog, ArchivedFile, WorkflowRoutingRule, RequestType, Organization, Directorate, Department, WorkflowTemplate, RequestEscalation, OrgNode, OrgNodeType
 from extensions import db
@@ -415,8 +416,13 @@ def manage_permissions():
 
         known = set(permissions) | set(PORTAL_ALL_KEYS)
 
+        role_variants = role_storage_variants(selected_role) or {selected_role.casefold()}
+
         # احذف فقط الصلاحيات المعروفة لتجنب مسح صلاحيات أخرى قد تكون أضيفت لاحقًا
-        RolePermission.query.filter_by(role=selected_role).filter(RolePermission.permission.in_(known)).delete(synchronize_session=False)
+        RolePermission.query \
+            .filter(func.lower(RolePermission.role).in_(sorted(role_variants))) \
+            .filter(RolePermission.permission.in_(known)) \
+            .delete(synchronize_session=False)
 
         for p in perms:
             p = (p or "").strip()
@@ -430,7 +436,12 @@ def manage_permissions():
     # Pre-check existing permissions for selected role
     checked = set()
     if selected_role:
-        rows = RolePermission.query.filter_by(role=selected_role).all()
+        role_variants = role_storage_variants(selected_role) or {selected_role.casefold()}
+        rows = (
+            RolePermission.query
+            .filter(func.lower(RolePermission.role).in_(sorted(role_variants)))
+            .all()
+        )
         checked = { (r.permission or "").strip() for r in rows if r.permission }
 
     return render_template(

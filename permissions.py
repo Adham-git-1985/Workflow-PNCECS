@@ -131,9 +131,6 @@ def role_perm_required(permission: str):
     from functools import wraps
     from flask import abort
     from flask_login import login_required, current_user
-    from models import RolePermission
-    from sqlalchemy import func
-
     permission = (permission or "").strip().upper()
     if not permission:
         raise ValueError("permission is required")
@@ -146,44 +143,21 @@ def role_perm_required(permission: str):
             if _user_is_super_admin(current_user) or _user_has_required_role(current_user, "ADMIN"):
                 return f(*args, **kwargs)
 
-            # Per-user override via UserPermission (optional)
             try:
-                from models import UserPermission
-                user_ok = (
-                    UserPermission.query
-                    .filter_by(user_id=current_user.id, key=permission, is_allowed=True)
-                    .first()
-                )
-                if user_ok:
+                if current_user.has_perm(permission):
                     return f(*args, **kwargs)
             except Exception:
                 pass
 
-            role = (getattr(current_user, "role", "") or "").strip()
-            if not role:
-                abort(403)
-
-            role_norm = role.strip().lower()
-
-            ok = (
-                RolePermission.query
-                .filter(func.lower(RolePermission.role) == role_norm)
-                .filter(RolePermission.permission == permission)
-                .first()
+            logger.warning(
+                "Forbidden by role_perm_required | path=%s | user_id=%s | email=%s | role=%s | permission=%s",
+                getattr(request, "path", None),
+                getattr(current_user, "id", None),
+                getattr(current_user, "email", None),
+                getattr(current_user, "role", None),
+                permission,
             )
-
-            if not ok:
-                logger.warning(
-                    "Forbidden by role_perm_required | path=%s | user_id=%s | email=%s | role=%s | permission=%s",
-                    getattr(request, "path", None),
-                    getattr(current_user, "id", None),
-                    getattr(current_user, "email", None),
-                    getattr(current_user, "role", None),
-                    permission,
-                )
-                abort(403)
-
-            return f(*args, **kwargs)
+            abort(403)
 
         return wrapper
 
