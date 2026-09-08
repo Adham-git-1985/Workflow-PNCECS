@@ -129,6 +129,7 @@ flask --app app run --debug
 
 ### بطء الجداول
 - شغّل `flask --app app db upgrade` لتثبيت فهارس مسار وسجل التدقيق والتنبيهات.
+- إذا كان `flask --app app db current` فارغًا على قاعدة قائمة، خذ نسخة احتياطية ثم شغّل `flask --app app db stamp f7e8d9c0b1a2` مرة واحدة قبل `db upgrade`.
 - أبقِ `NOTIFICATION_TRANSPORT=poll` مع Waitress حتى لا يحجز كل مستخدم خيط SSE دائمًا.
 - اضبط `WORKFLOW_DASHBOARD_PAGE_SIZE` و`WORKFLOW_FOLLOWING_PAGE_SIZE` بدل عرض آلاف الصفوف دفعة واحدة.
 

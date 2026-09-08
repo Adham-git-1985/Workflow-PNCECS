@@ -32,6 +32,22 @@ pip install -r requirements.txt
 python init_db.py
 ```
 سيقوم السكربت بإنشاء الجداول + الفهارس + Seed من ملف `seed.xlsx` (إن وجد) وإضافة مستخدمين افتراضيين.
+كما يسجّل السكربت إصدار Alembic الحالي تلقائيًا، بحيث تعمل الترقيات اللاحقة دون محاولة إعادة إنشاء الجداول.
+
+إذا كانت قاعدة البيانات قائمة من إصدار قديم ولا يعرض الأمر `flask --app app db current`
+أي رقم إصدار، أوقف التطبيق وخذ نسخة احتياطية من `instance/workflow.db`، ثم اعتمد آخر
+إصدار مطبق فعليًا قبل تشغيل الترقية. عند الانتقال إلى إصدار فهارس القراءة `g8f9a0b1c2d3`
+استخدم مرة واحدة:
+
+```powershell
+.\.venv\Scripts\python.exe -m flask --app app db stamp f7e8d9c0b1a2
+.\.venv\Scripts\python.exe -m flask --app app db upgrade
+.\.venv\Scripts\python.exe -m flask --app app db current
+```
+
+لا تستخدم `db upgrade` مباشرةً على قاعدة قديمة ممتلئة بلا إصدار Alembic؛ لأن Alembic
+سيفترض أنها فارغة ويبدأ من أول migration. أوامر `flask db` لا تشغّل مزامنة المخطط
+التلقائية، حتى تبقى مسؤولية تغيير المخطط للهجرات وحدها أثناء تنفيذها.
 
 ### 3) تشغيل التطبيق
 ```bash

@@ -67,6 +67,7 @@ from utils.permissions import get_effective_user
 from utils.request_audit import register_request_audit
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
 from utils.timezone import format_local_datetime
+from utils.runtime_schema import should_run_runtime_schema_sync
 from filters.request_filters import get_sla_state
 from services.escalation_service import run_escalation_if_needed
 
@@ -1323,7 +1324,7 @@ def _ensure_runtime_schema():
 # We allow scripts (like init_db.py) to skip this best-effort runtime schema sync
 # by setting SKIP_RUNTIME_SCHEMA=1.
 app.extensions["runtime_schema_sync"] = _ensure_runtime_schema
-if not os.getenv("SKIP_RUNTIME_SCHEMA"):
+if should_run_runtime_schema_sync():
     _ensure_runtime_schema()
 login_manager.init_app(app)
 login_manager.login_view = "login"

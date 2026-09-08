@@ -969,6 +969,12 @@ def init_database():
         # =========================
 
         db.session.commit()
+        from flask_migrate import stamp as stamp_migrations
+
+        stamp_migrations(
+            directory=os.path.join(BASE_DIR, "migrations"),
+            revision="head",
+        )
 
         print("===================================")
         print("Database initialized successfully")
