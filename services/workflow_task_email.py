@@ -77,18 +77,12 @@ def _valid_email(value: str | None) -> str:
 def resolve_user_delivery_email(user: User | None) -> str:
     """Return the authoritative email address for system deliveries.
 
-    The email recorded in the employee file is maintained by HR and takes
-    priority over the account/login email. An empty employee-file value keeps
-    the legacy account-email fallback; a non-empty invalid value deliberately
-    prevents delivery rather than sending to a stale account address.
+    The account email is the user-editable notification address. Employee-file
+    contact data is maintained independently by HR and must not override it.
+    An empty or invalid account email deliberately disables email delivery.
     """
     if not user:
         return ""
-
-    employee_file = getattr(user, "employee_file", None)
-    employee_email = str(getattr(employee_file, "email", None) or "").strip()
-    if employee_email:
-        return _valid_email(employee_email)
     return _valid_email(getattr(user, "email", None))
 
 

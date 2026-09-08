@@ -137,9 +137,9 @@ class CircularAttachmentStorageTests(unittest.TestCase):
         self.assertEqual(attachments[0].get_filename(), "مرفق التعميم.pdf")
         self.assertEqual(attachments[0].get_payload(decode=True), b"pdf-content")
 
-    def test_circular_uses_the_email_from_the_employee_file(self):
+    def test_circular_uses_the_current_account_email(self):
         user = User(
-            email="legacy-account@example.test",
+            email="current-account@example.test",
             name="Employee",
             password_hash="unused",
             role="EMPLOYEE",
@@ -154,7 +154,7 @@ class CircularAttachmentStorageTests(unittest.TestCase):
 
         self.assertEqual(
             _circular_user_emails([user.id]),
-            ["official-employee@example.test"],
+            ["current-account@example.test"],
         )
 
     def test_registered_attachment_files_are_removed_with_circular(self):

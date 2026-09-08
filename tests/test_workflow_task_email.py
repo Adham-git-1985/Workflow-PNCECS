@@ -188,6 +188,10 @@ class WorkflowTaskEmailTests(unittest.TestCase):
         self.assertEqual(smtp_class.return_value.send_message.call_count, 2)
 
     def test_pending_task_email_uses_the_current_user_email_address(self):
+        db.session.add(EmployeeFile(
+            user_id=self.assignee.id,
+            email="old-employee-file@example.test",
+        ))
         enqueue_task_assignment_emails(
             self.request,
             [self.assignee.id],
@@ -206,6 +210,10 @@ class WorkflowTaskEmailTests(unittest.TestCase):
 
     def test_account_without_any_email_is_not_queued_or_marked_as_failed(self):
         self.assignee.email = None
+        db.session.add(EmployeeFile(
+            user_id=self.assignee.id,
+            email="stale-employee-file@example.test",
+        ))
         db.session.commit()
 
         queued = enqueue_task_assignment_emails(
@@ -239,7 +247,7 @@ class WorkflowTaskEmailTests(unittest.TestCase):
         self.assertEqual(legacy.status, "CANCELLED")
         self.assertEqual(legacy.attempt_count, 0)
 
-    def test_employee_file_email_is_the_authoritative_delivery_address(self):
+    def test_account_email_is_authoritative_over_employee_file_email(self):
         db.session.add(EmployeeFile(
             user_id=self.assignee.id,
             email="official-assignee@example.test",
@@ -256,7 +264,7 @@ class WorkflowTaskEmailTests(unittest.TestCase):
             self.assertEqual(send_pending_task_emails(), 1)
 
         message = smtp_class.return_value.send_message.call_args.args[0]
-        self.assertEqual(message["To"], "official-assignee@example.test")
+        self.assertEqual(message["To"], "assignee@example.test")
 
     def test_disabled_global_email_control_skips_task_email_queue_and_smtp(self):
         db.session.add(SystemSetting(key="SYSTEM_EMAIL_DELIVERY_ENABLED", value="0"))
