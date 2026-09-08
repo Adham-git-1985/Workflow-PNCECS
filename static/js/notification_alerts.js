@@ -9,6 +9,11 @@
 
   const streamUrl = toggleButton.dataset.streamUrl || "/workflow/notifications/stream";
   const pollUrl = toggleButton.dataset.pollUrl || "/workflow/notifications/poll";
+  const notificationTransport = (toggleButton.dataset.notificationTransport || "poll").toLowerCase();
+  const configuredPollInterval = Number(toggleButton.dataset.pollIntervalMs || 10000);
+  const pollIntervalMs = Number.isFinite(configuredPollInterval)
+    ? Math.max(5000, configuredPollInterval)
+    : 10000;
   const workflowNotificationsUrl =
     toggleButton.dataset.workflowNotificationsUrl ||
     toggleButton.dataset.notificationsUrl ||
@@ -308,7 +313,7 @@
   }
 
   async function pollNotifications() {
-    if (pollingInFlight || !pollUrl) return;
+    if (pollingInFlight || !pollUrl || document.hidden) return;
     pollingInFlight = true;
     try {
       const url = new URL(pollUrl, window.location.origin);
@@ -343,7 +348,7 @@
   function startPolling() {
     if (pollingTimer || !window.fetch) return;
     pollNotifications();
-    pollingTimer = window.setInterval(pollNotifications, 5000);
+    pollingTimer = window.setInterval(pollNotifications, pollIntervalMs);
   }
 
   function connectEventStream() {
@@ -406,13 +411,20 @@
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) stopTitleFlash();
+    if (!document.hidden) {
+      stopTitleFlash();
+      if (notificationTransport !== "stream") pollNotifications();
+    }
   });
 
   window.addEventListener("focus", stopTitleFlash);
 
   updateToggleButton();
-  connectEventStream();
+  if (notificationTransport === "stream") {
+    connectEventStream();
+  } else {
+    startPolling();
+  }
 
   // A successful server-side action (sending mail, sharing, approving, etc.)
   // receives a short confirmation tone as well. The existing success message

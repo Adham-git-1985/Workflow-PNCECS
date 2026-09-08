@@ -15,6 +15,26 @@ class BaseConfig:
     # 🗄Database
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
+    # Synchronous WSGI workers should poll instead of holding one thread per
+    # signed-in browser. Deployments with an async-capable SSE proxy can opt in.
+    NOTIFICATION_TRANSPORT = os.getenv("NOTIFICATION_TRANSPORT", "poll").strip().lower()
+    NOTIFICATION_POLL_INTERVAL_MS = int(
+        os.getenv("NOTIFICATION_POLL_INTERVAL_MS", "10000")
+    )
+
+    WORKFLOW_DASHBOARD_SCAN_LIMIT = int(
+        os.getenv("WORKFLOW_DASHBOARD_SCAN_LIMIT", "1500")
+    )
+    WORKFLOW_DASHBOARD_PAGE_SIZE = int(
+        os.getenv("WORKFLOW_DASHBOARD_PAGE_SIZE", "50")
+    )
+    WORKFLOW_DASHBOARD_ASSIGNEE_PREVIEW_LIMIT = int(
+        os.getenv("WORKFLOW_DASHBOARD_ASSIGNEE_PREVIEW_LIMIT", "8")
+    )
+    WORKFLOW_FOLLOWING_PAGE_SIZE = int(
+        os.getenv("WORKFLOW_FOLLOWING_PAGE_SIZE", "50")
+    )
+
     # Archive
     ARCHIVE_PURGE_DAYS = int(
         os.getenv("ARCHIVE_PURGE_DAYS", 30)

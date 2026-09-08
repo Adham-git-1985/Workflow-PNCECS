@@ -296,6 +296,22 @@
   </div>
 </div>
 
+{% if pages > 1 %}
+<nav class="mt-3" aria-label="صفحات المسارات">
+  <ul class="pagination justify-content-center mb-0">
+    <li class="page-item {% if not previous_page_url %}disabled{% endif %}">
+      <a class="page-link" href="{{ previous_page_url or '#' }}">السابق</a>
+    </li>
+    <li class="page-item disabled">
+      <span class="page-link">{{ page }} / {{ pages }}</span>
+    </li>
+    <li class="page-item {% if not next_page_url %}disabled{% endif %}">
+      <a class="page-link" href="{{ next_page_url or '#' }}">التالي</a>
+    </li>
+  </ul>
+</nav>
+{% endif %}
+
 {# =========================
    اتفاقية مستوى الخدمة معلومة Modal (template-level)
    ========================= #}

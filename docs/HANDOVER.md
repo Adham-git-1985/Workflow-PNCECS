@@ -128,7 +128,9 @@ flask --app app run --debug
   - استخدام منطق تشغيل Job مرة واحدة على `before_request` أو داخل `@app.route('/')` أول دخول.
 
 ### بطء الجداول
-- تأكد من وجود Indexes على أعمدة الفرز والبحث.
+- شغّل `flask --app app db upgrade` لتثبيت فهارس مسار وسجل التدقيق والتنبيهات.
+- أبقِ `NOTIFICATION_TRANSPORT=poll` مع Waitress حتى لا يحجز كل مستخدم خيط SSE دائمًا.
+- اضبط `WORKFLOW_DASHBOARD_PAGE_SIZE` و`WORKFLOW_FOLLOWING_PAGE_SIZE` بدل عرض آلاف الصفوف دفعة واحدة.
 
 ---
 

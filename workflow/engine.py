@@ -488,6 +488,8 @@ def _is_strict_ancestor_node(ancestor_node_id: int, descendant_node_id: int) -> 
 def _hierarchy_bypass_steps(
     inst: WorkflowInstance,
     target_step: WorkflowInstanceStep,
+    *,
+    instance_steps=None,
 ) -> list[WorkflowInstanceStep]:
     """Return lower pending steps that a future higher step may bypass."""
     current_order = int(getattr(inst, "current_step_order", 0) or 0)
@@ -503,16 +505,26 @@ def _hierarchy_bypass_steps(
     if (getattr(target_step, "routing_reason", "") or "").strip() == DYNAMIC_RETURN_REASON:
         return []
 
-    route_steps = (
-        WorkflowInstanceStep.query
-        .filter(
-            WorkflowInstanceStep.instance_id == int(inst.id),
-            WorkflowInstanceStep.step_order >= current_order,
-            WorkflowInstanceStep.step_order <= target_order,
+    if instance_steps is None:
+        route_steps = (
+            WorkflowInstanceStep.query
+            .filter(
+                WorkflowInstanceStep.instance_id == int(inst.id),
+                WorkflowInstanceStep.step_order >= current_order,
+                WorkflowInstanceStep.step_order <= target_order,
+            )
+            .order_by(WorkflowInstanceStep.step_order.asc())
+            .all()
         )
-        .order_by(WorkflowInstanceStep.step_order.asc())
-        .all()
-    )
+    else:
+        route_steps = sorted(
+            (
+                step for step in instance_steps
+                if int(getattr(step, "instance_id", 0) or 0) == int(inst.id)
+                and current_order <= int(getattr(step, "step_order", 0) or 0) <= target_order
+            ),
+            key=lambda step: int(step.step_order),
+        )
     if not route_steps or int(route_steps[0].step_order) != current_order:
         return []
     if int(route_steps[-1].id) != int(target_step.id):
@@ -554,6 +566,9 @@ def _hierarchy_bypass_steps(
 def resolve_hierarchy_bypass_step(
     inst: WorkflowInstance,
     actor_user_ids,
+    *,
+    instance_steps=None,
+    can_actor_act=None,
 ) -> WorkflowInstanceStep | None:
     """Find the nearest future higher step an actor may execute immediately."""
     if not inst or getattr(inst, "is_completed", False):
@@ -562,20 +577,41 @@ def resolve_hierarchy_bypass_step(
     if not actor_ids:
         return None
 
-    candidates = (
-        WorkflowInstanceStep.query
-        .filter(
-            WorkflowInstanceStep.instance_id == int(inst.id),
-            WorkflowInstanceStep.step_order > int(inst.current_step_order or 0),
-            WorkflowInstanceStep.status == "PENDING",
+    if instance_steps is None:
+        candidates = (
+            WorkflowInstanceStep.query
+            .filter(
+                WorkflowInstanceStep.instance_id == int(inst.id),
+                WorkflowInstanceStep.step_order > int(inst.current_step_order or 0),
+                WorkflowInstanceStep.status == "PENDING",
+            )
+            .order_by(WorkflowInstanceStep.step_order.asc())
+            .all()
         )
-        .order_by(WorkflowInstanceStep.step_order.asc())
-        .all()
-    )
+    else:
+        candidates = sorted(
+            (
+                step for step in instance_steps
+                if int(getattr(step, "instance_id", 0) or 0) == int(inst.id)
+                and int(getattr(step, "step_order", 0) or 0) > int(inst.current_step_order or 0)
+                and (getattr(step, "status", "") or "").strip().upper() == "PENDING"
+            ),
+            key=lambda step: int(step.step_order),
+        )
     for candidate in candidates:
-        if not actor_ids.intersection(resolve_step_approver_user_ids(candidate)):
+        if can_actor_act is not None:
+            actor_can_act = bool(can_actor_act(candidate))
+        else:
+            actor_can_act = bool(
+                actor_ids.intersection(resolve_step_approver_user_ids(candidate))
+            )
+        if not actor_can_act:
             continue
-        if _hierarchy_bypass_steps(inst, candidate):
+        if _hierarchy_bypass_steps(
+            inst,
+            candidate,
+            instance_steps=instance_steps,
+        ):
             return candidate
     return None
 

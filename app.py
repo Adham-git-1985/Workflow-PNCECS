@@ -577,6 +577,73 @@ def _ensure_runtime_schema():
                 except Exception:
                     db.session.rollback()
 
+            # Cover the high-traffic Workflow dashboard, inbox, audit follower,
+            # and notification polling access paths on existing SQLite installs.
+            performance_indexes = (
+                (
+                    "workflow_request",
+                    ("status", "id"),
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_request_status_id "
+                    "ON workflow_request (status, id)",
+                ),
+                (
+                    "audit_log",
+                    ("request_id", "created_at"),
+                    "CREATE INDEX IF NOT EXISTS ix_audit_request_created "
+                    "ON audit_log (request_id, created_at)",
+                ),
+                (
+                    "audit_log",
+                    ("request_id", "action", "target_type", "target_id"),
+                    "CREATE INDEX IF NOT EXISTS ix_audit_request_action_target "
+                    "ON audit_log (request_id, action, target_type, target_id)",
+                ),
+                (
+                    "workflow_instances",
+                    ("is_completed", "current_step_order", "id"),
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_instances_open_current "
+                    "ON workflow_instances (is_completed, current_step_order, id)",
+                ),
+                (
+                    "workflow_instance_steps",
+                    ("instance_id", "status", "step_order"),
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_instance_steps_instance_status_order "
+                    "ON workflow_instance_steps (instance_id, status, step_order)",
+                ),
+                (
+                    "workflow_step_tasks",
+                    ("instance_id", "step_order", "status", "assignee_user_id"),
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_step_tasks_instance_step_status_user "
+                    "ON workflow_step_tasks (instance_id, step_order, status, assignee_user_id)",
+                ),
+                (
+                    "workflow_step_tasks",
+                    ("request_id", "status"),
+                    "CREATE INDEX IF NOT EXISTS ix_workflow_step_tasks_request_status "
+                    "ON workflow_step_tasks (request_id, status)",
+                ),
+                (
+                    "notification",
+                    ("user_id", "is_mirror", "is_visible", "is_read", "source"),
+                    "CREATE INDEX IF NOT EXISTS ix_notification_poll_unread "
+                    "ON notification (user_id, is_mirror, is_visible, is_read, source)",
+                ),
+                (
+                    "notification",
+                    ("user_id", "is_mirror", "is_visible", "id"),
+                    "CREATE INDEX IF NOT EXISTS ix_notification_poll_latest "
+                    "ON notification (user_id, is_mirror, is_visible, id)",
+                ),
+            )
+            try:
+                for table_name, columns, statement in performance_indexes:
+                    if all(_col_exists(table_name, column) for column in columns):
+                        db.session.execute(text(statement))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+                app.logger.exception("Unable to initialize performance indexes")
+
             # Backfill requests created before runtime SLA durations existed.
             # Existing due dates preserve the original duration when there is
             # no template value, then waiting steps have their clocks stopped.

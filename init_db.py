@@ -157,6 +157,14 @@ def init_database():
                 CREATE INDEX IF NOT EXISTS ix_notification_created
                 ON notification (created_at DESC);
             """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_notification_poll_unread
+                ON notification (user_id, is_mirror, is_visible, is_read, source);
+            """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_notification_poll_latest
+                ON notification (user_id, is_mirror, is_visible, id);
+            """))
 
         # ===== Audit Log =====
         if has_table("audit_log"):
@@ -167,6 +175,14 @@ def init_database():
             db.session.execute(text("""
                 CREATE INDEX IF NOT EXISTS ix_audit_target_created
                 ON audit_log (target_type, target_id, created_at DESC);
+            """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_audit_request_created
+                ON audit_log (request_id, created_at);
+            """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_audit_request_action_target
+                ON audit_log (request_id, action, target_type, target_id);
             """))
 
         # ===== Archive =====
@@ -218,6 +234,10 @@ def init_database():
                 CREATE INDEX IF NOT EXISTS ix_workflow_request_role
                 ON workflow_request (current_role);
             """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_workflow_request_status_id
+                ON workflow_request (status, id);
+            """))
 
         # ===== Attachments table (we set __tablename__ = workflow_request_attachments) =====
         if has_table("workflow_request_attachments"):
@@ -240,6 +260,10 @@ def init_database():
                 CREATE INDEX IF NOT EXISTS ix_workflow_instances_current
                 ON workflow_instances (current_step_order, is_completed);
             """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_workflow_instances_open_current
+                ON workflow_instances (is_completed, current_step_order, id);
+            """))
 
         if has_table("workflow_instance_steps"):
             db.session.execute(text("""
@@ -249,6 +273,20 @@ def init_database():
             db.session.execute(text("""
                 CREATE INDEX IF NOT EXISTS ix_wis_status_due
                 ON workflow_instance_steps (status, due_at);
+            """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_workflow_instance_steps_instance_status_order
+                ON workflow_instance_steps (instance_id, status, step_order);
+            """))
+
+        if has_table("workflow_step_tasks"):
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_workflow_step_tasks_instance_step_status_user
+                ON workflow_step_tasks (instance_id, step_order, status, assignee_user_id);
+            """))
+            db.session.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_workflow_step_tasks_request_status
+                ON workflow_step_tasks (request_id, status);
             """))
 
         if has_table("workflow_templates"):

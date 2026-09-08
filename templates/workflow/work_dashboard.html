@@ -103,6 +103,11 @@
                       {% endif %}
                     </div>
                   {% endfor %}
+                  {% if row.step_assignee_overflow %}
+                    <div class="small text-muted mt-1">
+                      و{{ row.step_assignee_overflow }} مستخدمين إضافيين
+                    </div>
+                  {% endif %}
                 {% endif %}
               {% else %}-{% endif %}
             </td>

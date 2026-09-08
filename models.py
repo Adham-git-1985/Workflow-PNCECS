@@ -615,6 +615,7 @@ class WorkflowRequest(db.Model):
             "source_corr_kind",
             "source_corr_id",
         ),
+        db.Index("ix_workflow_request_status_id", "status", "id"),
     )
 
 
@@ -631,6 +632,16 @@ class Approval(db.Model):
 
 class AuditLog(db.Model):
     __tablename__ = "audit_log"
+    __table_args__ = (
+        db.Index("ix_audit_request_created", "request_id", "created_at"),
+        db.Index(
+            "ix_audit_request_action_target",
+            "request_id",
+            "action",
+            "target_type",
+            "target_id",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -855,6 +866,21 @@ class Notification(db.Model):
         db.Index("ix_notification_event_key", "event_key"),
         db.Index("ix_notification_user_mirror_read", "user_id", "is_mirror", "is_read"),
         db.Index("ix_notification_user_source_read", "user_id", "source", "is_read"),
+        db.Index(
+            "ix_notification_poll_unread",
+            "user_id",
+            "is_mirror",
+            "is_visible",
+            "is_read",
+            "source",
+        ),
+        db.Index(
+            "ix_notification_poll_latest",
+            "user_id",
+            "is_mirror",
+            "is_visible",
+            "id",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -1166,6 +1192,14 @@ WorkflowTemplateStep.parallel_assignees = db.relationship(
 
 class WorkflowInstance(db.Model):
     __tablename__ = "workflow_instances"
+    __table_args__ = (
+        db.Index(
+            "ix_workflow_instances_open_current",
+            "is_completed",
+            "current_step_order",
+            "id",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
 
@@ -1197,6 +1231,14 @@ class WorkflowInstance(db.Model):
 
 class WorkflowInstanceStep(db.Model):
     __tablename__ = "workflow_instance_steps"
+    __table_args__ = (
+        db.Index(
+            "ix_workflow_instance_steps_instance_status_order",
+            "instance_id",
+            "status",
+            "step_order",
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     instance_id = db.Column(db.Integer, db.ForeignKey("workflow_instances.id"), nullable=False)
@@ -1254,10 +1296,6 @@ class WorkflowStepTask(db.Model):
 
     __tablename__ = "workflow_step_tasks"
 
-    __table_args__ = (
-        db.UniqueConstraint("instance_id", "step_order", "assignee_user_id", name="uq_wf_parallel_task"),
-    )
-
     id = db.Column(db.Integer, primary_key=True)
 
     instance_id = db.Column(db.Integer, db.ForeignKey("workflow_instances.id"), nullable=False, index=True)
@@ -1288,6 +1326,18 @@ class WorkflowStepTask(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("instance_id", "step_order", "assignee_user_id", name="uq_workflow_step_task"),
+        db.Index(
+            "ix_workflow_step_tasks_instance_step_status_user",
+            "instance_id",
+            "step_order",
+            "status",
+            "assignee_user_id",
+        ),
+        db.Index(
+            "ix_workflow_step_tasks_request_status",
+            "request_id",
+            "status",
+        ),
     )
 
     # (No SLA fields yet for PARALLEL_SYNC tasks)

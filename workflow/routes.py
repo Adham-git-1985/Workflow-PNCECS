@@ -140,6 +140,10 @@ from workflow.dynamic_paths import (
     requester_dynamic_manager_options,
 )
 from workflow.project_workflows import PROJECT_WORKFLOW_METADATA_BY_TEMPLATE_NAME
+from workflow.read_models import (
+    load_dashboard_correspondence_contexts,
+    load_workflow_access_snapshot,
+)
 from workflow.temporary_delete import can_delete_workflow_request, is_super_admin
 
 from workflow.engine import (
@@ -3317,6 +3321,29 @@ def _actor_context_can_view_request(req: WorkflowRequest, users) -> bool:
     return any(_user_can_view_request(user, req) for user in (users or []) if user)
 
 
+def _actor_context_can_view_request_from_snapshot(
+    req: WorkflowRequest,
+    users,
+    access_snapshot,
+    super_admin_user_ids: set[int],
+) -> bool:
+    """Apply the same visibility rules using a set-based access snapshot."""
+    visible_users = list(users or [])
+    if is_confidential_workflow(req):
+        if not can_user_pass_confidential_workflow_gate(current_user, req):
+            return False
+        visible_users = [current_user]
+    return any(
+        access_snapshot.can_view(
+            user,
+            req,
+            is_super_admin=int(user.id) in super_admin_user_ids,
+        )
+        for user in visible_users
+        if getattr(user, "id", None)
+    )
+
+
 def _get_request_followers_user_ids(req_id: int) -> set[int]:
     """Users who decided at least one step (followers)."""
     ids: set[int] = set()
@@ -4021,6 +4048,138 @@ def _workflow_user_summary(req, step):
     return {"last_action": last_action, "waiting_for": waiting_for}
 
 
+def _workflow_user_summaries(rows) -> dict[int, dict]:
+    """Build inbox summaries in batches instead of querying once per row."""
+    workflow_rows = list(rows or [])
+    request_ids = sorted({int(req.id) for req, _inst, _step in workflow_rows})
+    if not request_ids:
+        return {}
+
+    def id_chunks(values, size=400):
+        normalized_values = sorted({int(value) for value in values if value})
+        for offset in range(0, len(normalized_values), size):
+            yield normalized_values[offset:offset + size]
+
+    latest_logs = []
+    for request_id_chunk in id_chunks(request_ids):
+        ranked_logs = (
+            db.session.query(
+                AuditLog.request_id.label("request_id"),
+                AuditLog.user_id.label("user_id"),
+                AuditLog.action.label("action"),
+                func.row_number().over(
+                    partition_by=AuditLog.request_id,
+                    order_by=(AuditLog.created_at.desc(), AuditLog.id.desc()),
+                ).label("row_number"),
+            )
+            .filter(
+                AuditLog.request_id.in_(request_id_chunk),
+                ~AuditLog.action.in_(("PAGE_VIEW", "VIEW_PAGE", "REQUEST_VIEWED", "USER_ACTION")),
+            )
+            .subquery()
+        )
+        latest_logs.extend(
+            db.session.query(
+                ranked_logs.c.request_id,
+                ranked_logs.c.user_id,
+                ranked_logs.c.action,
+            )
+            .filter(ranked_logs.c.row_number == 1)
+            .all()
+        )
+    latest_log_by_request = {int(row.request_id): row for row in latest_logs}
+
+    user_ids = {
+        int(row.user_id) for row in latest_logs if row.user_id
+    }
+    user_ids.update(
+        int(step.approver_user_id)
+        for _req, _inst, step in workflow_rows
+        if step and step.approver_user_id
+    )
+    users_map = {}
+    for user_id_chunk in id_chunks(user_ids):
+        users_map.update({
+            int(user.id): user
+            for user in User.query.filter(User.id.in_(user_id_chunk)).all()
+        })
+    department_ids = {
+        int(step.approver_department_id)
+        for _req, _inst, step in workflow_rows
+        if step and step.approver_department_id
+    }
+    departments_map = {}
+    for department_id_chunk in id_chunks(department_ids):
+        departments_map.update({
+            int(row.id): row
+            for row in Department.query.filter(Department.id.in_(department_id_chunk)).all()
+        })
+    directorate_ids = {
+        int(step.approver_directorate_id)
+        for _req, _inst, step in workflow_rows
+        if step and step.approver_directorate_id
+    }
+    directorates_map = {}
+    for directorate_id_chunk in id_chunks(directorate_ids):
+        directorates_map.update({
+            int(row.id): row
+            for row in Directorate.query.filter(Directorate.id.in_(directorate_id_chunk)).all()
+        })
+    committee_ids = {
+        int(step.approver_committee_id)
+        for _req, _inst, step in workflow_rows
+        if step and step.approver_committee_id
+    }
+    committees_map = {}
+    for committee_id_chunk in id_chunks(committee_ids):
+        committees_map.update({
+            int(row.id): row
+            for row in Committee.query.filter(Committee.id.in_(committee_id_chunk)).all()
+        })
+
+    summaries = {}
+    for req, _inst, step in workflow_rows:
+        log = latest_log_by_request.get(int(req.id))
+        actor_user = users_map.get(int(log.user_id or 0)) if log else None
+        actor = actor_user.full_name if actor_user else "النظام"
+        action = (log.action or "").upper() if log else ""
+        if action == "WORKFLOW_COMMENT":
+            last_action = f"تمت إضافة تعليق من {actor}"
+        elif action == "WORKFLOW_REPLY":
+            last_action = f"تمت إضافة رد من {actor}"
+        elif action in {"APPROVE", "WORKFLOW_APPROVE", "STEP_APPROVED"}:
+            last_action = f"تمت المتابعة من {actor}"
+        elif action in {"REJECT", "WORKFLOW_REJECT", "STEP_REJECTED"}:
+            last_action = f"تم توقيف المسار بواسطة {actor}"
+        elif log:
+            last_action = f"آخر إجراء: {ui_label(log.action)} بواسطة {actor}"
+        else:
+            last_action = "لم يُتخذ إجراء بعد"
+
+        waiting_for = "لا يوجد إجراء معلّق"
+        if step and (step.status or "").upper() == "PENDING":
+            kind = (step.approver_kind or "").upper()
+            if kind == "USER" and step.approver_user_id:
+                target_user = users_map.get(int(step.approver_user_id))
+                waiting_for = f"بانتظار {target_user.full_name if target_user else 'مستخدم محدد'}"
+            elif kind == "DEPARTMENT" and step.approver_department_id:
+                department = departments_map.get(int(step.approver_department_id))
+                waiting_for = f"بانتظار إدارة {department.name_ar if department else 'محددة'}"
+            elif kind == "DIRECTORATE" and step.approver_directorate_id:
+                directorate = directorates_map.get(int(step.approver_directorate_id))
+                waiting_for = f"بانتظار {directorate.name_ar if directorate else 'إدارة محددة'}"
+            elif kind == "COMMITTEE" and step.approver_committee_id:
+                committee = committees_map.get(int(step.approver_committee_id))
+                waiting_for = f"بانتظار لجنة {committee.name_ar if committee else 'محددة'}"
+            elif kind == "ROLE":
+                waiting_for = "بانتظار الجهة المسؤولة"
+        summaries[int(req.id)] = {
+            "last_action": last_action,
+            "waiting_for": waiting_for,
+        }
+    return summaries
+
+
 _WORKFLOW_OPERATION_SOURCE_RE = re.compile(
     r"(?im)^[ \t]*مصدر[ \t]+العملية[ \t]*:[^\r\n]*(?:\r?\n|$)"
 )
@@ -4272,60 +4431,99 @@ def inbox():
                 existing_instance_ids.add(int(mention_row[1].id))
         rows.sort(key=lambda row: int(row[0].id), reverse=True)
 
-    # Future higher-level approvers in a dynamic hierarchy can act before the
-    # current lower step.  Surface those requests in the same inbox so the
-    # capability is discoverable instead of requiring a crafted direct URL.
+    dynamic_rows = []
     if not is_super:
-        actor_ids = [
-            int(user.id) for user in actor_users
-            if getattr(user, "id", None)
-        ]
-        existing_instance_ids = {int(inst.id) for _req, inst, _step in rows}
-        dynamic_instances = (
-            WorkflowInstance.query
+        dynamic_query = (
+            db.session.query(WorkflowRequest, WorkflowInstance)
+            .join(WorkflowInstance, WorkflowInstance.request_id == WorkflowRequest.id)
             .filter(
                 WorkflowInstance.template_id.is_(None),
                 WorkflowInstance.is_completed.is_(False),
             )
-            .order_by(WorkflowInstance.id.desc())
-            .all()
         )
-        for dynamic_instance in dynamic_instances:
+        if search:
+            dynamic_like = f"%{search}%"
+            dynamic_conditions = [
+                WorkflowRequest.title.ilike(dynamic_like),
+                WorkflowRequest.description.ilike(dynamic_like),
+                User.email.ilike(dynamic_like),
+            ]
+            if search.isdigit():
+                dynamic_conditions.insert(0, WorkflowRequest.id == int(search))
+            dynamic_query = (
+                dynamic_query
+                .join(User, User.id == WorkflowRequest.requester_id)
+                .filter(or_(*dynamic_conditions))
+            )
+        dynamic_rows = dynamic_query.order_by(WorkflowInstance.id.desc()).all()
+
+    inbox_access_snapshot = load_workflow_access_snapshot(
+        [
+            *(req for req, _inst, _step in rows),
+            *(req for req, _inst in dynamic_rows),
+        ],
+        actor_users,
+        mention_access_action=MENTION_ACCESS_ACTION,
+        mention_access_revoked_action=MENTION_ACCESS_REVOKED_ACTION,
+        retained_follower_actions=(
+            HIERARCHY_BYPASS_FOLLOWER_ACTION,
+            ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+        ),
+        mention_task_notes=MENTION_TASK_NOTES,
+        mention_task_prefix=MENTION_TASK_NOTE,
+    )
+
+    if dynamic_rows:
+        normalized_actor_ids = [
+            int(user.id) for user in actor_users
+            if getattr(user, "id", None)
+        ]
+        existing_instance_ids = {int(inst.id) for _req, inst, _step in rows}
+        for dynamic_request, dynamic_instance in dynamic_rows:
             if int(dynamic_instance.id) in existing_instance_ids:
                 continue
-            if not resolve_hierarchy_bypass_step(dynamic_instance, actor_ids):
+            instance_steps = inbox_access_snapshot.steps_by_instance.get(
+                int(dynamic_instance.id),
+                [],
+            )
+            if not resolve_hierarchy_bypass_step(
+                dynamic_instance,
+                normalized_actor_ids,
+                instance_steps=instance_steps,
+                can_actor_act=lambda candidate: any(
+                    inbox_access_snapshot.can_act(actor_user, candidate)
+                    for actor_user in actor_users
+                ),
+            ):
                 continue
-            dynamic_request = db.session.get(WorkflowRequest, int(dynamic_instance.request_id))
-            current_dynamic_step = WorkflowInstanceStep.query.filter_by(
-                instance_id=dynamic_instance.id,
-                step_order=dynamic_instance.current_step_order,
-                status="PENDING",
-            ).first()
-            if not dynamic_request or not current_dynamic_step:
+            current_dynamic_step = inbox_access_snapshot.current_step_for(dynamic_instance)
+            if (
+                not current_dynamic_step
+                or (current_dynamic_step.status or "").strip().upper() != "PENDING"
+            ):
                 continue
-            if search:
-                requester = db.session.get(User, int(dynamic_request.requester_id or 0))
-                haystack = " ".join(filter(None, (
-                    str(dynamic_request.id),
-                    dynamic_request.title,
-                    dynamic_request.description,
-                    getattr(requester, "email", None),
-                ))).casefold()
-                if search.casefold() not in haystack:
-                    continue
             rows.append((dynamic_request, dynamic_instance, current_dynamic_step))
             existing_instance_ids.add(int(dynamic_instance.id))
             hierarchy_bypass_instance_ids.add(int(dynamic_instance.id))
 
         rows.sort(key=lambda row: int(row[0].id), reverse=True)
 
-    # Query-level role matching is not enough for confidential correspondence:
-    # hide the row (including its title) unless the real logged-in user also
-    # passes the source correspondence ACL.
+    actor_super_admin_ids = set()
+    for actor_user in actor_users:
+        try:
+            if actor_user.has_role("SUPER_ADMIN"):
+                actor_super_admin_ids.add(int(actor_user.id))
+        except Exception:
+            pass
     rows = [
         (req, inst, step)
         for req, inst, step in rows
-        if _actor_context_can_view_request(req, actor_users)
+        if _actor_context_can_view_request_from_snapshot(
+            req,
+            actor_users,
+            inbox_access_snapshot,
+            actor_super_admin_ids,
+        )
     ]
 
     # PARALLEL_SYNC: if the step is still pending but the current user already responded/bypassed,
@@ -4337,16 +4535,13 @@ def inbox():
             for req, inst, step in rows:
                 try:
                     if (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
-                        pending = (
-                            WorkflowStepTask.query
-                            .filter(
-                                WorkflowStepTask.instance_id == inst.id,
-                                WorkflowStepTask.step_order == step.step_order,
-                                WorkflowStepTask.assignee_user_id.in_(actor_ids),
-                                WorkflowStepTask.status == "PENDING",
+                        pending = bool(
+                            set(actor_ids).intersection(
+                                inbox_access_snapshot.pending_task_users_by_step.get(
+                                    (int(inst.id), int(step.step_order)),
+                                    set(),
+                                )
                             )
-                            .count()
-                            > 0
                         )
                         if not pending:
                             continue
@@ -4357,15 +4552,11 @@ def inbox():
             rows = filtered
 
     corr_tasks = _correspondence_inbox_tasks(actor_users, search)
-    request_summaries = {}
+    request_summaries = _workflow_user_summaries(rows)
     for req, inst, step in rows:
-        summary = _workflow_user_summary(req, step)
-        if _mention_task_user_ids(
-            inst.id,
-            pending_only=True,
-        ).intersection(actor_ids):
+        summary = request_summaries[req.id]
+        if inbox_access_snapshot.pending_mentions(inst.id).intersection(actor_ids):
             summary["waiting_for"] = "بانتظار متابعتك عبر المنشن"
-        request_summaries[req.id] = summary
 
     movement_tasks = []
     try:
@@ -4465,109 +4656,73 @@ def work_dashboard():
             conditions.append(WorkflowRequest.id == int(search))
         qry = qry.filter(or_(*conditions))
 
-    requests = qry.limit(1500).all()
+    try:
+        scan_limit = max(
+            100,
+            min(int(current_app.config.get("WORKFLOW_DASHBOARD_SCAN_LIMIT", 1500)), 5000),
+        )
+    except (TypeError, ValueError):
+        scan_limit = 1500
+    requests = qry.limit(scan_limit).all()
+    access_snapshot = load_workflow_access_snapshot(
+        requests,
+        actor_users,
+        mention_access_action=MENTION_ACCESS_ACTION,
+        mention_access_revoked_action=MENTION_ACCESS_REVOKED_ACTION,
+        retained_follower_actions=(
+            HIERARCHY_BYPASS_FOLLOWER_ACTION,
+            ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+        ),
+        mention_task_notes=MENTION_TASK_NOTES,
+        mention_task_prefix=MENTION_TASK_NOTE,
+    )
+    correspondence_contexts = load_dashboard_correspondence_contexts(requests)
+    actor_super_admin_ids = set()
+    for actor_user in actor_users:
+        try:
+            if actor_user.has_role("SUPER_ADMIN"):
+                actor_super_admin_ids.add(int(actor_user.id))
+        except Exception:
+            pass
+
     rows = []
     now = datetime.utcnow()
     for req in requests:
-        if not _actor_context_can_view_request(req, actor_users):
+        if not _actor_context_can_view_request_from_snapshot(
+            req,
+            actor_users,
+            access_snapshot,
+            actor_super_admin_ids,
+        ):
             continue
-        inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
-        current_step = None
-        template = None
-        if inst:
-            current_step = WorkflowInstanceStep.query.filter_by(
-                instance_id=inst.id,
-                step_order=inst.current_step_order,
-            ).first()
-            template = db.session.get(WorkflowTemplate, inst.template_id) if inst.template_id else None
+        inst = access_snapshot.instance_for(req.id)
+        current_step = access_snapshot.current_step_for(inst)
 
-        mentioned_task_user_ids = _mention_task_user_ids(
-            getattr(inst, "id", None),
-            pending_only=True,
-        )
+        mentioned_task_user_ids = access_snapshot.pending_mentions(getattr(inst, "id", None))
         mentioned_task_for_actor = bool(actor_ids.intersection(mentioned_task_user_ids))
 
         needs_action = bool(
             current_step
             and current_step.status == "PENDING"
-            and any(_user_can_act_on_step(user, current_step) for user in actor_users)
+            and any(access_snapshot.can_act(user, current_step) for user in actor_users)
         )
         needs_action = needs_action or mentioned_task_for_actor
-        if current_step and (current_step.mode or "").upper() == "PARALLEL_SYNC" and inst:
-            needs_action = needs_action or (
-                WorkflowStepTask.query
-                .filter(
-                    WorkflowStepTask.instance_id == inst.id,
-                    WorkflowStepTask.step_order == current_step.step_order,
-                    WorkflowStepTask.assignee_user_id.in_(actor_ids or {-1}),
-                    WorkflowStepTask.status == "PENDING",
-                )
-                .first()
-                is not None
-            )
-
-        step_assignee_ids = []
-        if current_step:
-            if (current_step.mode or "").strip().upper() == "PARALLEL_SYNC" and inst:
-                step_assignee_ids = [
-                    int(user_id) for (user_id,) in (
-                        db.session.query(WorkflowStepTask.assignee_user_id)
-                        .filter(
-                            WorkflowStepTask.instance_id == inst.id,
-                            WorkflowStepTask.step_order == current_step.step_order,
-                            WorkflowStepTask.status == "PENDING",
-                        )
-                        .order_by(WorkflowStepTask.assignee_user_id.asc())
-                        .all()
-                    )
-                    if user_id
-                ]
-            else:
-                step_assignee_ids = resolve_step_approver_user_ids(current_step)
-            step_assignee_ids = list(dict.fromkeys([
-                *step_assignee_ids,
-                *sorted(mentioned_task_user_ids),
-            ]))
-        step_assignee_map = {
-            int(user.id): user
-            for user in (
-                User.query.filter(User.id.in_(step_assignee_ids)).all()
-                if step_assignee_ids else []
-            )
-        }
-        step_assignees = [
-            step_assignee_map[user_id]
-            for user_id in step_assignee_ids
-            if user_id in step_assignee_map
-        ]
-        step_assignee_details = [
-            {
-                "user": assignee,
-                "hierarchy_position": hierarchy_position_label(
-                    assignee,
-                    routing_node_label=current_step.routing_node_label,
-                    org_node_id=current_step.approver_org_node_id,
-                ),
-                "via_mention": int(assignee.id) in mentioned_task_user_ids,
-            }
-            for assignee in step_assignees
-        ] if current_step else []
-
-        follower_ids = _get_request_followers_user_ids(req.id)
+        follower_ids = access_snapshot.follower_ids(req.id)
         overdue = bool(
             current_step
             and current_step.status == "PENDING"
             and current_step.due_at
             and current_step.due_at < now
         )
-        corr_source = correspondence_context(req) if req.source_corr_id else None
+        corr_source = correspondence_contexts.get(int(req.id))
         rows.append({
             "req": req,
             "inst": inst,
             "step": current_step,
-            "step_assignee_details": step_assignee_details,
-            "template": template,
-            "requester": db.session.get(User, req.requester_id),
+            "step_assignee_details": [],
+            "step_assignee_overflow": 0,
+            "template": None,
+            "requester": None,
             "needs_action": needs_action,
             "mentioned_task_for_actor": mentioned_task_for_actor,
             "created": int(req.requester_id or 0) == int(current_user.id),
@@ -4580,25 +4735,6 @@ def work_dashboard():
             "corr_source": corr_source,
             "overdue": overdue,
         })
-
-    current_committee_summaries = build_committee_summaries(
-        committee_ids=(
-            row["step"].approver_committee_id
-            for row in rows
-            if row["step"]
-            and (row["step"].approver_kind or "").strip().upper() == "COMMITTEE"
-            and row["step"].approver_committee_id
-        )
-    )
-    for row in rows:
-        step = row["step"]
-        row["committee_summary"] = (
-            current_committee_summaries.get(int(step.approver_committee_id))
-            if step
-            and (step.approver_kind or "").strip().upper() == "COMMITTEE"
-            and step.approver_committee_id
-            else None
-        )
 
     def matches(row: dict, queue: str) -> bool:
         return {
@@ -4618,14 +4754,148 @@ def work_dashboard():
     }
     filtered = [row for row in rows if matches(row, selected_queue)]
     page = max(1, request.args.get("page", type=int, default=1))
-    per_page = 50
+    try:
+        per_page = max(
+            10,
+            min(int(current_app.config.get("WORKFLOW_DASHBOARD_PAGE_SIZE", 50)), 100),
+        )
+    except (TypeError, ValueError):
+        per_page = 50
     total = len(filtered)
     pages = max(1, (total + per_page - 1) // per_page)
     page = min(page, pages)
     start = (page - 1) * per_page
+    page_rows = filtered[start:start + per_page]
+
+    try:
+        assignee_preview_limit = max(
+            2,
+            min(int(current_app.config.get("WORKFLOW_DASHBOARD_ASSIGNEE_PREVIEW_LIMIT", 8)), 20),
+        )
+    except (TypeError, ValueError):
+        assignee_preview_limit = 8
+
+    assignee_ids_by_signature = {}
+    page_user_ids = {
+        int(row["req"].requester_id)
+        for row in page_rows
+        if row["req"].requester_id
+    }
+    template_ids = {
+        int(row["inst"].template_id)
+        for row in page_rows
+        if row["inst"] and row["inst"].template_id
+    }
+    for row in page_rows:
+        step = row["step"]
+        instance = row["inst"]
+        mentioned_user_ids = access_snapshot.pending_mentions(
+            getattr(instance, "id", None)
+        )
+        assignee_ids = []
+        if step:
+            if (step.mode or "").strip().upper() == "PARALLEL_SYNC" and instance:
+                assignee_ids = sorted(
+                    access_snapshot.pending_task_users_by_step.get(
+                        (int(instance.id), int(step.step_order)),
+                        set(),
+                    )
+                )
+            else:
+                signature = (
+                    (step.approver_kind or "").strip().upper(),
+                    step.approver_user_id,
+                    (step.approver_role or "").strip().casefold(),
+                    step.approver_department_id,
+                    step.approver_directorate_id,
+                    step.approver_unit_id,
+                    step.approver_section_id,
+                    step.approver_division_id,
+                    step.approver_org_node_id,
+                    step.approver_committee_id,
+                    (step.committee_delivery_mode or "").strip().upper(),
+                )
+                if signature not in assignee_ids_by_signature:
+                    assignee_ids_by_signature[signature] = resolve_step_approver_user_ids(step)
+                assignee_ids = list(assignee_ids_by_signature[signature])
+            assignee_ids = list(dict.fromkeys([
+                *assignee_ids,
+                *sorted(mentioned_user_ids),
+            ]))
+
+        row["step_assignee_overflow"] = max(0, len(assignee_ids) - assignee_preview_limit)
+        row["_step_assignee_ids"] = assignee_ids[:assignee_preview_limit]
+        page_user_ids.update(row["_step_assignee_ids"])
+
+    page_users = (
+        User.query.filter(User.id.in_(page_user_ids)).all()
+        if page_user_ids else []
+    )
+    page_user_map = {int(user.id): user for user in page_users}
+    template_map = {
+        int(template.id): template
+        for template in (
+            WorkflowTemplate.query.filter(WorkflowTemplate.id.in_(template_ids)).all()
+            if template_ids else []
+        )
+    }
+    hierarchy_position_cache = {}
+    current_committee_summaries = build_committee_summaries(
+        committee_ids=(
+            row["step"].approver_committee_id
+            for row in page_rows
+            if row["step"]
+            and (row["step"].approver_kind or "").strip().upper() == "COMMITTEE"
+            and row["step"].approver_committee_id
+        )
+    )
+    for row in page_rows:
+        req = row["req"]
+        instance = row["inst"]
+        step = row["step"]
+        row["requester"] = page_user_map.get(int(req.requester_id or 0))
+        row["template"] = (
+            template_map.get(int(instance.template_id))
+            if instance and instance.template_id else None
+        )
+        mentioned_user_ids = access_snapshot.pending_mentions(
+            getattr(instance, "id", None)
+        )
+        step_assignees = [
+            page_user_map[user_id]
+            for user_id in row.pop("_step_assignee_ids", [])
+            if user_id in page_user_map
+        ]
+        step_assignee_details = []
+        for assignee in step_assignees:
+            hierarchy_key = (
+                int(assignee.id),
+                int(step.approver_org_node_id or 0) if step else 0,
+                (step.routing_node_label or "") if step else "",
+            )
+            if hierarchy_key not in hierarchy_position_cache:
+                hierarchy_position_cache[hierarchy_key] = hierarchy_position_label(
+                    assignee,
+                    routing_node_label=step.routing_node_label if step else None,
+                    org_node_id=step.approver_org_node_id if step else None,
+                )
+            step_assignee_details.append({
+                "user": assignee,
+                "hierarchy_position": hierarchy_position_cache[hierarchy_key],
+                "via_mention": int(assignee.id) in mentioned_user_ids,
+            })
+        row["step_assignee_details"] = step_assignee_details
+        row["committee_summary"] = (
+            current_committee_summaries.get(int(step.approver_committee_id))
+            if step
+            and (step.approver_kind or "").strip().upper() == "COMMITTEE"
+            and step.approver_committee_id
+            else None
+        )
+
     return render_template(
         "workflow/work_dashboard.html",
-        rows=filtered[start:start + per_page],
+        rows=page_rows,
         counts=counts,
         queue_labels=_WORKFLOW_DASHBOARD_QUEUES,
         selected_queue=selected_queue,
@@ -4993,10 +5263,34 @@ def following():
         .order_by(order_expr, WorkflowRequest.id.desc())
         .all()
     )
+    following_access_snapshot = load_workflow_access_snapshot(
+        (req for req, _inst, _template in rows),
+        actor_users,
+        mention_access_action=MENTION_ACCESS_ACTION,
+        mention_access_revoked_action=MENTION_ACCESS_REVOKED_ACTION,
+        retained_follower_actions=(
+            HIERARCHY_BYPASS_FOLLOWER_ACTION,
+            ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+        ),
+        mention_task_notes=MENTION_TASK_NOTES,
+        mention_task_prefix=MENTION_TASK_NOTE,
+    )
+    actor_super_admin_ids = set()
+    for actor_user in actor_users:
+        try:
+            if actor_user.has_role("SUPER_ADMIN"):
+                actor_super_admin_ids.add(int(actor_user.id))
+        except Exception:
+            pass
     rows = [
         (req, inst, tpl)
         for req, inst, tpl in rows
-        if _actor_context_can_view_request(req, actor_users)
+        if _actor_context_can_view_request_from_snapshot(
+            req,
+            actor_users,
+            following_access_snapshot,
+            actor_super_admin_ids,
+        )
     ]
 
     # SLA filter is applied after loading because it depends on template SLA + current time.
@@ -5005,10 +5299,7 @@ def following():
     def _is_overdue(req, inst, tpl):
         try:
             if inst and (getattr(req, "status", "") or "").upper() not in ("APPROVED", "REJECTED", "CLOSED"):
-                current_step_row = WorkflowInstanceStep.query.filter_by(
-                    instance_id=inst.id,
-                    step_order=inst.current_step_order,
-                ).first()
+                current_step_row = following_access_snapshot.current_step_for(inst)
                 if current_step_row and is_sla_suspended(current_step_row.sla_days):
                     return False
                 if current_step_row and current_step_row.due_at:
@@ -5077,6 +5368,30 @@ def following():
     elif summary_filter == "overdue":
         rows = [row for row in summary_rows if _is_overdue(row[0], row[1], row[2])]
 
+    displayed_total = len(rows)
+    page = max(1, request.args.get("page", type=int, default=1))
+    try:
+        per_page = max(
+            10,
+            min(int(current_app.config.get("WORKFLOW_FOLLOWING_PAGE_SIZE", 50)), 100),
+        )
+    except (TypeError, ValueError):
+        per_page = 50
+    pages = max(1, (displayed_total + per_page - 1) // per_page)
+    page = min(page, pages)
+    page_start = (page - 1) * per_page
+    rows = rows[page_start:page_start + per_page]
+    pagination_args = request.args.to_dict(flat=True)
+    pagination_args.pop("page", None)
+    previous_page_url = (
+        url_for("workflow.following", page=page - 1, **pagination_args)
+        if page > 1 else None
+    )
+    next_page_url = (
+        url_for("workflow.following", page=page + 1, **pagination_args)
+        if page < pages else None
+    )
+
     summary_urls = {}
     summary_url_args = {
         key: value
@@ -5090,14 +5405,11 @@ def following():
         summary_urls[filter_key] = url_for("workflow.following", **url_args)
 
     instance_ids = [int(inst.id) for _req, inst, _tpl in rows if inst and getattr(inst, "id", None)]
-    report_steps = []
-    if instance_ids:
-        report_steps = (
-            WorkflowInstanceStep.query
-            .filter(WorkflowInstanceStep.instance_id.in_(instance_ids))
-            .order_by(WorkflowInstanceStep.instance_id.asc(), WorkflowInstanceStep.step_order.asc())
-            .all()
-        )
+    report_steps = [
+        step
+        for instance_id in instance_ids
+        for step in following_access_snapshot.steps_by_instance.get(instance_id, [])
+    ]
 
     step_count_map = {}
     current_step_map = {}
@@ -5121,12 +5433,66 @@ def following():
         int(user.id): user
         for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
     }
-    depts_map = {int(row.id): row for row in Department.query.all()}
-    dirs_map = {int(row.id): row for row in Directorate.query.all()}
-    units_map = {int(row.id): row for row in Unit.query.all()}
-    sections_map = {int(row.id): row for row in Section.query.all()}
-    divisions_map = {int(row.id): row for row in Division.query.all()}
-    committees_map = {int(row.id): row for row in Committee.query.all()}
+    department_ids = {
+        int(step.approver_department_id)
+        for step in report_steps if step.approver_department_id
+    }
+    directorate_ids = {
+        int(step.approver_directorate_id)
+        for step in report_steps if step.approver_directorate_id
+    }
+    unit_ids = {
+        int(step.approver_unit_id)
+        for step in report_steps if step.approver_unit_id
+    }
+    section_ids = {
+        int(step.approver_section_id)
+        for step in report_steps if step.approver_section_id
+    }
+    division_ids = {
+        int(step.approver_division_id)
+        for step in report_steps if step.approver_division_id
+    }
+    committee_ids = {
+        int(step.approver_committee_id)
+        for step in report_steps if step.approver_committee_id
+    }
+    depts_map = {
+        int(row.id): row for row in (
+            Department.query.filter(Department.id.in_(department_ids)).all()
+            if department_ids else []
+        )
+    }
+    dirs_map = {
+        int(row.id): row for row in (
+            Directorate.query.filter(Directorate.id.in_(directorate_ids)).all()
+            if directorate_ids else []
+        )
+    }
+    units_map = {
+        int(row.id): row for row in (
+            Unit.query.filter(Unit.id.in_(unit_ids)).all()
+            if unit_ids else []
+        )
+    }
+    sections_map = {
+        int(row.id): row for row in (
+            Section.query.filter(Section.id.in_(section_ids)).all()
+            if section_ids else []
+        )
+    }
+    divisions_map = {
+        int(row.id): row for row in (
+            Division.query.filter(Division.id.in_(division_ids)).all()
+            if division_ids else []
+        )
+    }
+    committees_map = {
+        int(row.id): row for row in (
+            Committee.query.filter(Committee.id.in_(committee_ids)).all()
+            if committee_ids else []
+        )
+    }
     current_target_map = {
         instance_id: _step_target_label(
             step,
@@ -5160,7 +5526,11 @@ def following():
         summary=summary,
         summary_filter=summary_filter,
         summary_urls=summary_urls,
-        displayed_total=len(rows),
+        displayed_total=displayed_total,
+        page=page,
+        pages=pages,
+        previous_page_url=previous_page_url,
+        next_page_url=next_page_url,
         now=now,
         step_count_map=step_count_map,
         current_step_map=current_step_map,
@@ -5451,16 +5821,17 @@ def view_request(request_id):
                     "note": _clean_workflow_note(latest_step.note),
                 })
 
-    # attachment counts per step (best-effort via audit meta)
     step_att_counts = {}
+    attachment_upload_logs = []
     try:
-        logs = (
+        attachment_upload_logs = (
             AuditLog.query
             .filter(AuditLog.request_id == req.id)
             .filter(AuditLog.action == 'WORKFLOW_ATTACHMENT_UPLOADED')
+            .order_by(AuditLog.created_at.asc(), AuditLog.id.asc())
             .all()
         )
-        for lg in logs:
+        for lg in attachment_upload_logs:
             so, _src = _parse_attachment_meta(getattr(lg, 'note', None))
             if so is None:
                 continue
@@ -5472,21 +5843,13 @@ def view_request(request_id):
     except Exception:
         pass
 
-    # attachment upload logs map (file_id -> meta)
     log_map = {}
     try:
         if file_ids:
-            logs = (
-                AuditLog.query
-                .filter(AuditLog.request_id == req.id)
-                .filter(AuditLog.action == 'WORKFLOW_ATTACHMENT_UPLOADED')
-                .filter(AuditLog.target_id.in_(file_ids))
-                .order_by(AuditLog.created_at.asc())
-                .all()
-            )
-            for lg in logs:
+            file_id_set = {int(file_id) for file_id in file_ids if file_id}
+            for lg in attachment_upload_logs:
                 fid = getattr(lg, 'target_id', None)
-                if not fid:
+                if not fid or int(fid) not in file_id_set:
                     continue
                 fid = int(fid)
                 if fid in log_map:
@@ -5501,21 +5864,113 @@ def view_request(request_id):
     except Exception:
         log_map = {}
 
-    # maps for readable routing display
-    users_map = {u.id: u for u in User.query.all()}
-    user_org_path_map = {
-        int(user.id): node_path_label(resolve_user_org_node_id(user))
-        for user in users_map.values()
-        if resolve_user_org_node_id(user)
+    try:
+        active_mention_logs = _active_mention_access_logs(req.id)
+    except Exception:
+        active_mention_logs = {}
+
+    user_ids = {int(req.requester_id)} if req.requester_id else set()
+    for step in steps:
+        for user_id in (step.approver_user_id, step.decided_by_id):
+            if user_id:
+                user_ids.add(int(user_id))
+    user_ids.update(
+        int(file_item.owner_id)
+        for file_item in files_map.values()
+        if getattr(file_item, "owner_id", None)
+    )
+    user_ids.update(
+        int(meta["user_id"])
+        for meta in log_map.values()
+        if meta.get("user_id")
+    )
+    user_ids.update(int(user_id) for user_id in active_mention_logs)
+    try:
+        for escalation in list(getattr(req, "escalations", None) or []):
+            if getattr(escalation, "to_user_id", None):
+                user_ids.add(int(escalation.to_user_id))
+            for target_id in (escalation.targets or "").split(","):
+                if target_id.strip().isdigit():
+                    user_ids.add(int(target_id.strip()))
+    except Exception:
+        pass
+
+    users_map = {
+        int(user.id): user
+        for user in (User.query.filter(User.id.in_(user_ids)).all() if user_ids else [])
     }
-    depts_map = {d.id: d for d in Department.query.all()}
-    dirs_map = {d.id: d for d in Directorate.query.all()}
-    units_map = {row.id: row for row in Unit.query.all()}
-    sections_map = {row.id: row for row in Section.query.all()}
-    divisions_map = {row.id: row for row in Division.query.all()}
-    org_nodes_map = {row.id: row for row in OrgNode.query.all()}
-    org_node_approver_names_map = org_node_approver_names(org_nodes_map.keys())
-    committees_map = {c.id: c for c in Committee.query.all()}
+    user_org_path_map = {}
+    department_ids = {
+        int(step.approver_department_id)
+        for step in steps if step.approver_department_id
+    }
+    directorate_ids = {
+        int(step.approver_directorate_id)
+        for step in steps if step.approver_directorate_id
+    }
+    unit_ids = {
+        int(step.approver_unit_id)
+        for step in steps if step.approver_unit_id
+    }
+    section_ids = {
+        int(step.approver_section_id)
+        for step in steps if step.approver_section_id
+    }
+    division_ids = {
+        int(step.approver_division_id)
+        for step in steps if step.approver_division_id
+    }
+    org_node_ids = {
+        int(step.approver_org_node_id)
+        for step in steps if step.approver_org_node_id
+    }
+    committee_ids = {
+        int(step.approver_committee_id)
+        for step in steps if step.approver_committee_id
+    }
+    depts_map = {
+        int(row.id): row for row in (
+            Department.query.filter(Department.id.in_(department_ids)).all()
+            if department_ids else []
+        )
+    }
+    dirs_map = {
+        int(row.id): row for row in (
+            Directorate.query.filter(Directorate.id.in_(directorate_ids)).all()
+            if directorate_ids else []
+        )
+    }
+    units_map = {
+        int(row.id): row for row in (
+            Unit.query.filter(Unit.id.in_(unit_ids)).all()
+            if unit_ids else []
+        )
+    }
+    sections_map = {
+        int(row.id): row for row in (
+            Section.query.filter(Section.id.in_(section_ids)).all()
+            if section_ids else []
+        )
+    }
+    divisions_map = {
+        int(row.id): row for row in (
+            Division.query.filter(Division.id.in_(division_ids)).all()
+            if division_ids else []
+        )
+    }
+    org_nodes_map = {
+        int(row.id): row for row in (
+            OrgNode.query.filter(OrgNode.id.in_(org_node_ids)).all()
+            if org_node_ids else []
+        )
+    }
+    org_node_approver_names_map = org_node_approver_names(org_node_ids)
+    committees_map = {
+        int(row.id): row for row in (
+            Committee.query.filter(Committee.id.in_(committee_ids)).all()
+            if committee_ids else []
+        )
+    }
     reopen_step_options = [
         {
             "order": int(step.step_order),
@@ -5545,7 +6000,6 @@ def view_request(request_id):
     mentioned_task_statuses = {}
     mention_removable_user_ids = set()
     try:
-        active_mention_logs = _active_mention_access_logs(req.id)
         mentioned_users = [
             users_map[uid]
             for uid in sorted(active_mention_logs)
