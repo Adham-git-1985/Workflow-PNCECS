@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Iterable
 
-from sqlalchemy import func, or_
+from sqlalchemy import exists, func, or_
 
 from extensions import db
 from models import (
@@ -50,6 +50,32 @@ SCOPE_SECRETARY_GENERAL = "SECRETARY_GENERAL"
 
 ACTIVE_STEP_STATUSES = {"PENDING", "WAITING"}
 
+ESCALATION_LEVELS = (1, 2)
+ESCALATION_UNIT_MINUTES = "MINUTES"
+ESCALATION_UNIT_HOURS = "HOURS"
+ESCALATION_UNIT_WORKING_DAYS = "WORKING_DAYS"
+ESCALATION_UNITS = frozenset({
+    ESCALATION_UNIT_MINUTES,
+    ESCALATION_UNIT_HOURS,
+    ESCALATION_UNIT_WORKING_DAYS,
+})
+
+ESCALATION_TARGET_NONE = "NONE"
+ESCALATION_TARGET_AUTO_NEXT = "AUTO_NEXT"
+ESCALATION_TARGET_DEPUTY = "DEPUTY"
+ESCALATION_TARGET_GENERAL_DIRECTOR = "GENERAL_DIRECTOR"
+ESCALATION_TARGET_HR = "HR"
+ESCALATION_TARGET_SECRETARY_GENERAL = "SECRETARY_GENERAL"
+ESCALATION_TARGET_USER_PREFIX = "USER:"
+ESCALATION_FIXED_TARGETS = frozenset({
+    ESCALATION_TARGET_NONE,
+    ESCALATION_TARGET_AUTO_NEXT,
+    ESCALATION_TARGET_DEPUTY,
+    ESCALATION_TARGET_GENERAL_DIRECTOR,
+    ESCALATION_TARGET_HR,
+    ESCALATION_TARGET_SECRETARY_GENERAL,
+})
+
 
 def _normalize(value: str | None) -> str:
     return "".join(ch for ch in (value or "").strip().upper() if ch.isalnum())
@@ -62,6 +88,155 @@ def _setting_int(key: str, default: int, minimum: int = 1) -> int:
         return value if value >= minimum else default
     except Exception:
         return default
+
+
+def escalation_setting_key(kind: str, level: int, field: str) -> str:
+    kind = (kind or "").strip().upper()
+    level = int(level)
+    field = (field or "").strip().upper()
+    if kind not in {KIND_LEAVE, KIND_PERMISSION} or level not in ESCALATION_LEVELS:
+        raise ValueError("INVALID_ESCALATION_POLICY")
+    if field not in {"VALUE", "UNIT", "TARGET"}:
+        raise ValueError("INVALID_ESCALATION_POLICY_FIELD")
+    return f"HR_{kind}_ESCALATION_{level}_{field}"
+
+
+def normalize_escalation_target(value: str | None) -> str | None:
+    target = (value or "").strip().upper()
+    if target in ESCALATION_FIXED_TARGETS:
+        return target
+    if target.startswith(ESCALATION_TARGET_USER_PREFIX):
+        user_id = target.removeprefix(ESCALATION_TARGET_USER_PREFIX).strip()
+        if user_id.isdigit() and int(user_id) > 0:
+            return f"{ESCALATION_TARGET_USER_PREFIX}{int(user_id)}"
+    return None
+
+
+def get_escalation_policies() -> dict[str, dict[int, dict[str, int | str]]]:
+    keys = {"HR_APPROVAL_ESCALATION_WORKDAYS"}
+    keys.update(
+        escalation_setting_key(kind, level, field)
+        for kind in (KIND_LEAVE, KIND_PERMISSION)
+        for level in ESCALATION_LEVELS
+        for field in ("VALUE", "UNIT", "TARGET")
+    )
+    values = {
+        row.key: (row.value or "").strip()
+        for row in SystemSetting.query.filter(SystemSetting.key.in_(keys)).all()
+    }
+    try:
+        legacy_days = max(1, int(values.get("HR_APPROVAL_ESCALATION_WORKDAYS") or 2))
+    except (TypeError, ValueError):
+        legacy_days = 2
+
+    policies: dict[str, dict[int, dict[str, int | str]]] = {
+        KIND_LEAVE: {},
+        KIND_PERMISSION: {},
+    }
+    for kind in (KIND_LEAVE, KIND_PERMISSION):
+        for level in ESCALATION_LEVELS:
+            if kind == KIND_LEAVE:
+                default_value = legacy_days
+                default_unit = ESCALATION_UNIT_WORKING_DAYS
+                default_target = ESCALATION_TARGET_AUTO_NEXT
+            else:
+                default_value = 60
+                default_unit = ESCALATION_UNIT_MINUTES
+                default_target = ESCALATION_TARGET_NONE
+
+            try:
+                value = min(10080, max(1, int(values.get(
+                    escalation_setting_key(kind, level, "VALUE"),
+                ) or default_value)))
+            except (TypeError, ValueError):
+                value = default_value
+            unit = (values.get(
+                escalation_setting_key(kind, level, "UNIT"),
+            ) or default_unit).upper()
+            if unit not in ESCALATION_UNITS:
+                unit = default_unit
+            target = normalize_escalation_target(values.get(
+                escalation_setting_key(kind, level, "TARGET"),
+            ) or default_target) or default_target
+            policies[kind][level] = {
+                "value": value,
+                "unit": unit,
+                "target": target,
+            }
+    return policies
+
+
+def get_escalation_policy(kind: str, level: int) -> dict[str, int | str]:
+    kind = (kind or "").strip().upper()
+    level = int(level)
+    if kind not in {KIND_LEAVE, KIND_PERMISSION}:
+        raise ValueError("INVALID_REQUEST_KIND")
+    if level not in ESCALATION_LEVELS:
+        raise ValueError("INVALID_ESCALATION_LEVEL")
+    return get_escalation_policies()[kind][level]
+
+
+def _add_escalation_period(start: datetime, value: int, unit: str) -> datetime:
+    if unit == ESCALATION_UNIT_MINUTES:
+        return start + timedelta(minutes=value)
+    if unit == ESCALATION_UNIT_HOURS:
+        return start + timedelta(hours=value)
+    return add_working_days(start, value)
+
+
+def _configured_escalation_count(step: HRRequestApprovalStep) -> int:
+    count = max(0, int(getattr(step, "escalation_count", 0) or 0))
+    reason = (getattr(step, "escalation_reason", None) or "").strip().upper()
+    if count == 1 and reason in {"ACTIVE_DELEGATION", "NO_DIRECT_MANAGER", "NO_ORG_MANAGER"}:
+        return 0
+    return count
+
+
+def _next_escalation_level(step: HRRequestApprovalStep) -> int | None:
+    level = _configured_escalation_count(step) + 1
+    return level if level in ESCALATION_LEVELS else None
+
+
+def escalation_due_at(
+    kind: str,
+    level: int,
+    assigned_at: datetime,
+    *,
+    policies: dict[str, dict[int, dict[str, int | str]]] | None = None,
+) -> datetime | None:
+    policy = (policies or get_escalation_policies())[kind][level]
+    if policy["target"] == ESCALATION_TARGET_NONE:
+        return None
+    return _add_escalation_period(
+        assigned_at,
+        int(policy["value"]),
+        str(policy["unit"]),
+    )
+
+
+def refresh_pending_escalation_deadlines(*, now: datetime | None = None) -> int:
+    now = now or datetime.utcnow()
+    policies = get_escalation_policies()
+    refreshed = 0
+    for step in HRRequestApprovalStep.query.filter_by(
+        stage_code=STAGE_DIRECT_MANAGER,
+        status="PENDING",
+    ).all():
+        level = _next_escalation_level(step)
+        assigned_at = step.assigned_at or step.created_at or now
+        step.due_at = (
+            escalation_due_at(
+                step.request_kind,
+                level,
+                assigned_at,
+                policies=policies,
+            )
+            if level
+            else None
+        )
+        step.updated_at = now
+        refreshed += 1
+    return refreshed
 
 
 def add_working_days(start: datetime, working_days: int) -> datetime:
@@ -531,7 +706,9 @@ def hr_notification_user_ids() -> list[int]:
     return sorted(recipient_ids)
 
 
-def _stage_due_at(kind: str, stage_code: str, assigned_at: datetime) -> datetime:
+def _stage_due_at(kind: str, stage_code: str, assigned_at: datetime) -> datetime | None:
+    if stage_code == STAGE_DIRECT_MANAGER:
+        return escalation_due_at(kind, 1, assigned_at)
     days = _setting_int("HR_APPROVAL_ESCALATION_WORKDAYS", 2)
     return add_working_days(assigned_at, days)
 
@@ -619,9 +796,8 @@ def start_request_flow(
             effective_approver_ids = [int(secretary_ids[0])]
         initial_escalation_reason = "NO_ORG_MANAGER" if effective_approver_ids else None
 
-    # Departure requests remain assigned to the resolved approver (including
-    # an active delegate), but never carry escalation state or are escalated
-    # later by the overdue-request job.
+    # Initial delegation/fallback is routing, not one of the two timed
+    # escalation levels configured by the administrator.
     record_initial_escalation = kind != KIND_PERMISSION and bool(initial_escalation_reason)
 
     first_approver_id = effective_approver_ids[0] if effective_approver_ids else None
@@ -662,7 +838,7 @@ def start_request_flow(
                 if first_manager_was_delegated and record_initial_escalation
                 else None
             ),
-            escalation_count=1 if active and record_initial_escalation else 0,
+            escalation_count=0,
             escalation_reason=initial_escalation_reason if record_initial_escalation else None,
         )
         db.session.add(step)
@@ -1065,41 +1241,115 @@ def _escalation_target(step: HRRequestApprovalStep, row, now: datetime) -> tuple
     return None, None
 
 
+def _configured_escalation_target_ids(
+    step: HRRequestApprovalStep,
+    row,
+    target: str,
+    now: datetime,
+) -> tuple[list[int], str | None]:
+    current_ids = set(_step_approver_ids(step))
+    excluded_ids = current_ids | {int(row.user_id)}
+    target_ids: list[int] = []
+    reason: str | None = None
+
+    if target == ESCALATION_TARGET_AUTO_NEXT:
+        user, reason = _escalation_target(step, row, now)
+        if user:
+            target_ids = [int(user.id)]
+    elif target == ESCALATION_TARGET_DEPUTY:
+        reason = "DEPUTY"
+        for current_id in current_ids:
+            delegation = _active_delegation_for(current_id, now)
+            if delegation and delegation.to_user_id != current_id:
+                target_ids.append(int(delegation.to_user_id))
+                continue
+            deputy = _deputy_for_manager(current_id, row.user_id)
+            if deputy:
+                target_ids.append(int(deputy.id))
+    elif target == ESCALATION_TARGET_GENERAL_DIRECTOR:
+        reason = "GENERAL_DIRECTOR"
+        user = resolve_general_director(row.user_id, exclude_ids=excluded_ids)
+        if user:
+            target_ids = [int(user.id)]
+    elif target == ESCALATION_TARGET_HR:
+        reason = "HR"
+        target_ids = hr_notification_user_ids()
+    elif target == ESCALATION_TARGET_SECRETARY_GENERAL:
+        reason = "SECRETARY_GENERAL"
+        target_ids = secretary_general_user_ids()
+    elif target.startswith(ESCALATION_TARGET_USER_PREFIX):
+        reason = "CONFIGURED_USER"
+        user_id = int(target.removeprefix(ESCALATION_TARGET_USER_PREFIX))
+        if db.session.get(User, user_id):
+            target_ids = [user_id]
+
+    normalized_ids: list[int] = []
+    seen: set[int] = set()
+    for user_id in target_ids:
+        user_id = int(user_id)
+        if user_id in excluded_ids or user_id in seen:
+            continue
+        if db.session.get(User, user_id):
+            seen.add(user_id)
+            normalized_ids.append(user_id)
+    return normalized_ids, reason
+
+
 def _initialize_legacy_pending_flows(now: datetime) -> int:
     """Attach the new workflow to requests submitted before this feature existed."""
     initialized = 0
-    existing = {
-        (str(kind).upper(), int(request_id))
-        for kind, request_id in db.session.query(
-            HRRequestApprovalStep.request_kind,
-            HRRequestApprovalStep.request_id,
-        ).distinct().all()
-    }
     for kind, model in ((KIND_LEAVE, HRLeaveRequest), (KIND_PERMISSION, HRPermissionRequest)):
-        for row in model.query.filter(func.upper(model.status) == "SUBMITTED").all():
-            key = (kind, int(row.id))
-            if key in existing:
-                continue
+        has_runtime_flow = exists().where(
+            HRRequestApprovalStep.request_kind == kind,
+            HRRequestApprovalStep.request_id == model.id,
+        )
+        rows = model.query.filter(
+            func.upper(model.status) == "SUBMITTED",
+            ~has_runtime_flow,
+        ).all()
+        for row in rows:
             submitted_at = getattr(row, "submitted_at", None)
             created_at = getattr(row, "created_at", None)
             assigned_at = submitted_at if isinstance(submitted_at, datetime) else created_at
             start_request_flow(kind, row, now=assigned_at if isinstance(assigned_at, datetime) else now)
-            existing.add(key)
             initialized += 1
     return initialized
 
 
 def process_pending_approvals(*, now: datetime | None = None, send_notifications: bool = True) -> dict[str, int]:
-    """Send reminders and reassign overdue manager steps without auto-approval."""
+    """Send reminders and apply the configured two-level escalations."""
     now = now or datetime.utcnow()
     initialized = _initialize_legacy_pending_flows(now)
+    policies = get_escalation_policies()
     reminded = 0
     escalated = 0
     unresolved = 0
     pending_steps = HRRequestApprovalStep.query.filter_by(status="PENDING").order_by(HRRequestApprovalStep.id.asc()).all()
+    request_ids_by_kind = {
+        kind: {
+            int(step.request_id)
+            for step in pending_steps
+            if step.request_kind == kind
+        }
+        for kind in (KIND_LEAVE, KIND_PERMISSION)
+    }
+    request_rows = {
+        KIND_LEAVE: {
+            int(row.id): row
+            for row in HRLeaveRequest.query.filter(
+                HRLeaveRequest.id.in_(request_ids_by_kind[KIND_LEAVE]),
+            ).all()
+        } if request_ids_by_kind[KIND_LEAVE] else {},
+        KIND_PERMISSION: {
+            int(row.id): row
+            for row in HRPermissionRequest.query.filter(
+                HRPermissionRequest.id.in_(request_ids_by_kind[KIND_PERMISSION]),
+            ).all()
+        } if request_ids_by_kind[KIND_PERMISSION] else {},
+    }
 
     for step in pending_steps:
-        row = _request(step.request_kind, step.request_id)
+        row = request_rows.get(step.request_kind, {}).get(int(step.request_id))
         if not row or (row.status or "").upper() != "SUBMITTED":
             step.status = "CANCELLED"
             continue
@@ -1125,50 +1375,51 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
         if step.stage_code != STAGE_DIRECT_MANAGER or not step.due_at or now < step.due_at:
             continue
 
-        # A departure request stays with its original approval path. It may
-        # receive reminders, but is never reassigned to a higher approver.
-        if step.request_kind == KIND_PERMISSION:
+        level = _next_escalation_level(step)
+        if not level:
+            step.due_at = None
             continue
 
-        candidate_ids = _step_approver_ids(step)
-        previous_candidate_ids = list(candidate_ids)
-        target, reason = _escalation_target(step, row, now)
-        if len(candidate_ids) > 1 and (not target or target.id in candidate_ids):
-            # The request is already available to every configured hierarchy
-            # manager. Keep the shared stage open instead of collapsing it to
-            # one person or reporting a routing error.
-            step.due_at = add_working_days(now, 1)
+        policy = policies[step.request_kind][level]
+        target_code = str(policy["target"])
+        if target_code == ESCALATION_TARGET_NONE:
+            step.due_at = None
             continue
-        if target and target.id not in candidate_ids:
-            old_id = step.approver_user_id
-            if len(candidate_ids) > 1:
-                # Parallel hierarchy approvers remain eligible; escalation
-                # only adds another responsible person to the same stage.
-                candidate_ids.append(int(target.id))
-                step.approver_user_ids = _serialize_approver_ids(candidate_ids)
-            else:
-                step.approver_user_id = target.id
-                step.approver_user_ids = _serialize_approver_ids([target.id])
-                row.approver_user_id = target.id
+
+        previous_candidate_ids = _step_approver_ids(step)
+        target_ids, reason = _configured_escalation_target_ids(
+            step,
+            row,
+            target_code,
+            now,
+        )
+        if target_ids:
+            old_id = step.approver_user_id or (previous_candidate_ids[0] if previous_candidate_ids else None)
+            step.approver_user_id = target_ids[0]
+            step.approver_user_ids = _serialize_approver_ids(target_ids)
+            row.approver_user_id = target_ids[0]
             step.escalated_from_user_id = old_id
             step.escalated_at = now
-            step.escalation_count = int(step.escalation_count or 0) + 1
-            step.escalation_reason = reason
+            step.escalation_count = level
+            step.escalation_reason = f"SLA_{level}_{reason or target_code}"[:120]
             step.assigned_at = now
-            step.due_at = _stage_due_at(step.request_kind, step.stage_code, now)
+            next_level = level + 1 if level < max(ESCALATION_LEVELS) else None
+            step.due_at = (
+                escalation_due_at(
+                    step.request_kind,
+                    next_level,
+                    now,
+                    policies=policies,
+                )
+                if next_level
+                else None
+            )
             step.reminder_sent_at = None
             row.updated_at = now
             if send_notifications:
                 _notify(
-                    [target.id],
+                    target_ids,
                     f"تم تصعيد طلب {_request_label(step.request_kind)} رقم #{row.id} إليك لعدم اتخاذ إجراء ضمن المهلة. الاعتماد ليس تلقائيًا.",
-                    kind=step.request_kind,
-                    request_id=row.id,
-                    ntype="HR_APPROVAL_ESCALATED",
-                )
-                _notify(
-                    previous_candidate_ids,
-                    f"تم تصعيد طلب {_request_label(step.request_kind)} رقم #{row.id} بعد انتهاء مهلة الاعتماد.",
                     kind=step.request_kind,
                     request_id=row.id,
                     ntype="HR_APPROVAL_ESCALATED",
@@ -1176,7 +1427,11 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
             escalated += 1
         else:
             # Keep it pending and alert only the request parties; never approve it.
-            step.due_at = add_working_days(now, 1)
+            step.due_at = _add_escalation_period(
+                now,
+                int(policy["value"]),
+                str(policy["unit"]),
+            )
             if send_notifications:
                 _notify(
                     [row.user_id, *_step_approver_ids(step)],

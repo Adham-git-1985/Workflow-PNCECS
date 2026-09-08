@@ -29,17 +29,24 @@ from models import (
     OrgNodeType,
     OrgUnitManager,
     RolePermission,
+    SystemSetting,
     User,
     UserPermission,
 )
 from portal import portal_bp
 from services.hr_request_workflow import (
+    ESCALATION_TARGET_HR,
+    ESCALATION_TARGET_NONE,
+    ESCALATION_TARGET_SECRETARY_GENERAL,
+    ESCALATION_UNIT_HOURS,
+    ESCALATION_UNIT_MINUTES,
     KIND_LEAVE,
     KIND_PERMISSION,
     board_visible_user_ids,
     can_user_act,
     current_step,
     decide_request,
+    escalation_setting_key,
     _notify,
     process_pending_approvals,
     request_ids_user_can_act_on,
@@ -174,6 +181,103 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         db.session.add(row)
         db.session.flush()
         return row
+
+    def _configure_two_stage_escalation(
+        self,
+        request_kind,
+        first_user_id,
+        second_user_id,
+    ):
+        policies = {
+            1: {
+                "value": "30",
+                "unit": ESCALATION_UNIT_MINUTES,
+                "target": f"USER:{first_user_id}",
+            },
+            2: {
+                "value": "2",
+                "unit": ESCALATION_UNIT_HOURS,
+                "target": f"USER:{second_user_id}",
+            },
+        }
+        db.session.add_all([
+            SystemSetting(
+                key=escalation_setting_key(request_kind, level, field),
+                value=value,
+            )
+            for level, policy in policies.items()
+            for field, value in policy.items()
+        ])
+        db.session.flush()
+
+    def _assert_two_stage_escalation(self, request_kind, row):
+        first_approver = User(
+            email=f"{request_kind.lower()}-first-escalation@example.test",
+            name=f"{request_kind} First Escalation",
+            password_hash="x",
+            role="employee",
+        )
+        second_approver = User(
+            email=f"{request_kind.lower()}-second-escalation@example.test",
+            name=f"{request_kind} Second Escalation",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add_all((first_approver, second_approver))
+        db.session.flush()
+        self._configure_two_stage_escalation(
+            request_kind,
+            first_approver.id,
+            second_approver.id,
+        )
+
+        assigned_at = datetime(2026, 9, 8, 8, 0)
+        start_request_flow(request_kind, row, now=assigned_at)
+        step = current_step(request_kind, row.id)
+        first_due_at = assigned_at + timedelta(minutes=30)
+        self.assertEqual(step.due_at, first_due_at)
+
+        first_result = process_pending_approvals(
+            now=first_due_at,
+            send_notifications=True,
+        )
+        self.assertEqual(first_result["escalated"], 1)
+        self.assertEqual(step.approver_user_id, first_approver.id)
+        self.assertEqual(step.escalation_count, 1)
+        self.assertEqual(step.escalated_from_user_id, self.manager.id)
+        self.assertEqual(step.due_at, first_due_at + timedelta(hours=2))
+        self.assertTrue(can_user_act(first_approver, step))
+        self.assertFalse(can_user_act(self.manager, step))
+
+        second_due_at = step.due_at
+        second_result = process_pending_approvals(
+            now=second_due_at,
+            send_notifications=True,
+        )
+        self.assertEqual(second_result["escalated"], 1)
+        self.assertEqual(step.approver_user_id, second_approver.id)
+        self.assertEqual(step.escalation_count, 2)
+        self.assertEqual(step.escalated_from_user_id, first_approver.id)
+        self.assertIsNone(step.due_at)
+        self.assertTrue(can_user_act(second_approver, step))
+        self.assertFalse(can_user_act(first_approver, step))
+
+        final_result = process_pending_approvals(
+            now=second_due_at + timedelta(days=3),
+            send_notifications=True,
+        )
+        self.assertEqual(final_result["escalated"], 0)
+        self.assertEqual(step.approver_user_id, second_approver.id)
+        escalation_recipient_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="HR_APPROVAL_ESCALATED",
+            ).all()
+        }
+        self.assertEqual(
+            escalation_recipient_ids,
+            {first_approver.id, second_approver.id},
+        )
 
     def test_normal_leave_is_final_after_direct_manager_without_observer_cc(self):
         row = self._leave(self.normal_type)
@@ -549,7 +653,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(row.status, "SUBMITTED")
         self.assertEqual(step.status, "PENDING")
         self.assertEqual(step.approver_user_id, self.general_director.id)
-        self.assertEqual(step.escalation_reason, "GENERAL_DIRECTOR")
+        self.assertEqual(step.escalation_reason, "SLA_1_GENERAL_DIRECTOR")
 
     def test_overdue_permission_step_is_not_escalated(self):
         row = self._permission()
@@ -566,6 +670,160 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(step.approver_user_id, self.manager.id)
         self.assertIsNone(step.escalated_at)
         self.assertIsNone(step.escalation_reason)
+
+    def test_leave_uses_two_configured_escalation_periods_and_targets(self):
+        row = self._leave(self.normal_type)
+        self._assert_two_stage_escalation(KIND_LEAVE, row)
+
+    def test_permission_uses_two_configured_escalation_periods_and_targets(self):
+        row = self._permission()
+        self._assert_two_stage_escalation(KIND_PERMISSION, row)
+
+    def test_permission_escalation_resolves_hr_then_secretary_general(self):
+        configured_values = {
+            escalation_setting_key(KIND_PERMISSION, 1, "VALUE"): "10",
+            escalation_setting_key(KIND_PERMISSION, 1, "UNIT"): ESCALATION_UNIT_MINUTES,
+            escalation_setting_key(KIND_PERMISSION, 1, "TARGET"): ESCALATION_TARGET_HR,
+            escalation_setting_key(KIND_PERMISSION, 2, "VALUE"): "1",
+            escalation_setting_key(KIND_PERMISSION, 2, "UNIT"): ESCALATION_UNIT_HOURS,
+            escalation_setting_key(KIND_PERMISSION, 2, "TARGET"): ESCALATION_TARGET_SECRETARY_GENERAL,
+        }
+        db.session.add_all([
+            SystemSetting(key=key, value=value)
+            for key, value in configured_values.items()
+        ])
+        row = self._permission()
+        assigned_at = datetime(2026, 9, 8, 8, 0)
+        start_request_flow(KIND_PERMISSION, row, now=assigned_at)
+        step = current_step(KIND_PERMISSION, row.id)
+
+        first_due_at = assigned_at + timedelta(minutes=10)
+        self.assertEqual(step.due_at, first_due_at)
+        process_pending_approvals(now=first_due_at, send_notifications=True)
+        self.assertEqual(step.approver_user_id, self.hr.id)
+
+        second_due_at = first_due_at + timedelta(hours=1)
+        self.assertEqual(step.due_at, second_due_at)
+        process_pending_approvals(now=second_due_at, send_notifications=True)
+        self.assertEqual(step.approver_user_id, self.secretary.id)
+        self.assertEqual(step.escalation_count, 2)
+        self.assertIsNone(step.due_at)
+
+    def test_escalation_settings_page_saves_all_four_policies(self):
+        db.session.add(UserPermission(
+            user_id=self.secretary.id,
+            key="HR_REQUESTS_VIEW_ALL",
+            is_allowed=True,
+        ))
+        row = self._leave(self.normal_type)
+        permission_row = self._permission()
+        assigned_at = datetime(2026, 9, 8, 9, 0)
+        start_request_flow(KIND_LEAVE, row, now=assigned_at)
+        start_request_flow(KIND_PERMISSION, permission_row, now=assigned_at)
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.secretary.id)
+        response = client.post(
+            "/portal/hr/alerts/escalation-settings",
+            data={
+                "leave_escalation_1_value": "15",
+                "leave_escalation_1_unit": ESCALATION_UNIT_MINUTES,
+                "leave_escalation_1_target": f"USER:{self.general_director.id}",
+                "leave_escalation_2_value": "2",
+                "leave_escalation_2_unit": ESCALATION_UNIT_HOURS,
+                "leave_escalation_2_target": f"USER:{self.secretary.id}",
+                "permission_escalation_1_value": "45",
+                "permission_escalation_1_unit": ESCALATION_UNIT_MINUTES,
+                "permission_escalation_1_target": f"USER:{self.hr.id}",
+                "permission_escalation_2_value": "3",
+                "permission_escalation_2_unit": ESCALATION_UNIT_HOURS,
+                "permission_escalation_2_target": ESCALATION_TARGET_NONE,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/portal/hr/alerts")
+        expected_values = {
+            escalation_setting_key(KIND_LEAVE, 1, "VALUE"): "15",
+            escalation_setting_key(KIND_LEAVE, 1, "UNIT"): ESCALATION_UNIT_MINUTES,
+            escalation_setting_key(KIND_LEAVE, 1, "TARGET"): f"USER:{self.general_director.id}",
+            escalation_setting_key(KIND_LEAVE, 2, "VALUE"): "2",
+            escalation_setting_key(KIND_LEAVE, 2, "UNIT"): ESCALATION_UNIT_HOURS,
+            escalation_setting_key(KIND_LEAVE, 2, "TARGET"): f"USER:{self.secretary.id}",
+            escalation_setting_key(KIND_PERMISSION, 1, "VALUE"): "45",
+            escalation_setting_key(KIND_PERMISSION, 1, "UNIT"): ESCALATION_UNIT_MINUTES,
+            escalation_setting_key(KIND_PERMISSION, 1, "TARGET"): f"USER:{self.hr.id}",
+            escalation_setting_key(KIND_PERMISSION, 2, "VALUE"): "3",
+            escalation_setting_key(KIND_PERMISSION, 2, "UNIT"): ESCALATION_UNIT_HOURS,
+            escalation_setting_key(KIND_PERMISSION, 2, "TARGET"): ESCALATION_TARGET_NONE,
+        }
+        stored_values = {
+            setting.key: setting.value
+            for setting in SystemSetting.query.filter(
+                SystemSetting.key.in_(expected_values),
+            ).all()
+        }
+        self.assertEqual(stored_values, expected_values)
+        step = current_step(KIND_LEAVE, row.id)
+        self.assertEqual(step.due_at, assigned_at + timedelta(minutes=15))
+        permission_step = current_step(KIND_PERMISSION, permission_row.id)
+        self.assertEqual(
+            permission_step.due_at,
+            assigned_at + timedelta(minutes=45),
+        )
+
+        with (
+            patch(
+                "portal.routes._check_pending_leave_requests",
+                return_value={"pending": [], "pending_days": 1},
+            ),
+            patch("portal.routes.render_template", return_value="ok") as render,
+        ):
+            page = client.get("/portal/hr/alerts")
+        self.assertEqual(page.status_code, 200)
+        self.assertEqual(render.call_args.args[0], "portal/hr/alerts.html")
+        self.assertTrue(render.call_args.kwargs["can_manage_escalation"])
+        self.assertEqual(
+            render.call_args.kwargs["escalation_policies"][KIND_LEAVE][1]["value"],
+            15,
+        )
+        self.assertEqual(
+            render.call_args.kwargs["escalation_policies"][KIND_PERMISSION][2]["target"],
+            ESCALATION_TARGET_NONE,
+        )
+
+    def test_escalation_settings_reject_second_level_when_first_is_disabled(self):
+        db.session.add(UserPermission(
+            user_id=self.secretary.id,
+            key="HR_REQUESTS_VIEW_ALL",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        client = self.app.test_client()
+        self._login(client, self.secretary.id)
+        response = client.post(
+            "/portal/hr/alerts/escalation-settings",
+            data={
+                "leave_escalation_1_value": "1",
+                "leave_escalation_1_unit": ESCALATION_UNIT_HOURS,
+                "leave_escalation_1_target": ESCALATION_TARGET_NONE,
+                "leave_escalation_2_value": "2",
+                "leave_escalation_2_unit": ESCALATION_UNIT_HOURS,
+                "leave_escalation_2_target": f"USER:{self.secretary.id}",
+                "permission_escalation_1_value": "30",
+                "permission_escalation_1_unit": ESCALATION_UNIT_MINUTES,
+                "permission_escalation_1_target": ESCALATION_TARGET_NONE,
+                "permission_escalation_2_value": "30",
+                "permission_escalation_2_unit": ESCALATION_UNIT_MINUTES,
+                "permission_escalation_2_target": ESCALATION_TARGET_NONE,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/portal/hr/alerts")
+        self.assertEqual(SystemSetting.query.count(), 0)
 
     def test_active_delegation_is_used_when_the_request_is_submitted(self):
         delegate = User(email="delegate@example.test", name="Delegate", password_hash="x", role="employee")

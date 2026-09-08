@@ -147,6 +147,7 @@ from models import (
     HRLeaveRequest,
     HRLeaveAttachment,
     HRLeaveBalance,
+    HRRequestApprovalStep,
     HRRequestObserver,
     HRMonthlyPermissionAllowance,
     HRLeaveGradeEntitlement,
@@ -289,6 +290,18 @@ from services.circulars import (
     visible_circulars_query,
 )
 from services.hr_request_workflow import (
+    ESCALATION_LEVELS,
+    ESCALATION_TARGET_AUTO_NEXT,
+    ESCALATION_TARGET_DEPUTY,
+    ESCALATION_TARGET_GENERAL_DIRECTOR,
+    ESCALATION_TARGET_HR,
+    ESCALATION_TARGET_NONE,
+    ESCALATION_TARGET_SECRETARY_GENERAL,
+    ESCALATION_TARGET_USER_PREFIX,
+    ESCALATION_UNIT_HOURS,
+    ESCALATION_UNIT_MINUTES,
+    ESCALATION_UNIT_WORKING_DAYS,
+    ESCALATION_UNITS,
     KIND_LEAVE,
     KIND_PERMISSION,
     approval_candidate_names_map,
@@ -301,8 +314,13 @@ from services.hr_request_workflow import (
     current_step as current_hr_request_step,
     decide_request as decide_hr_request,
     direct_approver_names_for_requests,
+    escalation_setting_key,
+    get_escalation_policies,
+    get_escalation_policy,
     is_special_leave,
+    normalize_escalation_target,
     process_pending_approvals,
+    refresh_pending_escalation_deadlines,
     request_progress,
     request_progress_map,
     request_ids_user_can_act_on,
@@ -312,6 +330,20 @@ from services.hr_request_workflow import (
     secretary_general_user_ids,
     stage_label as hr_stage_label,
     start_request_flow,
+)
+
+HR_ESCALATION_UNIT_OPTIONS = (
+    (ESCALATION_UNIT_MINUTES, "دقيقة"),
+    (ESCALATION_UNIT_HOURS, "ساعة"),
+    (ESCALATION_UNIT_WORKING_DAYS, "يوم عمل"),
+)
+HR_ESCALATION_TARGET_OPTIONS = (
+    (ESCALATION_TARGET_NONE, "بدون تصعيد آلي"),
+    (ESCALATION_TARGET_AUTO_NEXT, "المسؤول الأعلى تلقائياً"),
+    (ESCALATION_TARGET_DEPUTY, "المفوّض أو النائب للمعتمد الحالي"),
+    (ESCALATION_TARGET_GENERAL_DIRECTOR, "المدير العام للموظف"),
+    (ESCALATION_TARGET_HR, "الموارد البشرية"),
+    (ESCALATION_TARGET_SECRETARY_GENERAL, "الأمين العام"),
 )
 
 # -------------------------
@@ -22145,15 +22177,46 @@ def _portal_notify(
 def _check_pending_leave_requests(send_notifications: bool = True) -> dict:
     """Run the unified reminder/escalation policy and keep the old UI shape."""
     result = process_pending_approvals(send_notifications=send_notifications)
-    days_thr = _setting_get_int('HR_APPROVAL_ESCALATION_WORKDAYS', 2)
-    cutoff = datetime.utcnow() - timedelta(days=max(1, days_thr))
+    first_policy = get_escalation_policy(KIND_LEAVE, 1)
+    threshold_value = int(first_policy["value"])
+    threshold_unit = str(first_policy["unit"])
+    if threshold_unit == ESCALATION_UNIT_MINUTES:
+        days_thr = max(1, (threshold_value + 1439) // 1440)
+    elif threshold_unit == ESCALATION_UNIT_HOURS:
+        days_thr = max(1, (threshold_value + 23) // 24)
+    else:
+        days_thr = threshold_value
+    now = datetime.utcnow()
+    overdue_request_ids = {
+        int(request_id)
+        for request_id, in (
+            db.session.query(HRRequestApprovalStep.request_id)
+            .filter(
+                HRRequestApprovalStep.request_kind == KIND_LEAVE,
+                HRRequestApprovalStep.stage_code == "DIRECT_MANAGER",
+                HRRequestApprovalStep.status == "PENDING",
+                or_(
+                    HRRequestApprovalStep.escalation_count > 0,
+                    and_(
+                        HRRequestApprovalStep.due_at.isnot(None),
+                        HRRequestApprovalStep.due_at <= now,
+                    ),
+                ),
+            )
+            .distinct()
+            .all()
+        )
+    }
     pending = (
         HRLeaveRequest.query
-        .filter(HRLeaveRequest.status == 'SUBMITTED')
-        .filter(HRLeaveRequest.submitted_at.isnot(None))
-        .filter(HRLeaveRequest.submitted_at <= cutoff)
+        .filter(
+            HRLeaveRequest.status == 'SUBMITTED',
+            HRLeaveRequest.id.in_(overdue_request_ids),
+        )
         .order_by(HRLeaveRequest.submitted_at.asc())
         .all()
+        if overdue_request_ids
+        else []
     )
     if send_notifications:
         try:
@@ -22163,6 +22226,7 @@ def _check_pending_leave_requests(send_notifications: bool = True) -> dict:
     return {
         'threshold_days': days_thr,
         'pending_days': days_thr,
+        'first_escalation_policy': first_policy,
         'pending': pending,
         'notified': int(result.get('reminded', 0)) + int(result.get('escalated', 0)),
         'escalated': int(result.get('escalated', 0)),
@@ -22514,9 +22578,83 @@ def hr_monthly_leave_report_settings_update():
     flash('تم حفظ الإعدادات.', 'success')
     return redirect(url_for('portal.hr_monthly_leave_report', user_id=user_id or None, year=year, month=month))
 
+@portal_bp.route('/hr/alerts/escalation-settings', methods=['POST'])
+@login_required
+@_perm_any(HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL)
+def hr_escalation_settings_update():
+    policies: dict[str, dict[int, dict[str, int | str]]] = {
+        KIND_LEAVE: {},
+        KIND_PERMISSION: {},
+    }
+    form_kind_by_request_kind = {
+        KIND_LEAVE: "leave",
+        KIND_PERMISSION: "permission",
+    }
+
+    for request_kind, form_kind in form_kind_by_request_kind.items():
+        for level in ESCALATION_LEVELS:
+            prefix = f"{form_kind}_escalation_{level}"
+            try:
+                value = int((request.form.get(f"{prefix}_value") or "").strip())
+            except (TypeError, ValueError):
+                value = 0
+            unit = (request.form.get(f"{prefix}_unit") or "").strip().upper()
+            target = normalize_escalation_target(request.form.get(f"{prefix}_target"))
+
+            if value < 1 or value > 10080:
+                flash("يجب أن تكون مدة كل تصعيد بين 1 و10080.", "danger")
+                return redirect(url_for("portal.hr_alerts"))
+            if unit not in ESCALATION_UNITS:
+                flash("وحدة مدة التصعيد غير صحيحة.", "danger")
+                return redirect(url_for("portal.hr_alerts"))
+            if not target:
+                flash("جهة التصعيد المحددة غير صحيحة.", "danger")
+                return redirect(url_for("portal.hr_alerts"))
+            if target.startswith(ESCALATION_TARGET_USER_PREFIX):
+                user_id = int(target.removeprefix(ESCALATION_TARGET_USER_PREFIX))
+                if not db.session.get(User, user_id):
+                    flash("المستخدم المحدد للتصعيد غير موجود.", "danger")
+                    return redirect(url_for("portal.hr_alerts"))
+
+            policies[request_kind][level] = {
+                "value": value,
+                "unit": unit,
+                "target": target,
+            }
+
+        if (
+            policies[request_kind][1]["target"] == ESCALATION_TARGET_NONE
+            and policies[request_kind][2]["target"] != ESCALATION_TARGET_NONE
+        ):
+            flash("لا يمكن تفعيل التصعيد الثاني بينما التصعيد الأول معطل.", "danger")
+            return redirect(url_for("portal.hr_alerts"))
+
+    for request_kind, levels in policies.items():
+        for level, policy in levels.items():
+            for field in ("value", "unit", "target"):
+                _setting_set(
+                    escalation_setting_key(request_kind, level, field),
+                    str(policy[field]),
+                )
+
+    db.session.flush()
+    refreshed = refresh_pending_escalation_deadlines()
+    _portal_audit(
+        "HR_ESCALATION_SETTINGS_UPDATE",
+        note=json.dumps(policies, ensure_ascii=False, sort_keys=True),
+        target_type="SYSTEM",
+    )
+    db.session.commit()
+    flash(
+        f"تم حفظ إعدادات التصعيد وإعادة احتساب مواعيد {refreshed} طلب معلق.",
+        "success",
+    )
+    return redirect(url_for("portal.hr_alerts"))
+
+
 @portal_bp.route('/hr/alerts', methods=['GET'])
 @login_required
-@_perm_any(HR_ATTENDANCE_READ, HR_REQUESTS_VIEW_ALL)
+@_perm_any(HR_ATTENDANCE_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
 def hr_alerts():
     '''Show smart alerts (lateness, low leave balance, pending approvals).'''
     # Run pending check (and notify) to satisfy requirement "after 2 days".
@@ -22525,6 +22663,19 @@ def hr_alerts():
     # Thresholds
     late_thr = _setting_get_int('HR_ALERT_LATE_MINUTES_MONTH', 120)
     leave_thr = _setting_get_int('HR_ALERT_LEAVE_REMAIN_DAYS', 2)
+    escalation_policies = get_escalation_policies()
+    can_manage_escalation = bool(
+        current_user.has_perm(HR_MASTERDATA_MANAGE)
+        or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
+    )
+    escalation_users = (
+        User.query.order_by(
+            func.lower(func.coalesce(User.name, User.email)).asc(),
+            User.id.asc(),
+        ).all()
+        if can_manage_escalation
+        else []
+    )
 
     # Optional filters (UI scope filtering)
     def _to_int(v):
@@ -22683,6 +22834,13 @@ def hr_alerts():
         pending_info=pending_info,
         late_threshold=late_thr,
         leave_threshold=leave_thr,
+        escalation_policies=escalation_policies,
+        escalation_levels=ESCALATION_LEVELS,
+        escalation_unit_options=HR_ESCALATION_UNIT_OPTIONS,
+        escalation_target_options=HR_ESCALATION_TARGET_OPTIONS,
+        escalation_user_prefix=ESCALATION_TARGET_USER_PREFIX,
+        escalation_users=escalation_users,
+        can_manage_escalation=can_manage_escalation,
         late_rows=late_rows,
         low_leave=low_leave,
         year=year,

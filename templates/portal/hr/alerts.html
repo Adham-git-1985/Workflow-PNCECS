@@ -17,8 +17,93 @@
   </div>
 </div>
 
-{% set pending_days = pending_info.get('pending_days') if pending_info else 2 %}
+{% if can_manage_escalation %}
+<div class="p-4 bg-white rounded-3 shadow-sm mb-3">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-diagram-3"></i> إعدادات تصعيد الإجازات والمغادرات</h5>
+      <div class="text-muted small">
+        مدة التصعيد الأول تبدأ من إسناد الطلب، ومدة التصعيد الثاني تبدأ من لحظة تنفيذ التصعيد الأول.
+      </div>
+    </div>
+    <span class="badge bg-info-subtle text-info-emphasis border">مرحلتان كحد أقصى</span>
+  </div>
+
+  <form method="post" action="{{ url_for('portal.hr_escalation_settings_update') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+    <div class="row g-3">
+      {% for request_kind, form_kind, title, icon in [
+        ('LEAVE', 'leave', 'الإجازات', 'bi-calendar-check'),
+        ('PERMISSION', 'permission', 'المغادرات', 'bi-box-arrow-right')
+      ] %}
+        <div class="col-12 col-xl-6">
+          <div class="border rounded-3 p-3 h-100">
+            <h6 class="mb-3"><i class="bi {{ icon }}"></i> {{ title }}</h6>
+            {% for level in escalation_levels %}
+              {% set policy = escalation_policies[request_kind][level] %}
+              <div class="rounded-3 bg-light border p-3 mb-3">
+                <div class="fw-semibold mb-2">التصعيد {{ 'الأول' if level == 1 else 'الثاني' }}</div>
+                <div class="row g-2">
+                  <div class="col-5 col-md-3">
+                    <label class="form-label small">المدة</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="10080"
+                      required
+                      class="form-control"
+                      name="{{ form_kind }}_escalation_{{ level }}_value"
+                      value="{{ policy.value }}"
+                    >
+                  </div>
+                  <div class="col-7 col-md-3">
+                    <label class="form-label small">الوحدة</label>
+                    <select class="form-select" name="{{ form_kind }}_escalation_{{ level }}_unit" required>
+                      {% for option_value, option_label in escalation_unit_options %}
+                        <option value="{{ option_value }}" {% if policy.unit == option_value %}selected{% endif %}>{{ option_label }}</option>
+                      {% endfor %}
+                    </select>
+                  </div>
+                  <div class="col-12 col-md-6">
+                    <label class="form-label small">جهة التصعيد</label>
+                    <select class="form-select" name="{{ form_kind }}_escalation_{{ level }}_target" required>
+                      {% for option_value, option_label in escalation_target_options %}
+                        <option value="{{ option_value }}" {% if policy.target == option_value %}selected{% endif %}>{{ option_label }}</option>
+                      {% endfor %}
+                      <optgroup label="مستخدم محدد">
+                        {% for user in escalation_users %}
+                          {% set user_target = escalation_user_prefix ~ user.id %}
+                          <option value="{{ user_target }}" {% if policy.target == user_target %}selected{% endif %}>
+                            {{ user.full_name or user.email or ('مستخدم #' ~ user.id) }}{% if user.email and user.full_name != user.email %} — {{ user.email }}{% endif %}
+                          </option>
+                        {% endfor %}
+                      </optgroup>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="alert alert-light border small mt-3 mb-3">
+      <div><strong>المسؤول الأعلى تلقائياً:</strong> المفوّض/النائب، ثم المدير العام، ثم الأمين العام حسب الهيكل المتاح.</div>
+      <div>بعد التصعيد الثاني لا يحدث تصعيد ثالث، وتستمر التذكيرات للمعتمد الحالي فقط. تعطيل التصعيد الأول يعطّل المسار الآلي كله.</div>
+      <div>الإشعارات تبقى محصورة بمقدم الطلب والمعتمد المكلّف فعلياً.</div>
+      <div>ينفذ التصعيد في أول دورة لفاحص التنبيهات بعد انتهاء المهلة؛ وتيرة الفحص الافتراضية مرة كل ساعة.</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-save"></i> حفظ إعدادات التصعيد
+    </button>
+  </form>
+</div>
+{% endif %}
+
 {% set pending_list = pending_info.get('pending') if pending_info else [] %}
+{% set first_leave_policy = pending_info.get('first_escalation_policy') if pending_info else escalation_policies['LEAVE'][1] %}
 
 <div class="row g-3">
   <div class="col-12">
@@ -27,7 +112,10 @@
         <div class="fw-semibold"><i class="bi bi-calendar-event"></i> طلبات إجازات معلّقة</div>
         <div class="d-flex gap-2">
           {% if pending_info and pending_info.get('escalated') %}<span class="badge bg-danger">تم تصعيد {{ pending_info.get('escalated') }}</span>{% endif %}
-          <span class="badge bg-warning text-dark">التصعيد بعد {{ pending_days }} يومي عمل</span>
+          <span class="badge bg-warning text-dark">
+            التصعيد الأول بعد {{ first_leave_policy.value }}
+            {% if first_leave_policy.unit == 'MINUTES' %}دقيقة{% elif first_leave_policy.unit == 'HOURS' %}ساعة{% else %}يوم عمل{% endif %}
+          </span>
         </div>
       </div>
 
@@ -66,7 +154,7 @@
             </tbody>
           </table>
         </div>
-        <div class="text-muted small mt-2">يرسل النظام تذكيرًا بعد يوم عمل، ثم يصعّد إلى المفوّض/النائب أو المسؤول الأعلى بعد يومي عمل. لا يحدث اعتماد تلقائي.</div>
+        <div class="text-muted small mt-2">يطبق النظام مرحلتي التصعيد وفق الإعدادات المحفوظة، ولا يحدث اعتماد تلقائي.</div>
       {% else %}
         <div class="text-muted">لا توجد طلبات متأخرة حاليًا.</div>
       {% endif %}
