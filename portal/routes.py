@@ -12733,11 +12733,501 @@ def hr_my_pending_requests():
     return render_template('portal/hr/my_pending_requests.html', pending=pending)
 
 
+_MY_ATTENDANCE_ACTIVE_LEAVE_STATUSES = ("DRAFT", "PENDING", "SUBMITTED", "APPROVED")
+_MY_ATTENDANCE_EXCUSED_STATUSES = {"LEAVE", "MISSION", "HOLIDAY", "OFF", "SUSPENDED"}
+
+
+def _my_attendance_month_bounds(month_value: str | None, reference_day: date | None = None):
+    """Return a valid calendar month, defaulting to the previous month."""
+    reference_day = reference_day or date.today()
+    previous_month_end = reference_day.replace(day=1) - timedelta(days=1)
+    month_start = previous_month_end.replace(day=1)
+
+    value = (month_value or "").strip()
+    if re.fullmatch(r"\d{4}-\d{2}", value):
+        try:
+            requested_month = date.fromisoformat(f"{value}-01")
+            if 1900 <= requested_month.year < 9999:
+                month_start = requested_month
+        except ValueError:
+            pass
+
+    if month_start.month == 12:
+        next_month_start = date(month_start.year + 1, 1, 1)
+    else:
+        next_month_start = date(month_start.year, month_start.month + 1, 1)
+    month_end = next_month_start - timedelta(days=1)
+    return month_start.strftime("%Y-%m"), month_start, month_end
+
+
+def _my_attendance_days(day_from: date, day_to: date):
+    current_day = day_from
+    while current_day <= day_to:
+        yield current_day
+        current_day += timedelta(days=1)
+
+
+def _my_attendance_expand_period(day_from: str, day_to: str | None, scope_start: date, scope_end: date):
+    start_day = _parse_yyyy_mm_dd(day_from)
+    end_day = _parse_yyyy_mm_dd(day_to or day_from)
+    if not start_day or not end_day or end_day < start_day:
+        return []
+    return _my_attendance_days(max(start_day, scope_start), min(end_day, scope_end))
+
+
+def _my_attendance_display_row(source=None, values: dict | None = None):
+    values = values or {}
+
+    def field(name, default=None):
+        if name in values:
+            return values[name]
+        return getattr(source, name, default) if source is not None else default
+
+    return SimpleNamespace(
+        id=field("id"),
+        user_id=field("user_id"),
+        day=field("day"),
+        schedule_id=field("schedule_id"),
+        schedule=field("schedule"),
+        first_in=field("first_in"),
+        last_out=field("last_out"),
+        work_minutes=field("work_minutes", 0) or 0,
+        break_minutes=field("break_minutes", 0) or 0,
+        late_minutes=field("late_minutes", 0) or 0,
+        early_leave_minutes=field("early_leave_minutes", 0) or 0,
+        overtime_minutes=field("overtime_minutes", 0) or 0,
+        status=field("status", "ABSENT") or "ABSENT",
+        computed_at=field("computed_at"),
+        is_generated=source is None,
+    )
+
+
+def _my_attendance_default_policy() -> WorkPolicy | None:
+    policy_id = (_setting_get("HR_REGULAR_POLICY_ID") or "").strip()
+    if policy_id.isdigit():
+        policy = db.session.get(WorkPolicy, int(policy_id))
+        if policy and policy.is_active:
+            return policy
+    return None
+
+
+def _my_attendance_day_states(
+    employee_file: EmployeeFile | None,
+    scope_start: date,
+    scope_end: date,
+):
+    """Load attendance rules once, then classify every day in the requested scope."""
+    scope_days = list(_my_attendance_days(scope_start, scope_end))
+    if not employee_file or not (employee_file.timeclock_code or "").strip():
+        return {day_obj.isoformat(): {"kind": "NONE", "policy": None} for day_obj in scope_days}
+
+    user = getattr(employee_file, "user", None) or db.session.get(User, employee_file.user_id)
+    if _is_general_secretary(user):
+        return {day_obj.isoformat(): {"kind": "NONE", "policy": None} for day_obj in scope_days}
+
+    hire_day = _parse_yyyy_mm_dd(getattr(employee_file, "hire_date", None))
+    scope_start_str = scope_start.isoformat()
+    scope_end_str = scope_end.isoformat()
+    weekly_mask = _weekly_mask()
+
+    official_days = {
+        row.day
+        for row in HROfficialOccasion.query
+        .filter(HROfficialOccasion.day >= scope_start_str)
+        .filter(HROfficialOccasion.day <= scope_end_str)
+        .filter(HROfficialOccasion.is_day_off.is_(True))
+        .all()
+    }
+    try:
+        from models import HROfficialOccasionRange
+
+        occasion_ranges = (
+            HROfficialOccasionRange.query
+            .filter(HROfficialOccasionRange.start_day <= scope_end_str)
+            .filter(HROfficialOccasionRange.end_day >= scope_start_str)
+            .filter(HROfficialOccasionRange.is_day_off.is_(True))
+            .all()
+        )
+    except Exception:
+        occasion_ranges = []
+    for occasion in occasion_ranges:
+        if occasion.work_governorate_lookup_id and occasion.work_governorate_lookup_id != employee_file.work_governorate_lookup_id:
+            continue
+        if occasion.work_location_lookup_id and occasion.work_location_lookup_id != employee_file.work_location_lookup_id:
+            continue
+        for occasion_day in _my_attendance_expand_period(
+            occasion.start_day,
+            occasion.end_day,
+            scope_start,
+            scope_end,
+        ):
+            official_days.add(occasion_day.isoformat())
+
+    default_policy = _my_attendance_default_policy()
+    default_schedule = None
+    default_schedule_id = (_setting_get("HR_DEFAULT_SCHEDULE_ID") or "").strip()
+    if default_schedule_id.isdigit():
+        default_schedule = db.session.get(WorkSchedule, int(default_schedule_id))
+
+    try:
+        _ensure_work_policy_tables()
+        role = (getattr(user, "role", None) or "").strip() or None
+        department_id = _portal_department_id_for_user(employee_file.user_id)
+        assignment_conditions = [
+            and_(
+                WorkAssignment.target_type == "USER",
+                WorkAssignment.target_user_id == employee_file.user_id,
+            )
+        ]
+        if role:
+            assignment_conditions.append(and_(
+                WorkAssignment.target_type == "ROLE",
+                WorkAssignment.target_role == role,
+            ))
+        if department_id:
+            assignment_conditions.append(and_(
+                WorkAssignment.target_type == "DEPARTMENT",
+                WorkAssignment.target_department_id == department_id,
+            ))
+        assignments = (
+            WorkAssignment.query
+            .filter(WorkAssignment.is_active.is_(True))
+            .filter(or_(*assignment_conditions))
+            .filter(or_(WorkAssignment.start_date.is_(None), WorkAssignment.start_date <= scope_end_str))
+            .filter(or_(WorkAssignment.end_date.is_(None), WorkAssignment.end_date >= scope_start_str))
+            .all()
+        )
+    except Exception:
+        assignments = []
+
+    legacy_assignments = (
+        EmployeeScheduleAssignment.query
+        .filter_by(user_id=employee_file.user_id, is_active=True)
+        .filter(or_(
+            EmployeeScheduleAssignment.start_date.is_(None),
+            EmployeeScheduleAssignment.start_date <= scope_end_str,
+        ))
+        .filter(or_(
+            EmployeeScheduleAssignment.end_date.is_(None),
+            EmployeeScheduleAssignment.end_date >= scope_start_str,
+        ))
+        .all()
+    )
+
+    schedule_ids = {
+        assignment.schedule_id
+        for assignment in assignments + legacy_assignments
+        if assignment.schedule_id
+    }
+    if default_schedule:
+        schedule_ids.add(default_schedule.id)
+    shift_day_keys = set()
+    if schedule_ids:
+        shift_day_keys = {
+            (row.schedule_id, row.weekday)
+            for row in WorkScheduleDay.query.filter(WorkScheduleDay.schedule_id.in_(schedule_ids)).all()
+        }
+
+    assignment_priority = {"DEPARTMENT": 1, "ROLE": 2, "USER": 3}
+
+    def effective_rules(day_str: str):
+        eligible_assignments = [
+            assignment
+            for assignment in assignments
+            if (not assignment.start_date or assignment.start_date <= day_str)
+            and (not assignment.end_date or assignment.end_date >= day_str)
+        ]
+        best_assignment = max(
+            eligible_assignments,
+            key=lambda assignment: (
+                assignment_priority.get((assignment.target_type or "").upper(), 0),
+                assignment.start_date or "",
+                assignment.id,
+            ),
+            default=None,
+        )
+        if best_assignment:
+            policy = best_assignment.policy if best_assignment.policy and best_assignment.policy.is_active else default_policy
+            return policy, best_assignment.schedule
+
+        eligible_legacy = [
+            assignment
+            for assignment in legacy_assignments
+            if (not assignment.start_date or assignment.start_date <= day_str)
+            and (not assignment.end_date or assignment.end_date >= day_str)
+        ]
+        best_legacy = max(
+            eligible_legacy,
+            key=lambda assignment: (assignment.start_date or "", assignment.id),
+            default=None,
+        )
+        return default_policy, best_legacy.schedule if best_legacy else default_schedule
+
+    day_states = {}
+    for day_obj in scope_days:
+        day_str = day_obj.isoformat()
+        if hire_day and day_obj < hire_day:
+            day_states[day_str] = {"kind": "NONE", "policy": None}
+            continue
+        if _is_weekly_off(day_obj, weekly_mask):
+            day_states[day_str] = {"kind": "WEEKLY_OFF", "policy": None}
+            continue
+        if day_str in official_days:
+            day_states[day_str] = {"kind": "OFFICIAL_HOLIDAY", "policy": None}
+            continue
+
+        policy, schedule = effective_rules(day_str)
+        if policy and (policy.days_policy or "FIXED").upper() == "FIXED":
+            fixed_mask = policy.fixed_days_mask
+            if fixed_mask is not None and not (int(fixed_mask) & (1 << day_obj.weekday())):
+                day_states[day_str] = {"kind": "SCHEDULED_OFF", "policy": policy}
+                continue
+
+        if schedule and (schedule.kind or "").upper() == "SHIFT" and (
+            schedule.id,
+            day_obj.weekday(),
+        ) not in shift_day_keys:
+            day_states[day_str] = {"kind": "SCHEDULED_OFF", "policy": policy}
+            continue
+
+        if (schedule and (schedule.kind or "").upper() == "REMOTE") or (
+            policy and (policy.location_policy or "").upper() == "REMOTE"
+        ):
+            day_states[day_str] = {"kind": "REMOTE", "policy": policy}
+            continue
+
+        if policy and (policy.days_policy or "").upper() == "HYBRID_WEEKLY_QUOTA":
+            selection_mode = (policy.hybrid_selection_mode or "FLEXIBLE").upper()
+            fixed_mask = int(policy.hybrid_fixed_days_mask or 0)
+            if selection_mode == "FIXED" and fixed_mask:
+                kind = "OFFICE" if fixed_mask & (1 << day_obj.weekday()) else "REMOTE"
+            else:
+                kind = "HYBRID_FLEX"
+            day_states[day_str] = {"kind": kind, "policy": policy}
+            continue
+
+        day_states[day_str] = {"kind": "OFFICE", "policy": policy}
+
+    return day_states
+
+
+def _my_attendance_month_rows(
+    user_id: int,
+    employee_file: EmployeeFile | None,
+    month_start: date,
+    month_end: date,
+    reference_day: date | None = None,
+):
+    """Build a complete monthly view without persisting generated absence rows."""
+    reference_day = reference_day or date.today()
+    scope_start = month_start - timedelta(days=month_start.weekday())
+    scope_end = month_end + timedelta(days=6 - month_end.weekday())
+    scope_start_str = scope_start.isoformat()
+    scope_end_str = scope_end.isoformat()
+
+    stored_rows = (
+        AttendanceDailySummary.query
+        .filter(AttendanceDailySummary.user_id == user_id)
+        .filter(AttendanceDailySummary.day >= scope_start_str)
+        .filter(AttendanceDailySummary.day <= scope_end_str)
+        .all()
+    )
+    stored_by_day = {row.day: row for row in stored_rows if row.day}
+
+    events = (
+        AttendanceEvent.query
+        .filter(AttendanceEvent.user_id == user_id)
+        .filter(AttendanceEvent.event_dt >= datetime.combine(scope_start, datetime.min.time()))
+        .filter(AttendanceEvent.event_dt < datetime.combine(scope_end + timedelta(days=1), datetime.min.time()))
+        .all()
+    )
+    event_days = {event.event_dt.date().isoformat() for event in events if event.event_dt}
+    attendance_event_days = {
+        event.event_dt.date().isoformat()
+        for event in events
+        if event.event_dt and _attendance_event_code(event) not in {"C", "D", "E", "F"}
+    }
+
+    leave_status_by_day = {}
+    leave_priority = {"DRAFT": 1, "PENDING": 2, "SUBMITTED": 3, "APPROVED": 4}
+    leaves = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id == user_id)
+        .filter(HRLeaveRequest.status.in_(_MY_ATTENDANCE_ACTIVE_LEAVE_STATUSES))
+        .filter(HRLeaveRequest.start_date <= scope_end_str)
+        .filter(HRLeaveRequest.end_date >= scope_start_str)
+        .order_by(HRLeaveRequest.id.asc())
+        .all()
+    )
+    for leave in leaves:
+        leave_status = (leave.status or "").upper()
+        for leave_day in _my_attendance_expand_period(
+            leave.start_date,
+            leave.end_date,
+            scope_start,
+            scope_end,
+        ):
+            day_str = leave_day.isoformat()
+            current_status = leave_status_by_day.get(day_str)
+            if leave_priority.get(leave_status, 0) >= leave_priority.get(current_status, 0):
+                leave_status_by_day[day_str] = leave_status
+
+    special_status_by_day = {}
+    manual_days = set()
+    special_rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id == user_id)
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.kind.in_(("STATUS", "MANUAL_ATTENDANCE")))
+        .filter(HRAttendanceSpecialCase.day <= scope_end_str)
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= scope_start_str,
+        ))
+        .order_by(HRAttendanceSpecialCase.created_at.asc(), HRAttendanceSpecialCase.id.asc())
+        .all()
+    )
+    for special in special_rows:
+        for special_day in _my_attendance_expand_period(
+            special.day,
+            special.day_to,
+            scope_start,
+            scope_end,
+        ):
+            day_str = special_day.isoformat()
+            if (special.kind or "").upper() == "STATUS" and special.status:
+                special_status_by_day[day_str] = special.status.upper()
+            elif (special.kind or "").upper() == "MANUAL_ATTENDANCE":
+                manual_days.add(day_str)
+
+    attended_days = {
+        row.day
+        for row in stored_rows
+        if row.day and (row.first_in is not None or row.last_out is not None)
+    }
+    attended_days.update(attendance_event_days)
+    attended_days.update(manual_days)
+    attended_days.update(
+        day_str for day_str, status in special_status_by_day.items() if status == "PRESENT"
+    )
+
+    excused_days = set(leave_status_by_day)
+    excused_days.update(
+        day_str
+        for day_str, status in special_status_by_day.items()
+        if status in _MY_ATTENDANCE_EXCUSED_STATUSES
+    )
+
+    day_states = _my_attendance_day_states(employee_file, scope_start, scope_end)
+    classifications = {
+        day_str: state["kind"]
+        for day_str, state in day_states.items()
+        if state["kind"] != "HYBRID_FLEX"
+    }
+
+    hybrid_weeks = {}
+    for day_str, state in day_states.items():
+        if state["kind"] != "HYBRID_FLEX":
+            continue
+        day_obj = date.fromisoformat(day_str)
+        week_start = day_obj - timedelta(days=day_obj.weekday())
+        policy = state["policy"]
+        hybrid_weeks.setdefault((week_start, policy.id), {"policy": policy, "days": []})["days"].append(day_str)
+
+    explicit_absent_days = {
+        day_str for day_str, status in special_status_by_day.items() if status == "ABSENT"
+    }
+    for (week_start, _policy_id), group in hybrid_weeks.items():
+        policy = group["policy"]
+        work_days = sorted(group["days"])
+        available_days = [day_str for day_str in work_days if day_str not in excused_days]
+        attended_count = len(set(available_days) & attended_days)
+        office_quota = max(0, int(policy.hybrid_office_days or 0))
+        office_quota = min(office_quota, len(available_days))
+        missing_days = [day_str for day_str in available_days if day_str not in attended_days]
+        explicit_week_absences = set(missing_days) & explicit_absent_days
+
+        inferred_absence_count = 0
+        if week_start + timedelta(days=6) < reference_day:
+            inferred_absence_count = max(0, office_quota - attended_count)
+        remaining_absence_count = max(0, inferred_absence_count - len(explicit_week_absences))
+        inferred_absence_days = set(missing_days[-remaining_absence_count:]) if remaining_absence_count else set()
+        absence_days = explicit_week_absences | inferred_absence_days
+
+        for day_str in work_days:
+            classifications[day_str] = "ABSENT" if day_str in absence_days else "REMOTE"
+
+    display_rows = []
+    visible_end = min(month_end, reference_day)
+    if visible_end >= month_start:
+        for day_obj in _my_attendance_days(month_start, visible_end):
+            day_str = day_obj.isoformat()
+            stored_row = stored_by_day.get(day_str)
+            special_status = special_status_by_day.get(day_str)
+            leave_status = leave_status_by_day.get(day_str)
+            classification = classifications.get(day_str, "NONE")
+            has_event = day_str in event_days
+            has_manual = day_str in manual_days
+            has_source = bool(stored_row or has_event or has_manual or special_status or leave_status)
+
+            if classification in {"NONE", "WEEKLY_OFF", "OFFICIAL_HOLIDAY", "SCHEDULED_OFF"} and not has_source:
+                continue
+            current_day_has_evidence = bool(
+                has_event
+                or has_manual
+                or special_status
+                or leave_status
+                or (stored_row and (stored_row.first_in or stored_row.last_out))
+            )
+            if day_obj == reference_day and not current_day_has_evidence:
+                continue
+
+            row = _my_attendance_display_row(stored_row)
+            if not stored_row:
+                row.user_id = user_id
+                row.day = day_str
+
+            if (has_event or has_manual) and not (row.first_in or row.last_out):
+                row = _my_attendance_display_row(values=_summary_compute_one(user_id, day_str))
+
+            if classification in {"WEEKLY_OFF", "OFFICIAL_HOLIDAY", "SCHEDULED_OFF"}:
+                row.status = classification
+            elif special_status:
+                row.status = special_status
+            elif leave_status == "APPROVED":
+                row.status = "APPROVED_LEAVE"
+            elif leave_status:
+                row.status = "PENDING_LEAVE"
+            elif row.first_in and row.last_out:
+                row.status = "OK"
+            elif row.first_in or row.last_out:
+                row.status = "INCOMPLETE"
+            elif classification == "REMOTE":
+                row.status = "REMOTE_DAY"
+            else:
+                row.status = "ABSENT"
+
+            display_rows.append(row)
+
+    display_rows.sort(key=lambda row: row.day or "", reverse=True)
+    attendance_stats = {
+        "attendance_days": sum(
+            1
+            for row in display_rows
+            if row.first_in or row.last_out or (row.status or "").upper() == "PRESENT"
+        ),
+        "absence_days": sum(1 for row in display_rows if (row.status or "").upper() == "ABSENT"),
+        "incomplete_days": sum(1 for row in display_rows if (row.status or "").upper() == "INCOMPLETE"),
+        "remote_days": sum(1 for row in display_rows if (row.status or "").upper() == "REMOTE_DAY"),
+    }
+    return display_rows, attendance_stats
+
+
 @portal_bp.route("/hr/me/attendance")
 @login_required
 @_perm(PORTAL_READ)
 def hr_my_attendance():
-    """Employee attendance view (read-only)."""
+    """Employee monthly attendance view (read-only)."""
     # Gate by attendance read permission
     try:
         if not current_user.has_perm(HR_ATT_READ):
@@ -12748,12 +13238,14 @@ def hr_my_attendance():
     emp_file = EmployeeFile.query.filter_by(user_id=current_user.id).first()
     code = (emp_file.timeclock_code if emp_file else None)
 
-    rows = (
-        AttendanceDailySummary.query
-        .filter(AttendanceDailySummary.user_id == current_user.id)
-        .order_by(AttendanceDailySummary.day.desc())
-        .limit(45)
-        .all()
+    selected_month, month_start, month_end = _my_attendance_month_bounds(
+        request.args.get("month")
+    )
+    rows, attendance_stats = _my_attendance_month_rows(
+        current_user.id,
+        emp_file,
+        month_start,
+        month_end,
     )
     _attach_reconciled_departures(rows)
 
@@ -12761,6 +13253,8 @@ def hr_my_attendance():
         "portal/hr/my_attendance.html",
         timeclock_code=code,
         rows=rows,
+        selected_month=selected_month,
+        attendance_stats=attendance_stats,
     )
 
 

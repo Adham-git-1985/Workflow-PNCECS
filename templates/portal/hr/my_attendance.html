@@ -3,36 +3,85 @@
 
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
-  <h4 class="mb-1"><i class="bi bi-clock-history"></i> دوامي</h4>
-  <div class="text-muted">
-    عرض ملخص الدوام لآخر الأيام (Read-only).
-    {% if timeclock_code %}
-      <span class="ms-2">كود الساعة: <span class="badge bg-light text-dark border">{{ timeclock_code }}</span></span>
-    {% endif %}
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-clock-history"></i> دوامي</h4>
+      <div class="text-muted">
+        عرض موحّد للحضور والغياب حسب الشهر المختار.
+        {% if timeclock_code %}
+          <span class="ms-2">كود الساعة: <span class="badge bg-light text-dark border">{{ timeclock_code }}</span></span>
+        {% endif %}
+      </div>
+    </div>
+    <form method="get" class="d-flex flex-wrap align-items-end gap-2" aria-label="اختيار شهر الدوام">
+      <div>
+        <label class="form-label small mb-1" for="attendanceMonth">الشهر</label>
+        <input class="form-control" id="attendanceMonth" type="month" name="month" value="{{ selected_month }}" required>
+      </div>
+      <button class="btn btn-primary" type="submit"><i class="bi bi-search"></i> عرض</button>
+    </form>
   </div>
+  <div class="form-text mt-2">تفتح الصفحة تلقائياً على الشهر السابق، ويمكن اختيار أي شهر آخر.</div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="h-100 bg-white rounded-3 shadow-sm p-3 border-start border-4 border-primary">
+      <div class="text-muted small">أيام الدوام الفعلية</div>
+      <div class="display-6 fw-bold text-primary">{{ attendance_stats.attendance_days }}</div>
+      <div class="small text-muted">تشمل الدوام المكتمل وغير المكتمل</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="h-100 bg-white rounded-3 shadow-sm p-3 border-start border-4 border-danger">
+      <div class="text-muted small">أيام الغياب</div>
+      <div class="display-6 fw-bold text-danger">{{ attendance_stats.absence_days }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="h-100 bg-white rounded-3 shadow-sm p-3 border-start border-4 border-warning">
+      <div class="text-muted small">أيام غير مكتملة</div>
+      <div class="display-6 fw-bold text-warning">{{ attendance_stats.incomplete_days }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="h-100 bg-white rounded-3 shadow-sm p-3 border-start border-4 border-info">
+      <div class="text-muted small">أيام عن بُعد / هجين</div>
+      <div class="display-6 fw-bold text-info">{{ attendance_stats.remote_days }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-light border small py-2">
+  يُستنتج الغياب بعد انتهاء يوم العمل عند عدم وجود بصمة أو إجازة أو حالة معتمدة، ويُحتسب لموظف الدوام الهجين فقط عند نقص حصته الأسبوعية المطلوبة.
 </div>
 
 {% if rows and rows|length > 0 %}
   <div class="bg-white rounded-3 shadow-sm p-3">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+      <h5 class="mb-0">سجل شهر {{ selected_month }}</h5>
+      <span class="badge bg-light text-dark border">{{ rows|length }} يوم معروض</span>
+    </div>
     <div class="table-responsive">
       <table class="table table-sm align-middle">
         <thead>
           <tr>
-            <th>{{ portal_sort_link('اليوم', 'day') }}</th>
-            <th>{{ portal_sort_link('أول دخول', 'first_in') }}</th>
-            <th>{{ portal_sort_link('آخر خروج', 'last_out') }}</th>
+            <th>اليوم</th>
+            <th>أول دخول</th>
+            <th>آخر خروج</th>
             <th>ساعات العمل</th>
-            <th>{{ portal_sort_link('تأخير', 'late_minutes') }}</th>
-            <th>{{ portal_sort_link('مغادرة مبكرة', 'early_leave_minutes') }}</th>
+            <th>تأخير</th>
+            <th>مغادرة مبكرة</th>
             <th>مغادرة شخصية</th>
             <th>مغادرة رسمية</th>
-            <th>{{ portal_sort_link('إضافي', 'overtime_minutes') }}</th>
-            <th>{{ portal_sort_link('الحالة', 'status') }}</th>
+            <th>إضافي</th>
+            <th>الحالة</th>
           </tr>
         </thead>
         <tbody>
           {% for r in rows %}
-            <tr>
+            {% set attendance_status = (r.status or '')|upper %}
+            <tr class="{% if attendance_status == 'ABSENT' %}table-danger{% endif %}">
               <td class="fw-semibold">{{ r.day }}</td>
               <td class="text-muted small">{{ r.first_in.strftime('%H:%M') if r.first_in else '-' }}</td>
               <td class="text-muted small">{{ r.last_out.strftime('%H:%M') if r.last_out else '-' }}</td>
@@ -43,12 +92,30 @@
               <td>{{ r.official_departure_minutes or 0 }} د</td>
               <td>{{ r.overtime_minutes or 0 }} د</td>
               <td>
-                {% if r.status == 'OK' %}
+                {% if attendance_status == 'OK' %}
                   <span class="badge bg-success">مكتمل</span>
-                {% elif r.status == 'ABSENT' %}
+                {% elif attendance_status == 'INCOMPLETE' %}
+                  <span class="badge bg-warning text-dark">غير مكتمل</span>
+                {% elif attendance_status == 'ABSENT' %}
                   <span class="badge bg-danger">غائب</span>
+                {% elif attendance_status == 'APPROVED_LEAVE' %}
+                  <span class="badge bg-info text-dark">إجازة معتمدة</span>
+                {% elif attendance_status == 'PENDING_LEAVE' %}
+                  <span class="badge bg-warning text-dark">إجازة قيد الاعتماد</span>
+                {% elif attendance_status == 'REMOTE_DAY' %}
+                  <span class="badge bg-info text-dark">دوام عن بُعد / هجين</span>
+                {% elif attendance_status == 'WEEKLY_OFF' %}
+                  <span class="badge bg-secondary">عطلة أسبوعية</span>
+                {% elif attendance_status == 'OFFICIAL_HOLIDAY' %}
+                  <span class="badge bg-secondary">عطلة رسمية</span>
+                {% elif attendance_status == 'SCHEDULED_OFF' %}
+                  <span class="badge bg-secondary">غير مطلوب للدوام</span>
+                {% elif attendance_status == 'PRESENT' %}
+                  <span class="badge bg-success">حاضر</span>
+                {% elif attendance_status == 'MISSION' %}
+                  <span class="badge bg-primary">مهمة عمل</span>
                 {% else %}
-                  <span class="badge bg-warning text-dark">{{ r.status|ui_label }}</span>
+                  <span class="badge bg-secondary">{{ r.status|ui_label }}</span>
                 {% endif %}
               </td>
             </tr>
@@ -59,7 +126,7 @@
   </div>
 {% else %}
   <div class="alert alert-info">
-    لا توجد بيانات دوام حالياً. (سيظهر الملخص بعد استيراد الأحداث وحساب الملخص اليومي).
+    لا توجد بيانات دوام أو أيام غياب مستحقة في الشهر المختار.
   </div>
 {% endif %}
 
