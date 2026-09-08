@@ -83,6 +83,7 @@ class FollowupServicesTests(unittest.TestCase):
         document = Document(BytesIO(build_followup_docx(report)))
         text = " ".join(paragraph.text for paragraph in document.paragraphs)
         table_text = " ".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+        period_cell = document.tables[0].rows[3].cells[1]
         accomplishments_table = document.tables[-1]
         title = document.paragraphs[0]
 
@@ -111,6 +112,13 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertIn("إنجاز التقرير", table_text)
         self.assertIn("تمت المراجعة", text)
         self.assertEqual(
+            [run.text for run in period_cell.paragraphs[0].runs],
+            ["2026-09-01", "\u00a0إلى\u00a0", "2026-09-05"],
+        )
+        self.assertIsNotNone(
+            period_cell.paragraphs[0].runs[1]._element.rPr.find(qn("w:rtl"))
+        )
+        self.assertEqual(
             [cell.text for cell in accomplishments_table.rows[0].cells],
             ["المهمة", "التاريخ"],
         )
@@ -124,15 +132,23 @@ class FollowupServicesTests(unittest.TestCase):
                 int(cell._tc.tcPr.tcW.get(qn("w:w")))
                 for cell in table.rows[0].cells
             ]
-            self.assertLessEqual(sum(widths), int(5.7 * 1440))
-            self.assertEqual(table.alignment, WD_TABLE_ALIGNMENT.RIGHT)
+            self.assertGreaterEqual(sum(widths), int(6.9 * 1440))
+            self.assertLessEqual(sum(widths), int(7.0 * 1440))
+            self.assertEqual(table.alignment, WD_TABLE_ALIGNMENT.CENTER)
             self.assertEqual(
                 table._tbl.tblPr.find(qn("w:tblLayout")).get(qn("w:type")),
                 "fixed",
             )
+            self.assertEqual(
+                table._tbl.tblPr.find(qn("w:tblW")).get(qn("w:type")),
+                "dxa",
+            )
         for paragraph in document.paragraphs[1:]:
-            self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
             self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
+            self.assertEqual(
+                paragraph._p.pPr.find(qn("w:jc")).get(qn("w:val")),
+                "start",
+            )
             self.assertEqual(paragraph.runs[0].font.size.pt, 16)
             self.assertEqual(
                 paragraph.runs[0]._element.rPr.find(qn("w:szCs")).get(qn("w:val")),
@@ -142,8 +158,11 @@ class FollowupServicesTests(unittest.TestCase):
             for row in table.rows:
                 for cell in row.cells:
                     paragraph = cell.paragraphs[0]
-                    self.assertEqual(paragraph.alignment, WD_ALIGN_PARAGRAPH.RIGHT)
                     self.assertIsNotNone(paragraph._p.pPr.find(qn("w:bidi")))
+                    self.assertEqual(
+                        paragraph._p.pPr.find(qn("w:jc")).get(qn("w:val")),
+                        "start",
+                    )
                     self.assertEqual(paragraph.runs[0].font.size.pt, 16)
                     self.assertEqual(
                         paragraph.runs[0]._element.rPr.find(qn("w:szCs")).get(qn("w:val")),

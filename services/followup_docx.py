@@ -10,7 +10,8 @@ from pathlib import Path
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 ARABIC_FONT = "Sakkal Majalla"
 DOCUMENT_FONT_SIZE = 16
-TABLE_MAX_WIDTH_INCHES = 5.7
+DEFAULT_PAGE_MARGIN_INCHES = 0.65
+TABLE_MAX_WIDTH_INCHES = 7.0
 
 
 def is_valid_docx(path: str | Path) -> bool:
@@ -28,15 +29,27 @@ def _set_rtl(
     size: int = DOCUMENT_FONT_SIZE,
     color: str | None = None,
     center: bool = False,
+    space_after: int = 6,
 ) -> None:
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.oxml import OxmlElement
     from docx.oxml.ns import qn
     from docx.shared import Pt, RGBColor
 
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.RIGHT
-    paragraph.paragraph_format.space_after = Pt(6)
+    paragraph.paragraph_format.left_indent = Pt(0)
+    paragraph.paragraph_format.right_indent = Pt(0)
+    paragraph.paragraph_format.first_line_indent = Pt(0)
+    paragraph.paragraph_format.space_before = Pt(0)
+    paragraph.paragraph_format.space_after = Pt(space_after)
     p_pr = paragraph._p.get_or_add_pPr()
+    if center:
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    else:
+        justification = p_pr.find(qn("w:jc"))
+        if justification is None:
+            justification = OxmlElement("w:jc")
+            p_pr.append(justification)
+        justification.set(qn("w:val"), "start")
     bidi = p_pr.find(qn("w:bidi"))
     if bidi is None:
         bidi = OxmlElement("w:bidi")
@@ -59,11 +72,6 @@ def _set_rtl(
             size_cs = OxmlElement("w:szCs")
             r_pr.append(size_cs)
         size_cs.set(qn("w:val"), str(size * 2))
-        rtl = r_pr.find(qn("w:rtl"))
-        if rtl is None:
-            rtl = OxmlElement("w:rtl")
-            r_pr.append(rtl)
-        rtl.set(qn("w:val"), "1")
 
 
 def _paragraph(
@@ -141,7 +149,23 @@ def _set_cell(cell, value: str, *, header: bool = False) -> None:
             bold=header,
             size=DOCUMENT_FONT_SIZE,
             color="FFFFFF" if header else None,
+            space_after=0,
         )
+
+
+def _set_period_cell(cell, start, end) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    paragraph = cell.paragraphs[0]
+    paragraph.clear()
+    paragraph.add_run(_date_label(start))
+    connector = paragraph.add_run("\u00a0إلى\u00a0")
+    paragraph.add_run(_date_label(end))
+    _set_rtl(paragraph, size=DOCUMENT_FONT_SIZE, space_after=0)
+    rtl = OxmlElement("w:rtl")
+    rtl.set(qn("w:val"), "1")
+    connector._element.get_or_add_rPr().append(rtl)
 
 
 def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
@@ -150,7 +174,7 @@ def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
     from docx.oxml.ns import qn
     from docx.shared import Inches
 
-    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = False
     table_pr = table._tbl.tblPr
     layout = table_pr.find(qn("w:tblLayout"))
@@ -158,6 +182,12 @@ def _set_table_rtl(table, widths: tuple[float, ...]) -> None:
         layout = OxmlElement("w:tblLayout")
         table_pr.append(layout)
     layout.set(qn("w:type"), "fixed")
+    table_width = table_pr.find(qn("w:tblW"))
+    if table_width is None:
+        table_width = OxmlElement("w:tblW")
+        table_pr.append(table_width)
+    table_width.set(qn("w:w"), str(round(sum(widths) * 1440)))
+    table_width.set(qn("w:type"), "dxa")
     bidi_visual = table_pr.find(qn("w:bidiVisual"))
     if bidi_visual is None:
         bidi_visual = OxmlElement("w:bidiVisual")
@@ -191,7 +221,7 @@ def _fit_table_widths(document, proportions: tuple[float, ...]) -> tuple[float, 
     available_width = (
         section.page_width - section.left_margin - section.right_margin
     ) / 914400
-    width = min(TABLE_MAX_WIDTH_INCHES, max(available_width - 0.15, 1.0))
+    width = min(TABLE_MAX_WIDTH_INCHES, max(available_width - 0.1, 1.0))
     total = sum(proportions)
     return tuple(width * proportion / total for proportion in proportions)
 
@@ -213,10 +243,14 @@ def _add_rtl_table(document, headers: tuple[str, ...], rows, widths: tuple[float
 def build_followup_docx(report, template_path: str | Path | None = None) -> bytes:
     """Build a reviewable report document and preserve an uploaded letterhead."""
     from docx import Document
-    from docx.shared import Pt
+    from docx.shared import Inches, Pt
 
     path = Path(template_path) if template_path else None
     document = Document(str(path)) if path and path.is_file() else Document()
+    if not path or not path.is_file():
+        for section in document.sections:
+            section.left_margin = Inches(DEFAULT_PAGE_MARGIN_INCHES)
+            section.right_margin = Inches(DEFAULT_PAGE_MARGIN_INCHES)
     try:
         normal = document.styles["Normal"]
         normal.font.name = ARABIC_FONT
@@ -245,12 +279,13 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
         ("الحالة", _status_label(report.status)),
     ):
         details_rows.append((label, value))
-    _add_rtl_table(
+    details_table = _add_rtl_table(
         document,
         ("البيان", "التفاصيل"),
         details_rows,
         _fit_table_widths(document, (1.9, 3.8)),
     )
+    _set_period_cell(details_table.rows[3].cells[1], report.period_start, report.period_end)
 
     completed_items = [
         item
