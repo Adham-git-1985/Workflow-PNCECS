@@ -16,7 +16,11 @@ from services.delivery_controls import (
     cancel_pending_email_deliveries,
     email_delivery_enabled,
 )
-from services.hr_request_workflow import KIND_LEAVE, KIND_PERMISSION, can_view_request
+from services.hr_request_workflow import (
+    KIND_LEAVE,
+    KIND_PERMISSION,
+    can_receive_request_notification,
+)
 from services.workflow_task_email import (
     FAILED,
     MAX_ATTEMPTS,
@@ -103,7 +107,7 @@ def _can_receive_ticket_notification_email(user: User, notification: Notificatio
 
 
 def _can_receive_hr_request_notification_email(user: User, notification: Notification) -> bool:
-    """Reject queued HR-request emails for users who cannot open the request."""
+    """Limit HR-request email to the requester and current assigned approvers."""
     link_match = _HR_REQUEST_LINK_RE.match((getattr(notification, "link_url", None) or "").strip())
     if not link_match:
         return True
@@ -113,9 +117,7 @@ def _can_receive_hr_request_notification_email(user: User, notification: Notific
     row = db.session.get(HRLeaveRequest if kind == KIND_LEAVE else HRPermissionRequest, request_id)
     if not row:
         return False
-    if int(user.id) == int(row.user_id):
-        return True
-    return can_view_request(user, kind, request_id)
+    return can_receive_request_notification(user, kind, request_id)
 
 
 def _email_content(user: User, notification: Notification) -> tuple[str, str, str]:

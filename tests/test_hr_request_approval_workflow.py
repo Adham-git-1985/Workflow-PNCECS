@@ -21,6 +21,7 @@ from models import (
     HRPermissionType,
     HRRequestObserver,
     Notification,
+    NotificationEmailDelivery,
     Organization,
     OrgNode,
     OrgNodeAssignment,
@@ -44,6 +45,7 @@ from services.hr_request_workflow import (
     request_ids_user_can_act_on,
     start_request_flow,
 )
+from services.notification_email import _can_receive_hr_request_notification_email
 
 
 class HRRequestApprovalWorkflowTests(unittest.TestCase):
@@ -434,6 +436,77 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(permission_request.status, "APPROVED")
 
+    def test_submission_notifies_only_requester_and_assigned_manager(self):
+        db.session.add_all([
+            RolePermission(role="GENERAL-SECRETARY", permission=permission)
+            for permission in ("HR_REQUESTS_APPROVE", "HR_REQUESTS_VIEW_ALL")
+        ])
+        limited_approver = User(
+            email="submission-limited-approver@example.test",
+            name="Submission Limited Approver",
+            password_hash="x",
+            role="LIMITED_APPROVER",
+        )
+        db.session.add(limited_approver)
+        db.session.flush()
+        db.session.add(RolePermission(
+            role="LIMITED_APPROVER",
+            permission="HR_REQUESTS_APPROVE",
+        ))
+
+        leave = self._leave(self.normal_type)
+        permission_request = self._permission()
+        start_request_flow(KIND_LEAVE, leave)
+        start_request_flow(KIND_PERMISSION, permission_request)
+        db.session.commit()
+
+        expected_by_link = {
+            f"/portal/hr/approvals/leaves/{leave.id}": {
+                self.employee.id,
+                self.manager.id,
+            },
+            f"/portal/hr/approvals/permissions/{permission_request.id}": {
+                self.employee.id,
+                self.manager.id,
+            },
+        }
+        for link_url, expected_ids in expected_by_link.items():
+            notifications = Notification.query.filter_by(link_url=link_url).all()
+            self.assertEqual({notification.user_id for notification in notifications}, expected_ids)
+            self.assertTrue(all(notification.source == "portal" for notification in notifications))
+            self.assertTrue(all(not notification.is_read for notification in notifications))
+            self.assertEqual(
+                {notification.user_id for notification in notifications if notification.type == "HR_REQUEST_SUBMITTED"},
+                {self.employee.id},
+            )
+            manager_notification = next(
+                notification
+                for notification in notifications
+                if notification.user_id == self.manager.id
+            )
+            self.assertTrue(
+                _can_receive_hr_request_notification_email(
+                    self.manager,
+                    manager_notification,
+                )
+            )
+            self.assertFalse(
+                _can_receive_hr_request_notification_email(
+                    self.secretary,
+                    manager_notification,
+                )
+            )
+            self.assertFalse(
+                _can_receive_hr_request_notification_email(
+                    self.hr,
+                    manager_notification,
+                )
+            )
+            self.assertNotIn(limited_approver.id, {notification.user_id for notification in notifications})
+            self.assertNotIn(self.secretary.id, {notification.user_id for notification in notifications})
+            self.assertNotIn(self.hr.id, {notification.user_id for notification in notifications})
+        self.assertEqual(NotificationEmailDelivery.query.count(), 0)
+
     def test_secretary_general_returns_to_the_leave_after_final_approval(self):
         db.session.add(UserPermission(
             user_id=self.secretary.id,
@@ -579,7 +652,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(row.status, "APPROVED")
         self.assertEqual(steps[0].decided_by_id, raed.id)
 
-        allowed_notification_ids = set(expected_ids) | {requester.id, self.hr.id}
+        allowed_notification_ids = set(expected_ids) | {requester.id}
         recipient_ids = {
             notification.user_id
             for notification in Notification.query.filter_by(
@@ -708,7 +781,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             notification.user_id
             for notification in Notification.query.filter_by(type="HR_PERMISSION_REOPENED").all()
         }
-        self.assertTrue({self.employee.id, self.manager.id, self.hr.id}.issubset(notified_ids))
+        self.assertEqual(notified_ids, {self.employee.id, self.manager.id})
 
         self._login(client, self.manager.id)
         detail = client.get(f"/portal/hr/approvals/permissions/{row.id}")
@@ -919,7 +992,10 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(
-            {notification.user_id for notification in Notification.query.all()},
+            {
+                notification.user_id
+                for notification in Notification.query.filter_by(type="HR_APPROVAL").all()
+            },
             {self.manager.id},
         )
 
@@ -966,6 +1042,38 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             },
             {self.manager.id},
         )
+
+    def test_permission_updates_exclude_observers_and_global_approvers(self):
+        db.session.add_all([
+            RolePermission(role="GENERAL-SECRETARY", permission=permission)
+            for permission in ("HR_REQUESTS_APPROVE", "HR_REQUESTS_VIEW_ALL")
+        ])
+        row = self._permission()
+        start_request_flow(KIND_PERMISSION, row)
+        db.session.add(HRRequestObserver(
+            request_kind=KIND_PERMISSION,
+            request_id=row.id,
+            user_id=self.hr.id,
+            observer_scope="HR",
+        ))
+        db.session.flush()
+
+        _notify(
+            [self.employee.id, self.manager.id, self.hr.id, self.secretary.id],
+            "تحديث خاص بطلب مغادرة.",
+            kind=KIND_PERMISSION,
+            request_id=row.id,
+            ntype="HR_PERMISSION_PRIVATE_UPDATE",
+        )
+        db.session.commit()
+
+        recipient_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="HR_PERMISSION_PRIVATE_UPDATE",
+            ).all()
+        }
+        self.assertEqual(recipient_ids, {self.employee.id, self.manager.id})
 
     def test_general_director_board_scope_contains_directorate_employee(self):
         visible_ids = board_visible_user_ids(self.general_director)

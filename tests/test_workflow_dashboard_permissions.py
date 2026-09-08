@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask, g
 from flask_login import LoginManager
@@ -269,6 +270,101 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(request_row.title.encode("utf-8"), response.data)
+
+    def test_prior_approver_sees_returning_route_in_following_not_inbox(self):
+        secretary = User(
+            email="prior-secretary@example.test",
+            name="Prior Secretary",
+            password_hash="not-used-in-test",
+            role="GENERAL_SECRETARY",
+        )
+        current_manager = User(
+            email="current-route-manager@example.test",
+            name="Current Route Manager",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        node_type = OrgNodeType(
+            code="RETURN_ROUTE",
+            name_ar="مسار عائد",
+            is_active=True,
+        )
+        db.session.add_all((secretary, current_manager, node_type))
+        db.session.flush()
+        root_node = OrgNode(type_id=node_type.id, name_ar="المستوى الأعلى", is_active=True)
+        db.session.add(root_node)
+        db.session.flush()
+        current_node = OrgNode(
+            type_id=node_type.id,
+            parent_id=root_node.id,
+            name_ar="المستوى الحالي",
+            is_active=True,
+        )
+        db.session.add(current_node)
+        db.session.flush()
+        db.session.add_all((
+            OrgNodeManager(node_id=root_node.id, manager_user_id=secretary.id),
+            OrgNodeManager(node_id=current_node.id, manager_user_id=current_manager.id),
+        ))
+
+        request_row = WorkflowRequest(
+            requester_id=self.employee.id,
+            title="Returning route follows instead of inbox",
+            description="",
+            status="IN_PROGRESS",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        instance = WorkflowInstance(
+            request_id=request_row.id,
+            current_step_order=2,
+            is_completed=False,
+        )
+        db.session.add(instance)
+        db.session.flush()
+        db.session.add_all((
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                mode="SEQUENTIAL",
+                approver_kind="USER",
+                approver_user_id=secretary.id,
+                approver_org_node_id=current_node.id,
+                status="APPROVED",
+                decided_by_id=secretary.id,
+            ),
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=2,
+                mode="SEQUENTIAL",
+                approver_kind="ORG_NODE",
+                approver_org_node_id=current_node.id,
+                status="PENDING",
+            ),
+            WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=3,
+                mode="SEQUENTIAL",
+                approver_kind="ORG_NODE",
+                approver_org_node_id=root_node.id,
+                status="PENDING",
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, secretary)
+            with patch("workflow.routes.render_template", return_value="ok") as render:
+                inbox_response = client.get("/workflow/inbox")
+                inbox_rows = render.call_args.kwargs["rows"]
+            with patch("workflow.routes.render_template", return_value="ok") as render:
+                following_response = client.get("/workflow/following")
+                following_rows = render.call_args.kwargs["rows"]
+
+        self.assertEqual(inbox_response.status_code, 200)
+        self.assertEqual(following_response.status_code, 200)
+        self.assertNotIn(request_row.id, {row[0].id for row in inbox_rows})
+        self.assertIn(request_row.id, {row[0].id for row in following_rows})
 
     def test_pending_mention_from_an_earlier_step_stays_in_my_tasks(self):
         approver = User(

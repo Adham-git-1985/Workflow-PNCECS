@@ -4448,10 +4448,6 @@ def inbox():
     )
 
     if dynamic_rows:
-        normalized_actor_ids = [
-            int(user.id) for user in actor_users
-            if getattr(user, "id", None)
-        ]
         existing_instance_ids = {int(inst.id) for _req, inst, _step in rows}
         for dynamic_request, dynamic_instance in dynamic_rows:
             if int(dynamic_instance.id) in existing_instance_ids:
@@ -4460,13 +4456,24 @@ def inbox():
                 int(dynamic_instance.id),
                 [],
             )
+            prior_decider_ids = inbox_access_snapshot.decided_users_by_instance.get(
+                int(dynamic_instance.id),
+                set(),
+            )
+            bypass_actor_users = [
+                actor_user
+                for actor_user in actor_users
+                if int(getattr(actor_user, "id", 0) or 0) not in prior_decider_ids
+            ]
+            if not bypass_actor_users:
+                continue
             if not resolve_hierarchy_bypass_step(
                 dynamic_instance,
-                normalized_actor_ids,
+                [int(actor_user.id) for actor_user in bypass_actor_users],
                 instance_steps=instance_steps,
                 can_actor_act=lambda candidate: any(
                     inbox_access_snapshot.can_act(actor_user, candidate)
-                    for actor_user in actor_users
+                    for actor_user in bypass_actor_users
                 ),
             ):
                 continue

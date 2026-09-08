@@ -1589,10 +1589,13 @@ def _global_notification_observer_user_ids(session: Session) -> set[int]:
     return observer_ids
 
 
-def _is_leave_request_notification(notification: Notification) -> bool:
-    """Leave-request notifications must never be copied to global observers."""
+def _is_hr_request_notification(notification: Notification) -> bool:
+    """Leave and departure notifications must never reach global observers."""
     link_url = (getattr(notification, "link_url", None) or "").strip().lower()
-    return link_url.startswith("/portal/hr/approvals/leaves/")
+    return link_url.startswith((
+        "/portal/hr/approvals/leaves/",
+        "/portal/hr/approvals/permissions/",
+    ))
 
 
 @event.listens_for(Session, "before_flush")
@@ -1606,7 +1609,7 @@ def _copy_notifications_to_global_observers(session, flush_context, instances):
             notification, "_global_notification_observer_copy", False
         ):
             continue
-        if _is_leave_request_notification(notification):
+        if _is_hr_request_notification(notification):
             continue
 
         source = (getattr(notification, "source", None) or "workflow").strip().lower()

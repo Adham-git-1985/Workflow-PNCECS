@@ -81,83 +81,36 @@ def _request_link(kind: str, request_id: int) -> str:
 
 
 def _request_notification_recipient_ids(kind: str, request_id: int) -> set[int]:
-    """Return only users who are entitled to receive a request notification."""
+    """Return the requester and users assigned to the current approval step."""
     kind = (kind or "").upper()
     row = _request(kind, request_id)
     if not row:
         return set()
 
     recipient_ids = {int(row.user_id)}
-    steps = approval_steps(kind, request_id)
-    if kind == KIND_LEAVE:
-        active_step = next((step for step in steps if step.status == "PENDING"), None)
-        if active_step:
-            recipient_ids.update(_step_approver_ids(active_step))
-            if active_step.escalated_from_user_id:
-                recipient_ids.add(int(active_step.escalated_from_user_id))
-        return recipient_ids
-
-    for step in steps:
-        recipient_ids.update(_step_approver_ids(step))
-        for user_id in (
-            getattr(step, "decided_by_id", None),
-            getattr(step, "escalated_from_user_id", None),
-        ):
-            if user_id:
-                recipient_ids.add(int(user_id))
-    recipient_ids.update(_trusted_request_observer_ids(kind, row))
+    active_step = next(
+        (step for step in approval_steps(kind, request_id) if step.status == "PENDING"),
+        None,
+    )
+    if active_step:
+        recipient_ids.update(_step_approver_ids(active_step))
     return recipient_ids
 
 
-def _trusted_request_observer_ids(kind: str, row) -> set[int]:
-    """Return observers whose current role still entitles them to updates.
-
-    Older requests can contain broad observer rows created before request
-    notifications were scoped.  Those rows must not make unrelated employees
-    recipients of new leave or departure updates.
-    """
-    if not row:
-        return set()
-
-    hr_user_ids = set(hr_notification_user_ids())
-    direct_manager_ids = {
-        int(manager.id)
-        for manager in resolve_responsible_managers(int(row.user_id))
-    }
-    general_director = resolve_general_director(int(row.user_id))
-    general_director_id = int(general_director.id) if general_director else None
-    secretary_ids = set(secretary_general_user_ids())
-    trusted_ids: set[int] = set()
-
-    for observer in HRRequestObserver.query.filter_by(
-        request_kind=kind,
-        request_id=int(row.id),
-    ).all():
-        if not observer.user_id:
-            continue
-        user_id = int(observer.user_id)
-        scope = _normalize(getattr(observer, "observer_scope", None))
-
-        if scope == "HR" and user_id in hr_user_ids:
-            trusted_ids.add(user_id)
-        elif scope == "DIRECTMANAGER" and user_id in direct_manager_ids:
-            trusted_ids.add(user_id)
-        elif scope == "GENERALDIRECTOR" and user_id == general_director_id:
-            trusted_ids.add(user_id)
-        elif scope == "SECRETARYGENERAL" and user_id in secretary_ids:
-            trusted_ids.add(user_id)
-        elif scope == "SECRETARIAT":
-            user = db.session.get(User, user_id)
-            if _is_secretariat(user):
-                trusted_ids.add(user_id)
-        elif scope == "ROUTINGERROR" and (user_id in hr_user_ids or user_id in secretary_ids):
-            trusted_ids.add(user_id)
-
-    return trusted_ids
+def can_receive_request_notification(user: User, kind: str, request_id: int) -> bool:
+    if not user or not getattr(user, "id", None):
+        return False
+    return int(user.id) in _request_notification_recipient_ids(kind, request_id)
 
 
-def _notify(user_ids: Iterable[int], message: str, *, kind: str, request_id: int, ntype: str = "HR_APPROVAL") -> None:
-    now = datetime.utcnow()
+def _notify(
+    user_ids: Iterable[int],
+    message: str,
+    *,
+    kind: str,
+    request_id: int,
+    ntype: str = "HR_APPROVAL",
+) -> None:
     try:
         link = notification_target_path(
             "HR_LEAVE_REQUEST" if kind == KIND_LEAVE else "HR_PERMISSION_REQUEST",
@@ -166,26 +119,8 @@ def _notify(user_ids: Iterable[int], message: str, *, kind: str, request_id: int
     except Exception:
         link = _request_link(kind, request_id)
     recipient_ids = {int(value) for value in user_ids if value}
-    if ntype == "HR_APPROVAL_ROUTING_ERROR":
-        # A routing alert is intentionally sent to HR/secretariat users. Record
-        # them as observers first so its link is usable and the email remains
-        # within the same authorization boundary as every other request alert.
-        for user_id in recipient_ids:
-            observer = HRRequestObserver.query.filter_by(
-                request_kind=(kind or "").upper(),
-                request_id=int(request_id),
-                user_id=user_id,
-            ).first()
-            if not observer:
-                db.session.add(HRRequestObserver(
-                    request_kind=(kind or "").upper(),
-                    request_id=int(request_id),
-                    user_id=user_id,
-                    observer_scope="ROUTING_ERROR",
-                    notified_at=now,
-                    created_at=now,
-                ))
     recipient_ids.intersection_update(_request_notification_recipient_ids(kind, request_id))
+    now = datetime.utcnow()
     for user_id in sorted(recipient_ids):
         db.session.add(Notification(
             user_id=user_id,
@@ -737,20 +672,31 @@ def start_request_flow(
     row.approver_user_id = first_approver_id
     row.updated_at = now
 
+    approval_recipient_ids = set(effective_approver_ids)
+    approval_recipient_ids.discard(int(row.user_id))
+
+    _notify(
+        [row.user_id],
+        f"تم تقديم طلب {_request_label(kind)} رقم #{row.id} وهو بانتظار الاعتماد.",
+        kind=kind,
+        request_id=row.id,
+        ntype="HR_REQUEST_SUBMITTED",
+    )
+
     if effective_approver_ids:
         _notify(
-            effective_approver_ids,
+            approval_recipient_ids,
             f"طلب {_request_label(kind)} رقم #{row.id} للموظف {_request_employee_name(row)} بانتظار اعتمادك.",
             kind=kind,
             request_id=row.id,
         )
     else:
         _notify(
-            hr_observer_user_ids() + secretary_general_user_ids(),
+            [row.user_id],
             f"تعذر تحديد معتمد لطلب {_request_label(kind)} رقم #{row.id} للموظف {_request_employee_name(row)}. يلزم ضبط المسؤول التنظيمي.",
             kind=kind,
             request_id=row.id,
-            ntype="HR_APPROVAL_ROUTING_ERROR",
+            ntype="HR_REQUEST_ROUTING_ERROR",
         )
     return steps
 
@@ -766,9 +712,9 @@ def reopen_permission_request(
 ) -> list[HRRequestApprovalStep]:
     """Return an approved departure to the same approval path.
 
-    Historical decisions remain untouched.  The new round is appended to the
-    runtime path and every person who has participated in, observes, or now
-    approves the request receives a clear change notification.
+    Historical decisions remain untouched. The new round is appended to the
+    runtime path, while notifications stay limited to the requester and the
+    approvers assigned to the new active step.
     """
     now = now or datetime.utcnow()
     row.status = "SUBMITTED"
@@ -953,11 +899,11 @@ def _activate_next_step(kind: str, row, step: HRRequestApprovalStep, now: dateti
         )
     else:
         _notify(
-            hr_observer_user_ids(),
+            [row.user_id],
             f"تعذر تحديد معتمد لطلب {_request_label(kind)} رقم #{row.id} في مرحلة {stage_label(next_step.stage_code)}. يلزم ضبط الصلاحيات التنظيمية.",
             kind=kind,
             request_id=row.id,
-            ntype="HR_APPROVAL_ROUTING_ERROR",
+            ntype="HR_REQUEST_ROUTING_ERROR",
         )
     return next_step
 
@@ -996,14 +942,12 @@ def _observer_groups(kind: str, row) -> dict[str, set[int]]:
 
 
 def _record_final_observers(kind: str, row, now: datetime) -> None:
+    """Preserve permission-request visibility without sending observer alerts."""
     if kind == KIND_LEAVE:
         return
 
     seen: set[int] = set()
-    cc_ids: set[int] = set()
     for scope, user_ids in _observer_groups(kind, row).items():
-        if scope == "HR" or (kind == KIND_PERMISSION and scope == "DIRECT_MANAGER"):
-            cc_ids.update(user_ids)
         for user_id in sorted(user_ids):
             if user_id in seen:
                 continue
@@ -1022,14 +966,6 @@ def _record_final_observers(kind: str, row, now: datetime) -> None:
                     created_at=now,
                 )
                 db.session.add(observer)
-            observer.notified_at = now
-    _notify(
-        cc_ids,
-        f"للاطلاع: تم اعتماد طلب {_request_label(kind)} رقم #{row.id} للموظف {_request_employee_name(row)}.",
-        kind=kind,
-        request_id=row.id,
-        ntype="HR_REQUEST_CC",
-    )
 
 
 def decide_request(kind: str, row, actor: User, action: str, note: str | None = None, *, now: datetime | None = None) -> str:
@@ -1108,24 +1044,6 @@ def cancel_request_flow(kind: str, request_id: int, *, now: datetime | None = No
         if step.status in ACTIVE_STEP_STATUSES:
             step.status = "CANCELLED"
             step.updated_at = now
-    if kind == KIND_LEAVE:
-        return
-    observer_ids = [
-        row.user_id
-        for row in HRRequestObserver.query.filter_by(
-            request_kind=kind,
-            request_id=int(request_id),
-            observer_scope="HR",
-        ).all()
-    ]
-    if observer_ids:
-        _notify(
-            observer_ids,
-            f"للاطلاع: تم إلغاء طلب {_request_label(kind)} رقم #{request_id} بعد اعتماده.",
-            kind=kind,
-            request_id=request_id,
-            ntype="HR_REQUEST_CC",
-        )
 
 
 def _escalation_target(step: HRRequestApprovalStep, row, now: datetime) -> tuple[User | None, str | None]:
@@ -1257,15 +1175,15 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
                 )
             escalated += 1
         else:
-            # Keep it pending and raise a routing alert; never approve it.
+            # Keep it pending and alert only the request parties; never approve it.
             step.due_at = add_working_days(now, 1)
             if send_notifications:
                 _notify(
-                    hr_observer_user_ids() + secretary_general_user_ids(),
+                    [row.user_id, *_step_approver_ids(step)],
                     f"تعذر تصعيد طلب {_request_label(step.request_kind)} رقم #{row.id}: لا يوجد نائب أو مسؤول أعلى مضبوط.",
                     kind=step.request_kind,
                     request_id=row.id,
-                    ntype="HR_APPROVAL_ROUTING_ERROR",
+                    ntype="HR_REQUEST_ROUTING_ERROR",
                 )
             unresolved += 1
 
