@@ -12,6 +12,7 @@ from models import (
     WorkflowRequest,
     WorkflowStepTask,
 )
+from portal.perm_defs import ALL_KEYS as PORTAL_ALL_KEYS, PERMS as PORTAL_PERMS
 from workflow.engine import decide_step, reopen_workflow_to_step
 
 
@@ -126,6 +127,14 @@ class WorkflowReopenToStepTests(unittest.TestCase):
             action="WORKFLOW_REOPENED_TO_STEP",
             target_id=self.second_step.id,
         ).first())
+
+    def test_reopen_permission_is_available_in_the_permission_editor(self):
+        permission_key = "WORKFLOW_REOPEN_TO_STEP"
+        self.assertIn(permission_key, PORTAL_ALL_KEYS)
+        definitions = [permission for group in PORTAL_PERMS.values() for permission in group]
+        definition = next(permission for permission in definitions if permission.key == permission_key)
+        self.assertEqual(definition.label, "إعادة فتح المسار")
+        self.assertEqual(definition.module, "WORKFLOW")
 
     def test_reopen_rejects_a_step_after_the_current_step(self):
         with self.assertRaisesRegex(ValueError, "خطوة حالية أو سابقة"):
