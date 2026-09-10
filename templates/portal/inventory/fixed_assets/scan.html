@@ -1,0 +1,203 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div><h4 class="mb-1"><i class="bi bi-qr-code-scan"></i> ماسح جرد الأصول</h4><div class="text-muted">{{ cycle.name }} · {{ cycle.code }}</div></div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}"><i class="bi bi-clipboard-data"></i> تقرير الدورة</a>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card shadow-sm mb-3">
+      <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-bold">قراءة الملصق</span><span class="badge text-bg-secondary">متبقٍ {{ stats.get('PENDING', 0) }}</span></div>
+      <div class="card-body">
+        <div id="scanMessage" class="alert alert-info py-2">وجّه الكاميرا إلى ملصق QR، أو أدخل رقم الأصل يدوياً.</div>
+        <div class="ratio ratio-4x3 bg-dark rounded overflow-hidden mb-3 d-none" id="videoWrap"><video id="scannerVideo" playsinline muted></video></div>
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <button class="btn btn-primary" type="button" id="startCamera"><i class="bi bi-camera"></i> تشغيل الكاميرا</button>
+          <button class="btn btn-outline-secondary d-none" type="button" id="stopCamera"><i class="bi bi-stop-circle"></i> إيقاف</button>
+          <label class="btn btn-outline-primary mb-0"><i class="bi bi-image"></i> قراءة صورة<input class="d-none" type="file" id="scanImage" accept="image/*" capture="environment"></label>
+        </div>
+        <form id="manualLookup" class="input-group">
+          <input class="form-control form-control-lg font-monospace" id="manualCode" autocomplete="off" placeholder="رقم الأصل أو قيمة QR">
+          <button class="btn btn-outline-primary" type="submit">بحث</button>
+        </form>
+        <div class="form-text">تشغيل الكاميرا على الهاتف يحتاج اتصال HTTPS. عند عدم توفره استخدم قارئ QR خارجي أو الإدخال اليدوي.</div>
+      </div>
+    </div>
+
+    <form method="post" class="card shadow-sm d-none" id="confirmCard">
+      <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-bold">تأكيد نتيجة الجرد</span><span id="scopeBadge" class="badge text-bg-success"></span></div>
+      <div class="card-body">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+        <input type="hidden" name="asset_code" id="assetCode">
+        <input type="hidden" name="scan_source" id="scanSource" value="MANUAL">
+        <div class="border rounded p-3 mb-3 bg-light">
+          <div class="d-flex justify-content-between gap-2"><div><div class="fs-5 fw-bold" id="assetTitle"></div><div class="font-monospace fw-semibold" id="assetTag"></div></div><a id="assetView" class="btn btn-sm btn-outline-secondary align-self-start" target="_blank">بطاقة الأصل</a></div>
+          <div class="small text-muted mt-2" id="assetMeta"></div>
+          <hr class="my-2">
+          <div class="row g-2 small"><div class="col-md-6"><span class="text-muted">المتوقع:</span> <span id="expectedLocation"></span></div><div class="col-md-6"><span class="text-muted">نتيجة اللجنة السابقة:</span> <span id="previousResult"></span></div></div>
+          <div id="rescanWarning" class="alert alert-warning py-1 px-2 mt-2 mb-0 d-none"></div>
+        </div>
+        <div class="row g-3">
+          <div class="col-md-6"><label class="form-label">المستودع الفعلي</label><select class="form-select" name="observed_warehouse_id" id="observedWarehouse"><option value="">غير محدد</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.label }}</option>{% endfor %}</select></div>
+          <div class="col-md-6"><label class="form-label">الغرفة/المكتب الفعلي</label><select class="form-select" name="observed_room_id" id="observedRoom"><option value="">غير محدد</option>{% for room in rooms %}<option value="{{ room.id }}">{{ room.label }}</option>{% endfor %}</select></div>
+          <div class="col-md-12"><label class="form-label">الموظف المسؤول/صاحب العهدة</label><select class="form-select searchable-select" name="observed_custodian_user_id" id="observedCustodian"><option value="">لا يوجد</option>{% for user in users %}<option value="{{ user.id }}">{{ user.full_name }}{% if user.username %} — {{ user.username }}{% endif %}</option>{% endfor %}</select></div>
+          <div class="col-md-6"><label class="form-label">حالة الأصل</label><select class="form-select" name="observed_condition" id="observedCondition">{% for code, label in fixed_asset_condition_labels.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></div>
+          <div class="col-md-6"><label class="form-label">الوضع الإداري</label><select class="form-select" name="observed_lifecycle_status" id="observedLifecycle">{% for code, label in fixed_asset_lifecycle_labels.items() %}<option value="{{ code }}">{{ label }}</option>{% endfor %}</select></div>
+          <div class="col-12"><label class="form-label">ملاحظة اللجنة</label><textarea class="form-control" name="note" id="scanNote" rows="2" placeholder="مثال: نُقل إلى غرفة أخرى، يحتاج صيانة..."></textarea></div>
+        </div>
+      </div>
+      <div class="card-footer d-flex justify-content-between gap-2"><button class="btn btn-outline-secondary" type="button" id="cancelConfirm">إلغاء</button><button class="btn btn-success btn-lg" type="submit"><i class="bi bi-check2-circle"></i> اعتماد القراءة</button></div>
+    </form>
+  </div>
+
+  <div class="col-lg-5">
+    <div class="card shadow-sm mb-3"><div class="card-header fw-bold">تقدم اللجنة</div><div class="card-body"><div class="row text-center g-2"><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold">{{ stats.get('TOTAL', 0) }}</div><small class="text-muted">الإجمالي</small></div></div><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold text-success">{{ stats.get('SCANNED', 0) }}</div><small class="text-muted">مقروء</small></div></div><div class="col-4"><div class="border rounded p-2"><div class="fs-4 fw-bold text-secondary">{{ stats.get('PENDING', 0) }}</div><small class="text-muted">متبقٍ</small></div></div></div></div></div>
+    <div class="card shadow-sm"><div class="card-header fw-bold">آخر القراءات</div><div class="list-group list-group-flush" style="max-height:520px;overflow:auto">{% for scan in recent_scans %}<a class="list-group-item list-group-item-action" href="{{ url_for('portal.fixed_asset_view', asset_id=scan.asset_id) }}" target="_blank"><div class="d-flex justify-content-between gap-2"><span class="fw-semibold">{{ scan.asset.asset_tag }}</span><small class="text-muted">{{ scan.scanned_at|local_datetime }}</small></div><div>{{ scan.asset.name }}</div><span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span></a>{% else %}<div class="text-center text-muted py-4">ابدأ بأول قراءة.</div>{% endfor %}</div></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(() => {
+  const lookupUrl = {{ url_for('portal.fixed_asset_cycle_lookup', cycle_id=cycle.id)|tojson }};
+  const initialCode = {{ initial_code|tojson }};
+  const message = document.getElementById('scanMessage');
+  const confirmCard = document.getElementById('confirmCard');
+  const videoWrap = document.getElementById('videoWrap');
+  const video = document.getElementById('scannerVideo');
+  const startButton = document.getElementById('startCamera');
+  const stopButton = document.getElementById('stopCamera');
+  let mediaStream = null;
+  let detector = null;
+  let detecting = false;
+
+  function showMessage(text, kind='info') {
+    message.className = `alert alert-${kind} py-2`;
+    message.textContent = text;
+  }
+
+  function setValue(id, value) {
+    const field = document.getElementById(id);
+    if (field) {
+      field.value = value == null ? '' : String(value);
+      field.dispatchEvent(new Event('change', {bubbles: true}));
+    }
+  }
+
+  async function lookup(code, source='MANUAL') {
+    const cleanCode = String(code || '').trim();
+    if (!cleanCode) { showMessage('أدخل رقم الأصل أو امسح رمز QR.', 'warning'); return; }
+    showMessage('جارٍ البحث عن الأصل...', 'info');
+    try {
+      const response = await fetch(`${lookupUrl}?code=${encodeURIComponent(cleanCode)}`, {headers: {'Accept': 'application/json'}});
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.message || 'تعذر قراءة الرمز.');
+      document.getElementById('assetCode').value = data.asset.code;
+      document.getElementById('scanSource').value = source;
+      document.getElementById('assetTitle').textContent = data.asset.name;
+      document.getElementById('assetTag').textContent = data.asset.asset_tag;
+      document.getElementById('assetMeta').textContent = [data.asset.serial_number, data.asset.manufacturer, data.asset.model].filter(Boolean).join(' · ') || 'لا توجد بيانات إضافية';
+      document.getElementById('assetView').href = data.asset.view_url;
+      document.getElementById('expectedLocation').textContent = `${data.entry.expected_location} · ${data.entry.expected_condition || ''}`;
+      document.getElementById('previousResult').textContent = data.entry.previous_result || '-';
+      const scopeBadge = document.getElementById('scopeBadge');
+      scopeBadge.textContent = data.entry.expected ? 'ضمن النطاق' : 'خارج النطاق';
+      scopeBadge.className = `badge text-bg-${data.entry.expected ? 'success' : 'danger'}`;
+      const warning = document.getElementById('rescanWarning');
+      if (data.entry.already_scanned) {
+        warning.textContent = `سبق جرده ${data.entry.scan_count} مرة. الاعتماد سيضيف قراءة جديدة ويحدث النتيجة.`;
+        warning.classList.remove('d-none');
+      } else {
+        warning.classList.add('d-none');
+      }
+      setValue('observedWarehouse', data.defaults.warehouse_id);
+      setValue('observedRoom', data.defaults.room_id);
+      setValue('observedCustodian', data.defaults.custodian_user_id);
+      setValue('observedCondition', data.defaults.condition || 'GOOD');
+      setValue('observedLifecycle', data.defaults.lifecycle_status || 'ACTIVE');
+      setValue('scanNote', data.defaults.note || '');
+      confirmCard.classList.remove('d-none');
+      confirmCard.scrollIntoView({behavior: 'smooth', block: 'start'});
+      showMessage(`تم التعرف على ${data.asset.asset_tag}. راجع البيانات الفعلية ثم اعتمد.`, 'success');
+      if (navigator.vibrate) navigator.vibrate(120);
+      stopCamera();
+    } catch (error) {
+      showMessage(error.message || 'تعذر قراءة الرمز.', 'danger');
+      if (navigator.vibrate) navigator.vibrate([120, 80, 120]);
+    }
+  }
+
+  async function detectionLoop() {
+    if (!detecting || !detector || video.readyState < 2) return;
+    try {
+      const codes = await detector.detect(video);
+      if (codes.length) {
+        detecting = false;
+        await lookup(codes[0].rawValue, 'CAMERA');
+        return;
+      }
+    } catch (_) {}
+    if (detecting) window.setTimeout(detectionLoop, 220);
+  }
+
+  async function startCamera() {
+    if (!window.isSecureContext && location.hostname !== 'localhost') {
+      showMessage('المتصفح يمنع الكاميرا دون HTTPS. استخدم الإدخال اليدوي أو افتح البوابة عبر اتصال آمن.', 'warning');
+      return;
+    }
+    if (!('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) {
+      showMessage('هذا المتصفح لا يدعم قارئ QR المباشر. استخدم Chrome أو Edge حديثاً أو الإدخال اليدوي.', 'warning');
+      return;
+    }
+    try {
+      detector = new BarcodeDetector({formats: ['qr_code']});
+      mediaStream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}}, audio: false});
+      video.srcObject = mediaStream;
+      await video.play();
+      videoWrap.classList.remove('d-none');
+      startButton.classList.add('d-none');
+      stopButton.classList.remove('d-none');
+      detecting = true;
+      showMessage('الكاميرا تعمل؛ ثبّت رمز QR داخل الإطار.', 'primary');
+      detectionLoop();
+    } catch (error) {
+      showMessage('تعذر تشغيل الكاميرا. تحقق من الإذن أو استخدم الإدخال اليدوي.', 'danger');
+    }
+  }
+
+  function stopCamera() {
+    detecting = false;
+    if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+    video.srcObject = null;
+    videoWrap.classList.add('d-none');
+    startButton.classList.remove('d-none');
+    stopButton.classList.add('d-none');
+  }
+
+  document.getElementById('manualLookup').addEventListener('submit', event => { event.preventDefault(); lookup(document.getElementById('manualCode').value, 'MANUAL'); });
+  document.getElementById('cancelConfirm').addEventListener('click', () => { confirmCard.classList.add('d-none'); document.getElementById('manualCode').focus(); });
+  startButton.addEventListener('click', startCamera);
+  stopButton.addEventListener('click', stopCamera);
+  document.getElementById('scanImage').addEventListener('change', async event => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!('BarcodeDetector' in window)) { showMessage('قراءة الصور غير مدعومة في هذا المتصفح.', 'warning'); return; }
+    try {
+      const image = await createImageBitmap(file);
+      const imageDetector = new BarcodeDetector({formats: ['qr_code']});
+      const codes = await imageDetector.detect(image);
+      image.close();
+      if (!codes.length) throw new Error('لم يظهر رمز QR واضح في الصورة.');
+      await lookup(codes[0].rawValue, 'IMAGE');
+    } catch (error) { showMessage(error.message || 'تعذر قراءة الصورة.', 'danger'); }
+    event.target.value = '';
+  });
+  window.addEventListener('beforeunload', stopCamera);
+  if (initialCode) lookup(initialCode, 'QR'); else document.getElementById('manualCode').focus();
+})();
+</script>
+{% endblock %}

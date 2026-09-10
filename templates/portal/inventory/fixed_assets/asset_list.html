@@ -1,0 +1,80 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div><h4 class="mb-1">سجل الأصول الثابتة</h4><div class="text-muted small">كل قطعة لها رقم مستقل ورمز QR ثابت.</div></div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_assets_dashboard') }}"><i class="bi bi-speedometer2"></i> لوحة الجرد</a>
+    {% if can_export %}<a class="btn btn-outline-success" href="{{ url_for('portal.fixed_asset_export', **selected) }}"><i class="bi bi-file-earmark-excel"></i> تصدير</a>{% endif %}
+    {% if can_manage %}
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.fixed_asset_import') }}"><i class="bi bi-upload"></i> استيراد</a>
+      <a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_new') }}"><i class="bi bi-plus-circle"></i> أصل جديد</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card shadow-sm mb-3">
+  <div class="card-body">
+    <form method="get" class="row g-2">
+      <div class="col-lg-4"><input class="form-control" name="q" value="{{ selected.q }}" placeholder="رقم الأصل، الاسم، التسلسل، الشركة..."></div>
+      <div class="col-md-4 col-lg-2"><select class="form-select" name="category_id"><option value="">كل التصنيفات</option>{% for category in categories %}<option value="{{ category.id }}" {% if selected.category_id == category.id %}selected{% endif %}>{{ category.name }}</option>{% endfor %}</select></div>
+      <div class="col-md-4 col-lg-2"><select class="form-select" name="warehouse_id"><option value="">كل المستودعات</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if selected.warehouse_id == warehouse.id %}selected{% endif %}>{{ warehouse.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4 col-lg-2"><select class="form-select" name="room_id"><option value="">كل الغرف</option>{% for room in rooms %}<option value="{{ room.id }}" {% if selected.room_id == room.id %}selected{% endif %}>{{ room.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4 col-lg-2"><select class="form-select" name="status"><option value="">كل الأوضاع</option>{% for code, label in fixed_asset_lifecycle_labels.items() %}<option value="{{ code }}" {% if selected.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4 col-lg-3"><select class="form-select" name="condition"><option value="">كل الحالات</option>{% for code, label in fixed_asset_condition_labels.items() %}<option value="{{ code }}" {% if selected.condition == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4 col-lg-3"><select class="form-select" name="active"><option value="1" {% if selected.active == '1' %}selected{% endif %}>السجلات الفعالة</option><option value="all" {% if selected.active == 'all' %}selected{% endif %}>الكل</option><option value="0" {% if selected.active == '0' %}selected{% endif %}>المؤرشفة</option></select></div>
+      <div class="col-md-4 col-lg-2 d-grid"><button class="btn btn-outline-primary"><i class="bi bi-search"></i> بحث</button></div>
+      <div class="col-md-4 col-lg-2 d-grid"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_list') }}">مسح</a></div>
+    </form>
+  </div>
+</div>
+
+<div class="d-flex flex-wrap gap-2 mb-2">
+  <button class="btn btn-sm btn-outline-dark" type="button" id="printSelected"><i class="bi bi-printer"></i> طباعة المحدد</button>
+  <a class="btn btn-sm btn-outline-dark" href="{{ url_for('portal.fixed_asset_labels', **selected) }}"><i class="bi bi-printer-fill"></i> طباعة نتائج البحث</a>
+  <span class="small text-muted align-self-center">عدد النتائج: {{ pagination.total }}</span>
+</div>
+
+<div class="card shadow-sm">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead><tr><th><input class="form-check-input" type="checkbox" id="selectAll"></th><th>QR</th><th>رقم الأصل</th><th>البيانات</th><th>الموقع/العهدة</th><th>الحالة</th><th>الوضع</th><th></th></tr></thead>
+      <tbody>
+        {% for asset in rows %}
+          <tr class="{% if not asset.is_active %}table-secondary{% endif %}">
+            <td><input class="form-check-input asset-select" type="checkbox" value="{{ asset.id }}"></td>
+            <td><img src="{{ url_for('portal.fixed_asset_qr_png', asset_id=asset.id) }}" width="54" height="54" alt="QR {{ asset.asset_tag }}"></td>
+            <td><a class="fw-bold text-decoration-none" href="{{ url_for('portal.fixed_asset_view', asset_id=asset.id) }}">{{ asset.asset_tag }}</a>{% if asset.serial_number %}<div class="small text-muted">{{ asset.serial_number }}</div>{% endif %}</td>
+            <td><div class="fw-semibold">{{ asset.name }}</div><div class="small text-muted">{{ asset.category.name if asset.category else 'بدون تصنيف' }}{% if asset.manufacturer %} · {{ asset.manufacturer }}{% endif %}{% if asset.model %} · {{ asset.model }}{% endif %}</div></td>
+            <td><div>{{ asset.location_label }}</div><div class="small text-muted">{{ asset.custodian.full_name if asset.custodian else 'لا توجد عهدة شخصية' }}</div></td>
+            <td><span class="badge text-bg-{{ 'success' if asset.asset_condition in ['NEW', 'GOOD'] else ('warning' if asset.asset_condition in ['FAIR', 'DAMAGED'] else 'danger') }}">{{ fixed_asset_condition_labels.get(asset.asset_condition, asset.asset_condition) }}</span></td>
+            <td><span class="badge text-bg-{{ 'secondary' if not asset.is_active else ('danger' if asset.lifecycle_status in ['LOST', 'DISPOSED'] else 'primary') }}">{{ 'مؤرشف' if not asset.is_active else fixed_asset_lifecycle_labels.get(asset.lifecycle_status, asset.lifecycle_status) }}</span></td>
+            <td class="text-nowrap"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.fixed_asset_labels', ids=asset.id) }}"><i class="bi bi-printer"></i></a>{% if can_manage %} <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.fixed_asset_edit', asset_id=asset.id) }}">تعديل</a>{% endif %}</td>
+          </tr>
+        {% else %}<tr><td colspan="8" class="text-center text-muted py-5">لا توجد أصول مطابقة.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if pagination.pages > 1 %}
+<nav class="mt-3"><ul class="pagination justify-content-center">
+  <li class="page-item {% if not pagination.has_prev %}disabled{% endif %}"><a class="page-link" href="{{ url_for('portal.fixed_asset_list', page=pagination.prev_num, **selected) }}">السابق</a></li>
+  <li class="page-item disabled"><span class="page-link">{{ pagination.page }} / {{ pagination.pages }}</span></li>
+  <li class="page-item {% if not pagination.has_next %}disabled{% endif %}"><a class="page-link" href="{{ url_for('portal.fixed_asset_list', page=pagination.next_num, **selected) }}">التالي</a></li>
+</ul></nav>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const checkboxes = Array.from(document.querySelectorAll('.asset-select'));
+  document.getElementById('selectAll')?.addEventListener('change', event => checkboxes.forEach(box => { box.checked = event.target.checked; }));
+  document.getElementById('printSelected')?.addEventListener('click', () => {
+    const ids = checkboxes.filter(box => box.checked).map(box => box.value);
+    if (!ids.length) { alert('حدد أصلاً واحداً على الأقل.'); return; }
+    const target = {{ url_for('portal.fixed_asset_labels')|tojson }} + '?ids=' + encodeURIComponent(ids.join(','));
+    window.open(target, '_blank', 'noopener');
+  });
+</script>
+{% endblock %}

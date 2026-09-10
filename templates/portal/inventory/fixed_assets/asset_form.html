@@ -1,0 +1,33 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div><h4 class="mb-1">{{ 'إضافة أصل ثابت' if is_new else 'تعديل أصل ثابت' }}</h4><div class="text-muted small">سجّل كل قطعة على حدة ليكون لها QR وسجل جرد مستقل.</div></div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_list') }}">سجل الأصول</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4"><label class="form-label">رقم الأصل</label><input class="form-control" name="asset_tag" maxlength="80" value="{{ request.form.get('asset_tag', asset.asset_tag or '') }}" required><div class="form-text">رقم فريد يُطبع على الملصق.</div></div>
+      <div class="col-md-8"><label class="form-label">اسم الأصل</label><input class="form-control" name="name" maxlength="255" value="{{ request.form.get('name', asset.name or '') }}" required></div>
+      <div class="col-md-6"><label class="form-label">ربط بصنف المستودع</label><select class="form-select" name="item_id"><option value="">بدون ربط</option>{% set selected_item = request.form.get('item_id', asset.item_id or '')|string %}{% for item in items %}<option value="{{ item.id }}" {% if selected_item == item.id|string %}selected{% endif %}>{{ item.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-6"><label class="form-label">التصنيف</label><select class="form-select" name="category_id"><option value="">بدون تصنيف</option>{% set selected_category = request.form.get('category_id', asset.category_id or '')|string %}{% for category in categories %}<option value="{{ category.id }}" {% if selected_category == category.id|string %}selected{% endif %}>{{ category.name }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><label class="form-label">الرقم التسلسلي</label><input class="form-control" name="serial_number" maxlength="200" value="{{ request.form.get('serial_number', asset.serial_number or '') }}"></div>
+      <div class="col-md-4"><label class="form-label">الشركة المصنعة</label><input class="form-control" name="manufacturer" maxlength="150" value="{{ request.form.get('manufacturer', asset.manufacturer or '') }}"></div>
+      <div class="col-md-4"><label class="form-label">الموديل</label><input class="form-control" name="model" maxlength="150" value="{{ request.form.get('model', asset.model or '') }}"></div>
+      <div class="col-md-4"><label class="form-label">تاريخ الشراء</label><input class="form-control" type="date" name="acquisition_date" value="{{ request.form.get('acquisition_date', asset.acquisition_date or '') }}"></div>
+      <div class="col-md-4"><label class="form-label">التكلفة</label><input class="form-control" type="number" step="0.01" min="0" name="purchase_cost" value="{{ request.form.get('purchase_cost', asset.purchase_cost if asset.purchase_cost is not none else '') }}"></div>
+      <div class="col-md-4"><label class="form-label">حالة الأصل</label><select class="form-select" name="asset_condition">{% set selected_condition = request.form.get('asset_condition', asset.asset_condition or 'GOOD') %}{% for code, label in fixed_asset_condition_labels.items() %}<option value="{{ code }}" {% if selected_condition == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><label class="form-label">الوضع الإداري</label><select class="form-select" name="lifecycle_status">{% set selected_status = request.form.get('lifecycle_status', asset.lifecycle_status or 'ACTIVE') %}{% for code, label in fixed_asset_lifecycle_labels.items() %}<option value="{{ code }}" {% if selected_status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><label class="form-label">المستودع</label><select class="form-select" name="warehouse_id"><option value="">غير محدد</option>{% set selected_warehouse = request.form.get('warehouse_id', asset.warehouse_id or '')|string %}{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if selected_warehouse == warehouse.id|string %}selected{% endif %}>{{ warehouse.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><label class="form-label">الغرفة/المكتب</label><select class="form-select" name="room_id"><option value="">غير محدد</option>{% set selected_room = request.form.get('room_id', asset.room_id or '')|string %}{% for room in rooms %}<option value="{{ room.id }}" {% if selected_room == room.id|string %}selected{% endif %}>{{ room.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-6"><label class="form-label">الموظف المسؤول/صاحب العهدة</label><select class="form-select searchable-select" name="custodian_user_id"><option value="">لا يوجد</option>{% set selected_user = request.form.get('custodian_user_id', asset.custodian_user_id or '')|string %}{% for user in users %}<option value="{{ user.id }}" {% if selected_user == user.id|string %}selected{% endif %}>{{ user.full_name }}{% if user.username %} — {{ user.username }}{% endif %}</option>{% endfor %}</select></div>
+      <div class="col-md-6"><label class="form-label">الوصف</label><textarea class="form-control" name="description" rows="3">{{ request.form.get('description', asset.description or '') }}</textarea></div>
+      <div class="col-md-6"><label class="form-label">ملاحظات</label><textarea class="form-control" name="note" rows="3">{{ request.form.get('note', asset.note or '') }}</textarea></div>
+      <div class="col-12"><div class="form-check"><input class="form-check-input" type="checkbox" name="is_active" value="1" id="assetActive" {% if request.method != 'POST' and asset.is_active or request.method == 'POST' and request.form.get('is_active') %}checked{% endif %}><label class="form-check-label" for="assetActive">سجل فعال ويظهر في نطاق الجرد</label></div></div>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-end gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_view', asset_id=asset.id) if asset.id else url_for('portal.fixed_asset_list') }}">إلغاء</a><button class="btn btn-primary" type="submit"><i class="bi bi-check2-circle"></i> حفظ وإنشاء QR</button></div>
+</form>
+{% endblock %}

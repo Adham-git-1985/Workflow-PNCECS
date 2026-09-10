@@ -1,0 +1,96 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div>
+    <h4 class="mb-1"><i class="bi bi-qr-code-scan"></i> جرد الأصول الثابتة</h4>
+    <div class="text-muted">ترميز الأصول، طباعة الملصقات، وتنفيذ جرد مقارن بين اللجان.</div>
+  </div>
+  <div class="d-flex flex-wrap gap-2">
+    <a class="btn btn-outline-primary" href="{{ url_for('portal.fixed_asset_list') }}"><i class="bi bi-list-ul"></i> سجل الأصول</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}"><i class="bi bi-clipboard-data"></i> دورات الجرد</a>
+    {% if can_manage %}
+      <a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_new') }}"><i class="bi bi-plus-circle"></i> أصل جديد</a>
+      <a class="btn btn-success" href="{{ url_for('portal.fixed_asset_cycle_new') }}"><i class="bi bi-play-circle"></i> بدء جرد</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100"><div class="card-body"><div class="text-muted small">إجمالي السجلات</div><div class="display-6 fw-bold">{{ total_assets }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-success"><div class="card-body"><div class="text-muted small">الأصول الفعالة</div><div class="display-6 fw-bold text-success">{{ active_assets }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-warning"><div class="card-body"><div class="text-muted small">قيد الصيانة</div><div class="display-6 fw-bold text-warning">{{ status_counts.get('MAINTENANCE', 0) }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-danger"><div class="card-body"><div class="text-muted small">مفقود</div><div class="display-6 fw-bold text-danger">{{ status_counts.get('LOST', 0) }}</div></div></div></div>
+</div>
+
+<div class="card shadow-sm mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span class="fw-bold"><i class="bi bi-broadcast"></i> دورات الجرد الجارية</span>
+    {% if can_manage %}<a class="btn btn-sm btn-primary" href="{{ url_for('portal.fixed_asset_cycle_new') }}">دورة جديدة</a>{% endif %}
+  </div>
+  <div class="card-body">
+    <div class="row g-3">
+      {% for cycle, stats in cycle_cards %}
+        {% set total = stats.get('TOTAL', 0) %}
+        {% set completed = total - stats.get('PENDING', 0) %}
+        {% set progress = ((completed * 100 / total)|round|int) if total else 0 %}
+        <div class="col-lg-6">
+          <div class="border rounded p-3 h-100">
+            <div class="d-flex justify-content-between gap-2">
+              <div><div class="fw-bold">{{ cycle.name }}</div><div class="small text-muted">{{ cycle.code }} · {{ cycle.scope_label }}</div></div>
+              <span class="badge text-bg-primary align-self-start">{{ progress }}%</span>
+            </div>
+            <div class="progress my-3" style="height:8px"><div class="progress-bar" style="width:{{ progress }}%"></div></div>
+            <div class="d-flex flex-wrap gap-2 small mb-3">
+              <span class="badge text-bg-success">مطابق {{ stats.get('MATCHED', 0) }}</span>
+              <span class="badge text-bg-warning">فروقات {{ stats.get('MOVED', 0) + stats.get('CONDITION_CHANGED', 0) + stats.get('MOVED_AND_CONDITION_CHANGED', 0) }}</span>
+              <span class="badge text-bg-secondary">متبقٍ {{ stats.get('PENDING', 0) }}</span>
+            </div>
+            <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">التفاصيل</a>
+            {% if can_manage %}<a class="btn btn-sm btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-camera"></i> فتح الماسح</a>{% endif %}
+          </div>
+        </div>
+      {% else %}
+        <div class="col-12 text-center text-muted py-4">لا توجد دورة جرد جارية حالياً.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">آخر دورات الجرد</div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>الدورة</th><th>التاريخ</th><th>النطاق</th><th>الحالة</th><th></th></tr></thead>
+          <tbody>
+            {% for cycle in recent_cycles %}
+              <tr>
+                <td><div class="fw-semibold">{{ cycle.name }}</div><div class="small text-muted">{{ cycle.code }}</div></td>
+                <td>{{ cycle.inventory_date }}</td>
+                <td>{{ cycle.scope_label }}</td>
+                <td><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></td>
+                <td><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">عرض</a></td>
+              </tr>
+            {% else %}<tr><td colspan="5" class="text-center text-muted py-4">لا توجد دورات بعد.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card shadow-sm h-100">
+      <div class="card-header fw-bold">آخر قراءات QR</div>
+      <div class="list-group list-group-flush">
+        {% for scan in recent_scans %}
+          <a class="list-group-item list-group-item-action" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=scan.cycle_id) }}">
+            <div class="d-flex justify-content-between gap-2"><span class="fw-semibold">{{ scan.asset.asset_tag }} · {{ scan.asset.name }}</span><small class="text-muted">{{ scan.scanned_at|local_datetime }}</small></div>
+            <span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span>
+          </a>
+        {% else %}<div class="text-center text-muted py-4">لا توجد قراءات بعد.</div>{% endfor %}
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

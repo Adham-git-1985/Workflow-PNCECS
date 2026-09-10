@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import json
+import secrets
 import unicodedata
 
 from extensions import db
@@ -4479,6 +4480,280 @@ class InvWarehousePermission(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "warehouse_id", name="uq_inv_wh_perm_user_wh"),
+    )
+
+
+# ----------------------
+# Inventory: Fixed assets and QR stocktaking
+# ----------------------
+
+class InvFixedAsset(db.Model):
+    __tablename__ = "inv_fixed_asset"
+
+    id = db.Column(db.Integer, primary_key=True)
+    asset_tag = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    qr_token = db.Column(
+        db.String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: secrets.token_urlsafe(24),
+    )
+    name = db.Column(db.String(255), nullable=False, index=True)
+    item_id = db.Column(db.Integer, db.ForeignKey("inv_item.id"), nullable=True, index=True)
+    category_id = db.Column(db.Integer, db.ForeignKey("inv_item_category.id"), nullable=True, index=True)
+    serial_number = db.Column(db.String(200), nullable=True, index=True)
+    manufacturer = db.Column(db.String(150), nullable=True)
+    model = db.Column(db.String(150), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    acquisition_date = db.Column(db.String(10), nullable=True, index=True)
+    purchase_cost = db.Column(db.Numeric(14, 2), nullable=True)
+    asset_condition = db.Column(db.String(30), nullable=False, default="GOOD", index=True)
+    lifecycle_status = db.Column(db.String(30), nullable=False, default="ACTIVE", index=True)
+    warehouse_id = db.Column(db.Integer, db.ForeignKey("inv_warehouse.id"), nullable=True, index=True)
+    room_id = db.Column(db.Integer, db.ForeignKey("inv_room.id"), nullable=True, index=True)
+    custodian_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    note = db.Column(db.Text, nullable=True)
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        index=True,
+    )
+
+    item = db.relationship("InvItem", foreign_keys=[item_id], lazy="joined")
+    category = db.relationship("InvItemCategory", foreign_keys=[category_id], lazy="joined")
+    warehouse = db.relationship("InvWarehouse", foreign_keys=[warehouse_id], lazy="joined")
+    room = db.relationship("InvRoom", foreign_keys=[room_id], lazy="joined")
+    custodian = db.relationship("User", foreign_keys=[custodian_user_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.Index("ix_inv_fixed_asset_scope", "is_active", "lifecycle_status", "warehouse_id", "room_id"),
+        db.Index("ix_inv_fixed_asset_name_serial", "name", "serial_number"),
+    )
+
+    @property
+    def label(self) -> str:
+        return f"{self.asset_tag} — {self.name}"
+
+    @property
+    def location_label(self) -> str:
+        parts = []
+        if self.warehouse:
+            parts.append(self.warehouse.label)
+        if self.room:
+            parts.append(self.room.label)
+        return " / ".join(parts) or "غير محدد"
+
+
+class InvFixedAssetCycle(db.Model):
+    __tablename__ = "inv_fixed_asset_cycle"
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    name = db.Column(db.String(255), nullable=False, index=True)
+    inventory_date = db.Column(db.String(10), nullable=False, index=True)
+    committee_name = db.Column(db.String(255), nullable=True)
+    previous_cycle_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_fixed_asset_cycle.id"),
+        nullable=True,
+        index=True,
+    )
+    scope_warehouse_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_warehouse.id"),
+        nullable=True,
+        index=True,
+    )
+    scope_room_id = db.Column(db.Integer, db.ForeignKey("inv_room.id"), nullable=True, index=True)
+    status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)
+    note = db.Column(db.Text, nullable=True)
+    started_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    closed_at = db.Column(db.DateTime, nullable=True, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    closed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    previous_cycle = db.relationship(
+        "InvFixedAssetCycle",
+        remote_side=[id],
+        foreign_keys=[previous_cycle_id],
+        lazy="joined",
+    )
+    scope_warehouse = db.relationship("InvWarehouse", foreign_keys=[scope_warehouse_id], lazy="joined")
+    scope_room = db.relationship("InvRoom", foreign_keys=[scope_room_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    closed_by = db.relationship("User", foreign_keys=[closed_by_id], lazy="joined")
+    members = db.relationship(
+        "InvFixedAssetCycleMember",
+        back_populates="cycle",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InvFixedAssetCycleMember.id",
+    )
+    entries = db.relationship(
+        "InvFixedAssetEntry",
+        back_populates="cycle",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InvFixedAssetEntry.id",
+    )
+
+    __table_args__ = (
+        db.Index("ix_inv_fixed_asset_cycle_date_status", "inventory_date", "status"),
+    )
+
+    @property
+    def scope_label(self) -> str:
+        parts = []
+        if self.scope_warehouse:
+            parts.append(self.scope_warehouse.label)
+        if self.scope_room:
+            parts.append(self.scope_room.label)
+        return " / ".join(parts) or "جميع الأصول"
+
+
+class InvFixedAssetCycleMember(db.Model):
+    __tablename__ = "inv_fixed_asset_cycle_member"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cycle_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_fixed_asset_cycle.id"),
+        nullable=False,
+        index=True,
+    )
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    member_role = db.Column(db.String(20), nullable=False, default="MEMBER", index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+    cycle = db.relationship("InvFixedAssetCycle", back_populates="members")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("cycle_id", "user_id", name="uq_inv_fixed_asset_cycle_member"),
+    )
+
+
+class InvFixedAssetEntry(db.Model):
+    __tablename__ = "inv_fixed_asset_entry"
+
+    id = db.Column(db.Integer, primary_key=True)
+    cycle_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_fixed_asset_cycle.id"),
+        nullable=False,
+        index=True,
+    )
+    asset_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset.id"), nullable=False, index=True)
+    was_expected = db.Column(db.Boolean, nullable=False, default=True, index=True)
+    previous_result_status = db.Column(db.String(40), nullable=True, index=True)
+
+    expected_warehouse_id = db.Column(db.Integer, db.ForeignKey("inv_warehouse.id"), nullable=True)
+    expected_room_id = db.Column(db.Integer, db.ForeignKey("inv_room.id"), nullable=True)
+    expected_custodian_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    expected_condition = db.Column(db.String(30), nullable=True)
+    expected_lifecycle_status = db.Column(db.String(30), nullable=True)
+
+    observed_warehouse_id = db.Column(db.Integer, db.ForeignKey("inv_warehouse.id"), nullable=True)
+    observed_room_id = db.Column(db.Integer, db.ForeignKey("inv_room.id"), nullable=True)
+    observed_custodian_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    observed_condition = db.Column(db.String(30), nullable=True)
+    observed_lifecycle_status = db.Column(db.String(30), nullable=True)
+
+    result_status = db.Column(db.String(40), nullable=False, default="PENDING", index=True)
+    scan_count = db.Column(db.Integer, nullable=False, default=0)
+    last_scan_source = db.Column(db.String(20), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    scanned_at = db.Column(db.DateTime, nullable=True, index=True)
+    scanned_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    cycle = db.relationship("InvFixedAssetCycle", back_populates="entries")
+    asset = db.relationship("InvFixedAsset", foreign_keys=[asset_id], lazy="joined")
+    expected_warehouse = db.relationship("InvWarehouse", foreign_keys=[expected_warehouse_id], lazy="joined")
+    expected_room = db.relationship("InvRoom", foreign_keys=[expected_room_id], lazy="joined")
+    expected_custodian = db.relationship("User", foreign_keys=[expected_custodian_user_id], lazy="joined")
+    observed_warehouse = db.relationship("InvWarehouse", foreign_keys=[observed_warehouse_id], lazy="joined")
+    observed_room = db.relationship("InvRoom", foreign_keys=[observed_room_id], lazy="joined")
+    observed_custodian = db.relationship("User", foreign_keys=[observed_custodian_user_id], lazy="joined")
+    scanned_by = db.relationship("User", foreign_keys=[scanned_by_id], lazy="joined")
+    scans = db.relationship(
+        "InvFixedAssetScanLog",
+        back_populates="entry",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="InvFixedAssetScanLog.scanned_at.desc()",
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("cycle_id", "asset_id", name="uq_inv_fixed_asset_entry_cycle_asset"),
+        db.Index("ix_inv_fixed_asset_entry_cycle_result", "cycle_id", "result_status"),
+    )
+
+    @property
+    def expected_location_label(self) -> str:
+        parts = []
+        if self.expected_warehouse:
+            parts.append(self.expected_warehouse.label)
+        if self.expected_room:
+            parts.append(self.expected_room.label)
+        return " / ".join(parts) or "غير محدد"
+
+    @property
+    def observed_location_label(self) -> str:
+        parts = []
+        if self.observed_warehouse:
+            parts.append(self.observed_warehouse.label)
+        if self.observed_room:
+            parts.append(self.observed_room.label)
+        return " / ".join(parts) or "غير محدد"
+
+
+class InvFixedAssetScanLog(db.Model):
+    __tablename__ = "inv_fixed_asset_scan_log"
+
+    id = db.Column(db.Integer, primary_key=True)
+    entry_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset_entry.id"), nullable=False, index=True)
+    cycle_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset_cycle.id"), nullable=False, index=True)
+    asset_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset.id"), nullable=False, index=True)
+    scanned_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    scanned_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, index=True)
+    source = db.Column(db.String(20), nullable=False, default="MANUAL")
+    previous_result_status = db.Column(db.String(40), nullable=True)
+    result_status = db.Column(db.String(40), nullable=False)
+    observed_warehouse_id = db.Column(db.Integer, db.ForeignKey("inv_warehouse.id"), nullable=True)
+    observed_room_id = db.Column(db.Integer, db.ForeignKey("inv_room.id"), nullable=True)
+    observed_custodian_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    observed_condition = db.Column(db.String(30), nullable=True)
+    observed_lifecycle_status = db.Column(db.String(30), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    device_info = db.Column(db.String(255), nullable=True)
+
+    entry = db.relationship("InvFixedAssetEntry", back_populates="scans")
+    cycle = db.relationship("InvFixedAssetCycle", foreign_keys=[cycle_id], lazy="joined")
+    asset = db.relationship("InvFixedAsset", foreign_keys=[asset_id], lazy="joined")
+    scanned_by = db.relationship("User", foreign_keys=[scanned_by_id], lazy="joined")
+    observed_warehouse = db.relationship("InvWarehouse", foreign_keys=[observed_warehouse_id], lazy="joined")
+    observed_room = db.relationship("InvRoom", foreign_keys=[observed_room_id], lazy="joined")
+    observed_custodian = db.relationship("User", foreign_keys=[observed_custodian_user_id], lazy="joined")
+
+    __table_args__ = (
+        db.Index("ix_inv_fixed_asset_scan_cycle_time", "cycle_id", "scanned_at"),
     )
 
 # ======================

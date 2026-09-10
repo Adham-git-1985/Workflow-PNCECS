@@ -1,0 +1,24 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div><h4 class="mb-1">دورات جرد الأصول</h4><div class="text-muted small">كل دورة تحفظ خط الأساس ونتيجة اللجنة بشكل مستقل.</div></div>
+  <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_assets_dashboard') }}">لوحة الجرد</a>{% if can_manage %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_new') }}"><i class="bi bi-plus-circle"></i> دورة جديدة</a>{% endif %}</div>
+</div>
+
+<form class="card card-body shadow-sm mb-3" method="get"><div class="row g-2"><div class="col-md-7"><input class="form-control" name="q" value="{{ selected.q }}" placeholder="اسم الدورة، الرقم، اللجنة..."></div><div class="col-md-3"><select class="form-select" name="status"><option value="">كل الحالات</option>{% for code, label in fixed_asset_cycle_labels.items() %}<option value="{{ code }}" {% if selected.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-2 d-grid"><button class="btn btn-outline-primary">بحث</button></div></div></form>
+
+<div class="card shadow-sm"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th>الدورة</th><th>اللجنة والنطاق</th><th>التقدم</th><th>النتائج</th><th>الحالة</th><th></th></tr></thead><tbody>
+  {% for cycle, stats in rows %}
+    {% set total = stats.get('TOTAL', 0) %}{% set completed = total - stats.get('PENDING', 0) %}{% set progress = ((completed * 100 / total)|round|int) if total else 0 %}
+    <tr>
+      <td><div class="fw-bold">{{ cycle.name }}</div><div class="small text-muted">{{ cycle.code }} · {{ cycle.inventory_date }}</div>{% if cycle.previous_cycle %}<div class="small">مقارنة مع: {{ cycle.previous_cycle.code }}</div>{% endif %}</td>
+      <td><div>{{ cycle.committee_name or '-' }}</div><div class="small text-muted">{{ cycle.scope_label }}</div></td>
+      <td style="min-width:150px"><div class="d-flex justify-content-between small"><span>{{ completed }} / {{ total }}</span><span>{{ progress }}%</span></div><div class="progress" style="height:7px"><div class="progress-bar" style="width:{{ progress }}%"></div></div></td>
+      <td><span class="badge text-bg-success">مطابق {{ stats.get('MATCHED', 0) }}</span> <span class="badge text-bg-warning">فروقات {{ stats.get('MOVED', 0) + stats.get('CONDITION_CHANGED', 0) + stats.get('MOVED_AND_CONDITION_CHANGED', 0) }}</span> <span class="badge text-bg-danger">مفقود {{ stats.get('MISSING', 0) + stats.get('STILL_MISSING', 0) }}</span></td>
+      <td><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></td>
+      <td class="text-nowrap"><a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}">عرض</a>{% if can_manage and cycle.status == 'ACTIVE' %} <a class="btn btn-sm btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-camera"></i> مسح</a>{% endif %}</td>
+    </tr>
+  {% else %}<tr><td colspan="6" class="text-center text-muted py-5">لا توجد دورات جرد.</td></tr>{% endfor %}
+</tbody></table></div></div>
+{% endblock %}

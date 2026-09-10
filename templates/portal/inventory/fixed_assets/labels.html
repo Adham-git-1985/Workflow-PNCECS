@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>ملصقات الأصول الثابتة</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;font-family:"Tahoma","Arial",sans-serif;color:#111;background:#eee}.toolbar{position:sticky;top:0;padding:10px;text-align:center;background:#fff;border-bottom:1px solid #ccc;z-index:2}.label{width:60mm;height:40mm;padding:2.3mm;background:#fff;border:1px dashed #999;display:grid;grid-template-columns:22mm 1fr;gap:2mm;align-items:center;page-break-after:always;overflow:hidden}.qr{width:21mm;height:21mm}.org{font-size:7.5pt;font-weight:bold;line-height:1.25;margin-bottom:1mm}.name{font-size:10pt;font-weight:bold;line-height:1.25;max-height:9mm;overflow:hidden}.tag{font:700 12pt monospace;direction:ltr;text-align:right;margin:1mm 0}.meta{font-size:7.5pt;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sheet{display:flex;flex-direction:column;align-items:center;gap:4mm;padding:5mm}@media print{body{background:#fff}.toolbar{display:none}.sheet{padding:0;gap:0}.label{border:0}@page{size:60mm 40mm;margin:0}}
+  </style>
+</head>
+<body>
+  <div class="toolbar"><button onclick="window.print()">طباعة {{ assets|length }} ملصق</button> <button onclick="window.close()">إغلاق</button></div>
+  <main class="sheet">
+    {% for asset in assets %}<section class="label"><div><img class="qr" src="{{ url_for('portal.fixed_asset_qr_png', asset_id=asset.id) }}" alt="QR"><div class="meta" style="text-align:center">امسح لعرض الأصل</div></div><div><div class="org">{{ organization_name }}</div><div class="name">{{ asset.name }}</div><div class="tag">{{ asset.asset_tag }}</div><div class="meta">{{ asset.category.name if asset.category else 'أصل ثابت' }}</div>{% if asset.serial_number %}<div class="meta">تسلسل: {{ asset.serial_number }}</div>{% endif %}<div class="meta">{{ asset.location_label }}</div></div></section>{% endfor %}
+  </main>
+</body>
+</html>

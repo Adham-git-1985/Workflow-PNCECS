@@ -1,0 +1,31 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+<div class="d-flex align-items-center justify-content-between mb-3">
+  <div><h4 class="mb-1">{{ 'تعديل بيانات دورة الجرد' if is_edit else 'بدء دورة جرد جديدة' }}</h4><div class="text-muted small">{{ 'يمكن تعديل بيانات اللجنة، بينما يبقى خط الأساس والنطاق ثابتين.' if is_edit else 'يُثبت النظام الأصول المتوقعة ثم يقارنها بنتائج اللجنة الحالية.' }}</div></div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">دورات الجرد</a>
+</div>
+
+<form method="post" class="card shadow-sm">
+  <div class="card-body">
+    <div class="row g-3">
+      <div class="col-md-4"><label class="form-label">رقم الدورة</label><input class="form-control" name="code" maxlength="80" value="{{ form.code }}" required></div>
+      <div class="col-md-8"><label class="form-label">اسم الدورة</label><input class="form-control" name="name" maxlength="255" value="{{ form.name or '' }}" required></div>
+      <div class="col-md-4"><label class="form-label">تاريخ الجرد</label><input class="form-control" type="date" name="inventory_date" value="{{ form.inventory_date }}" required></div>
+      <div class="col-md-8"><label class="form-label">اسم/قرار اللجنة</label><input class="form-control" name="committee_name" maxlength="255" value="{{ form.committee_name or '' }}" placeholder="مثال: لجنة الجرد السنوي 2026"></div>
+
+      <div class="col-12"><hr><h6 class="fw-bold">المقارنة والنطاق</h6></div>
+      <div class="col-md-4"><label class="form-label">الدورة السابقة للمقارنة</label><select class="form-select" name="previous_cycle_id" {% if is_edit %}disabled{% endif %}><option value="">بدون دورة سابقة</option>{% for previous in previous_cycles %}<option value="{{ previous.id }}" {% if form.previous_cycle_id == previous.id %}selected{% endif %}>{{ previous.code }} — {{ previous.name }}</option>{% endfor %}</select><div class="form-text">تُستخدم نتيجة اللجنة السابقة كخط أساس.</div></div>
+      <div class="col-md-4"><label class="form-label">نطاق المستودع</label><select class="form-select" name="scope_warehouse_id" {% if is_edit %}disabled{% endif %}><option value="">كل المستودعات</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}" {% if form.scope_warehouse_id == warehouse.id %}selected{% endif %}>{{ warehouse.label }}</option>{% endfor %}</select></div>
+      <div class="col-md-4"><label class="form-label">نطاق الغرفة</label><select class="form-select" name="scope_room_id" {% if is_edit %}disabled{% endif %}><option value="">كل الغرف</option>{% for room in rooms %}<option value="{{ room.id }}" {% if form.scope_room_id == room.id %}selected{% endif %}>{{ room.label }}</option>{% endfor %}</select></div>
+      {% if is_edit %}<div class="col-12"><div class="alert alert-light border py-2 mb-0">لحماية المقارنة، لا يتغير النطاق أو الدورة المرجعية بعد بدء الجرد.</div></div>{% endif %}
+
+      <div class="col-12"><hr><h6 class="fw-bold">أعضاء اللجنة</h6></div>
+      <div class="col-md-6"><label class="form-label">رئيس اللجنة</label><select class="form-select searchable-select" name="chair_user_id"><option value="">غير محدد</option>{% for user in users %}<option value="{{ user.id }}" {% if form.chair_user_id == user.id %}selected{% endif %}>{{ user.full_name }}{% if user.username %} — {{ user.username }}{% endif %}</option>{% endfor %}</select></div>
+      <div class="col-md-6"><label class="form-label">الأعضاء</label><select class="form-select" name="member_ids" multiple size="7">{% for user in users %}<option value="{{ user.id }}" {% if user.id in form.member_ids %}selected{% endif %}>{{ user.full_name }}{% if user.username %} — {{ user.username }}{% endif %}</option>{% endfor %}</select><div class="form-text">استخدم Ctrl أو ⌘ لاختيار أكثر من عضو.</div></div>
+      <div class="col-12"><label class="form-label">ملاحظات</label><textarea class="form-control" name="note" rows="3">{{ form.note or '' }}</textarea></div>
+    </div>
+  </div>
+  <div class="card-footer d-flex justify-content-end gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">إلغاء</a><button class="btn btn-{{ 'primary' if is_edit else 'success' }}" type="submit"><i class="bi bi-{{ 'check2-circle' if is_edit else 'play-circle' }}"></i> {{ 'حفظ التعديلات' if is_edit else 'تثبيت خط الأساس وبدء الجرد' }}</button></div>
+</form>
+{% endblock %}

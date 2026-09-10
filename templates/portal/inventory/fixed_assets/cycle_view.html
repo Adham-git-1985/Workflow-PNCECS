@@ -1,0 +1,68 @@
+{% extends "portal/inventory/base.html" %}
+
+{% block inv_content %}
+{% set total = stats.get('TOTAL', 0) %}
+{% set completed = total - stats.get('PENDING', 0) %}
+{% set progress = ((completed * 100 / total)|round|int) if total else 0 %}
+<div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+  <div><div class="d-flex align-items-center gap-2"><h4 class="mb-1">{{ cycle.name }}</h4><span class="badge text-bg-{{ 'success' if cycle.status == 'CLOSED' else 'primary' }}">{{ fixed_asset_cycle_labels.get(cycle.status, cycle.status) }}</span></div><div class="text-muted">{{ cycle.code }} · {{ cycle.inventory_date }} · {{ cycle.scope_label }}</div></div>
+  <div class="d-flex flex-wrap gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_cycles') }}">كل الدورات</a>{% if can_manage %}<a class="btn btn-outline-primary" href="{{ url_for('portal.fixed_asset_cycle_edit', cycle_id=cycle.id) }}"><i class="bi bi-pencil"></i> تعديل اللجنة</a>{% endif %}{% if can_export %}<a class="btn btn-outline-success" href="{{ url_for('portal.fixed_asset_cycle_export', cycle_id=cycle.id) }}"><i class="bi bi-file-earmark-excel"></i> تصدير المقارنة</a>{% endif %}{% if can_manage and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}"><i class="bi bi-qr-code-scan"></i> فتح الماسح</a>{% endif %}</div>
+</div>
+
+<div class="card shadow-sm mb-3"><div class="card-body"><div class="row g-3">
+  <div class="col-md-3"><div class="text-muted small">اللجنة الحالية</div><div class="fw-bold">{{ cycle.committee_name or '-' }}</div>{% for member in cycle.members %}<span class="badge text-bg-light border">{{ member.user.full_name }}{% if member.member_role == 'CHAIR' %} · رئيس{% endif %}</span> {% endfor %}</div>
+  <div class="col-md-3"><div class="text-muted small">اللجنة/الدورة السابقة</div><div class="fw-bold">{{ cycle.previous_cycle.committee_name if cycle.previous_cycle else '-' }}</div>{% if cycle.previous_cycle %}<a class="small" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.previous_cycle.id) }}">{{ cycle.previous_cycle.code }}</a>{% endif %}</div>
+  <div class="col-md-3"><div class="text-muted small">بدأها</div><div class="fw-bold">{{ cycle.created_by.full_name if cycle.created_by else '-' }}</div><div class="small text-muted">{{ cycle.started_at|local_datetime }}</div></div>
+  <div class="col-md-3"><div class="text-muted small">الإغلاق</div><div class="fw-bold">{{ cycle.closed_by.full_name if cycle.closed_by else '-' }}</div><div class="small text-muted">{{ cycle.closed_at|local_datetime if cycle.closed_at else 'ما زالت جارية' }}</div></div>
+  {% if cycle.note %}<div class="col-12"><div class="text-muted small">ملاحظات</div><div>{{ cycle.note }}</div></div>{% endif %}
+</div></div></div>
+
+<div class="row g-2 mb-3">
+  <div class="col-6 col-xl-2"><a class="card card-body text-decoration-none text-reset h-100" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id) }}"><div class="text-muted small">الإجمالي</div><div class="fs-3 fw-bold">{{ total }}</div></a></div>
+  <div class="col-6 col-xl-2"><a class="card card-body text-decoration-none text-reset h-100 border-secondary" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id, status='PENDING') }}"><div class="text-muted small">متبقٍ</div><div class="fs-3 fw-bold text-secondary">{{ stats.get('PENDING', 0) }}</div></a></div>
+  <div class="col-6 col-xl-2"><a class="card card-body text-decoration-none text-reset h-100 border-success" href="{{ url_for('portal.fixed_asset_cycle_view', cycle_id=cycle.id, status='MATCHED') }}"><div class="text-muted small">مطابق</div><div class="fs-3 fw-bold text-success">{{ stats.get('MATCHED', 0) }}</div></a></div>
+  <div class="col-6 col-xl-2"><div class="card card-body h-100 border-warning"><div class="text-muted small">فروقات</div><div class="fs-3 fw-bold text-warning">{{ stats.get('MOVED', 0) + stats.get('CONDITION_CHANGED', 0) + stats.get('MOVED_AND_CONDITION_CHANGED', 0) }}</div></div></div>
+  <div class="col-6 col-xl-2"><div class="card card-body h-100 border-primary"><div class="text-muted small">مسترد/جديد</div><div class="fs-3 fw-bold text-primary">{{ stats.get('RECOVERED', 0) + stats.get('NEW_SINCE_PREVIOUS', 0) }}</div></div></div>
+  <div class="col-6 col-xl-2"><div class="card card-body h-100 border-danger"><div class="text-muted small">غير موجود</div><div class="fs-3 fw-bold text-danger">{{ stats.get('MISSING', 0) + stats.get('STILL_MISSING', 0) }}</div></div></div>
+</div>
+<div class="progress mb-3" style="height:10px"><div class="progress-bar" style="width:{{ progress }}%"></div></div>
+
+{% if can_manage and cycle.status == 'ACTIVE' %}
+<div class="d-flex flex-wrap gap-2 mb-3">
+  <form method="post" action="{{ url_for('portal.fixed_asset_cycle_refresh', cycle_id=cycle.id) }}"><button class="btn btn-sm btn-outline-primary" onclick="return confirm('إضافة الأصول الجديدة المطابقة للنطاق إلى هذه الدورة؟')"><i class="bi bi-arrow-repeat"></i> تحديث نطاق الأصول</button></form>
+  <button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="collapse" data-bs-target="#closeCycle"><i class="bi bi-lock"></i> إغلاق الدورة</button>
+</div>
+<div class="collapse mb-3" id="closeCycle"><form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" class="card card-body border-danger"><h6 class="text-danger">اعتماد النتيجة وإغلاق الدورة</h6><p class="small mb-2">ستُصنف كل الأصول غير المقروءة كغير موجودة، ولن تقبل الدورة قراءات جديدة إلا بعد إعادة فتحها.</p><div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="apply_observed_values" value="1" id="applyObserved" checked><label class="form-check-label" for="applyObserved">تحديث الموقع والعهدة والحالة في سجل الأصل حسب نتيجة اللجنة الحالية</label></div><div><button class="btn btn-danger" onclick="return confirm('هل أنت متأكد من اعتماد وإغلاق دورة الجرد؟')">اعتماد وإغلاق</button></div></form></div>
+{% elif can_manage and cycle.status == 'CLOSED' %}
+<form method="post" action="{{ url_for('portal.fixed_asset_cycle_reopen', cycle_id=cycle.id) }}" class="mb-3"><button class="btn btn-sm btn-outline-warning" onclick="return confirm('إعادة فتح الدورة للسماح بقراءات جديدة؟')"><i class="bi bi-unlock"></i> إعادة فتح الدورة</button></form>
+{% endif %}
+
+<form class="card card-body shadow-sm mb-2" method="get"><div class="row g-2"><div class="col-md-7"><input class="form-control" name="q" value="{{ selected.q }}" placeholder="رقم الأصل، الاسم، الرقم التسلسلي..."></div><div class="col-md-3"><select class="form-select" name="status"><option value="">كل النتائج</option>{% for code, label in fixed_asset_result_labels.items() %}<option value="{{ code }}" {% if selected.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></div><div class="col-md-2 d-grid"><button class="btn btn-outline-primary">تصفية</button></div></div></form>
+<div class="d-flex flex-wrap gap-2 mb-2"><button class="btn btn-sm btn-outline-dark" id="printCycleSelected" type="button"><i class="bi bi-printer"></i> طباعة ملصقات المحدد</button><span class="small text-muted align-self-center">يعرض الجدول {{ entries|length }} نتيجة.</span></div>
+
+<div class="card shadow-sm mb-4"><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr><th><input class="form-check-input" id="cycleSelectAll" type="checkbox"></th><th>الأصل</th><th>نتيجة اللجنة السابقة</th><th>المتوقع</th><th>الفعلي</th><th>نتيجة اللجنة الحالية</th><th>القراءة</th></tr></thead><tbody>
+  {% for entry in entries %}<tr class="{% if entry.result_status in ['MISSING', 'STILL_MISSING', 'UNEXPECTED'] %}table-danger{% elif entry.result_status in ['MOVED', 'CONDITION_CHANGED', 'MOVED_AND_CONDITION_CHANGED'] %}table-warning{% endif %}">
+    <td><input class="form-check-input cycle-asset-select" type="checkbox" value="{{ entry.asset_id }}"></td>
+    <td><a class="fw-bold text-decoration-none" href="{{ url_for('portal.fixed_asset_view', asset_id=entry.asset_id) }}">{{ entry.asset.asset_tag }}</a><div>{{ entry.asset.name }}</div><div class="small text-muted">{{ entry.asset.serial_number or '' }}</div></td>
+    <td>{{ fixed_asset_previous_labels.get(entry.previous_result_status, entry.previous_result_status or 'لا توجد دورة سابقة') }}</td>
+    <td><div>{{ entry.expected_location_label }}</div><div class="small">العهدة: {{ entry.expected_custodian.full_name if entry.expected_custodian else '-' }}</div><div class="small text-muted">{{ fixed_asset_condition_labels.get(entry.expected_condition, entry.expected_condition or '-') }} · {{ fixed_asset_lifecycle_labels.get(entry.expected_lifecycle_status, entry.expected_lifecycle_status or '-') }}</div></td>
+    <td>{% if entry.scanned_at %}<div>{{ entry.observed_location_label }}</div><div class="small">العهدة: {{ entry.observed_custodian.full_name if entry.observed_custodian else '-' }}</div><div class="small text-muted">{{ fixed_asset_condition_labels.get(entry.observed_condition, entry.observed_condition or '-') }} · {{ fixed_asset_lifecycle_labels.get(entry.observed_lifecycle_status, entry.observed_lifecycle_status or '-') }}</div>{% else %}<span class="text-muted">لم يُقرأ</span>{% endif %}</td>
+    <td><span class="badge text-bg-{{ fixed_asset_result_colors.get(entry.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(entry.result_status, entry.result_status) }}</span>{% if entry.note %}<div class="small mt-1">{{ entry.note }}</div>{% endif %}</td>
+    <td>{{ entry.scanned_at|local_datetime if entry.scanned_at else '-' }}{% if entry.scanned_by %}<div class="small text-muted">{{ entry.scanned_by.full_name }} · {{ entry.scan_count }} مرة</div>{% endif %}</td>
+  </tr>{% else %}<tr><td colspan="7" class="text-center text-muted py-5">لا توجد أصول مطابقة للمرشح.</td></tr>{% endfor %}
+</tbody></table></div></div>
+
+<div class="card shadow-sm"><div class="card-header fw-bold">آخر عمليات القراءة</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>الوقت</th><th>الأصل</th><th>النتيجة</th><th>بواسطة</th><th>المصدر</th></tr></thead><tbody>{% for scan in recent_scans %}<tr><td>{{ scan.scanned_at|local_datetime }}</td><td>{{ scan.asset.asset_tag }} · {{ scan.asset.name }}</td><td><span class="badge text-bg-{{ fixed_asset_result_colors.get(scan.result_status, 'secondary') }}">{{ fixed_asset_result_labels.get(scan.result_status, scan.result_status) }}</span></td><td>{{ scan.scanned_by.full_name if scan.scanned_by else '-' }}</td><td>{{ 'كاميرا' if scan.source == 'CAMERA' else ('رابط QR' if scan.source == 'QR' else 'يدوي') }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد قراءات.</td></tr>{% endfor %}</tbody></table></div></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const cycleBoxes = Array.from(document.querySelectorAll('.cycle-asset-select'));
+  document.getElementById('cycleSelectAll')?.addEventListener('change', event => cycleBoxes.forEach(box => { box.checked = event.target.checked; }));
+  document.getElementById('printCycleSelected')?.addEventListener('click', () => {
+    const ids = cycleBoxes.filter(box => box.checked).map(box => box.value);
+    if (!ids.length) { alert('حدد أصلاً واحداً على الأقل.'); return; }
+    window.open({{ url_for('portal.fixed_asset_labels')|tojson }} + '?ids=' + encodeURIComponent(ids.join(',')), '_blank', 'noopener');
+  });
+</script>
+{% endblock %}
