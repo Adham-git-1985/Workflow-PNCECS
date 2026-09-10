@@ -116,6 +116,8 @@
               <ul class="dropdown-menu">
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_leave_request_new') }}">تقديم إجازة</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_leaves') }}">إجازاتي</a></li>
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_balances_deductions') }}">أرصدتي وخصوماتي</a></li>
+                {% if current_user.has_perm('HR_REPORTS_VIEW') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') %}<li><a class="dropdown-item" href="{{ url_for('portal.hr_leave_balances') }}">تعبئة أرصدة الموظفين</a></li>{% endif %}
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_absence_board', view='leaves') }}">لوحة المجازين والمغادرين</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">أنواع الإجازات</a></li>
                 {% if current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') %}

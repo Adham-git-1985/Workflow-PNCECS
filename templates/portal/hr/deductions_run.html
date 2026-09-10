@@ -10,6 +10,7 @@
       <div class="text-muted">هذه العملية تنشئ مسودة قابلة للمراجعة والتعديل؛ لا تخصم شيئاً قبل اعتمادها.</div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-success" href="{{ url_for('portal.hr_leave_balances') }}"><i class="bi bi-wallet2"></i> تعبئة الأرصدة</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-clock-history"></i> سجل الخصومات</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_settings') }}"><i class="bi bi-sliders"></i> إعدادات السياسة</a>
     </div>
@@ -43,7 +44,7 @@
   <input type="hidden" name="q" value="{{ q }}">
 
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-    <h5 class="mb-0">اختر الموظفين</h5>
+    <div><h5 class="mb-0">اختر الموظفين</h5><div class="small text-muted">{{ matching_users_count }} موظف مطابق{% if matching_users_count > 500 %} — تظهر أول 500، وزر جميع النتائج يشملهم كلهم{% endif %}</div></div>
     <button class="btn btn-sm btn-outline-secondary" type="button" id="toggleEmployees">تحديد/إلغاء الكل</button>
   </div>
   <div class="table-responsive border rounded-3 mb-3" style="max-height: 420px;">
@@ -66,7 +67,10 @@
 
   <div class="row g-2 align-items-end">
     <div class="col-12 col-md-9"><label class="form-label">ملاحظة المعاينة</label><input class="form-control" name="note" placeholder="مثال: مراجعة خصومات شهر {{ month }}/{{ year }} قبل الاعتماد"></div>
-    <div class="col-12 col-md-3"><button class="btn btn-primary w-100" type="submit" {% if not can_manage %}disabled{% endif %}><i class="bi bi-calculator"></i> احتساب وعرض المسودة</button></div>
+    <div class="col-12 col-md-3 d-grid gap-2">
+      <button class="btn btn-primary" type="submit" {% if not can_manage %}disabled{% endif %}><i class="bi bi-calculator"></i> احتساب المحددين</button>
+      <button class="btn btn-success" type="submit" name="selection_scope" value="ALL_FILTERED" {% if not can_manage or not matching_users_count %}disabled{% endif %} onclick="return confirm('سيتم احتساب جميع الموظفين المطابقين للمرشحات الحالية. متابعة؟')"><i class="bi bi-people-fill"></i> احتساب جميع النتائج ({{ matching_users_count }})</button>
+    </div>
   </div>
   {% if not can_manage %}<div class="text-muted small mt-2">لا تملك صلاحية إنشاء معاينة.</div>{% endif %}
 </form>

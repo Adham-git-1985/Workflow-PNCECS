@@ -191,13 +191,19 @@
               <option value="1">تُحسب دوام</option>
             </select>
           </div>
-          <div class="col-md-9"><input class="form-control" name="name_en" placeholder="الاسم (EN)"></div>
+          <div class="col-md-3">
+            <select class="form-select" name="deduct_from_allowance">
+              <option value="1">تدخل في سماح المغادرات</option>
+              <option value="0">مستثناة من الخصم</option>
+            </select>
+          </div>
+          <div class="col-md-6"><input class="form-control" name="name_en" placeholder="الاسم (EN)"></div>
           <div class="col-12"><button class="btn btn-success w-100" type="submit">إضافة</button></div>
         </form>
 
         <div class="table-responsive mt-3">
           <table class="table table-sm align-middle">
-            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد', 'max_hours') }}</th><th>دوام</th><th>نشط</th><th></th></tr></thead>
+            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد', 'max_hours') }}</th><th>دوام</th><th>سياسة الخصم</th><th>نشط</th><th></th></tr></thead>
             <tbody>
               {% for t in perm_types %}
               <tr>
@@ -206,6 +212,7 @@
                 <td>{{ 'نعم' if t.requires_approval else 'لا' }}</td>
                 <td>{{ t.max_hours or '—' }}</td>
                 <td>{{ 'نعم' if t.counts_as_work else 'لا' }}</td>
+                <td>{% if t.deduct_from_allowance %}<span class="badge bg-warning text-dark">ضمن السماح</span>{% else %}<span class="badge bg-info text-dark">مستثناة</span>{% endif %}</td>
                 <td>{% if t.is_active %}<span class="badge bg-success">نعم</span>{% else %}<span class="badge bg-danger">لا</span>{% endif %}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_permission_type_edit', pt_id=t.id) }}">تعديل</a>

@@ -2902,6 +2902,7 @@ class HRPermissionType(db.Model):
     requires_approval = db.Column(db.Boolean, default=True, nullable=False)
     max_hours = db.Column(db.Integer, nullable=True)
     counts_as_work = db.Column(db.Boolean, default=False, nullable=False)  # if true, doesn't reduce work minutes
+    deduct_from_allowance = db.Column(db.Boolean, default=True, nullable=False)
     is_active = db.Column(db.Boolean, default=True, nullable=False)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -3090,6 +3091,33 @@ class HRLeaveBalance(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint('user_id', 'leave_type_id', 'year', name='uq_hr_leave_balance_user_type_year'),
+    )
+
+
+class HRLeaveBalanceAdjustment(db.Model):
+    __tablename__ = 'hr_leave_balance_adjustment'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    leave_type_id = db.Column(db.Integer, db.ForeignKey('hr_leave_type.id'), nullable=False, index=True)
+    year = db.Column(db.Integer, nullable=False, index=True)
+    days_delta = db.Column(db.Float, nullable=False)
+    reason = db.Column(db.Text, nullable=False)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[user_id], lazy='joined')
+    leave_type = db.relationship('HRLeaveType', foreign_keys=[leave_type_id], lazy='joined')
+    created_by = db.relationship('User', foreign_keys=[created_by_id], lazy='joined')
+
+    __table_args__ = (
+        db.Index(
+            'ix_hr_leave_balance_adjustment_user_year_type',
+            'user_id',
+            'year',
+            'leave_type_id',
+        ),
     )
 
 class HRPermissionRequest(db.Model):
@@ -3547,7 +3575,7 @@ class HRAttendanceDeductionRun(db.Model):
     year = db.Column(db.Integer, nullable=False, index=True)
     month = db.Column(db.Integer, nullable=False, index=True)
 
-    status = db.Column(db.String(20), default="DRAFT", nullable=False)  # DRAFT/FINAL
+    status = db.Column(db.String(20), default="DRAFT", nullable=False)  # DRAFT/FINAL/REVERSED
     note = db.Column(db.Text, nullable=True)
 
     config_snapshot_json = db.Column(db.Text, nullable=True)
@@ -3557,11 +3585,16 @@ class HRAttendanceDeductionRun(db.Model):
     approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     approval_note = db.Column(db.Text, nullable=True)
 
+    reversed_at = db.Column(db.DateTime, nullable=True, index=True)
+    reversed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    reversal_note = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
 
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
     approved_by = db.relationship("User", foreign_keys=[approved_by_id], lazy="joined")
+    reversed_by = db.relationship("User", foreign_keys=[reversed_by_id], lazy="joined")
 class HRAttendanceDeductionItem(db.Model):
     """Per-employee deduction totals linked to a run."""
 
@@ -3589,6 +3622,7 @@ class HRAttendanceDeductionItem(db.Model):
     amount = db.Column(db.Float, default=0.0, nullable=False)
 
     note = db.Column(db.Text, nullable=True)
+    details_json = db.Column(db.Text, nullable=True)
 
     run = db.relationship("HRAttendanceDeductionRun", backref=db.backref("items", lazy="selectin", cascade="all, delete-orphan"))
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")

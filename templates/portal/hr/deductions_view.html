@@ -2,15 +2,18 @@
 {% block title %}مراجعة الخصومات{% endblock %}
 
 {% block hr_content %}
-{% set is_draft = (run.status or '')|upper == 'DRAFT' %}
+{% set run_status = (run.status or '')|upper %}
+{% set is_draft = run_status == 'DRAFT' %}
+{% set is_reversed = run_status == 'REVERSED' %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <div class="{{ 'text-warning-emphasis' if is_draft else 'text-success' }} fw-semibold small mb-1">{{ 'المرحلة 2 من 2 — المراجعة والاعتماد' if is_draft else 'خصم معتمد' }}</div>
+      <div class="{{ 'text-warning-emphasis' if is_draft else ('text-secondary' if is_reversed else 'text-success') }} fw-semibold small mb-1">{{ 'المرحلة 2 من 2 — المراجعة والاعتماد' if is_draft else ('خصم معكوس' if is_reversed else 'خصم معتمد') }}</div>
       <h4 class="mb-1"><i class="bi bi-receipt"></i> خصومات {{ "%02d"|format(run.month) }}/{{ run.year }}</h4>
       <div class="text-muted">رقم العملية {{ run.id }} · {{ run.note or 'لا توجد ملاحظة عامة' }}</div>
     </div>
     <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-outline-success" href="{{ url_for('portal.hr_leave_balances', year=run.year) }}"><i class="bi bi-wallet2"></i> الأرصدة</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}"><i class="bi bi-arrow-right"></i> السجل</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=run.id, export='csv') }}"><i class="bi bi-download"></i> CSV</a>
     </div>
@@ -21,6 +24,11 @@
   <div class="alert alert-warning d-flex gap-3 align-items-start">
     <i class="bi bi-shield-exclamation fs-4"></i>
     <div><strong>معاينة فقط:</strong> لم يُخصم أي يوم إجازة ولم يُرحّل أي خصم إلى الراتب. راجع التفاصيل وعدّل الساعات عند الحاجة، ثم اعتمد العملية.</div>
+  </div>
+{% elif is_reversed %}
+  <div class="alert alert-secondary d-flex gap-3 align-items-start">
+    <i class="bi bi-arrow-counterclockwise fs-4"></i>
+    <div><strong>تم عكس العملية.</strong> لم تعد أيام الإجازة أو أيام الراتب تؤثر على الرصيد والتقارير النهائية.<div class="small mt-1">{{ run.reversal_note or '—' }}{% if run.reversed_by %} — بواسطة {{ run.reversed_by.full_name }}{% endif %}{% if run.reversed_at %} في {{ run.reversed_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}</div></div>
   </div>
 {% else %}
   <div class="alert alert-success d-flex gap-3 align-items-start">
@@ -41,7 +49,7 @@
           <th>تأخير</th>
           <th>خروج مبكر</th>
           <th>غياب</th>
-          <th>مغادرات معتمدة</th>
+          <th>مغادرات خاضعة للسماح</th>
           <th>السماح</th>
           <th>مستبعد</th>
           <th>ساعات محتسبة</th>
@@ -52,6 +60,7 @@
       </thead>
       <tbody>
         {% for item in run.items %}
+          {% set details = details_by_item.get(item.id, {}) %}
           <tr>
             <td style="min-width:170px"><div class="fw-bold">{{ item.user.full_name or item.user.name or '—' }}</div><div class="text-muted small">{{ item.user.email or '' }}</div></td>
             <td>{{ item.late_minutes }} د</td>
@@ -64,6 +73,30 @@
             <td><span class="badge text-bg-primary">{{ "%.2f"|format(item.leave_deduction_days or 0) }} يوم</span></td>
             <td><span class="badge text-bg-danger">{{ "%.2f"|format(item.salary_deduction_days or 0) }} يوم</span></td>
             <td class="small" style="min-width:220px">{{ item.note or '—' }}</td>
+          </tr>
+          <tr>
+            <td colspan="11" class="bg-body-tertiary">
+              <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#deductionDetails{{ item.id }}"><i class="bi bi-list-ul"></i> تفاصيل الأيام والمغادرات والاستثناءات</button>
+              <div class="collapse mt-3" id="deductionDetails{{ item.id }}">
+                <div class="small text-muted mb-2">{{ details.get('formula', 'التأخير + الخروج المبكر + المغادرات الخاصة بعد السماح + الغياب') }} · يوم الخصم = {{ "%.2f"|format((details.get('minutes_per_day', 420) or 420) / 60) }} ساعات</div>
+                {% if details.get('manual_adjustments') %}
+                  <div class="alert alert-warning py-2 small">
+                    <div class="fw-bold mb-1">تعديلات يدوية موثقة على المسودة</div>
+                    {% for adjustment in details.get('manual_adjustments', []) %}
+                      <div>{{ adjustment.at or '—' }} · {{ adjustment.by_name or ('مستخدم #' ~ adjustment.by_user_id) }} · {{ "%.2f"|format((adjustment.chargeable_minutes or 0) / 60) }} ساعة · {{ adjustment.note }}</div>
+                    {% endfor %}
+                  </div>
+                {% endif %}
+                <h6>الأيام</h6>
+                <div class="table-responsive mb-3"><table class="table table-sm table-bordered bg-white align-middle"><thead><tr><th>التاريخ</th><th>الحالة</th><th>دخول/خروج</th><th>تأخير</th><th>مبكر</th><th>محتسب</th><th>مستبعد</th><th>السبب</th></tr></thead><tbody>
+                  {% for day in details.get('days', []) %}<tr><td>{{ day.day }}</td><td>{{ day.status_label or day.status }}</td><td>{{ day.first_in or '—' }} - {{ day.last_out or '—' }}</td><td>{{ day.late_minutes or 0 }} د</td><td>{{ day.early_minutes or 0 }} د</td><td>{{ day.chargeable_minutes or 0 }} د</td><td>{{ day.excluded_minutes or 0 }} د</td><td>{{ day.exclusion_label or (day.component_exceptions|join('، ')) or '—' }}{% if day.mission_title %}<div class="text-muted">{{ day.mission_title }}</div>{% endif %}</td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted">لا توجد مخالفات أو أيام مستثناة.</td></tr>{% endfor %}
+                </tbody></table></div>
+                <h6>المغادرات</h6>
+                <div class="table-responsive"><table class="table table-sm table-bordered bg-white align-middle mb-0"><thead><tr><th>التاريخ</th><th>النوع</th><th>المصدر</th><th>الوقت</th><th>المدة</th><th>من السماح</th><th>محتسب</th><th>الاستثناء</th></tr></thead><tbody>
+                  {% for departure in details.get('departures', []) %}<tr><td>{{ departure.day }}</td><td>{{ departure.permission_name or departure.kind_label }}</td><td>{{ departure.source_label }}</td><td>{{ departure.from_time or '—' }} - {{ departure.to_time or '—' }}</td><td>{{ departure.minutes or 0 }} د</td><td>{{ departure.allowance_minutes or 0 }} د</td><td>{{ departure.chargeable_minutes or 0 }} د</td><td>{{ departure.exclusion_label or '—' }}</td></tr>{% else %}<tr><td colspan="8" class="text-center text-muted">لا توجد مغادرات.</td></tr>{% endfor %}
+                </tbody></table></div>
+              </div>
+            </td>
           </tr>
           {% if can_adjust %}
             <tr class="table-light">
@@ -96,6 +129,16 @@
     <div class="col-12 col-md-3">
       <button class="btn btn-success w-100" type="submit" onclick="return confirm('اعتماد الخصم سيؤثر على أرصدة الإجازة وتقرير الراتب. متابعة؟')"><i class="bi bi-check2-circle"></i> اعتماد وتنفيذ الخصم</button>
     </div>
+  </div>
+</form>
+{% endif %}
+
+{% if can_reverse %}
+<form method="post" action="{{ url_for('portal.hr_deduction_reverse', run_id=run.id) }}" class="bg-white border border-danger rounded-3 shadow-sm p-3 mt-3">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-md-9"><label class="form-label fw-bold">سبب عكس العملية <span class="text-danger">مطلوب</span></label><input class="form-control" name="reversal_note" required placeholder="مثال: اعتماد إجازة بأثر رجعي أو تصحيح بيانات الدوام"></div>
+    <div class="col-12 col-md-3"><button class="btn btn-outline-danger w-100" type="submit" onclick="return confirm('سيُعاد رصيد الإجازة ويُلغى أثر خصم الراتب لهذه العملية. متابعة؟')"><i class="bi bi-arrow-counterclockwise"></i> عكس الخصم وإعادة الرصيد</button></div>
   </div>
 </form>
 {% endif %}

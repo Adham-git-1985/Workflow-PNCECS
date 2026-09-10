@@ -42,6 +42,14 @@
         </select>
       </div>
       <div class="col-12 col-md-3">
+        <label class="form-label">سياسة الخصم</label>
+        <select class="form-select" name="deduct_from_allowance">
+          <option value="1" {% if row.deduct_from_allowance %}selected{% endif %}>تدخل في السماح والخصم</option>
+          <option value="0" {% if not row.deduct_from_allowance %}selected{% endif %}>مستثناة من الخصم</option>
+        </select>
+        <div class="form-text">اختر الاستثناء للمغادرة المرضية وأي نوع لا يجب أن يستهلك السماح.</div>
+      </div>
+      <div class="col-12 col-md-3">
         <label class="form-label">نشط</label>
         <select class="form-select" name="is_active">
           <option value="1" {% if row.is_active %}selected{% endif %}>نعم</option>

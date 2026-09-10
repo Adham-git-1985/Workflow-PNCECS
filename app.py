@@ -1133,6 +1133,7 @@ def _ensure_runtime_schema():
                 ("work_schedule", "end_grace_minutes", "INTEGER"),
                 ("work_policy", "hybrid_selection_mode", "TEXT NOT NULL DEFAULT 'FLEXIBLE'"),
                 ("work_policy", "hybrid_fixed_days_mask", "INTEGER"),
+                ("hr_permission_type", "deduct_from_allowance", "INTEGER NOT NULL DEFAULT 1"),
                 ("hr_att_deduction_config", "permission_allowance_hours", "REAL NOT NULL DEFAULT 6"),
                 ("hr_att_deduction_config", "annual_leave_type_id", "INTEGER"),
                 ("hr_att_deduction_config", "deduction_sequence", "TEXT NOT NULL DEFAULT 'LEAVE_THEN_SALARY'"),
@@ -1141,6 +1142,9 @@ def _ensure_runtime_schema():
                 ("hr_att_deduction_run", "approved_at", "TEXT"),
                 ("hr_att_deduction_run", "approved_by_id", "INTEGER"),
                 ("hr_att_deduction_run", "approval_note", "TEXT"),
+                ("hr_att_deduction_run", "reversed_at", "TEXT"),
+                ("hr_att_deduction_run", "reversed_by_id", "INTEGER"),
+                ("hr_att_deduction_run", "reversal_note", "TEXT"),
                 ("hr_att_deduction_item", "approved_permission_minutes", "INTEGER NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "permission_allowance_minutes", "INTEGER NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "excluded_minutes", "INTEGER NOT NULL DEFAULT 0"),
@@ -1149,6 +1153,7 @@ def _ensure_runtime_schema():
                 ("hr_att_deduction_item", "leave_deduction_days", "REAL NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "salary_deduction_days", "REAL NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "remainder_minutes", "INTEGER NOT NULL DEFAULT 0"),
+                ("hr_att_deduction_item", "details_json", "TEXT"),
                 ("hr_att_special_case", "approval_status", "TEXT NOT NULL DEFAULT 'APPROVED'"),
                 ("hr_att_special_case", "approved_by_id", "INTEGER"),
                 ("hr_att_special_case", "approved_at", "TEXT"),
@@ -1166,6 +1171,13 @@ def _ensure_runtime_schema():
                 db.session.execute(text(
                     "UPDATE hr_att_deduction_item SET salary_deduction_days=amount "
                     "WHERE COALESCE(salary_deduction_days, 0)=0 AND COALESCE(amount, 0)>0"
+                ))
+                db.session.execute(text(
+                    "UPDATE hr_permission_type SET deduct_from_allowance=FALSE "
+                    "WHERE UPPER(COALESCE(code, '')) IN ('S', 'SICK', 'SICK_LEAVE', 'MEDICAL') "
+                    "OR LOWER(COALESCE(code, '')) LIKE '%sick%' "
+                    "OR COALESCE(name_ar, '') LIKE '%مرضي%' "
+                    "OR COALESCE(name_ar, '') LIKE '%مرضية%'"
                 ))
                 db.session.commit()
             except Exception:

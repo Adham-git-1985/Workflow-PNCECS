@@ -6,9 +6,10 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-wallet2"></i> أرصدة الإجازات</h4>
-      <div class="text-muted">إدارة رصيد الإجازات السنوي (المعتمد) لكل موظف + عرض المستهلك والمتبقي. الأنواع غير الخاضعة للخصم تظهر للتوثيق فقط.</div>
+      <div class="text-muted">إدارة الاستحقاق السنوي، إضافة تصحيحات موثقة بعد الاعتماد، وعرض المستهلك والمتبقي.</div>
     </div>
     <div class="d-flex gap-2">
+      <a class="btn btn-success" href="{{ url_for('portal.hr_deductions_run', year=year) }}"><i class="bi bi-calculator"></i> احتساب الخصومات</a>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}"><i class="bi bi-arrow-right"></i> رجوع لإعدادات الموارد البشرية</a>
       <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_leaves_report', year=year, status='') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
     </div>
@@ -47,7 +48,7 @@
       <div class="text-muted small">السنة: {{ year }}</div>
     </div>
     {% if can_manage %}
-      <div class="small text-muted">يمكنك تعديل "الرصيد المعتمد" ثم حفظ.</div>
+      <div class="small text-muted">يمكن تعديل الاستحقاق الأساسي، أو إضافة تصحيح مستقل بسبب إلزامي من الأسفل.</div>
     {% endif %}
   </div>
 
@@ -62,7 +63,9 @@
             <th>الرمز</th>
             <th>النوع</th>
             <th>سياسة الرصيد</th>
-            <th style="width:180px">الرصيد المعتمد (أيام)</th>
+            <th style="width:170px">الاستحقاق الأساسي</th>
+            <th>التصحيحات</th>
+            <th>الرصيد الفعلي</th>
             <th>المستهلك</th>
             <th>المتبقي</th>
           </tr>
@@ -83,12 +86,14 @@
                 {% if not r.deducts_from_balance %}
                   —
                 {% elif can_manage %}
-                  <input class="form-control form-control-sm" type="number" min="0" name="total_{{ r.lt.id }}" value="{{ r.total }}">
+                  <input class="form-control form-control-sm" type="number" min="0" name="total_{{ r.lt.id }}" value="{{ r.base_total|int }}">
                 {% else %}
-                  {{ r.total }}
+                  {{ "%.2f"|format(r.base_total or 0) }}
                 {% endif %}
               </td>
-              <td>{{ r.used if r.deducts_from_balance else '—' }}</td>
+              <td>{% if r.deducts_from_balance %}<span class="{{ 'text-success' if r.adjustments_total > 0 else ('text-danger' if r.adjustments_total < 0 else 'text-muted') }}">{{ "%+.2f"|format(r.adjustments_total or 0) }}</span>{% else %}—{% endif %}</td>
+              <td>{{ "%.2f"|format(r.total or 0) if r.deducts_from_balance else '—' }}</td>
+              <td>{{ "%.2f"|format(r.used or 0) if r.deducts_from_balance else '—' }}</td>
               <td>
                 {% if not r.deducts_from_balance %}
                   —
@@ -112,6 +117,29 @@
       </div>
     {% endif %}
   </form>
+</div>
+
+{% if can_manage %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="balance-adjustments">
+  <h5 class="mb-1"><i class="bi bi-pencil-square"></i> تصحيح الرصيد بعد الاعتماد</h5>
+  <div class="text-muted small mb-3">لا يغيّر هذا الإجراء سجل الخصم أو طلبات الإجازة؛ يضيف حركة تصحيح موجبة أو سالبة موثقة إلى الرصيد.</div>
+  <form method="post" class="row g-2 align-items-end">
+    <input type="hidden" name="action" value="ADD_ADJUSTMENT">
+    <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <div class="col-12 col-md-3"><label class="form-label">نوع الإجازة</label><select class="form-select" name="leave_type_id" required><option value="">اختر...</option>{% for r in rows if r.deducts_from_balance %}<option value="{{ r.lt.id }}">{{ r.lt.name_ar }}</option>{% endfor %}</select></div>
+    <div class="col-12 col-md-2"><label class="form-label">التصحيح بالأيام</label><input class="form-control" type="number" name="days_delta" step="0.25" required placeholder="+1 أو -0.5"></div>
+    <div class="col-12 col-md-5"><label class="form-label">سبب التصحيح</label><input class="form-control" name="reason" required placeholder="قرار إداري، خطأ في الرصيد، تسوية بأثر رجعي..."></div>
+    <div class="col-12 col-md-2"><button class="btn btn-warning w-100" type="submit" onclick="return confirm('سيتم تسجيل حركة تصحيح دائمة على الرصيد. متابعة؟')"><i class="bi bi-check2-circle"></i> تسجيل التصحيح</button></div>
+  </form>
+</div>
+{% endif %}
+
+<div class="bg-white rounded-3 shadow-sm p-3">
+  <h5 class="mb-3">سجل تصحيحات الرصيد</h5>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>التاريخ</th><th>نوع الإجازة</th><th>القيمة</th><th>السبب</th><th>بواسطة</th></tr></thead><tbody>
+    {% for adjustment in adjustments %}<tr><td>{{ adjustment.created_at.strftime('%Y-%m-%d %H:%M') if adjustment.created_at else '—' }}</td><td>{{ adjustment.leave_type.name_ar if adjustment.leave_type else '—' }}</td><td><span class="badge {{ 'text-bg-success' if adjustment.days_delta > 0 else 'text-bg-danger' }}">{{ "%+.2f"|format(adjustment.days_delta) }} يوم</span></td><td>{{ adjustment.reason }}</td><td>{{ adjustment.created_by.full_name if adjustment.created_by else '—' }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد تصحيحات مسجلة لهذه السنة.</td></tr>{% endfor %}
+  </tbody></table></div>
 </div>
 
 {% endif %}

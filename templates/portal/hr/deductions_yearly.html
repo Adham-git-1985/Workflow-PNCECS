@@ -34,7 +34,7 @@
           <div class="d-flex align-items-center justify-content-between">
             <div class="fw-bold">{{ "%02d"|format(m) }}/{{ year }}</div>
             {% if r %}
-              <span class="badge text-bg-success">تم</span>
+              {% if (r.status or '')|upper == 'FINAL' %}<span class="badge text-bg-success">معتمد</span>{% elif (r.status or '')|upper == 'REVERSED' %}<span class="badge text-bg-secondary">معكوس</span>{% else %}<span class="badge text-bg-warning">مسودة</span>{% endif %}
             {% else %}
               <span class="badge text-bg-secondary">لا يوجد</span>
             {% endif %}

@@ -14,6 +14,7 @@
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log') }}">الكل</a>
     <a class="btn btn-sm btn-outline-warning" href="{{ url_for('portal.hr_deductions_log', status='DRAFT') }}">مسودات للمراجعة</a>
     <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_deductions_log', status='FINAL') }}">معتمدة</a>
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_deductions_log', status='REVERSED') }}">معكوسة</a>
   </div>
   <div class="table-responsive">
     <table class="table table-sm align-middle">
@@ -23,7 +24,7 @@
           <tr>
             <td>{{ row.id }}</td>
             <td class="fw-bold">{{ "%02d"|format(row.month) }}/{{ row.year }}</td>
-            <td>{% if (row.status or '')|upper == 'FINAL' %}<span class="badge text-bg-success">معتمد</span>{% else %}<span class="badge text-bg-warning">مسودة</span>{% endif %}</td>
+            <td>{% if (row.status or '')|upper == 'FINAL' %}<span class="badge text-bg-success">معتمد</span>{% elif (row.status or '')|upper == 'REVERSED' %}<span class="badge text-bg-secondary">معكوس</span>{% else %}<span class="badge text-bg-warning">مسودة</span>{% endif %}</td>
             <td>{{ row.items|length }}</td>
             <td>{{ "%.2f"|format(row.items|sum(attribute='leave_deduction_days')) }} يوم</td>
             <td>{{ "%.2f"|format(row.items|sum(attribute='salary_deduction_days')) }} يوم</td>
