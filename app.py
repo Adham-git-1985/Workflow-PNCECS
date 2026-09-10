@@ -956,6 +956,41 @@ def _ensure_runtime_schema():
             if not _col_exists("hr_leave_type", "default_balance_days"):
                 _add_column_retry("hr_leave_type", "default_balance_days", "INTEGER")
 
+            if not _col_exists("hr_leave_type", "balance_source_leave_type_id"):
+                _add_column_retry(
+                    "hr_leave_type",
+                    "balance_source_leave_type_id",
+                    "INTEGER",
+                )
+            if _col_exists("hr_leave_type", "balance_source_leave_type_id"):
+                try:
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_hr_leave_type_balance_source_leave_type_id "
+                        "ON hr_leave_type (balance_source_leave_type_id)"
+                    ))
+                    db.session.execute(text(
+                        "UPDATE hr_leave_type "
+                        "SET balance_source_leave_type_id = ("
+                        "SELECT annual.id FROM hr_leave_type AS annual "
+                        "WHERE UPPER(annual.code) IN ('A', 'ANNUAL', 'ANNUAL_LEAVE', 'PERSONAL') "
+                        "ORDER BY CASE UPPER(annual.code) "
+                        "WHEN 'A' THEN 1 WHEN 'ANNUAL' THEN 2 WHEN 'ANNUAL_LEAVE' THEN 3 ELSE 4 END "
+                        "LIMIT 1"
+                        "), deduct_from_balance = 1 "
+                        "WHERE balance_source_leave_type_id IS NULL "
+                        "AND UPPER(code) IN ('O', 'EXTERNAL', 'EXTERNAL_LEAVE', 'OUTSIDE') "
+                        "AND EXISTS ("
+                        "SELECT 1 FROM hr_leave_type AS annual "
+                        "WHERE UPPER(annual.code) IN ('A', 'ANNUAL', 'ANNUAL_LEAVE', 'PERSONAL')"
+                        ")"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
+
             # HR leave types: exceptional max days (e.g., sick leave extension)
             if not _col_exists("hr_leave_type", "exception_max_days"):
                 _add_column_retry("hr_leave_type", "exception_max_days", "INTEGER")

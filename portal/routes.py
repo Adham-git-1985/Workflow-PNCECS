@@ -11671,7 +11671,7 @@ def hr_deductions_settings():
         if permission_allowance_hours is None or permission_allowance_hours < 0:
             permission_allowance_hours = 6.0
         annual_leave_type_id = (request.form.get('annual_leave_type_id') or '').strip()
-        annual_leave_type_id = int(annual_leave_type_id) if annual_leave_type_id.isdigit() else None
+        annual_leave_type_id = _leave_balance_owner_id(annual_leave_type_id)
 
         if not cfg:
             cfg = HRAttendanceDeductionConfig()
@@ -11710,7 +11710,11 @@ def hr_deductions_settings():
         style_opts=style_opts,
         source_opts=source_opts,
         carry_opts=carry_opts,
-        leave_types=HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all(),
+        leave_types=[
+            leave_type
+            for leave_type in HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
+            if _leave_type_owns_balance(leave_type)
+        ],
         can_manage=_hr_can_manage(),
     )
 
@@ -11798,7 +11802,10 @@ def hr_deductions_run():
         if minutes_per_day <= 0:
             minutes_per_day = 420
         month_end = _end_of_month_str(year, month)
-        annual_leave_type_id = cfg.annual_leave_type_id or _permission_excess_leave_type_id()
+        annual_leave_type_id = (
+            _leave_balance_owner_id(cfg.annual_leave_type_id)
+            or _permission_excess_leave_type_id()
+        )
 
         run = HRAttendanceDeductionRun(
             year=year,
@@ -12606,7 +12613,7 @@ def hr_system_screens():
         allowed_permission_hours = _form_int('permission_allowance_hours', 6)
         hours_per_day = _form_int('hours_per_day', 7, 1)
         annual_leave_type_id = (request.form.get('annual_leave_type_id') or '').strip()
-        annual_leave_type_id = int(annual_leave_type_id) if annual_leave_type_id.isdigit() else None
+        annual_leave_type_id = _leave_balance_owner_id(annual_leave_type_id)
 
         schedule_id = (_setting_get('HR_DEFAULT_SCHEDULE_ID') or '').strip()
         schedule = WorkSchedule.query.get(int(schedule_id)) if schedule_id.isdigit() else None
@@ -12708,7 +12715,11 @@ def hr_system_screens():
     pending_permission_count = HRPermissionRequest.query.filter_by(status='SUBMITTED').count()
     draft_deduction_count = HRAttendanceDeductionRun.query.filter_by(status='DRAFT').count()
     active_assignment_count = WorkAssignment.query.filter_by(is_active=True).count()
-    leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
+    leave_types = [
+        leave_type
+        for leave_type in HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
+        if _leave_type_owns_balance(leave_type)
+    ]
 
     can_approve = False
     try:
@@ -13948,6 +13959,8 @@ def hr_my_balances_deductions():
     balance_rows = []
     leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
     for leave_type in leave_types:
+        if _leave_type_redirects_balance(leave_type):
+            continue
         deducts = _leave_type_deducts_from_balance(leave_type)
         base_total = float(_leave_base_entitlement_days(user_id, leave_type, year)) if deducts else None
         adjustments_total = float(_leave_balance_adjustment_days(user_id, leave_type.id, year)) if deducts else None
@@ -13958,8 +13971,12 @@ def hr_my_balances_deductions():
             deduction_used = float(
                 db.session.query(func.coalesce(func.sum(HRAttendanceDeductionItem.leave_deduction_days), 0.0))
                 .join(HRAttendanceDeductionRun, HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id)
+                .join(HRLeaveType, HRLeaveType.id == HRAttendanceDeductionItem.deduction_leave_type_id)
                 .filter(HRAttendanceDeductionItem.user_id == user_id)
-                .filter(HRAttendanceDeductionItem.deduction_leave_type_id == leave_type.id)
+                .filter(or_(
+                    HRLeaveType.id == leave_type.id,
+                    HRLeaveType.balance_source_leave_type_id == leave_type.id,
+                ))
                 .filter(HRAttendanceDeductionRun.status == "FINAL")
                 .filter(HRAttendanceDeductionRun.year == year)
                 .filter(HRAttendanceDeductionRun.month <= deduction_as_of_month)
@@ -14233,6 +14250,7 @@ def hr_leave_request_new():
             "requires_documents": bool(getattr(t, "requires_documents", False)),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
         }
@@ -14292,16 +14310,12 @@ def hr_leave_request_new():
             flash('هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.', 'danger')
             return render_template('portal/hr/leave_request_new.html', types=types, types_meta=types_meta)
 
-        # Enforce max days if set (with optional exceptional max)
-        exceptional = False
-        if lt.max_days and days > int(lt.max_days):
-            ex = getattr(lt, "exception_max_days", None)
-            if ex and days <= int(ex):
-                exceptional = True
-                flash(f"تنبيه: مدة الإجازة ({days} يوم) تتجاوز الحد الطبيعي ({lt.max_days})، وسيتم التعامل معها كحالة استثنائية (قد تتطلب اعتماد HR).", "warning")
-            else:
-                flash(f"عدد الأيام يتجاوز الحد الأقصى لهذا النوع ({lt.max_days}).", "danger")
-                return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+        limit_error, limit_warning = _leave_duration_limit_messages(lt, days)
+        if limit_error:
+            flash(limit_error, "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+        if limit_warning:
+            flash(limit_warning, "warning")
 
         mgr = resolve_direct_manager(current_user.id)
 
@@ -14408,6 +14422,7 @@ def hr_leave_request_edit(req_id: int):
             "requires_documents": bool(getattr(t, "requires_documents", False)),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
         }
@@ -14466,17 +14481,12 @@ def hr_leave_request_edit(req_id: int):
             flash("هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
             return render_form()
 
-        if leave_type.max_days and days > int(leave_type.max_days):
-            exceptional_max_days = getattr(leave_type, "exception_max_days", None)
-            if exceptional_max_days and days <= int(exceptional_max_days):
-                flash(
-                    f"تنبيه: مدة الإجازة ({days} يوم) تتجاوز الحد الطبيعي ({leave_type.max_days})، "
-                    "وسيتم التعامل معها كحالة استثنائية.",
-                    "warning",
-                )
-            else:
-                flash(f"عدد الأيام يتجاوز الحد الأقصى لهذا النوع ({leave_type.max_days}).", "danger")
-                return render_form()
+        limit_error, limit_warning = _leave_duration_limit_messages(leave_type, days)
+        if limit_error:
+            flash(limit_error, "danger")
+            return render_form()
+        if limit_warning:
+            flash(limit_warning, "warning")
 
         is_external_type = bool(getattr(leave_type, "is_external", False))
         normalized_place = leave_place.upper()
@@ -21224,12 +21234,18 @@ def hr_masterdata_index():
     schedules = WorkSchedule.query.order_by(WorkSchedule.id.desc()).all()
     perm_types = HRPermissionType.query.order_by(HRPermissionType.code.asc()).all()
     leave_types = HRLeaveType.query.order_by(HRLeaveType.code.asc()).all()
+    balance_source_types = [
+        leave_type
+        for leave_type in leave_types
+        if leave_type.is_active and _leave_type_owns_balance(leave_type)
+    ]
     default_schedule_id = _setting_get("HR_DEFAULT_SCHEDULE_ID")
     return render_template(
         "portal/hr/masterdata_index.html",
         schedules=schedules,
         perm_types=perm_types,
         leave_types=leave_types,
+        balance_source_types=balance_source_types,
         default_schedule_id=default_schedule_id,
     )
 
@@ -21927,6 +21943,7 @@ def hr_leave_type_new():
     max_days = (request.form.get("max_days") or "").strip()
     default_balance = (request.form.get("default_balance_days") or "").strip()
     deduct_from_balance = (request.form.get("deduct_from_balance") or "1") == "1"
+    balance_source_id_raw = (request.form.get("balance_source_leave_type_id") or "").strip()
     day_count_basis = (request.form.get("day_count_basis") or LEAVE_DAY_COUNT_WORKING).strip().upper()
     if day_count_basis not in {LEAVE_DAY_COUNT_CALENDAR, LEAVE_DAY_COUNT_WORKING}:
         day_count_basis = LEAVE_DAY_COUNT_WORKING
@@ -21941,6 +21958,17 @@ def hr_leave_type_new():
     if not code or not name_ar:
         flash("الكود والاسم عربي مطلوبان.", "danger")
         return redirect(url_for("portal.hr_masterdata_index"))
+
+    balance_source = HRLeaveType.query.get(int(balance_source_id_raw)) if balance_source_id_raw.isdigit() else None
+    if balance_source_id_raw and (
+        not balance_source
+        or not balance_source.is_active
+        or not _leave_type_owns_balance(balance_source)
+    ):
+        flash("اختر رصيد خصم فعالاً ومستقلاً.", "danger")
+        return redirect(url_for("portal.hr_masterdata_index"))
+    if balance_source:
+        deduct_from_balance = True
 
     md = int(max_days) if max_days.isdigit() else None
     dbd = int(default_balance) if default_balance.isdigit() else None
@@ -21961,6 +21989,7 @@ def hr_leave_type_new():
         max_days=md,
         default_balance_days=dbd,
         deduct_from_balance=deduct_from_balance,
+        balance_source_leave_type_id=(balance_source.id if balance_source else None),
         day_count_basis=day_count_basis,
         exclude_official_holidays=exclude_official_holidays,
         exception_max_days=exc_md,
@@ -22005,6 +22034,7 @@ def hr_leave_type_edit(lt_id: int):
         max_days = (request.form.get("max_days") or "").strip()
         default_balance = (request.form.get("default_balance_days") or "").strip()
         deduct_from_balance = (request.form.get("deduct_from_balance") or "1") == "1"
+        balance_source_id_raw = (request.form.get("balance_source_leave_type_id") or "").strip()
         day_count_basis = (request.form.get("day_count_basis") or LEAVE_DAY_COUNT_WORKING).strip().upper()
         if day_count_basis not in {LEAVE_DAY_COUNT_CALENDAR, LEAVE_DAY_COUNT_WORKING}:
             day_count_basis = LEAVE_DAY_COUNT_WORKING
@@ -22020,6 +22050,20 @@ def hr_leave_type_edit(lt_id: int):
         if not code or not name_ar:
             flash("الكود والاسم عربي مطلوبان.", "danger")
             return redirect(request.url)
+
+        balance_source = HRLeaveType.query.get(int(balance_source_id_raw)) if balance_source_id_raw.isdigit() else None
+        if balance_source_id_raw and (
+            not balance_source
+            or balance_source.id == row.id
+            or not balance_source.is_active
+            or not _leave_type_owns_balance(balance_source)
+        ):
+            flash("اختر رصيد خصم فعالاً ومستقلاً ومختلفاً عن نوع الإجازة.", "danger")
+            return redirect(request.url)
+        if not deduct_from_balance:
+            balance_source = None
+        elif balance_source:
+            deduct_from_balance = True
 
         other = HRLeaveType.query.filter(HRLeaveType.code == code, HRLeaveType.id != row.id).first()
         if other:
@@ -22039,6 +22083,7 @@ def hr_leave_type_edit(lt_id: int):
         row.max_days = md
         row.default_balance_days = dbd
         row.deduct_from_balance = deduct_from_balance
+        row.balance_source_leave_type_id = balance_source.id if balance_source else None
         row.day_count_basis = day_count_basis
         row.exclude_official_holidays = exclude_official_holidays
         row.exception_max_days = exc_md
@@ -22055,7 +22100,17 @@ def hr_leave_type_edit(lt_id: int):
         return redirect(url_for("portal.hr_masterdata_index"))
 
     entitlements = HRLeaveGradeEntitlement.query.filter_by(leave_type_id=row.id).order_by(HRLeaveGradeEntitlement.grade.asc()).all()
-    return render_template("portal/hr/leave_type_edit.html", row=row, entitlements=entitlements)
+    balance_source_types = [
+        leave_type
+        for leave_type in HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
+        if leave_type.id != row.id and _leave_type_owns_balance(leave_type)
+    ]
+    return render_template(
+        "portal/hr/leave_type_edit.html",
+        row=row,
+        entitlements=entitlements,
+        balance_source_types=balance_source_types,
+    )
 
 
 
@@ -22165,6 +22220,10 @@ def _leave_base_entitlement_days(user_id: int, lt: HRLeaveType, year: int) -> fl
       3) Leave type default_balance_days
       4) 0
     """
+    lt = _leave_balance_source_type(lt)
+    if not lt or not bool(getattr(lt, "deduct_from_balance", True)):
+        return 0.0
+
     # 1) explicit per-user/year balance
     try:
         row = HRLeaveBalance.query.filter_by(user_id=user_id, leave_type_id=lt.id, year=year).first()
@@ -22209,9 +22268,12 @@ def _leave_balance_adjustment_days(user_id: int, leave_type_id: int, year: int) 
 
 def _leave_entitlement_days(user_id: int, lt: HRLeaveType, year: int) -> float:
     """Return base entitlement plus immutable HR balance corrections."""
-    return _leave_base_entitlement_days(user_id, lt, year) + _leave_balance_adjustment_days(
+    balance_type = _leave_balance_source_type(lt)
+    if not balance_type or not bool(getattr(balance_type, "deduct_from_balance", True)):
+        return 0.0
+    return _leave_base_entitlement_days(user_id, balance_type, year) + _leave_balance_adjustment_days(
         user_id,
-        lt.id,
+        balance_type.id,
         year,
     )
 
@@ -22719,10 +22781,9 @@ def _permission_excess_leave_type_id() -> int | None:
     # explicit setting first
     try:
         v = (_setting_get('HR_EXCESS_PERM_DEDUCT_LEAVE_TYPE_ID') or '').strip()
-        if v.isdigit():
-            lt = HRLeaveType.query.get(int(v))
-            if lt and _leave_type_deducts_from_balance(lt):
-                return int(lt.id)
+        owner_id = _leave_balance_owner_id(v)
+        if owner_id:
+            return owner_id
     except Exception:
         pass
 
@@ -22730,14 +22791,14 @@ def _permission_excess_leave_type_id() -> int | None:
     try:
         for code in ('PERSONAL', 'ANNUAL', 'ANNUAL_LEAVE'):
             lt = HRLeaveType.query.filter(func.upper(HRLeaveType.code) == code).first()
-            if lt and _leave_type_deducts_from_balance(lt):
+            if lt and _leave_type_owns_balance(lt):
                 return int(lt.id)
     except Exception:
         pass
 
     try:
         for lt in HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all():
-            if _leave_type_deducts_from_balance(lt):
+            if _leave_type_owns_balance(lt):
                 return int(lt.id)
         return None
     except Exception:
@@ -22749,6 +22810,9 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
     try:
         leave_type = HRLeaveType.query.get(int(leave_type_id))
         if not leave_type or not _leave_type_deducts_from_balance(leave_type):
+            return 0.0
+        balance_type = _leave_balance_source_type(leave_type)
+        if not balance_type:
             return 0.0
 
         # Bound as_of to the requested year
@@ -22763,12 +22827,19 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
 
         total = 0.0
         q = (HRLeaveRequest.query
+             .join(HRLeaveType, HRLeaveRequest.leave_type_id == HRLeaveType.id)
              .filter(HRLeaveRequest.user_id == user_id)
-             .filter(HRLeaveRequest.leave_type_id == leave_type_id)
+             .filter(or_(
+                 HRLeaveType.id == balance_type.id,
+                 HRLeaveType.balance_source_leave_type_id == balance_type.id,
+             ))
              .filter(HRLeaveRequest.status.in_(["APPROVED", "CANCELLED"]))
              .order_by(HRLeaveRequest.id.asc()))
 
         for r in q.all():
+            request_leave_type = getattr(r, "leave_type", None)
+            if not _leave_type_deducts_from_balance(request_leave_type):
+                continue
             # Only count CANCELLED requests if they were cancelled after approval
             if r.status == "CANCELLED":
                 if (r.cancelled_from_status or "").upper() != "APPROVED":
@@ -22794,7 +22865,7 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
 
             total += float(
                 _calculate_leave_days(
-                    leave_type,
+                    request_leave_type,
                     s.isoformat(),
                     e.isoformat(),
                     user_id=user_id,
@@ -22807,8 +22878,12 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
             approved_days = (
                 db.session.query(func.coalesce(func.sum(HRAttendanceDeductionItem.leave_deduction_days), 0.0))
                 .join(HRAttendanceDeductionRun, HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id)
+                .join(HRLeaveType, HRLeaveType.id == HRAttendanceDeductionItem.deduction_leave_type_id)
                 .filter(HRAttendanceDeductionItem.user_id == user_id)
-                .filter(HRAttendanceDeductionItem.deduction_leave_type_id == leave_type_id)
+                .filter(or_(
+                    HRLeaveType.id == balance_type.id,
+                    HRLeaveType.balance_source_leave_type_id == balance_type.id,
+                ))
                 .filter(HRAttendanceDeductionRun.status == 'FINAL')
                 .filter(HRAttendanceDeductionRun.year == year)
                 .filter(HRAttendanceDeductionRun.month <= as_of.month)
@@ -23002,7 +23077,7 @@ def hr_leave_balances():
                 days_delta = round(float(delta_raw), 4)
             except (TypeError, ValueError):
                 days_delta = 0.0
-            if not leave_type or not leave_type.is_active or not _leave_type_deducts_from_balance(leave_type):
+            if not leave_type or not leave_type.is_active or not _leave_type_owns_balance(leave_type):
                 flash('اختر نوع إجازة خاضعاً للرصيد.', 'danger')
             elif abs(days_delta) < 0.0001:
                 flash('أدخل قيمة تصحيح موجبة أو سالبة لا تساوي صفراً.', 'danger')
@@ -23038,7 +23113,7 @@ def hr_leave_balances():
 
         updated = 0
         for lt in leave_types:
-            if not _leave_type_deducts_from_balance(lt):
+            if not _leave_type_owns_balance(lt):
                 continue
             key = f'total_{lt.id}'
             raw = (request.form.get(key) or '').strip()
@@ -23066,6 +23141,8 @@ def hr_leave_balances():
     rows = []
     if selected_user:
         for lt in leave_types:
+            if _leave_type_redirects_balance(lt):
+                continue
             deducts_from_balance = _leave_type_deducts_from_balance(lt)
             base_total = _leave_base_entitlement_days(selected_user.id, lt, year) if deducts_from_balance else None
             adjustments_total = _leave_balance_adjustment_days(selected_user.id, lt.id, year) if deducts_from_balance else None
@@ -23253,6 +23330,8 @@ def hr_monthly_leave_report():
 
         # Year-to-date balances as of end_str (as_of)
         for lt in leave_types:
+            if not _leave_type_owns_balance(lt):
+                continue
             total = float(_leave_entitlement_days(selected_user.id, lt, year))
             used = float(_leave_used_days_as_of(selected_user.id, lt.id, year, as_of))
             rem = total - used
@@ -23567,7 +23646,7 @@ def hr_alerts():
         active_types = [
             leave_type
             for leave_type in HRLeaveType.query.filter(HRLeaveType.is_active == True).order_by(HRLeaveType.code.asc()).all()  # noqa: E712
-            if _leave_type_deducts_from_balance(leave_type)
+            if _leave_type_owns_balance(leave_type)
         ]
 
         # Scope users first when filtering is enabled
@@ -33280,8 +33359,82 @@ LEAVE_DAY_COUNT_WORKING = "WORKING_DAYS"
 
 
 def _leave_type_deducts_from_balance(leave_type: HRLeaveType | None) -> bool:
-    """Return the balance policy, defaulting legacy types to deductible."""
-    return bool(getattr(leave_type, "deduct_from_balance", True))
+    """Return whether this request type consumes its configured balance."""
+    if not leave_type or not bool(getattr(leave_type, "deduct_from_balance", True)):
+        return False
+    balance_type = _leave_balance_source_type(leave_type)
+    return bool(balance_type and getattr(balance_type, "deduct_from_balance", True))
+
+
+def _leave_balance_source_type(leave_type: HRLeaveType | None) -> HRLeaveType | None:
+    """Resolve the balance owner while rejecting missing links and cycles."""
+    current = leave_type
+    visited_ids = set()
+    while current:
+        current_id = getattr(current, "id", None)
+        if current_id is not None:
+            if current_id in visited_ids:
+                return None
+            visited_ids.add(current_id)
+        source_id = getattr(current, "balance_source_leave_type_id", None)
+        if not source_id:
+            return current
+        source = getattr(current, "balance_source_leave_type", None)
+        if source is None:
+            source = HRLeaveType.query.get(int(source_id))
+        current = source
+    return None
+
+
+def _leave_type_redirects_balance(leave_type: HRLeaveType | None) -> bool:
+    balance_type = _leave_balance_source_type(leave_type)
+    return bool(
+        leave_type
+        and balance_type
+        and getattr(leave_type, "id", None) != getattr(balance_type, "id", None)
+    )
+
+
+def _leave_type_owns_balance(leave_type: HRLeaveType | None) -> bool:
+    return bool(_leave_type_deducts_from_balance(leave_type) and not _leave_type_redirects_balance(leave_type))
+
+
+def _leave_balance_owner_id(leave_type_id) -> int | None:
+    try:
+        leave_type = HRLeaveType.query.get(int(leave_type_id))
+    except Exception:
+        return None
+    balance_type = _leave_balance_source_type(leave_type)
+    if not _leave_type_owns_balance(balance_type):
+        return None
+    return int(balance_type.id)
+
+
+def _leave_type_balance_source_name(leave_type: HRLeaveType | None) -> str:
+    if not _leave_type_redirects_balance(leave_type):
+        return ""
+    balance_type = _leave_balance_source_type(leave_type)
+    return (getattr(balance_type, "name_ar", None) or getattr(balance_type, "code", None) or "").strip()
+
+
+def _leave_duration_limit_messages(leave_type: HRLeaveType | None, days: int) -> tuple[str | None, str | None]:
+    try:
+        maximum_days = int(getattr(leave_type, "max_days", None) or 0)
+    except (TypeError, ValueError):
+        maximum_days = 0
+    if maximum_days <= 0 or int(days or 0) <= maximum_days:
+        return None, None
+
+    try:
+        exceptional_maximum = int(getattr(leave_type, "exception_max_days", None) or 0)
+    except (TypeError, ValueError):
+        exceptional_maximum = 0
+    if exceptional_maximum > maximum_days and int(days or 0) <= exceptional_maximum:
+        return None, (
+            f"تنبيه: مدة الإجازة ({days} يوم) تتجاوز الحد الطبيعي ({maximum_days})، "
+            "وسيتم التعامل معها كحالة استثنائية."
+        )
+    return f"عدد الأيام يتجاوز الحد الأقصى لهذا النوع ({maximum_days}).", None
 
 
 def _leave_type_day_count_basis(leave_type: HRLeaveType | None) -> str:
@@ -33532,6 +33685,12 @@ def hr_leaves_admin_new():
             flash('تاريخ النهاية يجب أن يكون بعد تاريخ البداية.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
         days_val = _calculate_leave_days(lt, start_date, end_date, user_id=int(user_id))
+        limit_error, limit_warning = _leave_duration_limit_messages(lt, days_val)
+        if limit_error:
+            flash(limit_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
+        if limit_warning:
+            flash(limit_warning, 'warning')
 
         is_external = bool(getattr(lt, 'is_external', False)) if lt else False
 
@@ -33617,6 +33776,7 @@ def hr_leaves_admin_new():
             "requires_documents": bool(getattr(t, "requires_documents", False)),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
         }
@@ -33675,6 +33835,13 @@ def hr_leaves_admin_edit(row_id: int):
             row.end_date,
             user_id=row.user_id,
         )
+        limit_error, limit_warning = _leave_duration_limit_messages(lt, row.days)
+        if limit_error:
+            db.session.rollback()
+            flash(limit_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
+        if limit_warning:
+            flash(limit_warning, 'warning')
 
         admin_status_id = (request.form.get('admin_status_id') or '').strip()
         row.admin_status_id = int(admin_status_id) if admin_status_id.isdigit() else None
@@ -33718,6 +33885,7 @@ def hr_leaves_admin_edit(row_id: int):
             "requires_documents": bool(getattr(t, "requires_documents", False)),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
+            "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
         }
@@ -34131,7 +34299,7 @@ def hr_report_leave_employee_balances():
             for lt in leave_types:
                 # Informational leave types (for example maternity/paternity)
                 # are documented as requests but have no annual balance to report.
-                if not _leave_type_deducts_from_balance(lt):
+                if not _leave_type_owns_balance(lt):
                     continue
                 total = float(_leave_entitlement_days(uid, lt, year) or 0.0)
                 used = float(_leave_used_days_as_of(uid, lt.id, year, today) or 0.0)

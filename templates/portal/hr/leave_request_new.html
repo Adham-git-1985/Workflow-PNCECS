@@ -17,7 +17,7 @@
         <select name="leave_type_id" class="form-select" required>
           <option value="">— اختر —</option>
           {% for t in types %}
-            <option value="{{ t.id }}" {% if selected_type_id == (t.id|string) %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}{% if t.max_days %} (حد أقصى {{ t.max_days }} يوم){% endif %}</option>
+            <option value="{{ t.id }}" {% if selected_type_id == (t.id|string) %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}{% if t.balance_source_leave_type %} — من رصيد {{ t.balance_source_leave_type.name_ar }}{% endif %}{% if t.max_days %} (حد أقصى {{ t.max_days }} يوم){% endif %}</option>
           {% endfor %}
         </select>
       </div>
@@ -156,7 +156,9 @@
             ? 'وتُستبعد العطل الرسمية من المدة.'
             : 'والعطل الرسمية تدخل ضمن المدة.';
           const balance = current.deduct_from_balance
-            ? 'تُخصم الأيام المعتمدة من رصيد هذا النوع.'
+            ? (current.balance_source_name
+              ? `تُخصم الأيام المعتمدة من رصيد ${current.balance_source_name}.`
+              : 'تُخصم الأيام المعتمدة من رصيد هذا النوع.')
             : 'لا تُخصم الأيام المعتمدة من رصيد هذا النوع.';
           policy.textContent = `${weekly} ${official} ${balance}`;
         }

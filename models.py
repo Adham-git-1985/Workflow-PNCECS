@@ -2923,6 +2923,12 @@ class HRLeaveType(db.Model):
     # Whether approved days from this type consume the employee's leave balance.
     # Examples: annual leave normally consumes balance; maternity/paternity may not.
     deduct_from_balance = db.Column(db.Boolean, default=True, nullable=False)
+    balance_source_leave_type_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_leave_type.id"),
+        nullable=True,
+        index=True,
+    )
     # Basis for calculating the duration of this leave type.  Calendar days
     # include weekly holidays, while working days exclude them.
     day_count_basis = db.Column(db.String(20), default="WORKING_DAYS", nullable=False)
@@ -2944,6 +2950,12 @@ class HRLeaveType(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    balance_source_leave_type = db.relationship(
+        "HRLeaveType",
+        foreign_keys=[balance_source_leave_type_id],
+        remote_side=[id],
+        lazy="selectin",
+    )
 class HRLeaveGradeEntitlement(db.Model):
     """Per-grade annual entitlement (allowed days) per leave type.
 

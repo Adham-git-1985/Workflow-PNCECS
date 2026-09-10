@@ -29,7 +29,7 @@
         <label class="form-label">نوع الإجازة</label>
         <select class="form-select" name="leave_type_id" required>
           {% for t in leave_types %}
-            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}</option>
+            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}{% if t.balance_source_leave_type %} — من رصيد {{ t.balance_source_leave_type.name_ar }}{% endif %}</option>
           {% endfor %}
         </select>
       </div>
@@ -166,7 +166,9 @@
             ? 'وتُستبعد العطل الرسمية من المدة.'
             : 'والعطل الرسمية تدخل ضمن المدة.';
           const balance = current.deduct_from_balance
-            ? 'تُخصم الأيام المعتمدة من رصيد هذا النوع.'
+            ? (current.balance_source_name
+              ? `تُخصم الأيام المعتمدة من رصيد ${current.balance_source_name}.`
+              : 'تُخصم الأيام المعتمدة من رصيد هذا النوع.')
             : 'لا تُخصم الأيام المعتمدة من رصيد هذا النوع.';
           policy.textContent = `${weekly} ${official} ${balance}`;
         }

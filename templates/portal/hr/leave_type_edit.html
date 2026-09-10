@@ -75,6 +75,17 @@
       </div>
 
       <div class="col-12 col-md-3">
+        <label class="form-label">رصيد الخصم</label>
+        <select class="form-select" name="balance_source_leave_type_id">
+          <option value="">رصيد هذا النوع نفسه</option>
+          {% for source in balance_source_types %}
+            <option value="{{ source.id }}" {% if row.balance_source_leave_type_id == source.id %}selected{% endif %}>{{ source.name_ar }}</option>
+          {% endfor %}
+        </select>
+        <div class="form-text">اختر «الإجازة السنوية» مثلًا ليبقى الطلب مصنفًا كخارجية وتُخصم أيامه من الرصيد السنوي.</div>
+      </div>
+
+      <div class="col-12 col-md-3">
         <label class="form-label">العطل الأسبوعية ضمن فترة الإجازة</label>
         <select class="form-select" name="day_count_basis">
           <option value="WORKING_DAYS" {% if row.day_count_basis != 'CALENDAR_DAYS' %}selected{% endif %}>لا تُحتسب (أيام عمل)</option>
