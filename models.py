@@ -2829,6 +2829,96 @@ class EmployeeScheduleAssignment(db.Model):
     )
 
 
+class HRAttendanceSchedulePlan(db.Model):
+    """A versioned two-week attendance schedule proposed for one employee."""
+
+    __tablename__ = "hr_attendance_schedule_plan"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    period_start = db.Column(db.String(10), nullable=False, index=True)
+    period_end = db.Column(db.String(10), nullable=False, index=True)
+    version_no = db.Column(db.Integer, nullable=False, default=1)
+    replaces_plan_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_attendance_schedule_plan.id"),
+        nullable=True,
+        index=True,
+    )
+    status = db.Column(db.String(24), nullable=False, default="DRAFT", index=True)
+    employee_note = db.Column(db.Text, nullable=True)
+    manager_note = db.Column(db.Text, nullable=True)
+    submitted_at = db.Column(db.DateTime, nullable=True)
+    manager_approved_at = db.Column(db.DateTime, nullable=True)
+    manager_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    final_approved_at = db.Column(db.DateTime, nullable=True)
+    final_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    manager = db.relationship("User", foreign_keys=[manager_user_id], lazy="joined")
+    manager_approved_by = db.relationship("User", foreign_keys=[manager_approved_by_id], lazy="joined")
+    final_approved_by = db.relationship("User", foreign_keys=[final_approved_by_id], lazy="joined")
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id",
+            "period_start",
+            "version_no",
+            name="uq_hr_att_schedule_user_period_version",
+        ),
+        db.Index(
+            "ix_hr_att_schedule_period_status",
+            "period_start",
+            "status",
+        ),
+    )
+
+
+class HRAttendanceScheduleDay(db.Model):
+    """One day inside a versioned two-week attendance schedule."""
+
+    __tablename__ = "hr_attendance_schedule_day"
+
+    id = db.Column(db.Integer, primary_key=True)
+    plan_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_attendance_schedule_plan.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    work_date = db.Column(db.String(10), nullable=False, index=True)
+    day_type = db.Column(db.String(20), nullable=False, default="WORK")
+    schedule_id = db.Column(db.Integer, db.ForeignKey("work_schedule.id"), nullable=True)
+    start_time = db.Column(db.String(5), nullable=True)
+    end_time = db.Column(db.String(5), nullable=True)
+    note = db.Column(db.String(255), nullable=True)
+    edit_source = db.Column(db.String(24), nullable=False, default="EMPLOYEE")
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    plan = db.relationship(
+        "HRAttendanceSchedulePlan",
+        backref=db.backref(
+            "days",
+            lazy="selectin",
+            cascade="all, delete-orphan",
+            order_by="HRAttendanceScheduleDay.work_date",
+        ),
+    )
+    schedule = db.relationship("WorkSchedule", foreign_keys=[schedule_id], lazy="joined")
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("plan_id", "work_date", name="uq_hr_att_schedule_plan_day"),
+        db.Index("ix_hr_att_schedule_day_date_type", "work_date", "day_type"),
+    )
+
+
 class WorkPolicy(db.Model):
     """Work policies control *days* and *place* rules.
 

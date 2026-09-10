@@ -4,6 +4,7 @@ import time
 
 from extensions import db
 from portal.routes import _setting_get  # reuse SystemSetting helper (SystemSetting table)
+from services.attendance_schedule import send_attendance_schedule_reminders
 from services.hr_request_workflow import process_pending_approvals
 
 _HR_ALERTS_STARTED = False
@@ -11,6 +12,7 @@ _HR_ALERTS_STARTED = False
 def _check_pending_leave_requests():
     result = process_pending_approvals(send_notifications=True)
     followup_reminders = 0
+    schedule_reminders = 0
     try:
         from portal.followups import send_followup_reminders
 
@@ -20,11 +22,16 @@ def _check_pending_leave_requests():
     except Exception:
         # Reporting reminders must not prevent employee-request reminders.
         pass
+    try:
+        schedule_reminders = send_attendance_schedule_reminders()
+    except Exception:
+        pass
     db.session.commit()
     return (
         int(result.get("reminded", 0))
         + int(result.get("escalated", 0))
         + int(followup_reminders)
+        + int(schedule_reminders)
     )
 
 

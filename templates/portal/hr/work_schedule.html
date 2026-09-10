@@ -1,0 +1,787 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}جدول الدوام{% endblock %}
+
+{% block head %}
+  {{ super() }}
+  <style>
+    :root {
+      --ws-ink: #17223b;
+      --ws-muted: #667085;
+      --ws-purple: #6d4aff;
+      --ws-purple-dark: #4d32c7;
+      --ws-blue: #1788f5;
+      --ws-mint: #13b98c;
+      --ws-gold: #f5a524;
+      --ws-bg: #f4f6fb;
+      --ws-border: rgba(79, 70, 229, .12);
+    }
+
+    body { background: var(--ws-bg) !important; }
+    .ws-shell { color: var(--ws-ink); }
+    .ws-hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(1.4rem, 3vw, 2.35rem);
+      border-radius: 28px;
+      color: #fff;
+      background:
+        radial-gradient(circle at 10% 20%, rgba(255,255,255,.22), transparent 26%),
+        radial-gradient(circle at 88% 12%, rgba(27,216,178,.24), transparent 28%),
+        linear-gradient(125deg, #34216d 0%, #6747df 49%, #138bd2 100%);
+      box-shadow: 0 22px 55px rgba(65, 48, 145, .24);
+    }
+    .ws-hero::after {
+      content: "";
+      position: absolute;
+      inset-inline-end: -70px;
+      bottom: -120px;
+      width: 310px;
+      height: 310px;
+      border: 52px solid rgba(255,255,255,.08);
+      border-radius: 50%;
+    }
+    .ws-hero > * { position: relative; z-index: 1; }
+    .ws-eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      padding: .38rem .75rem;
+      margin-bottom: .75rem;
+      border: 1px solid rgba(255,255,255,.22);
+      border-radius: 999px;
+      background: rgba(255,255,255,.12);
+      font-size: .82rem;
+      font-weight: 700;
+      backdrop-filter: blur(10px);
+    }
+    .ws-title { font-size: clamp(1.65rem, 4vw, 2.65rem); font-weight: 800; letter-spacing: -.035em; }
+    .ws-subtitle { color: rgba(255,255,255,.78); max-width: 710px; }
+    .ws-cycle-nav {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      padding: .45rem;
+      border-radius: 18px;
+      background: rgba(18, 18, 55, .24);
+      border: 1px solid rgba(255,255,255,.16);
+      backdrop-filter: blur(12px);
+    }
+    .ws-cycle-nav a {
+      width: 38px;
+      height: 38px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      border-radius: 12px;
+      text-decoration: none;
+      background: rgba(255,255,255,.11);
+    }
+    .ws-cycle-nav a:hover { background: rgba(255,255,255,.23); }
+    .ws-cycle-date { min-width: 178px; text-align: center; font-weight: 700; line-height: 1.25; }
+    .ws-cycle-date small { display: block; color: rgba(255,255,255,.68); font-size: .72rem; font-weight: 500; }
+
+    .ws-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: .8rem;
+      margin-top: 1.15rem;
+    }
+    .ws-summary-item {
+      padding: .85rem 1rem;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 18px;
+      background: rgba(255,255,255,.1);
+      backdrop-filter: blur(10px);
+    }
+    .ws-summary-item span { color: rgba(255,255,255,.7); font-size: .75rem; }
+    .ws-summary-item strong { display: block; margin-top: .15rem; font-size: 1.12rem; }
+
+    .ws-panel {
+      border: 1px solid var(--ws-border);
+      border-radius: 24px;
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 14px 35px rgba(30, 42, 78, .07);
+    }
+    .ws-tabs {
+      display: flex;
+      gap: .45rem;
+      padding: .42rem;
+      border: 1px solid var(--ws-border);
+      border-radius: 18px;
+      background: #fff;
+      box-shadow: 0 8px 22px rgba(30, 42, 78, .06);
+      overflow-x: auto;
+    }
+    .ws-tabs .nav-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .45rem;
+      min-width: 132px;
+      padding: .72rem 1rem;
+      border: 0;
+      border-radius: 13px;
+      color: #5d667a;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .ws-tabs .nav-link.active {
+      color: #fff;
+      background: linear-gradient(120deg, var(--ws-purple), var(--ws-blue));
+      box-shadow: 0 8px 20px rgba(84, 73, 214, .24);
+    }
+    .ws-counter {
+      min-width: 23px;
+      height: 23px;
+      padding: 0 .35rem;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 999px;
+      background: rgba(255,255,255,.22);
+      font-size: .72rem;
+    }
+    .ws-tabs .nav-link:not(.active) .ws-counter { background: #eef0f8; }
+
+    .ws-reminder {
+      display: flex;
+      align-items: center;
+      gap: .9rem;
+      padding: 1rem 1.15rem;
+      border: 1px solid rgba(245, 165, 36, .25);
+      border-radius: 20px;
+      background: linear-gradient(100deg, #fff8e8, #fffdf8);
+      box-shadow: 0 10px 30px rgba(245,165,36,.08);
+    }
+    .ws-reminder-icon {
+      width: 48px;
+      height: 48px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 16px;
+      color: #9a5a00;
+      background: #ffe8b1;
+      font-size: 1.35rem;
+    }
+
+    .ws-flow {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .55rem;
+    }
+    .ws-flow-step {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      min-height: 70px;
+      padding: .75rem;
+      border: 1px solid #eaecf2;
+      border-radius: 17px;
+      color: #7a8294;
+      background: #fafbfe;
+    }
+    .ws-flow-step.is-active { color: var(--ws-purple-dark); border-color: rgba(109,74,255,.3); background: #f4f1ff; }
+    .ws-flow-step.is-done { color: #08785d; border-color: rgba(19,185,140,.24); background: #effcf8; }
+    .ws-flow-number {
+      width: 34px;
+      height: 34px;
+      flex: 0 0 auto;
+      display: grid;
+      place-items: center;
+      border-radius: 12px;
+      background: #e9ebf2;
+      font-weight: 800;
+    }
+    .ws-flow-step.is-active .ws-flow-number { color: #fff; background: var(--ws-purple); }
+    .ws-flow-step.is-done .ws-flow-number { color: #fff; background: var(--ws-mint); }
+    .ws-flow-step small { display: block; margin-top: .12rem; color: #949bad; }
+
+    .ws-week {
+      padding: clamp(.8rem, 2vw, 1.2rem);
+      border: 1px solid var(--ws-border);
+      border-radius: 24px;
+      background: #fff;
+      box-shadow: 0 12px 32px rgba(30, 42, 78, .055);
+    }
+    .ws-week-header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: 1rem; }
+    .ws-week-number {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      color: #fff;
+      background: linear-gradient(135deg, var(--ws-purple), var(--ws-blue));
+      box-shadow: 0 8px 18px rgba(83,75,207,.22);
+      font-weight: 800;
+    }
+    .ws-days-grid { display: grid; grid-template-columns: repeat(7, minmax(170px, 1fr)); gap: .72rem; overflow-x: auto; padding: .12rem .08rem .5rem; }
+    .ws-day-card {
+      position: relative;
+      min-width: 170px;
+      padding: .85rem;
+      border: 1px solid #e8eaf2;
+      border-radius: 20px;
+      background: linear-gradient(180deg, #fff, #fbfcff);
+      transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+    }
+    .ws-day-card:hover { transform: translateY(-3px); box-shadow: 0 14px 28px rgba(35,43,80,.1); }
+    .ws-day-card[data-kind="WORK"] { border-top: 4px solid var(--ws-purple); }
+    .ws-day-card[data-kind="REMOTE"] { border-top: 4px solid var(--ws-blue); background: linear-gradient(180deg, #f5fbff, #fff); }
+    .ws-day-card[data-kind="OFF"] { border-top: 4px solid #a8afbf; background: linear-gradient(180deg, #f7f8fa, #fff); }
+    .ws-day-card.is-today { box-shadow: 0 0 0 3px rgba(245,165,36,.18), 0 12px 26px rgba(35,43,80,.08); }
+    .ws-day-card.is-locked { opacity: .72; }
+    .ws-day-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .45rem; margin-bottom: .75rem; }
+    .ws-day-name { font-weight: 800; font-size: 1rem; }
+    .ws-day-date { color: var(--ws-muted); font-size: .74rem; direction: ltr; text-align: right; }
+    .ws-today-badge { padding: .25rem .46rem; border-radius: 8px; color: #8a5200; background: #fff0c8; font-size: .67rem; font-weight: 800; }
+    .ws-form-label { margin-bottom: .28rem; color: #737c90; font-size: .7rem; font-weight: 700; }
+    .ws-day-card .form-select,
+    .ws-day-card .form-control { border-color: #e4e7ef; border-radius: 11px; font-size: .78rem; }
+    .ws-day-card .form-select:focus,
+    .ws-day-card .form-control:focus { border-color: rgba(109,74,255,.5); box-shadow: 0 0 0 .2rem rgba(109,74,255,.1); }
+    .ws-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: .45rem; }
+    .ws-source {
+      display: inline-flex;
+      align-items: center;
+      gap: .25rem;
+      margin-top: .55rem;
+      color: #8d95a6;
+      font-size: .65rem;
+    }
+    .ws-source[data-source="MANAGER"] { color: #9b6505; }
+    .ws-source[data-source="SECRETARY_GENERAL"] { color: #08785d; }
+
+    .ws-metric {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      padding: .78rem .9rem;
+      border: 1px solid #e9ebf2;
+      border-radius: 16px;
+      background: #fff;
+    }
+    .ws-metric i {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      border-radius: 11px;
+      color: var(--ws-purple);
+      background: #f0edff;
+    }
+    .ws-metric strong { display: block; line-height: 1; }
+    .ws-metric span { color: var(--ws-muted); font-size: .68rem; }
+
+    .ws-action-bar {
+      position: sticky;
+      bottom: 12px;
+      z-index: 20;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .8rem;
+      padding: .8rem;
+      border: 1px solid rgba(109,74,255,.15);
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 18px 42px rgba(31,39,75,.16);
+      backdrop-filter: blur(16px);
+    }
+    .ws-primary-btn {
+      color: #fff;
+      border: 0;
+      background: linear-gradient(120deg, var(--ws-purple), var(--ws-blue));
+      box-shadow: 0 8px 18px rgba(83,75,207,.22);
+    }
+    .ws-primary-btn:hover { color: #fff; filter: brightness(1.04); }
+    .ws-approve-btn { color: #fff; border: 0; background: linear-gradient(120deg, #079a72, #14c69a); box-shadow: 0 8px 18px rgba(19,185,140,.22); }
+    .ws-approve-btn:hover { color: #fff; filter: brightness(1.03); }
+
+    .ws-person-card {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: .85rem;
+      align-items: center;
+      padding: .9rem;
+      border: 1px solid #e8eaf2;
+      border-radius: 18px;
+      background: #fff;
+      transition: border-color .18s ease, transform .18s ease, box-shadow .18s ease;
+    }
+    .ws-person-card:hover { transform: translateY(-2px); border-color: rgba(109,74,255,.28); box-shadow: 0 12px 28px rgba(35,43,80,.08); }
+    .ws-avatar {
+      width: 46px;
+      height: 46px;
+      display: grid;
+      place-items: center;
+      border-radius: 15px;
+      color: #fff;
+      background: linear-gradient(135deg, #6d4aff, #248fe6);
+      font-weight: 800;
+      box-shadow: 0 7px 16px rgba(80,73,202,.2);
+    }
+    .ws-person-name { font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ws-person-meta { color: var(--ws-muted); font-size: .74rem; }
+    .ws-person-actions { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; }
+    .ws-progress { height: 5px; margin-top: .5rem; border-radius: 999px; background: #edf0f5; overflow: hidden; }
+    .ws-progress > span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--ws-purple), var(--ws-blue)); }
+    .ws-kpi-card { padding: 1rem; border: 1px solid #e8eaf2; border-radius: 18px; background: #fff; }
+    .ws-kpi-card strong { display: block; font-size: 1.55rem; line-height: 1.1; }
+    .ws-kpi-card span { color: var(--ws-muted); font-size: .75rem; }
+    .ws-readonly-banner { border: 1px solid #d8e8f6; border-radius: 16px; background: #f2f8fd; color: #2c5e83; }
+    .ws-empty { padding: 2.5rem 1rem; text-align: center; border: 1px dashed #d6dae6; border-radius: 20px; background: #fafbfe; }
+    .ws-empty i { display: block; margin-bottom: .55rem; color: #9ca3b6; font-size: 2rem; }
+    .ws-version-pill { display: inline-flex; align-items: center; gap: .35rem; padding: .38rem .65rem; border-radius: 999px; background: #f1efff; color: #5e45ce; font-size: .72rem; font-weight: 700; }
+
+    @media (max-width: 991.98px) {
+      .ws-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .ws-days-grid { grid-template-columns: repeat(7, minmax(190px, 1fr)); }
+    }
+    @media (max-width: 767.98px) {
+      .ws-hero { border-radius: 22px; }
+      .ws-flow { grid-template-columns: 1fr; }
+      .ws-flow-step { min-height: 58px; }
+      .ws-person-card { grid-template-columns: auto minmax(0, 1fr); }
+      .ws-person-actions { grid-column: 1 / -1; justify-content: stretch; }
+      .ws-person-actions .btn, .ws-person-actions form { flex: 1; }
+      .ws-person-actions form .btn { width: 100%; }
+      .ws-action-bar { align-items: stretch; flex-direction: column; }
+      .ws-action-bar > div { width: 100%; display: grid !important; grid-template-columns: 1fr; }
+      .ws-action-bar .btn { width: 100%; }
+    }
+    @media (max-width: 575.98px) {
+      .ws-summary-grid { grid-template-columns: 1fr 1fr; }
+      .ws-summary-item { padding: .72rem; }
+      .ws-cycle-nav { width: 100%; justify-content: space-between; }
+      .ws-tabs .nav-link { min-width: 116px; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .ws-hero, .ws-panel, .ws-week { animation: ws-rise .38s ease both; }
+      .ws-week:nth-of-type(2) { animation-delay: .08s; }
+      @keyframes ws-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    }
+  </style>
+{% endblock %}
+
+{% block hr_content %}
+{% set active_view = request.args.get('view', 'schedule') %}
+{% if active_view == 'team' and not report_cards %}{% set active_view = 'schedule' %}{% endif %}
+{% if active_view == 'all' and not can_view_all %}{% set active_view = 'schedule' %}{% endif %}
+{% set plan_status = plan.status if plan else 'DRAFT' %}
+{% set plan_meta = status_meta.get(plan_status, status_meta.DRAFT) %}
+<div class="ws-shell">
+  <section class="ws-hero mb-3">
+    <div class="d-flex flex-column flex-xl-row align-items-xl-center justify-content-between gap-4">
+      <div>
+        <div class="ws-eyebrow"><i class="bi bi-stars"></i> تخطيط ذكي وواضح لأسبوعين</div>
+        <h1 class="ws-title mb-2">جدول الدوام</h1>
+        <p class="ws-subtitle mb-0">خطّط أيامك، أرسل المقترح لمديرك، وتابع الاعتماد النهائي من شاشة واحدة.</p>
+      </div>
+      <div class="ws-cycle-nav" aria-label="التنقل بين دورات جدول الدوام">
+        <a href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat()) }}" title="الدورة السابقة"><i class="bi bi-chevron-right"></i></a>
+        <div class="ws-cycle-date">
+          {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}
+          <small>دورة عمل من 14 يومًا</small>
+        </div>
+        <a href="{{ url_for('portal.hr_work_schedule', start=next_start.isoformat()) }}" title="الدورة التالية"><i class="bi bi-chevron-left"></i></a>
+      </div>
+    </div>
+
+    <div class="ws-summary-grid">
+      <div class="ws-summary-item"><span>الجدول المعروض</span><strong>{{ target_user.full_name }}</strong></div>
+      <div class="ws-summary-item"><span>الحالة الحالية</span><strong><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</strong></div>
+      <div class="ws-summary-item"><span>المدير المباشر</span><strong>{{ selected_manager.full_name if selected_manager else 'غير معيّن' }}</strong></div>
+      <div class="ws-summary-item"><span>النسخة</span><strong>الإصدار {{ plan.version_no if plan else 1 }}</strong></div>
+    </div>
+  </section>
+
+  {% if reminder_due %}
+  <div class="ws-reminder mb-3">
+    <div class="ws-reminder-icon"><i class="bi bi-bell-fill"></i></div>
+    <div class="flex-grow-1">
+      <div class="fw-bold">اقتربت بداية الأسبوع الثاني</div>
+      <div class="small text-muted">أكمل جدول الأسبوعين وأرسله لمديرك حتى يتم اعتماده في الوقت المناسب.</div>
+    </div>
+    <button class="btn btn-warning btn-sm fw-bold" type="button" data-focus-week="2">انتقل للأسبوع الثاني</button>
+  </div>
+  {% endif %}
+
+  <ul class="nav ws-tabs mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_view not in ['team', 'all'] %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#wsSchedulePane" type="button" role="tab">
+        <i class="bi bi-calendar2-week"></i> {% if target_user.id == current_user.id %}جدولي{% else %}تفاصيل الجدول{% endif %}
+      </button>
+    </li>
+    {% if report_cards %}
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_view == 'team' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#wsTeamPane" type="button" role="tab">
+        <i class="bi bi-people"></i> فريقي <span class="ws-counter">{{ manager_pending_count }}</span>
+      </button>
+    </li>
+    {% endif %}
+    {% if can_view_all %}
+    <li class="nav-item" role="presentation">
+      <button class="nav-link {% if active_view == 'all' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#wsAllPane" type="button" role="tab">
+        <i class="bi bi-grid-3x3-gap"></i> جميع الموظفين <span class="ws-counter">{{ organization_cards|length }}</span>
+      </button>
+    </li>
+    {% endif %}
+  </ul>
+
+  <div class="tab-content">
+    <div class="tab-pane fade {% if active_view not in ['team', 'all'] %}show active{% endif %}" id="wsSchedulePane" role="tabpanel">
+      {% if target_user.id != current_user.id %}
+      <div class="ws-panel p-3 mb-3 d-flex flex-wrap align-items-center justify-content-between gap-2">
+        <div>
+          <div class="small text-muted">أنت تعرض جدول</div>
+          <div class="fw-bold"><i class="bi bi-person-circle text-primary"></i> {{ target_user.full_name }}</div>
+        </div>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view=('all' if can_view_all else 'team')) }}"><i class="bi bi-arrow-right"></i> العودة للقائمة</a>
+      </div>
+      {% endif %}
+
+      {% if editor_mode == 'VIEW_ONLY' %}
+      <div class="ws-readonly-banner p-3 mb-3"><i class="bi bi-eye ms-1"></i><strong> وضع الاطلاع الإداري:</strong> يمكنك رؤية جداول جميع الموظفين دون تعديلها أو اعتمادها.</div>
+      {% endif %}
+
+      <div class="ws-panel p-3 p-lg-4 mb-3">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+          <div>
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
+              <h5 class="mb-0 fw-bold">مسار الاعتماد</h5>
+              <span class="badge text-bg-{{ plan_meta.class }}"><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</span>
+              {% if plan %}<span class="ws-version-pill"><i class="bi bi-layers"></i> نسخة {{ plan.version_no }}</span>{% endif %}
+            </div>
+            <div class="small text-muted">الشؤون الإدارية تطّلع فقط، والاعتماد النهائي حصري للأمين العام.</div>
+          </div>
+          {% if published_plan and (not plan or published_plan.id != plan.id) %}
+          <div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-shield-check"></i> النسخة {{ published_plan.version_no }} ما زالت سارية حتى اعتماد التعديل الجديد.</div>
+          {% endif %}
+        </div>
+        <div class="ws-flow">
+          <div class="ws-flow-step {% if plan_status in ['SUBMITTED','MANAGER_APPROVED','FINAL_APPROVED'] %}is-done{% else %}is-active{% endif %}">
+            <div class="ws-flow-number">1</div><div><strong>اقتراح الموظف</strong><small>إعداد وحفظ جدول 14 يومًا</small></div>
+          </div>
+          <div class="ws-flow-step {% if plan_status in ['MANAGER_APPROVED','FINAL_APPROVED'] %}is-done{% elif plan_status == 'SUBMITTED' %}is-active{% endif %}">
+            <div class="ws-flow-number">2</div><div><strong>اعتماد المدير</strong><small>مراجعة أو استبدال المقترح</small></div>
+          </div>
+          <div class="ws-flow-step {% if plan_status == 'FINAL_APPROVED' %}is-done{% elif plan_status == 'MANAGER_APPROVED' %}is-active{% endif %}">
+            <div class="ws-flow-number">3</div><div><strong>الاعتماد النهائي</strong><small>الأمين العام لجميع الموظفين</small></div>
+          </div>
+        </div>
+      </div>
+
+      <form method="post" action="{{ url_for('portal.hr_work_schedule_update') }}" id="wsScheduleForm">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+        <input type="hidden" name="target_user_id" value="{{ target_user.id }}">
+        <input type="hidden" name="period_start" value="{{ period_start.isoformat() }}">
+        <input type="hidden" name="plan_id" value="{{ plan.id if plan else '' }}">
+
+        <div class="row g-2 mb-3">
+          <div class="col-6 col-md-3"><div class="ws-metric"><i class="bi bi-building"></i><div><strong id="wsOfficeCount">0</strong><span>أيام مكتبية</span></div></div></div>
+          <div class="col-6 col-md-3"><div class="ws-metric"><i class="bi bi-house-laptop"></i><div><strong id="wsRemoteCount">0</strong><span>عن بُعد</span></div></div></div>
+          <div class="col-6 col-md-3"><div class="ws-metric"><i class="bi bi-cup-hot"></i><div><strong id="wsOffCount">0</strong><span>راحة / عطلة</span></div></div></div>
+          <div class="col-6 col-md-3"><div class="ws-metric"><i class="bi bi-clock-history"></i><div><strong id="wsHoursCount">0</strong><span>ساعة مخططة</span></div></div></div>
+        </div>
+
+        {% for week_no in [1, 2] %}
+        <section class="ws-week mb-3" data-week="{{ week_no }}">
+          <div class="ws-week-header">
+            <div class="d-flex align-items-center gap-2">
+              <div class="ws-week-number">{{ week_no }}</div>
+              <div><h5 class="mb-0 fw-bold">الأسبوع {{ 'الأول' if week_no == 1 else 'الثاني' }}</h5><div class="small text-muted">{% if week_no == 1 %}{{ period_start.strftime('%d/%m') }} — {{ week1_end.strftime('%d/%m') }}{% else %}{{ week2_start.strftime('%d/%m') }} — {{ period_end.strftime('%d/%m') }}{% endif %}</div></div>
+            </div>
+            {% if can_edit %}
+            <div class="d-flex flex-wrap gap-1">
+              <button class="btn btn-outline-primary btn-sm" type="button" data-repeat-week="{{ week_no }}"><i class="bi bi-copy"></i> تكرار أول يوم</button>
+              {% if week_no == 2 %}<button class="btn btn-outline-secondary btn-sm" type="button" data-copy-first-week><i class="bi bi-files"></i> نسخ الأسبوع الأول</button>{% endif %}
+            </div>
+            {% endif %}
+          </div>
+
+          <div class="ws-days-grid">
+            {% for day in days if day.week_no == week_no %}
+            {% set day_locked = (not can_edit) or (editor_mode == 'EMPLOYEE' and day.is_past) %}
+            <article class="ws-day-card {% if day.is_today %}is-today{% endif %} {% if day_locked %}is-locked{% endif %}" data-day-card data-kind="{{ day.day_type }}" data-week="{{ week_no }}" data-locked="{{ 1 if day_locked else 0 }}">
+              <div class="ws-day-head">
+                <div><div class="ws-day-name">{{ day.weekday }}</div><div class="ws-day-date">{{ day.date.strftime('%d / %m / %Y') }}</div></div>
+                {% if day.is_today %}<span class="ws-today-badge">اليوم</span>{% elif day.is_past %}<span class="badge text-bg-light">مضى</span>{% endif %}
+              </div>
+
+              <label class="ws-form-label" for="dayType{{ day.field_key }}">نوع اليوم</label>
+              <select class="form-select form-select-sm mb-2" id="dayType{{ day.field_key }}" name="day_type_{{ day.field_key }}" data-day-type {% if day_locked %}disabled{% endif %}>
+                {% for value, meta in day_meta.items() %}<option value="{{ value }}" {% if day.day_type == value %}selected{% endif %}>{{ meta.label }}</option>{% endfor %}
+              </select>
+
+              <div data-work-fields>
+                <label class="ws-form-label" for="schedule{{ day.field_key }}">قالب الدوام</label>
+                <select class="form-select form-select-sm mb-2" id="schedule{{ day.field_key }}" name="schedule_id_{{ day.field_key }}" data-schedule {% if day_locked or day.day_type == 'OFF' %}disabled{% endif %}>
+                  <option value="">وقت مخصص</option>
+                  {% for schedule in schedules %}
+                  <option value="{{ schedule.id }}" data-start="{{ schedule.start_time or '' }}" data-end="{{ schedule.end_time or '' }}" data-kind="{{ schedule.kind or 'FIXED' }}" {% if day.schedule_id == schedule.id %}selected{% endif %}>{{ schedule.name }}</option>
+                  {% endfor %}
+                </select>
+                <div class="ws-time-row">
+                  <div><label class="ws-form-label" for="start{{ day.field_key }}">من</label><input class="form-control form-control-sm" id="start{{ day.field_key }}" type="time" name="start_time_{{ day.field_key }}" value="{{ day.start_time or '' }}" data-start-time {% if day_locked or day.day_type == 'OFF' %}disabled{% endif %}></div>
+                  <div><label class="ws-form-label" for="end{{ day.field_key }}">إلى</label><input class="form-control form-control-sm" id="end{{ day.field_key }}" type="time" name="end_time_{{ day.field_key }}" value="{{ day.end_time or '' }}" data-end-time {% if day_locked or day.day_type == 'OFF' %}disabled{% endif %}></div>
+                </div>
+              </div>
+
+              <label class="ws-form-label mt-2" for="note{{ day.field_key }}">ملاحظة</label>
+              <input class="form-control form-control-sm" id="note{{ day.field_key }}" name="note_{{ day.field_key }}" value="{{ day.note }}" maxlength="255" placeholder="اختياري" {% if day_locked %}disabled{% endif %}>
+              <span class="ws-source" data-source="{{ day.edit_source }}"><i class="bi bi-pencil-square"></i>{% if day.edit_source == 'MANAGER' %}آخر تعديل: المدير{% elif day.edit_source == 'SECRETARY_GENERAL' %}آخر تعديل: الأمين العام{% else %}آخر تعديل: الموظف{% endif %}</span>
+            </article>
+            {% endfor %}
+          </div>
+        </section>
+        {% endfor %}
+
+        <div class="ws-panel p-3 mb-3">
+          <div class="row g-3">
+            <div class="col-lg-6">
+              <label class="form-label fw-bold" for="employeeNote"><i class="bi bi-chat-right-text text-primary"></i> ملاحظة الموظف</label>
+              {% if editor_mode == 'EMPLOYEE' and can_edit %}
+              <textarea class="form-control" id="employeeNote" name="employee_note" rows="3" placeholder="أي توضيح يساعد مديرك في مراجعة الجدول...">{{ plan.employee_note if plan else '' }}</textarea>
+              {% else %}
+              <div class="form-control bg-light" style="min-height:86px">{{ plan.employee_note if plan and plan.employee_note else 'لا توجد ملاحظة.' }}</div>
+              {% endif %}
+            </div>
+            <div class="col-lg-6">
+              <label class="form-label fw-bold" for="managerNote"><i class="bi bi-person-check text-success"></i> ملاحظة المدير / الأمين العام</label>
+              {% if editor_mode in ['MANAGER', 'SECRETARY_GENERAL'] and can_edit %}
+              <textarea class="form-control" id="managerNote" name="manager_note" rows="3" placeholder="اكتب سبب التعديل أو توجيهك للموظف...">{{ plan.manager_note if plan else '' }}</textarea>
+              {% else %}
+              <div class="form-control bg-light" style="min-height:86px">{{ plan.manager_note if plan and plan.manager_note else 'لا توجد ملاحظة.' }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+
+        {% if can_edit %}
+        <div class="ws-action-bar mb-4">
+          <div><strong>جاهز للحفظ؟</strong><div class="small text-muted">يمكن للموظف تعديل الأيام الحالية والقادمة خلال الأسبوع.</div></div>
+          <div class="d-flex flex-wrap gap-2">
+            {% if editor_mode == 'EMPLOYEE' %}
+              <button class="btn btn-outline-secondary" name="action" value="save" type="submit"><i class="bi bi-cloud-check"></i> حفظ مسودة</button>
+              <button class="btn ws-primary-btn" name="action" value="submit" type="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
+            {% elif editor_mode == 'MANAGER' %}
+              <button class="btn btn-outline-secondary" name="action" value="manager_save" type="submit"><i class="bi bi-save"></i> حفظ تعديل المدير</button>
+              <button class="btn ws-primary-btn" name="action" value="manager_approve" type="submit"><i class="bi bi-person-check"></i> اعتماد وإرسال للأمين العام</button>
+            {% elif editor_mode == 'SECRETARY_GENERAL' %}
+              <button class="btn btn-outline-secondary" name="action" value="secretary_save" type="submit"><i class="bi bi-save"></i> حفظ تعديل الأمين العام</button>
+              {% if plan and plan.status == 'MANAGER_APPROVED' %}<button class="btn ws-approve-btn" name="action" value="final_approve" type="submit"><i class="bi bi-patch-check-fill"></i> اعتماد نهائي</button>{% endif %}
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+      </form>
+
+      {% if history|length > 1 %}
+      <details class="ws-panel p-3 mb-3">
+        <summary class="fw-bold" style="cursor:pointer"><i class="bi bi-clock-history text-primary"></i> سجل نسخ الجدول ({{ history|length }})</summary>
+        <div class="table-responsive mt-3">
+          <table class="table table-sm align-middle mb-0">
+            <thead><tr><th>النسخة</th><th>الحالة</th><th>آخر تحديث</th><th>آخر معدّل</th></tr></thead>
+            <tbody>{% for version in history %}<tr><td>#{{ version.version_no }}</td><td><span class="badge text-bg-{{ status_meta.get(version.status, status_meta.DRAFT).class }}">{{ status_meta.get(version.status, status_meta.DRAFT).label }}</span></td><td>{{ version.updated_at|local_datetime if version.updated_at else '—' }}</td><td>{{ version.updated_by.full_name if version.updated_by else '—' }}</td></tr>{% endfor %}</tbody>
+          </table>
+        </div>
+      </details>
+      {% endif %}
+    </div>
+
+    {% if report_cards %}
+    <div class="tab-pane fade {% if active_view == 'team' %}show active{% endif %}" id="wsTeamPane" role="tabpanel">
+      <div class="ws-panel p-3 p-lg-4">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+          <div><h4 class="fw-bold mb-1"><i class="bi bi-people-fill text-primary"></i> جداول فريقي</h4><div class="text-muted">راجع مقترحات موظفيك، عدّلها عند الحاجة، ثم اعتمدها.</div></div>
+          <div class="input-group" style="max-width:300px"><span class="input-group-text bg-white"><i class="bi bi-search"></i></span><input class="form-control" type="search" placeholder="ابحث عن موظف..." data-person-search="#wsTeamList"></div>
+        </div>
+        <div class="row g-2" id="wsTeamList">
+          {% for item in report_cards %}
+          {% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}
+          <div class="col-12 col-xl-6" data-person-name="{{ item.user.full_name|lower }}">
+            <div class="ws-person-card h-100">
+              <div class="ws-avatar">{{ item.user.full_name[:1] }}</div>
+              <div class="min-w-0">
+                <div class="d-flex flex-wrap align-items-center gap-2"><div class="ws-person-name">{{ item.user.full_name }}</div><span class="badge text-bg-{{ item_meta.class }}">{{ item_meta.label }}</span></div>
+                <div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }} · {{ item.completed_days }}/14 يوم</div>
+                <div class="ws-progress"><span style="width:{{ (item.completed_days / 14 * 100)|round|int }}%"></span></div>
+              </div>
+              <div class="ws-person-actions">
+                <a class="btn btn-sm btn-primary" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}"><i class="bi bi-pencil-square"></i> مراجعة</a>
+                <form method="post" action="{{ url_for('portal.hr_work_schedule_remind') }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"><input type="hidden" name="target_user_id" value="{{ item.user.id }}"><input type="hidden" name="period_start" value="{{ period_start.isoformat() }}">
+                  <button class="btn btn-sm btn-outline-warning" type="submit"><i class="bi bi-bell"></i> تذكير</button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if can_view_all %}
+    <div class="tab-pane fade {% if active_view == 'all' %}show active{% endif %}" id="wsAllPane" role="tabpanel">
+      <div class="ws-panel p-3 p-lg-4">
+        <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
+          <div><h4 class="fw-bold mb-1"><i class="bi bi-grid-3x3-gap-fill text-primary"></i> جميع جداول الموظفين</h4><div class="text-muted">عرض مركزي لدورة {{ period_start.strftime('%d/%m') }} — {{ period_end.strftime('%d/%m/%Y') }}.</div></div>
+          {% if is_final_approver %}
+          <form method="post" action="{{ url_for('portal.hr_work_schedule_final_approve_all') }}" onsubmit="return confirm('اعتماد جميع الجداول الجاهزة دفعة واحدة؟');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"><input type="hidden" name="period_start" value="{{ period_start.isoformat() }}">
+            <button class="btn ws-approve-btn" type="submit" {% if not ready_for_final_count %}disabled{% endif %}><i class="bi bi-patch-check-fill"></i> اعتماد الجاهز دفعة واحدة <span class="badge bg-white text-success me-1">{{ ready_for_final_count }}</span></button>
+          </form>
+          {% else %}
+          <span class="ws-readonly-banner px-3 py-2 small"><i class="bi bi-eye"></i> عرض إداري فقط</span>
+          {% endif %}
+        </div>
+
+        <div class="row g-2 mb-3">
+          <div class="col-6 col-lg-3"><div class="ws-kpi-card"><strong>{{ status_counts.DRAFT }}</strong><span>مسودات / غير مرسلة</span></div></div>
+          <div class="col-6 col-lg-3"><div class="ws-kpi-card"><strong class="text-warning">{{ status_counts.SUBMITTED }}</strong><span>بانتظار المدير</span></div></div>
+          <div class="col-6 col-lg-3"><div class="ws-kpi-card"><strong class="text-info">{{ status_counts.MANAGER_APPROVED }}</strong><span>جاهزة للاعتماد النهائي</span></div></div>
+          <div class="col-6 col-lg-3"><div class="ws-kpi-card"><strong class="text-success">{{ status_counts.FINAL_APPROVED }}</strong><span>معتمدة نهائيًا</span></div></div>
+        </div>
+
+        <div class="input-group mb-3" style="max-width:350px"><span class="input-group-text bg-white"><i class="bi bi-search"></i></span><input class="form-control" type="search" placeholder="ابحث في جميع الموظفين..." data-person-search="#wsAllList"></div>
+        {% if organization_cards %}
+        <div class="row g-2" id="wsAllList">
+          {% for item in organization_cards %}
+          {% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}
+          <div class="col-12 col-xl-6" data-person-name="{{ item.user.full_name|lower }}">
+            <div class="ws-person-card h-100">
+              <div class="ws-avatar">{{ item.user.full_name[:1] }}</div>
+              <div class="min-w-0">
+                <div class="d-flex flex-wrap align-items-center gap-2"><div class="ws-person-name">{{ item.user.full_name }}</div><span class="badge text-bg-{{ item_meta.class }}">{{ item_meta.label }}</span></div>
+                <div class="ws-person-meta">{{ item.plan.manager.full_name if item.plan and item.plan.manager else 'لم يحدد مدير مباشر' }} · نسخة {{ item.plan.version_no if item.plan else 1 }}</div>
+                <div class="ws-progress"><span style="width:{{ (item.completed_days / 14 * 100)|round|int }}%"></span></div>
+              </div>
+              <div class="ws-person-actions"><a class="btn btn-sm {% if is_final_approver %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}"><i class="bi bi-{{ 'pencil-square' if is_final_approver else 'eye' }}"></i> {{ 'فتح وتعديل' if is_final_approver else 'عرض' }}</a></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="ws-empty"><i class="bi bi-people"></i><strong>لا توجد ملفات موظفين لعرضها</strong></div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+  {{ super() }}
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      var cards = Array.from(document.querySelectorAll('[data-day-card]'));
+
+      function minutes(value) {
+        if (!value || value.indexOf(':') === -1) return 0;
+        var parts = value.split(':');
+        return (parseInt(parts[0], 10) * 60) + parseInt(parts[1], 10);
+      }
+
+      function updateMetrics() {
+        var counts = {WORK: 0, REMOTE: 0, OFF: 0};
+        var totalMinutes = 0;
+        cards.forEach(function (card) {
+          var type = card.querySelector('[data-day-type]');
+          var value = type ? type.value : card.dataset.kind;
+          counts[value] = (counts[value] || 0) + 1;
+          if (value !== 'OFF') {
+            var start = card.querySelector('[data-start-time]');
+            var end = card.querySelector('[data-end-time]');
+            totalMinutes += Math.max(0, minutes(end && end.value) - minutes(start && start.value));
+          }
+        });
+        var office = document.getElementById('wsOfficeCount');
+        var remote = document.getElementById('wsRemoteCount');
+        var off = document.getElementById('wsOffCount');
+        var hours = document.getElementById('wsHoursCount');
+        if (office) office.textContent = counts.WORK || 0;
+        if (remote) remote.textContent = counts.REMOTE || 0;
+        if (off) off.textContent = counts.OFF || 0;
+        if (hours) hours.textContent = (totalMinutes / 60).toLocaleString('ar', {maximumFractionDigits: 1});
+      }
+
+      function refreshCard(card) {
+        var type = card.querySelector('[data-day-type]');
+        if (!type) return;
+        var isOff = type.value === 'OFF';
+        var locked = card.dataset.locked === '1';
+        card.dataset.kind = type.value;
+        card.querySelectorAll('[data-schedule], [data-start-time], [data-end-time]').forEach(function (control) {
+          control.disabled = locked || isOff;
+        });
+        updateMetrics();
+      }
+
+      function copyCard(source, target) {
+        if (!source || !target || target.dataset.locked === '1') return;
+        ['[data-day-type]', '[data-schedule]', '[data-start-time]', '[data-end-time]'].forEach(function (selector) {
+          var from = source.querySelector(selector);
+          var to = target.querySelector(selector);
+          if (from && to) to.value = from.value;
+        });
+        refreshCard(target);
+      }
+
+      cards.forEach(function (card) {
+        var type = card.querySelector('[data-day-type]');
+        var schedule = card.querySelector('[data-schedule]');
+        if (type) type.addEventListener('change', function () { refreshCard(card); });
+        if (schedule) schedule.addEventListener('change', function () {
+          var option = schedule.options[schedule.selectedIndex];
+          var start = card.querySelector('[data-start-time]');
+          var end = card.querySelector('[data-end-time]');
+          if (option && option.value) {
+            if (option.dataset.start && start) start.value = option.dataset.start;
+            if (option.dataset.end && end) end.value = option.dataset.end;
+            if (option.dataset.kind === 'REMOTE' && type) type.value = 'REMOTE';
+          }
+          refreshCard(card);
+        });
+        card.querySelectorAll('input').forEach(function (input) { input.addEventListener('change', updateMetrics); });
+        refreshCard(card);
+      });
+
+      document.querySelectorAll('[data-repeat-week]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var weekCards = cards.filter(function (card) { return card.dataset.week === button.dataset.repeatWeek && card.dataset.locked !== '1'; });
+          if (!weekCards.length) return;
+          weekCards.slice(1).forEach(function (card) { copyCard(weekCards[0], card); });
+        });
+      });
+
+      var copyFirstWeek = document.querySelector('[data-copy-first-week]');
+      if (copyFirstWeek) copyFirstWeek.addEventListener('click', function () {
+        var first = cards.filter(function (card) { return card.dataset.week === '1'; });
+        var second = cards.filter(function (card) { return card.dataset.week === '2'; });
+        second.forEach(function (card, index) { copyCard(first[index], card); });
+      });
+
+      document.querySelectorAll('[data-focus-week]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var week = document.querySelector('[data-week="' + button.dataset.focusWeek + '"]');
+          if (week) week.scrollIntoView({behavior: 'smooth', block: 'start'});
+        });
+      });
+
+      document.querySelectorAll('[data-person-search]').forEach(function (input) {
+        input.addEventListener('input', function () {
+          var list = document.querySelector(input.dataset.personSearch);
+          if (!list) return;
+          var query = (input.value || '').trim().toLocaleLowerCase('ar');
+          list.querySelectorAll('[data-person-name]').forEach(function (item) {
+            item.classList.toggle('d-none', query && item.dataset.personName.indexOf(query) === -1);
+          });
+        });
+      });
+    });
+  </script>
+{% endblock %}

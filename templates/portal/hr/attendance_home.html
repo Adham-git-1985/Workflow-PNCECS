@@ -15,6 +15,17 @@
 
   <div class="row g-3">
     <div class="col-md-6">
+      <div class="border border-primary rounded-3 p-4 h-100 d-flex flex-column shadow-sm">
+        <div class="fs-3 text-primary mb-3"><i class="bi bi-calendar2-week-fill"></i></div>
+        <h5>جدول الدوام</h5>
+        <p class="text-muted mb-4">اقتراح جدول أسبوعين، مراجعته من المدير، ومتابعة الاعتماد النهائي.</p>
+        <a class="btn btn-primary mt-auto" href="{{ url_for('portal.hr_work_schedule') }}">
+          فتح جدول الدوام <i class="bi bi-arrow-left"></i>
+        </a>
+      </div>
+    </div>
+
+    <div class="col-md-6">
       <div class="border rounded-3 p-4 h-100 d-flex flex-column">
         <div class="fs-3 text-primary mb-3"><i class="bi bi-calendar-day"></i></div>
         <h5>ملخص الدوام اليومي</h5>

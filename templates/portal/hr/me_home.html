@@ -14,6 +14,17 @@
 
 <div class="row g-3">
   <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 rounded-3 shadow-sm h-100 border border-primary text-white" style="background:linear-gradient(135deg,#5a3ed0,#168ddd);">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-calendar2-week-fill fs-4"></i>
+        <div class="fw-bold">جدول الدوام</div>
+      </div>
+      <div class="small mb-3" style="color:rgba(255,255,255,.8)">خطّط دوام أسبوعين، أرسله لمديرك، وعدّله خلال الأسبوع عند الحاجة.</div>
+      <a class="btn btn-light text-primary fw-bold w-100" href="{{ url_for('portal.hr_work_schedule') }}">فتح جدول الدوام</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-3">
     <div class="p-3 bg-white rounded-3 shadow-sm h-100 border border-primary">
       <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-box-seam fs-4 text-primary"></i>

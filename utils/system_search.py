@@ -212,6 +212,15 @@ def visible_items_for_user(user) -> List[SearchItem]:
             perms_any=("PORTAL_CIRCULARS_MANAGE",),
             keywords=("انشاء", "إصدار", "تعميم", "new circular", "create"),
         ),
+        SearchItem(
+            id="hr_attendance_work_schedule",
+            title="جدول الدوام",
+            desc="اقتراح جدول أسبوعين ومتابعة اعتماد المدير والأمين العام.",
+            category="شؤون الموظفين",
+            endpoint="portal.hr_work_schedule",
+            perms_any=("PORTAL_READ", "PORTAL_VIEW"),
+            keywords=("دوام", "جدول", "اسبوعين", "مناوبة", "schedule", "attendance"),
+        ),
 
         # Dynamic org masterdata (Portal masterdata area)
         SearchItem(
