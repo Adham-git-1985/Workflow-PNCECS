@@ -12,6 +12,7 @@ from models import (
     HRAttendanceScheduleDay,
     HRAttendanceSchedulePlan,
     Notification,
+    NotificationEmailDelivery,
     SystemSetting,
     User,
     WorkSchedule,
@@ -19,11 +20,14 @@ from models import (
 from portal.routes import (
     _attendance_exemption_reason,
     _attendance_schedule_fork_plan,
+    _attendance_schedule_is_final_approver,
     _attendance_schedule_latest_plan,
+    _attendance_schedule_week_rows,
     _effective_schedule_for_user,
 )
 from services.attendance_schedule import (
     attendance_schedule_cycle_start,
+    attendance_schedule_final_approver_user_ids,
     attendance_schedule_needs_reminder,
     send_attendance_schedule_reminders,
 )
@@ -92,6 +96,12 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
             password_hash="not-used",
             role="MANAGER",
         )
+        self.super_admin = User(
+            email="schedule-super-admin@example.test",
+            name="السوبر أدمن",
+            password_hash="not-used",
+            role="SUPER_ADMIN",
+        )
         self.schedule = WorkSchedule(
             name="الدوام الاعتيادي",
             kind="FIXED",
@@ -99,7 +109,7 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
             end_time="15:00",
             is_active=True,
         )
-        db.session.add_all((self.employee, self.manager, self.schedule))
+        db.session.add_all((self.employee, self.manager, self.super_admin, self.schedule))
         db.session.flush()
         db.session.add_all((
             EmployeeFile(
@@ -184,6 +194,35 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         self.assertEqual(first, 1)
         self.assertEqual(second, 0)
         self.assertEqual(Notification.query.filter_by(user_id=self.employee.id).count(), 1)
+        self.assertEqual(
+            {row.user_id for row in Notification.query.all()},
+            {self.employee.id, self.manager.id, self.super_admin.id},
+        )
+        self.assertEqual(NotificationEmailDelivery.query.count(), 3)
+
+    def test_super_admin_is_a_final_approver(self):
+        self.assertTrue(_attendance_schedule_is_final_approver(self.super_admin))
+        self.assertIn(
+            self.super_admin.id,
+            attendance_schedule_final_approver_user_ids(),
+        )
+
+    def test_week_rows_show_every_day_for_each_employee(self):
+        final_plan = self._final_plan()
+
+        week_dates, rows = _attendance_schedule_week_rows(
+            [self.employee],
+            date(2026, 9, 6),
+            1,
+            {self.employee.id: final_plan},
+        )
+
+        self.assertEqual(len(week_dates), 7)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows[0]["days"]), 7)
+        days = {row["date_text"]: row for row in rows[0]["days"]}
+        self.assertEqual(days["2026-09-10"]["start_time"], "09:00")
+        self.assertEqual(days["2026-09-11"]["day_type"], "OFF")
 
 
 class AttendanceScheduleTemplateTests(unittest.TestCase):
@@ -192,6 +231,9 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
         template = template_path.read_text(encoding="utf-8")
         navigation = (
             PROJECT_ROOT / "templates" / "portal" / "hr" / "_module_nav.html"
+        ).read_text(encoding="utf-8")
+        attendance_events = (
+            PROJECT_ROOT / "templates" / "portal" / "hr" / "attendance_events.html"
         ).read_text(encoding="utf-8")
 
         Environment().parse(template)
@@ -202,11 +244,14 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
             "اعتماد الجاهز دفعة واحدة",
             "عرض إداري فقط",
             "data-copy-first-week",
+            "ws-roster-table",
+            "السوبر أدمن",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, template)
         self.assertIn("portal.hr_work_schedule", navigation)
         self.assertIn("جدول الدوام", navigation)
+        self.assertIn("جدول دوام الموظفين", attendance_events)
 
 
 if __name__ == "__main__":

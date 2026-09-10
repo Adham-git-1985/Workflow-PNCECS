@@ -7,7 +7,16 @@ from models import (
     EmployeeFile,
     HRAttendanceSchedulePlan,
     Notification,
+    Role,
+    User,
 )
+from services.hr_request_workflow import resolve_direct_manager, secretary_general_user_ids
+from services.notification_email import (
+    ATTENDANCE_SCHEDULE_EMAIL_MODE,
+    enqueue_notification_email,
+)
+from utils.notification_links import safe_local_notification_url
+from utils.role_codes import canonical_role_key
 
 
 ATTENDANCE_SCHEDULE_STATUSES = {
@@ -17,6 +26,113 @@ ATTENDANCE_SCHEDULE_STATUSES = {
     "FINAL_APPROVED",
 }
 ATTENDANCE_SCHEDULE_DAY_TYPES = {"WORK", "REMOTE", "OFF"}
+_SUPER_ADMIN_ROLE_KEYS = {
+    "SUPERADMIN",
+    "SUPERADMINISTRATOR",
+    "SYSTEMADMIN",
+    "ADMINISTRATOR",
+    "ROOT",
+    "SUPERUSER",
+    "SYSADMIN",
+    "ADMINROOT",
+}
+
+
+def _super_admin_role_labels() -> set[str]:
+    labels = set()
+    try:
+        for role in Role.query.all():
+            if canonical_role_key(role.code) not in _SUPER_ADMIN_ROLE_KEYS:
+                continue
+            labels.update({
+                (role.code or "").strip().casefold(),
+                (role.name_ar or "").strip().casefold(),
+                (role.name_en or "").strip().casefold(),
+            })
+    except Exception:
+        pass
+    labels.discard("")
+    return labels
+
+
+def _is_super_admin_account(user: User, role_labels: set[str]) -> bool:
+    raw_role = (getattr(user, "role", None) or "").strip()
+    role_key = canonical_role_key(raw_role)
+    if role_key in _SUPER_ADMIN_ROLE_KEYS:
+        return True
+    if "سوبر" in raw_role and ("أدمن" in raw_role or "ادمن" in raw_role):
+        return True
+    return raw_role.casefold() in role_labels
+
+
+def attendance_schedule_final_approver_user_ids() -> list[int]:
+    user_ids = set(secretary_general_user_ids())
+    role_labels = _super_admin_role_labels()
+    for user in User.query.all():
+        if _is_super_admin_account(user, role_labels):
+            user_ids.add(int(user.id))
+    return sorted(user_ids)
+
+
+def attendance_schedule_stakeholder_user_ids(
+    employee: User,
+    manager: User | None = None,
+    final_approver_user_ids: list[int] | None = None,
+) -> list[int]:
+    if not employee:
+        return []
+    selected_manager = manager or resolve_direct_manager(int(employee.id))
+    final_user_ids = (
+        attendance_schedule_final_approver_user_ids()
+        if final_approver_user_ids is None
+        else final_approver_user_ids
+    )
+    user_ids = {int(employee.id), *final_user_ids}
+    if selected_manager:
+        user_ids.add(int(selected_manager.id))
+    return sorted(user_ids)
+
+
+def notify_attendance_schedule_stakeholders(
+    employee: User,
+    message: str,
+    *,
+    level: str = "INFO",
+    link_url: str | None = None,
+    manager: User | None = None,
+    event_key: str | None = None,
+    final_approver_user_ids: list[int] | None = None,
+) -> int:
+    safe_message = (message or "يوجد تحديث جديد على جدول الدوام.")[:255]
+    safe_link = safe_local_notification_url(link_url)
+    safe_event_key = (event_key or "")[:64] or None
+    created = 0
+    for user_id in attendance_schedule_stakeholder_user_ids(
+        employee,
+        manager,
+        final_approver_user_ids,
+    ):
+        if safe_event_key and Notification.query.filter_by(
+            user_id=user_id,
+            event_key=safe_event_key,
+        ).first():
+            continue
+        notification = Notification(
+            user_id=user_id,
+            message=safe_message,
+            type=(level or "INFO").strip().upper(),
+            source="portal",
+            link_url=safe_link,
+            event_key=safe_event_key,
+            is_read=False,
+            is_mirror=False,
+            email_delivery_mode=ATTENDANCE_SCHEDULE_EMAIL_MODE,
+        )
+        db.session.add(notification)
+        db.session.flush()
+        enqueue_notification_email(notification)
+        created += 1
+    return created
 
 
 def attendance_schedule_cycle_start(reference_day: date | None = None) -> date:
@@ -79,6 +195,7 @@ def send_attendance_schedule_reminders(reference_day: date | None = None) -> int
     for row in rows:
         plans.setdefault(row.user_id, row)
     sent = 0
+    final_approver_user_ids = attendance_schedule_final_approver_user_ids()
     for employee_file in EmployeeFile.query.all():
         user = employee_file.user
         if not user or not attendance_schedule_needs_reminder(
@@ -87,22 +204,25 @@ def send_attendance_schedule_reminders(reference_day: date | None = None) -> int
             today,
         ):
             continue
-        event_key = f"att-schedule-{period_start_text}-{user.id}"[:64]
+        event_key = f"att-schedule-reminder-{period_start_text}-{user.id}"[:64]
         exists = Notification.query.filter_by(
             user_id=user.id,
             event_key=event_key,
         ).first()
         if exists:
             continue
-        db.session.add(Notification(
-            user_id=user.id,
-            message="تذكير: أكمل جدول دوام الأسبوعين وأرسله لمديرك قبل بداية الأسبوع الثاني.",
-            type="WARNING",
-            source="portal",
-            link_url=f"/portal/hr/attendance/work-schedule?start={period_start_text}",
+        manager = resolve_direct_manager(int(user.id))
+        notify_attendance_schedule_stakeholders(
+            user,
+            f"تذكير بجدول دوام {user.full_name}: يرجى استكمال جدول الأسبوعين قبل بداية الأسبوع الثاني.",
+            level="WARNING",
+            link_url=(
+                "/portal/hr/attendance/work-schedule"
+                f"?start={period_start_text}&employee_id={user.id}"
+            ),
+            manager=manager,
             event_key=event_key,
-            is_read=False,
-            is_mirror=False,
-        ))
+            final_approver_user_ids=final_approver_user_ids,
+        )
         sent += 1
     return sent

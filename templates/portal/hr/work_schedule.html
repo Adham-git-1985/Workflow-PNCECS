@@ -330,6 +330,35 @@
     .ws-kpi-card { padding: 1rem; border: 1px solid #e8eaf2; border-radius: 18px; background: #fff; }
     .ws-kpi-card strong { display: block; font-size: 1.55rem; line-height: 1.1; }
     .ws-kpi-card span { color: var(--ws-muted); font-size: .75rem; }
+    .ws-roster-toolbar { display: flex; align-items: center; justify-content: space-between; gap: .8rem; flex-wrap: wrap; }
+    .ws-week-switch { display: inline-flex; gap: .35rem; padding: .32rem; border: 1px solid #e4e7ef; border-radius: 14px; background: #f7f8fc; }
+    .ws-week-switch a { padding: .48rem .8rem; border-radius: 10px; color: #667085; font-size: .78rem; font-weight: 800; text-decoration: none; white-space: nowrap; }
+    .ws-week-switch a.is-active { color: #fff; background: linear-gradient(120deg, var(--ws-purple), var(--ws-blue)); box-shadow: 0 7px 16px rgba(83,75,207,.2); }
+    .ws-roster-legend { display: flex; flex-wrap: wrap; gap: .55rem; color: var(--ws-muted); font-size: .72rem; }
+    .ws-roster-legend span { display: inline-flex; align-items: center; gap: .3rem; }
+    .ws-roster-legend i { width: 9px; height: 9px; border-radius: 50%; }
+    .ws-roster-wrap { max-height: 68vh; overflow: auto; border: 1px solid #e6e9f1; border-radius: 20px; background: #fff; }
+    .ws-roster-table { min-width: 1260px; margin: 0; border-collapse: separate; border-spacing: 0; }
+    .ws-roster-table th,
+    .ws-roster-table td { padding: .7rem; border: 0; border-bottom: 1px solid #edf0f5; border-inline-start: 1px solid #f0f2f6; vertical-align: middle; }
+    .ws-roster-table thead th { position: sticky; top: 0; z-index: 4; color: #50596d; background: #f7f8fc; box-shadow: 0 1px 0 #e6e9f1; text-align: center; }
+    .ws-roster-table tbody tr:last-child td { border-bottom: 0; }
+    .ws-roster-table tbody tr:hover td { background: #fbfcff; }
+    .ws-roster-employee { position: sticky; right: 0; z-index: 3; width: 245px; min-width: 245px; background: #fff; box-shadow: -8px 0 18px rgba(41,49,82,.045); }
+    .ws-roster-table thead .ws-roster-employee { z-index: 6; background: #f7f8fc; }
+    .ws-roster-person { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .65rem; align-items: center; text-align: right; }
+    .ws-roster-person .ws-avatar { width: 39px; height: 39px; border-radius: 12px; }
+    .ws-roster-day { min-width: 126px; }
+    .ws-roster-day strong { display: block; color: var(--ws-ink); font-size: .8rem; }
+    .ws-roster-day small { display: block; color: var(--ws-muted); font-size: .66rem; direction: ltr; }
+    .ws-roster-shift { min-height: 78px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .18rem; padding: .5rem; border: 1px solid transparent; border-radius: 14px; text-align: center; }
+    .ws-roster-shift span { display: inline-flex; align-items: center; gap: .3rem; font-size: .72rem; font-weight: 800; }
+    .ws-roster-shift strong { font-size: .78rem; direction: ltr; }
+    .ws-roster-shift small { max-width: 108px; overflow: hidden; color: #748096; font-size: .64rem; text-overflow: ellipsis; white-space: nowrap; }
+    .ws-roster-shift[data-kind="WORK"] { color: #5741ba; border-color: #ddd7ff; background: #f4f1ff; }
+    .ws-roster-shift[data-kind="REMOTE"] { color: #0872ba; border-color: #cfeaff; background: #eef8ff; }
+    .ws-roster-shift[data-kind="OFF"] { color: #6f7787; border-color: #e3e6eb; background: #f5f6f8; }
+    .ws-roster-status { width: 150px; min-width: 150px; text-align: center; }
     .ws-readonly-banner { border: 1px solid #d8e8f6; border-radius: 16px; background: #f2f8fd; color: #2c5e83; }
     .ws-empty { padding: 2.5rem 1rem; text-align: center; border: 1px dashed #d6dae6; border-radius: 20px; background: #fafbfe; }
     .ws-empty i { display: block; margin-bottom: .55rem; color: #9ca3b6; font-size: 2rem; }
@@ -350,6 +379,7 @@
       .ws-action-bar { align-items: stretch; flex-direction: column; }
       .ws-action-bar > div { width: 100%; display: grid !important; grid-template-columns: 1fr; }
       .ws-action-bar .btn { width: 100%; }
+      .ws-roster-wrap { max-height: none; }
     }
     @media (max-width: 575.98px) {
       .ws-summary-grid { grid-template-columns: 1fr 1fr; }
@@ -454,7 +484,7 @@
               <span class="badge text-bg-{{ plan_meta.class }}"><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</span>
               {% if plan %}<span class="ws-version-pill"><i class="bi bi-layers"></i> نسخة {{ plan.version_no }}</span>{% endif %}
             </div>
-            <div class="small text-muted">الشؤون الإدارية تطّلع فقط، والاعتماد النهائي حصري للأمين العام.</div>
+            <div class="small text-muted">الشؤون الإدارية تطّلع فقط، والاعتماد النهائي للأمين العام أو السوبر أدمن.</div>
           </div>
           {% if published_plan and (not plan or published_plan.id != plan.id) %}
           <div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-shield-check"></i> النسخة {{ published_plan.version_no }} ما زالت سارية حتى اعتماد التعديل الجديد.</div>
@@ -468,7 +498,7 @@
             <div class="ws-flow-number">2</div><div><strong>اعتماد المدير</strong><small>مراجعة أو استبدال المقترح</small></div>
           </div>
           <div class="ws-flow-step {% if plan_status == 'FINAL_APPROVED' %}is-done{% elif plan_status == 'MANAGER_APPROVED' %}is-active{% endif %}">
-            <div class="ws-flow-number">3</div><div><strong>الاعتماد النهائي</strong><small>الأمين العام لجميع الموظفين</small></div>
+            <div class="ws-flow-number">3</div><div><strong>الاعتماد النهائي</strong><small>الأمين العام أو السوبر أدمن</small></div>
           </div>
         </div>
       </div>
@@ -531,7 +561,7 @@
 
               <label class="ws-form-label mt-2" for="note{{ day.field_key }}">ملاحظة</label>
               <input class="form-control form-control-sm" id="note{{ day.field_key }}" name="note_{{ day.field_key }}" value="{{ day.note }}" maxlength="255" placeholder="اختياري" {% if day_locked %}disabled{% endif %}>
-              <span class="ws-source" data-source="{{ day.edit_source }}"><i class="bi bi-pencil-square"></i>{% if day.edit_source == 'MANAGER' %}آخر تعديل: المدير{% elif day.edit_source == 'SECRETARY_GENERAL' %}آخر تعديل: الأمين العام{% else %}آخر تعديل: الموظف{% endif %}</span>
+              <span class="ws-source" data-source="{{ day.edit_source }}"><i class="bi bi-pencil-square"></i>{% if day.edit_source == 'MANAGER' %}آخر تعديل: المدير{% elif day.edit_source == 'SECRETARY_GENERAL' %}آخر تعديل: المعتمد النهائي{% else %}آخر تعديل: الموظف{% endif %}</span>
             </article>
             {% endfor %}
           </div>
@@ -549,7 +579,7 @@
               {% endif %}
             </div>
             <div class="col-lg-6">
-              <label class="form-label fw-bold" for="managerNote"><i class="bi bi-person-check text-success"></i> ملاحظة المدير / الأمين العام</label>
+              <label class="form-label fw-bold" for="managerNote"><i class="bi bi-person-check text-success"></i> ملاحظة المدير / المعتمد النهائي</label>
               {% if editor_mode in ['MANAGER', 'SECRETARY_GENERAL'] and can_edit %}
               <textarea class="form-control" id="managerNote" name="manager_note" rows="3" placeholder="اكتب سبب التعديل أو توجيهك للموظف...">{{ plan.manager_note if plan else '' }}</textarea>
               {% else %}
@@ -568,9 +598,9 @@
               <button class="btn ws-primary-btn" name="action" value="submit" type="submit"><i class="bi bi-send"></i> إرسال للمدير</button>
             {% elif editor_mode == 'MANAGER' %}
               <button class="btn btn-outline-secondary" name="action" value="manager_save" type="submit"><i class="bi bi-save"></i> حفظ تعديل المدير</button>
-              <button class="btn ws-primary-btn" name="action" value="manager_approve" type="submit"><i class="bi bi-person-check"></i> اعتماد وإرسال للأمين العام</button>
+              <button class="btn ws-primary-btn" name="action" value="manager_approve" type="submit"><i class="bi bi-person-check"></i> اعتماد وإرسال للاعتماد النهائي</button>
             {% elif editor_mode == 'SECRETARY_GENERAL' %}
-              <button class="btn btn-outline-secondary" name="action" value="secretary_save" type="submit"><i class="bi bi-save"></i> حفظ تعديل الأمين العام</button>
+              <button class="btn btn-outline-secondary" name="action" value="secretary_save" type="submit"><i class="bi bi-save"></i> حفظ تعديل المعتمد النهائي</button>
               {% if plan and plan.status == 'MANAGER_APPROVED' %}<button class="btn ws-approve-btn" name="action" value="final_approve" type="submit"><i class="bi bi-patch-check-fill"></i> اعتماد نهائي</button>{% endif %}
             {% endif %}
           </div>
@@ -628,7 +658,7 @@
     <div class="tab-pane fade {% if active_view == 'all' %}show active{% endif %}" id="wsAllPane" role="tabpanel">
       <div class="ws-panel p-3 p-lg-4">
         <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">
-          <div><h4 class="fw-bold mb-1"><i class="bi bi-grid-3x3-gap-fill text-primary"></i> جميع جداول الموظفين</h4><div class="text-muted">عرض مركزي لدورة {{ period_start.strftime('%d/%m') }} — {{ period_end.strftime('%d/%m/%Y') }}.</div></div>
+          <div><h4 class="fw-bold mb-1"><i class="bi bi-grid-3x3-gap-fill text-primary"></i> الجدول الأسبوعي لجميع الموظفين</h4><div class="text-muted">كل الموظفين ودوام كل يوم في أسبوع واحد، ضمن دورة {{ period_start.strftime('%d/%m') }} — {{ period_end.strftime('%d/%m/%Y') }}.</div></div>
           {% if is_final_approver %}
           <form method="post" action="{{ url_for('portal.hr_work_schedule_final_approve_all') }}" onsubmit="return confirm('اعتماد جميع الجداول الجاهزة دفعة واحدة؟');">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}"><input type="hidden" name="period_start" value="{{ period_start.isoformat() }}">
@@ -646,23 +676,57 @@
           <div class="col-6 col-lg-3"><div class="ws-kpi-card"><strong class="text-success">{{ status_counts.FINAL_APPROVED }}</strong><span>معتمدة نهائيًا</span></div></div>
         </div>
 
-        <div class="input-group mb-3" style="max-width:350px"><span class="input-group-text bg-white"><i class="bi bi-search"></i></span><input class="form-control" type="search" placeholder="ابحث في جميع الموظفين..." data-person-search="#wsAllList"></div>
-        {% if organization_cards %}
-        <div class="row g-2" id="wsAllList">
-          {% for item in organization_cards %}
-          {% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}
-          <div class="col-12 col-xl-6" data-person-name="{{ item.user.full_name|lower }}">
-            <div class="ws-person-card h-100">
-              <div class="ws-avatar">{{ item.user.full_name[:1] }}</div>
-              <div class="min-w-0">
-                <div class="d-flex flex-wrap align-items-center gap-2"><div class="ws-person-name">{{ item.user.full_name }}</div><span class="badge text-bg-{{ item_meta.class }}">{{ item_meta.label }}</span></div>
-                <div class="ws-person-meta">{{ item.plan.manager.full_name if item.plan and item.plan.manager else 'لم يحدد مدير مباشر' }} · نسخة {{ item.plan.version_no if item.plan else 1 }}</div>
-                <div class="ws-progress"><span style="width:{{ (item.completed_days / 14 * 100)|round|int }}%"></span></div>
-              </div>
-              <div class="ws-person-actions"><a class="btn btn-sm {% if is_final_approver %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}"><i class="bi bi-{{ 'pencil-square' if is_final_approver else 'eye' }}"></i> {{ 'فتح وتعديل' if is_final_approver else 'عرض' }}</a></div>
-            </div>
+        <div class="ws-roster-toolbar mb-3">
+          <div class="input-group" style="max-width:350px"><span class="input-group-text bg-white"><i class="bi bi-search"></i></span><input class="form-control" type="search" placeholder="ابحث في جميع الموظفين..." data-person-search="#wsAllRoster"></div>
+          <div class="ws-week-switch" aria-label="اختيار الأسبوع المعروض">
+            <a class="{% if organization_week_no == 1 %}is-active{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all', week=1) }}"><i class="bi bi-calendar-week"></i> الأسبوع الأول</a>
+            <a class="{% if organization_week_no == 2 %}is-active{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all', week=2) }}"><i class="bi bi-calendar-week"></i> الأسبوع الثاني</a>
           </div>
-          {% endfor %}
+        </div>
+        <div class="ws-roster-legend mb-3">
+          <span><i style="background:#6d4aff"></i> دوام مكتبي</span><span><i style="background:#1788f5"></i> عمل عن بُعد</span><span><i style="background:#9aa1af"></i> راحة / عطلة</span>
+        </div>
+        {% if organization_week_rows %}
+        <div class="ws-roster-wrap">
+          <table class="table ws-roster-table" aria-label="جدول دوام جميع الموظفين للأسبوع">
+            <thead>
+              <tr>
+                <th class="ws-roster-employee"><i class="bi bi-person-badge ms-1"></i> الموظف</th>
+                {% for day in organization_week_rows[0].days %}
+                <th class="ws-roster-day {% if day.is_today %}text-warning{% endif %}"><strong>{{ day.weekday }}</strong><small>{{ day.date.strftime('%d/%m/%Y') }}</small></th>
+                {% endfor %}
+                <th class="ws-roster-status">الحالة والإجراء</th>
+              </tr>
+            </thead>
+            <tbody id="wsAllRoster">
+              {% for item in organization_week_rows %}
+              {% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}
+              <tr data-person-name="{{ (item.user.full_name ~ ' ' ~ (item.user.email or ''))|lower }}">
+                <td class="ws-roster-employee">
+                  <div class="ws-roster-person">
+                    <div class="ws-avatar">{{ item.user.full_name[:1] }}</div>
+                    <div class="min-w-0"><div class="ws-person-name">{{ item.user.full_name }}</div><div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }}</div><div class="ws-person-meta"><i class="bi bi-diagram-2"></i> {{ item.manager.full_name if item.manager else 'دون مدير مباشر' }}</div></div>
+                  </div>
+                </td>
+                {% for day in item.days %}
+                {% set cell_meta = day_meta.get(day.day_type, day_meta.WORK) %}
+                <td>
+                  <div class="ws-roster-shift" data-kind="{{ day.day_type }}" title="{{ day.note or cell_meta.label }}">
+                    <span><i class="bi {{ cell_meta.icon }}"></i> {{ cell_meta.short }}</span>
+                    <strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong>
+                    <small>{% if day.day_type == 'OFF' %}لا يوجد دوام{% else %}{{ day.schedule_name or 'وقت مخصص' }}{% endif %}</small>
+                  </div>
+                </td>
+                {% endfor %}
+                <td class="ws-roster-status">
+                  <span class="badge text-bg-{{ item_meta.class }} mb-2">{{ item_meta.label if item.plan else 'غير مرسل' }}</span>
+                  <div class="ws-person-meta mb-2">{{ 'نسخة ' ~ item.plan.version_no if item.plan else 'الجدول الافتراضي' }}</div>
+                  <a class="btn btn-sm {% if is_final_approver %}btn-primary{% else %}btn-outline-primary{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}"><i class="bi bi-{{ 'pencil-square' if is_final_approver else 'eye' }}"></i> {{ 'فتح وتعديل' if is_final_approver else 'عرض' }}</a>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
         {% else %}
         <div class="ws-empty"><i class="bi bi-people"></i><strong>لا توجد ملفات موظفين لعرضها</strong></div>

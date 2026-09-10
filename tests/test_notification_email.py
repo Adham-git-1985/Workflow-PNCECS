@@ -6,7 +6,9 @@ from flask import Flask
 from extensions import db
 from models import Notification, NotificationEmailDelivery, SystemSetting, User
 from services.notification_email import (
+    ATTENDANCE_SCHEDULE_EMAIL_MODE,
     NOTIFICATION_EMAILS_DISABLED_REASON,
+    enqueue_notification_email,
     send_pending_notification_emails,
 )
 
@@ -91,6 +93,31 @@ class NotificationEmailTests(unittest.TestCase):
         self.assertEqual(delivery.status, "CANCELLED")
         self.assertEqual(delivery.attempt_count, 0)
         self.assertEqual(delivery.last_error, NOTIFICATION_EMAILS_DISABLED_REASON)
+
+    def test_attendance_schedule_notification_is_queued_and_sent(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="Attendance schedule approved",
+            source="portal",
+            link_url="/portal/hr/attendance/work-schedule",
+            email_delivery_mode=ATTENDANCE_SCHEDULE_EMAIL_MODE,
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.flush()
+
+        self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+
+        delivery = NotificationEmailDelivery.query.one()
+        self.assertEqual(delivery.status, "PENDING")
+        with patch("services.notification_email._send_email") as send_email:
+            self.assertEqual(send_pending_notification_emails(), 1)
+        send_email.assert_called_once()
+
+        delivery = NotificationEmailDelivery.query.one()
+        self.assertEqual(delivery.status, "SENT")
+        self.assertIsNotNone(delivery.sent_at)
 
 
 if __name__ == "__main__":

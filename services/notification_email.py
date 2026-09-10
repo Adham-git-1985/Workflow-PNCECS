@@ -13,7 +13,7 @@ from sqlalchemy import func, or_
 from extensions import db
 from models import HRLeaveRequest, HRPermissionRequest, Notification, NotificationEmailDelivery, Role, TroubleTicket, User
 from services.delivery_controls import (
-    cancel_pending_email_deliveries,
+    EMAIL_DISABLED_REASON,
     email_delivery_enabled,
 )
 from services.hr_request_workflow import (
@@ -38,7 +38,9 @@ _HR_REQUEST_LINK_RE = re.compile(r"^/portal/hr/approvals/(leaves|permissions)/(\
 _TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
 _TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
 _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
+ATTENDANCE_SCHEDULE_EMAIL_MODE = "ATTENDANCE_SCHEDULE"
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
+EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
 
 
 def _normalize_trouble_ticket_role(value: str | None) -> str:
@@ -148,13 +150,129 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
     return subject, text_body, html_body
 
 
+def enqueue_notification_email(notification: Notification) -> bool:
+    """Queue email only for explicitly opted-in attendance notifications."""
+    if not notification:
+        return False
+    if (notification.email_delivery_mode or "").strip().upper() != ATTENDANCE_SCHEDULE_EMAIL_MODE:
+        return False
+    if not email_delivery_enabled():
+        return False
+
+    user = db.session.get(User, notification.user_id)
+    if not resolve_user_delivery_email(user):
+        return False
+    if notification.id is None:
+        db.session.flush()
+    if NotificationEmailDelivery.query.filter_by(notification_id=notification.id).first():
+        return False
+
+    db.session.add(NotificationEmailDelivery(
+        notification_id=notification.id,
+        user_id=notification.user_id,
+        status=PENDING,
+        attempt_count=0,
+    ))
+    return True
+
+
 def send_pending_notification_emails(limit: int = 100, now: datetime | None = None) -> int:
-    """Cancel legacy notification-email rows; notifications are in-app only."""
+    """Send opted-in attendance mail and cancel legacy notification mail."""
     pending_deliveries = NotificationEmailDelivery.query.filter_by(status=PENDING).all()
+    attendance_deliveries = []
+    legacy_deliveries = []
     for delivery in pending_deliveries:
+        mode = (
+            getattr(delivery.notification, "email_delivery_mode", "") or ""
+        ).strip().upper()
+        if mode == ATTENDANCE_SCHEDULE_EMAIL_MODE:
+            attendance_deliveries.append(delivery)
+        else:
+            legacy_deliveries.append(delivery)
+
+    for delivery in legacy_deliveries:
         delivery.status = "CANCELLED"
         delivery.next_attempt_at = None
         delivery.last_error = NOTIFICATION_EMAILS_DISABLED_REASON
-    if pending_deliveries:
+    if legacy_deliveries:
         db.session.commit()
-    return 0
+
+    if not attendance_deliveries:
+        return 0
+    if not email_delivery_enabled():
+        for delivery in attendance_deliveries:
+            delivery.status = "CANCELLED"
+            delivery.next_attempt_at = None
+            delivery.last_error = EMAIL_DISABLED_REASON
+        db.session.commit()
+        return 0
+
+    config = _mail_config()
+    if not config["ready"]:
+        return 0
+
+    now = now or datetime.utcnow()
+    for delivery in attendance_deliveries:
+        if int(delivery.attempt_count or 0) >= MAX_ATTEMPTS:
+            delivery.status = FAILED
+            delivery.next_attempt_at = None
+            delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
+    db.session.commit()
+
+    due_deliveries = [
+        delivery
+        for delivery in attendance_deliveries
+        if delivery.status == PENDING
+        and int(delivery.attempt_count or 0) < MAX_ATTEMPTS
+        and (delivery.next_attempt_at is None or delivery.next_attempt_at <= now)
+    ]
+    due_deliveries.sort(key=lambda row: (row.created_at or datetime.min, row.id or 0))
+    due_deliveries = due_deliveries[:max(1, min(int(limit), 200))]
+
+    sent = 0
+    for delivery in due_deliveries:
+        notification = db.session.get(Notification, delivery.notification_id)
+        user = db.session.get(User, delivery.user_id)
+        if not notification or not user:
+            delivery.status = FAILED
+            delivery.next_attempt_at = None
+            delivery.last_error = "Recipient or notification is unavailable."
+            db.session.commit()
+            continue
+
+        recipient = resolve_user_delivery_email(user)
+        if not recipient:
+            delivery.status = "CANCELLED"
+            delivery.next_attempt_at = None
+            delivery.last_error = EMAIL_UNAVAILABLE_CANCELLED_REASON
+            db.session.commit()
+            continue
+
+        try:
+            subject, text_body, html_body = _email_content(user, notification)
+            _send_email(config, recipient, subject, text_body, html_body)
+        except Exception as exc:
+            delivery.attempt_count += 1
+            delivery.last_error = str(exc)[:500]
+            if delivery.attempt_count >= MAX_ATTEMPTS:
+                delivery.status = FAILED
+                delivery.next_attempt_at = None
+            else:
+                delivery.next_attempt_at = now + timedelta(
+                    minutes=min(60, 2 ** delivery.attempt_count)
+                )
+            db.session.commit()
+            current_app.logger.warning(
+                "Attendance schedule email delivery failed id=%s attempt=%s",
+                delivery.id,
+                delivery.attempt_count,
+            )
+            continue
+
+        delivery.status = SENT
+        delivery.sent_at = now
+        delivery.next_attempt_at = None
+        delivery.last_error = None
+        db.session.commit()
+        sent += 1
+    return sent
