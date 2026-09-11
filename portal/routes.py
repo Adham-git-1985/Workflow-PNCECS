@@ -36824,8 +36824,23 @@ def inventory_admin_categories():
         flash("تم إضافة التصنيف.", "success")
         return redirect(url_for("portal.inventory_admin_categories"))
 
-    rows = InvItemCategory.query.order_by(InvItemCategory.id.desc()).all()
-    return render_template("portal/inventory/admin_categories.html", rows=rows, edit=edit)
+    search = (request.args.get("q") or "").strip()
+    query = InvItemCategory.query
+    if search:
+        query = query.filter(InvItemCategory.name.ilike(f"%{search}%"))
+    rows = query.order_by(InvItemCategory.name.asc(), InvItemCategory.id.asc()).all()
+    item_counts = dict(
+        db.session.query(InvItem.category_id, func.count(InvItem.id))
+        .group_by(InvItem.category_id)
+        .all()
+    )
+    return render_template(
+        "portal/inventory/admin_categories.html",
+        rows=rows,
+        item_counts=item_counts,
+        edit=edit,
+        search=search,
+    )
 
 
 @portal_bp.route("/inventory/admin/items", methods=["GET", "POST"])

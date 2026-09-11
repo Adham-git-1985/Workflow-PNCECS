@@ -249,6 +249,7 @@ class FixedAssetRouteTests(unittest.TestCase):
             {("التصنيف الفرعي", "Blinds"), ("مستهلك", "YES")},
         )
         self.assertEqual(self.client.get("/portal/inventory/admin/items").status_code, 200)
+        self.assertEqual(self.client.get("/portal/inventory/admin/categories").status_code, 200)
         lookup = self.client.get("/portal/inventory/items/search.json?q=roller")
         self.assertEqual(lookup.status_code, 200)
         self.assertEqual(lookup.get_json()["items"][0]["id"], InvItem.query.filter_by(code="010010002").one().id)

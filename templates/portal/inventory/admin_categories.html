@@ -6,7 +6,7 @@
 </div>
 
 <div class="row g-3">
-  <div class="col-md-5">
+  <div class="col-lg-4">
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="fw-bold mb-2">{{ 'تعديل تصنيف' if edit else 'إضافة تصنيف' }}</div>
@@ -31,40 +31,40 @@
     </div>
   </div>
 
-  <div class="col-md-7">
+  <div class="col-lg-8">
     <div class="card shadow-sm">
-      <div class="card-body p-0">
-        <div class="table-responsive">
-          <table class="table table-striped mb-0">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>الاسم</th>
-                <th>الحالة</th>
-                <th style="width:140px;"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for c in rows %}
-              <tr>
-                <td>{{ c.id }}</td>
-                <td>{{ c.name }}</td>
-                <td>{{ 'فعّال' if c.is_active else 'غير فعّال' }}</td>
-                <td class="text-end">
-                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories', edit_id=c.id) }}">تعديل</a>
-                  <form method="post" class="d-inline" onsubmit="return confirm('حذف التصنيف؟');">
-                    {{ csrf_token() if csrf_token is defined else '' }}
-                    <input type="hidden" name="action" value="delete">
-                    <input type="hidden" name="id" value="{{ c.id }}">
-                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
-                  </form>
-                </td>
-              </tr>
-              {% else %}
-              <tr><td colspan="4" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
-              {% endfor %}
-            </tbody>
-          </table>
+      <div class="card-body border-bottom">
+        <form method="get" class="input-group">
+          <input class="form-control" name="q" value="{{ search }}" placeholder="ابحث باسم التصنيف">
+          <button class="btn btn-outline-primary">بحث</button>
+          {% if search %}<a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_admin_categories') }}">مسح</a>{% endif %}
+        </form>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          {% for c in rows %}
+          <div class="col-md-6">
+            <div class="border rounded h-100 p-3 d-flex flex-column">
+              <div class="d-flex justify-content-between gap-2 mb-2">
+                <div class="fw-semibold">{{ c.name }}</div>
+                <span class="badge text-bg-{{ 'success' if c.is_active else 'secondary' }}">{{ 'فعّال' if c.is_active else 'موقوف' }}</span>
+              </div>
+              <div class="text-muted small mb-3">{{ item_counts.get(c.id, 0) }} صنفاً</div>
+              <div class="mt-auto d-flex gap-2">
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories', edit_id=c.id) }}">تعديل</a>
+                <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_admin_items', category_id=c.id) }}">عرض الأصناف</a>
+                <form method="post" class="ms-auto" onsubmit="return confirm('حذف التصنيف؟');">
+                  {{ csrf_token() if csrf_token is defined else '' }}
+                  <input type="hidden" name="action" value="delete">
+                  <input type="hidden" name="id" value="{{ c.id }}">
+                  <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                </form>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <div class="col-12 text-center text-muted py-4">لا توجد تصنيفات مطابقة.</div>
+          {% endfor %}
         </div>
       </div>
     </div>
