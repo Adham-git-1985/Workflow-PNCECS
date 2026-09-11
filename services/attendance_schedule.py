@@ -12,7 +12,6 @@ from models import (
 )
 from services.hr_request_workflow import (
     resolve_responsible_managers,
-    secretary_general_user_ids,
 )
 from services.notification_email import (
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
@@ -69,10 +68,13 @@ def _is_super_admin_account(user: User, role_labels: set[str]) -> bool:
 
 
 def attendance_schedule_final_approver_user_ids() -> list[int]:
-    user_ids = set(secretary_general_user_ids())
+    # Schedule notifications are restricted to the employee, responsible
+    # managers, and global administrators. The secretary general may still
+    # approve through the screen, but is not notified unless also an admin.
+    user_ids: set[int] = set()
     role_labels = _super_admin_role_labels()
     for user in User.query.all():
-        if _is_super_admin_account(user, role_labels):
+        if _is_super_admin_account(user, role_labels) or canonical_role_key(getattr(user, "role", None)) == "ADMIN":
             user_ids.add(int(user.id))
     return sorted(user_ids)
 
