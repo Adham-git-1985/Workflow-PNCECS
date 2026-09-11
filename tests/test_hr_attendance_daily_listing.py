@@ -14,6 +14,8 @@ from models import (
     HRAttendanceSpecialCase,
     HRLeaveRequest,
     HRLeaveType,
+    HRPermissionRequest,
+    HRPermissionType,
     HRRequestApprovalStep,
     User,
     UserPermission,
@@ -27,6 +29,7 @@ from portal.routes import (
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
     _summary_compute_one,
+    _attach_reconciled_departures,
     _sort_and_number_attendance_daily_rows,
     hr_attendance_manual_edit,
     hr_attendance_manual_review,
@@ -265,7 +268,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(result["early_leave_minutes"], 0)
         self.assertEqual(result["status"], "INCOMPLETE")
 
-    def _legacy_maternity_departure_workflow(self):
+    def test_maternity_departure_workflow(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
         editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")
         approver = User(email="approver@example.test", name="Approver", password_hash="x", role="HR")
@@ -332,6 +335,61 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertTrue(maternity_departure.applied)
         self.assertEqual(summary.early_leave_minutes, 0)
         self.assertEqual(AttendanceDailySummary.query.count(), 1)
+
+    def test_maternity_departure_accepts_dates_and_rejects_invalid_periods(self):
+        employee = User(email="mother@example.test", name="Employee", password_hash="x", role="USER")
+        editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")
+        db.session.add_all((employee, editor))
+        db.session.flush()
+        db.session.add(UserPermission(user_id=editor.id, key="HR_ATTENDANCE_EDIT", is_allowed=True))
+        db.session.commit()
+        for end_day in ("2026-08-31", "2027-09-01", "invalid", "2026-12-31"):
+            with self.app.test_request_context(
+                "/portal/hr/attendance/maternity-departures/new", method="POST",
+                data={"user_id": employee.id, "start_day": "2026-09-01", "end_day": end_day},
+            ):
+                login_user(editor)
+                self.assertEqual(hr_maternity_departure_new().status_code, 302)
+                logout_user()
+            self.assertEqual(HRAttendanceSpecialCase.query.count(), int(end_day == "2026-12-31"))
+        row = HRAttendanceSpecialCase.query.one()
+        self.assertEqual(row.day_to, "2026-12-31")
+        self.assertEqual(row.allow_evening_minutes, 60)
+        self.assertIsNone(row.start_time)
+        self.assertIsNone(row.end_time)
+
+    def test_departure_overlap_is_not_charged_as_early_exit(self):
+        employee = User(email="overlap@example.test", name="Employee", password_hash="x", role="USER")
+        permission_type = HRPermissionType(code="PRIVATE", name_ar="شخصية")
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        permission = HRPermissionRequest(user_id=employee.id, permission_type_id=permission_type.id,
+                                         day="2026-09-10", from_time="14:00", to_time="15:00", status="APPROVED")
+        db.session.add_all((permission,
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 10, 8, 20), event_type="IN"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 10, 13, 58), event_type="OUT")))
+        db.session.commit()
+        schedule = SimpleNamespace(id=None, kind="FIXED", start_time="08:00", end_time="15:00",
+                                   break_minutes=0, grace_minutes=15, overtime_threshold_minutes=0)
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            result = _summary_compute_one(employee.id, "2026-09-10")
+            self.assertEqual(result['early_leave_minutes'], 0)
+            self.assertEqual(result['late_minutes'], 5)
+            # Existing reports must also correct old values, without subtracting twice.
+            row = SimpleNamespace(**result)
+            row.early_leave_minutes = 47
+            _attach_reconciled_departures([row])
+            _attach_reconciled_departures([row])
+            self.assertEqual(row.early_leave_minutes, 0)
+            self.assertEqual(row.private_departure_minutes, 60)
+            schedule.grace_minutes = 0
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 2)
+            permission.to_time = "14:30"
+            db.session.flush()
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 32)
+            permission.status = "PENDING"
+            db.session.flush()
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 62)
 
     def test_maternity_leave_uses_regular_leave_workflow_and_allows_shorter_period(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")

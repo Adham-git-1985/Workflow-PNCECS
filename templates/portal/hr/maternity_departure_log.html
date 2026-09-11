@@ -1,0 +1,20 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}مغادرات الأمومة{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap justify-content-between gap-2"><h4>مغادرات الأمومة</h4><div>
+    {% if can_create %}<a class="btn btn-primary" href="{{ url_for('portal.hr_maternity_departure_new') }}">طلب مغادرة أمومة</a>{% endif %}
+    {% if can_approve %}<a class="btn btn-outline-primary" href="{{ url_for('portal.hr_maternity_departure_approval_queue') }}">طلبات الاعتماد</a>{% endif %}
+  </div></div>
+  <p class="text-muted">إعفاء ساعة انصراف يومية خلال الفترة المعتمدة.</p>
+  <div class="table-responsive"><table class="table align-middle">
+    <thead><tr><th>الموظفة</th><th>من تاريخ</th><th>إلى تاريخ</th><th>الحالة</th><th>التفاصيل</th><th>الإجراء</th></tr></thead>
+    <tbody>{% for row in rows %}<tr>
+      <td>{{ row.user.name if row.user else row.user_id }}</td><td>{{ row.day }}</td><td>{{ row.day_to or '—' }}</td>
+      <td>{{ {'PENDING':'بانتظار الاعتماد','APPROVED':'معتمد','REJECTED':'مرفوض'}.get(row.approval_status, row.approval_status) }}</td>
+      <td>{{ row.note or '' }}{% if row.approval_note %}<div class="text-muted">{{ row.approval_note }}</div>{% endif %}</td>
+      <td>{% if can_create and row.approval_status == 'PENDING' %}<form method="post" action="{{ url_for('portal.hr_maternity_departure_cancel', row_id=row.id) }}"><button class="btn btn-sm btn-outline-danger" type="submit">سحب الطلب</button></form>{% endif %}</td>
+    </tr>{% else %}<tr><td colspan="6" class="text-muted text-center">لا توجد طلبات.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}اعتماد مغادرات الأمومة{% endblock %}
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <h4>اعتماد مغادرات الأمومة</h4>
+  <a href="{{ url_for('portal.hr_maternity_departure_log') }}">سجل مغادرات الأمومة</a>
+  <div class="table-responsive mt-3"><table class="table align-middle">
+    <thead><tr><th>الموظفة</th><th>من تاريخ</th><th>إلى تاريخ</th><th>التفاصيل</th><th>القرار</th></tr></thead>
+    <tbody>{% for row in rows %}<tr>
+      <td>{{ row.user.name if row.user else row.user_id }}</td><td>{{ row.day }}</td><td>{{ row.day_to }}</td><td>{{ row.note or '' }}</td>
+      <td><form method="post" action="{{ url_for('portal.hr_maternity_departure_review', row_id=row.id) }}" class="d-flex flex-column gap-2">
+        <input name="approval_note" class="form-control" placeholder="ملاحظة الاعتماد أو سبب الرفض" aria-label="ملاحظة الاعتماد أو سبب الرفض">
+        <div><button class="btn btn-success" type="submit" name="action" value="approve">اعتماد</button> <button class="btn btn-outline-danger" type="submit" name="action" value="reject">رفض</button></div>
+      </form></td>
+    </tr>{% else %}<tr><td colspan="5" class="text-muted text-center">لا توجد طلبات بانتظار الاعتماد.</td></tr>{% endfor %}</tbody>
+  </table></div>
+</div>
+{% endblock %}

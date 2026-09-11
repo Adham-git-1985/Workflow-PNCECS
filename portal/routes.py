@@ -11157,7 +11157,6 @@ def _maternity_departure_overlaps(user_id: int, start_day: date, end_day: date) 
 @_perm_any(HR_ATT_EDIT, HR_ATT_EDIT_APPROVE)
 def hr_maternity_departure_log():
     """List annual maternity departures and their approval state."""
-    return redirect(url_for('portal.hr_my_leaves'))
 
     user_id = (request.args.get('user_id') or '').strip()
     status = (request.args.get('status') or '').strip().upper()
@@ -11185,7 +11184,6 @@ def hr_maternity_departure_log():
 @_perm(HR_ATT_EDIT)
 def hr_maternity_departure_new():
     """Submit an annual one-hour daily maternity departure for approval."""
-    return redirect(url_for('portal.hr_leave_request_new'))
 
     if not _hr_can_edit_attendance():
         abort(403)
@@ -11203,7 +11201,11 @@ def hr_maternity_departure_new():
             return redirect(url_for('portal.hr_maternity_departure_new', user_id=user_id))
 
         employee_id = int(user_id)
-        end_day = _maternity_departure_end_day(start_day)
+        end_value = (request.form.get('end_day') or '').strip()
+        end_day = _parse_yyyy_mm_dd(end_value) if end_value else _maternity_departure_end_day(start_day)
+        if not end_day or end_day < start_day or end_day > _maternity_departure_end_day(start_day):
+            flash('أدخل فترة صحيحة من تاريخ إلى تاريخ، بحد أقصى سنة واحدة.', 'danger')
+            return redirect(url_for('portal.hr_maternity_departure_new', user_id=user_id))
         if _maternity_departure_overlaps(employee_id, start_day, end_day):
             flash('يوجد طلب مغادرة أمومة قائم أو بانتظار الاعتماد ضمن هذه الفترة.', 'warning')
             return redirect(url_for('portal.hr_maternity_departure_log', user_id=employee_id))
@@ -11244,7 +11246,7 @@ def hr_maternity_departure_new():
         )
         db.session.commit()
 
-        flash('تم تقديم مغادرة الأمومة للاعتماد. ستمنح ساعة انصراف يومية لمدة سنة بعد الاعتماد.', 'success')
+        flash('تم تقديم مغادرة الأمومة للاعتماد. ستمنح ساعة انصراف يومية خلال الفترة المحددة بعد الاعتماد.', 'success')
         return redirect(url_for('portal.hr_maternity_departure_log', user_id=employee_id))
 
     return render_template(
@@ -11260,7 +11262,6 @@ def hr_maternity_departure_new():
 @_perm(HR_ATT_EDIT_APPROVE)
 def hr_maternity_departure_approval_queue():
     """Review queue for annual maternity departure requests."""
-    return redirect(url_for('portal.hr_approvals'))
 
     rows = (
         HRAttendanceSpecialCase.query
@@ -11277,7 +11278,6 @@ def hr_maternity_departure_approval_queue():
 @_perm(HR_ATT_EDIT_APPROVE)
 def hr_maternity_departure_review(row_id: int):
     """Approve or reject an annual maternity departure request."""
-    return redirect(url_for('portal.hr_approvals'))
 
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MATERNITY_DEPARTURE':
@@ -11345,7 +11345,6 @@ def hr_maternity_departure_review(row_id: int):
 @_perm(HR_ATT_EDIT)
 def hr_maternity_departure_cancel(row_id: int):
     """Withdraw a maternity departure before it has been reviewed."""
-    return redirect(url_for('portal.hr_my_leaves'))
 
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MATERNITY_DEPARTURE':
@@ -23610,6 +23609,12 @@ def _attach_reconciled_departures(attendance_rows) -> dict:
         row.private_departure_minutes = int(values.get('private_minutes') or 0)
         row.official_departure_minutes = int(values.get('official_minutes') or 0)
         row.departure_details = values.get('details') or []
+        # Refresh legacy summaries against today's approved departure records.
+        # Recompute from the clock so repeated report reads cannot subtract twice.
+        if row.departure_details and (row.first_in or row.last_out):
+            fresh = _summary_compute_one(row.user_id, row.day, departure_records=row.departure_details)
+            row.late_minutes = fresh['late_minutes']
+            row.early_leave_minutes = fresh['early_leave_minutes']
     return totals
 
 
@@ -25544,7 +25549,20 @@ def _maternity_departure_allowance_minutes(user_id: int | None, day_str: str) ->
     return 0
 
 
-def _summary_compute_one(user_id: int, day_str: str):
+def _uncovered_attendance_minutes(start_minute, end_minute, intervals):
+    """Subtract the union of covered intervals, clipped to the attendance gap."""
+    cursor = start_minute
+    uncovered = 0
+    for left, right in sorted(intervals):
+        left, right = max(start_minute, left), min(end_minute, right)
+        if right <= left or right <= cursor:
+            continue
+        uncovered += max(0, left - cursor)
+        cursor = max(cursor, right)
+    return uncovered + max(0, end_minute - cursor)
+
+
+def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     # Collect day events
     dt_from = datetime.fromisoformat(day_str + 'T00:00:00')
     dt_to = datetime.fromisoformat(day_str + 'T23:59:59')
@@ -25630,24 +25648,30 @@ def _summary_compute_one(user_id: int, day_str: str):
 
         st_min = _parse_hhmm_minutes(st)
         en_min = _parse_hhmm_minutes(en)
+        if departure_records is None:
+            departure_records = _reconciled_departure_records([user_id], day_str, day_str)
+        intervals = [
+            (record['from_dt'].hour * 60 + record['from_dt'].minute,
+             record['to_dt'].hour * 60 + record['to_dt'].minute)
+            for record in departure_records
+            if record.get('complete') and record.get('from_dt') and record.get('to_dt')
+        ]
 
         if first_in and st_min is not None:
             actual_in = first_in.hour * 60 + first_in.minute
-            late_minutes = max(0, actual_in - st_min - start_grace_minutes)
+            late_minutes = max(0, _uncovered_attendance_minutes(st_min, actual_in, intervals) - start_grace_minutes)
 
         if last_out and en_min is not None:
             actual_out = last_out.hour * 60 + last_out.minute
-            early_leave_minutes = max(0, en_min - actual_out - end_grace_minutes)
+            evening_intervals = list(intervals)
+            maternity_minutes = _maternity_departure_allowance_minutes(user_id, day_str)
+            if maternity_minutes:
+                evening_intervals.append((en_min - maternity_minutes, en_min))
+            early_leave_minutes = max(0, _uncovered_attendance_minutes(actual_out, en_min, evening_intervals) - end_grace_minutes)
 
             thr = schedule.overtime_threshold_minutes
             thr = int(thr) if (thr is not None) else 0
             overtime_minutes = max(0, actual_out - en_min - thr)
-
-    if not exemption_reason and early_leave_minutes:
-        early_leave_minutes = max(
-            0,
-            early_leave_minutes - _maternity_departure_allowance_minutes(user_id, day_str),
-        )
 
     if not exemption_reason and schedule and schedule.kind in ('FLEX', 'REMOTE'):
         # Late/Early undefined; overtime is minutes above required_minutes (if set)

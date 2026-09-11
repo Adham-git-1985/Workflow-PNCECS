@@ -19,6 +19,9 @@
   </div>
 
   <hr class="my-3"/>
+  {% if current_user.has_perm('HR_ATTENDANCE_EDIT') %}
+  <div class="alert alert-info">لطلب ساعة الأمومة اليومية لفترة من تاريخ إلى تاريخ دون إدخال ساعات، استخدم <a href="{{ url_for('portal.hr_maternity_departure_new') }}">طلب مغادرة أمومة</a>.</div>
+  {% endif %}
 
   <form method="post" enctype="multipart/form-data" class="mt-2">
     <div class="row g-3">

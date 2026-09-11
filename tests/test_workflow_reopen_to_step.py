@@ -129,7 +129,9 @@ class WorkflowReopenToStepTests(unittest.TestCase):
         ).first())
 
     def test_reopen_permission_is_available_in_the_permission_editor(self):
+        from admin.masterdata import PERM_EXTRA_KEYS
         permission_key = "WORKFLOW_REOPEN_TO_STEP"
+        self.assertIn(permission_key, dict(PERM_EXTRA_KEYS))
         self.assertIn(permission_key, PORTAL_ALL_KEYS)
         definitions = [permission for group in PORTAL_PERMS.values() for permission in group]
         definition = next(permission for permission in definitions if permission.key == permission_key)

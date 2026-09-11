@@ -45,7 +45,7 @@
                                    id="perm_{{ loop.index }}"
                                    {% if p in checked %}checked{% endif %}>
                             <label class="form-check-label" for="perm_{{ loop.index }}">
-                                {{ p }}
+                                {{ 'إعادة فتح المسار' if p == 'WORKFLOW_REOPEN_TO_STEP' else p }}
                             </label>
                         </div>
                     </div>
