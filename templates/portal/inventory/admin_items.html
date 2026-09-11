@@ -107,7 +107,7 @@
         </form>
       </div>
       <div class="card-body p-0">
-        <div class="px-3 py-2 border-bottom small text-muted">عدد الأصناف المعروضة: {{ rows|length }}. مرتبة حسب التصنيف ثم كود الصنف.</div>
+        <div class="px-3 py-2 border-bottom small text-muted">{{ pagination.total }} صنفاً. تظهر {{ pagination.items|length }} أصناف فقط في كل صفحة، مرتبة حسب التصنيف ثم كود الصنف.</div>
         <div class="table-responsive">
           <table class="table table-striped mb-0">
             <thead>
@@ -149,6 +149,17 @@
             </tbody>
           </table>
         </div>
+        {% if pagination.pages > 1 %}
+        <nav class="p-3 border-top" aria-label="صفحات الأصناف">
+          <ul class="pagination pagination-sm mb-0 justify-content-center flex-wrap">
+            {% if pagination.has_prev %}<li class="page-item"><a class="page-link" href="{{ url_for('portal.inventory_admin_items', q=search, category_id=selected_category_id, page=pagination.prev_num) }}">السابق</a></li>{% endif %}
+            {% for page_no in pagination.iter_pages(left_edge=1, left_current=2, right_current=2, right_edge=1) %}
+              {% if page_no %}<li class="page-item {% if page_no == pagination.page %}active{% endif %}"><a class="page-link" href="{{ url_for('portal.inventory_admin_items', q=search, category_id=selected_category_id, page=page_no) }}">{{ page_no }}</a></li>{% else %}<li class="page-item disabled"><span class="page-link">…</span></li>{% endif %}
+            {% endfor %}
+            {% if pagination.has_next %}<li class="page-item"><a class="page-link" href="{{ url_for('portal.inventory_admin_items', q=search, category_id=selected_category_id, page=pagination.next_num) }}">التالي</a></li>{% endif %}
+          </ul>
+        </nav>
+        {% endif %}
       </div>
     </div>
   </div>

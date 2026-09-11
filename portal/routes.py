@@ -35712,7 +35712,7 @@ def inventory_requests_log():
 def inventory_issue_voucher_new():
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
     categories = InvItemCategory.query.filter(InvItemCategory.is_active == True).order_by(InvItemCategory.name.asc()).all()  # noqa: E712
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
     rooms = InvRoom.query.filter(InvRoom.is_active == True).order_by(InvRoom.name.asc()).all()  # noqa: E712
 
     if request.method == "POST":
@@ -36004,7 +36004,7 @@ def inventory_issue_attachment_download(att_id: int):
 @_perm(STORE_MANAGE)
 def inventory_inbound_voucher_new():
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
 
     if request.method == "POST":
         voucher_no = (request.form.get("voucher_no") or "").strip()
@@ -36245,7 +36245,7 @@ def inventory_inbound_attachment_download(att_id: int):
 @_perm(STORE_MANAGE)
 def inventory_scrap_voucher_new():
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
 
     if request.method == "POST":
         voucher_no = (request.form.get("voucher_no") or "").strip()
@@ -36488,7 +36488,7 @@ def inventory_scrap_attachment_download(att_id: int):
 @_perm(STORE_MANAGE)
 def inventory_return_voucher_new():
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
     rooms = InvRoom.query.filter(InvRoom.is_active == True).order_by(InvRoom.name.asc()).all()  # noqa: E712
 
     if request.method == "POST":
@@ -36934,22 +36934,54 @@ def inventory_admin_items():
         ))
     if selected_category_id.isdigit():
         query = query.filter(InvItem.category_id == int(selected_category_id))
-    # Keep the full catalogue on one page, ordered as a reference catalogue:
-    # category first, then the official item code and finally the item name.
-    rows = query.order_by(
+    # A catalogue can contain tens of thousands of items.  Paginate it so the
+    # browser is never asked to render the whole catalogue at once.
+    pagination = query.order_by(
         InvItemCategory.name.asc(),
         InvItem.code.asc(),
         InvItem.name.asc(),
         InvItem.id.asc(),
-    ).all()
+    ).paginate(page=request.args.get("page", 1, type=int), per_page=100, error_out=False)
     return render_template(
         "portal/inventory/admin_items.html",
-        rows=rows,
+        rows=pagination.items,
+        pagination=pagination,
         categories=categories,
         edit=edit,
         search=search,
         selected_category_id=int(selected_category_id) if selected_category_id.isdigit() else None,
     )
+
+
+@portal_bp.route("/inventory/items/search.json")
+@login_required
+@_perm_any(STORE_READ, STORE_MANAGE, "INVENTORY_REQUEST_APPROVE")
+def inventory_item_search_json():
+    """Small, indexed item lookup used by voucher forms with a large catalogue."""
+    search = (request.args.get("q") or "").strip()
+    if len(search) < 2:
+        return jsonify({"items": []})
+    like = f"%{search}%"
+    rows = (
+        InvItem.query
+        .filter(InvItem.is_active.is_(True))
+        .filter(or_(InvItem.code.ilike(like), InvItem.name.ilike(like)))
+        .order_by(InvItem.code.asc(), InvItem.name.asc(), InvItem.id.asc())
+        .limit(30)
+        .all()
+    )
+    return jsonify({
+        "items": [
+            {
+                "id": item.id,
+                "label": item.label,
+                "code": item.code or "",
+                "unit": item.unit or "",
+                "category": item.category.name if item.category else "",
+            }
+            for item in rows
+        ]
+    })
 
 
 def _catalog_import_text(value, maximum: int | None = None) -> str:
@@ -37196,7 +37228,7 @@ def inventory_admin_items_import_catalog():
 def inventory_stocktake_voucher_new():
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
     categories = InvItemCategory.query.filter(InvItemCategory.is_active == True).order_by(InvItemCategory.name.asc()).all()  # noqa: E712
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
 
     if request.method == "POST":
         voucher_no = (request.form.get("voucher_no") or "").strip()
@@ -37421,7 +37453,7 @@ def inventory_stocktake_attachment_download(att_id: int):
 @_perm(STORE_MANAGE)
 def inventory_custody_voucher_new():
     categories = InvItemCategory.query.filter(InvItemCategory.is_active == True).order_by(InvItemCategory.name.asc()).all()  # noqa: E712
-    items = InvItem.query.filter(InvItem.is_active == True).order_by(InvItem.name.asc()).all()  # noqa: E712
+    items = []  # Item choices are retrieved on demand by the voucher picker.
     rooms = InvRoom.query.filter(InvRoom.is_active == True).order_by(InvRoom.name.asc()).all()  # noqa: E712
     users = User.query.order_by(func.coalesce(User.name, User.email).asc(), User.id.asc()).all()
 
