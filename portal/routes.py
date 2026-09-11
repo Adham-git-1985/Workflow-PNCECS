@@ -36956,7 +36956,7 @@ def inventory_admin_items():
         InvItem.code.asc(),
         InvItem.name.asc(),
         InvItem.id.asc(),
-    ).paginate(page=request.args.get("page", 1, type=int), per_page=100, error_out=False)
+    ).paginate(page=request.args.get("page", 1, type=int), per_page=60, error_out=False)
     return render_template(
         "portal/inventory/admin_items.html",
         rows=pagination.items,

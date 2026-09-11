@@ -11,7 +11,7 @@
       <div class="card-body">
         <div class="fw-bold mb-2">{{ 'تعديل تصنيف' if edit else 'إضافة تصنيف' }}</div>
         <form method="post">
-          {{ csrf_token() if csrf_token is defined else '' }}
+          {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
           <input type="hidden" name="action" value="{{ 'update' if edit else 'create' }}">
           {% if edit %}<input type="hidden" name="id" value="{{ edit.id }}">{% endif %}
           <div class="mb-2">
@@ -54,7 +54,7 @@
                 <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories', edit_id=c.id) }}">تعديل</a>
                 <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_admin_items', category_id=c.id) }}">عرض الأصناف</a>
                 <form method="post" class="ms-auto" onsubmit="return confirm('حذف التصنيف؟');">
-                  {{ csrf_token() if csrf_token is defined else '' }}
+                  {% if csrf_token is defined %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
                   <input type="hidden" name="action" value="delete">
                   <input type="hidden" name="id" value="{{ c.id }}">
                   <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>

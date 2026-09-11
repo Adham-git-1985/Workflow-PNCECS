@@ -249,7 +249,10 @@ class FixedAssetRouteTests(unittest.TestCase):
             {("التصنيف الفرعي", "Blinds"), ("مستهلك", "YES")},
         )
         self.assertEqual(self.client.get("/portal/inventory/admin/items").status_code, 200)
-        self.assertEqual(self.client.get("/portal/inventory/admin/categories").status_code, 200)
+        categories_page = self.client.get("/portal/inventory/admin/categories")
+        self.assertEqual(categories_page.status_code, 200)
+        self.assertIn(b'name="csrf_token"', categories_page.data)
+        self.assertNotIn(b">test-token<", categories_page.data)
         lookup = self.client.get("/portal/inventory/items/search.json?q=roller")
         self.assertEqual(lookup.status_code, 200)
         self.assertEqual(lookup.get_json()["items"][0]["id"], InvItem.query.filter_by(code="010010002").one().id)
