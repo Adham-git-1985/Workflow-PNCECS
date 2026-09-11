@@ -422,7 +422,7 @@
     <div class="ws-summary-grid">
       <div class="ws-summary-item"><span>الجدول المعروض</span><strong>{{ target_user.full_name }}</strong></div>
       <div class="ws-summary-item"><span>الحالة الحالية</span><strong><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</strong></div>
-      <div class="ws-summary-item"><span>المدير المباشر</span><strong>{{ selected_manager.full_name if selected_manager else 'غير معيّن' }}</strong></div>
+      <div class="ws-summary-item"><span>المديرون المسؤولون</span><strong>{% if selected_managers %}{{ selected_managers|map(attribute='full_name')|join('، ') }}{% else %}غير معيّن{% endif %}</strong></div>
       <div class="ws-summary-item"><span>النسخة</span><strong>الإصدار {{ plan.version_no if plan else 1 }}</strong></div>
     </div>
   </section>
@@ -705,7 +705,7 @@
                 <td class="ws-roster-employee">
                   <div class="ws-roster-person">
                     <div class="ws-avatar">{{ item.user.full_name[:1] }}</div>
-                    <div class="min-w-0"><div class="ws-person-name">{{ item.user.full_name }}</div><div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }}</div><div class="ws-person-meta"><i class="bi bi-diagram-2"></i> {{ item.manager.full_name if item.manager else 'دون مدير مباشر' }}</div></div>
+                    <div class="min-w-0"><div class="ws-person-name">{{ item.user.full_name }}</div><div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }}</div><div class="ws-person-meta"><i class="bi bi-diagram-2"></i> {% if item.managers %}{{ item.managers|map(attribute='full_name')|join('، ') }}{% else %}دون مدير مباشر{% endif %}</div></div>
                   </div>
                 </td>
                 {% for day in item.days %}

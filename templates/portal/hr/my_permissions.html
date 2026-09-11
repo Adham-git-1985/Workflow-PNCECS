@@ -12,6 +12,7 @@
       <a class="btn btn-primary" href="{{ url_for('portal.hr_permission_request_new') }}">
         <i class="bi bi-plus-circle"></i> طلب مغادرة جديد
       </a>
+      <a class="btn btn-warning" href="{{ url_for('portal.hr_maternity_departure_new') }}"><i class="bi bi-heart-pulse"></i> مغادرة أمومة</a>
     {% endif %}
   </div>
 </div>
@@ -19,6 +20,14 @@
 {% if can_requests %}
   <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
     <div class="fw-semibold mb-2">طلباتي (مغادرات)</div>
+    <form method="get" class="row g-2 align-items-end mb-3">
+      <div class="col-md-3"><label class="form-label">نوع المغادرة</label><select class="form-select" name="type_id"><option value="">الكل</option>{% for t in types %}<option value="{{ t.id }}" {% if permission_type_id|int == t.id %}selected{% endif %}>{{ t.name_ar }}</option>{% endfor %}</select></div>
+      <div class="col-md-2"><label class="form-label">الحالة</label><select class="form-select" name="status"><option value="">الكل</option>{% for s in ['SUBMITTED','APPROVED','REJECTED','CANCELLED'] %}<option value="{{ s }}" {% if permission_status == s %}selected{% endif %}>{{ s|ui_label }}</option>{% endfor %}</select></div>
+      <div class="col-md-2"><label class="form-label">من تاريخ</label><input type="date" class="form-control" name="date_from" value="{{ permission_date_from }}"></div>
+      <div class="col-md-2"><label class="form-label">إلى تاريخ</label><input type="date" class="form-control" name="date_to" value="{{ permission_date_to }}"></div>
+      <div class="col-md-2"><button class="btn btn-outline-primary w-100" type="submit">تصفية</button></div>
+      <div class="col-md-1"><a class="btn btn-outline-secondary w-100" href="{{ url_for('portal.hr_my_permissions') }}">مسح</a></div>
+    </form>
 
     {% if reqs and reqs|length > 0 %}
       <div class="table-responsive">

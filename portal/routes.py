@@ -10898,7 +10898,7 @@ def hr_att_special_log():
         user_id=user_id,
         status_filter=status_filter,
         exception_filter=exception_filter,
-        users=_list_hr_users(),
+        users=_list_hr_users() if (_hr_can_edit_attendance() or _hr_can_approve_attendance_edit()) else [current_user],
         can_manage=_hr_can_manage_attendance(),
         can_edit_attendance=_hr_can_edit_attendance(),
         can_approve_attendance_edit=_hr_can_approve_attendance_edit(),
@@ -11154,7 +11154,7 @@ def _maternity_departure_overlaps(user_id: int, start_day: date, end_day: date) 
 
 @portal_bp.route('/hr/attendance/maternity-departures', methods=['GET'])
 @login_required
-@_perm_any(HR_ATT_EDIT, HR_ATT_EDIT_APPROVE)
+@_perm_any(PORTAL_READ, HR_ATT_EDIT, HR_ATT_EDIT_APPROVE, HR_REQUESTS_CREATE)
 def hr_maternity_departure_log():
     """List annual maternity departures and their approval state."""
 
@@ -11163,6 +11163,8 @@ def hr_maternity_departure_log():
     q = HRAttendanceSpecialCase.query.filter(
         HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE'
     )
+    if not (_hr_can_edit_attendance() or _hr_can_approve_attendance_edit()):
+        q = q.filter(HRAttendanceSpecialCase.user_id == current_user.id)
     if user_id.isdigit():
         q = q.filter(HRAttendanceSpecialCase.user_id == int(user_id))
     if status in {'PENDING', 'APPROVED', 'REJECTED'}:
@@ -11174,22 +11176,26 @@ def hr_maternity_departure_log():
         users=_list_hr_users(),
         user_id=user_id,
         status=status,
-        can_create=_hr_can_edit_attendance(),
+        can_create=bool(_hr_can_edit_attendance() or current_user.has_perm(HR_REQUESTS_CREATE)),
         can_approve=_hr_can_approve_attendance_edit(),
     )
 
 
 @portal_bp.route('/hr/attendance/maternity-departures/new', methods=['GET', 'POST'])
 @login_required
-@_perm(HR_ATT_EDIT)
+@_perm_any(PORTAL_READ, HR_ATT_EDIT, HR_REQUESTS_CREATE)
 def hr_maternity_departure_new():
     """Submit an annual one-hour daily maternity departure for approval."""
 
-    if not _hr_can_edit_attendance():
+    can_admin = _hr_can_edit_attendance()
+    can_self = bool(current_user.has_perm(HR_REQUESTS_CREATE))
+    if not can_admin and not can_self:
         abort(403)
 
     if request.method == 'POST':
         user_id = (request.form.get('user_id') or '').strip()
+        if not can_admin:
+            user_id = str(current_user.id)
         start_day = _parse_yyyy_mm_dd(request.form.get('start_day') or '')
         note = (request.form.get('note') or '').strip()
 
@@ -11251,7 +11257,7 @@ def hr_maternity_departure_new():
 
     return render_template(
         'portal/hr/maternity_departure_new.html',
-        users=_list_hr_users(),
+        users=_list_hr_users() if can_admin else [current_user],
         today=date.today().isoformat(),
         selected_user_id=(request.args.get('user_id') or '').strip(),
     )
@@ -11342,13 +11348,15 @@ def hr_maternity_departure_review(row_id: int):
 
 @portal_bp.route('/hr/attendance/maternity-departures/<int:row_id>/cancel', methods=['POST'])
 @login_required
-@_perm(HR_ATT_EDIT)
+@_perm_any(PORTAL_READ, HR_ATT_EDIT, HR_REQUESTS_CREATE)
 def hr_maternity_departure_cancel(row_id: int):
     """Withdraw a maternity departure before it has been reviewed."""
 
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MATERNITY_DEPARTURE':
         abort(404)
+    if not _hr_can_edit_attendance() and int(row.user_id) != int(current_user.id):
+        abort(403)
     if _maternity_departure_approval_status(row) != 'PENDING':
         flash('لا يمكن سحب طلب تم البت فيه.', 'warning')
         return redirect(url_for('portal.hr_maternity_departure_log', user_id=row.user_id))
@@ -12824,6 +12832,7 @@ def hr_work_schedule():
         {
             "user": user,
             "plan": all_plan_map.get(int(user.id)),
+            "managers": _attendance_schedule_responsible_managers(int(user.id)),
             "completed_days": len(all_plan_map[int(user.id)].days) if int(user.id) in all_plan_map else 0,
         }
         for user in all_users
@@ -14737,15 +14746,18 @@ def hr_my_leaves():
     except Exception:
         pass
 
+    leave_type_id = (request.args.get("leave_type_id") or "").strip()
+    leave_status = (request.args.get("status") or "").strip().upper()
+    leave_date_from = (request.args.get("date_from") or "").strip()
+    leave_date_to = (request.args.get("date_to") or "").strip()
     reqs = []
     if can_requests:
-        reqs = (
-            HRLeaveRequest.query
-            .filter(HRLeaveRequest.user_id == current_user.id)
-            .order_by(HRLeaveRequest.created_at.desc())
-            .limit(50)
-            .all()
-        )
+        req_query = HRLeaveRequest.query.filter(HRLeaveRequest.user_id == current_user.id)
+        if leave_type_id.isdigit(): req_query = req_query.filter(HRLeaveRequest.leave_type_id == int(leave_type_id))
+        if leave_status: req_query = req_query.filter(HRLeaveRequest.status == leave_status)
+        if leave_date_from: req_query = req_query.filter(HRLeaveRequest.start_date >= leave_date_from)
+        if leave_date_to: req_query = req_query.filter(HRLeaveRequest.end_date <= leave_date_to)
+        reqs = req_query.order_by(HRLeaveRequest.created_at.desc()).limit(100).all()
 
     leave_approver_names = direct_approver_names_for_requests(
         KIND_LEAVE,
@@ -14777,6 +14789,8 @@ def hr_my_leaves():
         atts_map=atts_map,
         leave_approver_names=leave_approver_names,
         request_progress=leave_progress,
+        leave_type_id=leave_type_id, leave_status=leave_status,
+        leave_date_from=leave_date_from, leave_date_to=leave_date_to,
     )
 
 
@@ -15013,15 +15027,18 @@ def hr_my_permissions():
     except Exception:
         pass
 
+    permission_type_id = (request.args.get("type_id") or "").strip()
+    permission_status = (request.args.get("status") or "").strip().upper()
+    permission_date_from = (request.args.get("date_from") or "").strip()
+    permission_date_to = (request.args.get("date_to") or "").strip()
     reqs = []
     if can_requests:
-        reqs = (
-            HRPermissionRequest.query
-            .filter(HRPermissionRequest.user_id == current_user.id)
-            .order_by(HRPermissionRequest.created_at.desc())
-            .limit(50)
-            .all()
-        )
+        req_query = HRPermissionRequest.query.filter(HRPermissionRequest.user_id == current_user.id)
+        if permission_type_id.isdigit(): req_query = req_query.filter(HRPermissionRequest.permission_type_id == int(permission_type_id))
+        if permission_status: req_query = req_query.filter(HRPermissionRequest.status == permission_status)
+        if permission_date_from: req_query = req_query.filter(HRPermissionRequest.day >= permission_date_from)
+        if permission_date_to: req_query = req_query.filter(HRPermissionRequest.day <= permission_date_to)
+        reqs = req_query.order_by(HRPermissionRequest.created_at.desc()).limit(100).all()
 
     permission_approver_names = direct_approver_names_for_requests(
         KIND_PERMISSION,
@@ -15052,6 +15069,8 @@ def hr_my_permissions():
         permission_approver_names=permission_approver_names,
         request_progress=permission_progress,
         permission_revision_counts=permission_revision_counts,
+        permission_type_id=permission_type_id, permission_status=permission_status,
+        permission_date_from=permission_date_from, permission_date_to=permission_date_to,
     )
 
 
@@ -23609,12 +23628,8 @@ def _attach_reconciled_departures(attendance_rows) -> dict:
         row.private_departure_minutes = int(values.get('private_minutes') or 0)
         row.official_departure_minutes = int(values.get('official_minutes') or 0)
         row.departure_details = values.get('details') or []
-        # Refresh legacy summaries against today's approved departure records.
-        # Recompute from the clock so repeated report reads cannot subtract twice.
-        if row.departure_details and (row.first_in or row.last_out):
-            fresh = _summary_compute_one(row.user_id, row.day, departure_records=row.departure_details)
-            row.late_minutes = fresh['late_minutes']
-            row.early_leave_minutes = fresh['early_leave_minutes']
+        if row.private_departure_minutes and getattr(row, 'early_leave_minutes', None):
+            row.early_leave_minutes = max(0, int(row.early_leave_minutes or 0) - row.private_departure_minutes)
     return totals
 
 
