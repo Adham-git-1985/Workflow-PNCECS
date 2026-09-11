@@ -9,11 +9,26 @@
       <div class="text-muted">تصفية الأرصدة حسب الموظف وموقع العمل ونوع التعيين والسنة. يتم الاحتساب يوماً بيوم حتى تاريخ اليوم.</div>
     </div>
     <div class="d-flex gap-2">
+      {% if can_manage_balances %}
+        <a class="btn btn-primary" href="{{ url_for('portal.hr_leave_balances', user_id=selected_user_id, year=year) }}"><i class="bi bi-pencil-square"></i> تعبئة/تعديل الرصيد الافتتاحي</a>
+      {% endif %}
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
       {% if can_export %}
         <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_leave_employee_balances', user_id=selected_user_id, work_location_id=selected_work_location_id, appointment_type_id=selected_appointment_type_id, year=year, within_opening=within_opening, bal_op=bal_op, days=days, export='xlsx') }}"><i class="bi bi-file-earmark-excel"></i> تصدير Excel</a>
       {% endif %}
     </div>
+  </div>
+</div>
+
+<div class="alert {{ 'alert-info' if can_manage_balances else 'alert-warning' }} d-flex align-items-start gap-2" role="alert">
+  <i class="bi {{ 'bi-info-circle' if can_manage_balances else 'bi-lock' }} mt-1"></i>
+  <div>
+    <strong>هذه صفحة تقرير للعرض فقط.</strong>
+    {% if can_manage_balances %}
+      لتعبئة أو تعديل الرصيد الافتتاحي اختر الموظف والسنة، ثم استخدم زر «تعبئة/تعديل الرصيد الافتتاحي».
+    {% else %}
+      للتعديل يلزم منح صلاحية «إدارة أرصدة الإجازات» من تصنيف «الموارد البشرية».
+    {% endif %}
   </div>
 </div>
 
@@ -104,6 +119,7 @@
           <th>الرصيد الافتتاحي/الاستحقاق</th>
           <th>المستخدم حتى اليوم</th>
           <th>الرصيد الحالي</th>
+          {% if can_manage_balances %}<th>إجراء</th>{% endif %}
         </tr>
       </thead>
       <tbody>
@@ -127,6 +143,9 @@
                 <span class="badge text-bg-success">{{ r.remaining }}</span>
               {% endif %}
             </td>
+            {% if can_manage_balances %}
+              <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_leave_balances', user_id=u.id, year=r.year) }}"><i class="bi bi-pencil"></i> تعديل</a></td>
+            {% endif %}
           </tr>
         {% endfor %}
       </tbody>

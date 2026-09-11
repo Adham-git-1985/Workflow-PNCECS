@@ -13,12 +13,17 @@ from models import (
     HRAttendanceSchedulePlan,
     Notification,
     NotificationEmailDelivery,
+    OrgNode,
+    OrgNodeAssignment,
+    OrgNodeManager,
+    OrgNodeType,
     SystemSetting,
     User,
     WorkSchedule,
 )
 from portal.routes import (
     _attendance_exemption_reason,
+    _attendance_schedule_direct_reports,
     _attendance_schedule_fork_plan,
     _attendance_schedule_is_final_approver,
     _attendance_schedule_latest_plan,
@@ -29,6 +34,7 @@ from services.attendance_schedule import (
     attendance_schedule_cycle_start,
     attendance_schedule_final_approver_user_ids,
     attendance_schedule_needs_reminder,
+    attendance_schedule_stakeholder_user_ids,
     send_attendance_schedule_reminders,
 )
 
@@ -150,6 +156,41 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         db.session.commit()
         return plan
 
+    def _secondary_manager(self):
+        secondary_manager = User(
+            email="schedule-secondary-manager@example.test",
+            name="مدير الجدول الثاني",
+            password_hash="not-used",
+            role="MANAGER",
+        )
+        node_type = OrgNodeType(
+            code="ATTENDANCE_BRANCH",
+            name_ar="فرع جدول الدوام",
+            sort_order=1,
+        )
+        db.session.add_all((secondary_manager, node_type))
+        db.session.flush()
+        node = OrgNode(
+            type_id=node_type.id,
+            name_ar="التكليف الإضافي",
+            is_active=True,
+        )
+        db.session.add(node)
+        db.session.flush()
+        db.session.add_all((
+            OrgNodeAssignment(
+                user_id=self.employee.id,
+                node_id=node.id,
+                is_primary=False,
+            ),
+            OrgNodeManager(
+                node_id=node.id,
+                manager_user_id=secondary_manager.id,
+            ),
+        ))
+        db.session.commit()
+        return secondary_manager
+
     def test_final_plan_overrides_default_attendance_schedule(self):
         self._final_plan()
 
@@ -187,6 +228,8 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         )
 
     def test_automatic_reminder_is_deduplicated(self):
+        secondary_manager = self._secondary_manager()
+
         first = send_attendance_schedule_reminders(date(2026, 9, 10))
         second = send_attendance_schedule_reminders(date(2026, 9, 10))
         db.session.commit()
@@ -194,11 +237,28 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         self.assertEqual(first, 1)
         self.assertEqual(second, 0)
         self.assertEqual(Notification.query.filter_by(user_id=self.employee.id).count(), 1)
+        expected_recipient_ids = {
+            self.employee.id,
+            self.manager.id,
+            secondary_manager.id,
+            self.super_admin.id,
+        }
+        self.assertEqual(
+            set(attendance_schedule_stakeholder_user_ids(self.employee)),
+            expected_recipient_ids,
+        )
         self.assertEqual(
             {row.user_id for row in Notification.query.all()},
-            {self.employee.id, self.manager.id, self.super_admin.id},
+            expected_recipient_ids,
         )
-        self.assertEqual(NotificationEmailDelivery.query.count(), 3)
+        self.assertEqual(
+            {row.user_id for row in NotificationEmailDelivery.query.all()},
+            expected_recipient_ids,
+        )
+        self.assertIn(
+            self.employee.id,
+            {user.id for user in _attendance_schedule_direct_reports(secondary_manager.id)},
+        )
 
     def test_super_admin_is_a_final_approver(self):
         self.assertTrue(_attendance_schedule_is_final_approver(self.super_admin))

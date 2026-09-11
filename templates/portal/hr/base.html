@@ -108,7 +108,8 @@
     but they should NOT see "شؤون الموظفين" sidebar.
   #}
   {% set show_hr_admin_nav = (
-      current_user.has_perm('HR_MASTERDATA_MANAGE')
+      current_user.has_perm('HR_LEAVE_BALANCES_MANAGE')
+      or current_user.has_perm('HR_MASTERDATA_MANAGE')
       or current_user.has_perm('HR_REQUESTS_VIEW_ALL')
       or current_user.has_perm('HR_REPORTS_VIEW')
       or current_user.has_perm('HR_ATTENDANCE_EDIT')

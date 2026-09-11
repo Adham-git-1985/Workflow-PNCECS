@@ -338,6 +338,7 @@ from services.hr_request_workflow import (
     request_ids_user_participated_in,
     reopen_permission_request,
     resolve_direct_manager,
+    resolve_responsible_managers,
     secretary_general_user_ids,
     stage_label as hr_stage_label,
     start_request_flow,
@@ -386,6 +387,7 @@ HR_ATTENDANCE_EXPORT = HR_ATT_EXPORT
 # HR Reports
 HR_REPORTS_VIEW = "HR_REPORTS_VIEW"
 HR_REPORTS_EXPORT = "HR_REPORTS_EXPORT"
+HR_LEAVE_BALANCES_MANAGE = "HR_LEAVE_BALANCES_MANAGE"
 HR_EMP_READ = "HR_EMPLOYEE_READ"
 HR_EMP_MANAGE = "HR_EMPLOYEE_MANAGE"
 HR_EMP_ATTACH = "HR_EMPLOYEE_ATTACHMENTS_MANAGE"
@@ -741,6 +743,8 @@ def _portal_flags():
         has(HR_ATT_EDIT_APPROVE),
         has(HR_EMP_READ),
         has(HR_ORG_READ),
+        has(HR_REPORTS_VIEW),
+        has(HR_LEAVE_BALANCES_MANAGE),
         has(HR_MASTERDATA_MANAGE),
         has(HR_REQUESTS_READ),
         has(HR_REQUESTS_CREATE),
@@ -7300,6 +7304,8 @@ def hr_home():
         HR_ATT_READ, HR_ATT_CREATE, HR_ATT_EXPORT,
         HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
         HR_ORG_READ, HR_ORG_MANAGE,
+        HR_REPORTS_VIEW,
+        HR_LEAVE_BALANCES_MANAGE,
         HR_MASTERDATA_MANAGE,
         HR_ABSENCE_BOARD_VIEW,
     ]
@@ -7323,6 +7329,7 @@ def hr_home():
         HR_PERF_MANAGE, HR_PERF_EXPORT,
         HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
         HR_ORG_READ, HR_ORG_MANAGE,
+        HR_LEAVE_BALANCES_MANAGE,
         HR_MASTERDATA_MANAGE,
     ]
 
@@ -7409,6 +7416,7 @@ def hr_home():
     add_item(HR_ORG_MANAGE, "تعيين تبعية الموظفين (هيكلية موحدة)", "ربط الموظفين بعناصر الهيكلية الموحدة لاستخدامها في المسارات والموافقات.", "bi-person-badge", "portal.hr_org_node_assignments", "لوحة التحكم")
     add_item(HR_ORG_MANAGE, "مسؤولو الهيكلية الموحدة", "تعيين المسؤول ونائبه المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
+    add_item(HR_LEAVE_BALANCES_MANAGE, "تعبئة أرصدة الإجازات", "تعبئة وتعديل الرصيد الافتتاحي السنوي وتسجيل التصحيحات.", "bi-wallet2", "portal.hr_leave_balances", "الإجازات والمهام")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
     add_item(
         HR_LEAVE_APPROVED_DELETE,
@@ -7444,7 +7452,7 @@ def hr_home():
                 "icon": "bi-calendar2-week",
                 "url": url_for("portal.hr_monthly_leave_report"),
             })
-        if current_user.has_perm(HR_MASTERDATA_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_perm(HR_REPORTS_VIEW):
+        if current_user.has_perm(HR_LEAVE_BALANCES_MANAGE) or current_user.has_perm(HR_MASTERDATA_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL) or current_user.has_perm(HR_REPORTS_VIEW):
             _sec_map["التقارير"].append({
                 "title": "أرصدة الإجازات",
                 "desc": "عرض الأرصدة السنوية (المعتمدة/المستهلك/المتبقي).",
@@ -12421,13 +12429,17 @@ def _attendance_schedule_employee_users() -> list[User]:
     return result
 
 
+def _attendance_schedule_responsible_managers(user_id: int) -> list[User]:
+    return resolve_responsible_managers(int(user_id))
+
+
 def _attendance_schedule_direct_reports(manager_user_id: int) -> list[User]:
     reports = []
     for user in _attendance_schedule_employee_users():
         if int(user.id) == int(manager_user_id):
             continue
-        manager = resolve_direct_manager(int(user.id))
-        if manager and int(manager.id) == int(manager_user_id):
+        managers = _attendance_schedule_responsible_managers(int(user.id))
+        if any(int(manager.id) == int(manager_user_id) for manager in managers):
             reports.append(user)
     return reports
 
@@ -12516,7 +12528,8 @@ def _attendance_schedule_create_plan(
     period_start_text = period_start.isoformat()
     latest = _attendance_schedule_latest_plan(user.id, period_start_text)
     next_version = int(latest.version_no or 0) + 1 if latest else 1
-    manager = resolve_direct_manager(int(user.id))
+    managers = _attendance_schedule_responsible_managers(int(user.id))
+    manager = managers[0] if managers else None
     plan = HRAttendanceSchedulePlan(
         user_id=user.id,
         manager_user_id=manager.id if manager else None,
@@ -12556,7 +12569,8 @@ def _attendance_schedule_fork_plan(
 ) -> HRAttendanceSchedulePlan:
     latest = _attendance_schedule_latest_plan(source.user_id, source.period_start)
     next_version = int(latest.version_no or 0) + 1 if latest else int(source.version_no or 0) + 1
-    manager = resolve_direct_manager(int(source.user_id))
+    managers = _attendance_schedule_responsible_managers(int(source.user_id))
+    manager = managers[0] if managers else None
     plan = HRAttendanceSchedulePlan(
         user_id=source.user_id,
         manager_user_id=manager.id if manager else source.manager_user_id,
@@ -12739,10 +12753,12 @@ def _attendance_schedule_week_rows(
             for day in _attendance_schedule_view_days(user.id, period_start, plan)
             if day["date_text"] in week_date_values
         ]
-        manager = plan.manager if plan and plan.manager else resolve_direct_manager(int(user.id))
+        managers = _attendance_schedule_responsible_managers(int(user.id))
+        manager = managers[0] if managers else (plan.manager if plan else None)
         rows.append({
             "user": user,
             "manager": manager,
+            "managers": managers,
             "plan": plan,
             "days": days,
         })
@@ -12787,7 +12803,8 @@ def hr_work_schedule():
         period_start_text,
         final_only=True,
     )
-    selected_manager = resolve_direct_manager(int(target_user.id))
+    selected_managers = _attendance_schedule_responsible_managers(int(target_user.id))
+    selected_manager = selected_managers[0] if selected_managers else None
     schedules = (
         WorkSchedule.query
         .filter_by(is_active=True)
@@ -12844,6 +12861,7 @@ def hr_work_schedule():
         history=history,
         target_user=target_user,
         selected_manager=selected_manager,
+        selected_managers=selected_managers,
         period_start=period_start,
         period_end=period_end,
         week1_end=period_start + timedelta(days=6),
@@ -12934,7 +12952,8 @@ def hr_work_schedule_update():
             int(current_user.id),
             edit_source,
         )
-        manager = resolve_direct_manager(int(target_user.id))
+        managers = _attendance_schedule_responsible_managers(int(target_user.id))
+        manager = managers[0] if managers else None
         if manager:
             plan.manager_user_id = manager.id
         notification_link = url_for(
@@ -12949,26 +12968,30 @@ def hr_work_schedule_update():
             plan.final_approved_at = None
             plan.final_approved_by_id = None
             if action == "submit":
-                if not manager:
+                if not managers:
                     plan.status = "DRAFT"
                     notify_attendance_schedule_stakeholders(
                         target_user,
-                        f"تعذر إرسال جدول دوام {target_user.full_name}: لا يوجد مدير مباشر معيّن للموظف.",
+                        f"تعذر إرسال جدول دوام {target_user.full_name}: لا يوجد مدير مسؤول معيّن للموظف.",
                         level="WARNING",
                         link_url=notification_link,
                     )
-                    flash("تم حفظ الجدول، لكن لا يوجد مدير مباشر معيّن لإرساله إليه.", "warning")
+                    flash("تم حفظ الجدول، لكن لا يوجد مدير مسؤول معيّن لإرساله إليه.", "warning")
                 else:
                     plan.status = "SUBMITTED"
                     plan.submitted_at = datetime.utcnow()
+                    manager_names = "، ".join(
+                        manager.full_name or manager.email or f"#{manager.id}"
+                        for manager in managers
+                    )
                     notify_attendance_schedule_stakeholders(
                         target_user,
-                        f"أرسل {target_user.full_name} جدول دوام أسبوعين إلى {manager.full_name} للاعتماد.",
+                        f"أرسل {target_user.full_name} جدول دوام أسبوعين إلى المديرين المسؤولين: {manager_names}.",
                         level="INFO",
                         link_url=notification_link,
                         manager=manager,
                     )
-                    flash("تم إرسال الجدول إلى مديرك للاعتماد.", "success")
+                    flash("تم إرسال الجدول إلى جميع مديريك المسؤولين للاعتماد.", "success")
             else:
                 if changed or plan.status not in {"DRAFT", "SUBMITTED"}:
                     plan.status = "DRAFT"
@@ -13011,7 +13034,7 @@ def hr_work_schedule_update():
         else:
             if action == "final_approve":
                 if plan.status != "MANAGER_APPROVED":
-                    raise ValueError("يجب اعتماد الجدول من المدير قبل الاعتماد النهائي.")
+                    raise ValueError("يجب اعتماد الجدول من أحد المديرين المسؤولين قبل الاعتماد النهائي.")
                 plan.status = "FINAL_APPROVED"
                 plan.final_approved_at = datetime.utcnow()
                 plan.final_approved_by_id = current_user.id
@@ -13084,7 +13107,8 @@ def hr_work_schedule_remind():
     }
     if int(target_user.id) not in report_ids and not _attendance_schedule_is_final_approver():
         abort(403)
-    manager = resolve_direct_manager(int(target_user.id))
+    managers = _attendance_schedule_responsible_managers(int(target_user.id))
+    manager = managers[0] if managers else None
     notify_attendance_schedule_stakeholders(
         target_user,
         f"أرسل {current_user.full_name} تذكيرًا إلى {target_user.full_name} لإكمال جدول دوام الأسبوعين ابتداءً من {period_start.isoformat()}.",
@@ -13159,7 +13183,7 @@ def hr_work_schedule_final_approve_all():
         db.session.commit()
         flash(f"تم اعتماد {len(ready_plans)} جدول دوام دفعة واحدة.", "success")
     else:
-        flash("لا توجد جداول مكتملة ومعتمدة من المدير بانتظار الاعتماد النهائي.", "info")
+        flash("لا توجد جداول مكتملة ومعتمدة من أحد المديرين المسؤولين بانتظار الاعتماد النهائي.", "info")
     return redirect(url_for("portal.hr_work_schedule", start=period_start_text, view="all"))
 
 
@@ -23900,17 +23924,24 @@ def _check_pending_leave_requests(send_notifications: bool = True) -> dict:
     }
 
 
+def _can_manage_leave_balances() -> bool:
+    try:
+        return bool(
+            current_user.has_perm(HR_LEAVE_BALANCES_MANAGE)
+            or current_user.has_perm(HR_MASTERDATA_MANAGE)
+            or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
+        )
+    except Exception:
+        return False
+
+
 @portal_bp.route('/hr/leaves/balances', methods=['GET', 'POST'])
 @login_required
-@_perm_any(HR_REPORTS_VIEW, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL)
+@_perm_any(HR_REPORTS_VIEW, HR_LEAVE_BALANCES_MANAGE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL)
 def hr_leave_balances():
     """Manage/display leave balances (entitlements vs used/remaining)."""
-    # View allowed for reports viewers, but edits require manage (or view-all).
-    can_manage = False
-    try:
-        can_manage = current_user.has_perm(HR_MASTERDATA_MANAGE) or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
-    except Exception:
-        can_manage = False
+    # Report viewers can inspect balances; edits require a management permission.
+    can_manage = _can_manage_leave_balances()
     # Filters
     year_raw = (request.values.get('year') or '').strip()
     year = None
@@ -30989,6 +31020,7 @@ def _portal_perm_presets_defaults():
                 HR_ATT_CREATE, HR_ATT_EXPORT,
                 HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
                 HR_ORG_READ, HR_ORG_MANAGE,
+                HR_LEAVE_BALANCES_MANAGE,
                 HR_MASTERDATA_MANAGE,
                 HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE, HR_ABSENCE_BOARD_VIEW,
                 HR_SS_WORKFLOWS_MANAGE,
@@ -35115,7 +35147,7 @@ def hr_occasion_type_toggle(row_id: int):
 
 @portal_bp.route('/hr/reports/leaves/employee-balances', methods=['GET'])
 @login_required
-@_perm(HR_REPORTS_VIEW)
+@_perm_any(HR_REPORTS_VIEW, HR_LEAVE_BALANCES_MANAGE)
 def hr_report_leave_employee_balances():
     """تقرير أرصدة الموظفين: فلترة متقدمة (الموظف/الموقع/نوع التعيين/السنة/الرصيد)."""
     users = _list_hr_users()
@@ -35252,6 +35284,7 @@ def hr_report_leave_employee_balances():
         bal_op=bal_op,
         days=days_raw,
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
+        can_manage_balances=_can_manage_leave_balances(),
     )
 
 

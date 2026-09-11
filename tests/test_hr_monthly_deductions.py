@@ -7,6 +7,7 @@ from flask_login import LoginManager, login_user, logout_user
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from werkzeug.exceptions import Forbidden
 
 from extensions import db
 from models import (
@@ -24,11 +25,14 @@ from models import (
     HRPermissionType,
     SystemSetting,
     User,
+    UserPermission,
     WorkAssignment,
     WorkPolicy,
     WorkSchedule,
 )
 from portal.routes import (
+    HR_LEAVE_BALANCES_MANAGE,
+    HR_REPORTS_VIEW,
     _leave_entitlement_days,
     _leave_used_days_as_of,
     _monthly_attendance_deduction_breakdown,
@@ -378,6 +382,86 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(adjustment.reason, "تصحيح بعد اعتماد الخصم")
         self.assertEqual(adjustment.created_by_id, admin.id)
         self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 11.5)
+
+    def test_dedicated_permission_can_set_opening_leave_balance(self):
+        manager = User(
+            email="balance-manager@example.test",
+            name="Balance Manager",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(
+            code="ANNUAL",
+            name_ar="إجازة سنوية",
+            deduct_from_balance=True,
+            is_active=True,
+        )
+        db.session.add_all((manager, leave_type))
+        db.session.flush()
+        db.session.add(UserPermission(
+            user_id=manager.id,
+            key=HR_LEAVE_BALANCES_MANAGE,
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data={
+                "user_id": str(self.user.id),
+                "year": "2026",
+                f"total_{leave_type.id}": "18",
+            },
+        ):
+            login_user(manager)
+            response = hr_leave_balances()
+            logout_user()
+
+        balance = HRLeaveBalance.query.one()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(balance.user_id, self.user.id)
+        self.assertEqual(balance.leave_type_id, leave_type.id)
+        self.assertEqual(balance.year, 2026)
+        self.assertEqual(balance.total_days, 18)
+
+    def test_report_view_permission_cannot_change_opening_leave_balance(self):
+        report_viewer = User(
+            email="balance-viewer@example.test",
+            name="Balance Viewer",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(
+            code="ANNUAL",
+            name_ar="إجازة سنوية",
+            deduct_from_balance=True,
+            is_active=True,
+        )
+        db.session.add_all((report_viewer, leave_type))
+        db.session.flush()
+        db.session.add(UserPermission(
+            user_id=report_viewer.id,
+            key=HR_REPORTS_VIEW,
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data={
+                "user_id": str(self.user.id),
+                "year": "2026",
+                f"total_{leave_type.id}": "18",
+            },
+        ):
+            login_user(report_viewer)
+            with self.assertRaises(Forbidden):
+                hr_leave_balances()
+            logout_user()
+
+        self.assertEqual(HRLeaveBalance.query.count(), 0)
 
     def test_all_filtered_action_creates_items_for_every_matching_employee(self):
         admin = User(

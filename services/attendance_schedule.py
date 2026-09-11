@@ -10,7 +10,10 @@ from models import (
     Role,
     User,
 )
-from services.hr_request_workflow import resolve_direct_manager, secretary_general_user_ids
+from services.hr_request_workflow import (
+    resolve_responsible_managers,
+    secretary_general_user_ids,
+)
 from services.notification_email import (
     ATTENDANCE_SCHEDULE_EMAIL_MODE,
     enqueue_notification_email,
@@ -79,17 +82,23 @@ def attendance_schedule_stakeholder_user_ids(
     manager: User | None = None,
     final_approver_user_ids: list[int] | None = None,
 ) -> list[int]:
+    """Return the employee, every responsible manager, and final approvers."""
     if not employee:
         return []
-    selected_manager = manager or resolve_direct_manager(int(employee.id))
+    selected_managers = resolve_responsible_managers(int(employee.id))
+    if not selected_managers and manager:
+        selected_managers = [manager]
     final_user_ids = (
         attendance_schedule_final_approver_user_ids()
         if final_approver_user_ids is None
         else final_approver_user_ids
     )
     user_ids = {int(employee.id), *final_user_ids}
-    if selected_manager:
-        user_ids.add(int(selected_manager.id))
+    user_ids.update(
+        int(selected_manager.id)
+        for selected_manager in selected_managers
+        if selected_manager and selected_manager.id
+    )
     return sorted(user_ids)
 
 
@@ -211,7 +220,6 @@ def send_attendance_schedule_reminders(reference_day: date | None = None) -> int
         ).first()
         if exists:
             continue
-        manager = resolve_direct_manager(int(user.id))
         notify_attendance_schedule_stakeholders(
             user,
             f"تذكير بجدول دوام {user.full_name}: يرجى استكمال جدول الأسبوعين قبل بداية الأسبوع الثاني.",
@@ -220,7 +228,6 @@ def send_attendance_schedule_reminders(reference_day: date | None = None) -> int
                 "/portal/hr/attendance/work-schedule"
                 f"?start={period_start_text}&employee_id={user.id}"
             ),
-            manager=manager,
             event_key=event_key,
             final_approver_user_ids=final_approver_user_ids,
         )

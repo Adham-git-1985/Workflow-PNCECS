@@ -121,6 +121,7 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_ATTENDANCE_EXPORT", "تصدير الدوام", "تصدير الدوام PDF/Excel.", module="HR_ATTENDANCE"),
         PermDef("HR_REPORTS_VIEW", "عرض تقارير الموارد البشرية", "عرض تقارير الموارد البشرية (الإجازات/الدوام).", module="HR_REPORTS"),
         PermDef("HR_REPORTS_EXPORT", "تصدير تقارير الموارد البشرية", "تصدير تقارير الموارد البشرية PDF/Excel.", module="HR_REPORTS"),
+        PermDef("HR_LEAVE_BALANCES_MANAGE", "إدارة أرصدة الإجازات", "تعبئة وتعديل الرصيد الافتتاحي السنوي للموظفين وإضافة تصحيحات موثقة بعد الاعتماد.", module="HR_LEAVE_BALANCES"),
         PermDef("HR_MASTERDATA_MANAGE", "إعدادات HR", "إدارة أنواع المغادرات/الإجازات/الجداول... من لوحة الإدارة.", module="HR_MASTERDATA"),
         PermDef("HR_EMPLOYEE_READ", "عرض ملفات الموظفين", "عرض ملف الموظف وبياناته الأساسية.", module="HR_EMPLOYEE"),
         PermDef("HR_EMPLOYEE_MANAGE", "تعديل ملفات الموظفين", "تعديل بيانات ملف الموظف وربط كود الساعة.", module="HR_EMPLOYEE"),

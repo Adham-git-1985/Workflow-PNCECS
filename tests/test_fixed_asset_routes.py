@@ -26,6 +26,7 @@ class FixedAssetRouteTests(unittest.TestCase):
         )
         cls.app.config.update(
             TESTING=True,
+            WTF_CSRF_ENABLED=False,
             SECRET_KEY="fixed-asset-routes-test",
             SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
             SQLALCHEMY_TRACK_MODIFICATIONS=False,

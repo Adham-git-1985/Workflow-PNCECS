@@ -1,20 +1,24 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}أرصدة الإجازات{% endblock %}
+{% block title %}تعبئة أرصدة الإجازات{% endblock %}
 
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
-      <h4 class="mb-1"><i class="bi bi-wallet2"></i> أرصدة الإجازات</h4>
-      <div class="text-muted">إدارة الاستحقاق السنوي، إضافة تصحيحات موثقة بعد الاعتماد، وعرض المستهلك والمتبقي.</div>
+      <h4 class="mb-1"><i class="bi bi-wallet2"></i> تعبئة وتعديل أرصدة الإجازات</h4>
+      <div class="text-muted">تعبئة الرصيد الافتتاحي السنوي، إضافة تصحيحات موثقة بعد الاعتماد، وعرض المستهلك والمتبقي.</div>
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-success" href="{{ url_for('portal.hr_deductions_run', year=year) }}"><i class="bi bi-calculator"></i> احتساب الخصومات</a>
-      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_masterdata_index') }}"><i class="bi bi-arrow-right"></i> رجوع لإعدادات الموارد البشرية</a>
-      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_leaves_report', year=year, status='') }}"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}"><i class="bi bi-arrow-right"></i> رجوع لشؤون الموظفين</a>
+      <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_report_leave_employee_balances', user_id=(selected_user.id if selected_user else None), year=year) }}"><i class="bi bi-file-earmark-text"></i> تقرير الأرصدة</a>
     </div>
   </div>
 </div>
+
+{% if not can_manage %}
+  <div class="alert alert-warning"><i class="bi bi-lock"></i> الصفحة متاحة للعرض فقط. يلزم منح صلاحية «إدارة أرصدة الإجازات» من تصنيف «الموارد البشرية» لتعبئة أو تعديل الرصيد الافتتاحي.</div>
+{% endif %}
 
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="get" class="row g-2 align-items-end">
@@ -63,7 +67,7 @@
             <th>الرمز</th>
             <th>النوع</th>
             <th>سياسة الرصيد</th>
-            <th style="width:170px">الاستحقاق الأساسي</th>
+            <th style="width:170px">الرصيد الافتتاحي</th>
             <th>التصحيحات</th>
             <th>الرصيد الفعلي</th>
             <th>المستهلك</th>
