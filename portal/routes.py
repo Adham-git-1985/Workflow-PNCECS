@@ -37062,16 +37062,27 @@ def _read_ministry_catalog(uploaded_file) -> tuple[list[dict], list[str]]:
 def inventory_admin_items_import_catalog():
     """Import the Ministry of Finance's inventory catalogue into the item master."""
     result = None
+    server_catalog_path = Path(current_app.root_path) / "jard.xlsx"
     if request.method == "POST":
-        uploaded_file = request.files.get("file")
+        import_from_server = request.form.get("source") == "server"
+        uploaded_file = server_catalog_path if import_from_server else request.files.get("file")
         update_existing = bool(request.form.get("update_existing"))
-        if not uploaded_file or not uploaded_file.filename:
+        filename = (
+            server_catalog_path.name
+            if import_from_server
+            else (uploaded_file.filename if uploaded_file else "")
+        )
+        if import_from_server and not server_catalog_path.is_file():
+            flash("ملف jard.xlsx غير موجود في مجلد النظام على الخادم.", "warning")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
+        if not uploaded_file or not filename:
             flash("اختر ملف الجرد أولاً.", "warning")
             return redirect(url_for("portal.inventory_admin_items_import_catalog"))
-        if Path(uploaded_file.filename).suffix.lower() != ".xlsx":
+        if Path(filename).suffix.lower() != ".xlsx":
             flash("صيغة الملف يجب أن تكون XLSX.", "warning")
             return redirect(url_for("portal.inventory_admin_items_import_catalog"))
-        if request.content_length and request.content_length > 12 * 1024 * 1024:
+        file_size = server_catalog_path.stat().st_size if import_from_server else (request.content_length or 0)
+        if file_size > 12 * 1024 * 1024:
             flash("حجم الملف يتجاوز 12 ميغابايت.", "danger")
             return redirect(url_for("portal.inventory_admin_items_import_catalog"))
 
@@ -37161,7 +37172,11 @@ def inventory_admin_items_import_catalog():
             db.session.rollback()
             flash(str(exc) if isinstance(exc, ValueError) else "تعذر الاستيراد بسبب بيانات مكررة.", "danger")
 
-    return render_template("portal/inventory/admin_items_import_catalog.html", result=result)
+    return render_template(
+        "portal/inventory/admin_items_import_catalog.html",
+        result=result,
+        server_file_available=server_catalog_path.is_file(),
+    )
 
 
 # ==========================================================

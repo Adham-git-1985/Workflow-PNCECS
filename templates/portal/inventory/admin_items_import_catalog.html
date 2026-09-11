@@ -30,6 +30,20 @@
         <button class="btn btn-primary" type="submit"><i class="bi bi-upload"></i> بدء الاستيراد</button>
       </div>
     </form>
+    {% if server_file_available %}
+    <hr>
+    <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
+      <div>
+        <div class="fw-semibold">ملف jard.xlsx موجود في مجلد النظام على الخادم</div>
+        <div class="small text-muted">يمكن استيراده مباشرة دون رفعه من جهازك.</div>
+      </div>
+      <form method="post">
+        {{ csrf_token() if csrf_token is defined else '' }}
+        <input type="hidden" name="source" value="server">
+        <button class="btn btn-outline-success" type="submit"><i class="bi bi-database-add"></i> استيراد ملف الخادم</button>
+      </form>
+    </div>
+    {% endif %}
   </div>
 </div>
 
