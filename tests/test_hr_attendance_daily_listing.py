@@ -17,6 +17,7 @@ from models import (
     HRPermissionRequest,
     HRPermissionType,
     HRRequestApprovalStep,
+    Notification,
     User,
     UserPermission,
 )
@@ -36,6 +37,7 @@ from portal.routes import (
     hr_leave_request_new,
     hr_maternity_departure_new,
     hr_maternity_departure_review,
+    _visible_maternity_departures,
 )
 
 
@@ -357,6 +359,48 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(row.allow_evening_minutes, 60)
         self.assertIsNone(row.start_time)
         self.assertIsNone(row.end_time)
+
+    def test_maternity_departure_is_visible_to_manager_and_super_admin(self):
+        employee = User(email="mother2@example.test", name="Employee", password_hash="x", role="USER")
+        manager = User(email="manager@example.test", name="Manager", password_hash="x", role="USER")
+        super_admin = User(email="super@example.test", name="Super", password_hash="x", role="SUPER_ADMIN")
+        db.session.add_all((employee, manager, super_admin))
+        db.session.flush()
+        db.session.add_all((
+            EmployeeFile(user_id=employee.id, direct_manager_user_id=manager.id),
+            UserPermission(user_id=employee.id, key="PORTAL_READ", is_allowed=True),
+            UserPermission(user_id=employee.id, key="HR_REQUESTS_CREATE", is_allowed=True),
+            UserPermission(user_id=manager.id, key="PORTAL_READ", is_allowed=True),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            "/portal/hr/attendance/maternity-departures/new", method="POST",
+            data={"start_day": "2026-09-01", "end_day": "2026-12-31"},
+        ):
+            login_user(employee)
+            self.assertEqual(hr_maternity_departure_new().status_code, 302)
+            logout_user()
+
+        row = HRAttendanceSpecialCase.query.filter_by(kind="MATERNITY_DEPARTURE").one()
+        self.assertIsNotNone(Notification.query.filter_by(user_id=manager.id).first())
+        self.assertIsNotNone(Notification.query.filter_by(user_id=super_admin.id).first())
+        with self.app.test_request_context():
+            login_user(manager)
+            self.assertEqual([item.id for item in _visible_maternity_departures()], [row.id])
+            logout_user()
+            login_user(super_admin)
+            self.assertEqual([item.id for item in _visible_maternity_departures()], [row.id])
+            logout_user()
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/maternity-departures/{row.id}/review", method="POST",
+            data={"action": "approve", "approval_note": "اعتماد المدير"},
+        ):
+            login_user(manager)
+            self.assertEqual(hr_maternity_departure_review(row.id).status_code, 302)
+            logout_user()
+        self.assertEqual(db.session.get(HRAttendanceSpecialCase, row.id).approval_status, "APPROVED")
 
     def test_departure_overlap_is_not_charged_as_early_exit(self):
         employee = User(email="overlap@example.test", name="Employee", password_hash="x", role="USER")

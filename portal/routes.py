@@ -10632,6 +10632,41 @@ def _maternity_departure_approval_status(row: HRAttendanceSpecialCase | None) ->
     return 'APPROVED' if bool(getattr(row, 'applied', False)) else 'PENDING'
 
 
+def _can_review_maternity_departure(row: HRAttendanceSpecialCase | None, user=None) -> bool:
+    """Allow global HR approvers and every responsible manager to review the request."""
+    selected_user = user or current_user
+    if not row or not getattr(selected_user, 'id', None):
+        return False
+    try:
+        if (
+            selected_user.has_role('ADMIN')
+            or selected_user.has_role('SUPER_ADMIN')
+            or selected_user.has_perm(HR_ATT_EDIT_APPROVE)
+            or selected_user.has_perm(HR_REQUESTS_VIEW_ALL)
+        ):
+            return True
+    except Exception:
+        pass
+    return any(
+        int(manager.id) == int(selected_user.id)
+        for manager in resolve_responsible_managers(int(row.user_id))
+    )
+
+
+def _visible_maternity_departures(status: str = 'PENDING') -> list[HRAttendanceSpecialCase]:
+    query = HRAttendanceSpecialCase.query.filter(
+        HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE'
+    )
+    if status != 'ALL':
+        mapped = 'PENDING' if status == 'SUBMITTED' else status
+        query = query.filter(HRAttendanceSpecialCase.approval_status == mapped)
+    rows = query.order_by(
+        HRAttendanceSpecialCase.created_at.desc(),
+        HRAttendanceSpecialCase.id.desc(),
+    ).limit(500).all()
+    return [row for row in rows if _can_review_maternity_departure(row)]
+
+
 def _attendance_summary_keys_for_period(user_id: int, day: str, day_to: str | None) -> set[tuple[int, str]]:
     """Build daily-summary keys affected by a manual attendance correction."""
     start_day = _parse_yyyy_mm_dd(day)
@@ -11232,7 +11267,12 @@ def hr_maternity_departure_new():
         db.session.flush()
 
         approval_url = url_for('portal.hr_maternity_departure_approval_queue')
-        for approver_id in _attendance_edit_approver_user_ids():
+        approver_ids = set(_attendance_edit_approver_user_ids())
+        approver_ids.update(
+            int(manager.id)
+            for manager in resolve_responsible_managers(employee_id)
+        )
+        for approver_id in sorted(approver_ids):
             if approver_id == int(current_user.id):
                 continue
             db.session.add(Notification(
@@ -11265,29 +11305,35 @@ def hr_maternity_departure_new():
 
 @portal_bp.route('/hr/attendance/maternity-departures/approvals', methods=['GET'])
 @login_required
-@_perm(HR_ATT_EDIT_APPROVE)
+@_perm(PORTAL_READ)
 def hr_maternity_departure_approval_queue():
     """Review queue for annual maternity departure requests."""
 
-    rows = (
-        HRAttendanceSpecialCase.query
-        .filter(HRAttendanceSpecialCase.kind == 'MATERNITY_DEPARTURE')
-        .filter(HRAttendanceSpecialCase.approval_status == 'PENDING')
-        .order_by(HRAttendanceSpecialCase.created_at.asc(), HRAttendanceSpecialCase.id.asc())
-        .all()
-    )
+    rows = _visible_maternity_departures('PENDING')
+    if not rows and not (
+        current_user.has_role('ADMIN')
+        or current_user.has_role('SUPER_ADMIN')
+        or current_user.has_perm(HR_ATT_EDIT_APPROVE)
+        or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
+    ):
+        # A manager with no current request may still open an empty queue.
+        managed_users = _attendance_schedule_direct_reports(int(current_user.id))
+        if not managed_users:
+            abort(403)
     return render_template('portal/hr/maternity_departure_approval_queue.html', rows=rows)
 
 
 @portal_bp.route('/hr/attendance/maternity-departures/<int:row_id>/review', methods=['POST'])
 @login_required
-@_perm(HR_ATT_EDIT_APPROVE)
+@_perm_any(PORTAL_READ, HR_ATT_EDIT_APPROVE, HR_REQUESTS_APPROVE, HR_REQUESTS_VIEW_ALL)
 def hr_maternity_departure_review(row_id: int):
     """Approve or reject an annual maternity departure request."""
 
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MATERNITY_DEPARTURE':
         abort(404)
+    if not _can_review_maternity_departure(row):
+        abort(403)
     if _maternity_departure_approval_status(row) != 'PENDING':
         flash('تم البت في هذا الطلب مسبقاً.', 'warning')
         return redirect(url_for('portal.hr_maternity_departure_approval_queue'))
@@ -16071,6 +16117,7 @@ def hr_approvals():
 
     assigned_leave_ids = _current_user_approvable_request_ids(KIND_LEAVE)
     assigned_permission_ids = _current_user_approvable_request_ids(KIND_PERMISSION)
+    pending_maternity_reqs = _visible_maternity_departures('PENDING')
     participated_leave_ids = set(request_ids_user_participated_in(current_user, KIND_LEAVE))
     participated_permission_ids = set(request_ids_user_participated_in(current_user, KIND_PERMISSION))
     has_request_history = bool(
@@ -16078,7 +16125,13 @@ def hr_approvals():
         or participated_permission_ids
         or HRRequestObserver.query.filter_by(user_id=current_user.id).first()
     )
-    can_approve = bool(can_approve or assigned_leave_ids or assigned_permission_ids or has_request_history)
+    can_approve = bool(
+        can_approve
+        or assigned_leave_ids
+        or assigned_permission_ids
+        or pending_maternity_reqs
+        or has_request_history
+    )
 
     if not can_approve:
         abort(403)
@@ -16087,6 +16140,7 @@ def hr_approvals():
     allowed_status = {"SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "ALL"}
     if status not in allowed_status:
         status = "SUBMITTED"
+    maternity_reqs = _visible_maternity_departures(status)
 
     def _visible_ids(kind: str) -> set[int]:
         if status == "SUBMITTED":
@@ -16130,6 +16184,7 @@ def hr_approvals():
         can_view_all=can_view_all,
         leave_reqs=leave_reqs,
         perm_reqs=perm_reqs,
+        maternity_reqs=maternity_reqs,
         deletable_leave_ids=deletable_leave_ids,
         current_stage_labels=current_stage_labels,
     )

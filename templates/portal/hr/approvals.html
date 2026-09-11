@@ -138,6 +138,23 @@
       {% endif %}
     </div>
   </div>
+
+  <div class="col-12">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="fw-semibold mb-2"><i class="bi bi-heart-pulse"></i> مغادرات الأمومة</div>
+      {% if maternity_reqs %}
+      <div class="table-responsive"><table class="table table-sm align-middle mb-0">
+        <thead><tr><th>#</th><th>الموظفة</th><th>من تاريخ</th><th>إلى تاريخ</th><th>الحالة</th><th>التفاصيل</th><th></th></tr></thead>
+        <tbody>{% for r in maternity_reqs %}
+          {% set maternity_status = (r.approval_status or 'PENDING')|upper %}
+          <tr><td>{{ r.id }}</td><td class="fw-semibold">{{ r.user.full_name if r.user else r.user_id }}</td><td>{{ r.day }}</td><td>{{ r.day_to or r.day }}</td>
+            <td><span class="badge bg-{{ 'warning' if maternity_status == 'PENDING' else ('success' if maternity_status == 'APPROVED' else 'danger') }}">{{ {'PENDING':'بانتظار الاعتماد','APPROVED':'معتمد','REJECTED':'مرفوض'}.get(maternity_status, maternity_status) }}</span></td>
+            <td>{{ r.note or '—' }}</td><td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_maternity_departure_approval_queue') }}">فتح</a></td></tr>
+        {% endfor %}</tbody>
+      </table></div>
+      {% else %}<div class="text-muted">لا توجد طلبات.</div>{% endif %}
+    </div>
+  </div>
 </div>
 
 <div class="mt-3">
