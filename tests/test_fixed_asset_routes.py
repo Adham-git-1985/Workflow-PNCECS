@@ -248,6 +248,7 @@ class FixedAssetRouteTests(unittest.TestCase):
             {(row.name, row.value) for row in InvItemAttribute.query.filter_by(item_id=first_item.id)},
             {("التصنيف الفرعي", "Blinds"), ("مستهلك", "YES")},
         )
+        self.assertEqual(self.client.get("/portal/inventory/admin/items").status_code, 200)
 
         response = self.client.post(
             "/portal/inventory/admin/items/import-catalog",

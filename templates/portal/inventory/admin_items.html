@@ -107,16 +107,18 @@
         </form>
       </div>
       <div class="card-body p-0">
+        <div class="px-3 py-2 border-bottom small text-muted">عدد الأصناف المعروضة: {{ rows|length }}. مرتبة حسب التصنيف ثم كود الصنف.</div>
         <div class="table-responsive">
           <table class="table table-striped mb-0">
             <thead>
               <tr>
                 <th>#</th>
-                <th>الصنف</th>
+                <th>التصنيف</th>
                 <th>الكود</th>
+                <th>الصنف</th>
+                <th>الوحدة</th>
                 <th>النوع</th>
                 <th>المواصفات</th>
-                <th>التصنيف</th>
                 <th>الحالة</th>
                 <th style="width:160px;"></th>
               </tr>
@@ -125,11 +127,12 @@
               {% for it in rows %}
               <tr>
                 <td>{{ it.id }}</td>
-                <td>{{ it.name }}</td>
+                <td>{{ it.category.name if it.category else '-' }}</td>
                 <td>{{ it.code or '-' }}</td>
+                <td>{{ it.name }}</td>
+                <td>{{ it.unit or '-' }}</td>
                 <td>{{ it.variant or '-' }}</td>
                 <td><span class="small">{{ it.attributes_text or '-' }}</span></td>
-                <td>{{ it.category.name if it.category else '-' }}</td>
                 <td>{% if it.is_active %}<span class="badge text-bg-success">فعّال</span>{% else %}<span class="badge text-bg-secondary">موقوف</span>{% endif %}</td>
                 <td class="text-end">
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_items', edit_id=it.id) }}">تعديل</a>
@@ -141,7 +144,7 @@
                 </td>
               </tr>
               {% else %}
-              <tr><td colspan="8" class="text-center text-muted py-4">لا توجد أصناف.</td></tr>
+              <tr><td colspan="9" class="text-center text-muted py-4">لا توجد أصناف.</td></tr>
               {% endfor %}
             </tbody>
           </table>

@@ -36920,7 +36920,7 @@ def inventory_admin_items():
         flash("تم إضافة الصنف.", "success")
         return redirect(url_for("portal.inventory_admin_items"))
 
-    query = InvItem.query
+    query = InvItem.query.outerjoin(InvItemCategory, InvItem.category_id == InvItemCategory.id)
     if search:
         like = f"%{search}%"
         query = query.filter(or_(
@@ -36934,7 +36934,14 @@ def inventory_admin_items():
         ))
     if selected_category_id.isdigit():
         query = query.filter(InvItem.category_id == int(selected_category_id))
-    rows = query.order_by(InvItem.id.desc()).all()
+    # Keep the full catalogue on one page, ordered as a reference catalogue:
+    # category first, then the official item code and finally the item name.
+    rows = query.order_by(
+        InvItemCategory.name.asc(),
+        InvItem.code.asc(),
+        InvItem.name.asc(),
+        InvItem.id.asc(),
+    ).all()
     return render_template(
         "portal/inventory/admin_items.html",
         rows=rows,
