@@ -9,7 +9,16 @@ from jinja2 import ChoiceLoader, DictLoader
 from openpyxl import Workbook
 
 from extensions import db
-from models import InvFixedAsset, InvFixedAssetCycle, InvFixedAssetEntry, InvWarehouse, User
+from models import (
+    InvFixedAsset,
+    InvFixedAssetCycle,
+    InvFixedAssetEntry,
+    InvItem,
+    InvItemAttribute,
+    InvItemCategory,
+    InvWarehouse,
+    User,
+)
 from portal import portal_bp
 
 
@@ -212,6 +221,41 @@ class FixedAssetRouteTests(unittest.TestCase):
         asset = InvFixedAsset.query.filter_by(asset_tag="FA-IMPORT-001").one()
         self.assertEqual(asset.name, "حاسوب محمول")
         self.assertEqual(asset.warehouse_id, self.warehouse.id)
+
+    def test_ministry_catalog_import_creates_items_and_is_idempotent(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Items"
+        sheet.append(["Code", "Name", "Category", "Subcategory", "Consumable", "Unit"])
+        sheet.append(["010010001", "Vertical blinds", "Furniture", "Blinds", "YES", "m2"])
+        sheet.append(["010010002", "Roller blinds", "Furniture", "Blinds", "NO", "PCS"])
+        payload = io.BytesIO()
+        workbook.save(payload)
+        payload_bytes = payload.getvalue()
+
+        response = self.client.post(
+            "/portal/inventory/admin/items/import-catalog",
+            data={"file": (io.BytesIO(payload_bytes), "jard.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(InvItemCategory.query.count(), 1)
+        self.assertEqual(InvItem.query.count(), 2)
+        first_item = InvItem.query.filter_by(code="010010001").one()
+        self.assertEqual(first_item.category.name, "Furniture")
+        self.assertEqual(first_item.unit, "m2")
+        self.assertEqual(
+            {(row.name, row.value) for row in InvItemAttribute.query.filter_by(item_id=first_item.id)},
+            {("التصنيف الفرعي", "Blinds"), ("مستهلك", "YES")},
+        )
+
+        response = self.client.post(
+            "/portal/inventory/admin/items/import-catalog",
+            data={"file": (io.BytesIO(payload_bytes), "jard.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(InvItem.query.count(), 2)
 
 
 if __name__ == "__main__":

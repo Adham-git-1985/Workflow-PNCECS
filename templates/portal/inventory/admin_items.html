@@ -3,7 +3,10 @@
 {% block inv_content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h5 class="m-0">إدارة الأصناف</h5>
-  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories') }}"><i class="bi bi-tags"></i> التصنيفات العامة</a>
+  <div class="d-flex gap-2">
+    <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.inventory_admin_items_import_catalog') }}"><i class="bi bi-upload"></i> استيراد دليل الجرد</a>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_categories') }}"><i class="bi bi-tags"></i> التصنيفات العامة</a>
+  </div>
 </div>
 
 <div class="alert alert-info py-2">

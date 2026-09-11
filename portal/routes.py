@@ -36945,6 +36945,225 @@ def inventory_admin_items():
     )
 
 
+def _catalog_import_text(value, maximum: int | None = None) -> str:
+    """Return a normalized, display-safe value from the ministry catalogue."""
+    if value is None:
+        return ""
+    text_value = str(value).strip()
+    if text_value.endswith(".0"):
+        integer_part = text_value[:-2]
+        if integer_part.isdigit():
+            text_value = integer_part
+    return text_value[:maximum] if maximum else text_value
+
+
+def _catalog_import_code(value) -> str:
+    """Keep the nine-digit government item codes intact when Excel reads them as numbers."""
+    code = _catalog_import_text(value, 80)
+    if code.isdigit() and len(code) < 9:
+        return code.zfill(9)
+    return code
+
+
+def _catalog_import_header(value) -> str:
+    text_value = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+    text_value = text_value.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    return re.sub(r"[^\w\u0600-\u06ff]", "", text_value)
+
+
+def _read_ministry_catalog(uploaded_file) -> tuple[list[dict], list[str]]:
+    """Read the وزارة المالية ``جرد`` workbook without depending on sheet order."""
+    from openpyxl import load_workbook
+
+    stream = getattr(uploaded_file, "stream", uploaded_file)
+    try:
+        stream.seek(0)
+    except (AttributeError, OSError):
+        pass
+    workbook = load_workbook(stream, read_only=True, data_only=True)
+
+    aliases = {
+        "code": {"رمزالصنف", "كودالصنف", "itemcode", "code"},
+        "name": {"اسمالصنف", "الصنف", "itemname", "name"},
+        "category": {"التصنيفالرئيسي", "التصنبفالرئيسي", "maincategory", "category"},
+        "subcategory": {"التصنيفالفرعي", "التصنبفالفرعي", "subcategory", "subcat"},
+        "consumable": {"مستهلك", "consumable"},
+        "unit": {"الوحدة", "unit"},
+    }
+    alias_lookup = {
+        alias: key
+        for key, values in aliases.items()
+        for alias in values
+    }
+
+    candidates: list[tuple[object, int, dict[int, str]]] = []
+    for sheet in workbook.worksheets:
+        for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+            candidate = {
+                index: alias_lookup.get(_catalog_import_header(value))
+                for index, value in enumerate(row)
+            }
+            candidate = {index: key for index, key in candidate.items() if key}
+            if {"code", "name", "category"}.issubset(candidate.values()):
+                candidates.append((sheet, row_number, candidate))
+                break
+
+    if not candidates:
+        raise ValueError("لم يتم العثور على ورقة الأصناف أو عناوين أعمدتها في الملف.")
+
+    # The workbook also contains an empty entry sheet with similar headers.  The
+    # ministry catalogue is explicitly named "الأصناف", so choose it first.
+    worksheet, header_row, columns = next(
+        (
+            candidate
+            for candidate in candidates
+            if _catalog_import_header(candidate[0].title) in {"الاصناف", "دليلالاصناف"}
+        ),
+        candidates[0],
+    )
+
+    rows: list[dict] = []
+    errors: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for row_number, values in enumerate(
+        worksheet.iter_rows(min_row=header_row + 1, values_only=True),
+        start=header_row + 1,
+    ):
+        row = {
+            key: values[index] if index < len(values) else None
+            for index, key in columns.items()
+        }
+        if not any(value not in (None, "") for value in row.values()):
+            continue
+        code = _catalog_import_code(row.get("code"))
+        name = _catalog_import_text(row.get("name"), 255)
+        category = _catalog_import_text(row.get("category"), 200)
+        if not code or not name or not category:
+            errors.append(f"الصف {row_number}: رمز الصنف واسمه وتصنيفه الرئيسي مطلوبة.")
+            continue
+        fingerprint = (code.casefold(), name.casefold())
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        rows.append({
+            "code": code,
+            "name": name,
+            "category": category,
+            "subcategory": _catalog_import_text(row.get("subcategory"), 200),
+            "consumable": _catalog_import_text(row.get("consumable"), 80),
+            "unit": _catalog_import_text(row.get("unit"), 80),
+        })
+    return rows, errors
+
+
+@portal_bp.route("/inventory/admin/items/import-catalog", methods=["GET", "POST"])
+@login_required
+@_perm(STORE_MANAGE)
+def inventory_admin_items_import_catalog():
+    """Import the Ministry of Finance's inventory catalogue into the item master."""
+    result = None
+    if request.method == "POST":
+        uploaded_file = request.files.get("file")
+        update_existing = bool(request.form.get("update_existing"))
+        if not uploaded_file or not uploaded_file.filename:
+            flash("اختر ملف الجرد أولاً.", "warning")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
+        if Path(uploaded_file.filename).suffix.lower() != ".xlsx":
+            flash("صيغة الملف يجب أن تكون XLSX.", "warning")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
+        if request.content_length and request.content_length > 12 * 1024 * 1024:
+            flash("حجم الملف يتجاوز 12 ميغابايت.", "danger")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
+
+        try:
+            source_rows, errors = _read_ministry_catalog(uploaded_file)
+            if errors:
+                raise ValueError("\n".join(errors[:20]))
+            if not source_rows:
+                raise ValueError("لم يعثر الملف على أصناف صالحة للاستيراد.")
+            if len(source_rows) > 25000:
+                raise ValueError("الحد الأعلى لاستيراد دليل الأصناف هو 25,000 صف.")
+
+            category_by_name = {
+                (category.name or "").casefold(): category
+                for category in InvItemCategory.query.all()
+            }
+            categories_created = 0
+            for name in sorted({row["category"] for row in source_rows}, key=str.casefold):
+                key = name.casefold()
+                if key not in category_by_name:
+                    category = InvItemCategory(name=name, is_active=True, created_at=datetime.utcnow())
+                    db.session.add(category)
+                    category_by_name[key] = category
+                    categories_created += 1
+            db.session.flush()
+
+            existing_by_key: dict[tuple[str, str], InvItem] = {}
+            for item in InvItem.query.all():
+                key = ((_catalog_import_text(item.code)).casefold(), (item.name or "").strip().casefold())
+                if key not in existing_by_key:
+                    existing_by_key[key] = item
+
+            created = 0
+            updated = 0
+            skipped = 0
+            for row in source_rows:
+                key = (row["code"].casefold(), row["name"].casefold())
+                category = category_by_name[row["category"].casefold()]
+                item = existing_by_key.get(key)
+                if item is not None and not update_existing:
+                    skipped += 1
+                    continue
+                if item is None:
+                    item = InvItem(
+                        name=row["name"],
+                        code=row["code"],
+                        unit=row["unit"] or None,
+                        category_id=category.id,
+                        is_active=True,
+                        created_at=datetime.utcnow(),
+                    )
+                    db.session.add(item)
+                    existing_by_key[key] = item
+                    created += 1
+                else:
+                    item.name = row["name"]
+                    item.code = row["code"]
+                    item.unit = row["unit"] or None
+                    item.category_id = category.id
+                    item.is_active = True
+                    item.attributes.clear()
+                    updated += 1
+
+                if row["subcategory"]:
+                    item.attributes.append(InvItemAttribute(
+                        name="التصنيف الفرعي",
+                        value=row["subcategory"],
+                        sort_order=0,
+                    ))
+                if row["consumable"]:
+                    item.attributes.append(InvItemAttribute(
+                        name="مستهلك",
+                        value=row["consumable"],
+                        sort_order=1,
+                    ))
+
+            db.session.commit()
+            result = {
+                "source_rows": len(source_rows),
+                "categories_created": categories_created,
+                "created": created,
+                "updated": updated,
+                "skipped": skipped,
+            }
+            flash("تم استيراد دليل الأصناف بنجاح.", "success")
+        except (ValueError, IntegrityError) as exc:
+            db.session.rollback()
+            flash(str(exc) if isinstance(exc, ValueError) else "تعذر الاستيراد بسبب بيانات مكررة.", "danger")
+
+    return render_template("portal/inventory/admin_items_import_catalog.html", result=result)
+
+
 # ==========================================================
 # Inventory: Stocktake (سندات الجرد)
 # ==========================================================
