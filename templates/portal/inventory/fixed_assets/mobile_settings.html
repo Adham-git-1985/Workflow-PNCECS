@@ -1,0 +1,6 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<h4>ربط QR بالهاتف</h4>
+<form method="post" class="card card-body mb-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label>عنوان النظام المتاح للهاتف<input class="form-control" type="url" dir="ltr" name="base_url" value="{{ base_url }}" placeholder="https://portal.example.org"></label><p class="form-text">استخدم عنوان الخادم الذي يفتحه الهاتف. localhost و127.0.0.1 يشيران إلى الهاتف نفسه. الكاميرا داخل المتصفح تحتاج HTTPS وشهادة موثوقة.</p><button class="btn btn-primary">حفظ عنوان الملصقات</button></form>
+<div class="card card-body text-center"><h5>افتح الماسح على الهاتف</h5><img class="mx-auto" width="240" height="240" src="{{ url_for('portal.fixed_asset_mobile_entry_qr') }}" alt="رمز فتح الجرد من الهاتف"><a class="text-break" href="{{ mobile_url }}">{{ mobile_url }}</a><p class="mt-2">امسح الرمز بكاميرا الهاتف، سجل الدخول بحسابك، ثم اختر دورة الجرد. يجب أن تكون عضواً في لجنتها أو مسؤولاً عن المستودع.</p></div>
+{% endblock %}

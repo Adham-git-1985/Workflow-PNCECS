@@ -1,6 +1,8 @@
 {% extends "portal/inventory/base.html" %}
 
 {% block inv_content %}
+{% if can_manage %}<a class="btn btn-outline-primary mb-3" href="{{ url_for('portal.asset_movement', asset_id=asset.id) }}">إسناد / نقل / إرجاع / إسقاط العهدة</a>{% endif %}
+{% if custody_history and can_manage %}<div class="card card-body mb-3"><h6>سجل مستندات العهدة</h6>{% for doc in custody_history %}<a href="{{ url_for('portal.asset_document', document_id=doc.id) }}">مستند {{ doc.id }} · {{ doc.employee.full_name }} · {{ doc.created_at.strftime('%Y-%m-%d') }}</a>{% endfor %}</div>{% endif %}
 <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div><h4 class="mb-1">{{ asset.asset_tag }} · {{ asset.name }}</h4><div class="text-muted small">بطاقة الأصل وسجل الجرد الكامل</div></div>
   <div class="d-flex gap-2"><a class="btn btn-outline-secondary" href="{{ url_for('portal.fixed_asset_list') }}">السجل</a><a class="btn btn-outline-dark" href="{{ url_for('portal.fixed_asset_labels', ids=asset.id) }}"><i class="bi bi-printer"></i> طباعة الملصق</a>{% if can_manage %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_edit', asset_id=asset.id) }}">تعديل</a>{% endif %}</div>

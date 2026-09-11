@@ -4849,6 +4849,44 @@ class InvFixedAssetScanLog(db.Model):
 # ======================
 # Portal: Access Requests (Request permission within Portal)
 # ======================
+class InvAssetDocument(db.Model):
+    """Immutable asset snapshots reviewed by the receiving employee."""
+    __tablename__ = "inv_asset_document"
+    id = db.Column(db.Integer, primary_key=True)
+    kind = db.Column(db.String(20), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="PENDING")
+    cycle_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset_cycle.id"), index=True)
+    employee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    reviewed_at = db.Column(db.DateTime)
+    issued_at = db.Column(db.DateTime)
+    issued_by_id = db.Column(db.Integer, db.ForeignKey("users.id"))
+    reason = db.Column(db.Text)
+    employee = db.relationship("User", foreign_keys=[employee_id])
+    cycle = db.relationship("InvFixedAssetCycle", foreign_keys=[cycle_id])
+    lines = db.relationship("InvAssetDocumentLine", back_populates="document", cascade="all, delete-orphan", order_by="InvAssetDocumentLine.id")
+
+
+class InvAssetDocumentLine(db.Model):
+    __tablename__ = "inv_asset_document_line"
+    id = db.Column(db.Integer, primary_key=True)
+    document_id = db.Column(db.Integer, db.ForeignKey("inv_asset_document.id"), nullable=False, index=True)
+    asset_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset.id"), nullable=False, index=True)
+    snapshot = db.Column(db.JSON, nullable=False)
+    decision = db.Column(db.String(20), nullable=False, default="PENDING")
+    employee_note = db.Column(db.Text)
+    document = db.relationship("InvAssetDocument", back_populates="lines")
+    asset = db.relationship("InvFixedAsset", foreign_keys=[asset_id])
+    __table_args__ = (db.UniqueConstraint("document_id", "asset_id", name="uq_asset_document_line"),)
+
+
+class InvAssetDocumentReservation(db.Model):
+    __tablename__ = "inv_asset_document_reservation"
+    asset_id = db.Column(db.Integer, db.ForeignKey("inv_fixed_asset.id"), primary_key=True)
+    document_id = db.Column(db.Integer, db.ForeignKey("inv_asset_document.id"), nullable=False, index=True)
+
+
 class PortalAccessRequest(db.Model):
     """A lightweight workflow for employees to request portal permissions.
 

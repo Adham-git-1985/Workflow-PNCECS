@@ -1,0 +1,12 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<h4>عهدي وتقارير الاعتماد</h4>
+<p class="text-muted">راجع كل بند وأضف ملاحظاتك. يصدر مسؤول العهدة المستند بعد موافقتك.</p>
+<form class="d-flex gap-2 mb-3"><select class="form-select" name="status"><option value="">جميع الحالات</option>{% for key, label in statuses.items() %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ label }}</option>{% endfor %}</select><button class="btn btn-outline-primary">تصفية</button></form>
+<div class="table-responsive"><table class="table table-bordered bg-white"><thead><tr><th>الرقم</th><th>المستند</th><th>الموظف</th><th>الحالة</th><th>التاريخ</th></tr></thead><tbody>
+{% for doc in documents.items %}<tr><td><a href="{{ url_for('portal.asset_document', document_id=doc.id) }}">{{ doc.id }}</a></td><td>{{ kinds[doc.kind] }}{% if doc.cycle %} · {{ doc.cycle.code }}{% endif %}</td><td>{{ doc.employee.full_name }}</td><td>{{ statuses[doc.status] }}</td><td>{{ doc.created_at.strftime('%Y-%m-%d') }}</td></tr>{% else %}<tr><td colspan="5">لا توجد مستندات.</td></tr>{% endfor %}
+</tbody></table></div>
+<div class="d-flex gap-3 mb-4">{% if documents.has_prev %}<a href="{{ url_for('portal.asset_documents', page=documents.prev_num, status=selected_status, cycle_id=request.args.get('cycle_id'), employee_id=request.args.get('employee_id')) }}">السابق</a>{% endif %}<span>{{ documents.page }} / {{ documents.pages or 1 }}</span>{% if documents.has_next %}<a href="{{ url_for('portal.asset_documents', page=documents.next_num, status=selected_status, cycle_id=request.args.get('cycle_id'), employee_id=request.args.get('employee_id')) }}">التالي</a>{% endif %}</div>
+<h5>الأصول على عهدتي حالياً</h5>
+<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>رقم الأصل</th><th>الأصل</th><th>الموقع</th><th>الحالة</th></tr></thead><tbody>{% for asset in assets %}<tr><td>{{ asset.asset_tag }}</td><td>{{ asset.name }}</td><td>{{ asset.location_label }}</td><td>{{ fixed_asset_lifecycle_labels[asset.lifecycle_status] }}</td></tr>{% else %}<tr><td colspan="4">لا توجد أصول على عهدتك.</td></tr>{% endfor %}</tbody></table></div>
+{% endblock %}

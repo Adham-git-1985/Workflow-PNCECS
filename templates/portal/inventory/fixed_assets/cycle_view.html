@@ -1,6 +1,12 @@
 {% extends "portal/inventory/base.html" %}
 
 {% block inv_content %}
+<div class="d-flex flex-wrap gap-2 mb-3">
+{% if can_scan and cycle.status == 'ACTIVE' %}<a class="btn btn-primary" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id) }}">القراءة بالهاتف</a>{% endif %}
+{% if can_manage %}<a class="btn btn-outline-primary" href="{{ url_for('portal.asset_documents', cycle_id=cycle.id) }}">تقارير الموظفين والعهد الصادرة</a>
+{% if cycle.status == 'CLOSED' %}<form method="post" action="{{ url_for('portal.asset_send_reports', cycle_id=cycle.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-success">إرسال تقرير كل موظف للاعتماد</button></form>{% endif %}{% endif %}
+</div>
+<p class="text-muted">إغلاق الجرد يثبت النتيجة. تغيير الموظف صاحب العهدة يتم بعد مراجعة تقريره وإصدار العهدة.</p>
 {% set total = stats.get('TOTAL', 0) %}
 {% set completed = total - stats.get('PENDING', 0) %}
 {% set progress = ((completed * 100 / total)|round|int) if total else 0 %}
@@ -32,7 +38,7 @@
   <form method="post" action="{{ url_for('portal.fixed_asset_cycle_refresh', cycle_id=cycle.id) }}"><button class="btn btn-sm btn-outline-primary" onclick="return confirm('إضافة الأصول الجديدة المطابقة للنطاق إلى هذه الدورة؟')"><i class="bi bi-arrow-repeat"></i> تحديث نطاق الأصول</button></form>
   <button class="btn btn-sm btn-outline-danger" type="button" data-bs-toggle="collapse" data-bs-target="#closeCycle"><i class="bi bi-lock"></i> إغلاق الدورة</button>
 </div>
-<div class="collapse mb-3" id="closeCycle"><form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" class="card card-body border-danger"><h6 class="text-danger">اعتماد النتيجة وإغلاق الدورة</h6><p class="small mb-2">ستُصنف كل الأصول غير المقروءة كغير موجودة، ولن تقبل الدورة قراءات جديدة إلا بعد إعادة فتحها.</p><div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="apply_observed_values" value="1" id="applyObserved" checked><label class="form-check-label" for="applyObserved">تحديث الموقع والعهدة والحالة في سجل الأصل حسب نتيجة اللجنة الحالية</label></div><div><button class="btn btn-danger" onclick="return confirm('هل أنت متأكد من اعتماد وإغلاق دورة الجرد؟')">اعتماد وإغلاق</button></div></form></div>
+<div class="collapse mb-3" id="closeCycle"><form method="post" action="{{ url_for('portal.fixed_asset_cycle_close', cycle_id=cycle.id) }}" class="card card-body border-danger"><h6 class="text-danger">اعتماد النتيجة وإغلاق الدورة</h6><p class="small mb-2">ستُصنف كل الأصول غير المقروءة كغير موجودة، ولن تقبل الدورة قراءات جديدة إلا بعد إعادة فتحها.</p><div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="apply_observed_values" value="1" id="applyObserved" checked><label class="form-check-label" for="applyObserved">تحديث الموقع والحالة في سجل الأصل حسب نتيجة اللجنة الحالية (العهدة بعد اعتماد الموظف)</label></div><div><button class="btn btn-danger" onclick="return confirm('هل أنت متأكد من اعتماد وإغلاق دورة الجرد؟')">اعتماد وإغلاق</button></div></form></div>
 {% elif can_manage and cycle.status == 'CLOSED' %}
 <form method="post" action="{{ url_for('portal.fixed_asset_cycle_reopen', cycle_id=cycle.id) }}" class="mb-3"><button class="btn btn-sm btn-outline-warning" onclick="return confirm('إعادة فتح الدورة للسماح بقراءات جديدة؟')"><i class="bi bi-unlock"></i> إعادة فتح الدورة</button></form>
 {% endif %}

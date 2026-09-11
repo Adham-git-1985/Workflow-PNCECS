@@ -11,6 +11,8 @@ from models import (
     InvFixedAssetCycle,
     InvFixedAssetEntry,
     InvFixedAssetScanLog,
+    InvAssetDocument,
+    InvAssetDocumentLine,
 )
 
 
@@ -348,6 +350,7 @@ def close_inventory_cycle(
     *,
     closed_by_id: int | None,
     apply_observed_values: bool = False,
+    apply_custodian_values: bool = False,
 ) -> dict[str, int]:
     if cycle.status != "ACTIVE":
         raise ValueError("دورة الجرد مغلقة بالفعل.")
@@ -368,9 +371,12 @@ def close_inventory_cycle(
 
         if apply_observed_values and entry.asset:
             asset = entry.asset
+            if ((apply_custodian_values and asset.custodian_user_id != entry.observed_custodian_user_id) or asset.lifecycle_status != entry.observed_lifecycle_status) and InvAssetDocumentLine.query.filter_by(asset_id=asset.id).first():
+                raise ValueError("توجد عهدة موثقة لبعض الأصول؛ أغلق الجرد دون تحديث السجل ثم نفذ نقل أو إسقاط العهدة من حركات العهدة.")
             asset.warehouse_id = entry.observed_warehouse_id
             asset.room_id = entry.observed_room_id
-            asset.custodian_user_id = entry.observed_custodian_user_id
+            if apply_custodian_values:
+                asset.custodian_user_id = entry.observed_custodian_user_id
             asset.asset_condition = entry.observed_condition or asset.asset_condition
             asset.lifecycle_status = entry.observed_lifecycle_status or asset.lifecycle_status
             if asset.lifecycle_status == "DISPOSED":
@@ -386,6 +392,8 @@ def close_inventory_cycle(
 
 
 def reopen_inventory_cycle(cycle: InvFixedAssetCycle) -> int:
+    if InvAssetDocument.query.filter(InvAssetDocument.cycle_id == cycle.id, InvAssetDocument.status.notin_(["CANCELLED", "REJECTED"])).first():
+        raise ValueError("صدرت تقارير اعتماد لهذه الدورة. ألغ التقارير المعلقة أولاً، أو أنشئ دورة جديدة إن صدرت العهدة.")
     if cycle.status != "CLOSED":
         raise ValueError("دورة الجرد ليست مغلقة.")
     reset_count = 0

@@ -1,0 +1,7 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<h4><i class="bi bi-qr-code-scan"></i> الجرد من الهاتف</h4>
+<p>اختر دورة الجرد. اقرأ الملصق بالكاميرا أو بصورة، ثم راجع البيانات واحفظ النتيجة مباشرة في النظام.</p>
+<div class="d-grid gap-3">{% for cycle in cycles %}<a class="btn btn-lg btn-outline-primary text-start" href="{{ url_for('portal.fixed_asset_cycle_scan', cycle_id=cycle.id, code=code) }}">{{ cycle.name }}<br><small>{{ cycle.code }} · {{ cycle.scope_label }}</small></a>{% else %}<div class="alert alert-info">لا توجد دورة جرد نشطة متاحة لك. يضيفك مسؤول الجرد إلى لجنة الدورة لتتمكن من القراءة.</div>{% endfor %}</div>
+<a class="btn btn-outline-secondary mt-3" href="{{ url_for('portal.asset_documents') }}">عهدي وتقارير الاعتماد</a>
+{% endblock %}

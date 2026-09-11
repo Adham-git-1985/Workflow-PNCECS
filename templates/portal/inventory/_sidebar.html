@@ -40,6 +40,9 @@
         <i class="bi bi-chevron-down chev"></i>
       </a>
       <div class="collapse {% if fixed_assets_open %}show{% endif %}" id="invSecFixedAssets">
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.asset_documents') }}">عهدي وتقارير الاعتماد</a>
+        <a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.fixed_asset_mobile') }}">الجرد من الهاتف</a>
+        {% if current_user.has_perm('STORE_MANAGE') %}<a class="list-group-item list-group-item-action inv-sub" href="{{ url_for('portal.fixed_asset_mobile_settings') }}">ربط QR بالهاتف</a>{% endif %}
         <a class="list-group-item list-group-item-action inv-sub {% if request.path == '/portal/inventory/fixed-assets' %}active{% endif %}" href="{{ url_for('portal.fixed_assets_dashboard') }}"><i class="bi bi-speedometer2"></i> لوحة الجرد</a>
         <a class="list-group-item list-group-item-action inv-sub {% if '/fixed-assets/assets' in request.path %}active{% endif %}" href="{{ url_for('portal.fixed_asset_list') }}"><i class="bi bi-pc-display"></i> سجل الأصول والملصقات</a>
         <a class="list-group-item list-group-item-action inv-sub {% if '/fixed-assets/cycles' in request.path %}active{% endif %}" href="{{ url_for('portal.fixed_asset_cycles') }}"><i class="bi bi-clipboard-data"></i> دورات الجرد والمقارنة</a>

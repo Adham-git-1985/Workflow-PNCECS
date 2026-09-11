@@ -60,6 +60,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="{{ url_for('static', filename='vendor/jsqr/jsQR.js') }}"></script>
 <script>
 (() => {
   const lookupUrl = {{ url_for('portal.fixed_asset_cycle_lookup', cycle_id=cycle.id)|tojson }};
@@ -73,6 +74,24 @@
   let mediaStream = null;
   let detector = null;
   let detecting = false;
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d', {willReadFrequently: true});
+
+  async function readCodes(source) {
+    if (detector) {
+      try { return await detector.detect(source); } catch (_) { detector = null; }
+    }
+    const width = source.videoWidth || source.width;
+    const height = source.videoHeight || source.height;
+    if (!width || !height || !window.jsQR) return [];
+    const scale = Math.min(1, 1400 / Math.max(width, height));
+    canvas.width = Math.round(width * scale);
+    canvas.height = Math.round(height * scale);
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    const result = window.jsQR(pixels.data, pixels.width, pixels.height);
+    return result ? [{rawValue: result.data}] : [];
+  }
 
   function showMessage(text, kind='info') {
     message.className = `alert alert-${kind} py-2`;
@@ -88,6 +107,8 @@
   }
 
   async function lookup(code, source='MANUAL') {
+    stopCamera();
+    confirmCard.classList.add('d-none');
     const cleanCode = String(code || '').trim();
     if (!cleanCode) { showMessage('أدخل رقم الأصل أو امسح رمز QR.', 'warning'); return; }
     showMessage('جارٍ البحث عن الأصل...', 'info');
@@ -131,9 +152,10 @@
   }
 
   async function detectionLoop() {
-    if (!detecting || !detector || video.readyState < 2) return;
+    if (!detecting) return;
+    if (video.readyState < 2) { window.setTimeout(detectionLoop, 220); return; }
     try {
-      const codes = await detector.detect(video);
+      const codes = await readCodes(video);
       if (codes.length) {
         detecting = false;
         await lookup(codes[0].rawValue, 'CAMERA');
@@ -148,12 +170,15 @@
       showMessage('المتصفح يمنع الكاميرا دون HTTPS. استخدم الإدخال اليدوي أو افتح البوابة عبر اتصال آمن.', 'warning');
       return;
     }
-    if (!('BarcodeDetector' in window) || !navigator.mediaDevices?.getUserMedia) {
+    if (!navigator.mediaDevices?.getUserMedia) {
       showMessage('هذا المتصفح لا يدعم قارئ QR المباشر. استخدم Chrome أو Edge حديثاً أو الإدخال اليدوي.', 'warning');
       return;
     }
     try {
-      detector = new BarcodeDetector({formats: ['qr_code']});
+      if ('BarcodeDetector' in window) {
+        try { detector = new BarcodeDetector({formats: ['qr_code']}); } catch (_) { detector = null; }
+      }
+      startButton.disabled = true;
       mediaStream = await navigator.mediaDevices.getUserMedia({video: {facingMode: {ideal: 'environment'}}, audio: false});
       video.srcObject = mediaStream;
       await video.play();
@@ -164,8 +189,9 @@
       showMessage('الكاميرا تعمل؛ ثبّت رمز QR داخل الإطار.', 'primary');
       detectionLoop();
     } catch (error) {
+      stopCamera();
       showMessage('تعذر تشغيل الكاميرا. تحقق من الإذن أو استخدم الإدخال اليدوي.', 'danger');
-    }
+    } finally { startButton.disabled = false; }
   }
 
   function stopCamera() {
@@ -185,18 +211,18 @@
   document.getElementById('scanImage').addEventListener('change', async event => {
     const file = event.target.files?.[0];
     if (!file) return;
-    if (!('BarcodeDetector' in window)) { showMessage('قراءة الصور غير مدعومة في هذا المتصفح.', 'warning'); return; }
+    stopCamera();
     try {
       const image = await createImageBitmap(file);
-      const imageDetector = new BarcodeDetector({formats: ['qr_code']});
-      const codes = await imageDetector.detect(image);
-      image.close();
+      let codes;
+      try { codes = await readCodes(image); } finally { image.close(); }
       if (!codes.length) throw new Error('لم يظهر رمز QR واضح في الصورة.');
       await lookup(codes[0].rawValue, 'IMAGE');
     } catch (error) { showMessage(error.message || 'تعذر قراءة الصورة.', 'danger'); }
     event.target.value = '';
   });
   window.addEventListener('beforeunload', stopCamera);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) stopCamera(); });
   if (initialCode) lookup(initialCode, 'QR'); else document.getElementById('manualCode').focus();
 })();
 </script>

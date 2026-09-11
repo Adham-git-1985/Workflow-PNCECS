@@ -88,6 +88,8 @@
   or au.has_perm('HR_ATTENDANCE_EDIT_APPROVE')
   or au.has_perm('HR_EMPLOYEE_READ')
   or au.has_perm('HR_ORGSTRUCTURE_READ')
+  or au.has_perm('HR_REPORTS_VIEW')
+  or au.has_perm('HR_LEAVE_BALANCES_MANAGE')
   or au.has_perm('HR_MASTERDATA_MANAGE')
   or au.has_perm('HR_REQUESTS_READ')
   or au.has_perm('HR_REQUESTS_CREATE')
@@ -213,6 +215,8 @@
         <span class="d-inline d-md-none">حسابي</span>
       </button>
       <ul class="dropdown-menu dropdown-menu-end text-end" style="min-width:260px;">
+        <li><a class="dropdown-item" href="{{ url_for('portal.asset_documents') }}"><i class="bi bi-clipboard-check"></i> عهدي وتقارير الاعتماد</a></li>
+        <li><a class="dropdown-item" href="{{ url_for('portal.fixed_asset_mobile') }}"><i class="bi bi-qr-code-scan"></i> الجرد من الهاتف</a></li>
         <li class="px-3 py-2">
           <div class="fw-bold">{{ current_user.full_name }}</div>
           <div class="small text-muted ltr">{{ current_user.email }}</div>
@@ -317,7 +321,8 @@
 	          So we only treat users as HR-admin if they have at least one *administrative* HR permission.
 	        #}
 	        {% set can_hr_admin_tools = (
-	            au.has_perm('HR_MASTERDATA_MANAGE')
+	            au.has_perm('HR_LEAVE_BALANCES_MANAGE')
+	            or au.has_perm('HR_MASTERDATA_MANAGE')
 	            or au.has_perm('HR_REQUESTS_VIEW_ALL')
 	            or au.has_perm('HR_EMPLOYEE_MANAGE')
 	            or au.has_perm('HR_ORGSTRUCTURE_MANAGE')

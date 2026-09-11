@@ -6,6 +6,7 @@ import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from urllib.parse import urlparse
 
 import qrcode
 from flask import (
@@ -35,6 +36,8 @@ from models import (
     InvFixedAssetCycleMember,
     InvFixedAssetEntry,
     InvFixedAssetScanLog,
+    InvAssetDocument,
+    InvAssetDocumentLine,
     InvItem,
     InvItemCategory,
     InvRoom,
@@ -203,6 +206,64 @@ def _asset_qr_target(asset: InvFixedAsset) -> str:
     return url_for("portal.fixed_asset_qr_resolve", token=asset.qr_token, _external=True)
 
 
+def _can_scan_cycle(cycle):
+    return current_user.has_perm(STORE_MANAGE) or any(member.user_id == current_user.id for member in cycle.members)
+
+
+def _require_asset_access(asset):
+    if current_user.has_perm(STORE_READ) or current_user.has_perm(STORE_MANAGE) or asset.custodian_user_id == current_user.id:
+        return
+    member = InvFixedAssetCycleMember.query.join(InvFixedAssetCycle).filter(InvFixedAssetCycleMember.user_id == current_user.id, InvFixedAssetCycle.status == "ACTIVE").first()
+    if member:
+        return  # Committee members can identify unexpected assets during field scans.
+    abort(403)
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile")
+@login_required
+def fixed_asset_mobile():
+    query = InvFixedAssetCycle.query.filter_by(status="ACTIVE")
+    if not current_user.has_perm(STORE_MANAGE):
+        query = query.filter(InvFixedAssetCycle.members.any(user_id=current_user.id))
+    return render_template("portal/inventory/fixed_assets/mobile.html", cycles=query.order_by(InvFixedAssetCycle.id.desc()).all(), code=request.args.get("code", ""))
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile-settings", methods=["GET", "POST"])
+@login_required
+@_perm_any(STORE_MANAGE)
+def fixed_asset_mobile_settings():
+    if request.method == "POST":
+        base = (request.form.get("base_url") or "").strip().rstrip("/")
+        parsed = urlparse(base)
+        if base and (len(base) > 240 or parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment or parsed.path not in {"", "/"}):
+            flash("أدخل عنوان الخادم مثل https://portal.example.org دون مسار أو معلومات دخول.", "danger")
+        else:
+            row = SystemSetting.query.filter_by(key="INV_FIXED_ASSET_QR_BASE_URL").first()
+            if row is None:
+                row = SystemSetting(key="INV_FIXED_ASSET_QR_BASE_URL")
+                db.session.add(row)
+            row.value = base
+            _audit("INV_FIXED_ASSET_QR_SETTINGS", "تحديث عنوان QR للهاتف", "SYSTEM_SETTING", None)
+            db.session.commit()
+            flash("تم حفظ عنوان QR. أعد طباعة الملصقات إذا تغير عنوان الخادم.", "success")
+    base = _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "") or request.url_root.rstrip("/")
+    return render_template("portal/inventory/fixed_assets/mobile_settings.html", base_url=base,
+                           mobile_url=base + url_for("portal.fixed_asset_mobile"))
+
+
+@portal_bp.route("/inventory/fixed-assets/mobile-entry.png")
+@login_required
+@_perm_any(STORE_MANAGE)
+def fixed_asset_mobile_entry_qr():
+    base = _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "") or request.url_root.rstrip("/")
+    output = io.BytesIO()
+    qrcode.make(base + url_for("portal.fixed_asset_mobile")).save(output, format="PNG")
+    output.seek(0)
+    response = send_file(output, mimetype="image/png")
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def _next_asset_tag() -> str:
     prefix = re.sub(r"[^A-Za-z0-9_-]", "", _system_setting("INV_FIXED_ASSET_PREFIX", "FA")) or "FA"
     existing = {
@@ -282,6 +343,9 @@ def _asset_values(source) -> dict:
 
 
 def _apply_asset_values(asset: InvFixedAsset, values: dict):
+    if asset.id and InvAssetDocumentLine.query.filter_by(asset_id=asset.id).first():
+        if any(values.get(key) != getattr(asset, key) for key in ("custodian_user_id", "lifecycle_status", "is_active")):
+            raise ValueError("الأصل مرتبط بمستندات عهدة؛ استخدم حركة عهدة لتغيير الموظف أو إسقاط الأصل.")
     duplicate = (
         InvFixedAsset.query
         .filter(func.lower(InvFixedAsset.asset_tag) == values["asset_tag"].casefold())
@@ -484,9 +548,9 @@ def fixed_asset_new():
 
 @portal_bp.route("/inventory/fixed-assets/assets/<int:asset_id>")
 @login_required
-@_perm_any(STORE_READ, STORE_MANAGE)
 def fixed_asset_view(asset_id: int):
     asset = InvFixedAsset.query.get_or_404(asset_id)
+    _require_asset_access(asset)
     history = (
         InvFixedAssetEntry.query
         .filter(InvFixedAssetEntry.asset_id == asset.id)
@@ -505,6 +569,7 @@ def fixed_asset_view(asset_id: int):
         history=history,
         active_cycles=active_cycles,
         can_manage=current_user.has_perm(STORE_MANAGE),
+        custody_history=InvAssetDocument.query.join(InvAssetDocumentLine).filter(InvAssetDocumentLine.asset_id == asset.id).order_by(InvAssetDocument.id.desc()).all(),
     )
 
 
@@ -542,6 +607,9 @@ def fixed_asset_edit(asset_id: int):
 @_perm_any(STORE_MANAGE)
 def fixed_asset_toggle(asset_id: int):
     asset = InvFixedAsset.query.get_or_404(asset_id)
+    if InvAssetDocumentLine.query.filter_by(asset_id=asset.id).first():
+        flash("الأصل مرتبط بعهدة موثقة؛ استخدم حركة إسقاط العهدة.", "warning")
+        return redirect(url_for("portal.fixed_asset_view", asset_id=asset.id))
     asset.is_active = not asset.is_active
     asset.updated_by_id = current_user.id
     asset.updated_at = datetime.utcnow()
@@ -558,9 +626,9 @@ def fixed_asset_toggle(asset_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/assets/<int:asset_id>/qr.png")
 @login_required
-@_perm_any(STORE_READ, STORE_MANAGE)
 def fixed_asset_qr_png(asset_id: int):
     asset = InvFixedAsset.query.get_or_404(asset_id)
+    _require_asset_access(asset)
     target = _asset_qr_target(asset)
     qr_code = qrcode.QRCode(
         version=None,
@@ -581,15 +649,17 @@ def fixed_asset_qr_png(asset_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/qr/<token>")
 @login_required
-@_perm_any(STORE_READ, STORE_MANAGE)
 def fixed_asset_qr_resolve(token: str):
     asset = find_asset_by_identifier(token)
     if asset is None:
         abort(404)
+    _require_asset_access(asset)
     cycle_id = _optional_int(session.get("fixed_asset_active_cycle_id"))
     cycle = db.session.get(InvFixedAssetCycle, cycle_id) if cycle_id else None
-    if cycle and cycle.status == "ACTIVE" and current_user.has_perm(STORE_MANAGE):
+    if cycle and cycle.status == "ACTIVE" and _can_scan_cycle(cycle):
         return redirect(url_for("portal.fixed_asset_cycle_scan", cycle_id=cycle.id, code=asset.qr_token))
+    if current_user.has_perm(STORE_MANAGE) or InvFixedAssetCycleMember.query.filter_by(user_id=current_user.id).first():
+        return redirect(url_for("portal.fixed_asset_mobile", code=asset.qr_token))
     return redirect(url_for("portal.fixed_asset_view", asset_id=asset.id))
 
 
@@ -1163,9 +1233,10 @@ def fixed_asset_cycle_edit(cycle_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>")
 @login_required
-@_perm_any(STORE_READ, STORE_MANAGE)
 def fixed_asset_cycle_view(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    if not (current_user.has_perm(STORE_READ) or _can_scan_cycle(cycle)):
+        abort(403)
     status = (request.args.get("status") or "").strip().upper()
     search = (request.args.get("q") or "").strip()
     query = InvFixedAssetEntry.query.filter(InvFixedAssetEntry.cycle_id == cycle.id).join(InvFixedAsset)
@@ -1194,6 +1265,7 @@ def fixed_asset_cycle_view(cycle_id: int):
         recent_scans=recent_scans,
         selected={"q": search, "status": status},
         can_manage=current_user.has_perm(STORE_MANAGE),
+        can_scan=_can_scan_cycle(cycle),
         can_export=current_user.has_perm(STORE_EXPORT) or current_user.has_perm(STORE_MANAGE),
     )
 
@@ -1220,9 +1292,10 @@ def fixed_asset_cycle_refresh(cycle_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/scan", methods=["GET", "POST"])
 @login_required
-@_perm_any(STORE_MANAGE)
 def fixed_asset_cycle_scan(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    if not _can_scan_cycle(cycle):
+        abort(403)
     if cycle.status != "ACTIVE":
         flash("هذه الدورة مغلقة ولا تقبل عمليات جرد جديدة.", "warning")
         return redirect(url_for("portal.fixed_asset_cycle_view", cycle_id=cycle.id))
@@ -1292,9 +1365,10 @@ def fixed_asset_cycle_scan(cycle_id: int):
 
 @portal_bp.route("/inventory/fixed-assets/cycles/<int:cycle_id>/scan/lookup")
 @login_required
-@_perm_any(STORE_MANAGE)
 def fixed_asset_cycle_lookup(cycle_id: int):
     cycle = InvFixedAssetCycle.query.get_or_404(cycle_id)
+    if not _can_scan_cycle(cycle):
+        abort(403)
     if cycle.status != "ACTIVE":
         return jsonify({"ok": False, "message": "دورة الجرد مغلقة."}), 409
     asset = find_asset_by_identifier(request.args.get("code"))
@@ -1434,4 +1508,13 @@ def fixed_asset_cycle_export(cycle_id: int):
             entry.note or "",
         ])
     _style_worksheet(sheet, {2: 28, 3: 24, 6: 28, 9: 25, 10: 28, 14: 28, 15: 28, 22: 35})
+    from services.asset_custody import KINDS, STATUSES
+    approvals = workbook.create_sheet("اعتماد الموظفين والعهد")
+    approvals.append(["المستند", "النوع", "الموظف", "الحالة", "الأصل", "قرار الموظف", "ملاحظات الموظف", "وقت المراجعة", "وقت الإصدار"])
+    for doc in InvAssetDocument.query.filter_by(cycle_id=cycle.id).order_by(InvAssetDocument.id).all():
+        for line in doc.lines:
+            approvals.append([doc.id, KINDS[doc.kind], doc.employee.full_name, STATUSES[doc.status],
+                              line.snapshot["tag"], {"PENDING": "لم يراجع", "ACCEPT": "موافق", "OBJECT": "اعتراض"}.get(line.decision, line.decision),
+                              line.employee_note or "", doc.reviewed_at, doc.issued_at])
+    _style_worksheet(approvals, {3: 28, 7: 40})
     return _workbook_response(workbook, f"fixed-asset-inventory-{cycle.code}.xlsx")

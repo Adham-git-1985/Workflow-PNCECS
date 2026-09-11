@@ -1,0 +1,13 @@
+{% extends "portal/inventory/base.html" %}
+{% block inv_content %}
+<h4>حركة عهدة — {{ asset.label }}</h4>
+<p>الموظف الحالي: {{ asset.custodian.full_name if asset.custodian else 'لا يوجد' }} · {{ asset.location_label }}</p>
+<form method="post" class="card card-body gap-3">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label>نوع الحركة<select name="kind" class="form-select" required>{% for key in ['ASSIGN','TRANSFER','RETURN','DISPOSE'] %}<option value="{{ key }}">{{ kinds[key] }}</option>{% endfor %}</select></label>
+<label>الموظف المستلم (للإسناد والنقل)<select name="employee_id" class="form-select"><option value="">اختر الموظف</option>{% for user in users %}<option value="{{ user.id }}">{{ user.full_name }}</option>{% endfor %}</select></label>
+<label>السبب / مرجع القرار<textarea name="reason" class="form-control" required rows="3" maxlength="4000"></textarea></label>
+<div class="alert alert-info">الإسناد والنقل يُرسلان إلى الموظف المستلم للاعتماد، ثم يصدرهما المسؤول. الإرجاع والإسقاط يُنفذان عند حفظ الحركة ويُشعر بهما الموظف.</div>
+<button class="btn btn-primary">حفظ الحركة</button>
+</form>
+{% endblock %}
