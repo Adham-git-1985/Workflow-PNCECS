@@ -16,6 +16,12 @@ depends_on = None
 
 
 def upgrade():
+    # The application performs a runtime ``create_all`` sync for SQLite before
+    # Alembic runs.  In that deployment mode these tables may already exist;
+    # treat the migration as applied instead of failing on CREATE TABLE.
+    if sa.inspect(op.get_bind()).has_table("hr_attendance_schedule_plan"):
+        return
+
     op.create_table(
         "hr_attendance_schedule_plan",
         sa.Column("id", sa.Integer(), nullable=False),
