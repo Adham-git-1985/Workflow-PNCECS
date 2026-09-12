@@ -1,5 +1,6 @@
 import json
 import unittest
+from urllib.parse import unquote
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -515,6 +516,9 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(pdf_response.mimetype, "application/pdf")
         self.assertEqual(word_response.status_code, 200)
         self.assertIn("wordprocessingml", word_response.mimetype)
+        employee_name = self.employee.full_name or self.employee.name or self.employee.email
+        self.assertIn(f"{employee_name} - إجازة.pdf", unquote(pdf_response.headers["Content-Disposition"]))
+        self.assertIn(f"{employee_name} - إجازة.docx", unquote(word_response.headers["Content-Disposition"]))
 
     def test_permission_official_forms_enforce_request_visibility(self):
         row = self._permission()
@@ -528,6 +532,11 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             response = client.get(f"/portal/hr/me/permissions/{row.id}/form.{extension}")
             self.assertEqual(response.status_code, 200)
             self.assertIn("no-store", response.headers["Cache-Control"])
+            employee_name = self.employee.full_name or self.employee.name or self.employee.email
+            self.assertIn(
+                f"{employee_name} - مغادرة.{extension}",
+                unquote(response.headers["Content-Disposition"]),
+            )
         self.assertEqual(client.get(f"/portal/hr/me/permissions/{row.id}/form.exe").status_code, 404)
         # No workflow assignment grants this manager visibility yet.
         self._login(client, self.manager.id)

@@ -12,6 +12,7 @@ from services.official_request_forms import (
     build_permission_request_docx,
     build_permission_request_pdf,
     LEAVE_TEMPLATE,
+    official_form_filename,
 )
 
 
@@ -69,8 +70,12 @@ def _assert_valid_docx(content: bytes):
     assert any(name.startswith("word/media/") for name in names)
     document = Document(BytesIO(content))
     assert document.sections
-    # The filled official page is anchored so Word cannot reflow Arabic fields.
-    assert document.element.xpath('//wp:anchor[@behindDoc="1"]')
+    # The page artwork uses a schema-valid page anchor and cannot be reflowed.
+    anchors = document.element.xpath('//wp:anchor')
+    assert anchors and not document.element.xpath('//wp:inline')
+    children = [node.tag.rsplit('}', 1)[-1] for node in anchors[0]]
+    assert children[:4] == ['simplePos', 'positionH', 'positionV', 'extent']
+    assert children.index('wrapNone') < children.index('docPr')
 
 
 def test_supply_request_generates_printable_pdf_and_word_form():
@@ -115,8 +120,12 @@ def test_long_reason_is_carried_in_full_to_an_attachment():
             assert text.count(token) == 1
 
 
-def test_permission_generates_reference_form_with_editable_word_values():
+def test_permission_generates_reference_form_in_pdf_and_word():
     data = dict(employee_no='25001', employee_name='Employee', request_date='2026/09/12',
                 day='Saturday', from_time='14:00', to_time='15:00', department='HR')
     _assert_valid_pdf(build_permission_request_pdf(data), '25001')
     _assert_valid_docx(build_permission_request_docx(data))
+
+
+def test_official_filename_keeps_arabic_and_removes_windows_reserved_characters():
+    assert official_form_filename('أحمد/محمد:علي', 'طلب المواد', 'DOCX') == 'أحمد محمد علي - طلب المواد.docx'

@@ -1,5 +1,6 @@
 import json
 import unittest
+from urllib.parse import unquote
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
@@ -133,6 +134,9 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(pdf_response.mimetype, "application/pdf")
         self.assertEqual(word_response.status_code, 200)
         self.assertIn("wordprocessingml", word_response.mimetype)
+        employee_name = self.employee.full_name or self.employee.name or self.employee.email
+        self.assertIn(f"{employee_name} - طلب المواد.pdf", unquote(pdf_response.headers["Content-Disposition"]))
+        self.assertIn(f"{employee_name} - طلب المواد.docx", unquote(word_response.headers["Content-Disposition"]))
 
     def test_requester_can_search_the_catalogue_from_the_material_request_form(self):
         self._login(self.employee.id)

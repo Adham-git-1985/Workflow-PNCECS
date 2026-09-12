@@ -90,6 +90,7 @@ from services.official_request_forms import (
     build_leave_request_pdf,
     build_permission_request_docx,
     build_permission_request_pdf,
+    official_form_filename,
 )
 from services.employee_attachment_archive import (
     archive_employee_attachment_deletion,
@@ -16202,11 +16203,12 @@ def hr_leave_request_form_pdf(req_id: int):
     row = HRLeaveRequest.query.get_or_404(req_id)
     if not _can_access_leave_form(row):
         abort(403)
+    payload = _leave_request_form_payload(row)
     response = send_file(
-        BytesIO(build_leave_request_pdf(_leave_request_form_payload(row))),
+        BytesIO(build_leave_request_pdf(payload)),
         mimetype="application/pdf",
         as_attachment=request.args.get("download") == "1",
-        download_name=f"طلب إجازة - {row.id}.pdf",
+        download_name=official_form_filename(payload["employee_name"], "إجازة", "pdf"),
         max_age=0,
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -16220,11 +16222,12 @@ def hr_leave_request_form_docx(req_id: int):
     row = HRLeaveRequest.query.get_or_404(req_id)
     if not _can_access_leave_form(row):
         abort(403)
+    payload = _leave_request_form_payload(row)
     response = send_file(
-        BytesIO(build_leave_request_docx(_leave_request_form_payload(row))),
+        BytesIO(build_leave_request_docx(payload)),
         mimetype=OFFICIAL_FORM_DOCX_MIME,
         as_attachment=True,
-        download_name=f"طلب إجازة - {row.id}.docx",
+        download_name=official_form_filename(payload["employee_name"], "إجازة", "docx"),
         max_age=0,
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -16264,11 +16267,12 @@ def hr_permission_request_form(req_id: int, form_format: str):
     if not (row.user_id == current_user.id or can_view_hr_request(current_user, KIND_PERMISSION, row.id)):
         abort(403)
     builder = build_permission_request_pdf if form_format == "pdf" else build_permission_request_docx
+    payload = _permission_request_form_payload(row)
     response = send_file(
-        BytesIO(builder(_permission_request_form_payload(row))),
+        BytesIO(builder(payload)),
         mimetype="application/pdf" if form_format == "pdf" else OFFICIAL_FORM_DOCX_MIME,
         as_attachment=form_format == "docx" or request.args.get("download") == "1",
-        download_name=f"طلب مغادرة - {row.id}.{form_format}",
+        download_name=official_form_filename(payload["employee_name"], "مغادرة", form_format),
         max_age=0,
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"

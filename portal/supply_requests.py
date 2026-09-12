@@ -31,6 +31,7 @@ from services.official_request_forms import (
     DOCX_MIME,
     build_supply_request_docx,
     build_supply_request_pdf,
+    official_form_filename,
 )
 
 
@@ -483,11 +484,12 @@ def inventory_employee_request_form_pdf(request_id):
     row = InvEmployeeRequest.query.get_or_404(request_id)
     if not _can_view(row):
         abort(403)
+    payload = _supply_form_payload(row)
     response = send_file(
-        BytesIO(build_supply_request_pdf(_supply_form_payload(row))),
+        BytesIO(build_supply_request_pdf(payload)),
         mimetype="application/pdf",
         as_attachment=request.args.get("download") == "1",
-        download_name=f"طلب لوازم من المستودع - {row.id}.pdf",
+        download_name=official_form_filename(payload["requester_name"], "طلب المواد", "pdf"),
         max_age=0,
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -500,11 +502,12 @@ def inventory_employee_request_form_docx(request_id):
     row = InvEmployeeRequest.query.get_or_404(request_id)
     if not _can_view(row):
         abort(403)
+    payload = _supply_form_payload(row)
     response = send_file(
-        BytesIO(build_supply_request_docx(_supply_form_payload(row))),
+        BytesIO(build_supply_request_docx(payload)),
         mimetype=DOCX_MIME,
         as_attachment=True,
-        download_name=f"طلب لوازم من المستودع - {row.id}.docx",
+        download_name=official_form_filename(payload["requester_name"], "طلب المواد", "docx"),
         max_age=0,
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"

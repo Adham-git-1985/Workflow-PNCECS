@@ -6,6 +6,7 @@ only placeholder ink inside explicitly allocated value boxes is covered.
 from __future__ import annotations
 
 import os
+import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
@@ -17,6 +18,7 @@ import fitz
 from bidi.algorithm import get_display
 from docx import Document
 from docx.oxml import parse_xml
+from docx.oxml.ns import qn
 from docx.shared import Pt
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -35,6 +37,18 @@ _RESHAPER = arabic_reshaper.ArabicReshaper(configuration={"support_ligatures": F
 
 def _plain(value, default=""):
     return str(value if value is not None else "").strip() or default
+
+
+def official_form_filename(employee_name, form_label, extension):
+    """Return an Arabic, Windows-safe download name based on the employee."""
+    def clean(value, fallback):
+        value = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", _plain(value, fallback))
+        return re.sub(r"\s+", " ", value).strip(" .") or fallback
+
+    name = clean(employee_name, "موظف")[:120].rstrip()
+    label = clean(form_label, "نموذج")[:50].rstrip()
+    suffix = re.sub(r"[^a-z0-9]", "", _plain(extension).lower()) or "pdf"
+    return f"{name} - {label}.{suffix}"
 
 
 def _format_date(value):
@@ -277,14 +291,32 @@ def _build_docx(template, pages):
             paragraph.paragraph_format.line_spacing = Pt(1)
             paragraph.paragraph_format.page_break_before = page_index > 0
             png = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False).tobytes("png")
-            inline = paragraph.add_run().add_picture(BytesIO(png), width=Pt(width), height=Pt(height))._inline
-            # Anchor each rendered page to its physical page, outside text flow.
+            inline = paragraph.add_run().add_picture(
+                BytesIO(png), width=Pt(width), height=Pt(height - 2),
+            )._inline
+            # Reuse Word's own image nodes and only change their container to a
+            # schema-valid page anchor. Child order is significant to Word.
             anchor = parse_xml('''<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
-              distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="1" locked="1" layoutInCell="1" allowOverlap="1">
-              <wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH>
-              <wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:wrapNone/></wp:anchor>''')
-            for child in list(inline):
-                anchor.append(child)
+              distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0"
+              behindDoc="1" locked="1" layoutInCell="1" allowOverlap="1">
+              <wp:simplePos x="0" y="0"/>
+              <wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH>
+              <wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV>
+            </wp:anchor>''')
+            for tag in ("extent", "effectExtent"):
+                child = inline.find(qn(f"wp:{tag}"))
+                if child is not None:
+                    anchor.append(child)
+            anchor.append(parse_xml(
+                '<wp:wrapNone xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"/>',
+            ))
+            for tag in ("docPr", "cNvGraphicFramePr"):
+                child = inline.find(qn(f"wp:{tag}"))
+                if child is not None:
+                    anchor.append(child)
+            graphic = inline.find(qn("a:graphic"))
+            if graphic is not None:
+                anchor.append(graphic)
             inline.getparent().replace(inline, anchor)
     doc.core_properties.title = "نموذج رسمي"
     doc.core_properties.author = "نظام مسار"
