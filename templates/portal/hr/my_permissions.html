@@ -78,6 +78,8 @@
                     <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_approval_permission', req_id=r.id) }}">
                       <i class="bi bi-diagram-3"></i> متابعة الاعتماد
                     </a>
+                    <a class="btn btn-sm btn-outline-danger" target="_blank" rel="noopener" href="{{ url_for('portal.hr_permission_request_form', req_id=r.id, form_format='pdf') }}">PDF</a>
+                    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_permission_request_form', req_id=r.id, form_format='docx') }}">Word</a>
                     {% if st in ['SUBMITTED', 'DRAFT'] and can_create %}
                       <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_permission_request_edit', req_id=r.id) }}">
                         <i class="bi bi-pencil"></i> تعديل

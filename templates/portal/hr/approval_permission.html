@@ -2,6 +2,10 @@
 {% block title %}مراجعة طلب مغادرة{% endblock %}
 
 {% block hr_content %}
+<div class="d-flex gap-2 mb-3">
+  <a class="btn btn-outline-danger" target="_blank" rel="noopener" href="{{ url_for('portal.hr_permission_request_form', req_id=r.id, form_format='pdf') }}">نموذج المغادرة PDF</a>
+  <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_permission_request_form', req_id=r.id, form_format='docx') }}">نموذج المغادرة Word</a>
+</div>
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <h4 class="mb-1"><i class="bi bi-door-open"></i> {% if is_requester %}متابعة{% else %}مراجعة{% endif %} طلب مغادرة #{{ r.id }}</h4>
   <div class="text-muted">{% if is_requester %}تابع حالة طلبك ومراحل اعتماده.{% else %}تحقق من البيانات ثم اعتمد أو ارفض.{% endif %}</div>

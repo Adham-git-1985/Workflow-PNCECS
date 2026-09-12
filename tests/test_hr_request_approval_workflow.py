@@ -516,6 +516,35 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(word_response.status_code, 200)
         self.assertIn("wordprocessingml", word_response.mimetype)
 
+    def test_permission_official_forms_enforce_request_visibility(self):
+        row = self._permission()
+        for user in (self.employee, self.manager):
+            if not UserPermission.query.filter_by(user_id=user.id, key="PORTAL_READ").first():
+                db.session.add(UserPermission(user_id=user.id, key="PORTAL_READ", is_allowed=True))
+        db.session.commit()
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+        for extension in ("pdf", "docx"):
+            response = client.get(f"/portal/hr/me/permissions/{row.id}/form.{extension}")
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertEqual(client.get(f"/portal/hr/me/permissions/{row.id}/form.exe").status_code, 404)
+        # No workflow assignment grants this manager visibility yet.
+        self._login(client, self.manager.id)
+        with patch("portal.routes.can_view_hr_request", return_value=False):
+            for extension in ("pdf", "docx"):
+                self.assertEqual(client.get(f"/portal/hr/me/permissions/{row.id}/form.{extension}").status_code, 403)
+
+    def test_pending_approval_form_does_not_print_candidate_names_as_signatories(self):
+        from portal.routes import _leave_form_step_name
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        step = current_step(KIND_LEAVE, row.id)
+        self.assertEqual(_leave_form_step_name(step), "")
+        decide_request(KIND_LEAVE, row, self.manager, "APPROVE")
+        db.session.commit()
+        self.assertEqual(_leave_form_step_name(step), self.manager.full_name or self.manager.name)
+
     def test_view_all_and_approve_grant_global_leave_and_permission_approval(self):
         db.session.add_all([
             RolePermission(role="GENERAL-SECRETARY", permission=permission)

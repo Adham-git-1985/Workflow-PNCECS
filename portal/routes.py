@@ -88,6 +88,8 @@ from services.official_request_forms import (
     DOCX_MIME as OFFICIAL_FORM_DOCX_MIME,
     build_leave_request_docx,
     build_leave_request_pdf,
+    build_permission_request_docx,
+    build_permission_request_pdf,
 )
 from services.employee_attachment_archive import (
     archive_employee_attachment_deletion,
@@ -16114,10 +16116,9 @@ def _leave_form_step(steps, stage_code):
 def _leave_form_step_name(step):
     if not step:
         return ""
-    if step.decided_by:
+    if (step.status or "").upper() in ("APPROVED", "REJECTED") and step.decided_by:
         return step.decided_by.full_name or step.decided_by.name or step.decided_by.email or ""
-    names = approval_candidate_names_map([step]).get(step.id, []) if step.id else []
-    return "، ".join(names)
+    return ""
 
 
 def _leave_form_decision(step):
@@ -16168,7 +16169,10 @@ def _leave_request_form_payload(row: HRLeaveRequest) -> dict:
         "start_date": row.start_date,
         "end_date": row.end_date,
         "days": f"{int(row.days or 0)} يوم",
-        "reason": row.travel_purpose or row.note or getattr(leave_type, "name_ar", None) or "-",
+        "reason": " - ".join(dict.fromkeys(value for value in (
+            "خارجية" if external else "داخلية",
+            getattr(leave_type, "name_ar", None), row.travel_purpose or row.note,
+        ) if value)),
         "entitlement": entitlement,
         "used": used,
         "remaining": remaining,
@@ -16225,6 +16229,51 @@ def hr_leave_request_form_docx(req_id: int):
     )
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
+
+def _permission_request_form_payload(row: HRPermissionRequest) -> dict:
+    employee = db.session.get(EmployeeFile, row.user_id)
+    department = getattr(employee, "department", None)
+    if department is None and row.user.department_id:
+        department = db.session.get(Department, row.user.department_id)
+    day = _parse_yyyy_mm_dd(row.day)
+    steps = hr_request_approval_steps(KIND_PERMISSION, row.id)
+    return {
+        "employee_no": getattr(employee, "employee_no", ""),
+        "employee_name": row.user.full_name or row.user.name or row.user.email,
+        "department": getattr(department, "name_ar", ""),
+        "day": _ARABIC_WEEKDAYS.get(day.weekday(), "") if day else "",
+        "request_date": row.day,
+        "from_time": row.from_time,
+        "to_time": row.to_time,
+        "destination": " - ".join(value for value in (
+            getattr(row.permission_type, "name_ar", ""), row.note,
+        ) if value),
+        "manager_name": _leave_form_step_name(_leave_form_step(steps, "DIRECT_MANAGER")),
+        # A generic HR reviewer is not necessarily the general director.
+        "director_name": _leave_form_step_name(_leave_form_step(steps, "GENERAL_DIRECTOR")),
+    }
+
+
+@portal_bp.route("/hr/me/permissions/<int:req_id>/form.<form_format>")
+@login_required
+@_perm(PORTAL_READ)
+def hr_permission_request_form(req_id: int, form_format: str):
+    if form_format not in ("pdf", "docx"):
+        abort(404)
+    row = HRPermissionRequest.query.get_or_404(req_id)
+    if not (row.user_id == current_user.id or can_view_hr_request(current_user, KIND_PERMISSION, row.id)):
+        abort(403)
+    builder = build_permission_request_pdf if form_format == "pdf" else build_permission_request_docx
+    response = send_file(
+        BytesIO(builder(_permission_request_form_payload(row))),
+        mimetype="application/pdf" if form_format == "pdf" else OFFICIAL_FORM_DOCX_MIME,
+        as_attachment=form_format == "docx" or request.args.get("download") == "1",
+        download_name=f"طلب مغادرة - {row.id}.{form_format}",
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
 
 @portal_bp.route("/hr/approvals")
 @login_required

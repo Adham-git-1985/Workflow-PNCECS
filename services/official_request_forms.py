@@ -1,368 +1,317 @@
-"""Printable Arabic Word/PDF forms for employee supply and leave requests.
+"""Official source artwork with bounded, editable RTL fields in PDF and Word.
 
-The PDF versions keep the supplied official forms as their background.  The
-system only writes the approved request values in their allocated spaces;
-signatures are intentionally left as physical-signature lines.
+Coordinates are top-origin PDF points. Both exporters consume the same layout;
+only placeholder ink inside explicitly allocated value boxes is covered.
 """
-
 from __future__ import annotations
 
 import os
 import unicodedata
+from dataclasses import dataclass
 from datetime import date
 from io import BytesIO
 from pathlib import Path
 
+import arabic_reshaper
 import fitz
+from bidi.algorithm import get_display
 from docx import Document
-from docx.enum.section import WD_ORIENT
-from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
-from docx.shared import Mm, Pt
+from docx.oxml import parse_xml
+from docx.shared import Pt
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4, letter
-
-from utils.corr_stamps import _shape_arabic
-
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FORM_TEMPLATE_DIR = PROJECT_ROOT / "assets" / "templates" / "forms"
-SUPPLY_TEMPLATE = FORM_TEMPLATE_DIR / "supply_request_template.pdf"
 LEAVE_TEMPLATE = FORM_TEMPLATE_DIR / "leave_request_template.pdf"
-WINDOWS_FONT_DIR = Path(os.environ.get("WINDIR", r"C:\\Windows")) / "Fonts"
-FONT_DIR = PROJECT_ROOT / "assets" / "fonts"
-REGULAR_FONT = "OfficialFormsSakkal"
-BOLD_FONT = "OfficialFormsSakkalBold"
+SUPPLY_TEMPLATE = FORM_TEMPLATE_DIR / "supply_request_template.pdf"
+PERMISSION_TEMPLATE = FORM_TEMPLATE_DIR / "permission_request_template.png"
 FONT_NAME = "Sakkal Majalla"
+REGULAR_FONT = "OfficialFormsSakkal"
+_RESHAPER = arabic_reshaper.ArabicReshaper(configuration={"support_ligatures": False})
 
 
-def _plain(value, default: str = "-") -> str:
-    value = str(value or "").strip()
-    return value or default
+def _plain(value, default=""):
+    return str(value if value is not None else "").strip() or default
 
 
-def _shape(value) -> str:
-    raw = unicodedata.normalize("NFC", _plain(value))
-    try:
-        import arabic_reshaper
-        from bidi.algorithm import get_display
-
-        return get_display(arabic_reshaper.reshape(raw))
-    except Exception:
-        return _shape_arabic(raw)
+def _format_date(value):
+    return value.strftime("%Y/%m/%d") if isinstance(value, date) else _plain(value).replace("-", "/")
 
 
-def _register_fonts() -> tuple[str, str]:
-    registered = set(pdfmetrics.getRegisteredFontNames())
-    regular_path = WINDOWS_FONT_DIR / "majalla.ttf"
-    bold_path = WINDOWS_FONT_DIR / "majallab.ttf"
-    if not regular_path.is_file() or not bold_path.is_file():
-        regular_path = FONT_DIR / "DejaVuSans.ttf"
-        bold_path = FONT_DIR / "DejaVuSans-Bold.ttf"
-    if REGULAR_FONT not in registered:
-        pdfmetrics.registerFont(TTFont(REGULAR_FONT, str(regular_path)))
-    if BOLD_FONT not in registered:
-        pdfmetrics.registerFont(TTFont(BOLD_FONT, str(bold_path)))
-    return REGULAR_FONT, BOLD_FONT
+def _shape(value):
+    return get_display(_RESHAPER.reshape(unicodedata.normalize("NFC", _plain(value))))
 
 
-def _draw_right(pdf: canvas.Canvas, text, right: float, y: float, *, size: float = 10, bold: bool = False):
-    regular, bold_font = _register_fonts()
-    pdf.setFont(bold_font if bold else regular, size)
-    pdf.drawRightString(right, y, _shape(text))
+def _register_fonts():
+    if REGULAR_FONT not in pdfmetrics.getRegisteredFontNames():
+        path = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts" / "majalla.ttf"
+        if not path.is_file():
+            path = PROJECT_ROOT / "assets/fonts/DejaVuSans.ttf"
+        pdfmetrics.registerFont(TTFont(REGULAR_FONT, str(path)))
 
 
-def _draw_center(pdf: canvas.Canvas, text, center: float, y: float, *, size: float = 10, bold: bool = False):
-    regular, bold_font = _register_fonts()
-    pdf.setFont(bold_font if bold else regular, size)
-    pdf.drawCentredString(center, y, _shape(text))
+@dataclass(frozen=True)
+class Field:
+    key: str
+    box: tuple[float, float, float, float]
+    text: str
+    size: float = 12
+    center: bool = False
+    clear: bool = True
 
 
-def _merge_template(template_path: Path, overlay: bytes) -> bytes:
-    source = fitz.open(str(template_path))
-    layer = fitz.open(stream=overlay, filetype="pdf")
-    try:
-        source[0].show_pdf_page(source[0].rect, layer, 0, overlay=True)
-        return source.tobytes(garbage=4, deflate=True)
-    finally:
-        layer.close()
-        source.close()
+def _field(data, key, box, **kwargs):
+    value = data.get(key)
+    if "date" in key:
+        value = _format_date(value)
+    return Field(key, box, _plain(value), **kwargs)
 
 
-def _overlay(page_size) -> tuple[canvas.Canvas, BytesIO]:
-    output = BytesIO()
-    pdf = canvas.Canvas(output, pagesize=page_size)
-    pdf.setFillColorRGB(0, 0, 0)
-    return pdf, output
+def _leave_fields(data):
+    # All boxes exclude printed labels, title borders and signature rules.
+    specs = {
+        "employee_no": (335, 198, 466, 214), "request_date": (350, 218, 466, 235),
+        "employee_name": (317, 285, 480, 300), "job_title": (75, 285, 200, 300),
+        "start_date": (317, 305, 400, 322), "days": (75, 305, 190, 322),
+        "reason": (317, 327, 443, 342),
+        "entitlement": (409, 414, 521, 429), "used": (263, 414, 309, 429),
+        "remaining": (65, 414, 128, 429),
+        "manager_decision": (308, 506, 418, 522), "manager_days": (308, 527, 417, 543),
+        "covering_employee": (308, 547, 423, 563),
+        "secretary_decision": (57, 506, 168, 522),
+        "leave_day": (300, 617, 366, 632), "return_day": (300, 638, 366, 653),
+        "return_date": (158, 638, 260, 653),
+    }
+    fields = [_field(data, key, box) for key, box in specs.items()]
+    fields += [_field(data, "request_date", (72, 327, 192, 342)),
+               _field(data, "start_date", (158, 617, 260, 632))]
+    # Names above the dotted signature line leave the line itself for handwriting.
+    for key, box in [("manager_name", (309, 562, 428, 574)),
+                     ("secretary_name", (51, 562, 190, 574)),
+                     ("employee_name", (381, 671, 520, 682)),
+                     ("manager_name", (228, 671, 363, 682)),
+                     ("secretary_name", (54, 671, 206, 682))]:
+        fields.append(_field(data, key, box, size=10, center=True, clear=False))
+    # Keep original title and its mixed fonts; specify type within the reason field.
+    return fields
 
 
-def _format_date(value) -> str:
-    if isinstance(value, date):
-        return value.strftime("%Y/%m/%d")
-    return _plain(value, "")
+def _supply_pages(data):
+    lines = list(data.get("lines") or [])
+    pages = []
+    for start in range(0, max(1, len(lines)), 8):
+        fields = [_field(data, key, box) for key, box in {
+            "organization": (91, 178, 395, 197), "directorate": (91, 206, 395, 225),
+            "request_date": (396, 232, 476, 247), "request_no": (96, 252, 123, 267),
+            "requester_name": (324, 535, 473, 551), "manager_name": (99, 535, 229, 551),
+            "requester_date": (324, 589, 495, 608),
+            "warehouse_note": (91, 654, 532, 672), "manager_note": (91, 677, 532, 694),
+        }.items()]
+        for index, line in enumerate(lines[start:start + 8]):
+            top = 298 + index * 23.7
+            values = dict(line, number=start + index + 1)
+            for key, left, right in [("number", 504, 539), ("item", 298, 498),
+                                     ("unit", 206, 292), ("quantity", 93, 200)]:
+                fields.append(_field(values, key, (left, top, right, top + 20),
+                                     size=11, center=key != "item", clear=False))
+        if data.get("warehouse_name"):
+            fields.append(Field("warehouse_name", (91, 706, 530, 722),
+                                "مدير المستودع: " + _plain(data["warehouse_name"]), size=11, clear=False))
+        if len(lines) > 8:
+            fields.append(Field("page", (280, 738, 340, 750),
+                                f"{start // 8 + 1} / {(len(lines) + 7) // 8}", size=9, center=True, clear=False))
+        pages.append(fields)
+    return pages
 
 
-def build_supply_request_pdf(data: dict) -> bytes:
-    """Fill the supplied ``نموذج طلب لوازم من المستودع`` PDF."""
-    if not SUPPLY_TEMPLATE.is_file():
-        raise FileNotFoundError(f"Supply request template is missing: {SUPPLY_TEMPLATE}")
-    pdf, output = _overlay(letter)
-    _draw_right(pdf, data.get("organization"), 397, 606, size=10)
-    _draw_right(pdf, data.get("directorate"), 397, 578, size=10)
-    _draw_right(pdf, _format_date(data.get("request_date")), 420, 551, size=10)
-    _draw_right(pdf, data.get("request_no"), 275, 524, size=10)
-
-    lines = list(data.get("lines") or [])[:8]
-    row_y = [495, 471, 447, 423, 399, 375, 351, 327]
-    for index, (line, y) in enumerate(zip(lines, row_y), start=1):
-        _draw_center(pdf, index, 522, y, size=9)
-        _draw_right(pdf, line.get("item"), 492, y, size=9)
-        _draw_center(pdf, line.get("unit"), 245, y, size=9)
-        _draw_center(pdf, line.get("quantity"), 145, y, size=9)
-
-    _draw_right(pdf, data.get("requester_name"), 488, 245, size=10)
-    _draw_right(pdf, data.get("requester_date"), 488, 194, size=10)
-    _draw_right(pdf, data.get("manager_name"), 280, 245, size=10)
-    _draw_right(pdf, data.get("warehouse_note"), 500, 112, size=9)
-    _draw_right(pdf, data.get("manager_note"), 500, 94, size=9)
-    pdf.save()
-    return _merge_template(SUPPLY_TEMPLATE, output.getvalue())
+def _permission_fields(data):
+    # Supplied scan is 995 x 620, placed at 0.6 pt per pixel (597 x 372 pt).
+    boxes = {"day": (429, 118, 490, 139), "request_date": (291, 118, 379, 140),
+             "employee_name": (343, 158, 494, 176), "department": (219, 158, 299, 176),
+             "employee_no": (79, 158, 135, 176), "destination": (461, 220, 527, 238),
+             "from_time": (375, 220, 449, 238), "to_time": (271, 220, 337, 238),
+             "manager_name": (402, 286, 529, 303), "director_name": (82, 286, 205, 303)}
+    return [_field(data, key, box, size=12, center=True,
+                   clear=key not in ("manager_name", "director_name")) for key, box in boxes.items()]
 
 
-def build_leave_request_pdf(data: dict) -> bytes:
-    """Fill the supplied ``اجازات`` form while preserving physical signatures."""
-    if not LEAVE_TEMPLATE.is_file():
-        raise FileNotFoundError(f"Leave request template is missing: {LEAVE_TEMPLATE}")
-    pdf, output = _overlay(A4)
-    # The reference title has a fixed internal/external label. Cover it only
-    # where the data differs, keeping the original border and letterhead.
-    pdf.setFillColorRGB(1, 1, 1)
-    # Cover the complete title box before replacing its internal/external label.
-    pdf.rect(90, 555, 390, 42, stroke=0, fill=1)
-    pdf.setFillColorRGB(0, 0, 0)
-    _draw_center(pdf, data.get("form_title"), 297, 571, size=17, bold=True)
-    _draw_right(pdf, data.get("employee_no"), 473, 639, size=10)
-    _draw_right(pdf, _format_date(data.get("request_date")), 470, 611, size=10)
-    _draw_right(pdf, data.get("employee_name"), 430, 550, size=10)
-    _draw_right(pdf, data.get("job_title"), 265, 550, size=10)
-    _draw_right(pdf, _format_date(data.get("start_date")), 460, 528, size=10)
-    _draw_right(pdf, data.get("days"), 270, 528, size=10)
-    _draw_right(pdf, _format_date(data.get("request_date")), 270, 507, size=10)
-    _draw_right(pdf, data.get("reason"), 455, 507, size=10)
-    _draw_right(pdf, data.get("entitlement"), 455, 441, size=10)
-    _draw_right(pdf, data.get("used"), 310, 421, size=10)
-    _draw_right(pdf, data.get("remaining"), 108, 421, size=10)
-    _draw_right(pdf, data.get("manager_decision"), 465, 325, size=10)
-    _draw_right(pdf, data.get("manager_days"), 465, 305, size=10)
-    _draw_right(pdf, data.get("covering_employee"), 465, 283, size=10)
-    _draw_right(pdf, data.get("manager_name"), 465, 261, size=10)
-    _draw_right(pdf, data.get("secretary_decision"), 210, 325, size=10)
-    _draw_right(pdf, data.get("secretary_name"), 210, 261, size=10)
-    _draw_right(pdf, data.get("leave_day"), 464, 216, size=10)
-    _draw_right(pdf, _format_date(data.get("start_date")), 300, 216, size=10)
-    _draw_right(pdf, data.get("return_day"), 464, 195, size=10)
-    _draw_right(pdf, _format_date(data.get("return_date")), 300, 195, size=10)
-    _draw_right(pdf, data.get("employee_name"), 470, 175, size=9)
-    _draw_right(pdf, data.get("manager_name"), 300, 175, size=9)
-    _draw_right(pdf, data.get("secretary_name"), 120, 175, size=9)
-    pdf.save()
-    return _merge_template(LEAVE_TEMPLATE, output.getvalue())
+def _source(template):
+    if template.suffix.lower() == ".pdf":
+        return fitz.open(str(template))
+    source = fitz.open()
+    page = source.new_page(width=597, height=372)
+    page.insert_image(page.rect, filename=str(template))
+    return source
 
 
-def _set_run_font(run, *, size: float = 12, bold: bool = False):
-    run.font.name = FONT_NAME
-    run.font.size = Pt(size)
-    run.font.bold = bold
-    properties = run._element.get_or_add_rPr()
-    fonts = properties.get_or_add_rFonts()
-    for attr in ("ascii", "hAnsi", "eastAsia", "cs"):
-        fonts.set(qn(f"w:{attr}"), FONT_NAME)
-    rtl = properties.find(qn("w:rtl"))
-    if rtl is None:
-        rtl = OxmlElement("w:rtl")
-        properties.append(rtl)
-    rtl.set(qn("w:val"), "1")
+def _background(source, fields):
+    result = fitz.open()
+    result.insert_pdf(source, from_page=0, to_page=0)
+    for field in fields:
+        if field.clear and field.text:
+            result[0].draw_rect(fitz.Rect(field.box), color=None, fill=(1, 1, 1), overlay=True)
+    return result
 
 
-def _set_rtl(paragraph, *, center: bool = False, size: float = 12, bold: bool = False):
-    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if center else WD_ALIGN_PARAGRAPH.RIGHT
-    paragraph.paragraph_format.space_after = Pt(1)
-    paragraph.paragraph_format.space_before = Pt(0)
-    paragraph.paragraph_format.line_spacing = 1
-    properties = paragraph._p.get_or_add_pPr()
-    bidi = properties.find(qn("w:bidi"))
-    if bidi is None:
-        bidi = OxmlElement("w:bidi")
-        properties.append(bidi)
-    bidi.set(qn("w:val"), "1")
-    for run in paragraph.runs:
-        _set_run_font(run, size=size, bold=bold)
+def _fit(field):
+    """Wrap and shrink to fit, never let a long value cover neighboring labels."""
+    _register_fonts()
+    width = field.box[2] - field.box[0] - 4
+    height = field.box[3] - field.box[1]
+    for size in [field.size - n * .5 for n in range(int((field.size - 7) * 2) + 1)]:
+        lines = []
+        current = ""
+        for word in field.text.split():
+            candidate = (current + " " + word).strip()
+            if current and pdfmetrics.stringWidth(_shape(candidate), REGULAR_FONT, size) > width:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        if current:
+            lines.append(current)
+        if len(lines) * size <= height and all(pdfmetrics.stringWidth(_shape(line), REGULAR_FONT, size) <= width for line in lines):
+            return size, lines
+    # Overflow is explicitly carried onto a continuation page, never truncated.
+    return None, []
 
 
-def _set_table_rtl(table):
-    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
-    props = table._tbl.tblPr
-    bidi = props.find(qn("w:bidiVisual"))
-    if bidi is None:
-        bidi = OxmlElement("w:bidiVisual")
-        props.append(bidi)
-    bidi.set(qn("w:val"), "1")
+def _prepared_pages(pages, width, height):
+    prepared = []
+    overflow = []
+    for fields in pages:
+        fitted = []
+        for field in fields:
+            if not field.text:
+                continue
+            size, lines = _fit(field)
+            if size is None:
+                overflow.append(field)
+                field = Field(field.key, field.box, f"({len(overflow)}) انظر المرفق", 9, field.center, field.clear)
+            fitted.append(field)
+        prepared.append(fitted)
+    # Continuations use readable full-width text, while the official first pages stay unchanged.
+    if overflow:
+        title = Field("continuation", (40, 25, width - 40, 45),
+                      "مرفق النموذج - استكمال البيانات", 14, center=True, clear=False)
+        continuation = [title]
+        top = 65
+        for number, field in enumerate(overflow, 1):
+            words = field.text.split()
+            while words:
+                chunk = []
+                while words and len(" ".join(chunk)) < 80:
+                    word = words.pop(0)
+                    if len(word) > 60:
+                        chunk.append(word[:60])
+                        words.insert(0, word[60:])
+                        break
+                    chunk.append(word)
+                if top + 45 > height - 45:
+                    prepared.append(continuation)
+                    continuation, top = [title], 65
+                continuation.append(Field("continuation", (40, top, width - 40, top + 40),
+                                          f"({number}) " + " ".join(chunk), 12, clear=False))
+                top += 42
+        prepared.append(continuation)
+    return prepared
 
 
-def _set_cell(cell, text, *, bold: bool = False, size: float = 10.5, shade: str | None = None):
-    cell.text = _plain(text, "")
-    cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-    for paragraph in cell.paragraphs:
-        _set_rtl(paragraph, center=True, size=size, bold=bold)
-    if shade:
-        props = cell._tc.get_or_add_tcPr()
-        element = OxmlElement("w:shd")
-        element.set(qn("w:fill"), shade)
-        props.append(element)
+def _build_pdf(template, pages):
+    with _source(template) as source:
+        width, height = source[0].rect.width, source[0].rect.height
+        pages = _prepared_pages(pages, width, height)
+        output = fitz.open()
+        for fields in pages:
+            continuation = fields and fields[0].key == "continuation"
+            if continuation:
+                output.new_page(width=width, height=height)
+            else:
+                with _background(source, fields) as background:
+                    output.insert_pdf(background)
+            stream = BytesIO()
+            pdf = canvas.Canvas(stream, pagesize=(width, height))
+            for field in fields:
+                size, lines = _fit(field)
+                if size is None:
+                    raise ValueError(f"Official form field cannot fit: {field.key}")
+                left, top, right, bottom = field.box
+                pdf.setFont(REGULAR_FONT, size)
+                baseline = height - top - (bottom - top - len(lines) * size) / 2 - size * .8
+                for line in lines:
+                    if field.center:
+                        pdf.drawCentredString((left + right) / 2, baseline, _shape(line))
+                    else:
+                        pdf.drawRightString(right - 2, baseline, _shape(line))
+                    baseline -= size
+            pdf.save()
+            with fitz.open(stream=stream.getvalue(), filetype="pdf") as layer:
+                output[-1].show_pdf_page(output[-1].rect, layer, 0)
+        result = output.tobytes(garbage=4, deflate=True)
+        output.close()
+        return result
 
 
-def _header_image(template_path: Path, *, height_ratio: float) -> BytesIO | None:
-    if not template_path.is_file():
-        return None
-    document = fitz.open(str(template_path))
-    try:
-        page = document[0]
-        clip = fitz.Rect(0, 0, page.rect.width, page.rect.height * height_ratio)
-        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=clip, alpha=False)
-        return BytesIO(pix.tobytes("png"))
-    finally:
-        document.close()
+def _build_docx(template, pages):
+    """Put the final official pages in Word without letting Word reflow them.
 
-
-def _new_document(template_path: Path, *, landscape: bool = False, header_ratio: float = 0.23) -> Document:
+    Word and LibreOffice shape Arabic and positioned text differently. Embedding
+    the already-filled page preserves every supplied font, border and RTL
+    position and keeps Word useful for printing and paper signatures.
+    """
+    rendered = _build_pdf(template, pages)
     doc = Document()
-    section = doc.sections[0]
-    if landscape:
-        section.orientation = WD_ORIENT.LANDSCAPE
-        section.page_width, section.page_height = section.page_height, section.page_width
-    section.top_margin = Mm(43)
-    section.bottom_margin = Mm(13)
-    section.left_margin = Mm(14)
-    section.right_margin = Mm(14)
-    section.header_distance = Mm(4)
-    section.footer_distance = Mm(5)
-    header_image = _header_image(template_path, height_ratio=header_ratio)
-    if header_image:
-        paragraph = section.header.paragraphs[0]
-        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        paragraph.add_run().add_picture(header_image, width=Mm(178 if not landscape else 260))
-    style = doc.styles["Normal"]
-    style.font.name = FONT_NAME
-    style.font.size = Pt(12)
-    return doc
-
-
-def _add_heading(doc: Document, text: str, *, size: float = 16):
-    paragraph = doc.add_paragraph()
-    paragraph.add_run(text)
-    _set_rtl(paragraph, center=True, size=size, bold=True)
-    return paragraph
-
-
-def _add_key_values(doc: Document, rows: list[tuple[str, str]], *, columns: int = 2):
-    table = doc.add_table(rows=0, cols=columns * 2)
-    table.style = "Table Grid"
-    _set_table_rtl(table)
-    for start in range(0, len(rows), columns):
-        cells = table.add_row().cells
-        for col, (label, value) in enumerate(rows[start:start + columns]):
-            # Word visual RTL means the value appears next to its label.
-            _set_cell(cells[col * 2], label, bold=True, size=10, shade="F1F1F1")
-            _set_cell(cells[col * 2 + 1], value, size=10)
-    return table
-
-
-def _add_signature_line(doc: Document, label: str, name: str):
-    paragraph = doc.add_paragraph()
-    paragraph.add_run(f"{label}: {_plain(name, '________________')}    التوقيع: __________________")
-    _set_rtl(paragraph, size=11, bold=True)
-
-
-def _docx_bytes(doc: Document, title: str) -> bytes:
-    doc.core_properties.title = title
+    with fitz.open(stream=rendered, filetype="pdf") as source:
+        width, height = source[0].rect.width, source[0].rect.height
+        section = doc.sections[0]
+        section.page_width, section.page_height = Pt(width), Pt(height)
+        section.top_margin = section.bottom_margin = Pt(0)
+        section.left_margin = section.right_margin = Pt(0)
+        section.header_distance = section.footer_distance = Pt(0)
+        for page_index, page in enumerate(source):
+            paragraph = doc.add_paragraph()
+            paragraph.paragraph_format.space_after = Pt(0)
+            paragraph.paragraph_format.line_spacing = Pt(1)
+            paragraph.paragraph_format.page_break_before = page_index > 0
+            png = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False).tobytes("png")
+            inline = paragraph.add_run().add_picture(BytesIO(png), width=Pt(width), height=Pt(height))._inline
+            # Anchor each rendered page to its physical page, outside text flow.
+            anchor = parse_xml('''<wp:anchor xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
+              distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="0" behindDoc="1" locked="1" layoutInCell="1" allowOverlap="1">
+              <wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionH>
+              <wp:positionV relativeFrom="page"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:wrapNone/></wp:anchor>''')
+            for child in list(inline):
+                anchor.append(child)
+            inline.getparent().replace(inline, anchor)
+    doc.core_properties.title = "نموذج رسمي"
     doc.core_properties.author = "نظام مسار"
-    output = BytesIO()
-    doc.save(output)
-    return output.getvalue()
+    stream = BytesIO()
+    doc.save(stream)
+    return stream.getvalue()
 
 
-def build_supply_request_docx(data: dict) -> bytes:
-    doc = _new_document(SUPPLY_TEMPLATE, header_ratio=0.26)
-    _add_heading(doc, "نموذج طلب لوازم من المستودع")
-    _add_key_values(doc, [
-        ("الجهة الطالبة / الإدارة العامة", data.get("organization")),
-        ("الدائرة", data.get("directorate")),
-        ("رقم الطلب", data.get("request_no")),
-        ("التاريخ", _format_date(data.get("request_date"))),
-    ])
-    table = doc.add_table(rows=1, cols=4)
-    table.style = "Table Grid"
-    _set_table_rtl(table)
-    for cell, label in zip(table.rows[0].cells, ("الرقم", "الصنف", "الوحدة", "الكمية المطلوبة")):
-        _set_cell(cell, label, bold=True, shade="E9E9E9")
-    for index, line in enumerate(data.get("lines") or [], start=1):
-        cells = table.add_row().cells
-        _set_cell(cells[0], index)
-        _set_cell(cells[1], line.get("item"))
-        _set_cell(cells[2], line.get("unit"))
-        _set_cell(cells[3], line.get("quantity"))
-    doc.add_paragraph()
-    _add_signature_line(doc, "اسم المستلم", data.get("requester_name"))
-    _add_signature_line(doc, "المسؤول المباشر", data.get("manager_name"))
-    _add_signature_line(doc, "مدير المستودع", data.get("warehouse_name"))
-    for label, value in (("ملاحظة المسؤول المباشر", data.get("manager_note")), ("ملاحظة مدير المستودع", data.get("warehouse_note"))):
-        paragraph = doc.add_paragraph()
-        paragraph.add_run(f"{label}: {_plain(value, '_______________________________')}")
-        _set_rtl(paragraph, size=11)
-    return _docx_bytes(doc, "نموذج طلب لوازم من المستودع")
+def build_leave_request_pdf(data):
+    return _build_pdf(LEAVE_TEMPLATE, [_leave_fields(data)])
 
 
-def build_leave_request_docx(data: dict) -> bytes:
-    doc = _new_document(LEAVE_TEMPLATE, header_ratio=0.20)
-    _add_heading(doc, data.get("form_title") or "طلب إجازة")
-    _add_key_values(doc, [
-        ("رقم الموظف", data.get("employee_no")),
-        ("تاريخ تقديم الطلب", _format_date(data.get("request_date"))),
-        ("الاسم", data.get("employee_name")),
-        ("الوظيفة", data.get("job_title")),
-        ("من تاريخ", _format_date(data.get("start_date"))),
-        ("إلى تاريخ", _format_date(data.get("end_date"))),
-        ("مدة الإجازة", data.get("days")),
-        ("سبب الإجازة", data.get("reason")),
-    ])
-    _add_heading(doc, "لاستعمال وحدة شؤون الموظفين بالوزارة", size=14)
-    _add_key_values(doc, [
-        ("مقدار الإجازة المستحقة", data.get("entitlement")),
-        ("استنفذ منها", data.get("used")),
-        ("الرصيد المتبقي", data.get("remaining")),
-        ("نوع الإجازة", data.get("leave_type")),
-    ])
-    _add_heading(doc, "لاستعمال المسؤول المباشر", size=14)
-    _add_key_values(doc, [
-        ("القرار", data.get("manager_decision")),
-        ("مدة الإجازة المصادق عليها", data.get("manager_days")),
-        ("من يقوم بالعمل مكانه", data.get("covering_employee")),
-    ], columns=1)
-    _add_signature_line(doc, "المسؤول المباشر", data.get("manager_name"))
-    _add_heading(doc, "لاستعمال الوزير / الوكيل / الإدارة العامة", size=14)
-    _add_key_values(doc, [("القرار", data.get("secretary_decision"))], columns=1)
-    _add_signature_line(doc, "الأمين العام", data.get("secretary_name"))
-    _add_heading(doc, "إقرار القيام بالإجازة", size=14)
-    _add_key_values(doc, [
-        ("يوم وتاريخ القيام بالإجازة", f"{_plain(data.get('leave_day'), '')} {_format_date(data.get('start_date'))}"),
-        ("يوم وتاريخ العودة من الإجازة", f"{_plain(data.get('return_day'), '')} {_format_date(data.get('return_date'))}"),
-    ], columns=1)
-    _add_signature_line(doc, "الموظف", data.get("employee_name"))
-    _add_signature_line(doc, "المسؤول المباشر", data.get("manager_name"))
-    _add_signature_line(doc, "الأمين العام", data.get("secretary_name"))
-    return _docx_bytes(doc, "طلب إجازة")
+def build_leave_request_docx(data):
+    return _build_docx(LEAVE_TEMPLATE, [_leave_fields(data)])
+
+
+def build_supply_request_pdf(data):
+    return _build_pdf(SUPPLY_TEMPLATE, _supply_pages(data))
+
+
+def build_supply_request_docx(data):
+    return _build_docx(SUPPLY_TEMPLATE, _supply_pages(data))
+
+
+def build_permission_request_pdf(data):
+    return _build_pdf(PERMISSION_TEMPLATE, [_permission_fields(data)])
+
+
+def build_permission_request_docx(data):
+    return _build_docx(PERMISSION_TEMPLATE, [_permission_fields(data)])
