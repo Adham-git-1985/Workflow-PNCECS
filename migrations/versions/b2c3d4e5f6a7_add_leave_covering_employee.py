@@ -1,7 +1,7 @@
 """store the employee covering an approved leave requester
 
-Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
+Revision ID: f9a0b1c2d3e4
+Revises: e8f1c2d3a4b5
 Create Date: 2026-09-12 12:15:00
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "b2c3d4e5f6a7"
-down_revision = "a1b2c3d4e5f6"
+revision = "f9a0b1c2d3e4"
+down_revision = "e8f1c2d3a4b5"
 branch_labels = None
 depends_on = None
 

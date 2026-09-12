@@ -1,7 +1,7 @@
 """store parallel direct-manager recipients for supply requests
 
-Revision ID: a1b2c3d4e5f6
-Revises: z1a2b3c4d5e6
+Revision ID: e8f1c2d3a4b5
+Revises: l2m3n4o5p6q7
 Create Date: 2026-09-12 12:00:00
 """
 
@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "a1b2c3d4e5f6"
-down_revision = "z1a2b3c4d5e6"
+revision = "e8f1c2d3a4b5"
+down_revision = "l2m3n4o5p6q7"
 branch_labels = None
 depends_on = None
 
