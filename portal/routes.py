@@ -84,6 +84,11 @@ from services.employee_data_import import (
     validate_employee_payload,
 )
 from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
+from services.official_request_forms import (
+    DOCX_MIME as OFFICIAL_FORM_DOCX_MIME,
+    build_leave_request_docx,
+    build_leave_request_pdf,
+)
 from services.employee_attachment_archive import (
     archive_employee_attachment_deletion,
     sync_employee_attachment_to_archive,
@@ -16096,6 +16101,131 @@ def hr_permission_request_cancel(req_id: int):
 # HR - Approvals (Manager / HR)
 # -------------------------
 
+_ARABIC_WEEKDAYS = {
+    0: "الاثنين", 1: "الثلاثاء", 2: "الأربعاء", 3: "الخميس",
+    4: "الجمعة", 5: "السبت", 6: "الأحد",
+}
+
+
+def _leave_form_step(steps, stage_code):
+    return next((step for step in steps if step.stage_code == stage_code), None)
+
+
+def _leave_form_step_name(step):
+    if not step:
+        return ""
+    if step.decided_by:
+        return step.decided_by.full_name or step.decided_by.name or step.decided_by.email or ""
+    names = approval_candidate_names_map([step]).get(step.id, []) if step.id else []
+    return "، ".join(names)
+
+
+def _leave_form_decision(step):
+    if not step:
+        return "غير مطلوب"
+    status = (step.status or "").upper()
+    if status == "APPROVED":
+        return "أوافق"
+    if status == "REJECTED":
+        return "لا أوافق"
+    return "بانتظار الاعتماد"
+
+
+def _leave_request_form_payload(row: HRLeaveRequest) -> dict:
+    """Build only presentation data; the form generator remains model-agnostic."""
+    employee = EmployeeFile.query.get(row.user_id)
+    user = row.user
+    leave_type = row.leave_type
+    steps = hr_request_approval_steps(KIND_LEAVE, row.id)
+    manager_step = _leave_form_step(steps, "DIRECT_MANAGER")
+    secretary_step = _leave_form_step(steps, "SECRETARY_GENERAL")
+    start = _parse_yyyy_mm_dd(row.start_date)
+    end = _parse_yyyy_mm_dd(row.end_date)
+    year = start.year if start else date.today().year
+    entitlement = used = remaining = "-"
+    if leave_type and _leave_type_deducts_from_balance(leave_type):
+        total = _leave_base_entitlement_days(row.user_id, leave_type, year) + _leave_balance_adjustment_days(
+            row.user_id, leave_type.id, year,
+        )
+        used_value = _leave_used_days(row.user_id, leave_type.id, year)
+        entitlement = f"{total:g} يوم"
+        used = f"{used_value:g} يوم"
+        remaining = f"{max(0, total - used_value):g} يوم"
+    external = bool(
+        getattr(leave_type, "is_external", False)
+        or (row.leave_place or "").upper() == "EXTERNAL"
+    )
+    return_date = (end + timedelta(days=1)) if end else None
+    manager_name = _leave_form_step_name(manager_step)
+    secretary_name = _leave_form_step_name(secretary_step)
+    return {
+        "form_title": "طلب إجازة خارجية" if external else "طلب إجازة داخلية",
+        "employee_no": getattr(employee, "employee_no", None) or "-",
+        "employee_name": user.full_name or user.name or user.email,
+        "job_title": getattr(user, "job_title", None) or "-",
+        "leave_type": getattr(leave_type, "name_ar", None) or getattr(leave_type, "code", None) or "-",
+        "request_date": (row.submitted_at or row.created_at or datetime.utcnow()).strftime("%Y/%m/%d"),
+        "start_date": row.start_date,
+        "end_date": row.end_date,
+        "days": f"{int(row.days or 0)} يوم",
+        "reason": row.travel_purpose or row.note or getattr(leave_type, "name_ar", None) or "-",
+        "entitlement": entitlement,
+        "used": used,
+        "remaining": remaining,
+        "manager_decision": _leave_form_decision(manager_step),
+        "manager_days": f"{int(row.days or 0)} يوم" if manager_step and manager_step.status == "APPROVED" else "-",
+        "covering_employee": row.covering_employee_name or "-",
+        "manager_name": manager_name,
+        "secretary_decision": _leave_form_decision(secretary_step),
+        "secretary_name": secretary_name,
+        "leave_day": _ARABIC_WEEKDAYS.get(start.weekday(), "") if start else "",
+        "return_day": _ARABIC_WEEKDAYS.get(return_date.weekday(), "") if return_date else "",
+        "return_date": return_date.strftime("%Y/%m/%d") if return_date else "",
+    }
+
+
+def _can_access_leave_form(row: HRLeaveRequest) -> bool:
+    return bool(
+        row.user_id == current_user.id
+        or can_view_hr_request(current_user, KIND_LEAVE, row.id)
+    )
+
+
+@portal_bp.route("/hr/me/leaves/<int:req_id>/form.pdf")
+@login_required
+@_perm(PORTAL_READ)
+def hr_leave_request_form_pdf(req_id: int):
+    row = HRLeaveRequest.query.get_or_404(req_id)
+    if not _can_access_leave_form(row):
+        abort(403)
+    response = send_file(
+        BytesIO(build_leave_request_pdf(_leave_request_form_payload(row))),
+        mimetype="application/pdf",
+        as_attachment=request.args.get("download") == "1",
+        download_name=f"طلب إجازة - {row.id}.pdf",
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@portal_bp.route("/hr/me/leaves/<int:req_id>/form.docx")
+@login_required
+@_perm(PORTAL_READ)
+def hr_leave_request_form_docx(req_id: int):
+    row = HRLeaveRequest.query.get_or_404(req_id)
+    if not _can_access_leave_form(row):
+        abort(403)
+    response = send_file(
+        BytesIO(build_leave_request_docx(_leave_request_form_payload(row))),
+        mimetype=OFFICIAL_FORM_DOCX_MIME,
+        as_attachment=True,
+        download_name=f"طلب إجازة - {row.id}.docx",
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
 @portal_bp.route("/hr/approvals")
 @login_required
 @_perm(PORTAL_READ)
@@ -16347,6 +16477,12 @@ def hr_approval_leave(req_id: int):
         if note_required and action == "APPROVE" and not note:
             flash("ملاحظة القرار مطلوبة في مرحلة الموارد البشرية لهذه الحالة الاستثنائية.", "danger")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+        if action == "APPROVE" and step and step.stage_code == "DIRECT_MANAGER":
+            covering_employee_name = (request.form.get("covering_employee_name") or "").strip()
+            if not covering_employee_name:
+                flash("يرجى تحديد الموظف الذي سيقوم بالعمل مكان مقدم الطلب.", "danger")
+                return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+            r.covering_employee_name = covering_employee_name
         try:
             result = decide_hr_request(KIND_LEAVE, r, current_user, action, note)
         except PermissionError:

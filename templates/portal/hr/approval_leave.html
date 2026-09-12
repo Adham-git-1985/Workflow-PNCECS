@@ -4,7 +4,13 @@
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
   <h4 class="mb-1"><i class="bi bi-calendar2-check"></i> {% if is_requester %}متابعة{% else %}مراجعة{% endif %} طلب إجازة #{{ r.id }}</h4>
-  <div class="text-muted">{% if is_requester %}تابع حالة طلبك ومراحل اعتماده.{% else %}تحقق من البيانات ثم اعتمد أو ارفض.{% endif %}</div>
+  <div class="d-flex justify-content-between gap-2 flex-wrap align-items-center">
+    <div class="text-muted">{% if is_requester %}تابع حالة طلبك ومراحل اعتماده.{% else %}تحقق من البيانات ثم اعتمد أو ارفض.{% endif %}</div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a class="btn btn-sm btn-outline-danger" target="_blank" href="{{ url_for('portal.hr_leave_request_form_pdf', req_id=r.id) }}"><i class="bi bi-file-earmark-pdf"></i> النموذج PDF</a>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_leave_request_form_docx', req_id=r.id) }}"><i class="bi bi-file-earmark-word"></i> النموذج Word</a>
+    </div>
+  </div>
 </div>
 
 {% set st = (r.status or '').upper() %}
@@ -142,6 +148,13 @@
 {% if st == 'SUBMITTED' and can_act %}
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <form method="post">
+    {% if current_step and current_step.stage_code == 'DIRECT_MANAGER' %}
+      <div class="mb-2">
+        <label class="form-label">من يقوم بالعمل مكانه <span class="text-danger">*</span></label>
+        <input type="text" name="covering_employee_name" class="form-control" value="{{ r.covering_employee_name or '' }}" placeholder="اسم الموظف المكلف بالعمل" required>
+        <div class="text-muted small mt-1">تظهر هذه البيانات في نموذج الإجازة الرسمي.</div>
+      </div>
+    {% endif %}
     <div class="mb-2">
       <label class="form-label">ملاحظة {% if note_required %}(مطلوبة){% else %}(اختياري){% endif %}</label>
       <textarea name="decision_note" class="form-control" rows="2" placeholder="سبب الرفض أو أي توضيح" {% if note_required %}required{% endif %}></textarea>
@@ -152,7 +165,7 @@
 
     <div class="d-flex gap-2 flex-wrap">
       <button class="btn btn-success" type="submit" name="action" value="APPROVE"><i class="bi bi-check2"></i> اعتماد</button>
-      <button class="btn btn-danger" type="submit" name="action" value="REJECT" onclick="return confirm('هل تريد رفض الطلب؟');"><i class="bi bi-x"></i> رفض</button>
+      <button class="btn btn-danger" type="submit" name="action" value="REJECT" formnovalidate onclick="return confirm('هل تريد رفض الطلب؟');"><i class="bi bi-x"></i> رفض</button>
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
     </div>
   </form>

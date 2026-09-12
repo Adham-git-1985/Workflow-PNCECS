@@ -3115,6 +3115,8 @@ class HRLeaveRequest(db.Model):
     decided_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
 
     decision_note = db.Column(db.Text, nullable=True)
+    # Filled by the direct manager before approving the official leave form.
+    covering_employee_name = db.Column(db.String(200), nullable=True)
     # Reminders for pending approvals
     reminder_sent_at = db.Column(db.DateTime, nullable=True)
     reminder_count = db.Column(db.Integer, nullable=False, default=0)
@@ -4293,6 +4295,10 @@ class InvEmployeeRequest(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     requester_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    # Snapshot of every direct manager who received this request.  Keeping the
+    # list on the request makes a submitted path stable when the org chart is
+    # later changed.  One of these managers may approve the request.
+    manager_user_ids = db.Column(db.Text, nullable=True)
     items_text = db.Column(db.Text, nullable=False)
     purpose = db.Column(db.String(255), nullable=False)
     note = db.Column(db.Text, nullable=True)

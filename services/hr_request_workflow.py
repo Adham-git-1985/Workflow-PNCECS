@@ -732,9 +732,61 @@ def is_special_leave(row: HRLeaveRequest) -> bool:
         return False
 
 
+def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
+    """Whether this requester must obtain the Secretary-General's approval.
+
+    Ministers, deputies/under-secretaries, and directors general are identified
+    from their role/title as well as their active management assignment.  The
+    latter keeps the route correct where the old user role is only ``employee``.
+    """
+    user = getattr(row, "user", None) or db.session.get(User, getattr(row, "user_id", None))
+    if not user:
+        return False
+    role = _normalize(getattr(user, "role", None))
+    if role in {
+        "MINISTER", "DEPUTYMINISTER", "MINISTRYDEPUTY", "UNDERSECRETARY",
+        "WAKIL", "GENERALDIRECTOR", "DIRECTORGENERAL",
+    }:
+        return True
+
+    labels = [getattr(user, "job_title", None), getattr(user, "role", None)]
+    labels.extend(
+        assignment.title
+        for assignment in OrgNodeAssignment.query.filter_by(user_id=user.id).all()
+        if assignment.title
+    )
+    normalized_labels = " ".join(str(label or "") for label in labels).casefold()
+    if any(label in normalized_labels for label in (
+        "minister", "deputy minister", "undersecretary", "general director",
+        "وزير", "وكيل", "مدير عام", "الإدارة العامة",
+    )):
+        return True
+
+    if OrgUnitManager.query.filter_by(manager_user_id=user.id, unit_type="DIRECTORATE").first():
+        return True
+    try:
+        return bool(
+            OrgNodeManager.query
+            .join(OrgNode, OrgNode.id == OrgNodeManager.node_id)
+            .join(OrgNodeType, OrgNodeType.id == OrgNode.type_id)
+            .filter(
+                OrgNodeManager.manager_user_id == user.id,
+                func.upper(OrgNodeType.code).in_(("DIRECTORATE", "GENERAL_DIRECTOR", "GENERALDIRECTOR")),
+            )
+            .first()
+        )
+    except Exception:
+        return False
+
+
 def _step_specs(kind: str, row) -> list[tuple[str, str]]:
     specs = [(STAGE_DIRECT_MANAGER, SCOPE_USER)]
-    if kind == KIND_LEAVE and is_special_leave(row):
+    if kind == KIND_LEAVE and requires_secretary_general_leave_approval(row):
+        # A minister, deputy/under-secretary, or director general submits
+        # directly to the Secretary-General.  These positions do not need a
+        # parallel direct-manager or unrelated HR review stage.
+        return [(STAGE_SECRETARY_GENERAL, SCOPE_SECRETARY_GENERAL)]
+    elif kind == KIND_LEAVE and is_special_leave(row):
         specs.extend(((STAGE_HR, SCOPE_HR), (STAGE_SECRETARY_GENERAL, SCOPE_SECRETARY_GENERAL)))
     return specs
 

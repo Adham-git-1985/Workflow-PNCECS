@@ -3,7 +3,7 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-start mb-3">
   <div><h4 class="mb-1">طلب مواد #{{ item.id }}</h4><div class="text-muted">مقدم الطلب: {{ item.requester.full_name }} · {{ item.created_at.strftime('%Y-%m-%d %H:%M') }}</div></div>
-  <div>{% if can_manage_catalog %}<a class="btn btn-outline-primary" href="{{ url_for('portal.inventory_admin_items') }}">إدارة الأصناف والمواصفات</a>{% endif %} <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_requests') }}">رجوع</a></div>
+  <div class="d-flex gap-2 flex-wrap justify-content-end">{% if can_manage_catalog %}<a class="btn btn-outline-primary" href="{{ url_for('portal.inventory_admin_items') }}">إدارة الأصناف والمواصفات</a>{% endif %}<a class="btn btn-outline-danger" target="_blank" href="{{ url_for('portal.inventory_employee_request_form_pdf', request_id=item.id) }}"><i class="bi bi-file-earmark-pdf"></i> PDF</a><a class="btn btn-outline-primary" href="{{ url_for('portal.inventory_employee_request_form_docx', request_id=item.id) }}"><i class="bi bi-file-earmark-word"></i> Word</a><a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_requests') }}">رجوع</a></div>
 </div>
 
 <div class="row g-3">
@@ -45,12 +45,9 @@
         <select class="form-select mb-3" name="warehouse_id" id="warehouseSelect" required><option value="">اختر المستودع</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.label }}</option>{% endfor %}</select>
         <div class="small text-muted mb-2">حدد الكمية التي سيصرفها المستودع:</div>
         {% for line in item.lines %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ line.item.label }}</div><div class="input-group mt-1"><span class="input-group-text">المعتمد</span><input class="form-control approved-qty" type="number" min="0" max="{{ line.requested_qty }}" step="0.01" name="approved_qty_{{ line.id }}" value="{{ line.requested_qty }}" data-item="{{ line.item_id }}"><span class="input-group-text stock-value">المتاح: —</span></div></div>{% endfor %}
-        {% elif item.approval_stage == 'ADMIN' %}
-        <div class="alert alert-warning">عند الاعتماد النهائي سيُنشأ سند صرف آلي وتُخصم الكميات من المستودع.</div>
-        {% for line in item.lines %}<div class="d-flex justify-content-between border-bottom py-2"><span>{{ line.item.label }}</span><b>{{ line.approved_qty|round(2) }} من {{ line.warehouse.label }}</b></div>{% endfor %}
         {% endif %}
         <label class="form-label mt-3">ملاحظة الاعتماد</label><textarea class="form-control mb-2" name="note" rows="2"></textarea>
-        <button class="btn btn-success w-100">{{ 'اعتماد نهائي وصرف المواد' if item.approval_stage == 'ADMIN' else 'متابعة للمرحلة التالية' }}</button>
+        <button class="btn btn-success w-100">{{ 'اعتماد وصرف المواد' if item.approval_stage == 'WAREHOUSE' else 'إحالة إلى مدير المستودع' }}</button>
       </form>
     </div></div>
     {% endif %}

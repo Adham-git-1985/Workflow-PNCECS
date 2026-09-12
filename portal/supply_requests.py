@@ -1,7 +1,9 @@
 from collections import defaultdict
+from io import BytesIO
+import json
 from datetime import date, datetime
 
-from flask import abort, flash, redirect, render_template, request, url_for
+from flask import abort, flash, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
 
 from . import portal_bp
@@ -24,12 +26,17 @@ from models import (
     UserPermission,
 )
 from utils.perms import perm_required
+from services.hr_request_workflow import resolve_responsible_managers
+from services.official_request_forms import (
+    DOCX_MIME,
+    build_supply_request_docx,
+    build_supply_request_pdf,
+)
 
 
 STAGES = {
-    "MANAGER": "المدير المباشر",
+    "MANAGER": "المسؤولون المباشرون",
     "WAREHOUSE": "مدير المستودع",
-    "ADMIN": "مدير الشؤون الإدارية",
     "DONE": "مكتمل",
 }
 
@@ -57,43 +64,60 @@ def _grant_permission(user_id, key):
         db.session.add(UserPermission(user_id=user_id, key=key, is_allowed=True))
 
 
+def _manager_ids(row):
+    """Return the direct-manager snapshot for a submitted materials request."""
+    raw = (getattr(row, "manager_user_ids", None) or "").strip()
+    ids = []
+    if raw:
+        try:
+            values = json.loads(raw)
+            values = values if isinstance(values, list) else [values]
+            ids = [int(value) for value in values if str(value).isdigit()]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            ids = [int(value) for value in raw.split(",") if value.strip().isdigit()]
+    if not ids and row.manager_user_id:
+        ids = [int(row.manager_user_id)]
+    if not ids:
+        ids = [int(user.id) for user in resolve_responsible_managers(row.requester_user_id)]
+    return list(dict.fromkeys(ids))
+
+
+def _is_system_admin(user):
+    try:
+        return bool(user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN") or user.has_role("ADMIN"))
+    except Exception:
+        return (getattr(user, "role", "") or "").upper().replace("_", "") in {"SUPERADMIN", "ADMIN"}
+
+
 def _recipient_ids(row):
     if row.approval_stage == "MANAGER":
-        return [row.manager_user_id] if row.manager_user_id else []
+        return _manager_ids(row)
     if row.approval_stage == "WAREHOUSE":
         configured = _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID")
         if configured:
             return [configured]
         return [user.id for user in User.query.all() if user.has_perm("INVENTORY_REQUEST_APPROVE")]
-    if row.approval_stage == "ADMIN":
-        configured = _setting("INVENTORY_ADMIN_MANAGER_USER_ID")
-        if configured:
-            return [configured]
-        return [user.id for user in User.query.all() if user.has_perm("STORE_MANAGE")]
     return []
 
 
 def _can_process(row):
     if row.status != "SUBMITTED":
         return False
-    if current_user.has_perm("STORE_MANAGE"):
+    if _is_system_admin(current_user):
         return True
     if row.approval_stage == "MANAGER":
-        return row.manager_user_id == current_user.id
+        return current_user.id in _manager_ids(row)
     if row.approval_stage == "WAREHOUSE":
         configured = _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID")
         return current_user.id == configured or current_user.has_perm("INVENTORY_REQUEST_APPROVE")
-    if row.approval_stage == "ADMIN":
-        return current_user.id == _setting("INVENTORY_ADMIN_MANAGER_USER_ID")
     return False
 
 
 def _can_manage():
     configured_ids = {
         _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
-        _setting("INVENTORY_ADMIN_MANAGER_USER_ID"),
     }
-    return current_user.id in configured_ids or current_user.has_perm("INVENTORY_REQUEST_APPROVE") or current_user.has_perm("STORE_MANAGE")
+    return _is_system_admin(current_user) or current_user.id in configured_ids or current_user.has_perm("INVENTORY_REQUEST_APPROVE") or current_user.has_perm("STORE_MANAGE")
 
 
 def _can_manage_catalog():
@@ -104,6 +128,55 @@ def _can_view(row):
     return row.requester_user_id == current_user.id or _can_manage() or _can_process(row) or any(
         action.actor_user_id == current_user.id for action in row.actions
     )
+
+
+def _action_for_stage(row, stage, *, after=None):
+    return next(
+        (
+            action for action in sorted(row.actions, key=lambda value: value.created_at or datetime.min, reverse=True)
+            if action.stage == stage and action.action == "APPROVED" and (after is None or action.created_at >= after)
+        ),
+        None,
+    )
+
+
+def _supply_form_payload(row):
+    employee = EmployeeFile.query.get(row.requester_user_id)
+    last_update = max(
+        (action.created_at for action in row.actions if action.action == "UPDATED" and action.created_at),
+        default=None,
+    )
+    manager_action = _action_for_stage(row, "MANAGER", after=last_update)
+    warehouse_action = _action_for_stage(row, "WAREHOUSE", after=last_update)
+    created_at = row.created_at or datetime.utcnow()
+    return {
+        "request_no": str(row.id),
+        "request_date": created_at.strftime("%Y/%m/%d"),
+        "organization": (
+            getattr(getattr(employee, "organization", None), "name_ar", None)
+            or getattr(getattr(employee, "organization", None), "name", None)
+            or "-"
+        ),
+        "directorate": (
+            getattr(getattr(employee, "directorate", None), "name_ar", None)
+            or getattr(getattr(employee, "directorate", None), "name", None)
+            or "-"
+        ),
+        "requester_name": row.requester.full_name or row.requester.name or row.requester.email,
+        "requester_date": created_at.strftime("%Y/%m/%d"),
+        "manager_name": (manager_action.actor.full_name if manager_action and manager_action.actor else ""),
+        "manager_note": manager_action.note if manager_action else "",
+        "warehouse_name": (warehouse_action.actor.full_name if warehouse_action and warehouse_action.actor else ""),
+        "warehouse_note": warehouse_action.note if warehouse_action else "",
+        "lines": [
+            {
+                "item": line.item.label if line.item else "-",
+                "unit": (line.item.unit if line.item else "") or "-",
+                "quantity": f"{float(line.requested_qty or 0):g}",
+            }
+            for line in row.lines
+        ],
+    }
 
 
 def _notify(row, recipient_ids, text):
@@ -245,12 +318,9 @@ def _create_issue_vouchers(row):
 def inventory_request_settings():
     if request.method == "POST":
         warehouse_manager_id = request.form.get("warehouse_manager_user_id") or ""
-        admin_manager_id = request.form.get("admin_manager_user_id") or ""
         _set_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID", warehouse_manager_id)
-        _set_setting("INVENTORY_ADMIN_MANAGER_USER_ID", admin_manager_id)
         _grant_permission(int(warehouse_manager_id) if warehouse_manager_id.isdigit() else None, "INVENTORY_REQUEST_APPROVE")
         _grant_permission(int(warehouse_manager_id) if warehouse_manager_id.isdigit() else None, "PORTAL_REPORTS_READ")
-        _grant_permission(int(admin_manager_id) if admin_manager_id.isdigit() else None, "PORTAL_REPORTS_READ")
         db.session.commit()
         flash("تم حفظ مسؤولي اعتماد طلبات المواد.", "success")
         return redirect(url_for("portal.inventory_request_settings"))
@@ -258,7 +328,6 @@ def inventory_request_settings():
         "portal/inventory/request_settings.html",
         users=User.query.order_by(User.name.asc()).all(),
         warehouse_manager_id=_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
-        admin_manager_id=_setting("INVENTORY_ADMIN_MANAGER_USER_ID"),
     )
 
 
@@ -315,11 +384,13 @@ def inventory_employee_request_new():
                 item_totals=item_totals,
                 can_manage_catalog=_can_manage_catalog(),
             )
-        employee = EmployeeFile.query.get(current_user.id)
-        manager_id = employee.direct_manager_user_id if employee else None
+        managers = resolve_responsible_managers(current_user.id)
+        manager_ids = [int(manager.id) for manager in managers if manager and manager.id != current_user.id]
+        manager_id = manager_ids[0] if manager_ids else None
         row = InvEmployeeRequest(
             requester_user_id=current_user.id,
             manager_user_id=manager_id,
+            manager_user_ids=json.dumps(manager_ids, separators=(",", ":")) if manager_ids else None,
             items_text="",
             purpose=purpose,
             note=(request.form.get("note") or "").strip() or None,
@@ -356,7 +427,9 @@ def inventory_employee_request_view(request_id):
     if not _can_view(row):
         abort(403)
     items, categories, warehouses, item_totals, warehouse_balances = _catalog_context()
-    can_edit = row.status == "SUBMITTED" and (row.requester_user_id == current_user.id or _can_manage())
+    # The employee owns the requested quantities.  Managers record their
+    # approval/comment in their own stage and cannot silently alter the form.
+    can_edit = row.status == "SUBMITTED" and row.requester_user_id == current_user.id
     if request.method == "POST":
         if not can_edit:
             abort(403)
@@ -371,7 +444,7 @@ def inventory_employee_request_view(request_id):
         row.note = (request.form.get("note") or "").strip() or None
         if old_signature != new_signature:
             _replace_lines(row, requested_lines)
-            row.approval_stage = "MANAGER" if row.manager_user_id else "WAREHOUSE"
+            row.approval_stage = "MANAGER" if _manager_ids(row) else "WAREHOUSE"
             _notify(row, _recipient_ids(row), f"تم تعديل طلب المواد #{row.id} ويحتاج إعادة المتابعة لدى {STAGES[row.approval_stage]}.")
         db.session.add(InvEmployeeRequestAction(
             request_id=row.id,
@@ -396,6 +469,40 @@ def inventory_employee_request_view(request_id):
         can_edit=can_edit,
         can_manage_catalog=_can_manage_catalog(),
     )
+
+
+@portal_bp.route("/inventory/employee-requests/<int:request_id>/form.pdf")
+@login_required
+def inventory_employee_request_form_pdf(request_id):
+    row = InvEmployeeRequest.query.get_or_404(request_id)
+    if not _can_view(row):
+        abort(403)
+    response = send_file(
+        BytesIO(build_supply_request_pdf(_supply_form_payload(row))),
+        mimetype="application/pdf",
+        as_attachment=request.args.get("download") == "1",
+        download_name=f"طلب لوازم من المستودع - {row.id}.pdf",
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@portal_bp.route("/inventory/employee-requests/<int:request_id>/form.docx")
+@login_required
+def inventory_employee_request_form_docx(request_id):
+    row = InvEmployeeRequest.query.get_or_404(request_id)
+    if not _can_view(row):
+        abort(403)
+    response = send_file(
+        BytesIO(build_supply_request_docx(_supply_form_payload(row))),
+        mimetype=DOCX_MIME,
+        as_attachment=True,
+        download_name=f"طلب لوازم من المستودع - {row.id}.docx",
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 
 @portal_bp.route("/inventory/employee-requests/<int:request_id>/approve", methods=["POST"])
@@ -437,8 +544,6 @@ def inventory_employee_request_approve(request_id):
         if errors:
             flash("الرصيد غير كافٍ: " + "؛ ".join(errors), "danger")
             return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
-        row.approval_stage = "ADMIN"
-    else:
         try:
             _create_issue_vouchers(row)
         except ValueError as exc:
@@ -447,6 +552,8 @@ def inventory_employee_request_approve(request_id):
         row.status = "APPROVED"
         row.approval_stage = "DONE"
         row.decided_at = datetime.utcnow()
+    else:
+        abort(400)
     db.session.add(InvEmployeeRequestAction(
         request_id=row.id,
         stage=current_stage,

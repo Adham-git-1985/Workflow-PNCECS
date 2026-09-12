@@ -483,6 +483,39 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             link_url=f"/portal/hr/approvals/leaves/{row.id}",
         ).count(), 0)
 
+    def test_minister_leave_routes_directly_to_secretary_general(self):
+        self.employee.role = "MINISTER"
+        db.session.commit()
+
+        row = self._leave(self.normal_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+
+        self.assertEqual(
+            [step.stage_code for step in steps],
+            ["SECRETARY_GENERAL"],
+        )
+        self.assertEqual(steps[0].approver_user_id, self.secretary.id)
+        self.assertTrue(can_user_act(self.secretary, current_step(KIND_LEAVE, row.id)))
+
+    def test_leave_requester_can_download_official_pdf_and_word_forms(self):
+        row = self._leave(self.normal_type)
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="PORTAL_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+        client = self.app.test_client()
+        self._login(client, self.employee.id)
+
+        pdf_response = client.get(f"/portal/hr/me/leaves/{row.id}/form.pdf")
+        word_response = client.get(f"/portal/hr/me/leaves/{row.id}/form.docx")
+
+        self.assertEqual(pdf_response.status_code, 200)
+        self.assertEqual(pdf_response.mimetype, "application/pdf")
+        self.assertEqual(word_response.status_code, 200)
+        self.assertIn("wordprocessingml", word_response.mimetype)
+
     def test_view_all_and_approve_grant_global_leave_and_permission_approval(self):
         db.session.add_all([
             RolePermission(role="GENERAL-SECRETARY", permission=permission)
@@ -1376,10 +1409,16 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         response = client.post(
             f"/portal/hr/approvals/leaves/{row.id}",
-            data={"action": "APPROVE", "decision_note": "approved"},
+            data={
+                "action": "APPROVE",
+                "decision_note": "approved",
+                "covering_employee_name": "Covering Employee",
+            },
         )
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(db.session.get(HRLeaveRequest, row.id).status, "APPROVED")
+        approved = db.session.get(HRLeaveRequest, row.id)
+        self.assertEqual(approved.status, "APPROVED")
+        self.assertEqual(approved.covering_employee_name, "Covering Employee")
         history = client.get("/portal/hr/approvals?status=APPROVED")
         self.assertEqual(history.status_code, 200)
         self.assertIn(b"Employee", history.data)

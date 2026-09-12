@@ -1,1 +1,13 @@
-{% extends "portal/layout.html" %}{% block content %}<h4>مسؤولو اعتماد طلبات المواد</h4><form method="post" class="card card-body"><label>مدير المستودع</label><select class="form-select mb-3" name="warehouse_manager_user_id"><option value="">—</option>{% for user in users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}</select><label>مدير الشؤون الإدارية</label><select class="form-select mb-3" name="admin_manager_user_id"><option value="">—</option>{% for user in users %}<option value="{{ user.id }}" {% if admin_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}</select><button class="btn btn-primary">حفظ</button></form>{% endblock %}
+{% extends "portal/layout.html" %}
+{% block content %}
+<h4>مسؤول اعتماد طلبات المواد</h4>
+<div class="alert alert-info">يسير الطلب من الموظف إلى مسؤوليه المباشرين بالتوازي، ويكفي اعتماد أحدهم، ثم يصل إلى مدير المستودع للاعتماد والصرف النهائي.</div>
+<form method="post" class="card card-body">
+  <label class="form-label">مدير المستودع</label>
+  <select class="form-select mb-3" name="warehouse_manager_user_id">
+    <option value="">—</option>
+    {% for user in users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}
+  </select>
+  <button class="btn btn-primary">حفظ</button>
+</form>
+{% endblock %}
