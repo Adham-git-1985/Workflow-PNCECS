@@ -217,11 +217,14 @@ def _inventory_balances():
     return _inv_build_balances()
 
 
-def _catalog_context():
-    items = InvItem.query.filter(InvItem.is_active.is_(True)).order_by(InvItem.name.asc()).all()
+def _catalog_context(*, include_items=True):
+    item_query = InvItem.query.filter(InvItem.is_active.is_(True)).order_by(InvItem.name.asc())
+    # The employee request screen resolves items through the small remote
+    # lookup.  Do not render the complete catalogue three times in its form.
+    items = item_query.all() if include_items else []
     categories = InvItemCategory.query.filter(InvItemCategory.is_active.is_(True)).order_by(InvItemCategory.name.asc()).all()
     warehouses = InvWarehouse.query.filter(InvWarehouse.is_active.is_(True)).order_by(InvWarehouse.name.asc()).all()
-    balances = _inventory_balances()
+    balances = _inventory_balances() if include_items else {}
     item_totals = {
         item.id: sum(float(quantity or 0) for (warehouse_id, item_id), quantity in balances.items() if item_id == item.id)
         for item in items
@@ -370,7 +373,8 @@ def inventory_employee_request_tasks():
 @portal_bp.route("/inventory/employee-requests/new", methods=["GET", "POST"])
 @login_required
 def inventory_employee_request_new():
-    items, categories, warehouses, item_totals, warehouse_balances = _catalog_context()
+    items, categories, warehouses, item_totals, warehouse_balances = _catalog_context(include_items=False)
+    catalog_has_items = InvItem.query.filter(InvItem.is_active.is_(True)).limit(1).first() is not None
     if request.method == "POST":
         requested_lines = _parse_requested_lines()
         purpose = (request.form.get("purpose") or "").strip()
@@ -382,6 +386,7 @@ def inventory_employee_request_new():
                 items=items,
                 categories=categories,
                 item_totals=item_totals,
+                catalog_has_items=catalog_has_items,
                 can_manage_catalog=_can_manage_catalog(),
             )
         managers = resolve_responsible_managers(current_user.id)
@@ -416,6 +421,7 @@ def inventory_employee_request_new():
         items=items,
         categories=categories,
         item_totals=item_totals,
+        catalog_has_items=catalog_has_items,
         can_manage_catalog=_can_manage_catalog(),
     )
 

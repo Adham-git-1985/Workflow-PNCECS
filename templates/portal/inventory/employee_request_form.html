@@ -14,21 +14,19 @@
 
 <form method="post" class="card shadow-sm">
   <div class="card-body">
-    {% if items %}<div class="alert alert-info">اختر الأصناف والكميات المطلوبة. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. {% if can_manage_catalog %}<a class="alert-link" href="{{ url_for('portal.inventory_admin_items') }}">أضف صنفاً ومواصفاته الآن</a>.{% else %}يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.{% endif %}</div>{% endif %}
+    {% if catalog_has_items %}<div class="alert alert-info">انقر في حقل الصنف لتظهر قائمة أول 60 صنفاً، أو اكتب الاسم أو الكود للبحث. الكمية المتاحة المعروضة هي إجمالي الرصيد الحالي في المستودعات.</div>{% else %}<div class="alert alert-warning">لا توجد أصناف معرفة في المستودع حالياً. {% if can_manage_catalog %}<a class="alert-link" href="{{ url_for('portal.inventory_admin_items') }}">أضف صنفاً ومواصفاته الآن</a>.{% else %}يرجى التواصل مع مدير المستودع لإضافة الأصناف والأرصدة.{% endif %}</div>{% endif %}
     <div class="row g-2 mb-3">
-      <div class="col-md-7"><label class="form-label">البحث عن صنف</label><input class="form-control" id="itemSearch" placeholder="ابحث بالاسم أو الكود أو النوع أو المواصفات..."></div>
-      <div class="col-md-5"><label class="form-label">التصنيف</label><select class="form-select" id="itemCategory"><option value="">كل التصنيفات</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></div>
+      <div class="col-md-5"><label class="form-label">تصفية حسب التصنيف</label><select class="form-select" id="itemCategory"><option value="">كل التصنيفات</option>{% for category in categories %}<option value="{{ category.id }}">{{ category.name }}</option>{% endfor %}</select></div>
     </div>
     <div class="table-responsive">
       <table class="table align-middle" id="requestLines">
         <thead><tr><th>الصنف</th><th style="width:170px">الكمية المطلوبة</th><th style="width:150px">المتاح إجمالاً</th><th style="width:60px"></th></tr></thead>
         <tbody>
-          {% for row_no in range(3) %}
+          {% for row_no in range(1) %}
           <tr>
             <td>
-              <select class="form-select item-select" name="item_id">
+              <select class="form-select item-select" name="item_id" data-searchable="0" data-item-picker-category="#itemCategory">
                 <option value="">اختر الصنف</option>
-                {% for product in items %}<option value="{{ product.id }}" data-stock="{{ item_totals.get(product.id, 0) }}" data-category="{{ product.category_id or '' }}" data-search="{{ (product.name ~ ' ' ~ (product.code or '') ~ ' ' ~ (product.variant or '') ~ ' ' ~ product.attributes_text ~ ' ' ~ (product.category.name if product.category else ''))|lower }}">{{ product.label }}{% if product.category %} — {{ product.category.name }}{% endif %}{% if product.unit %} — {{ product.unit }}{% endif %}</option>{% endfor %}
               </select>
             </td>
             <td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td>
@@ -39,6 +37,7 @@
         </tbody>
       </table>
     </div>
+    <template id="requestLineTemplate"><tr><td><select class="form-select item-select" name="item_id" data-searchable="0" data-item-picker-category="#itemCategory"><option value="">اختر الصنف</option></select></td><td><input class="form-control" type="number" name="requested_qty" min="0.01" step="0.01" value="1"></td><td class="available text-muted">—</td><td><button class="btn btn-sm btn-outline-danger remove-line" type="button"><i class="bi bi-x"></i></button></td></tr></template>
     <button class="btn btn-sm btn-outline-primary mb-3" type="button" id="addLine"><i class="bi bi-plus"></i> إضافة صنف</button>
     <label class="form-label">سبب الطلب *</label>
     <input class="form-control mb-3" name="purpose" required>
@@ -51,26 +50,10 @@
 {% block scripts %}
 <script>
   const tableBody = document.querySelector('#requestLines tbody');
-  const searchInput = document.getElementById('itemSearch');
-  const categoryInput = document.getElementById('itemCategory');
-  function filterOptions() {
-    const query = (searchInput.value || '').trim().toLowerCase();
-    const category = categoryInput.value;
-    document.querySelectorAll('.item-select').forEach(select => Array.from(select.options).forEach(option => {
-      if (!option.value) return;
-      const matches = (!query || (option.dataset.search || '').includes(query)) && (!category || option.dataset.category === category);
-      option.hidden = !matches && !option.selected;
-      option.disabled = !matches && !option.selected;
-    }));
-  }
-  function refreshRow(row) {
-    const option = row.querySelector('.item-select').selectedOptions[0];
-    row.querySelector('.available').textContent = option && option.value ? Number(option.dataset.stock || 0).toLocaleString('ar') : '—';
-  }
-  tableBody.addEventListener('change', event => { if (event.target.classList.contains('item-select')) refreshRow(event.target.closest('tr')); });
   tableBody.addEventListener('click', event => { const button = event.target.closest('.remove-line'); if (button && tableBody.rows.length > 1) button.closest('tr').remove(); });
-  searchInput.addEventListener('input', filterOptions);
-  categoryInput.addEventListener('change', filterOptions);
-  document.getElementById('addLine').addEventListener('click', () => { const row = tableBody.rows[0].cloneNode(true); row.querySelector('select').value = ''; row.querySelector('input').value = '1'; refreshRow(row); tableBody.appendChild(row); filterOptions(); });
+  document.getElementById('addLine').addEventListener('click', () => {
+    const row = document.getElementById('requestLineTemplate').content.firstElementChild.cloneNode(true);
+    tableBody.appendChild(row);
+  });
 </script>
 {% endblock %}

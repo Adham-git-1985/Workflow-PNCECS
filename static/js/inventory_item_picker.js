@@ -30,6 +30,8 @@
     const id = wrapper.querySelector('input[type="hidden"]');
     const input = wrapper.querySelector('.inventory-item-query');
     const results = wrapper.querySelector('.inventory-item-results');
+    const categorySelector = select.dataset.itemPickerCategory || '';
+    const categoryInput = categorySelector ? document.querySelector(categorySelector) : null;
     if (required) input.required = true;
 
     function clearSelection() {
@@ -64,9 +66,10 @@
     }
     async function search() {
       const query = input.value.trim();
-      if (query.length < 2) { hideResults(); return; }
       try {
-        const response = await fetch(endpoint + '?q=' + encodeURIComponent(query), {credentials: 'same-origin'});
+        const params = new URLSearchParams({q: query});
+        if (categoryInput && categoryInput.value) params.set('category_id', categoryInput.value);
+        const response = await fetch(endpoint + '?' + params.toString(), {credentials: 'same-origin'});
         if (!response.ok) throw new Error('lookup failed');
         show((await response.json()).items || []);
       } catch (_) {
@@ -79,7 +82,14 @@
       window.clearTimeout(timer);
       timer = window.setTimeout(search, 220);
     });
+    input.addEventListener('focus', search);
     input.addEventListener('blur', function () { window.setTimeout(hideResults, 180); });
+    if (categoryInput) {
+      categoryInput.addEventListener('change', function () {
+        clearSelection();
+        search();
+      });
+    }
     if (selectedId) input.setCustomValidity('');
     else if (required) clearSelection();
   }

@@ -37106,21 +37106,26 @@ def inventory_admin_items():
 
 @portal_bp.route("/inventory/items/search.json")
 @login_required
-@_perm_any(STORE_READ, STORE_MANAGE, "INVENTORY_REQUEST_APPROVE")
+@_perm_any(PORTAL_READ, STORE_READ, STORE_MANAGE, "INVENTORY_REQUEST_APPROVE")
 def inventory_item_search_json():
-    """Small, indexed item lookup used by voucher forms with a large catalogue."""
+    """Small, indexed item lookup used by vouchers and employee requests."""
     search = (request.args.get("q") or "").strip()
-    if len(search) < 2:
-        return jsonify({"items": []})
-    like = f"%{search}%"
-    rows = (
-        InvItem.query
-        .filter(InvItem.is_active.is_(True))
-        .filter(or_(InvItem.code.ilike(like), InvItem.name.ilike(like)))
-        .order_by(InvItem.code.asc(), InvItem.name.asc(), InvItem.id.asc())
-        .limit(30)
-        .all()
-    )
+    category_id = (request.args.get("category_id") or "").strip()
+    query = InvItem.query.filter(InvItem.is_active.is_(True))
+    if category_id.isdigit():
+        query = query.filter(InvItem.category_id == int(category_id))
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(
+            InvItem.code.ilike(like),
+            InvItem.name.ilike(like),
+            InvItem.variant.ilike(like),
+            InvItem.attributes.any(or_(
+                InvItemAttribute.name.ilike(like),
+                InvItemAttribute.value.ilike(like),
+            )),
+        ))
+    rows = query.order_by(InvItem.code.asc(), InvItem.name.asc(), InvItem.id.asc()).limit(60).all()
     return jsonify({
         "items": [
             {

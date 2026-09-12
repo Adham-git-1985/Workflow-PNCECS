@@ -2,13 +2,14 @@ import json
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
-from flask import Flask
+from flask import Flask, g
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import InvEmployeeRequest, InvEmployeeRequestAction, User
+from models import InvEmployeeRequest, InvEmployeeRequestAction, InvItem, User, UserPermission
 from portal import portal_bp
 
 
@@ -78,10 +79,16 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             note="Submitted",
             created_at=datetime.utcnow(),
         ))
+        db.session.add_all((
+            InvItem(name="Printer paper", code="PAPER-001", is_active=True),
+            UserPermission(user_id=self.employee.id, key="PORTAL_READ", is_allowed=True),
+        ))
         db.session.commit()
         self.client = self.app.test_client()
 
     def _login(self, user_id):
+        for key in ("_login_user", "_role_permission_keys"):
+            g.pop(key, None)
         with self.client.session_transaction() as session:
             session.clear()
             session["_user_id"] = str(user_id)
@@ -126,6 +133,22 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(pdf_response.mimetype, "application/pdf")
         self.assertEqual(word_response.status_code, 200)
         self.assertIn("wordprocessingml", word_response.mimetype)
+
+    def test_requester_can_search_the_catalogue_from_the_material_request_form(self):
+        self._login(self.employee.id)
+
+        initial = self.client.get("/portal/inventory/items/search.json")
+        matched = self.client.get("/portal/inventory/items/search.json?q=paper")
+        with patch("portal.supply_requests.render_template", return_value="form") as render:
+            form = self.client.get("/portal/inventory/employee-requests/new")
+
+        self.assertEqual(initial.status_code, 200)
+        self.assertEqual(matched.status_code, 200)
+        self.assertEqual(initial.get_json()["items"][0]["code"], "PAPER-001")
+        self.assertEqual(matched.get_json()["items"][0]["label"], "Printer paper (PAPER-001)")
+        self.assertEqual(form.status_code, 200)
+        self.assertTrue(render.call_args.kwargs["catalog_has_items"])
+        self.assertEqual(render.call_args.kwargs["items"], [])
 
 
 if __name__ == "__main__":
