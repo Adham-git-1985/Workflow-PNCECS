@@ -1,0 +1,10 @@
+{% extends 'portal/hr/base.html' %}
+{% block title %}طلباتي للمهمات الرسمية{% endblock %}
+{% block hr_content %}
+<div class="container py-3" dir="rtl">
+  <div class="d-flex justify-content-between align-items-center"><h3>طلباتي للمهمات الرسمية</h3><a class="btn btn-primary" href="{{ url_for('portal.hr_mission_request_new') }}">طلب مهمة رسمية</a></div>
+  <div class="table-responsive"><table class="table table-striped"><thead><tr><th>المهمة</th><th>الوجهة</th><th>الفترة</th><th>الحالة</th><th>الملاحظات</th></tr></thead><tbody>
+  {% for row in rows %}<tr><td>{{ row.title }}</td><td>{{ row.destination or '-' }}</td><td>{{ row.start_day }} — {{ row.end_day }}</td><td>{{ row.status_def.name_ar if row.status_def else '-' }}</td><td><pre class="mb-0" style="white-space:pre-wrap">{{ row.note or '' }}</pre></td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted">لا توجد طلبات.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+{% endblock %}

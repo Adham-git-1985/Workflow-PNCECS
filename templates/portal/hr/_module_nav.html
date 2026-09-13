@@ -140,6 +140,11 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('portal.hr_official_missions') }}">المهمات الرسمية</a>
             </li>
+            {% if current_user.has_perm('HR_SS_CREATE') or current_user.has_perm('HR_READ') %}
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_mission_request_new') }}">طلب مهمة رسمية</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_my_mission_requests') }}">طلباتي للمهمات الرسمية</a></li>
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_mission_requests_queue') }}">مراجعة طلبات المهمات</a></li>
+            {% endif %}
             <li>
               <a class="dropdown-item" href="{{ url_for('portal.hr_official_occasions') }}">المناسبات الرسمية</a>
             </li>
@@ -164,6 +169,9 @@
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_room_bookings') }}">حجز القاعة</a></li>
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_log') }}">سجل التدريبات</a></li>
+            {% if current_user.has_perm('HR_SS_CREATE') or current_user.has_perm('HR_READ') %}
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_requests_queue') }}">مراجعة طلبات التدريب</a></li>
+            {% endif %}
             {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMP_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_REPORTS_VIEW') %}
               <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_program_new') }}">إضافة تدريب</a></li>
               <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_admin_dashboard') }}">لوحة تحكم التدريب</a></li>

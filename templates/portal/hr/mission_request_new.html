@@ -1,0 +1,18 @@
+{% extends 'portal/hr/base.html' %}
+{% block title %}طلب مهمة رسمية{% endblock %}
+{% block hr_content %}
+<div class="container py-3" dir="rtl">
+  <h3>طلب مهمة رسمية</h3>
+  <p class="text-muted">قدّم الطلب قبل موعد المهمة بأسبوعين على الأقل. المدة القصوى شهر واحد. يلزم إرفاق الدعوة أو مستند الجهة المنظمة، ولا تُعتمد المهمة المبنية على دعوة شخصية.</p>
+  <form method="post" enctype="multipart/form-data" class="card card-body gap-3">
+    <div><label class="form-label">عنوان المهمة</label><input class="form-control" name="title" required maxlength="200"></div>
+    <div><label class="form-label">الجهة والوجهة</label><input class="form-control" name="destination" required maxlength="200"></div>
+    <div><label class="form-label">غرض المهمة وصلتها بالعمل</label><textarea class="form-control" name="purpose" rows="3" required></textarea></div>
+    <div class="row"><div class="col-md-6"><label class="form-label">من</label><input class="form-control" type="date" name="start_day" min="{{ today }}" required></div><div class="col-md-6"><label class="form-label">إلى</label><input class="form-control" type="date" name="end_day" min="{{ today }}" required></div></div>
+    <div><label class="form-label">الدعوة أو مستند الجهة المنظمة</label><input class="form-control" type="file" name="attachment" required></div>
+    <div><label class="form-label">مبرر الضرورة العاجلة (يلزم عند التقديم قبل أقل من أسبوعين)</label><textarea class="form-control" name="urgent_reason" rows="2"></textarea></div>
+    <div class="form-check"><input class="form-check-input" type="checkbox" name="not_personal_invitation" value="1" id="missionAttest" required><label class="form-check-label" for="missionAttest">أقر بأن المهمة رسمية وليست مبنية على دعوة شخصية.</label></div>
+    <div><button class="btn btn-primary">إرسال للمسؤول المباشر</button> <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_my_mission_requests') }}">طلباتي السابقة</a></div>
+  </form>
+</div>
+{% endblock %}

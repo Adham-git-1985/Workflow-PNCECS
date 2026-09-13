@@ -57,7 +57,7 @@
           </div>
         {%- endmacro %}
 
-        {{ tri_select('require_manager_approval', 'هل الترشيح يتطلب موافقة المسؤول المباشر؟', program.require_manager_approval, sys_defaults.require_manager_approval) }}
+        <div class="col-12"><div class="alert alert-info mb-0">ترشيح التدريب يخضع دائماً لمراجعة المسؤول المباشر ثم الموارد البشرية والتنسيق مع ديوان الموظفين.</div></div>
         {{ tri_select('needs_training_needs_window', 'نافذة إدخال الاحتياجات التدريبية (مفتوحة؟)', program.needs_training_needs_window, sys_defaults.needs_training_needs_window) }}
         {{ tri_select('employee_notifications_enabled', 'الإشعارات للموظفين (فعالة؟)', program.employee_notifications_enabled, sys_defaults.employee_notifications_enabled) }}
         {{ tri_select('apply_conditions_on_portal', 'تطبيق الشروط عند الانتساب على البوابة (فعال؟)', program.apply_conditions_on_portal, sys_defaults.apply_conditions_on_portal) }}

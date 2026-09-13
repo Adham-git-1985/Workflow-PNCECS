@@ -3,6 +3,12 @@
 {% block title %}سجل التدريبات{% endblock %}
 
 {% block hr_content %}
+  {% if not can_manage %}
+    <div class="alert alert-info d-flex flex-wrap justify-content-between align-items-center gap-2">
+      <span>طلب الانتساب لا يصبح معتمداً إلا بعد مراجعة المسؤول المباشر والموارد البشرية والتنسيق مع ديوان الموظفين.</span>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_training_requests_queue') }}">مراجعة طلبات التدريب للمسؤولين</a>
+    </div>
+  {% endif %}
   <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
     <h4 class="mb-0">سجل التدريبات</h4>
     <div class="d-flex gap-2">
@@ -109,6 +115,8 @@
                   <td>
                     {% if my %}
                       <span class="badge bg-info">{{ my.status|ui_label }}</span>
+                      {% if my.status == 'APPROVED' and 'التعهد_الموقّع_ملف:' in (my.notes or '') %}<a class="d-block small" href="{{ url_for('portal.hr_training_undertaking_download', enrollment_id=my.id) }}">التعهد الموقع</a>{% endif %}
+                      {% if my.status == 'APPROVED' %}<form method="post" action="{{ url_for('portal.hr_training_program_report', program_id=p.id) }}" class="mt-2"><select name="report_type" class="form-select form-select-sm mb-1" required><option value="">نوع التقرير</option><option value="PROGRESS">تقدم (خلال الدورة)</option><option value="RESULT">نتيجة نهائية</option><option value="RETURN">العودة للوحدة</option></select><textarea name="report_text" class="form-control form-control-sm mb-1" rows="2" placeholder="النتيجة أو ملخص التقدم" required minlength="10"></textarea><button class="btn btn-sm btn-outline-primary">إرسال تقرير</button></form>{% endif %}
                     {% else %}
                       <span class="text-muted">-</span>
                     {% endif %}
@@ -119,14 +127,22 @@
                     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_training_program_info', program_id=p.id) }}">تعديل</a>
                     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_training_program_enrollments', program_id=p.id) }}">المنتسبين</a>
                   {% else %}
-                    {% if my and my.status != 'WITHDRAWN' %}
+                    {% if my and my.status == 'CANDIDATE' %}
                       <form method="post" action="{{ url_for('portal.hr_training_program_withdraw', program_id=p.id) }}" class="d-inline">
                         <button class="btn btn-sm btn-outline-danger">انسحاب</button>
                       </form>
                     {% elif open_map.get(p.id) %}
-                      <form method="post" action="{{ url_for('portal.hr_training_program_apply', program_id=p.id) }}" class="d-inline">
+                      <details class="text-start"><summary class="btn btn-sm btn-primary">طلب ترشيح</summary>
+                      <form method="post" action="{{ url_for('portal.hr_training_program_apply', program_id=p.id) }}" class="mt-2 border rounded p-2" style="min-width:300px">
+                        <label class="form-label">كيف يرتبط التدريب بعملك؟</label>
+                        <textarea name="application_reason" class="form-control mb-2" rows="2" required minlength="10"></textarea>
+                        <label class="form-label">اسما الضامنين الموظفين</label>
+                        <input name="guarantors" class="form-control mb-2" required>
+                        <label class="form-label">مبرر الاستمرار أو التطوير (إن انطبق)</label>
+                        <textarea name="continuation_reason" class="form-control mb-2" rows="2"></textarea>
                         <button class="btn btn-sm btn-primary">انتساب</button>
                       </form>
+                      </details>
                     {% else %}
                       <span class="text-muted">-</span>
                     {% endif %}

@@ -1,0 +1,13 @@
+{% extends 'portal/hr/base.html' %}
+{% block title %}مراجعة طلبات المهمات{% endblock %}
+{% block hr_content %}
+<div class="container py-3" dir="rtl">
+  <h3>مراجعة طلبات المهمات الرسمية</h3>
+  <div class="table-responsive"><table class="table table-striped align-middle"><thead><tr><th>الموظف</th><th>المهمة والفترة</th><th>التفاصيل والمرفقات</th><th>الإجراء</th></tr></thead><tbody>
+  {% for row in rows %}<tr><td>{{ row.user.full_name or row.user.email }}</td><td>{{ row.title }}<br>{{ row.start_day }} — {{ row.end_day }}<br>{{ row.destination }}</td><td><pre style="white-space:pre-wrap">{{ row.note or '' }}</pre>{% for att in row.attachments %}<div><a href="{{ url_for('portal.hr_mission_request_attachment_download', att_id=att.id) }}">{{ att.original_name }}</a></div>{% endfor %}</td><td>
+    {% if row.status_def and row.status_def.code == 'SUBMITTED' and row.id in manager_ids %}<form method="post" class="d-grid gap-2"><input type="hidden" name="mission_id" value="{{ row.id }}"><textarea name="review_note" class="form-control" placeholder="ملاحظة (سبب الرفض مطلوب)"></textarea><button name="action" value="APPROVE" class="btn btn-success">توصية بالاعتماد</button><button name="action" value="REJECT" class="btn btn-outline-danger">رفض</button></form>
+    {% elif can_manage and row.status_def and row.status_def.code == 'MANAGER_APPROVED' %}<form method="post" enctype="multipart/form-data" class="d-grid gap-2"><input type="hidden" name="mission_id" value="{{ row.id }}"><input name="diwan_dispatch_ref" class="form-control" placeholder="مرجع موافقة الديوان" required><input type="file" name="dispatch_order" class="form-control" required><button name="action" value="CONFIRM" class="btn btn-primary">تأكيد وإرفاق أمر الإيفاد</button></form>{% endif %}
+  </td></tr>{% else %}<tr><td colspan="4" class="text-center text-muted">لا توجد طلبات بانتظار الإجراء.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+{% endblock %}

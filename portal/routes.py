@@ -14493,7 +14493,7 @@ def _my_attendance_month_rows(
     )
     for mission in missions:
         status_code = (getattr(getattr(mission, "status_def", None), "code", None) or "").upper()
-        if status_code == "CANCELLED":
+        if status_code in {"SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}:
             continue
         for mission_day in _my_attendance_expand_period(
             mission.start_day,
@@ -26208,7 +26208,8 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
             .all()
         )
         if any(
-            (getattr(getattr(mission, "status_def", None), "code", None) or "").upper() != "CANCELLED"
+            (getattr(getattr(mission, "status_def", None), "code", None) or "").upper()
+            not in {"SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}
             for mission in missions
         ):
             return "OFFICIAL_MISSION"
@@ -35214,6 +35215,47 @@ def _ensure_status_defs(entity: str):
         db.session.commit()
     return HRStatusDef.query.filter_by(entity=entity, is_active=True).order_by(HRStatusDef.sort_order.asc()).all()
 
+
+def _ensure_mission_request_statuses():
+    """Add request states to the legacy mission-status lookup without a migration."""
+    from models import HRStatusDef
+    defaults = (
+        ("NEW", "جديدة", "New", 10),
+        ("SUBMITTED", "بانتظار المسؤول المباشر", "Awaiting manager", 15),
+        ("MANAGER_APPROVED", "اعتمدها المسؤول — بانتظار الديوان", "Manager approved — pending Diwan", 20),
+        ("REJECTED", "مرفوضة", "Rejected", 30),
+        ("CONFIRMED", "مثبتة", "Confirmed", 40),
+        ("CANCELLED", "ملغاة", "Cancelled", 90),
+    )
+    existing = {
+        (code or "").strip().upper()
+        for (code,) in HRStatusDef.query.filter_by(entity="MISSION").with_entities(HRStatusDef.code).all()
+    }
+    changed = False
+    for code, name_ar, name_en, order in defaults:
+        if code not in existing:
+            db.session.add(HRStatusDef(
+                entity="MISSION", code=code, name_ar=name_ar,
+                name_en=name_en, sort_order=order, is_active=True,
+            ))
+            changed = True
+    if changed:
+        db.session.commit()
+    return _ensure_status_defs("MISSION")
+
+
+def _mission_status_code(row: HROfficialMission | None) -> str:
+    return (getattr(getattr(row, "status_def", None), "code", None) or "").strip().upper()
+
+
+def _mission_status_id(code: str) -> int:
+    from models import HRStatusDef
+    _ensure_mission_request_statuses()
+    row = HRStatusDef.query.filter_by(entity="MISSION", code=(code or "").upper(), is_active=True).first()
+    if not row:
+        raise LookupError("mission_status_missing")
+    return int(row.id)
+
 def _ensure_occasion_types():
     from models import HROfficialOccasionType
     if HROfficialOccasionType.query.count() == 0:
@@ -35236,7 +35278,7 @@ def _save_mission_attachment(mission_id: int, f):
     from models import HROfficialMissionAttachment
     folder = _mission_upload_dir(mission_id)
     orig = (f.filename or '').strip()
-    stored = f"{uuid.uuid4().hex}_{orig}"
+    stored = f"{uuid.uuid4().hex}_{secure_filename(orig) or 'attachment'}"
     full = folder / stored
     f.save(str(full))
     att = HROfficialMissionAttachment(
@@ -35577,6 +35619,162 @@ def hr_leave_attachment_download_admin(att_id: int):
     return send_from_directory(str(folder), att.stored_name, as_attachment=True, download_name=att.original_name or att.stored_name)
 
 # ===== Missions =====
+def _employee_can_request_hr_service() -> bool:
+    try:
+        return bool(current_user.has_perm(HR_SS_CREATE) or current_user.has_perm(HR_READ))
+    except Exception:
+        return False
+
+
+def _calendar_month_end(start: date, months: int) -> date:
+    month_index = start.month - 1 + months
+    year = start.year + month_index // 12
+    month = month_index % 12 + 1
+    import calendar
+    day = min(start.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _period_within_month_limit(start: date, end: date, months: int) -> bool:
+    return end >= start and end <= (_calendar_month_end(start, months) - timedelta(days=1))
+
+
+def _manager_ids_for_employee(user_id: int) -> set[int]:
+    try:
+        return {int(m.id) for m in resolve_responsible_managers(int(user_id)) if getattr(m, "id", None)}
+    except Exception:
+        return set()
+
+
+def _append_review_note(existing: str | None, label: str, value: str) -> str:
+    line = f"{label}: {value.strip()}"
+    return f"{(existing or '').strip()}\n{line}".strip()
+
+
+def _training_undertaking_dir(enrollment_id: int) -> Path:
+    base = Path(current_app.instance_path) / "uploads" / "training_undertakings" / str(enrollment_id)
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+@portal_bp.route('/hr/missions/request', methods=['GET', 'POST'])
+@login_required
+@_perm(PORTAL_READ)
+def hr_mission_request_new():
+    if not _employee_can_request_hr_service():
+        abort(403)
+    if request.method == 'POST':
+        title = (request.form.get('title') or '').strip()
+        destination = (request.form.get('destination') or '').strip()
+        purpose = (request.form.get('purpose') or '').strip()
+        start_s = (request.form.get('start_day') or '').strip()
+        end_s = (request.form.get('end_day') or '').strip()
+        urgent_reason = (request.form.get('urgent_reason') or '').strip()
+        start, end = _parse_yyyy_mm_dd(start_s), _parse_yyyy_mm_dd(end_s)
+        invitation = request.files.get('attachment')
+        if not title or not destination or not purpose or not start or not end or end < start:
+            flash('يرجى استكمال العنوان والوجهة والغرض والتاريخين بصورة صحيحة.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
+        if start < date.today():
+            flash('يجب أن يبدأ الطلب بتاريخ اليوم أو بتاريخ لاحق.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
+        if not _period_within_month_limit(start, end, 1):
+            flash('مدة المهمة الرسمية لا يجوز أن تتجاوز شهراً واحداً.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
+        if (start - date.today()).days < 14 and not urgent_reason:
+            flash('يجب تقديم المهمة قبل أسبوعين؛ أضف مبرر الضرورة العاجلة للاستثناء.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
+        if not invitation or not (invitation.filename or '').strip():
+            flash('أرفق الدعوة أو مستند الجهة المنظمة، وأكد أن المهمة ليست مبنية على دعوة شخصية.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
+        if request.form.get('not_personal_invitation') != '1':
+            flash('يجب تأكيد أن المهمة لا تقوم على دعوة شخصية.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
+        row = HROfficialMission(
+            user_id=current_user.id, title=title, start_day=start_s, end_day=end_s,
+            days=(end - start).days + 1, entered_by='SELF',
+            status_def_id=_mission_status_id('SUBMITTED'), destination=destination,
+            note=f"الغرض: {purpose}\nإقرار: الدعوة رسمية وليست شخصية."
+                 + (f"\nضرورة عاجلة: {urgent_reason}" if urgent_reason else ""),
+            created_by_id=current_user.id,
+        )
+        db.session.add(row)
+        db.session.flush()
+        _save_mission_attachment(row.id, invitation)
+        db.session.commit()
+        flash('تم إرسال طلب المهمة للمسؤول المباشر. لا تحتسب في الدوام قبل صدور أمر الإيفاد النهائي.', 'success')
+        return redirect(url_for('portal.hr_my_mission_requests'))
+    return render_template('portal/hr/mission_request_new.html', today=date.today().isoformat())
+
+
+@portal_bp.route('/hr/missions/my-requests')
+@login_required
+@_perm(PORTAL_READ)
+def hr_my_mission_requests():
+    if not _employee_can_request_hr_service():
+        abort(403)
+    rows = HROfficialMission.query.filter_by(user_id=current_user.id, entered_by='SELF').order_by(HROfficialMission.created_at.desc()).limit(100).all()
+    return render_template('portal/hr/my_missions.html', rows=rows)
+
+
+@portal_bp.route('/hr/missions/requests', methods=['GET', 'POST'])
+@login_required
+@_perm(PORTAL_READ)
+def hr_mission_requests_queue():
+    if request.method == 'POST':
+        mission = HROfficialMission.query.get_or_404(request.form.get('mission_id', type=int))
+        action = (request.form.get('action') or '').strip().upper()
+        note = (request.form.get('review_note') or '').strip()
+        status = _mission_status_code(mission)
+        if action in {'APPROVE', 'REJECT'}:
+            if current_user.id not in _manager_ids_for_employee(mission.user_id) or status != 'SUBMITTED':
+                abort(403)
+            if action == 'REJECT' and not note:
+                flash('اكتب سبب الرفض.', 'danger')
+                return redirect(url_for('portal.hr_mission_requests_queue'))
+            mission.status_def_id = _mission_status_id('MANAGER_APPROVED' if action == 'APPROVE' else 'REJECTED')
+            mission.note = _append_review_note(mission.note, 'مراجعة المسؤول المباشر', ('اعتماد' if action == 'APPROVE' else 'رفض') + (f' — {note}' if note else ''))
+        elif action == 'CONFIRM':
+            if not _hr_can_manage() or status != 'MANAGER_APPROVED':
+                abort(403)
+            dispatch_ref = (request.form.get('diwan_dispatch_ref') or '').strip()
+            dispatch_doc = request.files.get('dispatch_order')
+            if not dispatch_ref or not dispatch_doc or not (dispatch_doc.filename or '').strip():
+                flash('لاستكمال الإيفاد، أدخل رقم/مرجع موافقة الديوان وأرفق أمر الإيفاد.', 'danger')
+                return redirect(url_for('portal.hr_mission_requests_queue'))
+            mission.status_def_id = _mission_status_id('CONFIRMED')
+            mission.note = _append_review_note(mission.note, 'أمر الإيفاد/مرجع الديوان', dispatch_ref)
+            _save_mission_attachment(mission.id, dispatch_doc)
+        else:
+            abort(400)
+        db.session.commit()
+        flash('تم تحديث طلب المهمة.', 'success')
+        return redirect(url_for('portal.hr_mission_requests_queue'))
+
+    submitted = HROfficialMission.query.filter_by(entered_by='SELF').order_by(HROfficialMission.created_at.asc()).all()
+    manager_ids = set()
+    for mission in submitted:
+        if _mission_status_code(mission) == 'SUBMITTED':
+            manager_ids.update(_manager_ids_for_employee(mission.user_id))
+    if current_user.id not in manager_ids and not _hr_can_manage():
+        abort(403)
+    rows = [m for m in submitted if _mission_status_code(m) in {'SUBMITTED', 'MANAGER_APPROVED'} and ( _hr_can_manage() or current_user.id in _manager_ids_for_employee(m.user_id))]
+    return render_template('portal/hr/mission_requests_queue.html', rows=rows, can_manage=_hr_can_manage(), manager_ids={m.id for m in rows if current_user.id in _manager_ids_for_employee(m.user_id)})
+
+
+@portal_bp.route('/hr/missions/request-attachments/<int:att_id>')
+@login_required
+@_perm(PORTAL_READ)
+def hr_mission_request_attachment_download(att_id: int):
+    from models import HROfficialMissionAttachment
+    att = HROfficialMissionAttachment.query.get_or_404(att_id)
+    mission = HROfficialMission.query.get_or_404(att.mission_id)
+    if current_user.id != mission.user_id and current_user.id not in _manager_ids_for_employee(mission.user_id) and not _hr_can_manage():
+        abort(403)
+    folder = _mission_upload_dir(mission.id)
+    return send_from_directory(str(folder), att.stored_name, as_attachment=True, download_name=att.original_name or att.stored_name)
+
+
 @portal_bp.route('/hr/missions/new', methods=['GET','POST'])
 @login_required
 @_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
@@ -39978,8 +40176,16 @@ def hr_training_program_info(program_id: int):
         course_id = request.form.get("course_id")
         p.course_id = int(course_id) if (course_id and course_id.isdigit()) else None
 
-        p.start_date = (request.form.get("start_date") or "").strip() or None
-        p.end_date = (request.form.get("end_date") or "").strip() or None
+        start_s = (request.form.get("start_date") or "").strip() or None
+        end_s = (request.form.get("end_date") or "").strip() or None
+        if start_s or end_s:
+            start_d = _parse_yyyy_mm_dd(start_s or "")
+            end_d = _parse_yyyy_mm_dd(end_s or "")
+            if not start_d or not end_d or not _period_within_month_limit(start_d, end_d, 8):
+                flash("تواريخ البرنامج غير صحيحة أو تتجاوز ثمانية أشهر.", "danger")
+                return redirect(url_for("portal.hr_training_program_info", program_id=p.id))
+        p.start_date = start_s
+        p.end_date = end_s
 
         country_id = request.form.get("country_lookup_id")
         p.country_lookup_id = int(country_id) if (country_id and country_id.isdigit()) else None
@@ -40260,7 +40466,7 @@ def hr_training_program_settings(program_id: int):
                 return None
             return True if v == "1" else False
 
-        p.require_manager_approval = _tri("require_manager_approval")
+        p.require_manager_approval = True
         p.needs_training_needs_window = _tri("needs_training_needs_window")
         p.employee_notifications_enabled = _tri("employee_notifications_enabled")
         p.apply_conditions_on_portal = _tri("apply_conditions_on_portal")
@@ -40281,7 +40487,7 @@ def hr_training_program_settings(program_id: int):
 
     ctx = _training_wizard_ctx(p, "settings")
     sys_defaults = {
-        "require_manager_approval": _ss_get_bool(SS_TRAINING_REQUIRE_MANAGER_APPROVAL, False),
+        "require_manager_approval": True,
         "needs_training_needs_window": _ss_get_bool(SS_TRAINING_NEEDS_WINDOW, False),
         "employee_notifications_enabled": _ss_get_bool(SS_TRAINING_EMPLOYEE_NOTIFICATIONS, True),
         "apply_conditions_on_portal": _ss_get_bool(SS_TRAINING_APPLY_COND_PORTAL, False),
@@ -40315,6 +40521,9 @@ def hr_training_program_enrollments(program_id: int):
             email = (request.form.get("employee_email") or "").strip().lower()
             status = (request.form.get("status") or "CANDIDATE").strip().upper()
             notes = (request.form.get("notes") or "").strip() or None
+            if status != "CANDIDATE":
+                flash("أضف الموظف كمرشح أولاً؛ الاعتماد والإنهاء يتطلبان استكمال المراجعة والتقارير الرسمية.", "danger")
+                return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
 
             u = None
             if email:
@@ -40354,9 +40563,19 @@ def hr_training_program_enrollments(program_id: int):
             if rid and rid.isdigit():
                 row = HRTrainingEnrollment.query.filter_by(id=int(rid), program_id=p.id).first()
                 if row:
+                    if status == "APPROVED" and (row.status or "").upper() != "APPROVED":
+                        flash("اعتماد الترشيح يتم من شاشة طلبات التدريب بعد توصية المسؤول وموافقة الديوان.", "danger")
+                        return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
+                    if status == "COMPLETED" and not all(marker in (row.notes or "") for marker in ("النتيجة النهائية", "تقرير العودة للوحدة")):
+                        flash("يلزم تسجيل النتيجة النهائية وتقرير العودة قبل إغلاق الدورة.", "danger")
+                        return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
                     if status:
                         row.status = status
-                    row.notes = notes
+                    if any(marker in (row.notes or "") for marker in ("تقرير تقدم", "النتيجة النهائية", "تقرير العودة للوحدة")):
+                        if notes:
+                            row.notes = _append_review_note(row.notes, "ملاحظة الموارد البشرية", notes)
+                    else:
+                        row.notes = notes
                     db.session.commit()
                     flash("تم تحديث حالة المنتسب.", "success")
             return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
@@ -40414,6 +40633,38 @@ def hr_training_program_apply(program_id: int):
         flash("هذا التدريب غير متاح للانتساب الآن.", "warning")
         return redirect(url_for("portal.hr_training_log"))
 
+    start = _parse_yyyy_mm_dd(p.start_date)
+    end = _parse_yyyy_mm_dd(p.end_date)
+    if not start or not end or not _period_within_month_limit(start, end, 8):
+        flash("تواريخ البرنامج غير صحيحة أو أن مدته تتجاوز ثمانية أشهر.", "danger")
+        return redirect(url_for("portal.hr_training_log"))
+    reason = (request.form.get("application_reason") or "").strip()
+    continuation_reason = (request.form.get("continuation_reason") or "").strip()
+    guarantors = (request.form.get("guarantors") or "").strip()
+    if len(reason) < 10 or len(guarantors) < 5:
+        flash("اكتب صلة التدريب بعملك واسمَي الضامنين الموظفين.", "danger")
+        return redirect(url_for("portal.hr_training_log"))
+    employee_file = EmployeeFile.query.filter_by(user_id=current_user.id).first()
+    hire_date = _parse_yyyy_mm_dd(getattr(employee_file, "hire_date", None) or "")
+    if not hire_date or start < _calendar_month_end(hire_date, 12):
+        flash("يشترط مضي سنة خدمة على الأقل قبل بدء الدورة؛ راجع الموارد البشرية إذا كان تاريخ التعيين غير مكتمل.", "danger")
+        return redirect(url_for("portal.hr_training_log"))
+    conditions = HRTrainingCondition.query.filter_by(program_id=p.id).all()
+    if conditions:
+        qual_cache = {}
+        if not all(_training_eval_condition_strict(employee_file, c, qual_cache=qual_cache) for c in conditions):
+            flash("لا تنطبق عليك الشروط المحددة لهذا التدريب.", "danger")
+            return redirect(url_for("portal.hr_training_log"))
+    prior = (HRTrainingEnrollment.query.join(HRTrainingProgram)
+             .filter(HRTrainingEnrollment.user_id == current_user.id)
+             .filter(HRTrainingEnrollment.status.in_(["APPROVED", "COMPLETED"]))
+             .order_by(HRTrainingProgram.end_date.desc()).all())
+    prior_dates = [_parse_yyyy_mm_dd(e.program.end_date or e.program.start_date or "") for e in prior if e.program]
+    last_training = max((d for d in prior_dates if d), default=None)
+    if last_training and start < _calendar_month_end(last_training, 12) and len(continuation_reason) < 10:
+        flash("يشترط مرور سنة على التدريب السابق؛ اكتب مبرر الاستكمال أو التطوير ليُراجع.", "danger")
+        return redirect(url_for("portal.hr_training_log"))
+
     # apply conditions on portal if enabled OR if training is published by conditions only
     cond_required = False
     try:
@@ -40447,12 +40698,19 @@ def hr_training_program_apply(program_id: int):
 
 
     row = HRTrainingEnrollment.query.filter_by(program_id=p.id, user_id=current_user.id).first()
-    if row:
+    if row and (row.status or "").upper() != "WITHDRAWN":
         flash("أنت منتسب/مرشح مسبقًا لهذا التدريب.", "info")
         return redirect(url_for("portal.hr_training_log"))
 
-    row = HRTrainingEnrollment(program_id=p.id, user_id=current_user.id, status="CANDIDATE")
-    db.session.add(row)
+    note_parts = [f"صلة التدريب بالعمل: {reason}", f"الضامنان الموظفان: {guarantors}", "إقرار الموظف: الالتزام بالحضور وعدم تغيير البرنامج دون موافقة، وتقديم تقارير التقدم والنتيجة والعودة للوحدة خلال عشرة أيام."]
+    if continuation_reason:
+        note_parts.append(f"مبرر الاستمرار/التطوير: {continuation_reason}")
+    if row:
+        row.status = "CANDIDATE"
+        row.notes = "\n".join(note_parts)
+    else:
+        row = HRTrainingEnrollment(program_id=p.id, user_id=current_user.id, status="CANDIDATE", notes="\n".join(note_parts))
+        db.session.add(row)
     db.session.commit()
     flash("تم إرسال طلب الانتساب.", "success")
     return redirect(url_for("portal.hr_training_log"))
@@ -40473,9 +40731,128 @@ def hr_training_program_withdraw(program_id: int):
         flash("لا يوجد انتساب لهذا التدريب.", "info")
         return redirect(url_for("portal.hr_training_log"))
 
+    if (row.status or "").upper() not in {"CANDIDATE", "WITHDRAWN"}:
+        flash("لا يمكن سحب طلب تم اعتماده أو بدأ تنفيذه؛ تواصل مع الموارد البشرية.", "warning")
+        return redirect(url_for("portal.hr_training_log"))
+
     row.status = "WITHDRAWN"
     db.session.commit()
     flash("تم الانسحاب من التدريب.", "success")
+    return redirect(url_for("portal.hr_training_log"))
+
+
+@portal_bp.route("/hr/training/requests", methods=["GET", "POST"])
+@login_required
+@_perm(PORTAL_READ)
+def hr_training_requests_queue():
+    if request.method == "POST":
+        row = HRTrainingEnrollment.query.get_or_404(request.form.get("enrollment_id", type=int))
+        action = (request.form.get("action") or "").strip().upper()
+        status = (row.status or "").upper()
+        note = (request.form.get("review_note") or "").strip()
+        if action in {"MANAGER_APPROVE", "MANAGER_REJECT"}:
+            if current_user.id not in _manager_ids_for_employee(row.user_id) or status != "CANDIDATE":
+                abort(403)
+            if action == "MANAGER_REJECT" and not note:
+                flash("اكتب سبب عدم التوصية.", "danger")
+                return redirect(url_for("portal.hr_training_requests_queue"))
+            if action == "MANAGER_APPROVE":
+                required = ("qualification_verified", "performance_good", "work_related")
+                if any(request.form.get(k) != "1" for k in required):
+                    flash("لا يمكن التوصية قبل التحقق من المؤهل، وتقدير كفاية جيد على الأقل، وصلة الدورة بالعمل.", "danger")
+                    return redirect(url_for("portal.hr_training_requests_queue"))
+                row.status = "HR_REVIEW"
+                decision = "تحققت من المؤهل؛ تقدير الكفاية جيد أو أفضل؛ التدريب مرتبط مباشرة بالعمل/المصلحة الوطنية."
+                row.notes = _append_review_note(row.notes, "توصية المسؤول المباشر", decision + (f" — {note}" if note else ""))
+            else:
+                row.status = "REJECTED"
+                row.notes = _append_review_note(row.notes, "عدم توصية المسؤول المباشر", note)
+        elif action in {"HR_APPROVE", "HR_REJECT"}:
+            if not _training_can_manage() or status != "HR_REVIEW":
+                abort(403)
+            if action == "HR_REJECT":
+                if not note:
+                    flash("اكتب سبب الرفض.", "danger")
+                    return redirect(url_for("portal.hr_training_requests_queue"))
+                row.status = "REJECTED"
+                row.notes = _append_review_note(row.notes, "قرار الموارد البشرية", f"رفض: {note}")
+            else:
+                diwan_ref = (request.form.get("diwan_ref") or "").strip()
+                committee_ref = (request.form.get("committee_ref") or "").strip()
+                undertaking = request.files.get("signed_undertaking")
+                original = (undertaking.filename or "").strip() if undertaking else ""
+                extension = Path(original).suffix.lower()
+                if not committee_ref or not diwan_ref or not original or extension not in {".pdf", ".png", ".jpg", ".jpeg"}:
+                    flash("أدخل مرجع محضر لجنة التدريب ومرجع تنسيق/موافقة الديوان، وأرفق التعهد الموقع بصيغة PDF أو صورة.", "danger")
+                    return redirect(url_for("portal.hr_training_requests_queue"))
+                stored = f"{uuid.uuid4().hex}{extension}"
+                undertaking.save(str(_training_undertaking_dir(row.id) / stored))
+                row.status = "APPROVED"
+                row.notes = _append_review_note(row.notes, "قرار لجنة التدريب/مرجع المحضر", committee_ref)
+                row.notes = _append_review_note(row.notes, "اعتماد الموارد البشرية/مرجع الديوان", diwan_ref)
+                row.notes = _append_review_note(row.notes, "التعهد_الموقّع_ملف", stored)
+        else:
+            abort(400)
+        db.session.commit()
+        flash("تم تحديث طلب التدريب.", "success")
+        return redirect(url_for("portal.hr_training_requests_queue"))
+
+    rows = HRTrainingEnrollment.query.filter(HRTrainingEnrollment.status.in_(["CANDIDATE", "HR_REVIEW"])).order_by(HRTrainingEnrollment.created_at.asc()).all()
+    manager_rows = [r for r in rows if r.status == "CANDIDATE" and current_user.id in _manager_ids_for_employee(r.user_id)]
+    hr_rows = [r for r in rows if r.status == "HR_REVIEW"] if _training_can_manage() else []
+    if not manager_rows and not hr_rows:
+        abort(403)
+    return render_template("portal/hr/training/requests.html", manager_rows=manager_rows, hr_rows=hr_rows, can_manage=_training_can_manage())
+
+
+@portal_bp.route("/hr/training/enrollments/<int:enrollment_id>/undertaking")
+@login_required
+@_perm(PORTAL_READ)
+def hr_training_undertaking_download(enrollment_id: int):
+    row = HRTrainingEnrollment.query.get_or_404(enrollment_id)
+    if current_user.id != row.user_id and current_user.id not in _manager_ids_for_employee(row.user_id) and not _training_can_manage():
+        abort(403)
+    stored = None
+    for line in (row.notes or "").splitlines():
+        if line.startswith("التعهد_الموقّع_ملف:"):
+            stored = line.split(":", 1)[1].strip()
+            break
+    if not stored or Path(stored).name != stored:
+        abort(404)
+    return send_from_directory(str(_training_undertaking_dir(row.id)), stored, as_attachment=True)
+
+
+@portal_bp.route("/hr/training/programs/<int:program_id>/report", methods=["POST"])
+@login_required
+@_perm(PORTAL_READ)
+def hr_training_program_report(program_id: int):
+    row = HRTrainingEnrollment.query.filter_by(program_id=program_id, user_id=current_user.id).first_or_404()
+    if (row.status or "").upper() not in {"APPROVED", "COMPLETED"}:
+        abort(403)
+    report_type = (request.form.get("report_type") or "").strip().upper()
+    report_text = (request.form.get("report_text") or "").strip()
+    end = _parse_yyyy_mm_dd(row.program.end_date or "")
+    if report_type not in {"PROGRESS", "RESULT", "RETURN"} or len(report_text) < 10:
+        flash("اختر نوع التقرير وأدخل ملخصاً لا يقل عن عشرة أحرف.", "danger")
+        return redirect(url_for("portal.hr_training_log"))
+    duplicate_marker = {"RESULT": "النتيجة النهائية", "RETURN": "تقرير العودة للوحدة"}.get(report_type)
+    if duplicate_marker and duplicate_marker in (row.notes or ""):
+        flash("سبق تسجيل هذا التقرير.", "info")
+        return redirect(url_for("portal.hr_training_log"))
+    if report_type in {"RESULT", "RETURN"} and (not end or date.today() < end):
+        flash("تقرير النتيجة أو العودة يُرفع بعد انتهاء التدريب.", "warning")
+        return redirect(url_for("portal.hr_training_log"))
+    start = _parse_yyyy_mm_dd(row.program.start_date or "")
+    if report_type == "PROGRESS" and (not start or not end or not (start <= date.today() <= end)):
+        flash("تقرير التقدم يُرفع خلال فترة التدريب.", "warning")
+        return redirect(url_for("portal.hr_training_log"))
+    late = report_type == "RETURN" and end and (date.today() - end).days > 10
+    label = {"PROGRESS": "تقرير تقدم", "RESULT": "النتيجة النهائية", "RETURN": "تقرير العودة للوحدة"}[report_type]
+    row.notes = _append_review_note(row.notes, f"{label} — {date.today().isoformat()}", report_text + (" [سجل بعد مهلة العشرة أيام]" if late else ""))
+    if all(marker in (row.notes or "") for marker in ("النتيجة النهائية", "تقرير العودة للوحدة")):
+        row.status = "COMPLETED"
+    db.session.commit()
+    flash("تم تسجيل التقرير.", "success")
     return redirect(url_for("portal.hr_training_log"))
 
 
@@ -40500,7 +40877,7 @@ def hr_training_admin_dashboard():
 
         # Settings
         if action == "save_settings":
-            _ss_set_bool(SS_TRAINING_REQUIRE_MANAGER_APPROVAL, request.form.get("require_manager_approval") == "1")
+            _ss_set_bool(SS_TRAINING_REQUIRE_MANAGER_APPROVAL, True)
             _ss_set_bool(SS_TRAINING_NEEDS_WINDOW, request.form.get("needs_window") == "1")
             _ss_set_bool(SS_TRAINING_EMPLOYEE_NOTIFICATIONS, request.form.get("employee_notifications") == "1")
             _ss_set_bool(SS_TRAINING_APPLY_COND_PORTAL, request.form.get("apply_cond_portal") == "1")
@@ -40602,7 +40979,7 @@ def hr_training_admin_dashboard():
     courses = HRTrainingCourse.query.order_by(HRTrainingCourse.sort_order.asc(), HRTrainingCourse.id.asc()).all()
 
     settings = {
-        "require_manager_approval": _ss_get_bool(SS_TRAINING_REQUIRE_MANAGER_APPROVAL, False),
+        "require_manager_approval": True,
         "needs_window": _ss_get_bool(SS_TRAINING_NEEDS_WINDOW, False),
         "employee_notifications": _ss_get_bool(SS_TRAINING_EMPLOYEE_NOTIFICATIONS, True),
         "apply_cond_portal": _ss_get_bool(SS_TRAINING_APPLY_COND_PORTAL, False),
