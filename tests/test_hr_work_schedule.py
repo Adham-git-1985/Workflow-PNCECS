@@ -13,6 +13,9 @@ from models import (
     EmployeeFile,
     HRAttendanceScheduleDay,
     HRAttendanceSchedulePlan,
+    HRTrainingCourse,
+    HRTrainingEnrollment,
+    HRTrainingProgram,
     Notification,
     NotificationEmailDelivery,
     OrgNode,
@@ -207,6 +210,50 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
             _attendance_exemption_reason(self.employee.id, "2026-09-11"),
             "PLANNED_OFF",
         )
+
+    def test_approved_training_is_an_official_attendance_exemption(self):
+        course = HRTrainingCourse(name_ar="دورة إدارية")
+        db.session.add(course)
+        db.session.flush()
+        program = HRTrainingProgram(
+            course_id=course.id,
+            start_date="2026-09-10",
+            end_date="2026-09-12",
+        )
+        db.session.add(program)
+        db.session.flush()
+        enrollment = HRTrainingEnrollment(
+            program_id=program.id,
+            user_id=self.employee.id,
+            status="APPROVED",
+        )
+        db.session.add(enrollment)
+        db.session.commit()
+
+        self.assertEqual(
+            _attendance_exemption_reason(self.employee.id, "2026-09-10"),
+            "OFFICIAL_TRAINING",
+        )
+
+    def test_pending_training_does_not_exempt_attendance(self):
+        course = HRTrainingCourse(name_ar="دورة غير معتمدة")
+        db.session.add(course)
+        db.session.flush()
+        program = HRTrainingProgram(
+            course_id=course.id,
+            start_date="2026-09-10",
+            end_date="2026-09-12",
+        )
+        db.session.add(program)
+        db.session.flush()
+        db.session.add(HRTrainingEnrollment(
+            program_id=program.id,
+            user_id=self.employee.id,
+            status="CANDIDATE",
+        ))
+        db.session.commit()
+
+        self.assertIsNone(_attendance_exemption_reason(self.employee.id, "2026-09-10"))
 
     def test_editing_final_plan_creates_a_new_version(self):
         final_plan = self._final_plan()

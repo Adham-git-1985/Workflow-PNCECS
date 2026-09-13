@@ -14135,7 +14135,7 @@ def hr_my_pending_requests():
 
 
 _MY_ATTENDANCE_ACTIVE_LEAVE_STATUSES = ("DRAFT", "PENDING", "SUBMITTED", "APPROVED")
-_MY_ATTENDANCE_EXCUSED_STATUSES = {"LEAVE", "MISSION", "HOLIDAY", "OFF", "SUSPENDED"}
+_MY_ATTENDANCE_EXCUSED_STATUSES = {"LEAVE", "MISSION", "OFFICIAL_TRAINING", "HOLIDAY", "OFF", "SUSPENDED"}
 
 
 def _my_attendance_month_bounds(month_value: str | None, reference_day: date | None = None):
@@ -14503,6 +14503,23 @@ def _my_attendance_month_rows(
         ):
             mission_title_by_day[mission_day.isoformat()] = mission.title or "مهمة رسمية"
 
+    training_title_by_day = {}
+    trainings = (
+        HRTrainingEnrollment.query
+        .join(HRTrainingProgram, HRTrainingProgram.id == HRTrainingEnrollment.program_id)
+        .filter(HRTrainingEnrollment.user_id == user_id)
+        .filter(HRTrainingEnrollment.status.in_(["APPROVED", "COMPLETED"]))
+        .filter(HRTrainingProgram.start_date <= scope_end_str)
+        .filter(HRTrainingProgram.end_date >= scope_start_str)
+        .all()
+    )
+    for enrollment in trainings:
+        program = enrollment.program
+        for training_day in _my_attendance_expand_period(program.start_date, program.end_date, scope_start, scope_end):
+            training_title_by_day[training_day.isoformat()] = (
+                program.course.name_ar if program.course else "دورة تدريبية"
+            )
+
     special_status_by_day = {}
     manual_days = set()
     special_rows = (
@@ -14548,6 +14565,7 @@ def _my_attendance_month_rows(
         if not approved_exceptions_only or leave_status == "APPROVED"
     }
     excused_days.update(mission_title_by_day)
+    excused_days.update(training_title_by_day)
     excused_days.update(
         day_str
         for day_str, status in special_status_by_day.items()
@@ -14602,10 +14620,11 @@ def _my_attendance_month_rows(
             special_status = special_status_by_day.get(day_str)
             leave_status = leave_status_by_day.get(day_str)
             mission_title = mission_title_by_day.get(day_str)
+            training_title = training_title_by_day.get(day_str)
             classification = classifications.get(day_str, "NONE")
             has_event = day_str in event_days
             has_manual = day_str in manual_days
-            has_source = bool(stored_row or has_event or has_manual or special_status or leave_status or mission_title)
+            has_source = bool(stored_row or has_event or has_manual or special_status or leave_status or mission_title or training_title)
 
             if classification == "NONE" and not has_source:
                 continue
@@ -14621,6 +14640,7 @@ def _my_attendance_month_rows(
                 or special_status
                 or leave_status
                 or mission_title
+                or training_title
                 or (stored_row and (stored_row.first_in or stored_row.last_out))
             )
             if day_obj == reference_day and not current_day_has_evidence:
@@ -14644,6 +14664,8 @@ def _my_attendance_month_rows(
                 row.status = "PENDING_LEAVE"
             elif mission_title:
                 row.status = "MISSION"
+            elif training_title:
+                row.status = "OFFICIAL_TRAINING"
             elif row.first_in and row.last_out:
                 row.status = "OK"
             elif row.first_in or row.last_out:
@@ -14654,7 +14676,7 @@ def _my_attendance_month_rows(
                 row.status = "ABSENT"
 
             row.attendance_classification = classification
-            row.mission_title = mission_title
+            row.mission_title = mission_title or training_title
             row.leave_status = leave_status
 
             display_rows.append(row)
@@ -14679,6 +14701,7 @@ _DEDUCTION_EXCLUSION_LABELS = {
     "SCHEDULED_OFF": "يوم غير مجدول للدوام",
     "HYBRID_REMOTE": "عمل عن بُعد ضمن سياسة الهايبرد",
     "OFFICIAL_MISSION": "مهمة رسمية",
+    "OFFICIAL_TRAINING": "دورة تدريبية معتمدة",
     "OFFICIAL_DEPARTURE": "مغادرة رسمية",
     "APPROVED_LEAVE": "إجازة معتمدة",
     "PENDING_LEAVE": "طلب إجازة قيد المعالجة",
@@ -14696,6 +14719,7 @@ _DEDUCTION_DAY_STATUS_LABELS = {
     "REMOTE_DAY": "عمل عن بُعد",
     "MISSION": "مهمة رسمية",
     "OFFICIAL_MISSION": "مهمة رسمية",
+    "OFFICIAL_TRAINING": "دورة تدريبية معتمدة",
     "APPROVED_LEAVE": "إجازة معتمدة",
     "PENDING_LEAVE": "إجازة قيد المعالجة",
     "WEEKLY_OFF": "عطلة أسبوعية",
@@ -14722,6 +14746,8 @@ def _deduction_day_reason(row) -> str | None:
         return status
     if status in {"MISSION", "OFFICIAL_MISSION", "SPECIAL_MISSION"}:
         return "OFFICIAL_MISSION"
+    if status == "OFFICIAL_TRAINING":
+        return "OFFICIAL_TRAINING"
     if status in {"APPROVED_LEAVE", "LEAVE", "SPECIAL_LEAVE"}:
         return "APPROVED_LEAVE"
     if status in {"HOLIDAY", "SPECIAL_HOLIDAY"}:
@@ -14821,6 +14847,7 @@ def _deduction_departure_details(
                 "OFFICIAL_HOLIDAY": "OFFICIAL_HOLIDAY",
                 "APPROVED_LEAVE": "APPROVED_LEAVE",
                 "OFFICIAL_MISSION": "OFFICIAL_MISSION",
+                "OFFICIAL_TRAINING": "OFFICIAL_TRAINING",
             }.get(raw_reason, "SPECIAL_STATUS")
         elif source in {"SYSTEM", "CLOCK_SYSTEM"} and "SPECIAL_PERMISSION" in fields:
             reason = "SPECIAL_EXCEPTION"
@@ -14940,7 +14967,7 @@ def _monthly_attendance_deduction_breakdown(
         attendance_chargeable_minutes += charged
         attendance_excluded_minutes += excluded
 
-        if charged or excluded or reason in {"HYBRID_REMOTE", "OFFICIAL_MISSION", "APPROVED_LEAVE", "PENDING_LEAVE"} or status in {"ABSENT", "INCOMPLETE"}:
+        if charged or excluded or reason in {"HYBRID_REMOTE", "OFFICIAL_MISSION", "OFFICIAL_TRAINING", "APPROVED_LEAVE", "PENDING_LEAVE"} or status in {"ABSENT", "INCOMPLETE"}:
             detail_reason = reason
             if not detail_reason and component_exceptions:
                 detail_reason = "SPECIAL_EXCEPTION"
@@ -14998,6 +15025,7 @@ def _monthly_attendance_deduction_breakdown(
                 "excluded_minutes": excluded_minutes,
                 "remote_days": sum(1 for row in rows_by_day.values() if _deduction_day_reason(row) == "HYBRID_REMOTE"),
                 "mission_days": sum(1 for row in rows_by_day.values() if _deduction_day_reason(row) == "OFFICIAL_MISSION"),
+                "training_days": sum(1 for row in rows_by_day.values() if _deduction_day_reason(row) == "OFFICIAL_TRAINING"),
                 "approved_leave_days": sum(1 for row in rows_by_day.values() if _deduction_day_reason(row) == "APPROVED_LEAVE"),
             },
         },
@@ -26213,6 +26241,21 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
             for mission in missions
         ):
             return "OFFICIAL_MISSION"
+    except Exception:
+        pass
+
+    try:
+        approved_training = (
+            HRTrainingEnrollment.query
+            .join(HRTrainingProgram, HRTrainingProgram.id == HRTrainingEnrollment.program_id)
+            .filter(HRTrainingEnrollment.user_id == user_id)
+            .filter(HRTrainingEnrollment.status.in_(["APPROVED", "COMPLETED"]))
+            .filter(HRTrainingProgram.start_date <= day_str)
+            .filter(HRTrainingProgram.end_date >= day_str)
+            .first()
+        )
+        if approved_training:
+            return "OFFICIAL_TRAINING"
     except Exception:
         pass
 
