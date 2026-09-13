@@ -124,6 +124,31 @@
 </div>
 
 {% if can_manage %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="leave-rollover">
+  <h5 class="mb-1"><i class="bi bi-arrow-left-right"></i> اعتماد ترحيل الإجازة السنوية</h5>
+  <p class="text-muted small mb-2">وفق المادة 83، اعرض رصيد السنتين السابقتين للموظف، واختر لكل سنة ونوع رصيد ما إذا كان سيُرحّل إلى سنة {{ year }}. يسجل النظام قرار الترحيل أو عدمه مرة واحدة مع اسم المعتمد، ويضيف الأيام المرحلة إلى رصيد سنة {{ year }}.</p>
+  <div class="alert alert-info py-2">يُستخدم الرصيد المرحّل حتى نفاده مع استحقاق السنة، على ألا يتجاوز مجموع الإجازة السنوية المستخدمة 60 يومًا في السنة.</div>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+    <input type="hidden" name="action" value="ROLLOVER">
+    <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>سنة الرصيد</th><th>نوع الإجازة</th><th>المستحق</th><th>المستخدم</th><th>المتبقي عند الإقفال</th><th>قرار الترحيل إلى {{ year }}</th></tr></thead><tbody>
+      {% for rollover in rollover_rows %}
+      <tr><td>{{ rollover.source_year }}</td><td>{{ rollover.leave_type.name_ar }}</td><td>{{ '%.2f'|format(rollover.total) }}</td><td>{{ '%.2f'|format(rollover.used) }}</td><td>{{ '%.2f'|format(rollover.remaining) }} يوم</td><td>
+        {% if rollover.decision == 'TRANSFER' %}<span class="badge text-bg-success">رُحّل {{ '%.2f'|format(rollover.transfer_days) }} يوم</span>
+        {% elif rollover.decision == 'KEEP' %}<span class="badge text-bg-secondary">اعتمد عدم الترحيل</span>
+        {% elif rollover.can_decide %}<select class="form-select form-select-sm mb-1" required name="rollover_{{ rollover.source_year }}_{{ rollover.leave_type.id }}"><option value="">اختر القرار</option><option value="TRANSFER">ترحيل الرصيد المتبقي</option><option value="KEEP">عدم ترحيله</option></select><textarea class="form-control form-control-sm" name="rollover_reason_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" rows="2" placeholder="سبب قوي لمصلحة العمل (مطلوب عند الترحيل)"></textarea>
+        {% else %}<span class="text-muted">لا يوجد رصيد متبقٍ للقرار</span>{% endif %}
+      </td></tr>
+      {% else %}<tr><td colspan="6" class="text-center text-muted py-3">لا توجد أنواع إجازة سنوية خاضعة للرصيد.</td></tr>{% endfor %}
+    </tbody></table></div>
+    {% if rollover_rows|selectattr('can_decide')|list %}<button class="btn btn-primary" type="submit" onclick="return confirm('سيتم تثبيت قرارات الترحيل وعدم الترحيل لهذه الأرصدة. متابعة؟')"><i class="bi bi-check2-circle"></i> اعتماد قرارات الترحيل</button>{% endif %}
+  </form>
+</div>
+{% endif %}
+
+{% if can_manage %}
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="balance-adjustments">
   <h5 class="mb-1"><i class="bi bi-pencil-square"></i> تصحيح الرصيد بعد الاعتماد</h5>
   <div class="text-muted small mb-3">لا يغيّر هذا الإجراء سجل الخصم أو طلبات الإجازة؛ يضيف حركة تصحيح موجبة أو سالبة موثقة إلى الرصيد.</div>

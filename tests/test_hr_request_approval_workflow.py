@@ -302,6 +302,28 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         }
         self.assertFalse(cc_ids)
 
+    def test_annual_leave_approval_cannot_exceed_60_days_in_a_calendar_year(self):
+        row = self._leave(self.normal_type)
+        start_request_flow(KIND_LEAVE, row)
+        db.session.commit()
+        client = self.app.test_client()
+        self._login(client, self.manager.id)
+
+        with patch("portal.routes._leave_used_days_as_of", return_value=61.0):
+            response = client.post(
+                f"/portal/hr/approvals/leaves/{row.id}",
+                data={
+                    "action": "APPROVE",
+                    "covering_employee_name": "Covering Employee",
+                    "decision_note": "Reviewed",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.expire_all()
+        persisted = db.session.get(HRLeaveRequest, row.id)
+        self.assertEqual(persisted.status, "SUBMITTED")
+
     def test_hr_management_permission_does_not_subscribe_to_all_leave_updates(self):
         db.session.add(UserPermission(
             user_id=self.general_director.id,

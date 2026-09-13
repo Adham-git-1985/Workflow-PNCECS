@@ -34,6 +34,7 @@ from portal.routes import (
     HR_LEAVE_BALANCES_MANAGE,
     HR_REPORTS_VIEW,
     _leave_entitlement_days,
+    _leave_rollover_rows,
     _leave_used_days_as_of,
     _monthly_attendance_deduction_breakdown,
     hr_deduction_approve,
@@ -590,6 +591,73 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
             logout_user()
         self.assertEqual(second_response.status_code, 302)
         self.assertEqual(run.status, "FINAL")
+
+
+    def test_leave_rollover_records_transfer_and_no_transfer_once(self):
+        admin = User(
+            email="rollover-admin@example.test",
+            name="Rollover Admin",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(
+            code="ANNUAL",
+            name_ar="إجازة سنوية",
+            deduct_from_balance=True,
+            is_active=True,
+        )
+        db.session.add_all((admin, leave_type))
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(user_id=admin.id, key=HR_LEAVE_BALANCES_MANAGE, is_allowed=True),
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=leave_type.id, year=2025, total_days=17),
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=leave_type.id, year=2024, total_days=22),
+        ))
+        db.session.commit()
+
+        post_data = {
+            "action": "ROLLOVER",
+            "user_id": str(self.user.id),
+            "year": "2026",
+            f"rollover_2025_{leave_type.id}": "TRANSFER",
+            f"rollover_reason_2025_{leave_type.id}": "تعذر منح الموظف إجازته بسبب حاجة العمل",
+            f"rollover_2024_{leave_type.id}": "KEEP",
+        }
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data=post_data,
+        ):
+            login_user(admin)
+            response = hr_leave_balances()
+            logout_user()
+        self.assertEqual(response.status_code, 302)
+
+        source_adjustment = HRLeaveBalanceAdjustment.query.filter_by(
+            user_id=self.user.id, leave_type_id=leave_type.id, year=2025
+        ).one()
+        self.assertEqual(source_adjustment.days_delta, -17)
+        self.assertIn("DECISION=TRANSFER", source_adjustment.reason)
+        target_adjustments = HRLeaveBalanceAdjustment.query.filter_by(
+            user_id=self.user.id, leave_type_id=leave_type.id, year=2026
+        ).all()
+        self.assertEqual(sorted(row.days_delta for row in target_adjustments), [0, 17])
+        self.assertTrue(any("DECISION=KEEP" in row.reason for row in target_adjustments))
+        rollover_rows = _leave_rollover_rows(self.user.id, 2026, [leave_type])
+        transferred_row = next(row for row in rollover_rows if row["source_year"] == 2025)
+        self.assertEqual(transferred_row["total"], 17)
+        self.assertEqual(transferred_row["remaining"], 17)
+        self.assertEqual(transferred_row["decision"], "TRANSFER")
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data=post_data,
+        ):
+            login_user(admin)
+            hr_leave_balances()
+            logout_user()
+        self.assertEqual(HRLeaveBalanceAdjustment.query.count(), 3)
 
 
 class MonthlyDeductionMigrationTests(unittest.TestCase):
