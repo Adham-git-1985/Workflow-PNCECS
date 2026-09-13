@@ -247,8 +247,12 @@ def fixed_asset_mobile_settings():
             db.session.commit()
             flash("تم حفظ عنوان QR. أعد طباعة الملصقات إذا تغير عنوان الخادم.", "success")
     base = _system_setting("INV_FIXED_ASSET_QR_BASE_URL", "") or request.url_root.rstrip("/")
-    return render_template("portal/inventory/fixed_assets/mobile_settings.html", base_url=base,
-                           mobile_url=base + url_for("portal.fixed_asset_mobile"))
+    return render_template(
+        "portal/inventory/fixed_assets/mobile_settings.html",
+        base_url=base,
+        mobile_url=base + url_for("portal.fixed_asset_mobile"),
+        camera_available=base.lower().startswith("https://"),
+    )
 
 
 @portal_bp.route("/inventory/fixed-assets/mobile-entry.png")

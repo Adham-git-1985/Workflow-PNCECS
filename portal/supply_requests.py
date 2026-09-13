@@ -3,8 +3,9 @@ from io import BytesIO
 import json
 from datetime import date, datetime
 
-from flask import abort, flash, redirect, render_template, request, send_file, url_for
+from flask import abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
+from sqlalchemy import or_
 
 from . import portal_bp
 from extensions import db
@@ -16,6 +17,7 @@ from models import (
     InvIssueVoucher,
     InvIssueVoucherLine,
     InvItem,
+    InvItemAttribute,
     InvItemCategory,
     InvWarehouse,
     Message,
@@ -40,6 +42,74 @@ STAGES = {
     "WAREHOUSE": "مدير المستودع",
     "DONE": "مكتمل",
 }
+
+STATUS_LABELS = {
+    "SUBMITTED": "قيد الاعتماد",
+    "APPROVED": "معتمد ومصروف",
+    "REJECTED": "مرفوض",
+    "CANCELLED": "ملغى من الموظف",
+}
+
+
+def _status_label(status, approval_stage):
+    if status == "SUBMITTED":
+        return f"بانتظار {STAGES.get(approval_stage, approval_stage)}"
+    return STATUS_LABELS.get(status, status)
+
+
+def _request_status_label(row):
+    return _status_label(row.status, row.approval_stage)
+
+
+def _last_request_label(created_at):
+    if not created_at:
+        return "لم يسبق طلب الصنف"
+    age_days = max(0, (datetime.utcnow().date() - created_at.date()).days)
+    if age_days == 0:
+        return "آخر طلب: اليوم (أقل من شهر)"
+    if age_days <= 30:
+        return f"آخر طلب: منذ {age_days} يومًا (أقل من شهر)"
+    return f"آخر طلب: {created_at.strftime('%Y-%m-%d')} (أكثر من شهر)"
+
+
+def _latest_item_request_history(requester_user_id, item_ids, *, exclude_request_id=None):
+    item_ids = {int(item_id) for item_id in item_ids if item_id}
+    if not item_ids:
+        return {}
+    query = (
+        db.session.query(
+            InvEmployeeRequestLine.item_id,
+            InvEmployeeRequestLine.requested_qty,
+            InvEmployeeRequest.id,
+            InvEmployeeRequest.status,
+            InvEmployeeRequest.approval_stage,
+            InvEmployeeRequest.created_at,
+        )
+        .join(InvEmployeeRequest, InvEmployeeRequest.id == InvEmployeeRequestLine.request_id)
+        .filter(InvEmployeeRequest.requester_user_id == int(requester_user_id))
+        .filter(InvEmployeeRequestLine.item_id.in_(item_ids))
+    )
+    if exclude_request_id:
+        query = query.filter(InvEmployeeRequest.id != int(exclude_request_id))
+    rows = query.order_by(
+        InvEmployeeRequest.created_at.desc(),
+        InvEmployeeRequest.id.desc(),
+        InvEmployeeRequestLine.id.desc(),
+    ).all()
+    history = {}
+    for item_id, quantity, request_id, status, approval_stage, created_at in rows:
+        if int(item_id) in history:
+            continue
+        age_days = max(0, (datetime.utcnow().date() - created_at.date()).days) if created_at else None
+        history[int(item_id)] = {
+            "request_id": int(request_id),
+            "requested_qty": float(quantity or 0),
+            "age_days": age_days,
+            "within_month": age_days is not None and age_days <= 30,
+            "label": _last_request_label(created_at),
+            "status_label": _status_label(status, approval_stage),
+        }
+    return history
 
 
 def _setting(key):
@@ -347,6 +417,7 @@ def inventory_employee_requests():
         "portal/inventory/employee_requests.html",
         rows=rows,
         stages=STAGES,
+        request_status_labels={row.id: _request_status_label(row) for row in rows},
         can_manage=_can_manage(),
         can_manage_catalog=_can_manage_catalog(),
         pending_count=pending_count,
@@ -364,11 +435,49 @@ def inventory_employee_request_tasks():
         "portal/inventory/employee_requests.html",
         rows=rows,
         stages=STAGES,
+        request_status_labels={row.id: _request_status_label(row) for row in rows},
         can_manage=_can_manage(),
         can_manage_catalog=_can_manage_catalog(),
         pending_count=len(rows),
         tasks=True,
     )
+
+
+@portal_bp.route("/inventory/employee-requests/items/search.json")
+@login_required
+def inventory_employee_request_items_search():
+    """Return request catalogue choices with this employee's latest request."""
+    search = (request.args.get("q") or "").strip()
+    category_id = (request.args.get("category_id") or "").strip()
+    query = InvItem.query.filter(InvItem.is_active.is_(True))
+    if category_id.isdigit():
+        query = query.filter(InvItem.category_id == int(category_id))
+    if search:
+        like = f"%{search}%"
+        query = query.filter(or_(
+            InvItem.code.ilike(like),
+            InvItem.name.ilike(like),
+            InvItem.variant.ilike(like),
+            InvItem.attributes.any(or_(
+                InvItemAttribute.name.ilike(like),
+                InvItemAttribute.value.ilike(like),
+            )),
+        ))
+    items = query.order_by(InvItem.code.asc(), InvItem.name.asc(), InvItem.id.asc()).limit(60).all()
+    history = _latest_item_request_history(current_user.id, [item.id for item in items])
+    return jsonify({
+        "items": [
+            {
+                "id": item.id,
+                "label": item.label,
+                "code": item.code or "",
+                "unit": item.unit or "",
+                "category": item.category.name if item.category else "",
+                "last_request": history.get(item.id),
+            }
+            for item in items
+        ]
+    })
 
 
 @portal_bp.route("/inventory/employee-requests/new", methods=["GET", "POST"])
@@ -437,6 +546,11 @@ def inventory_employee_request_view(request_id):
     # The employee owns the requested quantities.  Managers record their
     # approval/comment in their own stage and cannot silently alter the form.
     can_edit = row.status == "SUBMITTED" and row.requester_user_id == current_user.id
+    previous_requests = _latest_item_request_history(
+        row.requester_user_id,
+        [line.item_id for line in row.lines],
+        exclude_request_id=row.id,
+    )
     if request.method == "POST":
         if not can_edit:
             abort(403)
@@ -472,8 +586,11 @@ def inventory_employee_request_view(request_id):
         item_totals=item_totals,
         warehouse_balances=warehouse_balances,
         stages=STAGES,
+        status_label=_request_status_label(row),
+        previous_requests=previous_requests,
         can_process=_can_process(row),
         can_edit=can_edit,
+        can_cancel=row.status == "SUBMITTED" and row.requester_user_id == current_user.id,
         can_manage_catalog=_can_manage_catalog(),
     )
 
@@ -522,6 +639,30 @@ def inventory_employee_request_approve(request_id):
         abort(403)
     note = (request.form.get("note") or "").strip() or None
     current_stage = row.approval_stage
+    decision = (request.form.get("decision") or "approve").strip().lower()
+    if decision == "reject":
+        if not note:
+            flash("اكتب سبب رفض الطلب.", "danger")
+            return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+        row.status = "REJECTED"
+        row.decided_at = datetime.utcnow()
+        db.session.add(InvEmployeeRequestAction(
+            request_id=row.id,
+            stage=current_stage,
+            action="REJECTED",
+            actor_user_id=current_user.id,
+            note=note,
+        ))
+        _notify(
+            row,
+            [row.requester_user_id],
+            f"تم رفض طلب المواد #{row.id} لدى {STAGES.get(current_stage, current_stage)}. السبب: {note}",
+        )
+        db.session.commit()
+        flash("تم رفض الطلب وإبلاغ الموظف.", "success")
+        return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+    if decision != "approve":
+        abort(400)
     if current_stage == "MANAGER":
         row.approval_stage = "WAREHOUSE"
     elif current_stage == "WAREHOUSE":
@@ -576,6 +717,33 @@ def inventory_employee_request_approve(request_id):
         _notify(row, [row.requester_user_id], f"تم اعتماد طلب المواد #{row.id} نهائياً وصرف المواد من المستودع.")
     db.session.commit()
     flash("تمت متابعة طلب المواد." if row.status == "SUBMITTED" else "تم الاعتماد النهائي وإنشاء سند الصرف وخصم الكميات.", "success")
+    return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+
+
+@portal_bp.route("/inventory/employee-requests/<int:request_id>/cancel", methods=["POST"])
+@login_required
+def inventory_employee_request_cancel(request_id):
+    row = InvEmployeeRequest.query.get_or_404(request_id)
+    if row.requester_user_id != current_user.id:
+        abort(403)
+    if row.status != "SUBMITTED":
+        flash("لا يمكن إلغاء الطلب بعد رفضه أو صرف مواده.", "warning")
+        return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+    note = (request.form.get("note") or "").strip() or "ألغى الموظف طلب المواد."
+    recipients = _recipient_ids(row)
+    current_stage = row.approval_stage
+    row.status = "CANCELLED"
+    row.decided_at = datetime.utcnow()
+    db.session.add(InvEmployeeRequestAction(
+        request_id=row.id,
+        stage=current_stage,
+        action="CANCELLED",
+        actor_user_id=current_user.id,
+        note=note,
+    ))
+    _notify(row, recipients, f"ألغى الموظف طلب المواد #{row.id}. لم يعد يحتاج إلى إجراء.")
+    db.session.commit()
+    flash("تم إلغاء طلب المواد.", "success")
     return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
 
 

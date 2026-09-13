@@ -1,7 +1,7 @@
 /* Replace large item <select> lists in vouchers with a small remote search. */
 (function () {
   'use strict';
-  const endpoint = '/portal/inventory/items/search.json';
+  const defaultEndpoint = '/portal/inventory/items/search.json';
   let timer;
 
   function escapeHtml(value) {
@@ -31,12 +31,19 @@
     const input = wrapper.querySelector('.inventory-item-query');
     const results = wrapper.querySelector('.inventory-item-results');
     const categorySelector = select.dataset.itemPickerCategory || '';
+    const endpoint = select.dataset.itemPickerEndpoint || defaultEndpoint;
     const categoryInput = categorySelector ? document.querySelector(categorySelector) : null;
     if (required) input.required = true;
 
     function clearSelection() {
       id.value = '';
       input.setCustomValidity('اختر الصنف من نتائج البحث.');
+      const row = wrapper.closest('tr');
+      const previous = row && row.querySelector('.previous-request');
+      if (previous) {
+        previous.className = 'previous-request text-muted';
+        previous.textContent = 'اختر صنفًا لعرض آخر طلب';
+      }
     }
     function hideResults() {
       results.classList.add('d-none');
@@ -46,6 +53,24 @@
       id.value = item.id;
       input.value = item.label;
       input.setCustomValidity('');
+      const row = wrapper.closest('tr');
+      const previous = row && row.querySelector('.previous-request');
+      if (previous) {
+        previous.replaceChildren();
+        if (item.last_request) {
+          previous.className = 'previous-request';
+          const badge = document.createElement('span');
+          badge.className = 'badge ' + (item.last_request.within_month ? 'text-bg-warning' : 'text-bg-info');
+          badge.textContent = item.last_request.label;
+          const detail = document.createElement('div');
+          detail.className = 'small text-muted mt-1';
+          detail.textContent = 'طلب #' + item.last_request.request_id + ' · ' + item.last_request.status_label;
+          previous.append(badge, detail);
+        } else {
+          previous.className = 'previous-request text-muted';
+          previous.textContent = 'لم يسبق طلب هذا الصنف';
+        }
+      }
       hideResults();
     }
     function show(items) {
@@ -57,7 +82,10 @@
           const button = document.createElement('button');
           button.type = 'button';
           button.className = 'list-group-item list-group-item-action text-start';
-          button.innerHTML = '<div>' + escapeHtml(item.label) + '</div><small class="text-muted">' + escapeHtml([item.code, item.category, item.unit].filter(Boolean).join(' — ')) + '</small>';
+          const history = item.last_request
+            ? '<div class="small mt-1 ' + (item.last_request.within_month ? 'text-warning' : 'text-info') + '">' + escapeHtml(item.last_request.label + ' · ' + item.last_request.status_label) + '</div>'
+            : '<div class="small mt-1 text-success">لم يسبق طلب هذا الصنف</div>';
+          button.innerHTML = '<div>' + escapeHtml(item.label) + '</div><small class="text-muted">' + escapeHtml([item.code, item.category, item.unit].filter(Boolean).join(' — ')) + '</small>' + history;
           button.addEventListener('click', function () { choose(item); });
           results.appendChild(button);
         });

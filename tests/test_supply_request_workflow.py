@@ -1,7 +1,7 @@
 import json
 import unittest
 from urllib.parse import unquote
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,7 +10,14 @@ from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
 from extensions import db
-from models import InvEmployeeRequest, InvEmployeeRequestAction, InvItem, User, UserPermission
+from models import (
+    InvEmployeeRequest,
+    InvEmployeeRequestAction,
+    InvEmployeeRequestLine,
+    InvItem,
+    User,
+    UserPermission,
+)
 from portal import portal_bp
 
 
@@ -120,6 +127,48 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(duplicate.status_code, 403)
 
+    def test_current_approver_can_reject_with_a_recorded_reason(self):
+        self._login(self.second_manager.id)
+
+        response = self.client.post(
+            f"/portal/inventory/employee-requests/{self.request.id}/approve",
+            data={"decision": "reject", "note": "The request is not needed"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, self.request.id)
+        self.assertEqual(row.status, "REJECTED")
+        action = InvEmployeeRequestAction.query.filter_by(
+            request_id=row.id,
+            stage="MANAGER",
+            action="REJECTED",
+        ).one()
+        self.assertEqual(action.actor_user_id, self.second_manager.id)
+        self.assertEqual(action.note, "The request is not needed")
+
+    def test_requester_can_cancel_a_pending_material_request(self):
+        self._login(self.employee.id)
+
+        response = self.client.post(
+            f"/portal/inventory/employee-requests/{self.request.id}/cancel",
+            data={"note": "No longer required"},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.expire_all()
+        row = db.session.get(InvEmployeeRequest, self.request.id)
+        self.assertEqual(row.status, "CANCELLED")
+        action = InvEmployeeRequestAction.query.filter_by(
+            request_id=row.id,
+            action="CANCELLED",
+        ).one()
+        self.assertEqual(action.actor_user_id, self.employee.id)
+
+        self._login(self.first_manager.id)
+        duplicate = self.client.post(f"/portal/inventory/employee-requests/{row.id}/cancel")
+        self.assertEqual(duplicate.status_code, 403)
+
     def test_requester_can_download_the_official_pdf_and_word_forms(self):
         self._login(self.employee.id)
 
@@ -153,6 +202,37 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(form.status_code, 200)
         self.assertTrue(render.call_args.kwargs["catalog_has_items"])
         self.assertEqual(render.call_args.kwargs["items"], [])
+
+    def test_material_search_shows_the_employee_last_request_and_month_marker(self):
+        item = InvItem.query.filter_by(code="PAPER-001").one()
+        self.request.created_at = datetime.utcnow() - timedelta(days=12)
+        db.session.add(InvEmployeeRequestLine(
+            request_id=self.request.id,
+            item_id=item.id,
+            requested_qty=3,
+        ))
+        db.session.commit()
+        self._login(self.employee.id)
+
+        response = self.client.get(
+            "/portal/inventory/employee-requests/items/search.json?q=paper"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()["items"][0]
+        self.assertEqual(result["id"], item.id)
+        self.assertEqual(result["last_request"]["request_id"], self.request.id)
+        self.assertEqual(result["last_request"]["requested_qty"], 3.0)
+        self.assertTrue(result["last_request"]["within_month"])
+        self.assertIn("أقل من شهر", result["last_request"]["label"])
+
+        self.request.created_at = datetime.utcnow() - timedelta(days=45)
+        db.session.commit()
+        older = self.client.get(
+            "/portal/inventory/employee-requests/items/search.json?q=paper"
+        ).get_json()["items"][0]["last_request"]
+        self.assertFalse(older["within_month"])
+        self.assertIn("أكثر من شهر", older["label"])
 
 
 if __name__ == "__main__":
