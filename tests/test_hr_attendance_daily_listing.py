@@ -30,6 +30,7 @@ from portal.routes import (
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
     _summary_compute_one,
+    _reconciled_departure_records,
     _attach_reconciled_departures,
     _sort_and_number_attendance_daily_rows,
     hr_attendance_manual_edit,
@@ -269,6 +270,39 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(result["work_minutes"], 0)
         self.assertEqual(result["early_leave_minutes"], 0)
         self.assertEqual(result["status"], "INCOMPLETE")
+
+    def test_final_personal_departure_is_checkout_until_a_return_arrives(self):
+        employee = User(email="open-departure@example.test", name="Employee", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add_all([
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 13, h, m), event_type=code)
+            for h, m, code in [(8, 0, 'I'), (11, 0, 'C'), (11, 46, 'D'), (13, 35, 'C')]
+        ])
+        db.session.commit()
+        schedule = SimpleNamespace(
+            id=None, kind='FIXED', start_time='08:00', end_time='15:00',
+            break_minutes=0, grace_minutes=0, overtime_threshold_minutes=0,
+        )
+        with patch('portal.routes._effective_schedule_for_user', return_value=schedule), patch(
+            'portal.routes._attendance_exemption_reason', return_value=None,
+        ):
+            result = _summary_compute_one(employee.id, '2026-09-13')
+            self.assertEqual(result['last_out'], datetime(2026, 9, 13, 13, 35))
+            self.assertEqual(result['status'], 'OK')
+            self.assertEqual(result['work_minutes'], 335)
+            self.assertEqual(result['early_leave_minutes'], 85)
+            records = _reconciled_departure_records([employee.id], '2026-09-13', '2026-09-13')
+            self.assertEqual(sum(r['counted_minutes'] for r in records), 46)
+            # A late-arriving return restores the missing-checkout state.
+            db.session.add(AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 13, 14, 0), event_type='D'))
+            db.session.commit()
+            result = _summary_compute_one(employee.id, '2026-09-13')
+            self.assertIsNone(result['last_out'])
+            self.assertEqual(result['status'], 'INCOMPLETE')
+            db.session.add(AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 13, 15, 0), event_type='O'))
+            db.session.commit()
+            self.assertEqual(_summary_compute_one(employee.id, '2026-09-13')['last_out'], datetime(2026, 9, 13, 15, 0))
 
     def test_maternity_departure_workflow(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")

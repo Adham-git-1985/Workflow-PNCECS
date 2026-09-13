@@ -21,12 +21,7 @@
         </div>
         <div class="col-md-3">
           <label class="form-label">حالة الانتساب</label>
-          <select name="status" class="form-select">
-            <option value="CANDIDATE">مرشح</option>
-            <option value="APPROVED">معتمد</option>
-            <option value="COMPLETED">أتم التدريب</option>
-            <option value="WITHDRAWN">منسحب</option>
-          </select>
+          <div class="form-control bg-body-secondary">مرشح — يمر بمسار التوصية والاعتماد</div>
         </div>
         <div class="col-md-3">
           <label class="form-label">ملاحظات</label>
@@ -70,12 +65,12 @@
                   <form method="post" class="d-flex gap-2">
                     <input type="hidden" name="action" value="update">
                     <input type="hidden" name="enroll_id" value="{{ r.id }}">
+                    {% set st = (r.status or '').upper() %}
                     <select name="status" class="form-select form-select-sm">
-                      {% set st = (r.status or '').upper() %}
-                      <option value="CANDIDATE" {% if st=='CANDIDATE' %}selected{% endif %}>مرشح</option>
-                      <option value="APPROVED" {% if st=='APPROVED' %}selected{% endif %}>معتمد</option>
-                      <option value="COMPLETED" {% if st=='COMPLETED' %}selected{% endif %}>أتم التدريب</option>
-                      <option value="WITHDRAWN" {% if st=='WITHDRAWN' %}selected{% endif %}>منسحب</option>
+                      <option value="{{ st }}" selected>{{ st|ui_label }}</option>
+                      {% if st in ['CANDIDATE', 'HR_REVIEW', 'APPROVED'] %}
+                        <option value="WITHDRAWN">إلغاء الترشيح</option>
+                      {% endif %}
                     </select>
                 </td>
                 <td>

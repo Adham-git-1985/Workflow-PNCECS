@@ -26366,6 +26366,12 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     if not last_out and not ins and len(all_times) > 1:
         last_out = all_times[-1]
 
+    # A final personal departure with no checkout or subsequent movement is
+    # the employee's effective checkout. Keep the source punch unchanged:
+    # a subsequently imported return must remove this inference on recompute.
+    if not last_out and evs and _attendance_event_code(evs[-1]) == 'C':
+        last_out = evs[-1].event_dt
+
     manual_override = _manual_attendance_override(user_id, day_str)
     if manual_override:
         if manual_override.start_time:
@@ -35316,6 +35322,11 @@ def _load_work_location_lookups():
     return {"govs": govs, "locs": locs}
 
 def _save_mission_attachment(mission_id: int, f):
+    """Stage a mission attachment in the caller's current transaction.
+
+    The caller owns the commit so an approval status, its order, and the
+    attachment record cannot be persisted as separate workflow transitions.
+    """
     from models import HROfficialMissionAttachment
     folder = _mission_upload_dir(mission_id)
     orig = (f.filename or '').strip()
@@ -35331,7 +35342,6 @@ def _save_mission_attachment(mission_id: int, f):
         uploaded_by_id=getattr(current_user, "id", None),
     )
     db.session.add(att)
-    db.session.commit()
 
 # ===== Leaves Admin =====
 @portal_bp.route('/hr/leaves/admin', methods=['GET'])
@@ -35771,6 +35781,12 @@ def hr_mission_request_new():
         db.session.add(row)
         db.session.flush()
         _save_mission_attachment(row.id, invitation)
+        _portal_audit(
+            'HR_MISSION_SUBMIT',
+            f'user_id={row.user_id}; status=SUBMITTED',
+            target_type='HR_OFFICIAL_MISSION',
+            target_id=row.id,
+        )
         db.session.commit()
         flash('تم إرسال طلب المهمة للمسؤول المباشر. لا تحتسب في الدوام قبل صدور أمر الإيفاد النهائي.', 'success')
         return redirect(url_for('portal.hr_my_mission_requests'))
@@ -35804,6 +35820,7 @@ def hr_mission_requests_queue():
                 return redirect(url_for('portal.hr_mission_requests_queue'))
             mission.status_def_id = _mission_status_id('MANAGER_APPROVED' if action == 'APPROVE' else 'REJECTED')
             mission.note = _append_review_note(mission.note, 'مراجعة المسؤول المباشر', ('اعتماد' if action == 'APPROVE' else 'رفض') + (f' — {note}' if note else ''))
+            audit_note = f'action={action}; status={"MANAGER_APPROVED" if action == "APPROVE" else "REJECTED"}; note={note}'
         elif action == 'HR_REJECT':
             if not _hr_can_manage() or status != 'MANAGER_APPROVED':
                 abort(403)
@@ -35812,6 +35829,7 @@ def hr_mission_requests_queue():
                 return redirect(url_for('portal.hr_mission_requests_queue'))
             mission.status_def_id = _mission_status_id('REJECTED')
             mission.note = _append_review_note(mission.note, 'رفض الموارد البشرية', note)
+            audit_note = f'action=HR_REJECT; status=REJECTED; note={note}'
         elif action == 'CONFIRM':
             if not _hr_can_manage() or status != 'MANAGER_APPROVED':
                 abort(403)
@@ -35823,8 +35841,13 @@ def hr_mission_requests_queue():
             mission.status_def_id = _mission_status_id('CONFIRMED')
             mission.note = _append_review_note(mission.note, 'أمر الإيفاد/مرجع الديوان', dispatch_ref)
             _save_mission_attachment(mission.id, dispatch_doc)
+            audit_note = f'action=CONFIRM; status=CONFIRMED; dispatch_ref={dispatch_ref}'
         else:
             abort(400)
+        _portal_audit(
+            'HR_MISSION_DECISION', audit_note,
+            target_type='HR_OFFICIAL_MISSION', target_id=mission.id,
+        )
         db.session.commit()
         flash('تم تحديث طلب المهمة.', 'success')
         return redirect(url_for('portal.hr_mission_requests_queue'))
@@ -35923,10 +35946,16 @@ def hr_official_mission_new():
             created_by_id=getattr(current_user, 'id', None),
         )
         db.session.add(row)
-        db.session.commit()
+        db.session.flush()
 
         if f and (f.filename or '').strip():
             _save_mission_attachment(row.id, f)
+        _portal_audit(
+            'HR_MISSION_CREATE',
+            f'user_id={row.user_id}; status={_mission_status_code(row)}',
+            target_type='HR_OFFICIAL_MISSION', target_id=row.id,
+        )
+        db.session.commit()
 
         flash('تم حفظ المهمة الرسمية.', 'success')
         return redirect(url_for('portal.hr_official_missions'))
@@ -35992,10 +36021,14 @@ def hr_official_mission_edit(mission_id: int):
             return redirect(url_for('portal.hr_official_mission_edit', mission_id=row.id))
         row.status_def_id = requested_status_id or _mission_status_id('NEW')
 
-        db.session.commit()
-
         if f and (f.filename or '').strip():
             _save_mission_attachment(row.id, f)
+        _portal_audit(
+            'HR_MISSION_UPDATE',
+            f'status={_mission_status_code(row)}; attachment_added={bool(f and (f.filename or "").strip())}',
+            target_type='HR_OFFICIAL_MISSION', target_id=row.id,
+        )
+        db.session.commit()
 
         flash('تم تحديث المهمة.', 'success')
         return redirect(url_for('portal.hr_official_missions'))
@@ -36025,6 +36058,11 @@ def hr_official_mission_delete(mission_id: int):
     if not _hr_can_manage():
         abort(403)
     row = HROfficialMission.query.get_or_404(mission_id)
+    _portal_audit(
+        'HR_MISSION_DELETE',
+        f'user_id={row.user_id}; status={_mission_status_code(row)}',
+        target_type='HR_OFFICIAL_MISSION', target_id=row.id,
+    )
     db.session.delete(row)
     db.session.commit()
     flash('تم حذف المهمة.', 'success')
@@ -40667,6 +40705,12 @@ def hr_training_program_enrollments(program_id: int):
 
             row = HRTrainingEnrollment(program_id=p.id, user_id=u.id, status=status, notes=notes)
             db.session.add(row)
+            db.session.flush()
+            _portal_audit(
+                'HR_TRAINING_NOMINATE',
+                f'program_id={p.id}; user_id={u.id}; status=CANDIDATE',
+                target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+            )
             db.session.commit()
             flash("تمت إضافة المنتسب.", "success")
             return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
@@ -40678,19 +40722,22 @@ def hr_training_program_enrollments(program_id: int):
             if rid and rid.isdigit():
                 row = HRTrainingEnrollment.query.filter_by(id=int(rid), program_id=p.id).first()
                 if row:
-                    if status == "APPROVED" and (row.status or "").upper() != "APPROVED":
-                        flash("اعتماد الترشيح يتم من شاشة طلبات التدريب بعد توصية المسؤول وموافقة الديوان.", "danger")
-                        return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
-                    if status == "COMPLETED" and not all(marker in (row.notes or "") for marker in ("النتيجة النهائية", "تقرير العودة للوحدة")):
-                        flash("يلزم تسجيل النتيجة النهائية وتقرير العودة قبل إغلاق الدورة.", "danger")
-                        return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
-                    if status:
+                    old_status = (row.status or '').upper()
+                    if status and status != old_status:
+                        if status != "WITHDRAWN" or old_status not in {"CANDIDATE", "HR_REVIEW", "APPROVED"}:
+                            flash("لا يمكن تغيير حالة الترشيح من هذه الشاشة؛ استخدم مسار المراجعة أو تقارير الموظف.", "danger")
+                            return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
+                        if not notes:
+                            flash("اكتب سبب إلغاء الترشيح.", "danger")
+                            return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
                         row.status = status
-                    if any(marker in (row.notes or "") for marker in ("تقرير تقدم", "النتيجة النهائية", "تقرير العودة للوحدة")):
-                        if notes:
-                            row.notes = _append_review_note(row.notes, "ملاحظة الموارد البشرية", notes)
-                    else:
-                        row.notes = notes
+                    if notes:
+                        row.notes = _append_review_note(row.notes, "ملاحظة الموارد البشرية", notes)
+                    _portal_audit(
+                        'HR_TRAINING_ADMIN_UPDATE',
+                        f'program_id={p.id}; status={old_status}->{(row.status or "").upper()}; note_added={bool(notes)}',
+                        target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+                    )
                     db.session.commit()
                     flash("تم تحديث حالة المنتسب.", "success")
             return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
@@ -40700,6 +40747,14 @@ def hr_training_program_enrollments(program_id: int):
             if rid and rid.isdigit():
                 row = HRTrainingEnrollment.query.filter_by(id=int(rid), program_id=p.id).first()
                 if row:
+                    if (row.status or '').upper() not in {"CANDIDATE", "WITHDRAWN"}:
+                        flash("لا يمكن حذف سجل وصل إلى المراجعة أو الاعتماد؛ ألغِه مع ذكر السبب للحفاظ على السجل.", "danger")
+                        return redirect(url_for("portal.hr_training_program_enrollments", program_id=p.id))
+                    _portal_audit(
+                        'HR_TRAINING_ENROLLMENT_DELETE',
+                        f'program_id={p.id}; user_id={row.user_id}; status={(row.status or "").upper()}',
+                        target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+                    )
                     db.session.delete(row)
                     db.session.commit()
                     flash("تم حذف المنتسب.", "success")
@@ -40829,6 +40884,12 @@ def hr_training_program_apply(program_id: int):
     else:
         row = HRTrainingEnrollment(program_id=p.id, user_id=current_user.id, status="CANDIDATE", notes="\n".join(note_parts))
         db.session.add(row)
+        db.session.flush()
+    _portal_audit(
+        'HR_TRAINING_APPLY',
+        f'program_id={p.id}; user_id={current_user.id}; status=CANDIDATE',
+        target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+    )
     db.session.commit()
     flash("تم إرسال طلب الانتساب.", "success")
     return redirect(url_for("portal.hr_training_log"))
@@ -40854,6 +40915,11 @@ def hr_training_program_withdraw(program_id: int):
         return redirect(url_for("portal.hr_training_log"))
 
     row.status = "WITHDRAWN"
+    _portal_audit(
+        'HR_TRAINING_WITHDRAW',
+        f'program_id={row.program_id}; status=WITHDRAWN',
+        target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+    )
     db.session.commit()
     flash("تم الانسحاب من التدريب.", "success")
     return redirect(url_for("portal.hr_training_log"))
@@ -40882,9 +40948,11 @@ def hr_training_requests_queue():
                 row.status = "HR_REVIEW"
                 decision = "تحققت من المؤهل؛ تقدير الكفاية جيد أو أفضل؛ التدريب مرتبط مباشرة بالعمل/المصلحة الوطنية."
                 row.notes = _append_review_note(row.notes, "توصية المسؤول المباشر", decision + (f" — {note}" if note else ""))
+                audit_note = "action=MANAGER_APPROVE; status=HR_REVIEW; qualification_verified=1; performance_good=1; work_related=1"
             else:
                 row.status = "REJECTED"
                 row.notes = _append_review_note(row.notes, "عدم توصية المسؤول المباشر", note)
+                audit_note = f'action=MANAGER_REJECT; status=REJECTED; note={note}'
         elif action in {"HR_APPROVE", "HR_REJECT"}:
             if not _training_can_manage() or status != "HR_REVIEW":
                 abort(403)
@@ -40894,6 +40962,7 @@ def hr_training_requests_queue():
                     return redirect(url_for("portal.hr_training_requests_queue"))
                 row.status = "REJECTED"
                 row.notes = _append_review_note(row.notes, "قرار الموارد البشرية", f"رفض: {note}")
+                audit_note = f'action=HR_REJECT; status=REJECTED; note={note}'
             else:
                 diwan_ref = (request.form.get("diwan_ref") or "").strip()
                 committee_ref = (request.form.get("committee_ref") or "").strip()
@@ -40909,8 +40978,13 @@ def hr_training_requests_queue():
                 row.notes = _append_review_note(row.notes, "قرار لجنة التدريب/مرجع المحضر", committee_ref)
                 row.notes = _append_review_note(row.notes, "اعتماد الموارد البشرية/مرجع الديوان", diwan_ref)
                 row.notes = _append_review_note(row.notes, "التعهد_الموقّع_ملف", stored)
+                audit_note = f'action=HR_APPROVE; status=APPROVED; committee_ref={committee_ref}; diwan_ref={diwan_ref}; undertaking={stored}'
         else:
             abort(400)
+        _portal_audit(
+            'HR_TRAINING_DECISION', audit_note,
+            target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+        )
         db.session.commit()
         flash("تم تحديث طلب التدريب.", "success")
         return redirect(url_for("portal.hr_training_requests_queue"))
@@ -40967,6 +41041,11 @@ def hr_training_program_report(program_id: int):
     row.notes = _append_review_note(row.notes, f"{label} — {date.today().isoformat()}", report_text + (" [سجل بعد مهلة العشرة أيام]" if late else ""))
     if all(marker in (row.notes or "") for marker in ("النتيجة النهائية", "تقرير العودة للوحدة")):
         row.status = "COMPLETED"
+    _portal_audit(
+        'HR_TRAINING_REPORT_SUBMIT',
+        f'program_id={row.program_id}; report_type={report_type}; late={int(late)}; status={(row.status or "").upper()}',
+        target_type='HR_TRAINING_ENROLLMENT', target_id=row.id,
+    )
     db.session.commit()
     flash("تم تسجيل التقرير.", "success")
     return redirect(url_for("portal.hr_training_log"))
