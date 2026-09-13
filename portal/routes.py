@@ -16091,6 +16091,7 @@ def hr_permission_request_new():
         db.session.add(req)
         db.session.flush()
         start_request_flow(KIND_PERMISSION, req)
+        _attendance_recompute_summaries_for_keys({(target_user_id, day)})
         db.session.commit()
 
         # Optional attachment
@@ -16308,6 +16309,7 @@ def hr_permission_request_edit(req_id: int):
             return redirect(url_for('portal.hr_permission_request_edit', req_id=req_id))
 
         previous_values = {
+            'user_id': r.user_id,
             'permission_type_name': previous_type_name,
             'day': r.day,
             'from_time': r.from_time,
@@ -16377,6 +16379,11 @@ def hr_permission_request_edit(req_id: int):
                 db.session.rollback()
                 flash('تم تعديل المغادرة، لكن تعذّر حفظ المرفق.', 'warning')
 
+        db.session.flush()
+        _attendance_recompute_summaries_for_keys({
+            (previous_values['user_id'], previous_values['day']),
+            (r.user_id, r.day),
+        })
         db.session.commit()
         flash('تم تعديل المغادرة.', 'success')
         return redirect(url_for('portal.hr_my_permissions'))
@@ -16420,6 +16427,8 @@ def hr_permission_request_cancel(req_id: int):
     r.cancelled_at = datetime.utcnow()
     r.cancelled_by_id = current_user.id
     r.updated_at = datetime.utcnow()
+    db.session.flush()
+    _attendance_recompute_summaries_for_keys({(r.user_id, r.day)})
     db.session.commit()
     flash("تم إلغاء الطلب.", "success")
     return redirect(url_for("portal.hr_my_permissions"))
@@ -17107,6 +17116,8 @@ def hr_approval_permission(req_id: int):
         except ValueError:
             flash("هذا الطلب ليس بانتظار إجراء صالح منك.", "warning")
             return redirect(url_for("portal.hr_approval_permission", req_id=req_id))
+        db.session.flush()
+        _attendance_recompute_summaries_for_keys({(r.user_id, r.day)})
         db.session.commit()
         if result == "APPROVED":
             flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
@@ -20611,7 +20622,7 @@ def hr_attendance_events():
         if not user_id.isdigit() and not q and not device_id and not batch_id:
             system_users_query = (
                 db.session.query(HRPermissionRequest.user_id)
-                .filter(HRPermissionRequest.status.in_(['APPROVED', 'SUBMITTED']))
+                .filter(HRPermissionRequest.status.in_(['APPROVED', 'SUBMITTED', 'PENDING']))
                 .filter(HRPermissionRequest.day >= report_start)
                 .filter(HRPermissionRequest.day <= report_end)
             )
@@ -23940,8 +23951,9 @@ def _clock_departure_records(user_ids, start_day: str, end_day: str) -> list[dic
 def _system_departure_records(user_ids, start_day: str, end_day: str, *, include_pending: bool = False) -> list[dict]:
     """Return system permissions as normalized departure intervals.
 
-    Pending requests are display-only: they can appear in the daily attendance
-    table, but never affect time, balances, or deductions before approval.
+    Pending requests do not contribute departure minutes, balances, or
+    deductions before approval. They can still supply the effective checkout
+    when no later clock movement proves that the employee returned.
     """
     ids = sorted({int(uid) for uid in (user_ids or []) if uid})
     if not ids or not start_day or not end_day or end_day < start_day:
@@ -23951,7 +23963,11 @@ def _system_departure_records(user_ids, start_day: str, end_day: str, *, include
         HRPermissionRequest.query
         .join(HRPermissionType, HRPermissionType.id == HRPermissionRequest.permission_type_id)
         .filter(HRPermissionRequest.user_id.in_(ids))
-        .filter(HRPermissionRequest.status.in_(['APPROVED', 'SUBMITTED']) if include_pending else HRPermissionRequest.status == 'APPROVED')
+        .filter(
+            HRPermissionRequest.status.in_(['APPROVED', 'SUBMITTED', 'PENDING'])
+            if include_pending
+            else HRPermissionRequest.status == 'APPROVED'
+        )
         .filter(HRPermissionRequest.day >= start_day)
         .filter(HRPermissionRequest.day <= end_day)
         .order_by(HRPermissionRequest.user_id.asc(), HRPermissionRequest.day.asc(), HRPermissionRequest.from_time.asc())
@@ -24098,6 +24114,44 @@ def _departure_time_range_label(from_dt: datetime | None, to_dt: datetime | None
     return 'الوقت غير متاح'
 
 
+def _departure_source_start_times(record: dict) -> tuple[datetime, ...]:
+    source = record.get('source')
+    if source == 'CLOCK_SYSTEM':
+        values = (record.get('clock_from_dt'), record.get('system_from_dt'))
+    elif source == 'CLOCK':
+        values = (record.get('clock_from_dt') or record.get('from_dt'),)
+    else:
+        values = (record.get('system_from_dt') or record.get('from_dt'),)
+    return tuple(dict.fromkeys(value for value in values if value))
+
+
+def _latest_effective_departure_checkout(events, departure_records) -> datetime | None:
+    event_times = [
+        event.event_dt
+        for event in events or []
+        if getattr(event, 'event_dt', None)
+    ]
+    candidates = [
+        event.event_dt
+        for event in events or []
+        if getattr(event, 'event_dt', None)
+        and _attendance_event_code(event) in {'C', 'E'}
+    ]
+    for record in departure_records or []:
+        approval_status = (record.get('approval_status') or '').upper()
+        if approval_status and approval_status not in {'APPROVED', 'SUBMITTED', 'PENDING'}:
+            continue
+        candidates.extend(_departure_source_start_times(record))
+
+    latest_event = max(event_times, default=None)
+    eligible = [
+        candidate
+        for candidate in candidates
+        if latest_event is None or candidate >= latest_event
+    ]
+    return max(eligible, default=None)
+
+
 def _departure_display_lines(records: list[dict] | tuple[dict, ...]) -> list[dict[str, str]]:
     """Build source-labelled clock and Masar times for one report cell."""
     lines: list[dict[str, str]] = []
@@ -24148,55 +24202,69 @@ def _attach_departure_sources_to_attendance_events(events, departure_records: li
         if event_dt and getattr(event, 'user_id', None):
             events_by_key.setdefault((int(event.user_id), event_dt.date().isoformat()), []).append(event)
 
-    records_by_key: dict[tuple[int, str, str], list[dict]] = {}
     for record in departure_records or []:
         user_id = record.get('user_id')
         day = record.get('day')
         kind = record.get('kind')
-        if user_id and day and kind:
-            records_by_key.setdefault((int(user_id), str(day), str(kind)), []).append(record)
-
-    for (user_id, day, kind), records in records_by_key.items():
+        if not (user_id and day and kind):
+            continue
+        user_id = int(user_id)
+        day = str(day)
         candidates = sorted(
             events_by_key.get((user_id, day), []),
             key=lambda item: getattr(item, 'event_dt', None) or datetime.min,
         )
         start_code = 'C' if kind == 'PRIVATE' else 'E'
-        anchor = next(
-            (event for event in candidates if _attendance_event_code(event) == start_code),
-            None,
+        source_starts = _departure_source_start_times(record)
+        clock_start = record.get('clock_from_dt') or (
+            record.get('from_dt') if record.get('source') in {'CLOCK', 'CLOCK_SYSTEM'} else None
         )
-        if anchor is None:
-            # Do not attach a portal-only departure to the first check-in.
-            # It made the departure appear as a "دخول" row in the movement
-            # log. Create a dedicated row at the departure time unless a C/E
-            # clock departure was actually recorded.
-            timestamp = next(
+        anchor = None
+        if clock_start:
+            anchor = next(
                 (
-                    record.get('system_from_dt') or record.get('clock_from_dt')
-                    or record.get('from_dt') or record.get('system_to_dt')
-                    or record.get('clock_to_dt') or record.get('to_dt')
-                    for record in records
+                    event for event in candidates
+                    if _attendance_event_code(event) == start_code
+                    and getattr(event, 'event_dt', None) == clock_start
                 ),
                 None,
             )
+        if anchor is None:
+            source = record.get('source')
+            timestamp = (
+                (source_starts[0] if source_starts else None)
+                or record.get('system_to_dt') or record.get('clock_to_dt') or record.get('to_dt')
+            )
+            if source == 'CLOCK':
+                event_type = 'CLOCK_DEPARTURE'
+                event_label = 'مغادرة من ساعة الدوام'
+            elif source == 'CLOCK_SYSTEM':
+                event_type = 'RECONCILED_DEPARTURE'
+                event_label = 'مغادرة من الساعة والنظام'
+            else:
+                event_type = 'SYSTEM_DEPARTURE'
+                event_label = 'مغادرة من نظام مسار'
             anchor = SimpleNamespace(
                 id=None,
                 user_id=user_id,
                 event_dt=timestamp,
-                event_type='SYSTEM_DEPARTURE',
+                event_type=event_type,
                 raw_line=None,
-                display_event_code='SYSTEM_DEPARTURE',
-                display_event_label='مغادرة من نظام مسار',
+                display_event_code=event_type,
+                display_event_label=event_label,
                 departure_type_label='رسمية' if kind == 'OFFICIAL' else 'شخصية',
                 daily_employee_number=None,
             )
             display_events.append(anchor)
             events_by_key.setdefault((user_id, day), []).append(anchor)
 
-        anchor.departure_display_lines = _departure_display_lines(records)
+        display_records = list(getattr(anchor, '_departure_display_records', []))
+        display_records.append(record)
+        anchor._departure_display_records = display_records
+        anchor.departure_display_lines = _departure_display_lines(display_records)
         anchor.departure_is_pending = any(
-            record.get('approval_status') == 'SUBMITTED' for record in records
+            item.get('approval_status') in {'SUBMITTED', 'PENDING'}
+            for item in display_records
         )
 
     return display_events
@@ -24242,13 +24310,21 @@ def _attach_reconciled_departures(attendance_rows, *, include_pending: bool = Fa
         row.private_departure_minutes = int(values.get('private_minutes') or 0)
         row.official_departure_minutes = int(values.get('official_minutes') or 0)
         row.departure_details = values.get('details') or []
-        row.pending_private_departure_details = [
+        row.private_departure_details = [
             record for record in row.departure_details
-            if include_pending and record.get('kind') == 'PRIVATE' and record.get('approval_status') == 'SUBMITTED'
+            if record.get('kind') == 'PRIVATE'
+        ]
+        row.official_departure_details = [
+            record for record in row.departure_details
+            if record.get('kind') == 'OFFICIAL'
+        ]
+        row.pending_private_departure_details = [
+            record for record in row.private_departure_details
+            if include_pending and record.get('approval_status') in {'SUBMITTED', 'PENDING'}
         ]
         row.pending_official_departure_details = [
-            record for record in row.departure_details
-            if include_pending and record.get('kind') == 'OFFICIAL' and record.get('approval_status') == 'SUBMITTED'
+            record for record in row.official_departure_details
+            if include_pending and record.get('approval_status') in {'SUBMITTED', 'PENDING'}
         ]
         if row.private_departure_minutes and getattr(row, 'early_leave_minutes', None):
             row.early_leave_minutes = max(0, int(row.early_leave_minutes or 0) - row.private_departure_minutes)
@@ -26400,38 +26476,15 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     if not last_out and not ins and len(all_times) > 1:
         last_out = all_times[-1]
 
-    # A final personal departure with no checkout or subsequent movement is
-    # the employee's effective checkout. Keep the source punch unchanged:
-    # a subsequently imported return must remove this inference on recompute.
-    if not last_out and evs and _attendance_event_code(evs[-1]) == 'C':
-        last_out = evs[-1].event_dt
-
-    # A personal departure submitted in the portal can represent the day's
-    # final checkout when it starts after noon, has no return time, and no
-    # later attendance movement exists.  This is intentionally limited to
-    # the checkout/status calculation; a pending request remains excluded
-    # from permission minutes and allowance/deduction calculations.
-    if not last_out:
-        effective_departures = departure_records
-        if effective_departures is None:
-            effective_departures = _reconciled_departure_records(
-                [user_id], day_str, day_str, include_pending=True,
-            )
-        for departure in effective_departures or []:
-            if departure.get('kind') != 'PRIVATE':
-                continue
-            if departure.get('source') not in {'SYSTEM', 'CLOCK_SYSTEM'}:
-                continue
-            departure_from = departure.get('system_from_dt') or departure.get('from_dt')
-            # The request's "to" time is the requested return time, not a
-            # clocked return. A real movement after the departure is the only
-            # proof that the employee returned.
-            if not departure_from or departure_from.hour < 12:
-                continue
-            if any(event.event_dt and event.event_dt > departure_from for event in evs):
-                continue
-            last_out = departure_from
-            break
+    effective_departures = departure_records
+    if effective_departures is None:
+        effective_departures = _reconciled_departure_records(
+            [user_id], day_str, day_str, include_pending=True,
+        )
+        departure_records = effective_departures
+    departure_checkout = _latest_effective_departure_checkout(evs, effective_departures)
+    if departure_checkout and (not last_out or departure_checkout > last_out):
+        last_out = departure_checkout
 
     manual_override = _manual_attendance_override(user_id, day_str)
     if manual_override:
@@ -26495,7 +26548,10 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             (record['from_dt'].hour * 60 + record['from_dt'].minute,
              record['to_dt'].hour * 60 + record['to_dt'].minute)
             for record in departure_records
-            if record.get('complete') and record.get('from_dt') and record.get('to_dt')
+            if record.get('countable')
+            and record.get('complete')
+            and record.get('from_dt')
+            and record.get('to_dt')
         ]
 
         if first_in and st_min is not None:

@@ -94,6 +94,12 @@ class HRAttendancePolicyCenterTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertIn(token, self.daily_view)
 
+    def test_daily_departures_open_the_filtered_event_log_in_a_new_tab(self):
+        self.assertIn("macro departure_link", self.daily_view)
+        self.assertIn("portal.hr_attendance_events", self.daily_view)
+        self.assertIn('target="_blank" rel="noopener"', self.daily_view)
+        self.assertIn("event_type=event_code", self.daily_view)
+
     def test_pending_request_indicator_has_a_direct_destination(self):
         index = (PROJECT_ROOT / "templates" / "portal" / "index.html").read_text(encoding="utf-8")
         routes = self.routes

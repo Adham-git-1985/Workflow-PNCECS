@@ -210,6 +210,50 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
 
         self.assertTrue(rows[0].departure_is_pending)
 
+    def test_each_clock_departure_is_attached_to_its_own_event_row(self):
+        first_departure = SimpleNamespace(
+            id=1,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 10, 0),
+            event_type='C',
+            raw_line=None,
+        )
+        last_departure = SimpleNamespace(
+            id=2,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 13, 30),
+            event_type='C',
+            raw_line=None,
+        )
+        records = [
+            {
+                'user_id': 7,
+                'day': '2026-09-01',
+                'kind': 'PRIVATE',
+                'source': 'CLOCK',
+                'clock_from_dt': first_departure.event_dt,
+                'clock_to_dt': datetime(2026, 9, 1, 11, 0),
+            },
+            {
+                'user_id': 7,
+                'day': '2026-09-01',
+                'kind': 'PRIVATE',
+                'source': 'CLOCK',
+                'clock_from_dt': last_departure.event_dt,
+                'clock_to_dt': None,
+            },
+        ]
+
+        rows = _attach_departure_sources_to_attendance_events(
+            [first_departure, last_departure],
+            records,
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertIn('10:00', first_departure.departure_display_lines[0]['time_range'])
+        self.assertIn('13:30', last_departure.departure_display_lines[0]['time_range'])
+        self.assertNotIn('13:30', first_departure.departure_display_lines[0]['time_range'])
+
 
 if __name__ == '__main__':
     unittest.main()

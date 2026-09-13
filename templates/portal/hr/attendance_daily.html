@@ -1,5 +1,26 @@
 {% extends "portal/hr/base.html" %}
 {% block title %}ملخص الدوام اليومي{% endblock %}
+{% macro departure_link(row, kind, minutes, movements, pending_movements, badge_class) -%}
+  {% if movements %}
+    {% set event_code = 'C' if kind == 'PRIVATE' else 'E' %}
+    <a class="d-inline-block text-decoration-none"
+       href="{{ url_for('portal.hr_attendance_events', user_id=row.user_id, date_from=row.day, date_to=row.day, event_type=event_code) }}"
+       target="_blank" rel="noopener"
+       title="فتح المغادرة في سجل الدخول والخروج والمغادرات">
+      <span class="badge {{ badge_class }}">
+        {% if minutes %}{{ minutes }} د{% elif pending_movements %}قيد الاعتماد{% else %}فتح المغادرة{% endif %}
+      </span>
+      {% for movement in pending_movements %}
+        {% set start = movement.system_from_dt or movement.clock_from_dt or movement.from_dt %}
+        {% set finish = movement.system_to_dt or movement.clock_to_dt or movement.to_dt %}
+        <span class="d-block small text-warning text-nowrap mt-1">
+          <i class="bi bi-hourglass-split"></i>
+          {% if start %}{{ start.strftime('%H:%M') }}{% endif %}{% if finish %}–{{ finish.strftime('%H:%M') }}{% endif %}
+        </span>
+      {% endfor %}
+    </a>
+  {% else %}—{% endif %}
+{%- endmacro %}
 {% block hr_content %}
 <style>
   .attendance-daily-table th,
@@ -111,20 +132,10 @@
           <td>{% if r.late_minutes %}<span class="badge bg-warning text-dark">{{ r.late_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>
-            {% if r.private_departure_minutes %}<span class="badge bg-warning text-dark">{{ r.private_departure_minutes }} د</span>{% endif %}
-            {% for movement in r.pending_private_departure_details|default([]) %}
-              {% set start = movement.system_from_dt or movement.from_dt %}{% set finish = movement.system_to_dt or movement.to_dt %}
-              <div class="small text-warning text-nowrap"><i class="bi bi-hourglass-split"></i> قيد الاعتماد{% if start %} {{ start.strftime('%H:%M') }}{% endif %}{% if finish %}–{{ finish.strftime('%H:%M') }}{% endif %}</div>
-            {% endfor %}
-            {% if not r.private_departure_minutes and not (r.pending_private_departure_details|default([])) %}—{% endif %}
+            {{ departure_link(r, 'PRIVATE', r.private_departure_minutes, r.private_departure_details|default([]), r.pending_private_departure_details|default([]), 'bg-warning text-dark') }}
           </td>
           <td>
-            {% if r.official_departure_minutes %}<span class="badge bg-info text-dark">{{ r.official_departure_minutes }} د</span>{% endif %}
-            {% for movement in r.pending_official_departure_details|default([]) %}
-              {% set start = movement.system_from_dt or movement.from_dt %}{% set finish = movement.system_to_dt or movement.to_dt %}
-              <div class="small text-warning text-nowrap"><i class="bi bi-hourglass-split"></i> قيد الاعتماد{% if start %} {{ start.strftime('%H:%M') }}{% endif %}{% if finish %}–{{ finish.strftime('%H:%M') }}{% endif %}</div>
-            {% endfor %}
-            {% if not r.official_departure_minutes and not (r.pending_official_departure_details|default([])) %}—{% endif %}
+            {{ departure_link(r, 'OFFICIAL', r.official_departure_minutes, r.official_departure_details|default([]), r.pending_official_departure_details|default([]), 'bg-info text-dark') }}
           </td>
           <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>

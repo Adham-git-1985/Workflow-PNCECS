@@ -38,6 +38,8 @@ from portal.routes import (
     hr_leave_request_new,
     hr_maternity_departure_new,
     hr_maternity_departure_review,
+    hr_permission_request_cancel,
+    hr_permission_request_new,
     _visible_maternity_departures,
 )
 
@@ -252,6 +254,181 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary["last_out"].hour, 13)
         self.assertEqual(summary["last_out"].minute, 35)
         self.assertEqual(summary["status"], "OK")
+
+    def test_last_clock_departure_is_checkout_for_both_kinds_and_times(self):
+        scenarios = (
+            ("C", datetime(2026, 9, 14, 10, 30)),
+            ("E", datetime(2026, 9, 14, 13, 30)),
+        )
+        for index, (event_type, departure_at) in enumerate(scenarios, start=1):
+            employee = User(
+                email=f"clock-departure-{index}@example.test",
+                name=f"Clock Departure {index}",
+                password_hash="x",
+                role="USER",
+            )
+            db.session.add(employee)
+            db.session.flush()
+            db.session.add_all((
+                AttendanceEvent(
+                    user_id=employee.id,
+                    event_dt=datetime(2026, 9, 14, 8, 0),
+                    event_type="I",
+                ),
+                AttendanceEvent(
+                    user_id=employee.id,
+                    event_dt=departure_at,
+                    event_type=event_type,
+                ),
+            ))
+            db.session.commit()
+
+            with self.subTest(event_type=event_type, departure_at=departure_at):
+                summary = _summary_compute_one(employee.id, "2026-09-14")
+                self.assertEqual(summary["last_out"], departure_at)
+                self.assertEqual(summary["status"], "OK")
+
+    def test_last_system_departure_is_checkout_regardless_of_approval_or_noon(self):
+        scenarios = (
+            ("SUBMITTED", False, "10:30", datetime(2026, 9, 14, 10, 30)),
+            ("APPROVED", True, "13:30", datetime(2026, 9, 14, 13, 30)),
+        )
+        for index, (status, counts_as_work, from_time, expected) in enumerate(scenarios, start=1):
+            employee = User(
+                email=f"system-departure-{index}@example.test",
+                name=f"System Departure {index}",
+                password_hash="x",
+                role="USER",
+            )
+            permission_type = HRPermissionType(
+                code=f"SYSTEM_DEPARTURE_{index}",
+                name_ar=f"مغادرة {index}",
+                counts_as_work=counts_as_work,
+            )
+            db.session.add_all((employee, permission_type))
+            db.session.flush()
+            db.session.add_all((
+                AttendanceEvent(
+                    user_id=employee.id,
+                    event_dt=datetime(2026, 9, 14, 8, 0),
+                    event_type="I",
+                ),
+                HRPermissionRequest(
+                    user_id=employee.id,
+                    permission_type_id=permission_type.id,
+                    day="2026-09-14",
+                    from_time=from_time,
+                    to_time="15:00",
+                    status=status,
+                ),
+            ))
+            db.session.commit()
+
+            with self.subTest(status=status, counts_as_work=counts_as_work, from_time=from_time):
+                summary = _summary_compute_one(employee.id, "2026-09-14")
+                self.assertEqual(summary["last_out"], expected)
+                self.assertEqual(summary["status"], "OK")
+
+    def test_clock_movement_after_system_departure_prevents_checkout_inference(self):
+        employee = User(email="returned-after-departure@example.test", name="Returned", password_hash="x", role="USER")
+        permission_type = HRPermissionType(code="RETURNED", name_ar="مغادرة شخصية", counts_as_work=False)
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 14, 8, 0), event_type="I"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 14, 11, 30), event_type="I"),
+            HRPermissionRequest(
+                user_id=employee.id,
+                permission_type_id=permission_type.id,
+                day="2026-09-14",
+                from_time="10:30",
+                to_time="11:00",
+                status="SUBMITTED",
+            ),
+        ))
+        db.session.commit()
+
+        summary = _summary_compute_one(employee.id, "2026-09-14")
+        self.assertIsNone(summary["last_out"])
+        self.assertEqual(summary["status"], "INCOMPLETE")
+
+        db.session.add(AttendanceEvent(
+            user_id=employee.id,
+            event_dt=datetime(2026, 9, 14, 15, 0),
+            event_type="O",
+        ))
+        db.session.commit()
+        self.assertEqual(
+            _summary_compute_one(employee.id, "2026-09-14")["last_out"],
+            datetime(2026, 9, 14, 15, 0),
+        )
+
+    def test_later_system_departure_replaces_an_earlier_clock_checkout(self):
+        employee = User(email="latest-departure@example.test", name="Latest Departure", password_hash="x", role="USER")
+        permission_type = HRPermissionType(code="LATEST", name_ar="مغادرة رسمية", counts_as_work=True)
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 14, 8, 0), event_type="I"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 14, 12, 0), event_type="O"),
+            HRPermissionRequest(
+                user_id=employee.id,
+                permission_type_id=permission_type.id,
+                day="2026-09-14",
+                from_time="13:30",
+                to_time="15:00",
+                status="SUBMITTED",
+            ),
+        ))
+        db.session.commit()
+
+        summary = _summary_compute_one(employee.id, "2026-09-14")
+        self.assertEqual(summary["last_out"], datetime(2026, 9, 14, 13, 30))
+
+    def test_permission_submission_and_cancellation_recompute_daily_summary(self):
+        employee = User(email="permission-lifecycle@example.test", name="Permission Lifecycle", password_hash="x", role="USER")
+        permission_type = HRPermissionType(code="LIFECYCLE", name_ar="مغادرة شخصية", counts_as_work=False)
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 14, 8, 0), event_type="I"),
+            UserPermission(user_id=employee.id, key="PORTAL_READ", is_allowed=True),
+            UserPermission(user_id=employee.id, key="HR_READ", is_allowed=True),
+            UserPermission(user_id=employee.id, key="HR_REQUESTS_CREATE", is_allowed=True),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            "/portal/hr/me/permissions/new",
+            method="POST",
+            data={
+                "permission_type_id": str(permission_type.id),
+                "day": "2026-09-14",
+                "from_time": "13:30",
+                "to_time": "15:00",
+            },
+        ):
+            login_user(employee)
+            response = hr_permission_request_new()
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        request_row = HRPermissionRequest.query.one()
+        summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-14").one()
+        self.assertEqual(summary.last_out, datetime(2026, 9, 14, 13, 30))
+
+        with self.app.test_request_context(
+            f"/portal/hr/me/permissions/{request_row.id}/cancel",
+            method="POST",
+        ):
+            login_user(employee)
+            response = hr_permission_request_cancel(request_row.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-14").one()
+        self.assertIsNone(summary.last_out)
+        self.assertEqual(summary.status, "INCOMPLETE")
 
     def test_approved_maternity_departure_does_not_create_early_leave_deduction(self):
         employee = User(email="maternity@example.test", name="Maternity Employee", password_hash="x", role="USER")
@@ -521,13 +698,13 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             self.assertEqual(row.early_leave_minutes, 0)
             self.assertEqual(row.private_departure_minutes, 60)
             schedule.grace_minutes = 0
-            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 2)
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 0)
             permission.to_time = "14:30"
             db.session.flush()
-            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 32)
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 30)
             permission.status = "PENDING"
             db.session.flush()
-            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 62)
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 60)
 
     def test_maternity_leave_uses_regular_leave_workflow_and_allows_shorter_period(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
