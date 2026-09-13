@@ -217,6 +217,42 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
 
+    def test_pending_personal_departure_after_noon_is_effective_checkout(self):
+        employee = User(email="pending-departure@example.test", name="Pending Departure", password_hash="x", role="USER")
+        permission_type = HRPermissionType(
+            code="PERSONAL_PENDING_CHECKOUT",
+            name_ar="مغادرة شخصية",
+            requires_approval=True,
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 13, 7, 32),
+                event_type="I",
+            ),
+            HRPermissionRequest(
+                user_id=employee.id,
+                permission_type_id=permission_type.id,
+                day="2026-09-13",
+                from_time="13:35",
+                to_time=None,
+                status="SUBMITTED",
+            ),
+        ))
+        db.session.commit()
+
+        summary = _summary_compute_one(employee.id, "2026-09-13")
+
+        self.assertEqual(summary["first_in"].hour, 7)
+        self.assertEqual(summary["first_in"].minute, 32)
+        self.assertEqual(summary["last_out"].hour, 13)
+        self.assertEqual(summary["last_out"].minute, 35)
+        self.assertEqual(summary["status"], "OK")
+
     def test_approved_maternity_departure_does_not_create_early_leave_deduction(self):
         employee = User(email="maternity@example.test", name="Maternity Employee", password_hash="x", role="USER")
         db.session.add(employee)

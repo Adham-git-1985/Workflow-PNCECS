@@ -26404,6 +26404,31 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     if not last_out and evs and _attendance_event_code(evs[-1]) == 'C':
         last_out = evs[-1].event_dt
 
+    # A personal departure submitted in the portal can represent the day's
+    # final checkout when it starts after noon, has no return time, and no
+    # later attendance movement exists.  This is intentionally limited to
+    # the checkout/status calculation; a pending request remains excluded
+    # from permission minutes and allowance/deduction calculations.
+    if not last_out:
+        effective_departures = departure_records
+        if effective_departures is None:
+            effective_departures = _reconciled_departure_records(
+                [user_id], day_str, day_str, include_pending=True,
+            )
+        for departure in effective_departures or []:
+            if departure.get('kind') != 'PRIVATE':
+                continue
+            if departure.get('source') not in {'SYSTEM', 'CLOCK_SYSTEM'}:
+                continue
+            departure_from = departure.get('system_from_dt') or departure.get('from_dt')
+            departure_to = departure.get('system_to_dt') or departure.get('to_dt')
+            if not departure_from or departure_to or departure_from.hour < 12:
+                continue
+            if any(event.event_dt and event.event_dt > departure_from for event in evs):
+                continue
+            last_out = departure_from
+            break
+
     manual_override = _manual_attendance_override(user_id, day_str)
     if manual_override:
         if manual_override.start_time:
