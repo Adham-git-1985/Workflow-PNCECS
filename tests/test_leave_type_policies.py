@@ -26,6 +26,8 @@ from portal.routes import (
     _leave_type_deducts_from_balance,
     _leave_type_owns_balance,
     _leave_used_days_as_of,
+    _ensure_statutory_leave_types,
+    _statutory_leave_validation,
     hr_leaves_admin_new,
     hr_leave_type_new,
 )
@@ -60,6 +62,67 @@ class LeaveTypePolicyTests(unittest.TestCase):
         db.session.add(SystemSetting(key="HR_WEEKLY_HOLIDAYS_MASK", value=str((1 << 4) | (1 << 5))))
         db.session.add(HROfficialOccasion(title="عطلة رسمية", day="2026-09-06", is_day_off=True))
         db.session.commit()
+
+    def test_statutory_leave_types_are_seeded_idempotently_without_balance_deduction(self):
+        _ensure_statutory_leave_types()
+        _ensure_statutory_leave_types()
+
+        unpaid = HRLeaveType.query.filter_by(code="UNPAID").one()
+        study = HRLeaveType.query.filter_by(code="STUDY").one()
+        self.assertFalse(unpaid.deduct_from_balance)
+        self.assertFalse(study.deduct_from_balance)
+        self.assertTrue(study.requires_documents)
+        self.assertEqual(HRLeaveType.query.filter_by(code="UNPAID").count(), 1)
+        self.assertEqual(HRLeaveType.query.filter_by(code="STUDY").count(), 1)
+
+    def test_spouse_unpaid_leave_enforces_six_month_minimum_and_four_year_cap(self):
+        unpaid = HRLeaveType(code="UNPAID", name_ar="إجازة بدون راتب")
+        db.session.add(unpaid)
+        db.session.commit()
+        details = {
+            "reason_kind": "SPOUSE",
+            "spouse_reason": "WORK",
+            "spouse_stay_to": "2026-07-30",
+            "unpaid_reason": "مرافقة الزوج للعمل بالخارج",
+        }
+
+        error, _ = _statutory_leave_validation(
+            unpaid, date(2026, 1, 31), date(2026, 7, 30), details,
+        )
+        self.assertIn("ستة أشهر", error)
+
+        details["spouse_stay_to"] = "2030-01-31"
+        error, _ = _statutory_leave_validation(
+            unpaid, date(2026, 1, 31), date(2030, 2, 1), details,
+        )
+        self.assertIn("أربع سنوات", error)
+
+    def test_study_leave_requires_two_years_service_and_one_year_per_request(self):
+        employee = User(email="study-policy@example.test", name="Study Employee", password_hash="x", role="USER")
+        study = HRLeaveType(code="STUDY", name_ar="إجازة دراسية")
+        db.session.add_all((employee, study))
+        db.session.flush()
+        db.session.add(EmployeeFile(user_id=employee.id, hire_date="2024-09-12"))
+        db.session.commit()
+        details = {
+            "study_program": "إدارة عامة",
+            "study_institution": "جامعة",
+            "study_relation": "تطوير مهارات العمل وحاجة المصلحة العامة",
+            "study_undertaking": "YES",
+            "study_reason": "إكمال الدراسة",
+        }
+
+        with self.app.test_request_context("/portal/hr/me/leaves/new"):
+            login_user(employee)
+            error, _ = _statutory_leave_validation(
+                study, date(2026, 9, 13), date(2027, 9, 12), details,
+            )
+            self.assertIsNone(error)
+            error, _ = _statutory_leave_validation(
+                study, date(2026, 9, 13), date(2027, 9, 13), details,
+            )
+            self.assertIn("سنة واحدة", error)
+            logout_user()
 
     def test_duration_policy_applies_weekends_and_official_holidays_independently(self):
         calendar = HRLeaveType(

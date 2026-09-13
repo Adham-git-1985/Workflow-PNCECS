@@ -82,9 +82,47 @@
         </div>
       </div>
 
+      {% set saved = statutory_saved or {} %}
+      <div class="col-12 statutory-unpaid-fields" style="display:none;">
+        <div class="border rounded-3 p-3 bg-warning-subtle">
+          <div class="fw-semibold mb-2">بيانات الإجازة بدون راتب</div>
+          <div class="alert alert-warning py-2 small">تخضع الإجازة لموافقة الإدارة، ومدتها لا تتجاوز أربع سنوات. لا تُخصم من رصيد الإجازة السنوية، ولا يستحق الموظف خلالها راتباً أو علاوة أو ترقية، ولا تدخل في أقدمية الترقية والعلاوة، مع مراعاة أحكام التأمين والمعاشات. بعد العودة من إجازة سنة فأكثر، يلزم مرور سنة قبل إجازة أخرى، عدا مرافقة الزوج ورعاية المولود. تُحال للموارد البشرية والأمين العام بعد المديرين المسؤولين لاستكمال التنسيق مع الديوان والمالية.</div>
+          <div class="row g-3">
+            <div class="col-12 col-md-4"><label class="form-label">سبب الإجازة</label>
+              <select class="form-select unpaid-reason-kind" name="reason_kind">
+                <option value="">اختر السبب</option>
+                <option value="GENERAL" {% if request.form.get('reason_kind', saved.get('reason_kind')) == 'GENERAL' %}selected{% endif %}>سبب شخصي/آخر</option>
+                <option value="SPOUSE" {% if request.form.get('reason_kind', saved.get('reason_kind')) == 'SPOUSE' %}selected{% endif %}>مرافقة الزوج/الزوجة للعمل أو الدراسة خارج البلاد</option>
+                <option value="CHILDCARE" {% if request.form.get('reason_kind', saved.get('reason_kind')) == 'CHILDCARE' %}selected{% endif %}>رعاية طفل بعد الولادة</option>
+              </select>
+            </div>
+            <div class="col-12 unpaid-spouse-fields" style="display:none;"><div class="row g-3">
+              <div class="col-12 col-md-4"><label class="form-label">سبب سفر الزوج/الزوجة</label><select class="form-select spouse-reason" name="spouse_reason"><option value="">اختر</option><option value="WORK" {% if request.form.get('spouse_reason', saved.get('spouse_reason')) == 'WORK' %}selected{% endif %}>العمل</option><option value="STUDY" {% if request.form.get('spouse_reason', saved.get('spouse_reason')) == 'STUDY' %}selected{% endif %}>الدراسة</option></select></div>
+              <div class="col-12 col-md-4"><label class="form-label">نهاية مدة سفر الزوج/الزوجة</label><input type="date" class="form-control spouse-stay-to" name="spouse_stay_to" value="{{ request.form.get('spouse_stay_to') or saved.get('spouse_stay_to', '') }}"></div>
+              <div class="col-12 small text-muted">يشترط أن تكون مدة السفر ستة أشهر على الأقل، وإرفاق الترخيص أو الوثائق الرسمية المثبتة للسبب والمدة.</div>
+            </div></div>
+            <div class="col-12"><label class="form-label">تفاصيل ومبررات الطلب</label><textarea class="form-control statutory-reason" name="unpaid_reason" rows="3">{{ request.form.get('unpaid_reason') or saved.get('reason', '') }}</textarea></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-12 statutory-study-fields" style="display:none;">
+        <div class="border rounded-3 p-3 bg-info-subtle">
+          <div class="fw-semibold mb-2">بيانات الإجازة الدراسية</div>
+          <div class="alert alert-info py-2 small">يشترط إكمال سنتي خدمة، وارتباط الدراسة بالعمل وحاجة المصلحة العامة. كل طلب لمدة سنة، قابل للتجديد سنوياً، وبإجمالي لا يتجاوز أربع سنوات. الإجازة بدون راتب؛ ولا تستحق خلالها علاوة أو ترقية ولا تدخل في أقدمية الترقية والعلاوة، مع مراعاة أحكام التأمين والمعاشات. أرفق القبول/الاستمرار والتعهد الرسمي الموقّع بإتمام الدراسة والخدمة. يلزم تقديم إثبات استمرار الدراسة سنوياً والنتائج النهائية خلال ثلاثة أشهر من انتهائها، وفق اللائحة التنفيذية. يُنسق اعتمادها مع الموارد البشرية والديوان والمالية.</div>
+          <div class="row g-3">
+            <div class="col-12 col-md-6"><label class="form-label">البرنامج أو التخصص الدراسي</label><input class="form-control study-required" name="study_program" value="{{ request.form.get('study_program') or saved.get('study_program', '') }}"></div>
+            <div class="col-12 col-md-6"><label class="form-label">المؤسسة التعليمية</label><input class="form-control study-required" name="study_institution" value="{{ request.form.get('study_institution') or saved.get('study_institution', '') }}"></div>
+            <div class="col-12"><label class="form-label">صلة الدراسة بالعمل وحاجة المصلحة العامة</label><textarea class="form-control study-required" name="study_relation" rows="2">{{ request.form.get('study_relation') or saved.get('study_relation', '') }}</textarea></div>
+            <div class="col-12"><label class="form-label">سبب وتفاصيل طلب الدراسة</label><textarea class="form-control statutory-reason" name="study_reason" rows="2">{{ request.form.get('study_reason') or saved.get('reason', '') }}</textarea></div>
+            <div class="col-12"><div class="form-check"><input class="form-check-input study-required study-undertaking" type="checkbox" name="study_undertaking" value="YES" {% if request.form.get('study_undertaking') == 'YES' or saved.get('study_undertaking') == 'YES' %}checked{% endif %}><label class="form-check-label">أتعهد بإتمام الدراسة، وتقديم إثبات الاستمرار والنتائج ضمن المدد النظامية، وتوقيع التعهد الرسمي بالخدمة قبل بدء الإجازة.</label></div></div>
+          </div>
+        </div>
+      </div>
+
       <div class="col-12">
-        <label class="form-label">ملاحظات</label>
-        <textarea name="note" class="form-control" rows="3" placeholder="سبب الإجازة (اختياري)">{{ request.form.get('note') or (req.note if req else '') }}</textarea>
+        <label class="form-label">ملاحظات إضافية</label>
+        <textarea name="note" class="form-control" rows="3">{{ request.form.get('note') or (req.note if req and not statutory_saved else '') }}</textarea>
       </div>
 
 
@@ -123,6 +161,19 @@
 
     function refresh() {
       const id = sel.value || '';
+      const statutoryCode = (meta[id] && meta[id].statutory_code) || '';
+      const unpaidKind = document.querySelector('.unpaid-reason-kind');
+      const unpaidReason = unpaidKind ? unpaidKind.value : '';
+      const spouseFields = document.querySelector('.unpaid-spouse-fields');
+      const isSpouse = statutoryCode === 'UNPAID' && unpaidReason === 'SPOUSE';
+      document.querySelectorAll('.statutory-unpaid-fields').forEach(el => el.style.display = statutoryCode === 'UNPAID' ? '' : 'none');
+      document.querySelectorAll('.statutory-study-fields').forEach(el => el.style.display = statutoryCode === 'STUDY' ? '' : 'none');
+      if (spouseFields) spouseFields.style.display = isSpouse ? '' : 'none';
+      document.querySelectorAll('.unpaid-reason-kind').forEach(el => el.required = statutoryCode === 'UNPAID');
+      document.querySelectorAll('.statutory-unpaid-fields .statutory-reason').forEach(el => el.required = statutoryCode === 'UNPAID');
+      document.querySelectorAll('.statutory-study-fields .statutory-reason').forEach(el => el.required = statutoryCode === 'STUDY');
+      document.querySelectorAll('.study-required').forEach(el => el.required = statutoryCode === 'STUDY');
+      document.querySelectorAll('.spouse-reason, .spouse-stay-to').forEach(el => el.required = isSpouse);
       const isExternal = !!(meta[id] && meta[id].is_external) || !!(placeSel && placeSel.value === 'EXTERNAL');
       box.style.display = isExternal ? '' : 'none';
 
@@ -136,7 +187,7 @@
       const docsRequired = document.getElementById('docs-required');
       const docsHint = document.getElementById('docs-hint');
       if (docsInput && docsRequired && docsHint) {
-        const requiresDocs = !!(meta[id] && meta[id].requires_documents);
+        const requiresDocs = !!(meta[id] && meta[id].requires_documents) || statutoryCode === 'STUDY' || isSpouse || (statutoryCode === 'UNPAID' && unpaidReason === 'CHILDCARE');
         const hint = (meta[id] && meta[id].documents_hint) ? String(meta[id].documents_hint) : '';
         docsInput.required = requiresDocs && !hasExistingAttachments;
         docsRequired.style.display = requiresDocs ? '' : 'none';
@@ -166,6 +217,7 @@
     }
 
     sel.addEventListener('change', refresh);
+    document.querySelectorAll('.unpaid-reason-kind').forEach(el => el.addEventListener('change', refresh));
     if (placeSel) placeSel.addEventListener('change', refresh);
     refresh();
   })();

@@ -722,6 +722,10 @@ def _stage_reminder_at(step: HRRequestApprovalStep) -> datetime:
 
 def is_special_leave(row: HRLeaveRequest) -> bool:
     leave_type = getattr(row, "leave_type", None)
+    if (getattr(leave_type, "code", None) or "").strip().upper() in {"UNPAID", "STUDY", "W", "U"}:
+        # Statutory unpaid and study leave must be reviewed by HR and the
+        # Secretary-General after the employee's responsible managers.
+        return True
     if leave_type and bool(getattr(leave_type, "is_external", False)):
         return True
     if (getattr(row, "leave_place", None) or "").upper() == "EXTERNAL":

@@ -17,6 +17,10 @@
 {% set progress = request_progress or {} %}
 {% set badge = progress.get('badge', 'secondary') %}
 
+{% if r.leave_type and (r.leave_type.code or '').upper() in ['UNPAID', 'STUDY', 'W', 'U'] %}
+  <div class="alert alert-warning"><strong>أثر الإجازة النظامي:</strong> لا يستحق الموظف خلالها راتباً أو علاوة أو ترقية، ولا تدخل مدتها في أقدمية الترقية والعلاوة، مع مراعاة أحكام التأمين والمعاشات. عند اعتمادها، تستكمل الموارد البشرية التنسيق مع ديوان الموظفين ووزارة المالية وتوثيق التعهدات أو مبررات منح الإجازة.</div>
+{% endif %}
+
 {% if exceptional %}
   <div class="alert alert-warning">
     <div class="fw-semibold mb-1"><i class="bi bi-exclamation-triangle"></i> طلب استثنائي</div>

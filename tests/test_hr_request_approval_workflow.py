@@ -506,6 +506,19 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             link_url=f"/portal/hr/approvals/leaves/{row.id}",
         ).count(), 0)
 
+    def test_study_leave_uses_the_same_statutory_approval_path(self):
+        study_type = HRLeaveType(code="STUDY", name_ar="إجازة دراسية", is_active=True)
+        db.session.add(study_type)
+        db.session.commit()
+
+        row = self._leave(study_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+
+        self.assertEqual(
+            [step.stage_code for step in steps],
+            ["DIRECT_MANAGER", "HR", "SECRETARY_GENERAL"],
+        )
+
     def test_minister_leave_routes_directly_to_secretary_general(self):
         self.employee.role = "MINISTER"
         db.session.commit()

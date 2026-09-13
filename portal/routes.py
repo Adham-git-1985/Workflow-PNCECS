@@ -13,6 +13,7 @@ import tempfile
 import uuid
 import csv
 import json
+import calendar
 import base64
 import mimetypes
 import unicodedata
@@ -7545,7 +7546,206 @@ def _add_years_safe(d: date, years: int):
         return date(d.year + years, d.month, min(d.day, 28))
 
 
+def _add_months_safe(d: date, months: int):
+    month_index = d.year * 12 + (d.month - 1) + months
+    year, month0 = divmod(month_index, 12)
+    month = month0 + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
 MATERNITY_LEAVE_CODE = "M"
+UNPAID_LEAVE_CODE = "UNPAID"
+STUDY_LEAVE_CODE = "STUDY"
+
+
+def _ensure_statutory_leave_types() -> None:
+    """Ensure the statutory leave options exist even on long-lived databases."""
+    definitions = (
+        ((UNPAID_LEAVE_CODE, "W"), "إجازة بدون راتب", "Unpaid leave", "وفق قانون الخدمة المدنية واللائحة التنفيذية: الحد الأقصى أربع سنوات. يلزم بيان السبب، ومرفق الإثبات عند مرافقة الزوج أو رعاية الطفل."),
+        ((STUDY_LEAVE_CODE, "U"), "إجازة دراسية", "Study leave", "تتطلب سنتي خدمة على الأقل، وأن تكون الدراسة مرتبطة بالعمل ومطلوبة للمصلحة العامة. تمنح سنة وتجدد سنوياً حتى أربع سنوات، وهي بدون راتب."),
+    )
+    changed = False
+    for codes, name_ar, name_en, hint in definitions:
+        code = codes[0]
+        row = HRLeaveType.query.filter(func.upper(HRLeaveType.code).in_(codes)).order_by(HRLeaveType.id.asc()).first()
+        if row is None:
+            row = HRLeaveType(
+                code=code,
+                name_ar=name_ar,
+                name_en=name_en,
+                requires_approval=True,
+                deduct_from_balance=False,
+                day_count_basis=LEAVE_DAY_COUNT_CALENDAR,
+                exclude_official_holidays=False,
+                requires_documents=(code == STUDY_LEAVE_CODE),
+                documents_hint=hint,
+                is_active=True,
+                created_at=datetime.utcnow(),
+            )
+            db.session.add(row)
+            changed = True
+        else:
+            values = {
+                "name_ar": name_ar,
+                "name_en": name_en,
+                "is_active": True,
+                "requires_approval": True,
+                "deduct_from_balance": False,
+                "day_count_basis": LEAVE_DAY_COUNT_CALENDAR,
+                "exclude_official_holidays": False,
+                "requires_documents": code == STUDY_LEAVE_CODE,
+                "documents_hint": hint,
+            }
+            for key, value in values.items():
+                if getattr(row, key, None) != value:
+                    setattr(row, key, value)
+                    changed = True
+    if changed:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+
+def _statutory_leave_code(leave_type: HRLeaveType | None) -> str | None:
+    code = (getattr(leave_type, "code", None) or "").strip().upper()
+    if code in {UNPAID_LEAVE_CODE, "W"}:
+        return UNPAID_LEAVE_CODE
+    if code in {STUDY_LEAVE_CODE, "U"}:
+        return STUDY_LEAVE_CODE
+    return None
+
+
+def _statutory_note(kind: str | None, values: dict[str, str], note: str | None) -> str | None:
+    """Keep type-specific application details in the existing auditable note field."""
+    if not kind:
+        return note or None
+    labels = {
+        "reason_kind": "تصنيف سبب الإجازة",
+        "reason": "تفاصيل السبب",
+        "spouse_reason": "سبب سفر الزوج/الزوجة",
+        "spouse_stay_to": "نهاية مدة سفر الزوج/الزوجة",
+        "study_program": "البرنامج/التخصص الدراسي",
+        "study_institution": "المؤسسة التعليمية",
+        "study_relation": "صلة الدراسة بالعمل والمصلحة العامة",
+        "study_undertaking": "التزام الموظف",
+    }
+    lines = ["بيانات الطلب النظامية:"]
+    for key, label in labels.items():
+        value = (values.get(key) or "").strip()
+        if value:
+            lines.append(f"{label}: {value}")
+    if note:
+        lines.extend(("ملاحظات الموظف:", note))
+    return "\n".join(lines)
+
+
+def _statutory_note_values(note: str | None) -> dict[str, str]:
+    labels = {
+        "تصنيف سبب الإجازة": "reason_kind",
+        "تفاصيل السبب": "reason",
+        "سبب سفر الزوج/الزوجة": "spouse_reason",
+        "نهاية مدة سفر الزوج/الزوجة": "spouse_stay_to",
+        "البرنامج/التخصص الدراسي": "study_program",
+        "المؤسسة التعليمية": "study_institution",
+        "صلة الدراسة بالعمل والمصلحة العامة": "study_relation",
+        "التزام الموظف": "study_undertaking",
+    }
+    values = {}
+    for line in (note or "").splitlines():
+        for label, key in labels.items():
+            prefix = f"{label}:"
+            if line.startswith(prefix):
+                values[key] = line[len(prefix):].strip()
+    return values
+
+
+def _statutory_leave_validation(leave_type, start_day, end_day, form, *, exclude_request_id=None):
+    """Return (error, details) after applying Civil Service Law leave limits."""
+    kind = _statutory_leave_code(leave_type)
+    if not kind:
+        return None, {}
+    details = {
+        key: (form.get(key) or "").strip()
+        for key in ("reason_kind", "spouse_reason", "spouse_stay_to", "study_program", "study_institution", "study_relation", "study_undertaking")
+    }
+    details["reason"] = (form.get("unpaid_reason" if kind == UNPAID_LEAVE_CODE else "study_reason") or "").strip()
+    if not details["reason"]:
+        return "اكتب سبب الإجازة وتفاصيلها.", details
+    span_end_4y = _add_years_safe(start_day, 4) - timedelta(days=1)
+    if kind == UNPAID_LEAVE_CODE:
+        reason_kind = details["reason_kind"].upper()
+        if reason_kind not in {"GENERAL", "SPOUSE", "CHILDCARE"}:
+            return "اختر سبب الإجازة بدون راتب.", details
+        if end_day > span_end_4y:
+            return "لا يجوز أن تتجاوز الإجازة بدون راتب أربع سنوات.", details
+        if reason_kind == "SPOUSE":
+            spouse_end = _parse_yyyy_mm_dd(details["spouse_stay_to"])
+            if details["spouse_reason"].upper() not in {"WORK", "STUDY"} or not spouse_end:
+                return "لمرافقة الزوج/الزوجة، أدخل سبب السفر وتاريخ انتهائه وأرفق ما يثبت الترخيص ومدة الإقامة.", details
+            if spouse_end < _add_months_safe(start_day, 6):
+                return "يشترط أن تكون مدة سفر الزوج/الزوجة ستة أشهر على الأقل.", details
+            if end_day > spouse_end:
+                return "يجب ألا يتجاوز طلب الإجازة نهاية مدة سفر الزوج/الزوجة المثبتة.", details
+        if reason_kind == "CHILDCARE" and not details["reason"]:
+            return "أدخل مبررات إجازة رعاية الطفل.", details
+        if reason_kind == "GENERAL":
+            past_unpaid = (
+                HRLeaveRequest.query
+                .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
+                .filter(
+                    HRLeaveRequest.user_id == current_user.id,
+                    HRLeaveRequest.status == "APPROVED",
+                    func.upper(HRLeaveType.code).in_((UNPAID_LEAVE_CODE, "W")),
+                )
+            )
+            if exclude_request_id:
+                past_unpaid = past_unpaid.filter(HRLeaveRequest.id != exclude_request_id)
+            for previous in past_unpaid.all():
+                previous_start = _parse_yyyy_mm_dd(previous.start_date)
+                previous_end = _parse_yyyy_mm_dd(previous.end_date)
+                previous_values = _statutory_note_values(previous.note)
+                if not previous_start or not previous_end or (previous_end - previous_start).days + 1 < 365:
+                    continue
+                if previous_values.get("reason_kind", "GENERAL").upper() in {"SPOUSE", "CHILDCARE"}:
+                    continue
+                if start_day < _add_years_safe(previous_end, 1):
+                    return "بعد العودة من إجازة بدون راتب مدتها سنة أو أكثر، لا تُمنح إجازة أخرى قبل مرور سنة، وفق الاستثناءات القانونية لمرافقة الزوج ورعاية الطفل.", details
+        return None, details
+
+    employee_file = EmployeeFile.query.filter_by(user_id=current_user.id).first()
+    hire_date = _parse_yyyy_mm_dd(getattr(employee_file, "hire_date", None)) if employee_file else None
+    if not hire_date or _add_years_safe(hire_date, 2) > date.today():
+        return "يشترط لإجازة الدراسة إكمال سنتين من الخدمة، وتأكد من تسجيل تاريخ التعيين في ملفك الوظيفي.", details
+    if end_day > _add_years_safe(start_day, 1) - timedelta(days=1):
+        return "تمنح الإجازة الدراسية لمدة سنة واحدة في كل طلب، وتجدد سنوياً وفق الموافقة.", details
+    if not details["study_program"] or not details["study_institution"] or not details["study_relation"]:
+        return "أدخل التخصص أو البرنامج، والمؤسسة التعليمية، وبيان ارتباط الدراسة بعملك والمصلحة العامة.", details
+    if details["study_undertaking"] != "YES":
+        return "أكد التزامك بإتمام الدراسة وتوقيع التعهد الرسمي بالخدمة قبل بدء الإجازة.", details
+    prior = (
+        HRLeaveRequest.query
+        .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
+        .filter(
+            HRLeaveRequest.user_id == current_user.id,
+            HRLeaveType.code.in_((STUDY_LEAVE_CODE, "U")),
+            HRLeaveRequest.status.in_(("APPROVED", "SUBMITTED", "PENDING")),
+        )
+    )
+    if exclude_request_id:
+        prior = prior.filter(HRLeaveRequest.id != exclude_request_id)
+    used_days = 0
+    for row in prior.all():
+        try:
+            row_start = _parse_yyyy_mm_dd(row.start_date)
+            row_end = _parse_yyyy_mm_dd(row.end_date)
+            if row_start and row_end and row_end >= row_start:
+                used_days += (row_end - row_start).days + 1
+        except Exception:
+            continue
+    if used_days + (end_day - start_day).days + 1 > 1461:
+        return "إجمالي الإجازة الدراسية وتجديداتها لا يجوز أن يتجاوز أربع سنوات.", details
+    return None, details
 
 
 def _ensure_maternity_leave_type() -> HRLeaveType | None:
@@ -15215,6 +15415,7 @@ def hr_leave_request_new():
         abort(403)
 
     _ensure_maternity_leave_type()
+    _ensure_statutory_leave_types()
     types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
     types_meta = {
         str(t.id): {
@@ -15225,6 +15426,7 @@ def hr_leave_request_new():
             "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+            "statutory_code": _statutory_leave_code(t),
         }
         for t in types
     }
@@ -15275,6 +15477,20 @@ def hr_leave_request_new():
             return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
         days = _calculate_leave_days(lt, start_s, end_s, user_id=current_user.id)
+
+        statutory_error, statutory_details = _statutory_leave_validation(lt, start_d, end_d, request.form)
+        if statutory_error:
+            flash(statutory_error, "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+        statutory_code = _statutory_leave_code(lt)
+        needs_statutory_documents = (
+            statutory_code == STUDY_LEAVE_CODE
+            or (statutory_code == UNPAID_LEAVE_CODE and statutory_details.get("reason_kind", "").upper() in {"SPOUSE", "CHILDCARE"})
+        )
+        if needs_statutory_documents and not valid_files:
+            flash("أرفق المستندات المؤيدة للطلب؛ إجازة الدراسة تتطلب إثبات القبول/الاستمرار، ومرافقة الزوج تتطلب إثبات السفر ومدته.", "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+        note = _statutory_note(statutory_code, statutory_details, note)
 
 
         # Enforce documents if the leave type requires them
@@ -15379,6 +15595,7 @@ def hr_leave_request_edit(req_id: int):
         return redirect(url_for("portal.hr_my_leaves"))
 
     _ensure_maternity_leave_type()
+    _ensure_statutory_leave_types()
 
     # Keep the selected type visible if it was subsequently disabled, while
     # still allowing the employee to choose any active type.
@@ -15397,6 +15614,7 @@ def hr_leave_request_edit(req_id: int):
             "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+            "statutory_code": _statutory_leave_code(t),
         }
         for t in types
     }
@@ -15410,6 +15628,7 @@ def hr_leave_request_edit(req_id: int):
             req=req,
             edit_mode=True,
             has_attachments=has_attachments,
+            statutory_saved=_statutory_note_values(req.note),
         )
 
     if request.method == "POST":
@@ -15448,7 +15667,23 @@ def hr_leave_request_edit(req_id: int):
 
         days = _calculate_leave_days(leave_type, start_s, end_s, user_id=current_user.id)
 
+        statutory_error, statutory_details = _statutory_leave_validation(
+            leave_type, start_date, end_date, request.form, exclude_request_id=req.id,
+        )
+        if statutory_error:
+            flash(statutory_error, "danger")
+            return render_form()
+        statutory_code = _statutory_leave_code(leave_type)
+        needs_statutory_documents = (
+            statutory_code == STUDY_LEAVE_CODE
+            or (statutory_code == UNPAID_LEAVE_CODE and statutory_details.get("reason_kind", "").upper() in {"SPOUSE", "CHILDCARE"})
+        )
         has_existing_attachments = HRLeaveAttachment.query.filter_by(request_id=req.id).first() is not None
+        if needs_statutory_documents and not (valid_files or has_existing_attachments):
+            flash("أرفق المستندات المؤيدة للطلب؛ إجازة الدراسة تتطلب إثبات القبول/الاستمرار، ومرافقة الزوج تتطلب إثبات السفر ومدته.", "danger")
+            return render_form()
+        note = _statutory_note(statutory_code, statutory_details, note)
+
         if getattr(leave_type, "requires_documents", False) and not (valid_files or has_existing_attachments):
             flash("هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
             return render_form()
