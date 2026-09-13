@@ -271,6 +271,30 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(result["early_leave_minutes"], 0)
         self.assertEqual(result["status"], "INCOMPLETE")
 
+    def test_submitted_personal_departure_is_visible_without_affecting_calculation(self):
+        employee = User(email="pending-departure@example.test", name="Employee", password_hash="x", role="USER")
+        permission_type = HRPermissionType(
+            code="PERSONAL", name_ar="Personal departure", counts_as_work=False,
+        )
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add(HRPermissionRequest(
+            user_id=employee.id,
+            permission_type_id=permission_type.id,
+            day="2026-09-13",
+            from_time="11:00",
+            to_time="12:00",
+            status="SUBMITTED",
+        ))
+        db.session.commit()
+
+        row = SimpleNamespace(user_id=employee.id, day="2026-09-13", early_leave_minutes=0)
+        _attach_reconciled_departures([row], include_pending=True)
+
+        self.assertEqual(row.private_departure_minutes, 0)
+        self.assertEqual(len(row.pending_private_departure_details), 1)
+        self.assertEqual(row.pending_private_departure_details[0]["approval_status"], "SUBMITTED")
+
     def test_final_personal_departure_is_checkout_until_a_return_arrives(self):
         employee = User(email="open-departure@example.test", name="Employee", password_hash="x", role="USER")
         db.session.add(employee)

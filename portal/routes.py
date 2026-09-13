@@ -20594,9 +20594,9 @@ def hr_attendance_events():
         day_key = event.event_dt.date().isoformat() if event.event_dt else ''
         event.daily_employee_number = employee_numbers.get((event.user_id, day_key))
 
-    # Merge the approved Masar requests with C/D/E/F clock movements for the
-    # report display.  Unlike the daily total, this preserves both submitted
-    # and clock times so they can be read in one table cell.
+    # Merge system requests with C/D/E/F clock movements for the report
+    # display. Submitted requests are visibly marked as pending and never
+    # participate in any attendance calculation.
     raw_event_days = [event.event_dt.date().isoformat() for event in events if event.event_dt]
     report_start = date_from or (min(raw_event_days) if raw_event_days else '') or date_to
     report_end = date_to or (max(raw_event_days) if raw_event_days else '') or date_from
@@ -20611,7 +20611,7 @@ def hr_attendance_events():
         if not user_id.isdigit() and not q and not device_id and not batch_id:
             system_users_query = (
                 db.session.query(HRPermissionRequest.user_id)
-                .filter(HRPermissionRequest.status == 'APPROVED')
+                .filter(HRPermissionRequest.status.in_(['APPROVED', 'SUBMITTED']))
                 .filter(HRPermissionRequest.day >= report_start)
                 .filter(HRPermissionRequest.day <= report_end)
             )
@@ -20632,6 +20632,7 @@ def hr_attendance_events():
             report_user_ids,
             report_start,
             report_end,
+            include_pending=True,
         )
         kind_for_event_type = {
             'C': 'PRIVATE', 'D': 'PRIVATE',
@@ -23936,8 +23937,12 @@ def _clock_departure_records(user_ids, start_day: str, end_day: str) -> list[dic
     return sorted(records, key=lambda item: (item['user_id'], item['day'], item.get('from_dt') or item.get('to_dt') or datetime.min))
 
 
-def _system_departure_records(user_ids, start_day: str, end_day: str) -> list[dict]:
-    """Return approved system permissions as normalized departure intervals."""
+def _system_departure_records(user_ids, start_day: str, end_day: str, *, include_pending: bool = False) -> list[dict]:
+    """Return system permissions as normalized departure intervals.
+
+    Pending requests are display-only: they can appear in the daily attendance
+    table, but never affect time, balances, or deductions before approval.
+    """
     ids = sorted({int(uid) for uid in (user_ids or []) if uid})
     if not ids or not start_day or not end_day or end_day < start_day:
         return []
@@ -23946,7 +23951,7 @@ def _system_departure_records(user_ids, start_day: str, end_day: str) -> list[di
         HRPermissionRequest.query
         .join(HRPermissionType, HRPermissionType.id == HRPermissionRequest.permission_type_id)
         .filter(HRPermissionRequest.user_id.in_(ids))
-        .filter(HRPermissionRequest.status == 'APPROVED')
+        .filter(HRPermissionRequest.status.in_(['APPROVED', 'SUBMITTED']) if include_pending else HRPermissionRequest.status == 'APPROVED')
         .filter(HRPermissionRequest.day >= start_day)
         .filter(HRPermissionRequest.day <= end_day)
         .order_by(HRPermissionRequest.user_id.asc(), HRPermissionRequest.day.asc(), HRPermissionRequest.from_time.asc())
@@ -23976,6 +23981,7 @@ def _system_departure_records(user_ids, start_day: str, end_day: str) -> list[di
         elif minutes and to_dt and not from_dt:
             from_dt = to_dt - timedelta(minutes=minutes)
 
+        approval_status = (row.status or '').upper()
         records.append({
             'user_id': row.user_id,
             'day': row.day,
@@ -23984,8 +23990,9 @@ def _system_departure_records(user_ids, start_day: str, end_day: str) -> list[di
             'to_dt': to_dt,
             'minutes': minutes,
             'complete': bool(from_dt and to_dt),
-            'countable': bool(minutes),
+            'countable': approval_status == 'APPROVED' and bool(minutes),
             'source': 'SYSTEM',
+            'approval_status': approval_status,
             'permission_id': row.id,
             'permission_type_id': row.permission_type_id,
             'permission_name': getattr(row.permission_type, 'name_ar', None) or getattr(row.permission_type, 'code', None) or '',
@@ -24010,7 +24017,7 @@ def _departure_records_match(clock_record: dict, system_record: dict) -> bool:
     return overlap or (same_start and same_end)
 
 
-def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> list[dict]:
+def _reconciled_departure_records(user_ids, start_day: str, end_day: str, *, include_pending: bool = False) -> list[dict]:
     """Merge approved system requests with clock C/D/E/F movements.
 
     A matched record keeps both sources for reporting, but the clock interval
@@ -24020,7 +24027,7 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> lis
     recorded by the attendance clock.
     """
     clock_records = _clock_departure_records(user_ids, start_day, end_day)
-    system_records = _system_departure_records(user_ids, start_day, end_day)
+    system_records = _system_departure_records(user_ids, start_day, end_day, include_pending=include_pending)
     for record in clock_records:
         record['clock_from_dt'] = record.get('from_dt')
         record['clock_to_dt'] = record.get('to_dt')
@@ -24044,6 +24051,7 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str) -> lis
         combined = dict(match)
         combined.update({
             'source': 'CLOCK_SYSTEM',
+            'approval_status': system_record.get('approval_status', 'APPROVED'),
             'permission_id': system_record.get('permission_id'),
             'permission_type_id': system_record.get('permission_type_id'),
             'permission_name': system_record.get('permission_name') or '',
@@ -24185,6 +24193,9 @@ def _attach_departure_sources_to_attendance_events(events, departure_records: li
             events_by_key.setdefault((user_id, day), []).append(anchor)
 
         anchor.departure_display_lines = _departure_display_lines(records)
+        anchor.departure_is_pending = any(
+            record.get('approval_status') == 'SUBMITTED' for record in records
+        )
 
     return display_events
 
@@ -24207,8 +24218,13 @@ def _departure_totals_by_key(records) -> dict:
     return totals
 
 
-def _attach_reconciled_departures(attendance_rows) -> dict:
-    """Attach report-only departure attributes to daily summary ORM rows."""
+def _attach_reconciled_departures(attendance_rows, *, include_pending: bool = False) -> dict:
+    """Attach report-only departure attributes to daily summary ORM rows.
+
+    Pending permissions are intentionally limited to the daily screen, where
+    they help staff see a newly submitted departure before it is approved.
+    Other reports retain the established approved-only behavior.
+    """
     rows = list(attendance_rows or [])
     if not rows:
         return {}
@@ -24216,12 +24232,22 @@ def _attach_reconciled_departures(attendance_rows) -> dict:
     days = [row.day for row in rows if getattr(row, 'day', None)]
     if not user_ids or not days:
         return {}
-    totals = _departure_totals_by_key(_reconciled_departure_records(user_ids, min(days), max(days)))
+    totals = _departure_totals_by_key(
+        _reconciled_departure_records(user_ids, min(days), max(days), include_pending=include_pending)
+    )
     for row in rows:
         values = totals.get((row.user_id, row.day), {})
         row.private_departure_minutes = int(values.get('private_minutes') or 0)
         row.official_departure_minutes = int(values.get('official_minutes') or 0)
         row.departure_details = values.get('details') or []
+        row.pending_private_departure_details = [
+            record for record in row.departure_details
+            if include_pending and record.get('kind') == 'PRIVATE' and record.get('approval_status') == 'SUBMITTED'
+        ]
+        row.pending_official_departure_details = [
+            record for record in row.departure_details
+            if include_pending and record.get('kind') == 'OFFICIAL' and record.get('approval_status') == 'SUBMITTED'
+        ]
         if row.private_departure_minutes and getattr(row, 'early_leave_minutes', None):
             row.early_leave_minutes = max(0, int(row.early_leave_minutes or 0) - row.private_departure_minutes)
     return totals
@@ -26722,7 +26748,7 @@ def hr_attendance_daily():
     rows = _sort_and_number_attendance_daily_rows(
         qry.order_by(AttendanceDailySummary.day.desc()).limit(500).all()
     )
-    _attach_reconciled_departures(rows)
+    _attach_reconciled_departures(rows, include_pending=True)
     users = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
     attendance_count_day = _attendance_count_day(day_from, day_to, today)
     attendance_count_query = (

@@ -147,6 +147,7 @@
               {% elif e.departure_type_label == 'رسمية' %}
                 <span class="badge text-bg-info text-dark">مغادرة رسمية</span>
               {% else %}—{% endif %}
+              {% if e.departure_is_pending %}<span class="badge text-bg-warning">قيد الاعتماد</span>{% endif %}
             </td>
             <td class="small">
               {% for detail in e.departure_display_lines|default([]) %}

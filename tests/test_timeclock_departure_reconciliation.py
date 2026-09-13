@@ -163,6 +163,21 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         self.assertEqual(rows[0].display_event_label, 'مغادرة من نظام مسار')
         self.assertEqual(rows[0].departure_display_lines[0]['source_label'], 'نظام مسار')
 
+    def test_submitted_system_departure_is_marked_pending_in_the_event_log(self):
+        record = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'source': 'SYSTEM',
+            'approval_status': 'SUBMITTED',
+            'system_from_dt': datetime(2026, 9, 1, 12, 0),
+            'system_to_dt': datetime(2026, 9, 1, 12, 30),
+        }
+
+        rows = _attach_departure_sources_to_attendance_events([], [record])
+
+        self.assertTrue(rows[0].departure_is_pending)
+
 
 if __name__ == '__main__':
     unittest.main()

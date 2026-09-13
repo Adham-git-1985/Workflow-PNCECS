@@ -110,8 +110,22 @@
           <td>{{ '%.2f'|format((r.work_minutes or 0) / 60) }}</td>
           <td>{% if r.late_minutes %}<span class="badge bg-warning text-dark">{{ r.late_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
-          <td>{% if r.private_departure_minutes %}<span class="badge bg-warning text-dark">{{ r.private_departure_minutes }} د</span>{% else %}—{% endif %}</td>
-          <td>{% if r.official_departure_minutes %}<span class="badge bg-info text-dark">{{ r.official_departure_minutes }} د</span>{% else %}—{% endif %}</td>
+          <td>
+            {% if r.private_departure_minutes %}<span class="badge bg-warning text-dark">{{ r.private_departure_minutes }} د</span>{% endif %}
+            {% for movement in r.pending_private_departure_details|default([]) %}
+              {% set start = movement.system_from_dt or movement.from_dt %}{% set finish = movement.system_to_dt or movement.to_dt %}
+              <div class="small text-warning text-nowrap"><i class="bi bi-hourglass-split"></i> قيد الاعتماد{% if start %} {{ start.strftime('%H:%M') }}{% endif %}{% if finish %}–{{ finish.strftime('%H:%M') }}{% endif %}</div>
+            {% endfor %}
+            {% if not r.private_departure_minutes and not (r.pending_private_departure_details|default([])) %}—{% endif %}
+          </td>
+          <td>
+            {% if r.official_departure_minutes %}<span class="badge bg-info text-dark">{{ r.official_departure_minutes }} د</span>{% endif %}
+            {% for movement in r.pending_official_departure_details|default([]) %}
+              {% set start = movement.system_from_dt or movement.from_dt %}{% set finish = movement.system_to_dt or movement.to_dt %}
+              <div class="small text-warning text-nowrap"><i class="bi bi-hourglass-split"></i> قيد الاعتماد{% if start %} {{ start.strftime('%H:%M') }}{% endif %}{% if finish %}–{{ finish.strftime('%H:%M') }}{% endif %}</div>
+            {% endfor %}
+            {% if not r.official_departure_minutes and not (r.pending_official_departure_details|default([])) %}—{% endif %}
+          </td>
           <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>
             {% if r.status == 'OK' %}<span class="badge bg-success">مكتمل</span>
