@@ -97,6 +97,18 @@ class LeaveTypePolicyTests(unittest.TestCase):
         )
         self.assertIn("أربع سنوات", error)
 
+    def test_childcare_unpaid_leave_cannot_exceed_one_year(self):
+        unpaid = HRLeaveType(code="UNPAID", name_ar="إجازة بدون راتب")
+        error, _ = _statutory_leave_validation(
+            unpaid, date(2026, 1, 1), date(2026, 12, 31), {"reason_kind": "CHILDCARE"},
+        )
+        self.assertIn("سبب الإجازة", error)
+        details = {"reason_kind": "CHILDCARE", "unpaid_reason": "رعاية المولود"}
+        error, _ = _statutory_leave_validation(unpaid, date(2026, 1, 1), date(2026, 12, 31), details)
+        self.assertIsNone(error)
+        error, _ = _statutory_leave_validation(unpaid, date(2026, 1, 1), date(2027, 1, 1), details)
+        self.assertIn("سنة واحدة", error)
+
     def test_study_leave_requires_two_years_service_and_one_year_per_request(self):
         employee = User(email="study-policy@example.test", name="Study Employee", password_hash="x", role="USER")
         study = HRLeaveType(code="STUDY", name_ar="إجازة دراسية")

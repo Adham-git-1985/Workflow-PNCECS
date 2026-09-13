@@ -29,7 +29,8 @@
         <label class="form-label">نوع الإجازة</label>
         <select class="form-select" name="leave_type_id" required>
           {% for t in leave_types %}
-            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}{% if t.balance_source_leave_type %} — من رصيد {{ t.balance_source_leave_type.name_ar }}{% endif %}</option>
+            {% set tm = types_meta.get(t.id|string, {}) %}
+            <option value="{{ t.id }}" {% if row and row.leave_type_id==t.id %}selected{% endif %} {% if tm.get('statutory_code') %}disabled{% endif %}>{{ t.name_ar }}{% if t.is_external %} — خارجية{% endif %}{% if t.balance_source_leave_type %} — من رصيد {{ t.balance_source_leave_type.name_ar }}{% endif %}{% if tm.get('statutory_code') %} — تُقدّم من خدماتي{% endif %}</option>
           {% endfor %}
         </select>
       </div>

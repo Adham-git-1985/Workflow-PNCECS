@@ -7687,8 +7687,9 @@ def _statutory_leave_validation(leave_type, start_day, end_day, form, *, exclude
                 return "يشترط أن تكون مدة سفر الزوج/الزوجة ستة أشهر على الأقل.", details
             if end_day > spouse_end:
                 return "يجب ألا يتجاوز طلب الإجازة نهاية مدة سفر الزوج/الزوجة المثبتة.", details
-        if reason_kind == "CHILDCARE" and not details["reason"]:
-            return "أدخل مبررات إجازة رعاية الطفل.", details
+        if reason_kind == "CHILDCARE":
+            if end_day > _add_years_safe(start_day, 1) - timedelta(days=1):
+                return "إجازة رعاية المولود بدون راتب لا تتجاوز سنة واحدة.", details
         if reason_kind == "GENERAL":
             past_unpaid = (
                 HRLeaveRequest.query
@@ -7704,10 +7705,7 @@ def _statutory_leave_validation(leave_type, start_day, end_day, form, *, exclude
             for previous in past_unpaid.all():
                 previous_start = _parse_yyyy_mm_dd(previous.start_date)
                 previous_end = _parse_yyyy_mm_dd(previous.end_date)
-                previous_values = _statutory_note_values(previous.note)
                 if not previous_start or not previous_end or (previous_end - previous_start).days + 1 < 365:
-                    continue
-                if previous_values.get("reason_kind", "GENERAL").upper() in {"SPOUSE", "CHILDCARE"}:
                     continue
                 if start_day < _add_years_safe(previous_end, 1):
                     return "بعد العودة من إجازة بدون راتب مدتها سنة أو أكثر، لا تُمنح إجازة أخرى قبل مرور سنة، وفق الاستثناءات القانونية لمرافقة الزوج ورعاية الطفل.", details
@@ -14493,7 +14491,7 @@ def _my_attendance_month_rows(
     )
     for mission in missions:
         status_code = (getattr(getattr(mission, "status_def", None), "code", None) or "").upper()
-        if status_code in {"SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}:
+        if status_code in {"NEW", "SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}:
             continue
         for mission_day in _my_attendance_expand_period(
             mission.start_day,
@@ -26237,7 +26235,7 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
         )
         if any(
             (getattr(getattr(mission, "status_def", None), "code", None) or "").upper()
-            not in {"SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}
+            not in {"NEW", "SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}
             for mission in missions
         ):
             return "OFFICIAL_MISSION"
@@ -35425,6 +35423,9 @@ def hr_leaves_admin_new():
         if not lt or not lt.is_active:
             flash('اختر نوع إجازة فعالاً.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
+        if _statutory_leave_code(lt):
+            flash('الإجازة الدراسية وبدون راتب تُقدمان من نموذج الموظف المخصص لضمان استكمال البيانات والمستندات ومسار الاعتماد القانوني.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
 
         start_day = _parse_yyyy_mm_dd(start_date)
         end_day = _parse_yyyy_mm_dd(end_date)
@@ -35462,6 +35463,14 @@ def hr_leaves_admin_new():
             sdef_id = int(admin_status_id) if admin_status_id.isdigit() else None
         except Exception:
             sdef_id = None
+        if sdef_id:
+            from models import HRStatusDef
+            leave_status = HRStatusDef.query.filter_by(
+                id=sdef_id, entity="LEAVE", is_active=True
+            ).first()
+            if not leave_status:
+                flash('حالة الإجازة المحددة غير صالحة.', 'danger')
+                return redirect(url_for('portal.hr_leaves_admin_new'))
 
         approver = resolve_direct_manager(int(user_id))
         row = HRLeaveRequest(
@@ -35529,6 +35538,7 @@ def hr_leaves_admin_new():
             "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+            "statutory_code": _statutory_leave_code(t),
         }
         for t in leave_types
     }
@@ -35552,6 +35562,10 @@ def hr_leaves_admin_edit(row_id: int):
     row = HRLeaveRequest.query.get_or_404(row_id)
 
     if request.method == 'POST':
+        requested_leave_type = HRLeaveType.query.get(int(request.form.get('leave_type_id') or row.leave_type_id))
+        if _statutory_leave_code(requested_leave_type):
+            flash('لا يمكن تعديل الإجازة الدراسية أو بدون راتب من نموذج الإدارة القديم؛ استخدم مسار طلب الموظف ومراجعته.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_log'))
         row.leave_type_id = int(request.form.get('leave_type_id') or row.leave_type_id)
         row.start_date = (request.form.get('start_date') or row.start_date).strip()
         row.end_date = (request.form.get('end_date') or row.end_date).strip()
@@ -35594,7 +35608,16 @@ def hr_leaves_admin_edit(row_id: int):
             flash(limit_warning, 'warning')
 
         admin_status_id = (request.form.get('admin_status_id') or '').strip()
-        row.admin_status_id = int(admin_status_id) if admin_status_id.isdigit() else None
+        requested_admin_status_id = int(admin_status_id) if admin_status_id.isdigit() else None
+        if requested_admin_status_id:
+            from models import HRStatusDef
+            leave_status = HRStatusDef.query.filter_by(
+                id=requested_admin_status_id, entity="LEAVE", is_active=True
+            ).first()
+            if not leave_status:
+                flash('حالة الإجازة المحددة غير صالحة.', 'danger')
+                return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
+        row.admin_status_id = requested_admin_status_id
 
         db.session.commit()
 
@@ -35638,6 +35661,7 @@ def hr_leaves_admin_edit(row_id: int):
             "balance_source_name": _leave_type_balance_source_name(t),
             "day_count_basis": _leave_type_day_count_basis(t),
             "exclude_official_holidays": _leave_type_excludes_official_holidays(t),
+            "statutory_code": _statutory_leave_code(t),
         }
         for t in leave_types
     }
@@ -35684,7 +35708,7 @@ def _period_within_month_limit(start: date, end: date, months: int) -> bool:
 
 def _manager_ids_for_employee(user_id: int) -> set[int]:
     try:
-        return {int(m.id) for m in resolve_responsible_managers(int(user_id)) if getattr(m, "id", None)}
+        return {int(m.id) for m in resolve_responsible_managers(int(user_id)) if getattr(m, "id", None) and int(m.id) != int(user_id)}
     except Exception:
         return set()
 
@@ -35733,6 +35757,9 @@ def hr_mission_request_new():
         if request.form.get('not_personal_invitation') != '1':
             flash('يجب تأكيد أن المهمة لا تقوم على دعوة شخصية.', 'danger')
             return redirect(url_for('portal.hr_mission_request_new'))
+        if not _manager_ids_for_employee(current_user.id):
+            flash('لا يوجد مسؤول مباشر مهيأ لك في الهيكل التنظيمي. تواصل مع الموارد البشرية قبل إرسال الطلب.', 'danger')
+            return redirect(url_for('portal.hr_mission_request_new'))
         row = HROfficialMission(
             user_id=current_user.id, title=title, start_day=start_s, end_day=end_s,
             days=(end - start).days + 1, entered_by='SELF',
@@ -35777,6 +35804,14 @@ def hr_mission_requests_queue():
                 return redirect(url_for('portal.hr_mission_requests_queue'))
             mission.status_def_id = _mission_status_id('MANAGER_APPROVED' if action == 'APPROVE' else 'REJECTED')
             mission.note = _append_review_note(mission.note, 'مراجعة المسؤول المباشر', ('اعتماد' if action == 'APPROVE' else 'رفض') + (f' — {note}' if note else ''))
+        elif action == 'HR_REJECT':
+            if not _hr_can_manage() or status != 'MANAGER_APPROVED':
+                abort(403)
+            if not note:
+                flash('اكتب سبب الرفض.', 'danger')
+                return redirect(url_for('portal.hr_mission_requests_queue'))
+            mission.status_def_id = _mission_status_id('REJECTED')
+            mission.note = _append_review_note(mission.note, 'رفض الموارد البشرية', note)
         elif action == 'CONFIRM':
             if not _hr_can_manage() or status != 'MANAGER_APPROVED':
                 abort(403)
@@ -35799,8 +35834,6 @@ def hr_mission_requests_queue():
     for mission in submitted:
         if _mission_status_code(mission) == 'SUBMITTED':
             manager_ids.update(_manager_ids_for_employee(mission.user_id))
-    if current_user.id not in manager_ids and not _hr_can_manage():
-        abort(403)
     rows = [m for m in submitted if _mission_status_code(m) in {'SUBMITTED', 'MANAGER_APPROVED'} and ( _hr_can_manage() or current_user.id in _manager_ids_for_employee(m.user_id))]
     return render_template('portal/hr/mission_requests_queue.html', rows=rows, can_manage=_hr_can_manage(), manager_ids={m.id for m in rows if current_user.id in _manager_ids_for_employee(m.user_id)})
 
@@ -35850,6 +35883,9 @@ def hr_official_mission_new():
 
         d0 = _parse_yyyy_mm_dd(start_day)
         d1 = _parse_yyyy_mm_dd(end_day)
+        if not d0 or not d1 or not _period_within_month_limit(d0, d1, 1):
+            flash('مدة المهمة الرسمية يجب أن تكون صحيحة وألا تتجاوز شهراً واحداً.', 'danger')
+            return redirect(url_for('portal.hr_official_mission_new'))
         auto_days = (d1 - d0).days + 1 if d0 and d1 else None
         try:
             days_val = int(days_s) if days_s else auto_days
@@ -35860,6 +35896,19 @@ def hr_official_mission_new():
             sdef_id = int(status_def_id) if status_def_id else None
         except Exception:
             sdef_id = None
+        f = request.files.get('attachment')
+        selected_status = None
+        if sdef_id:
+            from models import HRStatusDef
+            selected_status = HRStatusDef.query.filter_by(
+                id=sdef_id, entity="MISSION", is_active=True
+            ).first()
+            if not selected_status:
+                flash('حالة المهمة الرسمية المحددة غير صالحة.', 'danger')
+                return redirect(url_for('portal.hr_official_mission_new'))
+        if (getattr(selected_status, 'code', '') or '').upper() == 'CONFIRMED' and (not note or not f or not (f.filename or '').strip()):
+            flash('لتثبيت المهمة، أدخل مرجع أمر الإيفاد في التفاصيل وأرفق الأمر.', 'danger')
+            return redirect(url_for('portal.hr_official_mission_new'))
 
         row = HROfficialMission(
             user_id=uid,
@@ -35870,13 +35919,12 @@ def hr_official_mission_new():
             destination=destination or None,
             note=note or None,
             entered_by="ADMIN",
-            status_def_id=sdef_id,
+            status_def_id=sdef_id or _mission_status_id('NEW'),
             created_by_id=getattr(current_user, 'id', None),
         )
         db.session.add(row)
         db.session.commit()
 
-        f = request.files.get('attachment')
         if f and (f.filename or '').strip():
             _save_mission_attachment(row.id, f)
 
@@ -35898,10 +35946,21 @@ def hr_official_mission_edit(mission_id: int):
         abort(403)
     row = HROfficialMission.query.get_or_404(mission_id)
 
+    if request.method == 'POST' and row.entered_by == 'SELF':
+        flash('طلبات الموظفين تُراجع من مسار المهمات الرسمي.', 'warning')
+        return redirect(url_for('portal.hr_mission_requests_queue'))
+
     if request.method == 'POST':
-        row.title = (request.form.get('title') or '').strip()
-        row.start_day = (request.form.get('start_day') or '').strip()
-        row.end_day = (request.form.get('end_day') or '').strip()
+        new_title = (request.form.get('title') or '').strip()
+        new_start = (request.form.get('start_day') or '').strip()
+        new_end = (request.form.get('end_day') or '').strip()
+        start_obj, end_obj = _parse_yyyy_mm_dd(new_start), _parse_yyyy_mm_dd(new_end)
+        if not new_title or not start_obj or not end_obj or not _period_within_month_limit(start_obj, end_obj, 1):
+            flash('العنوان مطلوب ومدة المهمة يجب ألا تتجاوز شهراً واحداً.', 'danger')
+            return redirect(url_for('portal.hr_official_mission_edit', mission_id=row.id))
+        row.title = new_title
+        row.start_day = new_start
+        row.end_day = new_end
         row.destination = (request.form.get('destination') or '').strip() or None
         row.note = (request.form.get('note') or '').strip() or None
 
@@ -35913,13 +35972,28 @@ def hr_official_mission_edit(mission_id: int):
 
         status_def_id = (request.form.get('status_def_id') or '').strip()
         try:
-            row.status_def_id = int(status_def_id) if status_def_id else None
+            requested_status_id = int(status_def_id) if status_def_id else None
         except Exception:
-            row.status_def_id = None
+            requested_status_id = None
+
+        f = request.files.get('attachment')
+        requested_status = None
+        if requested_status_id:
+            from models import HRStatusDef
+            requested_status = HRStatusDef.query.filter_by(
+                id=requested_status_id, entity="MISSION", is_active=True
+            ).first()
+            if not requested_status:
+                flash('حالة المهمة الرسمية المحددة غير صالحة.', 'danger')
+                return redirect(url_for('portal.hr_official_mission_edit', mission_id=row.id))
+        has_document = bool(row.attachments) or bool(f and (f.filename or '').strip())
+        if (getattr(requested_status, 'code', '') or '').upper() == 'CONFIRMED' and (not row.note or not has_document):
+            flash('لتثبيت المهمة، أدخل مرجع أمر الإيفاد في التفاصيل وأرفق الأمر.', 'danger')
+            return redirect(url_for('portal.hr_official_mission_edit', mission_id=row.id))
+        row.status_def_id = requested_status_id or _mission_status_id('NEW')
 
         db.session.commit()
 
-        f = request.files.get('attachment')
         if f and (f.filename or '').strip():
             _save_mission_attachment(row.id, f)
 
@@ -39472,8 +39546,6 @@ def _training_can_manage() -> bool:
         return bool(
             current_user.has_perm(HR_MASTERDATA_MANAGE)
             or current_user.has_perm(HR_EMP_MANAGE)
-            or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
-            or current_user.has_perm(HR_REPORTS_VIEW)
         )
     except Exception:
         return False
@@ -40707,6 +40779,9 @@ def hr_training_program_apply(program_id: int):
     if last_training and start < _calendar_month_end(last_training, 12) and len(continuation_reason) < 10:
         flash("يشترط مرور سنة على التدريب السابق؛ اكتب مبرر الاستكمال أو التطوير ليُراجع.", "danger")
         return redirect(url_for("portal.hr_training_log"))
+    if not _manager_ids_for_employee(current_user.id):
+        flash("لا يوجد مسؤول مباشر مهيأ لك في الهيكل التنظيمي. تواصل مع الموارد البشرية قبل إرسال الطلب.", "danger")
+        return redirect(url_for("portal.hr_training_log"))
 
     # apply conditions on portal if enabled OR if training is published by conditions only
     cond_required = False
@@ -40843,8 +40918,6 @@ def hr_training_requests_queue():
     rows = HRTrainingEnrollment.query.filter(HRTrainingEnrollment.status.in_(["CANDIDATE", "HR_REVIEW"])).order_by(HRTrainingEnrollment.created_at.asc()).all()
     manager_rows = [r for r in rows if r.status == "CANDIDATE" and current_user.id in _manager_ids_for_employee(r.user_id)]
     hr_rows = [r for r in rows if r.status == "HR_REVIEW"] if _training_can_manage() else []
-    if not manager_rows and not hr_rows:
-        abort(403)
     return render_template("portal/hr/training/requests.html", manager_rows=manager_rows, hr_rows=hr_rows, can_manage=_training_can_manage())
 
 

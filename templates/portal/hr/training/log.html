@@ -131,7 +131,7 @@
                       <form method="post" action="{{ url_for('portal.hr_training_program_withdraw', program_id=p.id) }}" class="d-inline">
                         <button class="btn btn-sm btn-outline-danger">انسحاب</button>
                       </form>
-                    {% elif open_map.get(p.id) %}
+                    {% elif open_map.get(p.id) and (not my or my.status == 'WITHDRAWN') %}
                       <details class="text-start"><summary class="btn btn-sm btn-primary">طلب ترشيح</summary>
                       <form method="post" action="{{ url_for('portal.hr_training_program_apply', program_id=p.id) }}" class="mt-2 border rounded p-2" style="min-width:300px">
                         <label class="form-label">كيف يرتبط التدريب بعملك؟</label>

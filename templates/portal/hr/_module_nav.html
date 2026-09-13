@@ -172,7 +172,7 @@
             {% if current_user.has_perm('HR_SS_CREATE') or current_user.has_perm('HR_READ') %}
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_requests_queue') }}">مراجعة طلبات التدريب</a></li>
             {% endif %}
-            {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMP_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') or current_user.has_perm('HR_REPORTS_VIEW') %}
+            {% if current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMP_MANAGE') %}
               <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_program_new') }}">إضافة تدريب</a></li>
               <li><a class="dropdown-item" href="{{ url_for('portal.hr_training_admin_dashboard') }}">لوحة تحكم التدريب</a></li>
             {% endif %}
