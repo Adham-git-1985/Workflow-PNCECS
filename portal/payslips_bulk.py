@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import zipfile
@@ -19,7 +20,7 @@ from flask import (
     url_for,
 )
 from flask_login import current_user, login_required
-from sqlalchemy import case, func
+from sqlalchemy import case, func, or_
 from werkzeug.utils import secure_filename
 
 from . import portal_bp
@@ -27,6 +28,11 @@ from extensions import db
 from models import EmployeeAttachment, EmployeeFile, User
 from utils.perms import perm_required
 from services.employee_attachment_archive import sync_employee_attachment_to_archive
+from services.correspondence_intake import (
+    OcrConfig,
+    _resolve_tesseract_command,
+    _run_tesseract_png,
+)
 
 # Reuse the existing HR payslip/storage helpers from portal.routes so the new page
 # stays connected to the old send/publish workflow.
@@ -75,6 +81,66 @@ def _extract_identity_number(page_text: str | None) -> str | None:
     return ids[0] if ids else None
 
 
+def _payslip_page_text(page) -> tuple[str, bool, str | None]:
+    """Read native PDF text, then OCR scanned Ministry payslips locally."""
+    page_text = page.get_text("text") or ""
+    if page_text.strip():
+        return page_text, False, None
+
+    enabled_value = current_app.config.get("PAYSLIP_OCR_ENABLED", True)
+    enabled = str(enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+    if not enabled:
+        return "", False, "ملف القسائم ممسوح كصور وقراءة OCR لقسائم الرواتب غير مفعّلة."
+
+    config = OcrConfig(
+        enabled=True,
+        command=str(current_app.config.get(
+            "PAYSLIP_TESSERACT_CMD",
+            current_app.config.get("CORR_INTAKE_TESSERACT_CMD", "tesseract"),
+        )),
+        # The payroll identity digits are Latin digits. English is enough and
+        # avoids requiring the optional Arabic Tesseract language package.
+        languages="eng",
+        max_pages=1,
+        dpi=int(current_app.config.get("PAYSLIP_OCR_DPI", 250)),
+        timeout_seconds=float(current_app.config.get("PAYSLIP_OCR_PAGE_TIMEOUT_SECONDS", 20)),
+    )
+    command = _resolve_tesseract_command(config)
+    if not command and os.name == "nt":
+        for root in (os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")):
+            candidate = Path(root or "") / "Tesseract-OCR" / "tesseract.exe"
+            if root and candidate.is_file():
+                command = str(candidate.resolve())
+                break
+    if not command:
+        return "", False, (
+            "ملف القسائم ممسوح كصور، لكن محرك Tesseract OCR غير متوفر على الخادم. "
+            "ثبّت Tesseract أو اضبط PAYSLIP_TESSERACT_CMD ثم أعد الرفع."
+        )
+
+    try:
+        # Identity and employee information are in the upper section. Cropping
+        # reduces OCR time and keeps the bank/summary numbers from winning the
+        # nine-digit fallback match.
+        clip = fitz.Rect(
+            page.rect.x0,
+            page.rect.y0,
+            page.rect.x1,
+            page.rect.y0 + (page.rect.height * 0.68),
+        )
+        pixmap = page.get_pixmap(dpi=config.dpi, clip=clip, alpha=False)
+        page_text = _run_tesseract_png(
+            pixmap.tobytes("png"),
+            command,
+            config,
+            config.timeout_seconds,
+        )
+    except Exception as exc:
+        current_app.logger.warning("Payslip OCR failed: %s", exc)
+        return "", False, "تعذر إجراء OCR لإحدى صفحات القسائم الممسوحة؛ راجع إعداد Tesseract وجودة الملف."
+    return page_text, bool(page_text.strip()), None
+
+
 def _payslip_batch_dir(batch_id: str) -> Path:
     safe_batch_id = secure_filename(batch_id) or datetime.now().strftime("%Y%m%d_%H%M%S")
     return Path(current_app.instance_path) / "uploads" / "payslips" / safe_batch_id
@@ -91,7 +157,7 @@ def _unique_pdf_path(output_dir: Path, identity_number: str) -> Path:
 
 
 def _find_employee_by_identity(identity_number: str | None) -> EmployeeFile | None:
-    """Find employee by EmployeeFile.national_id, allowing spaces/dashes/Arabic digits."""
+    """Find payroll recipient by identity, including legacy daily-wage records."""
     wanted = _digits_only(identity_number)
     if not wanted:
         return None
@@ -115,7 +181,26 @@ def _find_employee_by_identity(identity_number: str | None) -> EmployeeFile | No
             if _digits_only(getattr(emp, "national_id", None)) == wanted:
                 return emp
     except Exception:
-        return None
+        pass
+
+    # Some daily-wage employee files were imported before national_id became
+    # mandatory. Their Ministry-of-Finance identity is stored in employee_no or
+    # timeclock_code. Accept a unique exact match so their slips join the same
+    # PAYSLIP collection without creating a separate workflow.
+    try:
+        candidates = (
+            EmployeeFile.query
+            .filter(or_(
+                func.trim(EmployeeFile.employee_no) == wanted,
+                func.trim(EmployeeFile.timeclock_code) == wanted,
+            ))
+            .all()
+        )
+        unique = {int(emp.user_id): emp for emp in candidates}
+        if len(unique) == 1:
+            return next(iter(unique.values()))
+    except Exception:
+        pass
 
     return None
 
@@ -249,13 +334,19 @@ def _split_and_register_payslip_pdf(
 
     page_groups: list[dict] = []
     groups_by_identity: dict[str, dict] = {}
+    ocr_pages = 0
+    ocr_messages: set[str] = set()
 
     try:
         for page_index in range(doc.page_count):
             page_number = page_index + 1
             counters["pages"] += 1
 
-            page_text = doc.load_page(page_index).get_text("text")
+            page_text, used_ocr, ocr_message = _payslip_page_text(doc.load_page(page_index))
+            if used_ocr:
+                ocr_pages += 1
+            if ocr_message:
+                ocr_messages.add(ocr_message)
             identity_number = _extract_identity_number(page_text)
 
             if identity_number:
@@ -279,6 +370,10 @@ def _split_and_register_payslip_pdf(
                 page_groups.append(group)
 
             group["page_indexes"].append(page_index)
+
+        if ocr_pages:
+            warnings.append(f"تم استخدام OCR المحلي لقراءة {ocr_pages} صفحة ممسوحة ضوئياً.")
+        warnings.extend(sorted(ocr_messages))
 
         for group in page_groups:
             identity_number = group["identity_number"]

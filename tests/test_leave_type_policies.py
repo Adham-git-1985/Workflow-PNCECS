@@ -6,7 +6,10 @@ from flask_login import LoginManager, login_user, logout_user
 
 from extensions import db
 from models import (
+    EmployeeFile,
     HROfficialOccasion,
+    HRLeaveBalance,
+    HRLeaveBalanceAdjustment,
     HRLeaveRequest,
     HRLeaveType,
     SystemSetting,
@@ -19,6 +22,7 @@ from portal.routes import (
     _leave_balance_owner_id,
     _leave_duration_limit_messages,
     _leave_entitlement_days,
+    _leave_request_form_payload,
     _leave_type_deducts_from_balance,
     _leave_type_owns_balance,
     _leave_used_days_as_of,
@@ -196,6 +200,64 @@ class LeaveTypePolicyTests(unittest.TestCase):
         self.assertEqual(_leave_entitlement_days(employee.id, external, 2026), 30.0)
         self.assertEqual(_leave_used_days_as_of(employee.id, annual.id, 2026, date(2026, 1, 31)), 5.0)
         self.assertEqual(_leave_used_days_as_of(employee.id, external.id, 2026, date(2026, 1, 31)), 5.0)
+
+    def test_official_form_uses_the_configured_leave_balance_source(self):
+        employee = User(email="form-balance@example.test", name="Balance Employee", password_hash="x", role="USER")
+        annual = HRLeaveType(
+            code="FORM-ANNUAL",
+            name_ar="إجازة سنوية",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        db.session.add_all((employee, annual))
+        db.session.flush()
+        external = HRLeaveType(
+            code="FORM-EXTERNAL",
+            name_ar="إجازة خارجية",
+            deduct_from_balance=True,
+            balance_source_leave_type_id=annual.id,
+            day_count_basis="CALENDAR_DAYS",
+            is_external=True,
+        )
+        db.session.add(external)
+        db.session.flush()
+        db.session.add_all((
+            EmployeeFile(user_id=employee.id, employee_no="187464"),
+            HRLeaveBalance(user_id=employee.id, leave_type_id=annual.id, year=2026, total_days=22),
+            HRLeaveBalanceAdjustment(
+                user_id=employee.id,
+                leave_type_id=annual.id,
+                year=2026,
+                days_delta=3,
+                reason="رصيد مرحل",
+                created_by_id=employee.id,
+            ),
+            HRLeaveRequest(
+                user_id=employee.id,
+                leave_type_id=annual.id,
+                start_date="2026-01-01",
+                end_date="2026-01-05",
+                days=5,
+                status="APPROVED",
+            ),
+        ))
+        request_row = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=external.id,
+            start_date="2026-09-23",
+            end_date="2026-09-24",
+            days=2,
+            status="SUBMITTED",
+        )
+        db.session.add(request_row)
+        db.session.commit()
+
+        payload = _leave_request_form_payload(request_row)
+
+        self.assertEqual(payload["entitlement"], "25 يوم")
+        self.assertEqual(payload["used"], "5 يوم")
+        self.assertEqual(payload["remaining"], "20 يوم")
 
     def test_maternity_and_hajj_maximum_days_are_enforced(self):
         maternity = HRLeaveType(code="M", name_ar="إجازة أمومة", max_days=90)

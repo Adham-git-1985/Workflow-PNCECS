@@ -1,7 +1,9 @@
 import unittest
+import inspect
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from flask import Flask
 from jinja2 import Environment
@@ -27,8 +29,10 @@ from portal.routes import (
     _attendance_schedule_fork_plan,
     _attendance_schedule_is_final_approver,
     _attendance_schedule_latest_plan,
+    _attendance_schedule_responsible_managers,
     _attendance_schedule_week_rows,
     _effective_schedule_for_user,
+    hr_work_schedule,
 )
 from services.attendance_schedule import (
     attendance_schedule_cycle_start,
@@ -284,6 +288,36 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         self.assertEqual(days["2026-09-10"]["start_time"], "09:00")
         self.assertEqual(days["2026-09-11"]["day_type"], "OFF")
 
+    def test_manager_resolution_is_reused_within_one_page_request(self):
+        with self.app.test_request_context("/portal/hr/attendance/work-schedule"):
+            with patch(
+                "portal.routes.resolve_responsible_managers",
+                return_value=[self.manager],
+            ) as resolver:
+                first = _attendance_schedule_responsible_managers(self.employee.id)
+                second = _attendance_schedule_responsible_managers(self.employee.id)
+
+        self.assertEqual([user.id for user in first], [self.manager.id])
+        self.assertEqual([user.id for user in second], [self.manager.id])
+        resolver.assert_called_once_with(self.employee.id)
+
+    def test_opening_personal_schedule_defers_team_and_organization_rosters(self):
+        undecorated_view = inspect.unwrap(hr_work_schedule)
+        with self.app.test_request_context("/portal/hr/attendance/work-schedule"):
+            with patch("portal.routes.current_user", self.employee), patch(
+                "portal.routes._attendance_schedule_direct_reports",
+            ) as load_reports, patch(
+                "portal.routes._attendance_schedule_employee_users",
+            ) as load_all_users, patch(
+                "portal.routes.render_template",
+                return_value="rendered",
+            ):
+                result = undecorated_view()
+
+        self.assertEqual(result, "rendered")
+        load_reports.assert_not_called()
+        load_all_users.assert_not_called()
+
 
 class AttendanceScheduleTemplateTests(unittest.TestCase):
     def test_template_and_navigation_expose_the_full_workflow(self):
@@ -305,6 +339,7 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
             "عرض إداري فقط",
             "data-copy-first-week",
             "ws-roster-table",
+            "organization_loaded",
             "السوبر أدمن",
         ):
             with self.subTest(token=token):

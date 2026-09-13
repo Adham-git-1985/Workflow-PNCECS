@@ -1,6 +1,8 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import fitz
 from flask import Flask
@@ -8,7 +10,12 @@ from flask_login import LoginManager, login_user
 
 from extensions import db
 from models import EmployeeAttachment, EmployeeFile, User
-from portal.payslips_bulk import _split_and_register_payslip_pdf
+from portal.payslips_bulk import (
+    _extract_identity_number,
+    _find_employee_by_identity,
+    _payslip_page_text,
+    _split_and_register_payslip_pdf,
+)
 
 
 class PayslipsBulkTests(unittest.TestCase):
@@ -118,6 +125,55 @@ class PayslipsBulkTests(unittest.TestCase):
             self.assertIn("Second payslip page", merged_document[1].get_text())
         finally:
             merged_document.close()
+
+    def test_daily_wage_identity_can_match_legacy_timeclock_record(self):
+        daily_worker = User(
+            email="daily-worker@example.test",
+            name="Daily Worker",
+            password_hash="x",
+            role="employee",
+        )
+        db.session.add(daily_worker)
+        db.session.flush()
+        db.session.add(EmployeeFile(
+            user_id=daily_worker.id,
+            employee_no="DW-25",
+            full_name_quad="موظف مياومة",
+            national_id=None,
+            timeclock_code="401973847",
+        ))
+        db.session.commit()
+
+        matched = _find_employee_by_identity("401-973-847")
+
+        self.assertIsNotNone(matched)
+        self.assertEqual(matched.user_id, daily_worker.id)
+
+    def test_scanned_daily_wage_page_uses_local_ocr(self):
+        class ScannedPage:
+            rect = SimpleNamespace(x0=0, y0=0, x1=595, height=842)
+
+            @staticmethod
+            def get_text(_mode):
+                return ""
+
+            @staticmethod
+            def get_pixmap(**_kwargs):
+                return SimpleNamespace(tobytes=lambda _format: b"png")
+
+        with self.app.test_request_context("/"):
+            with patch(
+                "portal.payslips_bulk._resolve_tesseract_command",
+                return_value="tesseract",
+            ), patch(
+                "portal.payslips_bulk._run_tesseract_png",
+                return_value="Payroll voucher 401973847",
+            ):
+                text, used_ocr, warning = _payslip_page_text(ScannedPage())
+
+        self.assertTrue(used_ocr)
+        self.assertIsNone(warning)
+        self.assertEqual(_extract_identity_number(text), "401973847")
 
 
 if __name__ == "__main__":

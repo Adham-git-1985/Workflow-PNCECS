@@ -396,9 +396,6 @@
 {% endblock %}
 
 {% block hr_content %}
-{% set active_view = request.args.get('view', 'schedule') %}
-{% if active_view == 'team' and not report_cards %}{% set active_view = 'schedule' %}{% endif %}
-{% if active_view == 'all' and not can_view_all %}{% set active_view = 'schedule' %}{% endif %}
 {% set plan_status = plan.status if plan else 'DRAFT' %}
 {% set plan_meta = status_meta.get(plan_status, status_meta.DRAFT) %}
 <div class="ws-shell">
@@ -444,18 +441,30 @@
         <i class="bi bi-calendar2-week"></i> {% if target_user.id == current_user.id %}جدولي{% else %}تفاصيل الجدول{% endif %}
       </button>
     </li>
-    {% if report_cards %}
+    {% if has_reports %}
     <li class="nav-item" role="presentation">
+      {% if reports_loaded %}
       <button class="nav-link {% if active_view == 'team' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#wsTeamPane" type="button" role="tab">
         <i class="bi bi-people"></i> فريقي <span class="ws-counter">{{ manager_pending_count }}</span>
       </button>
+      {% else %}
+      <a class="nav-link" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='team') }}">
+        <i class="bi bi-people"></i> فريقي
+      </a>
+      {% endif %}
     </li>
     {% endif %}
     {% if can_view_all %}
     <li class="nav-item" role="presentation">
+      {% if organization_loaded %}
       <button class="nav-link {% if active_view == 'all' %}active{% endif %}" data-bs-toggle="tab" data-bs-target="#wsAllPane" type="button" role="tab">
-        <i class="bi bi-grid-3x3-gap"></i> جميع الموظفين <span class="ws-counter">{{ organization_cards|length }}</span>
+        <i class="bi bi-grid-3x3-gap"></i> جميع الموظفين <span class="ws-counter">{{ organization_count }}</span>
       </button>
+      {% else %}
+      <a class="nav-link" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all') }}">
+        <i class="bi bi-grid-3x3-gap"></i> جميع الموظفين <span class="ws-counter">{{ organization_count }}</span>
+      </a>
+      {% endif %}
     </li>
     {% endif %}
   </ul>
@@ -621,7 +630,7 @@
       {% endif %}
     </div>
 
-    {% if report_cards %}
+    {% if reports_loaded and report_cards %}
     <div class="tab-pane fade {% if active_view == 'team' %}show active{% endif %}" id="wsTeamPane" role="tabpanel">
       <div class="ws-panel p-3 p-lg-4">
         <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
@@ -654,7 +663,7 @@
     </div>
     {% endif %}
 
-    {% if can_view_all %}
+    {% if organization_loaded %}
     <div class="tab-pane fade {% if active_view == 'all' %}show active{% endif %}" id="wsAllPane" role="tabpanel">
       <div class="ws-panel p-3 p-lg-4">
         <div class="d-flex flex-wrap align-items-start justify-content-between gap-3 mb-3">

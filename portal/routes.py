@@ -7406,8 +7406,8 @@ def hr_home():
     # قسائم الرواتب (للـ HR Admin)
     add_item(
         HR_EMP_ATTACH,
-        "رفع قسائم الرواتب (شهرياً)",
-        "رفع جميع قسائم الموظفين دفعة واحدة لشهر محدد كمسودات (لا يتم الإرسال تلقائياً).",
+        "رفع قسائم الرواتب والمياومة (شهرياً)",
+        "رفع قسائم الموظفين الدائمين والمياومة دفعة واحدة لشهر محدد كمسودات (لا يتم الإرسال تلقائياً).",
         "bi-upload",
         "portal.hr_payslips_bulk_upload",
         "الموظفين",
@@ -12491,12 +12491,42 @@ def _attendance_schedule_employee_users() -> list[User]:
 
 
 def _attendance_schedule_responsible_managers(user_id: int) -> list[User]:
-    return resolve_responsible_managers(int(user_id))
+    normalized_user_id = int(user_id)
+    if has_request_context():
+        cache = getattr(g, "_attendance_schedule_manager_cache", None)
+        if cache is None:
+            cache = {}
+            g._attendance_schedule_manager_cache = cache
+        if normalized_user_id not in cache:
+            cache[normalized_user_id] = resolve_responsible_managers(normalized_user_id)
+        return cache[normalized_user_id]
+    return resolve_responsible_managers(normalized_user_id)
 
 
-def _attendance_schedule_direct_reports(manager_user_id: int) -> list[User]:
+def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
+    """Cheaply determine whether the team tab can apply to this user."""
+    manager_user_id = int(manager_user_id)
+    return bool(
+        EmployeeFile.query.filter_by(direct_manager_user_id=manager_user_id).first()
+        or EmployeeSecondment.query.filter_by(direct_manager_user_id=manager_user_id).first()
+        or OrgNodeManager.query.filter(or_(
+            OrgNodeManager.manager_user_id == manager_user_id,
+            OrgNodeManager.deputy_user_id == manager_user_id,
+        )).first()
+        or OrgUnitManager.query.filter(or_(
+            OrgUnitManager.manager_user_id == manager_user_id,
+            OrgUnitManager.deputy_user_id == manager_user_id,
+        )).first()
+    )
+
+
+def _attendance_schedule_direct_reports(
+    manager_user_id: int,
+    employee_users: list[User] | None = None,
+) -> list[User]:
     reports = []
-    for user in _attendance_schedule_employee_users():
+    users = employee_users if employee_users is not None else _attendance_schedule_employee_users()
+    for user in users:
         if int(user.id) == int(manager_user_id):
             continue
         managers = _attendance_schedule_responsible_managers(int(user.id))
@@ -12756,6 +12786,7 @@ def _attendance_schedule_view_days(
     user_id: int,
     period_start: date,
     plan: HRAttendanceSchedulePlan | None,
+    work_days: list[date] | None = None,
 ) -> list[dict]:
     day_rows = {row.work_date: row for row in plan.days} if plan else {}
     weekday_names = {
@@ -12769,7 +12800,11 @@ def _attendance_schedule_view_days(
     }
     today = date.today()
     result = []
-    for index, work_day in enumerate(attendance_schedule_cycle_days(period_start)):
+    cycle_days = attendance_schedule_cycle_days(period_start)
+    selected_days = work_days if work_days is not None else cycle_days
+    cycle_indexes = {work_day: index for index, work_day in enumerate(cycle_days)}
+    for work_day in selected_days:
+        index = cycle_indexes.get(work_day, 0)
         row = day_rows.get(work_day.isoformat())
         values = {
             "day_type": row.day_type,
@@ -12805,15 +12840,15 @@ def _attendance_schedule_week_rows(
     selected_week = 2 if int(week_no or 1) == 2 else 1
     week_start = period_start + timedelta(days=7 if selected_week == 2 else 0)
     week_dates = [week_start + timedelta(days=offset) for offset in range(7)]
-    week_date_values = {work_day.isoformat() for work_day in week_dates}
     rows = []
     for user in users:
         plan = plan_map.get(int(user.id))
-        days = [
-            day
-            for day in _attendance_schedule_view_days(user.id, period_start, plan)
-            if day["date_text"] in week_date_values
-        ]
+        days = _attendance_schedule_view_days(
+            user.id,
+            period_start,
+            plan,
+            work_days=week_dates,
+        )
         managers = _attendance_schedule_responsible_managers(int(user.id))
         manager = managers[0] if managers else (plan.manager if plan else None)
         rows.append({
@@ -12834,20 +12869,38 @@ def hr_work_schedule():
     period_start_text = period_start.isoformat()
     period_end = period_start + timedelta(days=13)
     organization_week_no = 2 if request.args.get("week") == "2" else 1
-    reports = _attendance_schedule_direct_reports(int(current_user.id))
-    report_ids = {int(user.id) for user in reports}
     is_final_approver = _attendance_schedule_is_final_approver()
     can_view_all = _attendance_schedule_can_view_all()
-    all_users = _attendance_schedule_employee_users() if can_view_all else []
-    all_user_ids = {int(user.id) for user in all_users}
+    active_view = (request.args.get("view") or "schedule").strip().lower()
+    if active_view not in {"schedule", "team", "all"}:
+        active_view = "schedule"
+    if active_view == "all" and not can_view_all:
+        active_view = "schedule"
 
     target_user = current_user
     requested_user_id = (request.args.get("employee_id") or "").strip()
+    requested_other_user = requested_user_id.isdigit() and int(requested_user_id) != int(current_user.id)
+    reports_loaded = active_view == "team" or (requested_other_user and not can_view_all)
+    reports = _attendance_schedule_direct_reports(int(current_user.id)) if reports_loaded else []
+    report_ids = {int(user.id) for user in reports}
+    has_reports = bool(reports) if reports_loaded else _attendance_schedule_has_reports(int(current_user.id))
+    if active_view == "team" and not reports:
+        active_view = "schedule"
+
     if requested_user_id.isdigit() and int(requested_user_id) != int(current_user.id):
         target_id = int(requested_user_id)
-        if target_id not in report_ids and not (can_view_all and target_id in all_user_ids):
+        is_employee = EmployeeFile.query.filter_by(user_id=target_id).first() is not None
+        if target_id not in report_ids and not (can_view_all and is_employee):
             abort(403)
         target_user = db.session.get(User, target_id) or abort(404)
+
+    organization_loaded = bool(can_view_all and active_view == "all")
+    all_users = _attendance_schedule_employee_users() if organization_loaded else []
+    organization_count = (
+        len(all_users)
+        if organization_loaded
+        else int(db.session.query(func.count(EmployeeFile.user_id)).scalar() or 0)
+    ) if can_view_all else 0
 
     if int(target_user.id) == int(current_user.id):
         editor_mode = "EMPLOYEE"
@@ -12938,6 +12991,11 @@ def hr_work_schedule():
         can_edit=editor_mode != "VIEW_ONLY" and employee_can_edit,
         is_final_approver=is_final_approver,
         can_view_all=can_view_all,
+        active_view=active_view,
+        has_reports=has_reports,
+        reports_loaded=reports_loaded,
+        organization_loaded=organization_loaded,
+        organization_count=organization_count,
         report_cards=report_cards,
         organization_cards=organization_cards,
         organization_week_no=organization_week_no,
@@ -16146,10 +16204,9 @@ def _leave_request_form_payload(row: HRLeaveRequest) -> dict:
     year = start.year if start else date.today().year
     entitlement = used = remaining = "-"
     if leave_type and _leave_type_deducts_from_balance(leave_type):
-        total = _leave_base_entitlement_days(row.user_id, leave_type, year) + _leave_balance_adjustment_days(
-            row.user_id, leave_type.id, year,
-        )
-        used_value = _leave_used_days(row.user_id, leave_type.id, year)
+        balance_type = _leave_balance_source_type(leave_type)
+        total = _leave_entitlement_days(row.user_id, balance_type, year)
+        used_value = _leave_used_days(row.user_id, balance_type.id, year)
         entitlement = f"{total:g} يوم"
         used = f"{used_value:g} يوم"
         remaining = f"{max(0, total - used_value):g} يوم"
