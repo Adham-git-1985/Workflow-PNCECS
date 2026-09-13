@@ -9600,6 +9600,12 @@ def _diwan_official_leave_symbol(leave_type) -> str:
     return '?'
 
 
+def _leave_type_requires_medical_report(leave_type) -> bool:
+    """Sick leave always requires a medical report, regardless of metadata."""
+    code = (getattr(leave_type, "code", None) or "").strip().upper()
+    return code in {"S", "SICK", "SICK_LEAVE", "MEDICAL"} or _diwan_official_leave_symbol(leave_type) == "S"
+
+
 def _diwan_weekly_holidays_mask() -> int:
     """Return the weekly-off mask used by the official monthly sheet.
 
@@ -15446,7 +15452,7 @@ def hr_leave_request_new():
     types_meta = {
         str(t.id): {
             "is_external": bool(getattr(t, "is_external", False)),
-            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)) or _leave_type_requires_medical_report(t),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
             "balance_source_name": _leave_type_balance_source_name(t),
@@ -15520,8 +15526,8 @@ def hr_leave_request_new():
 
 
         # Enforce documents if the leave type requires them
-        if getattr(lt, 'requires_documents', False) and not valid_files:
-            flash('هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.', 'danger')
+        if (_leave_type_requires_medical_report(lt) or getattr(lt, 'requires_documents', False)) and not valid_files:
+            flash('الإجازة المرضية تتطلب إرفاق تقرير طبي.' if _leave_type_requires_medical_report(lt) else 'هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.', 'danger')
             return render_template('portal/hr/leave_request_new.html', types=types, types_meta=types_meta)
 
         limit_error, limit_warning = _leave_duration_limit_messages(lt, days)
@@ -15634,7 +15640,7 @@ def hr_leave_request_edit(req_id: int):
     types_meta = {
         str(t.id): {
             "is_external": bool(getattr(t, "is_external", False)),
-            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)) or _leave_type_requires_medical_report(t),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
             "balance_source_name": _leave_type_balance_source_name(t),
@@ -15710,8 +15716,8 @@ def hr_leave_request_edit(req_id: int):
             return render_form()
         note = _statutory_note(statutory_code, statutory_details, note)
 
-        if getattr(leave_type, "requires_documents", False) and not (valid_files or has_existing_attachments):
-            flash("هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
+        if (_leave_type_requires_medical_report(leave_type) or getattr(leave_type, "requires_documents", False)) and not (valid_files or has_existing_attachments):
+            flash("الإجازة المرضية تتطلب إرفاق تقرير طبي." if _leave_type_requires_medical_report(leave_type) else "هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
             return render_form()
 
         limit_error, limit_warning = _leave_duration_limit_messages(leave_type, days)
@@ -35433,6 +35439,10 @@ def hr_leaves_admin_new():
         if not lt or not lt.is_active:
             flash('اختر نوع إجازة فعالاً.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
+        submitted_files = [f for f in (request.files.getlist('attachments') or []) if f and (getattr(f, 'filename', '') or '').strip()]
+        if _leave_type_requires_medical_report(lt) and not submitted_files:
+            flash('الإجازة المرضية تتطلب إرفاق تقرير طبي.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
         if _statutory_leave_code(lt):
             flash('الإجازة الدراسية وبدون راتب تُقدمان من نموذج الموظف المخصص لضمان استكمال البيانات والمستندات ومسار الاعتماد القانوني.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
@@ -35542,7 +35552,7 @@ def hr_leaves_admin_new():
     types_meta = {
         str(t.id): {
             "is_external": bool(getattr(t, "is_external", False)),
-            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)) or _leave_type_requires_medical_report(t),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
             "balance_source_name": _leave_type_balance_source_name(t),
@@ -35589,6 +35599,12 @@ def hr_leaves_admin_edit(row_id: int):
             lt = HRLeaveType.query.get(int(row.leave_type_id))
         except Exception:
             lt = None
+        new_files = [f for f in (request.files.getlist('attachments') or []) if f and (getattr(f, 'filename', '') or '').strip()]
+        existing_report = HRLeaveAttachment.query.filter_by(request_id=row.id).first() is not None
+        if lt and _leave_type_requires_medical_report(lt) and not (new_files or existing_report):
+            db.session.rollback()
+            flash('الإجازة المرضية تتطلب إرفاق تقرير طبي.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
         is_external = bool(getattr(lt, 'is_external', False)) if lt else False
 
         # If the type is external and place not set, default it

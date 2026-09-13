@@ -1278,7 +1278,12 @@ def transport_permit_new():
         flash("تم إرسال طلب الحركة للاعتماد" + (" إلى المدير المباشر." if manager_id else " إلى مسؤول الحركة والنقل لعدم تعيين مدير مباشر."), "success")
         return redirect(url_for("portal.transport_permits"))
 
-    return render_template("portal/transport/permit_form.html", item=None, zones=zones)
+    return render_template(
+        "portal/transport/permit_form.html",
+        item=None,
+        zones=zones,
+        default_depart_at=datetime.now().strftime("%Y-%m-%dT%H:%M"),
+    )
 
 
 @portal_bp.route("/transport/permits/<int:permit_id>")

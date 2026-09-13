@@ -286,7 +286,19 @@
               </td>
               <td>{{ movement.target_label or '-' }}</td>
               <td style="min-width: 220px">{{ movement.note or '-' }}</td>
-              <td>{{ movement.attachments|length }}</td>
+              <td>
+                {% set movement_attachments = movement.attachments.all() if movement.attachments.all is defined else (movement.attachments or []) %}
+                {% if movement_attachments %}
+                  {% for attachment in movement_attachments %}
+                    <div class="d-flex align-items-center gap-1 mb-1">
+                      <a class="small text-truncate" style="max-width: 12rem" href="{{ url_for('portal.corr_attachment_download', att_id=attachment.id) }}" title="{{ attachment.original_name }}">{{ attachment.original_name }}</a>
+                      <form method="post" action="{{ url_for('portal.corr_attachment_delete', att_id=attachment.id) }}" onsubmit="return confirm('حذف المرفق؟');">
+                        <button class="btn btn-sm btn-outline-danger py-0 px-1" type="submit" title="حذف المرفق">×</button>
+                      </form>
+                    </div>
+                  {% endfor %}
+                {% else %}-{% endif %}
+              </td>
               {% if corr_can_delete_procedures %}
                 <td class="text-end no-print">
                   <form method="post"
