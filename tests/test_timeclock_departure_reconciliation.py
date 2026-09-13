@@ -166,7 +166,9 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         rows = _attach_departure_sources_to_attendance_events([], [record])
 
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].display_event_label, 'مغادرة من نظام مسار')
+        self.assertEqual(rows[0].display_event_label, 'خروج')
+        self.assertEqual(rows[0].display_event_code, 'O')
+        self.assertTrue(rows[0].is_effective_departure_checkout)
         self.assertEqual(rows[0].departure_display_lines[0]['source_label'], 'نظام مسار')
 
     def test_system_departure_is_not_attached_to_the_checkin_row(self):
@@ -253,6 +255,78 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         self.assertIn('10:00', first_departure.departure_display_lines[0]['time_range'])
         self.assertIn('13:30', last_departure.departure_display_lines[0]['time_range'])
         self.assertNotIn('13:30', first_departure.departure_display_lines[0]['time_range'])
+        self.assertFalse(getattr(first_departure, 'is_effective_departure_checkout', False))
+        self.assertEqual(last_departure.display_event_code, 'O')
+        self.assertEqual(last_departure.display_event_label, 'خروج')
+
+    def test_return_after_departure_keeps_it_as_a_departure_movement(self):
+        departure = SimpleNamespace(
+            id=1,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 9, 10),
+            event_type='C',
+            raw_line=None,
+        )
+        returned = SimpleNamespace(
+            id=2,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 11, 46),
+            event_type='D',
+            raw_line=None,
+        )
+        record = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'source': 'CLOCK',
+            'clock_from_dt': departure.event_dt,
+            'clock_to_dt': returned.event_dt,
+        }
+
+        _attach_departure_sources_to_attendance_events(
+            [departure],
+            [record],
+            movement_context_events=[departure, returned],
+        )
+
+        self.assertFalse(getattr(departure, 'is_effective_departure_checkout', False))
+        self.assertFalse(hasattr(departure, 'display_event_label'))
+
+    def test_pending_system_departure_after_return_is_displayed_as_checkout(self):
+        checkin = SimpleNamespace(
+            id=1,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 8, 14),
+            event_type='I',
+            raw_line=None,
+        )
+        returned = SimpleNamespace(
+            id=2,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 11, 46),
+            event_type='D',
+            raw_line=None,
+        )
+        record = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'source': 'SYSTEM',
+            'approval_status': 'SUBMITTED',
+            'system_from_dt': datetime(2026, 9, 1, 13, 35),
+            'system_to_dt': datetime(2026, 9, 1, 15, 0),
+        }
+
+        rows = _attach_departure_sources_to_attendance_events(
+            [checkin, returned],
+            [record],
+            movement_context_events=[checkin, returned],
+        )
+
+        checkout = next(row for row in rows if row.event_type == 'SYSTEM_DEPARTURE')
+        self.assertEqual(checkout.display_event_code, 'O')
+        self.assertEqual(checkout.display_event_label, 'خروج')
+        self.assertTrue(checkout.departure_is_pending)
 
 
 if __name__ == '__main__':

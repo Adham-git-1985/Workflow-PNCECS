@@ -20655,7 +20655,28 @@ def hr_attendance_events():
                 record for record in departure_records
                 if expected_kind and record.get('kind') == expected_kind
             ]
-        events = _attach_departure_sources_to_attendance_events(events, departure_records)
+        movement_context_events = stats_events
+        if not selected_day and report_user_ids:
+            try:
+                movement_context_query = AttendanceEvent.query.filter(
+                    AttendanceEvent.user_id.in_(report_user_ids),
+                )
+                if report_start:
+                    movement_context_query = movement_context_query.filter(
+                        AttendanceEvent.event_dt >= datetime.fromisoformat(report_start + 'T00:00:00'),
+                    )
+                if report_end:
+                    movement_context_query = movement_context_query.filter(
+                        AttendanceEvent.event_dt <= datetime.fromisoformat(report_end + 'T23:59:59'),
+                    )
+                movement_context_events = movement_context_query.all()
+            except (TypeError, ValueError):
+                movement_context_events = events
+        events = _attach_departure_sources_to_attendance_events(
+            events,
+            departure_records,
+            movement_context_events=movement_context_events,
+        )
 
     # Synthetic system-only rows need the same daily employee sequence used by
     # clock events.  They do not increase the attendance count by themselves.
@@ -24189,19 +24210,32 @@ def _departure_display_lines(records: list[dict] | tuple[dict, ...]) -> list[dic
     return lines
 
 
-def _attach_departure_sources_to_attendance_events(events, departure_records: list[dict]) -> list:
+def _attach_departure_sources_to_attendance_events(
+    events,
+    departure_records: list[dict],
+    *,
+    movement_context_events=None,
+) -> list:
     """Attach all departure source times to one raw-event row per movement.
 
-    A system-only approved departure has no AttendanceEvent.  It receives a
-    synthetic display row so it is visible in the attendance-events report.
+    A system-only departure has no AttendanceEvent.  It receives a synthetic
+    display row so it is visible in the attendance-events report.  When the
+    departure is the employee's final movement, its display movement is خروج
+    regardless of its source or approval state.
     """
     display_events = list(events or [])
+    context_events = list(
+        movement_context_events
+        if movement_context_events is not None
+        else display_events
+    )
     events_by_key: dict[tuple[int, str], list] = {}
     for event in display_events:
         event_dt = getattr(event, 'event_dt', None)
         if event_dt and getattr(event, 'user_id', None):
             events_by_key.setdefault((int(event.user_id), event_dt.date().isoformat()), []).append(event)
 
+    departure_records_by_key: dict[tuple[int, str], list[dict]] = {}
     for record in departure_records or []:
         user_id = record.get('user_id')
         day = record.get('day')
@@ -24210,6 +24244,7 @@ def _attach_departure_sources_to_attendance_events(events, departure_records: li
             continue
         user_id = int(user_id)
         day = str(day)
+        departure_records_by_key.setdefault((user_id, day), []).append(record)
         candidates = sorted(
             events_by_key.get((user_id, day), []),
             key=lambda item: getattr(item, 'event_dt', None) or datetime.min,
@@ -24266,6 +24301,32 @@ def _attach_departure_sources_to_attendance_events(events, departure_records: li
             item.get('approval_status') in {'SUBMITTED', 'PENDING'}
             for item in display_records
         )
+
+    context_events_by_key: dict[tuple[int, str], list] = {}
+    for event in context_events:
+        event_dt = getattr(event, 'event_dt', None)
+        if event_dt and getattr(event, 'user_id', None):
+            key = (int(event.user_id), event_dt.date().isoformat())
+            context_events_by_key.setdefault(key, []).append(event)
+
+    for key, records in departure_records_by_key.items():
+        checkout_at = _latest_effective_departure_checkout(
+            context_events_by_key.get(key, []),
+            records,
+        )
+        if checkout_at is None:
+            continue
+        for event in events_by_key.get(key, []):
+            display_records = getattr(event, '_departure_display_records', [])
+            if not any(
+                checkout_at in _departure_source_start_times(record)
+                for record in display_records
+            ):
+                continue
+            event.is_effective_departure_checkout = True
+            event.effective_checkout_at = checkout_at
+            event.display_event_code = 'O'
+            event.display_event_label = 'خروج'
 
     return display_events
 
