@@ -24166,9 +24166,11 @@ def _attach_departure_sources_to_attendance_events(events, departure_records: li
             (event for event in candidates if _attendance_event_code(event) == start_code),
             None,
         )
-        if anchor is None and candidates:
-            anchor = candidates[0]
         if anchor is None:
+            # Do not attach a portal-only departure to the first check-in.
+            # It made the departure appear as a "دخول" row in the movement
+            # log. Create a dedicated row at the departure time unless a C/E
+            # clock departure was actually recorded.
             timestamp = next(
                 (
                     record.get('system_from_dt') or record.get('clock_from_dt')
@@ -26421,8 +26423,10 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             if departure.get('source') not in {'SYSTEM', 'CLOCK_SYSTEM'}:
                 continue
             departure_from = departure.get('system_from_dt') or departure.get('from_dt')
-            departure_to = departure.get('system_to_dt') or departure.get('to_dt')
-            if not departure_from or departure_to or departure_from.hour < 12:
+            # The request's "to" time is the requested return time, not a
+            # clocked return. A real movement after the departure is the only
+            # proof that the employee returned.
+            if not departure_from or departure_from.hour < 12:
                 continue
             if any(event.event_dt and event.event_dt > departure_from for event in evs):
                 continue
@@ -26774,7 +26778,14 @@ def hr_attendance_daily():
         qry.order_by(AttendanceDailySummary.day.desc()).limit(500).all()
     )
     _attach_reconciled_departures(rows, include_pending=True)
-    users = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
+    # The filter needs only these three fields. Avoid materializing every
+    # relationship on every user when the organization has a large directory.
+    users = (
+        db.session.query(User.id, User.name, User.email)
+        .order_by(User.name.asc().nullslast(), User.email.asc())
+        .limit(2000)
+        .all()
+    )
     attendance_count_day = _attendance_count_day(day_from, day_to, today)
     attendance_count_query = (
         AttendanceDailySummary.query

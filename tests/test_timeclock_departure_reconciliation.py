@@ -28,6 +28,12 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         row = _parse_timeclock_line('80439,2026-09-01,10:30:00,E,1002')
         self.assertEqual(row['event_type'], 'E')
 
+    def test_csv_afternoon_checkout_is_imported_as_an_exit(self):
+        row = _parse_timeclock_line('80439,9/13/2026 1:30 PM,O,9/13/2026')
+
+        self.assertEqual(row['event_type'], 'O')
+        self.assertEqual(row['event_dt'], datetime(2026, 9, 13, 13, 30))
+
     def test_departure_codes_have_clear_private_and_official_categories(self):
         self.assertEqual(_attendance_departure_type_label('C'), 'شخصية')
         self.assertEqual(_attendance_departure_type_label('D'), 'شخصية')
@@ -162,6 +168,32 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].display_event_label, 'مغادرة من نظام مسار')
         self.assertEqual(rows[0].departure_display_lines[0]['source_label'], 'نظام مسار')
+
+    def test_system_departure_is_not_attached_to_the_checkin_row(self):
+        checkin = SimpleNamespace(
+            id=1,
+            user_id=7,
+            event_dt=datetime(2026, 9, 1, 7, 32),
+            event_type='I',
+            raw_line=None,
+        )
+        record = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'source': 'SYSTEM',
+            'approval_status': 'SUBMITTED',
+            'system_from_dt': datetime(2026, 9, 1, 13, 45),
+            'system_to_dt': datetime(2026, 9, 1, 15, 0),
+        }
+
+        rows = _attach_departure_sources_to_attendance_events([checkin], [record])
+
+        self.assertEqual(len(rows), 2)
+        self.assertFalse(hasattr(checkin, 'departure_display_lines'))
+        departure_row = next(row for row in rows if row.event_type == 'SYSTEM_DEPARTURE')
+        self.assertEqual(departure_row.event_dt, datetime(2026, 9, 1, 13, 45))
+        self.assertTrue(departure_row.departure_is_pending)
 
     def test_submitted_system_departure_is_marked_pending_in_the_event_log(self):
         record = {

@@ -3276,6 +3276,7 @@ class HRPermissionRequest(db.Model):
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
     __table_args__ = (
         db.Index("ix_hr_perm_req_user_status", "user_id", "status"),
+        db.Index("ix_hr_perm_req_status_day_user", "status", "day", "user_id"),
         db.Index("ix_hr_perm_req_approver_status", "approver_user_id", "status"),
     )
 
@@ -3466,6 +3467,7 @@ class AttendanceDailySummary(db.Model):
     __table_args__ = (
         db.UniqueConstraint("user_id", "day", name="uq_att_daily_user_day"),
         db.Index("ix_att_daily_day", "day"),
+        db.Index("ix_att_daily_day_status", "day", "status"),
     )
 
 
@@ -3528,6 +3530,7 @@ class AttendanceEvent(db.Model):
         # Prevent duplicates across sync/import
         db.UniqueConstraint("user_id", "event_dt", "event_type", "device_id", name="uq_att_event_key"),
         db.Index("ix_att_event_user_dt", "user_id", "event_dt"),
+        db.Index("ix_att_event_user_dt_type", "user_id", "event_dt", "event_type"),
         db.Index("ix_att_event_batch_dt", "batch_id", "event_dt"),
     )
 

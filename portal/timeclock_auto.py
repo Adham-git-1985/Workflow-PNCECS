@@ -195,18 +195,32 @@ def _worker(app):
                             stored_last_size = int(str(stored_last_size_raw).strip())
                         except Exception:
                             stored_last_size = None
+                    stored_last_mtime_raw = _setting_get("TIMECLK_LAST_MTIME_NS", None)
+                    stored_last_mtime = None
+                    if stored_last_mtime_raw is not None:
+                        try:
+                            stored_last_mtime = int(str(stored_last_mtime_raw).strip())
+                        except Exception:
+                            stored_last_mtime = None
 
                     should_sync = False
+                    force_full_read = False
                     if not stored_last_file:
                         should_sync = True
                     elif stored_last_file != sig[0]:
                         should_sync = True
                     elif append_only:
-                        # Sync if file grew OR was truncated
+                        # Daily clock exports are sometimes rewritten in place
+                        # instead of appended.  A same-size rewrite used to
+                        # leave newly corrected exit punches unimported.
                         if stored_last_size is None:
                             should_sync = True
+                            force_full_read = True
                         elif sig[1] != stored_last_size:
                             should_sync = True
+                        elif stored_last_mtime is None or sig[2] != stored_last_mtime:
+                            should_sync = True
+                            force_full_read = True
                     else:
                         if last_sig is None or sig != last_sig:
                             should_sync = True
@@ -220,6 +234,7 @@ def _worker(app):
                                     file_path,
                                     imported_by_id=imported_by_id,
                                     append_only=append_only,
+                                    force_full_read=force_full_read,
                                 )
                                 app.logger.info(
                                     "TIMECLK auto-sync: inserted=%s skipped=%s errors=%s source=%s",
@@ -227,6 +242,7 @@ def _worker(app):
                                 )
                                 try:
                                     _setting_set("TIMECLK_LAST_ERROR", "")
+                                    _setting_set("TIMECLK_LAST_MTIME_NS", str(sig[2]))
                                     db.session.commit()
                                 except Exception:
                                     db.session.rollback()

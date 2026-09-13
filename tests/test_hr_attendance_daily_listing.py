@@ -239,7 +239,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
                 permission_type_id=permission_type.id,
                 day="2026-09-13",
                 from_time="13:35",
-                to_time=None,
+                to_time="15:00",
                 status="SUBMITTED",
             ),
         ))
