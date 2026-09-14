@@ -35,6 +35,7 @@ from models import (
     UserPermission,
 )
 from portal import portal_bp
+from portal.routes import _leave_used_days
 from services.hr_request_workflow import (
     ESCALATION_TARGET_HR,
     ESCALATION_TARGET_NONE,
@@ -1471,6 +1472,8 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
 
     def test_assigned_manager_can_use_inbox_without_a_global_approve_permission(self):
         row = self._leave(self.normal_type)
+        row.start_date = "2099-09-01"
+        row.end_date = "2099-09-02"
         start_request_flow(KIND_LEAVE, row)
         db.session.commit()
 
@@ -1492,6 +1495,7 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         approved = db.session.get(HRLeaveRequest, row.id)
         self.assertEqual(approved.status, "APPROVED")
         self.assertEqual(approved.covering_employee_name, "Covering Employee")
+        self.assertEqual(_leave_used_days(self.employee.id, self.normal_type.id, 2099), 2.0)
         history = client.get("/portal/hr/approvals?status=APPROVED")
         self.assertEqual(history.status_code, 200)
         self.assertIn(b"Employee", history.data)

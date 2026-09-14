@@ -24679,15 +24679,19 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
 
 
 def _leave_used_days(user_id: int, leave_type_id: int, year: int) -> float:
-    """Used leave days (day-by-day) based on approvals; future days are not deducted."""
+    """Return all days committed by final approval for the selected year.
+
+    An approved leave reserves its full duration immediately, even when its
+    start date is in the future. Historical reports that need a point-in-time
+    value must call ``_leave_used_days_as_of`` directly.
+    """
     try:
-        today = date.today()
-        as_of = today
-        if year < today.year:
-            as_of = date(year, 12, 31)
-        elif year > today.year:
-            as_of = date(year, 1, 1) - timedelta(days=1)
-        return _leave_used_days_as_of(user_id, leave_type_id, year, as_of)
+        return _leave_used_days_as_of(
+            user_id,
+            leave_type_id,
+            year,
+            date(year, 12, 31),
+        )
     except Exception:
         return 0.0
 
@@ -36604,7 +36608,6 @@ def hr_report_leave_employee_balances():
     leave_types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc(), HRLeaveType.id.asc()).all()
 
     rows = []
-    today = date.today()
     if user_ids:
         # Prefetch user objects (employee_file is selectin)
         users_map = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()}
@@ -36622,7 +36625,9 @@ def hr_report_leave_employee_balances():
                 if not _leave_type_owns_balance(lt):
                     continue
                 total = float(_leave_entitlement_days(uid, lt, year) or 0.0)
-                used = float(_leave_used_days_as_of(uid, lt.id, year, today) or 0.0)
+                # Available balance reserves every finally approved request,
+                # including leave whose start date is still in the future.
+                used = float(_leave_used_days(uid, lt.id, year) or 0.0)
                 if total == 0 and used == 0:
                     continue
                 remaining = float(total) - float(used)
@@ -36657,7 +36662,7 @@ def hr_report_leave_employee_balances():
             abort(403)
         loc_map = {x.id: x.name for x in (work_locations or [])}
         app_map = {x.id: x.name for x in (appointment_types or [])}
-        headers = ['السنة', 'الموظف', 'الرقم الوظيفي', 'موقع العمل', 'نوع التعيين', 'نوع الإجازة', 'الرصيد الافتتاحي/الاستحقاق', 'المستخدم حتى اليوم', 'الرصيد الحالي']
+        headers = ['السنة', 'الموظف', 'الرقم الوظيفي', 'موقع العمل', 'نوع التعيين', 'نوع الإجازة', 'الرصيد الافتتاحي/الاستحقاق', 'المستخدم/المحجوز بالاعتماد', 'الرصيد الحالي']
         xrows = []
         for r in rows:
             u = r.get('user')

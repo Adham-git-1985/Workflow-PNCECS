@@ -25,6 +25,7 @@ from portal.routes import (
     _leave_request_form_payload,
     _leave_type_deducts_from_balance,
     _leave_type_owns_balance,
+    _leave_used_days,
     _leave_used_days_as_of,
     _ensure_statutory_leave_types,
     _statutory_leave_validation,
@@ -333,6 +334,27 @@ class LeaveTypePolicyTests(unittest.TestCase):
         self.assertEqual(payload["entitlement"], "25 يوم")
         self.assertEqual(payload["used"], "5 يوم")
         self.assertEqual(payload["remaining"], "20 يوم")
+
+        # Final approval reserves the complete future leave immediately. The
+        # opening entitlement stays immutable, while historical as-of reports
+        # still exclude dates later than their cutoff.
+        request_row.status = "APPROVED"
+        db.session.commit()
+
+        self.assertEqual(_leave_used_days_as_of(employee.id, annual.id, 2026, date(2026, 9, 14)), 5.0)
+        self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 7.0)
+
+        approved_payload = _leave_request_form_payload(request_row)
+        self.assertEqual(approved_payload["entitlement"], payload["entitlement"])
+        self.assertEqual(approved_payload["used"], "7 يوم")
+        self.assertEqual(approved_payload["remaining"], "18 يوم")
+
+        # Cancelling before a future leave starts releases that reservation.
+        request_row.status = "CANCELLED"
+        request_row.cancelled_from_status = "APPROVED"
+        request_row.cancel_effective_date = "2026-09-14"
+        db.session.commit()
+        self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 5.0)
 
     def test_maternity_and_hajj_maximum_days_are_enforced(self):
         maternity = HRLeaveType(code="M", name_ar="إجازة أمومة", max_days=90)
