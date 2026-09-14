@@ -113,6 +113,11 @@ from services.attendance_schedule import (
     normalize_attendance_schedule_cycle,
     notify_attendance_schedule_stakeholders,
 )
+from services.employee_achievements import (
+    ACHIEVEMENT_LEVELS,
+    ACHIEVEMENT_STATUSES,
+    ACHIEVEMENT_TYPES,
+)
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
 # while the canonical decorator in this project is utils.perms.perm_required.
@@ -133,6 +138,7 @@ from models import (
     EmployeeFile,
     EmployeeAttachment,
     EmployeeEvaluationRun,
+    HREmployeeAchievement,
     HRLookupItem,
     EmployeeDependent,
     EmployeeQualification,
@@ -8202,6 +8208,7 @@ def hr_report_attendance_permissions():
 @login_required
 @_perm(HR_REPORTS_VIEW)
 def hr_report_delay():
+    print_view = (request.args.get('print') or '').strip().lower() in {'1', 'true', 'yes'}
     employee_id = (request.args.get('user_id') or '').strip()
     employee_id = int(employee_id) if employee_id.isdigit() else None
     work_location_id = (request.args.get('work_location_id') or '').strip()
@@ -8293,7 +8300,7 @@ def hr_report_delay():
         return _export_xlsx('hr_delay.xlsx', headers, xrows)
 
     return render_template(
-        'portal/hr/reports_delay.html',
+        'portal/hr/print/reports_delay.html' if print_view else 'portal/hr/reports_delay.html',
         rows=rows_view,
         users=users,
         selected_user_id=employee_id,
@@ -13075,7 +13082,12 @@ def hr_work_schedule():
     organization_week_no = 2 if request.args.get("week") == "2" else 1
     is_final_approver = _attendance_schedule_is_final_approver()
     can_view_all = _attendance_schedule_can_view_all()
+    print_view = (request.args.get("print") or "").strip().lower() in {"1", "true", "yes"}
     active_view = (request.args.get("view") or "schedule").strip().lower()
+    if print_view:
+        if not can_view_all:
+            abort(403)
+        active_view = "all"
     if active_view not in {"schedule", "team", "all"}:
         active_view = "schedule"
     if active_view == "all" and not can_view_all:
@@ -13162,6 +13174,21 @@ def hr_work_schedule():
         organization_week_no,
         all_plan_map,
     ) if can_view_all else ([], [])
+    organization_print_weeks = []
+    if organization_loaded:
+        for week_no in (1, 2):
+            week_days, week_rows = _attendance_schedule_week_rows(
+                all_users,
+                period_start,
+                week_no,
+                all_plan_map,
+            )
+            organization_print_weeks.append({
+                "week_no": week_no,
+                "days": week_days,
+                "rows": week_rows,
+                "headers": week_rows[0]["days"] if week_rows else [],
+            })
     history = (
         HRAttendanceSchedulePlan.query
         .filter_by(user_id=target_user.id, period_start=period_start_text)
@@ -13174,7 +13201,7 @@ def hr_work_schedule():
         and attendance_schedule_needs_reminder(plan, period_start, date.today())
     )
     return render_template(
-        'portal/hr/work_schedule.html',
+        'portal/hr/print/work_schedule_all.html' if print_view else 'portal/hr/work_schedule.html',
         plan=plan,
         published_plan=published_plan,
         history=history,
@@ -13205,6 +13232,7 @@ def hr_work_schedule():
         organization_week_no=organization_week_no,
         organization_week_days=organization_week_days,
         organization_week_rows=organization_week_rows,
+        organization_print_weeks=organization_print_weeks,
         status_counts=status_counts,
         manager_pending_count=sum(
             1 for row in report_plan_map.values() if row.status == "SUBMITTED"
@@ -13947,6 +13975,10 @@ def hr_me_home():
     # Quick stats (best-effort; never break the dashboard)
     uid = current_user.id
 
+    achievements_total = HREmployeeAchievement.query.filter_by(user_id=uid).count()
+    achievements_pending = HREmployeeAchievement.query.filter_by(user_id=uid, status="PENDING").count()
+    achievements_approved = HREmployeeAchievement.query.filter_by(user_id=uid, status="APPROVED").count()
+
     # Payslips
     payslips_count = 0
     payslips_latest_label = ""
@@ -14072,6 +14104,9 @@ def hr_me_home():
         trainings_upcoming=trainings_upcoming,
         latest_monthly_eval=latest_monthly_eval,
         latest_annual_eval=latest_annual_eval,
+        achievements_total=achievements_total,
+        achievements_pending=achievements_pending,
+        achievements_approved=achievements_approved,
     )
 
 
@@ -17442,6 +17477,74 @@ def hr_my_payslip_latest():
 # -------------------------
 # Employee: System Evaluations (KPI-based)
 # -------------------------
+@portal_bp.route("/hr/me/achievements", methods=["GET", "POST"])
+@login_required
+@_perm(PORTAL_READ)
+def hr_my_achievements():
+    """Let employees document exceptional work for an auditable HR review."""
+    if request.method == "POST":
+        achievement_type = (request.form.get("achievement_type") or "OTHER").strip().upper()
+        title = (request.form.get("title") or "").strip()
+        description = (request.form.get("description") or "").strip()
+        achieved_on = (request.form.get("achieved_on") or "").strip()
+        issuer = (request.form.get("issuer") or "").strip()[:250]
+        evidence_reference = (request.form.get("evidence_reference") or "").strip()[:500]
+
+        if achievement_type not in ACHIEVEMENT_TYPES:
+            achievement_type = "OTHER"
+        if not title or len(title) > 250:
+            flash("اكتب عنواناً واضحاً للإنجاز لا يتجاوز 250 حرفاً.", "danger")
+            return redirect(url_for("portal.hr_my_achievements"))
+        try:
+            achievement_day = date.fromisoformat(achieved_on)
+        except ValueError:
+            flash("حدد تاريخاً صحيحاً للإنجاز.", "danger")
+            return redirect(url_for("portal.hr_my_achievements"))
+        if achievement_day > date.today():
+            flash("لا يمكن تسجيل إنجاز بتاريخ مستقبلي.", "danger")
+            return redirect(url_for("portal.hr_my_achievements"))
+
+        row = HREmployeeAchievement(
+            user_id=current_user.id,
+            achievement_type=achievement_type,
+            title=title,
+            description=description or None,
+            achieved_on=achievement_day.isoformat(),
+            issuer=issuer or None,
+            evidence_reference=evidence_reference or None,
+            distinction_level="NOTABLE",
+            evaluation_points=0.0,
+            status="PENDING",
+            submitted_by_id=current_user.id,
+        )
+        db.session.add(row)
+        db.session.flush()
+        _portal_audit(
+            "HR_ACHIEVEMENT_SUBMIT",
+            f"achievement submitted user_id={current_user.id} type={achievement_type}",
+            target_type="HR_EMPLOYEE_ACHIEVEMENT",
+            target_id=row.id,
+        )
+        db.session.commit()
+        flash("تم إرسال الإنجاز للمراجعة. لن يدخل في التقييم قبل اعتماده.", "success")
+        return redirect(url_for("portal.hr_my_achievements"))
+
+    rows = (
+        HREmployeeAchievement.query
+        .filter(HREmployeeAchievement.user_id == current_user.id)
+        .order_by(HREmployeeAchievement.achieved_on.desc(), HREmployeeAchievement.id.desc())
+        .all()
+    )
+    return render_template(
+        "portal/hr/my_achievements.html",
+        rows=rows,
+        achievement_types=ACHIEVEMENT_TYPES,
+        achievement_levels=ACHIEVEMENT_LEVELS,
+        achievement_statuses=ACHIEVEMENT_STATUSES,
+        today=date.today().isoformat(),
+    )
+
+
 @portal_bp.route("/hr/me/system-evaluations")
 @login_required
 @_perm(PORTAL_READ)
@@ -20495,6 +20598,7 @@ def hr_attendance_batches():
 @_perm(HR_ATT_READ)
 def hr_attendance_events():
     """Admin/events view for raw timeclock events."""
+    print_view = (request.args.get("print") or "").strip().lower() in {"1", "true", "yes"}
     q = (request.args.get("q") or "").strip()
     date_from = (request.args.get("date_from") or "").strip()
     date_to = (request.args.get("date_to") or "").strip()
@@ -20760,7 +20864,7 @@ def hr_attendance_events():
             flash("تعذر تصدير Excel حالياً.", "danger")
 
     return render_template(
-        "portal/hr/attendance_events.html",
+        "portal/hr/print/attendance_events.html" if print_view else "portal/hr/attendance_events.html",
         events=events,
         users=users,
         locs=locs,
@@ -26844,6 +26948,7 @@ def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], st
 @_perm(HR_ATT_READ)
 def hr_attendance_absence():
     """Show timeclock employees with no punch or active leave for one day."""
+    print_view = (request.args.get('print') or '').strip().lower() in {'1', 'true', 'yes'}
     day = (request.args.get('day') or '').strip() or _as_yyyy_mm_dd(date.today())
     rows, excluded_reason = _attendance_absence_candidates(day)
     if excluded_reason == "INVALID_DATE":
@@ -26856,7 +26961,7 @@ def hr_attendance_absence():
         for row in _hr_lookup_options('WORK_LOCATION')
     }
     return render_template(
-        'portal/hr/attendance_absence.html',
+        'portal/hr/print/attendance_absence.html' if print_view else 'portal/hr/attendance_absence.html',
         day=day,
         rows=rows,
         excluded_reason=excluded_reason,
@@ -26870,6 +26975,7 @@ def hr_attendance_absence():
 @login_required
 @_perm(HR_ATT_READ)
 def hr_attendance_daily():
+    print_view = (request.args.get('print') or '').strip().lower() in {'1', 'true', 'yes'}
     day_from = (request.args.get('day_from') or '').strip()
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
@@ -26915,7 +27021,8 @@ def hr_attendance_daily():
         )
     attendance_count_today = attendance_count_query.count()
 
-    return render_template('portal/hr/attendance_daily.html', rows=rows, users=users,
+    template_name = 'portal/hr/print/attendance_daily.html' if print_view else 'portal/hr/attendance_daily.html'
+    return render_template(template_name, rows=rows, users=users,
                            day_from=day_from, day_to=day_to, user_id=user_id,
                            today=today,
                            attendance_count_day=attendance_count_day,

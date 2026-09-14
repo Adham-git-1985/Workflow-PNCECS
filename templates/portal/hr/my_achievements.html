@@ -1,0 +1,61 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}إنجازاتي المميزة{% endblock %}
+{% block hr_content %}
+<section class="rounded-4 p-4 mb-3 text-dark" style="background:linear-gradient(135deg,#fff4bd,#ffe185);border:1px solid #e4bb37;">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div>
+      <div class="small fw-bold text-uppercase mb-1"><i class="bi bi-stars"></i> التميّز المهني</div>
+      <h1 class="h3 fw-bold mb-2"><i class="bi bi-trophy-fill"></i> إنجازاتي المميزة</h1>
+      <p class="mb-0">سجّل الإنجاز مع دليله. بعد اعتماد الموارد البشرية يُمنح مستوى واضح ويضاف أثره إلى التقييم النظامي.</p>
+    </div>
+    <a class="btn btn-dark" href="{{ url_for('portal.hr_me_home') }}"><i class="bi bi-arrow-right"></i> خدمات الموظف</a>
+  </div>
+</section>
+
+<div class="alert alert-info">
+  <strong>آلية العلامة:</strong> إنجاز موثّق <strong>+1</strong>، إنجاز مميز <strong>+2</strong>، إنجاز استثنائي <strong>+3</strong> نقاط من 100، وبحد أقصى <strong>+5</strong> نقاط لكل فترة تقييم. لا تُحتسب الطلبات قيد المراجعة.
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-5">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <h2 class="h5 mb-3"><i class="bi bi-plus-circle text-primary"></i> توثيق إنجاز جديد</h2>
+        <form method="post" class="row g-3">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="col-12"><label class="form-label">نوع الإنجاز</label><select class="form-select" name="achievement_type">{% for key, meta in achievement_types.items() %}<option value="{{ key }}">{{ meta.label }}</option>{% endfor %}</select></div>
+          <div class="col-12"><label class="form-label">عنوان الإنجاز</label><input class="form-control" name="title" maxlength="250" required placeholder="مثال: الفوز بجائزة أفضل مبادرة"></div>
+          <div class="col-md-6"><label class="form-label">تاريخ الإنجاز</label><input class="form-control" type="date" name="achieved_on" max="{{ today }}" required></div>
+          <div class="col-md-6"><label class="form-label">الجهة المانحة أو الناشرة</label><input class="form-control" name="issuer" maxlength="250"></div>
+          <div class="col-12"><label class="form-label">وصف الأثر</label><textarea class="form-control" name="description" rows="4" placeholder="ما الذي تحقق؟ وما أثره على العمل أو المؤسسة؟"></textarea></div>
+          <div class="col-12"><label class="form-label">الدليل أو المرجع</label><input class="form-control" name="evidence_reference" maxlength="500" placeholder="رابط، رقم كتاب، شهادة، أو مرجع يمكن التحقق منه"><div class="form-text">وجود دليل واضح يساعد في اعتماد مستوى الإنجاز.</div></div>
+          <div class="col-12 d-grid"><button class="btn btn-warning fw-bold" type="submit"><i class="bi bi-send"></i> إرسال للمراجعة</button></div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-7">
+    <div class="card border-0 shadow-sm">
+      <div class="card-body p-4">
+        <h2 class="h5 mb-3"><i class="bi bi-award text-warning"></i> سجل الإنجازات</h2>
+        <div class="vstack gap-3">
+          {% for row in rows %}
+            {% set type_meta = achievement_types.get(row.achievement_type, achievement_types.OTHER) %}
+            {% set level_meta = achievement_levels.get(row.distinction_level, achievement_levels.NOTABLE) %}
+            {% set status_meta = achievement_statuses.get(row.status, achievement_statuses.PENDING) %}
+            <article class="rounded-3 p-3 {% if row.status == 'APPROVED' %}border border-warning{% else %}border{% endif %}" {% if row.status == 'APPROVED' %}style="background:#fffdf4"{% endif %}>
+              <div class="d-flex flex-wrap justify-content-between gap-2 mb-2">
+                <div><i class="bi {{ type_meta.icon }} text-warning"></i> <strong>{{ row.title }}</strong><div class="small text-muted">{{ type_meta.label }} · {{ row.achieved_on }}{% if row.issuer %} · {{ row.issuer }}{% endif %}</div></div>
+                <div><span class="badge text-bg-{{ status_meta.class }}">{{ status_meta.label }}</span>{% if row.status == 'APPROVED' %}<span class="badge text-bg-warning">{{ level_meta.label }} · +{{ '%.0f'|format(row.evaluation_points) }}</span>{% endif %}</div>
+              </div>
+              {% if row.description %}<p class="mb-2">{{ row.description }}</p>{% endif %}
+              {% if row.evidence_reference %}<div class="small"><strong>الدليل:</strong> {% if row.evidence_reference.startswith('http://') or row.evidence_reference.startswith('https://') %}<a href="{{ row.evidence_reference }}" target="_blank" rel="noopener">فتح المرجع</a>{% else %}{{ row.evidence_reference }}{% endif %}</div>{% endif %}
+              {% if row.review_note %}<div class="small text-muted mt-2"><strong>ملاحظة المراجعة:</strong> {{ row.review_note }}</div>{% endif %}
+            </article>
+          {% else %}<div class="text-center text-muted py-5"><i class="bi bi-trophy fs-1 d-block mb-2"></i>لم تسجل إنجازات بعد.</div>{% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

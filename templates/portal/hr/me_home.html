@@ -178,6 +178,22 @@
   </div>
   {% endif %}
 
+  <div class="col-12 col-md-6 col-lg-3">
+    <div class="p-3 rounded-3 shadow-sm h-100 border" style="border-color:#d9b64c!important;background:linear-gradient(145deg,#fffdf4,#fff8d9);">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-trophy-fill fs-4 text-warning"></i>
+        <div class="fw-bold">إنجازاتي المميزة</div>
+      </div>
+      <div class="text-muted small mb-2">وثّق جائزة أو بحثاً أو ابتكاراً أو تطويراً نوعياً ليُراجع ويظهر بوضوح في تقييمك.</div>
+      <div class="mb-3">
+        <span class="badge text-bg-success">معتمد: {{ achievements_approved }}</span>
+        <span class="badge text-bg-warning ms-1">قيد المراجعة: {{ achievements_pending }}</span>
+        <span class="badge text-bg-light ms-1">الإجمالي: {{ achievements_total }}</span>
+      </div>
+      <a class="btn btn-warning w-100 fw-bold" href="{{ url_for('portal.hr_my_achievements') }}">فتح سجل الإنجازات</a>
+    </div>
+  </div>
+
   <!-- Trainings -->
   <div class="col-12 col-md-6 col-lg-3">
     <div class="p-3 bg-white rounded-3 shadow-sm h-100">

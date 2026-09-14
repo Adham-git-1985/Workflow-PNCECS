@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ print_title }}</title>
+  <style>
+    @page { size: A4 {{ print_orientation|default('portrait') }}; margin: 9mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; color: #172033; background: #eef1f6; font-family: Tahoma, Arial, sans-serif; }
+    body { font-size: 10pt; }
+    .print-toolbar { position: sticky; top: 0; z-index: 10; display: flex; justify-content: center; gap: 8px; padding: 10px; background: #fff; border-bottom: 1px solid #dfe3ea; }
+    .print-toolbar button { border: 1px solid #6a4bb3; border-radius: 6px; padding: 7px 16px; color: #fff; background: #6a4bb3; font: inherit; cursor: pointer; }
+    .print-toolbar button.secondary { color: #364152; background: #fff; border-color: #aeb5c1; }
+    .report-document { width: min(100%, 297mm); min-height: 210mm; margin: 14px auto; padding: 9mm; background: #fff; box-shadow: 0 3px 18px rgba(28, 39, 60, .12); }
+    .report-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 6mm; padding-bottom: 3mm; border-bottom: 2px solid #6a4bb3; }
+    .report-header h1 { margin: 0 0 2mm; color: #3d2a70; font-size: 17pt; }
+    .report-subtitle { color: #596579; font-size: 9pt; line-height: 1.7; }
+    .report-count { min-width: 34mm; padding: 2.5mm 3mm; text-align: center; border: 1px solid #d9d2eb; border-radius: 7px; background: #f7f4fd; }
+    .report-count strong { display: block; color: #3d2a70; font-size: 16pt; }
+    .report-count span { color: #667085; font-size: 8pt; }
+    .report-note { margin: 0 0 4mm; padding: 2.5mm 3mm; border: 1px solid #e5e7eb; border-radius: 6px; background: #f8fafc; }
+    table { width: 100%; border-collapse: collapse; table-layout: auto; }
+    thead { display: table-header-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    th, td { padding: 2mm 1.6mm; text-align: right; vertical-align: middle; border: 1px solid #cfd5df; }
+    th { color: #263248; background: #ece8f6; font-weight: 700; }
+    tbody tr:nth-child(even) td { background: #fafbfc; }
+    .center { text-align: center; }
+    .ltr { direction: ltr; unicode-bidi: embed; }
+    .muted { color: #667085; }
+    .small { font-size: 8pt; }
+    .badge { display: inline-block; padding: 1mm 2mm; border-radius: 999px; color: #374151; background: #eceff3; white-space: nowrap; }
+    .badge.success { color: #075e44; background: #dff7ec; }
+    .badge.danger { color: #9b1c1c; background: #fde8e8; }
+    .badge.warning { color: #7a4b00; background: #fff1cc; }
+    .badge.info { color: #075985; background: #e0f2fe; }
+    .print-page { break-after: page; page-break-after: always; }
+    .print-page:last-child { break-after: auto; page-break-after: auto; }
+    .compact { font-size: 7.5pt; }
+    .compact th, .compact td { padding: 1.35mm 1mm; }
+    @media print {
+      html, body { background: #fff; }
+      .print-toolbar { display: none !important; }
+      .report-document { width: auto; min-height: 0; margin: 0; padding: 0; box-shadow: none; }
+    }
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <div class="print-toolbar">
+    <button type="button" onclick="window.print()">طباعة / حفظ PDF</button>
+    <button class="secondary" type="button" onclick="window.close()">إغلاق</button>
+  </div>
+  <main class="report-document">
+    {% block report %}{% endblock %}
+  </main>
+</body>
+</html>

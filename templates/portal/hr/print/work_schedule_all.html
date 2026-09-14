@@ -1,0 +1,37 @@
+{% extends "portal/hr/print/base.html" %}
+{% set print_title = "جدول الدوام لجميع الموظفين" %}
+{% set print_orientation = "landscape" %}
+{% block head %}
+<style>
+  .schedule-table { font-size: 7pt; table-layout: fixed; }
+  .schedule-table th, .schedule-table td { padding: 1.2mm .8mm; text-align: center; }
+  .schedule-table .employee { width: 39mm; text-align: right; }
+  .schedule-table .status { width: 24mm; }
+  .shift { line-height: 1.45; }
+  .shift strong { display: block; direction: ltr; }
+</style>
+{% endblock %}
+{% block report %}
+{% for week in organization_print_weeks %}
+<section class="print-page">
+  <header class="report-header">
+    <div><h1>{{ print_title }} — الأسبوع {{ 'الأول' if week.week_no == 1 else 'الثاني' }}</h1><div class="report-subtitle">دورة الدوام: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
+    <div class="report-count"><strong>{{ week.rows|length }}</strong><span>موظف</span></div>
+  </header>
+  <table class="schedule-table">
+    <thead><tr><th class="employee">الموظف</th>{% for day in week.headers %}<th>{{ day.weekday }}<div class="small ltr">{{ day.date.strftime('%d/%m/%Y') }}</div></th>{% endfor %}<th class="status">الحالة</th></tr></thead>
+    <tbody>
+      {% for item in week.rows %}{% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}
+      <tr>
+        <td class="employee"><strong>{{ item.user.full_name }}</strong><div class="small muted">{{ item.user.job_title or item.user.email or 'موظف' }}</div></td>
+        {% for day in item.days %}{% set cell_meta = day_meta.get(day.day_type, day_meta.WORK) %}
+        <td><div class="shift"><span>{{ cell_meta.short }}</span><strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong><span class="small muted">{% if day.day_type != 'OFF' %}{{ day.schedule_name or 'وقت مخصص' }}{% endif %}</span></div></td>
+        {% endfor %}
+        <td class="status">{{ item_meta.label if item.plan else 'غير مرسل' }}</td>
+      </tr>
+      {% else %}<tr><td colspan="9" class="center muted">لا توجد ملفات موظفين لعرضها.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+{% endblock %}

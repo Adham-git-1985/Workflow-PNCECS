@@ -1,0 +1,21 @@
+{% extends "portal/hr/print/base.html" %}
+{% set print_title = "كشف الغياب" %}
+{% set print_orientation = "portrait" %}
+{% block report %}
+<header class="report-header">
+  <div><h1>{{ print_title }}</h1><div class="report-subtitle">التاريخ: {{ day }}</div></div>
+  <div class="report-count"><strong>{{ rows|length }}</strong><span>موظف غائب</span></div>
+</header>
+{% if excluded_reason == 'WEEKLY_OFF' %}<div class="report-note">التاريخ المحدد عطلة أسبوعية.</div>
+{% elif excluded_reason == 'OFFICIAL_HOLIDAY' %}<div class="report-note">التاريخ المحدد عطلة رسمية.</div>
+{% else %}
+<table>
+  <thead><tr><th>#</th><th>الرقم الوظيفي</th><th>الموظف</th><th>كود الساعة</th><th>موقع العمل</th></tr></thead>
+  <tbody>
+    {% for employee in rows %}{% set user = employee.user %}
+    <tr><td class="center">{{ loop.index }}</td><td>{{ employee.employee_no or '—' }}</td><td>{{ employee.full_name_quad or user.full_name or user.email }}</td><td class="center ltr">{{ employee.timeclock_code }}</td><td>{{ work_locations.get(employee.work_location_lookup_id) or '—' }}</td></tr>
+    {% else %}<tr><td colspan="5" class="center muted">لا توجد حالات غياب مطابقة.</td></tr>{% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

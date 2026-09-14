@@ -1,0 +1,64 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="rounded-4 p-4 mb-4" style="background:linear-gradient(135deg,#fff4bd,#ffe185);border:1px solid #e4bb37;">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+    <div><h1 class="h3 fw-bold mb-1"><i class="bi bi-trophy-fill"></i> الإنجازات المميزة</h1><div>اعتماد الإنجاز وتحديد مستوى أثره قبل إضافته إلى التقييم النظامي.</div></div>
+    <a class="btn btn-dark" href="{{ url_for('admin.evaluations_index') }}"><i class="bi bi-arrow-right"></i> تقييم الموظفين</a>
+  </div>
+</div>
+
+<div class="alert alert-info"><strong>قاعدة واضحة:</strong> موثّق +1، مميز +2، استثنائي +3 نقاط من 100. مجموع المكافأة لا يتجاوز +5 نقاط في التقييم الشهري أو السنوي، ولا يغيّر أوزان KPI.</div>
+
+<div class="card shadow-sm mb-4"><div class="card-body">
+  <h2 class="h5 mb-3">إضافة إنجاز معتمد</h2>
+  <form method="post" class="row g-3 align-items-end">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="col-md-4"><label class="form-label">الموظف</label><select class="form-select" name="user_id" required><option value="">— اختر —</option>{% for user in users %}<option value="{{ user.id }}">{{ user.full_name }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label">النوع</label><select class="form-select" name="achievement_type">{% for key, meta in achievement_types.items() %}<option value="{{ key }}">{{ meta.label }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label">المستوى</label><select class="form-select" name="distinction_level">{% for key, meta in achievement_levels.items() %}<option value="{{ key }}">{{ meta.label }} (+{{ '%.0f'|format(meta.points) }})</option>{% endfor %}</select></div>
+    <div class="col-md-2"><label class="form-label">التاريخ</label><input class="form-control" type="date" name="achieved_on" max="{{ now.strftime('%Y-%m-%d') }}" required></div>
+    <div class="col-md-6"><label class="form-label">عنوان الإنجاز</label><input class="form-control" name="title" maxlength="250" required></div>
+    <div class="col-md-3"><label class="form-label">الجهة</label><input class="form-control" name="issuer" maxlength="250"></div>
+    <div class="col-md-3"><label class="form-label">الدليل/المرجع</label><input class="form-control" name="evidence_reference" maxlength="500"></div>
+    <div class="col-md-10"><label class="form-label">وصف الأثر</label><textarea class="form-control" name="description" rows="2"></textarea></div>
+    <div class="col-md-2 d-grid"><button class="btn btn-warning fw-bold" type="submit"><i class="bi bi-patch-check"></i> إضافة واعتماد</button></div>
+  </form>
+</div></div>
+
+<div class="card shadow-sm mb-4"><div class="card-body">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-4"><label class="form-label">الموظف</label><select class="form-select" name="user_id"><option value="">الكل</option>{% for user in users %}<option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.full_name }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label">الحالة</label><select class="form-select" name="status"><option value="">الكل</option>{% for key, meta in achievement_statuses.items() %}<option value="{{ key }}" {% if selected_status == key %}selected{% endif %}>{{ meta.label }}</option>{% endfor %}</select></div>
+    <div class="col-md-3"><label class="form-label">السنة</label><input class="form-control" type="number" name="year" value="{{ selected_year or '' }}"></div>
+    <div class="col-md-2 d-grid"><button class="btn btn-primary">عرض</button></div>
+  </form>
+</div></div>
+
+<div class="vstack gap-3">
+{% for row in rows %}
+  {% set type_meta = achievement_types.get(row.achievement_type, achievement_types.OTHER) %}
+  {% set level_meta = achievement_levels.get(row.distinction_level, achievement_levels.NOTABLE) %}
+  {% set status_meta = achievement_statuses.get(row.status, achievement_statuses.PENDING) %}
+  <article class="card shadow-sm {% if row.status == 'APPROVED' %}border-warning{% endif %}"><div class="card-body">
+    <div class="row g-3">
+      <div class="col-lg-7">
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-2"><span class="badge text-bg-{{ status_meta.class }}">{{ status_meta.label }}</span><span class="badge text-bg-light"><i class="bi {{ type_meta.icon }}"></i> {{ type_meta.label }}</span>{% if row.status == 'APPROVED' %}<span class="badge text-bg-warning">{{ level_meta.label }} · +{{ '%.0f'|format(row.evaluation_points) }}</span>{% endif %}</div>
+        <h2 class="h5 mb-1">{{ row.title }}</h2>
+        <div class="small text-muted mb-2">{{ row.user.full_name }} · {{ row.achieved_on }}{% if row.issuer %} · {{ row.issuer }}{% endif %}</div>
+        {% if row.description %}<p class="mb-2">{{ row.description }}</p>{% endif %}
+        {% if row.evidence_reference %}<div class="small"><strong>الدليل:</strong> {% if row.evidence_reference.startswith('http://') or row.evidence_reference.startswith('https://') %}<a href="{{ row.evidence_reference }}" target="_blank" rel="noopener">فتح المرجع</a>{% else %}{{ row.evidence_reference }}{% endif %}</div>{% endif %}
+      </div>
+      <div class="col-lg-5">
+        <form method="post" action="{{ url_for('admin.evaluation_achievement_review', achievement_id=row.id) }}" class="border rounded-3 p-3 bg-light">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label class="form-label">مستوى التميّز</label>
+          <select class="form-select mb-2" name="distinction_level">{% for key, meta in achievement_levels.items() %}<option value="{{ key }}" {% if row.distinction_level == key %}selected{% endif %}>{{ meta.label }} (+{{ '%.0f'|format(meta.points) }})</option>{% endfor %}</select>
+          <label class="form-label">ملاحظة المراجعة</label><textarea class="form-control mb-2" name="review_note" rows="2">{{ row.review_note or '' }}</textarea>
+          <div class="d-flex gap-2"><button class="btn btn-success flex-fill" name="action" value="approve"><i class="bi bi-check-lg"></i> اعتماد</button><button class="btn btn-outline-danger flex-fill" name="action" value="reject"><i class="bi bi-x-lg"></i> استبعاد</button></div>
+        </form>
+      </div>
+    </div>
+  </div></article>
+{% else %}<div class="card"><div class="card-body text-center text-muted py-5">لا توجد إنجازات مطابقة.</div></div>{% endfor %}
+</div>
+{% endblock %}

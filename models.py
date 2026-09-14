@@ -6649,3 +6649,53 @@ class EmployeeEvaluationRun(db.Model):
         db.UniqueConstraint("user_id", "period_type", "year", "month", name="uq_eval_user_period"),
         db.Index("ix_eval_period", "period_type", "year", "month"),
     )
+
+
+class HREmployeeAchievement(db.Model):
+    """A documented employee achievement reviewed before evaluation credit."""
+
+    __tablename__ = "hr_employee_achievement"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    achievement_type = db.Column(db.String(30), nullable=False, default="OTHER", index=True)
+    title = db.Column(db.String(250), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    achieved_on = db.Column(db.String(10), nullable=False, index=True)
+    issuer = db.Column(db.String(250), nullable=True)
+    evidence_reference = db.Column(db.String(500), nullable=True)
+
+    distinction_level = db.Column(db.String(20), nullable=False, default="NOTABLE", index=True)
+    evaluation_points = db.Column(db.Float, nullable=False, default=0.0)
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+
+    submitted_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    reviewed_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    review_note = db.Column(db.Text, nullable=True)
+    reviewed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    submitted_by = db.relationship("User", foreign_keys=[submitted_by_id], lazy="joined")
+    reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.CheckConstraint(
+            "achievement_type IN ('AWARD','RESEARCH','INNOVATION','DEVELOPMENT','COMMUNITY','OTHER')",
+            name="ck_hr_employee_achievement_type",
+        ),
+        db.CheckConstraint(
+            "distinction_level IN ('NOTABLE','SIGNIFICANT','EXCEPTIONAL')",
+            name="ck_hr_employee_achievement_level",
+        ),
+        db.CheckConstraint(
+            "status IN ('PENDING','APPROVED','REJECTED')",
+            name="ck_hr_employee_achievement_status",
+        ),
+        db.CheckConstraint(
+            "evaluation_points >= 0 AND evaluation_points <= 3",
+            name="ck_hr_employee_achievement_points",
+        ),
+        db.Index("ix_hr_achievement_user_date_status", "user_id", "achieved_on", "status"),
+    )

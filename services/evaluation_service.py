@@ -14,6 +14,7 @@ from models import (
     AttendanceDailySummary,
     EmployeeEvaluationRun,
     EmployeeFile,
+    HREmployeeAchievement,
     HRLeaveRequest,
     HRMonthlyPermissionAllowance,
     HRPermissionRequest,
@@ -23,6 +24,11 @@ from models import (
     SystemSetting,
     User,
     WorkflowRequest,
+)
+from services.employee_achievements import (
+    ACHIEVEMENT_BONUS_CAP,
+    ACHIEVEMENT_LEVELS,
+    ACHIEVEMENT_TYPES,
 )
 from utils.importer import pick, read_excel_rows, to_int, to_str
 from utils.scoring import clamp, score_5_from_100
@@ -201,6 +207,51 @@ def _finalize_components(components: dict[str, dict[str, Any]]) -> tuple[float, 
         score_100 += score_part
 
     score_100 = round(clamp(score_100, 0.0, 100.0), 2)
+    return score_100, score_5_from_100(score_100)
+
+
+def _achievement_bonus_data(user_id: int, start: datetime, end: datetime) -> dict[str, Any]:
+    rows = (
+        HREmployeeAchievement.query
+        .filter(HREmployeeAchievement.user_id == user_id)
+        .filter(HREmployeeAchievement.status == "APPROVED")
+        .filter(HREmployeeAchievement.achieved_on >= start.date().isoformat())
+        .filter(HREmployeeAchievement.achieved_on < end.date().isoformat())
+        .order_by(HREmployeeAchievement.achieved_on.asc(), HREmployeeAchievement.id.asc())
+        .all()
+    )
+    raw_points = round(sum(clamp(row.evaluation_points or 0.0, 0.0, 3.0) for row in rows), 2)
+    awarded_points = round(min(raw_points, ACHIEVEMENT_BONUS_CAP), 2)
+    details = []
+    for row in rows:
+        type_meta = ACHIEVEMENT_TYPES.get(row.achievement_type, ACHIEVEMENT_TYPES["OTHER"])
+        level_meta = ACHIEVEMENT_LEVELS.get(row.distinction_level, ACHIEVEMENT_LEVELS["NOTABLE"])
+        details.append({
+            "رقم الإنجاز": row.id,
+            "الإنجاز": row.title,
+            "النوع": type_meta["label"],
+            "المستوى": level_meta["label"],
+            "التاريخ": row.achieved_on,
+            "الجهة": row.issuer or "",
+            "النقاط": round(clamp(row.evaluation_points or 0.0, 0.0, 3.0), 2),
+            "الدليل": row.evidence_reference or "",
+        })
+    return {
+        "count": len(rows),
+        "raw_points": raw_points,
+        "points": awarded_points,
+        "cap": ACHIEVEMENT_BONUS_CAP,
+        "details": details,
+        "explanation": "تضاف نقاط الإنجازات المعتمدة فوق نتيجة مؤشرات KPI دون تغيير أوزانها، وبحد أقصى 5 نقاط لكل فترة تقييم.",
+    }
+
+
+def _score_with_achievement_bonus(base_score_100: float, achievement_bonus: dict[str, Any]) -> tuple[float, float]:
+    awarded_points = _as_float(achievement_bonus.get("points"))
+    score_100 = round(clamp(base_score_100 + awarded_points, 0.0, 100.0), 2)
+    applied_points = round(max(score_100 - base_score_100, 0.0), 2)
+    achievement_bonus["applied_points"] = applied_points
+    achievement_bonus["limited_points"] = round(max(awarded_points - applied_points, 0.0), 2)
     return score_100, score_5_from_100(score_100)
 
 
@@ -444,6 +495,11 @@ def _build_summary(metrics: dict[str, Any]) -> str:
         )
     if metrics.get("imported_indicators"):
         summary_bits.append(f"مؤشرات مستوردة: {metrics.get('imported_indicators', 0)}")
+    if metrics.get("achievement_count"):
+        summary_bits.append(
+            f"إنجازات مميزة: {metrics.get('achievement_count', 0)} "
+            f"(+{metrics.get('achievement_bonus_points', 0)} نقطة)"
+        )
     return " | ".join(summary_bits)
 
 
@@ -466,6 +522,7 @@ def _base_breakdown(user: User, period_type: str, year: int, month: int | None, 
             "الأوزان تُعاد نسبتها على المؤشرات المتاحة حتى لا يُعاقب الموظف على محور لا ينطبق عليه.",
             "مؤشرات الاجتماعات تُحتسب عند وجود دعوات أو مهام أو اجتماعات منظمة ضمن الفترة فقط.",
             "الإجازات والمغادرات المعتمدة تُعرض وتُحتسب كأثر توفر محدود، بينما الغياب غير المغطى والتأخير والخروج المبكر لها أثر أكبر.",
+            "الإنجازات المميزة لا تغيّر أوزان مؤشرات KPI؛ تضاف كمكافأة بعد اعتمادها وبحد أقصى 5 نقاط لكل فترة.",
         ],
     }
 
@@ -529,6 +586,50 @@ def _get_or_create_run(
     return run
 
 
+def refresh_achievement_bonus_for_existing_runs(user_id: int, achieved_on: str | None = None) -> int:
+    """Refresh only the achievement bonus while preserving imported indicators."""
+    query = EmployeeEvaluationRun.query.filter(EmployeeEvaluationRun.user_id == user_id)
+    if achieved_on:
+        try:
+            achievement_day = date.fromisoformat(achieved_on)
+            query = query.filter(EmployeeEvaluationRun.year == achievement_day.year)
+        except ValueError:
+            achievement_day = None
+    else:
+        achievement_day = None
+
+    refreshed = 0
+    for run in query.all():
+        if achievement_day and not (run.start_date.date() <= achievement_day < run.end_date.date()):
+            continue
+        breakdown = _load_breakdown(run, run.user, run.start_date, run.end_date)
+        components = breakdown.setdefault("components", {})
+        metrics = breakdown.setdefault("metrics", {})
+        base_score_100, _base_score_5 = _finalize_components(components)
+        achievement_bonus = _achievement_bonus_data(run.user_id, run.start_date, run.end_date)
+        score_100, score_5 = _score_with_achievement_bonus(base_score_100, achievement_bonus)
+        metrics["achievement_count"] = achievement_bonus["count"]
+        metrics["achievement_bonus_points"] = achievement_bonus["applied_points"]
+        metrics["achievement_awarded_points"] = achievement_bonus["points"]
+        breakdown["achievement_bonus"] = achievement_bonus
+        breakdown["score"] = {
+            "base_score_100": base_score_100,
+            "achievement_bonus_points": achievement_bonus["applied_points"],
+            "score_100": score_100,
+            "score_5": score_5,
+        }
+        run.score_100 = score_100
+        run.score_5 = score_5
+        run.summary = _build_summary(metrics)
+        run.breakdown_json = json.dumps(breakdown, ensure_ascii=False)
+        run.created_at = datetime.utcnow()
+        refreshed += 1
+
+    if refreshed:
+        db.session.commit()
+    return refreshed
+
+
 def compute_employee_evaluation(
     user_id: int,
     period_type: str,
@@ -568,6 +669,7 @@ def compute_employee_evaluation(
             "USER_ACTION_FAILED",
             "USER_LOGIN",
             "USER_LOGOUT",
+            "HR_ACHIEVEMENT_SUBMIT",
         )),
     )
 
@@ -1030,7 +1132,9 @@ def compute_employee_evaluation(
             details=_limited(attendance_details, 80),
         )
 
-    score_100, score_5 = _finalize_components(comp)
+    base_score_100, _base_score_5 = _finalize_components(comp)
+    achievement_bonus = _achievement_bonus_data(user_id, start, end)
+    score_100, score_5 = _score_with_achievement_bonus(base_score_100, achievement_bonus)
 
     metrics = {
         "total_actions": total_actions,
@@ -1066,12 +1170,21 @@ def compute_employee_evaluation(
         "approved_permission_hours": round(approved_permission_hours, 2),
         "permission_allowance_hours": permission_allowance_hours,
         "excess_permission_hours": round(excess_permission_hours, 2),
+        "achievement_count": achievement_bonus["count"],
+        "achievement_bonus_points": achievement_bonus["applied_points"],
+        "achievement_awarded_points": achievement_bonus["points"],
     }
 
     breakdown = _base_breakdown(u, period_type_u, year, month if period_type_u == "MONTHLY" else None, start, end)
     breakdown["metrics"] = metrics
     breakdown["components"] = comp
-    breakdown["score"] = {"score_100": score_100, "score_5": score_5}
+    breakdown["achievement_bonus"] = achievement_bonus
+    breakdown["score"] = {
+        "base_score_100": base_score_100,
+        "achievement_bonus_points": achievement_bonus["applied_points"],
+        "score_100": score_100,
+        "score_5": score_5,
+    }
 
     summary = _build_summary(metrics)
 
@@ -1313,8 +1426,19 @@ def import_indicator_evaluations(
                 )
 
             metrics["imported_indicators"] = _count_imported_indicators(components)
-            score_100_new, score_5_new = _finalize_components(components)
-            breakdown["score"] = {"score_100": score_100_new, "score_5": score_5_new}
+            base_score_100, _base_score_5 = _finalize_components(components)
+            achievement_bonus = _achievement_bonus_data(run.user_id, run.start_date, run.end_date)
+            score_100_new, score_5_new = _score_with_achievement_bonus(base_score_100, achievement_bonus)
+            metrics["achievement_count"] = achievement_bonus["count"]
+            metrics["achievement_bonus_points"] = achievement_bonus["applied_points"]
+            metrics["achievement_awarded_points"] = achievement_bonus["points"]
+            breakdown["achievement_bonus"] = achievement_bonus
+            breakdown["score"] = {
+                "base_score_100": base_score_100,
+                "achievement_bonus_points": achievement_bonus["applied_points"],
+                "score_100": score_100_new,
+                "score_5": score_5_new,
+            }
             run.score_100 = score_100_new
             run.score_5 = score_5_new
             run.summary = _build_summary(metrics)

@@ -8,9 +8,12 @@
       <h5 class="mb-1"><i class="bi bi-person-x text-danger"></i> صفحة الغياب</h5>
       <div class="text-muted">موظفو الساعة الذين لم تسجل لهم أي بصمة في التاريخ المحدد ولا توجد لهم إجازة مدخلة أو حالة حضور بديلة، باستثناء الأمين العام.</div>
     </div>
-    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}">
-      <i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام
-    </a>
+    <div class="d-flex gap-2">
+      <a class="btn btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.hr_attendance_absence', day=day, print=1) }}"><i class="bi bi-printer"></i> صفحة الطباعة</a>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}">
+        <i class="bi bi-arrow-right"></i> العودة إلى شاشات الدوام
+      </a>
+    </div>
   </div>
 
   <hr class="my-4">

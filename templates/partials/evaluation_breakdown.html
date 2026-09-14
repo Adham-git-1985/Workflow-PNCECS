@@ -1,5 +1,6 @@
 {% set m = breakdown.metrics or {} %}
 {% set comps = breakdown.components or {} %}
+{% set achievement_bonus = breakdown.achievement_bonus or {} %}
 {% set indicator_labels = {
   'activity': 'النشاط العام داخل النظام',
   'decisions': 'الإنتاجية في القرارات',
@@ -22,6 +23,29 @@
   'meeting_followup_tasks': 'يقيس إنجاز مهام المتابعة الناتجة عن الاجتماعات، مع مراعاة إنجازها ضمن الوقت.',
   'attendance_discipline': 'يقيس الغياب غير المغطى، الأيام غير المكتملة، التأخير، الخروج المبكر، والإجازات والمغادرات المعتمدة ضمن الفترة.'
 } %}
+
+{% if achievement_bonus.count %}
+<section class="rounded-3 p-3 mb-4 border border-warning" style="background:linear-gradient(135deg,#fffdf3,#fff5c7);">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-trophy-fill text-warning"></i> إنجازات مميزة معتمدة</h5>
+      <div class="small text-muted">{{ achievement_bonus.explanation }}</div>
+    </div>
+    <div class="text-center px-3 py-2 rounded-3 bg-warning-subtle border border-warning">
+      <div class="small">مكافأة الإنجازات</div>
+      <strong class="fs-4">+{{ '%.1f'|format(achievement_bonus.applied_points or 0) }}</strong>
+      <div class="small">من 100 · السقف +{{ '%.0f'|format(achievement_bonus.cap or 5) }}</div>
+      {% if achievement_bonus.limited_points %}<div class="small text-muted">المستحق {{ achievement_bonus.points }}؛ حُدّ بالسقف 100</div>{% endif %}
+    </div>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-sm bg-white mb-0 align-middle">
+      <thead><tr><th>الإنجاز</th><th>النوع</th><th>المستوى</th><th>التاريخ</th><th>النقاط</th></tr></thead>
+      <tbody>{% for item in achievement_bonus.details %}<tr><td><strong>{{ item.get('الإنجاز') }}</strong>{% if item.get('الجهة') %}<div class="small text-muted">{{ item.get('الجهة') }}</div>{% endif %}</td><td>{{ item.get('النوع') }}</td><td>{{ item.get('المستوى') }}</td><td>{{ item.get('التاريخ') }}</td><td><span class="badge text-bg-warning">+{{ item.get('النقاط') }}</span></td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
 
 <h5 class="mb-3">المؤشرات</h5>
 <div class="row g-3 mb-3">
