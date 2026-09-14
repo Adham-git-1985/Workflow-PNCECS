@@ -108,12 +108,15 @@ class WorkflowAttachmentDeletionTests(unittest.TestCase):
         ), patch("workflow.routes.current_user", user):
             return handler(self.request_row.id, self.attachment.id)
 
-    def test_requester_removes_link_and_preserves_archive_file(self):
+    def test_requester_removes_link_and_moves_archive_file_to_recycle_bin(self):
         response = self._delete(self.requester)
 
         self.assertEqual(response.status_code, 302)
         self.assertIsNone(db.session.get(RequestAttachment, self.attachment.id))
-        self.assertIsNotNone(db.session.get(ArchivedFile, self.file.id))
+        archived_file = db.session.get(ArchivedFile, self.file.id)
+        self.assertIsNotNone(archived_file)
+        self.assertTrue(archived_file.is_deleted)
+        self.assertEqual(archived_file.deleted_by, self.requester.id)
         self.assertTrue(self.file_path.exists())
         audit = AuditLog.query.filter_by(
             request_id=self.request_row.id,
@@ -121,6 +124,36 @@ class WorkflowAttachmentDeletionTests(unittest.TestCase):
             target_id=self.file.id,
         ).one_or_none()
         self.assertIsNotNone(audit)
+        self.assertIn("removed_from_archive=True", audit.note)
+
+    def test_file_linked_to_another_workflow_stays_in_archive(self):
+        other_request = WorkflowRequest(
+            requester_id=self.outsider.id,
+            title="Another workflow",
+            status="IN_PROGRESS",
+        )
+        db.session.add(other_request)
+        db.session.flush()
+        other_attachment = RequestAttachment(
+            request_id=other_request.id,
+            archived_file_id=self.file.id,
+        )
+        db.session.add(other_attachment)
+        db.session.commit()
+
+        response = self._delete(self.requester)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIsNone(db.session.get(RequestAttachment, self.attachment.id))
+        self.assertIsNotNone(db.session.get(RequestAttachment, other_attachment.id))
+        self.assertFalse(db.session.get(ArchivedFile, self.file.id).is_deleted)
+        self.assertTrue(self.file_path.exists())
+        audit = AuditLog.query.filter_by(
+            request_id=self.request_row.id,
+            action="WORKFLOW_ATTACHMENT_DELETED",
+            target_id=self.file.id,
+        ).one()
+        self.assertIn("removed_from_archive=False", audit.note)
 
     def test_unrelated_user_cannot_remove_attachment(self):
         with self.assertRaises(Forbidden):

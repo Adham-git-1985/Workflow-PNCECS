@@ -2452,8 +2452,8 @@ def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRe
 def delete_workflow_attachment(request_id: int, attachment_id: int):
     """Remove one attachment link from a workflow request.
 
-    The archived file is intentionally preserved. It may have originated in
-    the archive or be linked to another workflow request as well.
+    When this is the last workflow link, the archived file is soft-deleted so
+    it leaves the active archive and remains recoverable from the recycle bin.
     """
     req = WorkflowRequest.query.get_or_404(request_id)
     if not _user_can_view_request(current_user, req):
@@ -2472,15 +2472,33 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
     if not _can_delete_workflow_attachment(current_user, req, file):
         abort(403)
 
+    other_attachment = (
+        RequestAttachment.query
+        .filter(
+            RequestAttachment.archived_file_id == file.id,
+            RequestAttachment.id != attachment.id,
+        )
+        .first()
+    )
+    archive_removed = other_attachment is None
+
     try:
         db.session.delete(attachment)
+        if archive_removed:
+            file.is_deleted = True
+            file.deleted_at = datetime.utcnow()
+            file.deleted_by = current_user.id
+
         db.session.add(AuditLog(
             request_id=req.id,
             user_id=current_user.id,
             action="WORKFLOW_ATTACHMENT_DELETED",
             old_status=req.status,
             new_status=req.status,
-            note=f"Attachment: {file.original_name} | file_id={file.id} | removed_from_workflow=True",
+            note=(
+                f"Attachment: {file.original_name} | file_id={file.id} | "
+                f"removed_from_workflow=True | removed_from_archive={archive_removed}"
+            ),
             target_type="ARCHIVE_FILE",
             target_id=file.id,
             created_at=datetime.utcnow(),
@@ -2496,7 +2514,10 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
         flash("تعذر حذف المرفق من المسار.", "danger")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
-    flash("تم حذف المرفق من المسار، وبقي الملف محفوظًا في الأرشيف.", "success")
+    if archive_removed:
+        flash("تم حذف المرفق من المسار وإزالته من الأرشيف ونقله إلى سلة المحذوفات.", "success")
+    else:
+        flash("تم حذف المرفق من هذا المسار، وبقي في الأرشيف لارتباطه بمسار طلب آخر.", "success")
     return redirect(url_for("workflow.view_request", request_id=req.id))
 
 

@@ -252,7 +252,7 @@
                     {% if a.id in can_delete_workflow_attachment_ids %}
                       <form method="post"
                             action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=a.id) }}"
-                            onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                            onsubmit="return confirm('هل تريد حذف المرفق من المسار وإزالته من الأرشيف؟ سينقل إلى سلة المحذوفات.');">
                         <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف المرفق من المسار">
                           <i class="bi bi-trash"></i> حذف
                         </button>
@@ -402,7 +402,7 @@
                         {% if it.attachment_id in can_delete_workflow_attachment_ids %}
                           <form method="post" class="d-inline"
                                 action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=it.attachment_id) }}"
-                                onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                                onsubmit="return confirm('هل تريد حذف المرفق من المسار وإزالته من الأرشيف؟ سينقل إلى سلة المحذوفات.');">
                             <button class="btn btn-sm btn-outline-danger py-0 px-2" type="submit" title="حذف المرفق من المسار">
                               <i class="bi bi-trash"></i> حذف
                             </button>
@@ -582,7 +582,7 @@
                               {% if it.attachment_id in can_delete_workflow_attachment_ids %}
                                 <form method="post" class="d-inline"
                                       action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=it.attachment_id) }}"
-                                      onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                                      onsubmit="return confirm('هل تريد حذف المرفق من المسار وإزالته من الأرشيف؟ سينقل إلى سلة المحذوفات.');">
                                   <button class="btn btn-sm btn-outline-danger py-0 px-2" type="submit" title="حذف المرفق من المسار">
                                     <i class="bi bi-trash"></i> حذف
                                   </button>
