@@ -9,7 +9,7 @@ import fitz
 from PIL import Image
 from docx import Document
 from docx.oxml.ns import qn
-from flask import Flask, g
+from flask import Blueprint, Flask, g
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
 
@@ -24,6 +24,7 @@ from models import (
     TransportTrip,
     TransportVehicle,
     User,
+    UserPermission,
 )
 from portal import portal_bp
 from services.transport_forms import _shape_transport_text
@@ -57,6 +58,13 @@ class TransportReadyFormsTests(unittest.TestCase):
             except (TypeError, ValueError):
                 return None
 
+        users_blueprint = Blueprint("users", __name__)
+
+        @users_blueprint.route("/help/transport")
+        def help_transport_guide():
+            return "Transport help"
+
+        cls.app.register_blueprint(users_blueprint)
         cls.app.register_blueprint(portal_bp)
         cls.app.jinja_loader = ChoiceLoader([
             DictLoader({"portal/layout.html": "{% block content %}{% endblock %}"}),
@@ -88,6 +96,12 @@ class TransportReadyFormsTests(unittest.TestCase):
             password_hash="not-used-in-test",
             role="EMPLOYEE",
         )
+        self.transport_manager = User(
+            email="movement-manager@example.test",
+            name="مسؤول الحركة والنقل",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
         self.driver = TransportDriver(name="سائق الاختبار", status="ACTIVE")
         self.vehicle = TransportVehicle(
             plate_no="31-456-78",
@@ -102,8 +116,19 @@ class TransportReadyFormsTests(unittest.TestCase):
             current_odometer=1500,
             status="ACTIVE",
         )
-        db.session.add_all([self.admin, self.employee, self.driver, self.vehicle])
+        db.session.add_all([
+            self.admin,
+            self.employee,
+            self.transport_manager,
+            self.driver,
+            self.vehicle,
+        ])
         db.session.flush()
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_MANAGER_APPROVE",
+            is_allowed=True,
+        ))
 
         maintenance_type = HRLookupItem(
             category="TRANSPORT_MAINT_TYPE",
@@ -163,6 +188,15 @@ class TransportReadyFormsTests(unittest.TestCase):
             approval_stage="DONE",
         )
         db.session.add(self.employee_permit)
+        self.pending_transport_permit = TransportPermit(
+            requester_user_id=self.employee.id,
+            origin_text="مقر اللجنة",
+            dest_text="مقر المهمة",
+            purpose="طلب بانتظار مسؤول الحركة",
+            status="SUBMITTED",
+            approval_stage="TRANSPORT",
+        )
+        db.session.add(self.pending_transport_permit)
         db.session.commit()
 
     def _login(self, client, user_id: int):
@@ -380,6 +414,35 @@ class TransportReadyFormsTests(unittest.TestCase):
         self.assertNotIn('name="driver_id"', body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/approve", body)
         self.assertNotIn(f"/transport/permits/{self.employee_permit.id}/reject", body)
+
+    def test_transport_manager_can_open_and_approve_transport_stage(self):
+        with self.app.test_client() as client:
+            self._login(client, self.transport_manager.id)
+
+            listing = client.get("/portal/transport/permits?status=SUBMITTED")
+            self.assertEqual(listing.status_code, 200)
+            listing_body = listing.get_data(as_text=True)
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}#decision",
+                listing_body,
+            )
+
+            detail = client.get(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+            )
+            self.assertEqual(detail.status_code, 200)
+            self.assertIn('name="driver_id"', detail.get_data(as_text=True))
+
+            response = client.post(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/approve",
+                data={"driver_id": str(self.driver.id), "decision_note": "تم تعيين السائق"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(self.pending_transport_permit)
+        self.assertEqual(self.pending_transport_permit.approval_stage, "ADMIN")
+        self.assertEqual(self.pending_transport_permit.status, "SUBMITTED")
+        self.assertEqual(self.pending_transport_permit.driver_id, self.driver.id)
 
     def test_vehicle_and_driver_license_expiry_fields_are_shown(self):
         with self.app.test_client() as client:

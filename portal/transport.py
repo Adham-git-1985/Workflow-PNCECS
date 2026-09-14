@@ -1267,9 +1267,23 @@ def transport_permits():
     items = query.order_by(TransportPermit.created_at.desc(), TransportPermit.id.desc()).all()
 
     can_create = _can_request_movement()
-    can_approve = current_user.has_perm("TRANSPORT_APPROVE")
+    actionable_permit_ids = {
+        item.id
+        for item in items
+        if _can_process_movement(item)
+    }
     can_update = current_user.has_perm("TRANSPORT_UPDATE")
-    return render_template("portal/transport/permits_list.html", items=items, q=q, status=status, can_create=can_create, can_approve=can_approve, can_update=can_update, can_manage=can_manage, stage_labels=_MOVEMENT_STAGES)
+    return render_template(
+        "portal/transport/permits_list.html",
+        items=items,
+        q=q,
+        status=status,
+        can_create=can_create,
+        actionable_permit_ids=actionable_permit_ids,
+        can_update=can_update,
+        can_manage=can_manage,
+        stage_labels=_MOVEMENT_STAGES,
+    )
 
 
 @portal_bp.route("/transport/permits/new", methods=["GET", "POST"])
