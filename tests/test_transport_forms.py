@@ -126,7 +126,7 @@ class TransportReadyFormsTests(unittest.TestCase):
         db.session.flush()
         db.session.add(UserPermission(
             user_id=self.transport_manager.id,
-            key="TRANSPORT_MANAGER_APPROVE",
+            key="TRANSPORT_UPDATE",
             is_allowed=True,
         ))
 

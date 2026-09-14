@@ -183,7 +183,11 @@ def _assigned_transport_approver_ids(permission: str) -> list[int]:
 
 def _has_transport_manager() -> bool:
     configured_id = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
-    return bool(configured_id) or bool(_assigned_transport_approver_ids("TRANSPORT_MANAGER_APPROVE"))
+    return (
+        bool(configured_id)
+        or bool(_assigned_transport_approver_ids("TRANSPORT_MANAGER_APPROVE"))
+        or bool(_assigned_transport_approver_ids("TRANSPORT_UPDATE"))
+    )
 
 
 def _can_process_movement(row: TransportPermit) -> bool:
@@ -198,7 +202,7 @@ def _can_process_movement(row: TransportPermit) -> bool:
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
         return current_user.id == configured_manager or (
             not configured_manager and current_user.id == configured_director
-        ) or current_user.has_perm("TRANSPORT_MANAGER_APPROVE") or (
+        ) or current_user.has_perm("TRANSPORT_MANAGER_APPROVE") or current_user.has_perm("TRANSPORT_UPDATE") or (
             not _has_transport_manager() and current_user.has_perm("TRANSPORT_DIRECTOR_APPROVE")
         ) or current_user.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "ADMIN":
@@ -268,6 +272,9 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
         manager_ids = _assigned_transport_approver_ids("TRANSPORT_MANAGER_APPROVE")
         if manager_ids:
             return manager_ids
+        legacy_manager_ids = _assigned_transport_approver_ids("TRANSPORT_UPDATE")
+        if legacy_manager_ids:
+            return legacy_manager_ids
         return _assigned_transport_approver_ids("TRANSPORT_DIRECTOR_APPROVE")
     elif row.approval_stage == "ADMIN":
         configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))

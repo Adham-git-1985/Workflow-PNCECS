@@ -196,6 +196,27 @@ class TransportApprovalRoutingTests(unittest.TestCase):
             [self.other_approver.id],
         )
 
+    def test_legacy_transport_update_permission_can_receive_and_approve(self):
+        UserPermission.query.filter(
+            UserPermission.key.in_([
+                "TRANSPORT_MANAGER_APPROVE",
+                "TRANSPORT_DIRECTOR_APPROVE",
+            ])
+        ).delete(synchronize_session=False)
+        db.session.add(UserPermission(
+            user_id=self.transport_manager.id,
+            key="TRANSPORT_UPDATE",
+            is_allowed=True,
+        ))
+        db.session.commit()
+        self.permit.approval_stage = "TRANSPORT"
+
+        self.assertEqual(_movement_recipient_ids(self.permit), [self.transport_manager.id])
+        with self.app.test_request_context():
+            login_user(self.transport_manager)
+            self.assertTrue(_can_process_movement(self.permit))
+            logout_user()
+
     def test_requester_cannot_process_own_permit(self):
         db.session.add(UserPermission(
             user_id=self.requester.id,
