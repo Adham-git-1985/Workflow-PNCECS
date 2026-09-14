@@ -15,6 +15,7 @@ from sqlalchemy import inspect, or_
 from . import portal_bp
 from extensions import db
 from utils.perms import perm_required
+from utils.role_codes import canonical_role_key
 from services.transport_forms import (
     build_maintenance_request_pdf,
     build_movement_permit_pdf,
@@ -41,6 +42,8 @@ from models import (
     SystemSetting,
     AuditLog,
     EmployeeFile,
+    Role,
+    RolePermission,
     User,
     TransportPermitAction,
     Notification,
@@ -142,9 +145,45 @@ def _can_request_movement() -> bool:
     return current_user.is_authenticated
 
 
+def _assigned_transport_approver_ids(permission: str) -> list[int]:
+    permission = (permission or "").strip().upper()
+    if not permission:
+        return []
+
+    recipient_ids = {
+        item.user_id
+        for item in UserPermission.query.filter(
+            db.func.upper(UserPermission.key) == permission,
+            UserPermission.is_allowed.is_(True),
+        ).all()
+    }
+    granted_role_keys = {
+        canonical_role_key(item.role)
+        for item in RolePermission.query.filter(
+            db.func.upper(RolePermission.permission) == permission,
+        ).all()
+        if canonical_role_key(item.role)
+    }
+    if granted_role_keys:
+        for role in Role.query.all():
+            role_keys = {
+                canonical_role_key(value)
+                for value in (role.code, role.name_ar, role.name_en)
+                if canonical_role_key(value)
+            }
+            if role_keys & granted_role_keys:
+                granted_role_keys.update(role_keys)
+        recipient_ids.update(
+            user_id
+            for user_id, user_role in db.session.query(User.id, User.role).all()
+            if canonical_role_key(user_role) in granted_role_keys
+        )
+    return sorted(recipient_ids)
+
+
 def _has_transport_manager() -> bool:
     configured_id = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
-    return bool(configured_id) or any(user.has_perm("TRANSPORT_MANAGER_APPROVE") for user in User.query.all())
+    return bool(configured_id) or bool(_assigned_transport_approver_ids("TRANSPORT_MANAGER_APPROVE"))
 
 
 def _can_process_movement(row: TransportPermit) -> bool:
@@ -196,7 +235,14 @@ def _can_read_movement_requests() -> bool:
         _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID")),
         _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID")),
     }
-    return current_user.id in configured_ids or current_user.has_perm("TRANSPORT_READ") or current_user.has_perm("TRANSPORT_APPROVE") or current_user.has_perm("TRANSPORT_ADMIN_APPROVE")
+    return (
+        current_user.id in configured_ids
+        or current_user.has_perm("TRANSPORT_READ")
+        or current_user.has_perm("TRANSPORT_APPROVE")
+        or current_user.has_perm("TRANSPORT_MANAGER_APPROVE")
+        or current_user.has_perm("TRANSPORT_DIRECTOR_APPROVE")
+        or current_user.has_perm("TRANSPORT_ADMIN_APPROVE")
+    )
 
 
 def _record_movement_action(row: TransportPermit, action: str, note: str | None = None) -> None:
@@ -219,12 +265,15 @@ def _movement_recipient_ids(row: TransportPermit) -> list[int]:
             return [configured_manager]
         if configured_director:
             return [configured_director]
-        return []
+        manager_ids = _assigned_transport_approver_ids("TRANSPORT_MANAGER_APPROVE")
+        if manager_ids:
+            return manager_ids
+        return _assigned_transport_approver_ids("TRANSPORT_DIRECTOR_APPROVE")
     elif row.approval_stage == "ADMIN":
         configured_admin = _to_int(_get_setting("TRANSPORT_ADMIN_USER_ID"))
         if configured_admin:
             return [configured_admin]
-        return []
+        return _assigned_transport_approver_ids("TRANSPORT_ADMIN_APPROVE")
     else:
         return []
 
