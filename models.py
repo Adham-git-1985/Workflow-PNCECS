@@ -3095,6 +3095,24 @@ class HRLeaveRequest(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True, index=True)
     admin_status_id = db.Column(db.Integer, db.ForeignKey('hr_status_def.id'), nullable=True, index=True)
 
+    # Machine-generated leave rows keep an explicit, queryable source instead
+    # of relying on a note string.  ``source_attendance_day`` also makes the
+    # daily reconciliation idempotent when the background job runs repeatedly.
+    source = db.Column(db.String(30), nullable=True, index=True)  # ATTENDANCE_AUTO / NULL
+    source_attendance_day = db.Column(db.String(10), nullable=True, index=True)
+
+    # An automatically charged annual day may later be superseded by an
+    # approved sick leave (or by an approved manual attendance correction).
+    # Keeping the original row provides an auditable balance trail.
+    replaced_by_leave_request_id = db.Column(
+        db.Integer,
+        db.ForeignKey('hr_leave_request.id'),
+        nullable=True,
+        index=True,
+    )
+    replaced_at = db.Column(db.DateTime, nullable=True, index=True)
+    replacement_reason = db.Column(db.String(80), nullable=True)
+
     # External leave fields (optional)
     travel_country = db.Column(db.String(120), nullable=True)
     travel_city = db.Column(db.String(120), nullable=True)
@@ -3139,12 +3157,24 @@ class HRLeaveRequest(db.Model):
     cancelled_by_user = db.relationship("User", foreign_keys=[cancelled_by_id], lazy="joined")
     created_by = db.relationship('User', foreign_keys=[created_by_id], lazy='joined')
     admin_status = db.relationship('HRStatusDef', foreign_keys=[admin_status_id], lazy='joined')
+    replacement_request = db.relationship(
+        'HRLeaveRequest',
+        foreign_keys=[replaced_by_leave_request_id],
+        remote_side=[id],
+        lazy='joined',
+    )
 
     attachments = db.relationship("HRLeaveAttachment", back_populates="request", cascade="all, delete-orphan", lazy="selectin")
 
     __table_args__ = (
         db.Index("ix_hr_leave_req_user_status", "user_id", "status"),
         db.Index("ix_hr_leave_req_approver_status", "approver_user_id", "status"),
+        db.UniqueConstraint(
+            "user_id",
+            "source",
+            "source_attendance_day",
+            name="uq_hr_leave_attendance_auto_day",
+        ),
     )
 
 
@@ -3593,12 +3623,20 @@ class HRAttendanceSpecialCase(db.Model):
     approved_at = db.Column(db.DateTime, nullable=True, index=True)
     approval_note = db.Column(db.Text, nullable=True)
 
+    # Manual attendance corrections require two sequential decisions: first
+    # Administrative Affairs/HR, then the Secretary General.  The legacy
+    # ``approved_*`` columns hold the first decision for compatibility.
+    final_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    final_approved_at = db.Column(db.DateTime, nullable=True, index=True)
+    final_approval_note = db.Column(db.Text, nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
 
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
     approved_by = db.relationship("User", foreign_keys=[approved_by_id], lazy="joined")
+    final_approved_by = db.relationship("User", foreign_keys=[final_approved_by_id], lazy="joined")
     __table_args__ = (
         db.Index("ix_hr_att_special_user_day", "user_id", "day"),
     )

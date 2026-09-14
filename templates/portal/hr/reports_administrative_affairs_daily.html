@@ -1,0 +1,162 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقرير الشؤون الإدارية الموحّد{% endblock %}
+{% block hr_content %}
+{% set category_badges = {
+  'PRESENT': 'bg-success',
+  'LEAVE': 'bg-primary',
+  'REMOTE': 'bg-info text-dark',
+  'LEAVE_PENDING': 'bg-warning text-dark',
+  'MISSING_PUNCH': 'bg-danger',
+  'OFFICIAL_DUTY': 'bg-secondary',
+  'OFF': 'bg-light text-dark border',
+  'UNSCHEDULED': 'bg-light text-dark border'
+} %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-3">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-clipboard2-data"></i> تقرير الشؤون الإدارية الموحّد</h4>
+      <div class="text-muted small">سجل يومي واحد يجمع البصمة والإجازات وجدول الدوام المعتمد لجميع موظفي المؤسسة.</div>
+    </div>
+    <div class="d-flex flex-wrap gap-2">
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+      {% if can_export %}
+      <a class="btn btn-outline-success" href="{{ url_for('portal.hr_report_administrative_affairs_daily', from_date=from_date, to_date=to_date, user_id=selected_user_id or '', work_location_id=selected_work_location_id or '', appointment_type_id=selected_appointment_type_id or '', category=selected_category or '', export='xlsx') }}">
+        <i class="bi bi-file-earmark-excel"></i> تصدير Excel
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  <hr class="my-4">
+
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-md-2">
+      <label class="form-label">من تاريخ</label>
+      <input class="form-control" type="date" name="from_date" value="{{ from_date }}" required>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">إلى تاريخ</label>
+      <input class="form-control" type="date" name="to_date" value="{{ to_date }}" required>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">الموظف</label>
+      <select class="form-select" name="user_id">
+        <option value="">— جميع الموظفين —</option>
+        {% for user in users %}
+        <option value="{{ user.id }}" {% if selected_user_id == user.id %}selected{% endif %}>{{ user.full_name or user.email }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">موقع العمل</label>
+      <select class="form-select" name="work_location_id">
+        <option value="">— الجميع —</option>
+        {% for item in work_locations %}
+        <option value="{{ item.id }}" {% if selected_work_location_id == item.id %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">نوع التعيين</label>
+      <select class="form-select" name="appointment_type_id">
+        <option value="">— الجميع —</option>
+        {% for item in appointment_types %}
+        <option value="{{ item.id }}" {% if selected_appointment_type_id == item.id %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-md-2">
+      <label class="form-label">الحالة</label>
+      <select class="form-select" name="category">
+        <option value="">— جميع الحالات —</option>
+        {% for code, label in [('PRESENT', 'حاضر'), ('LEAVE', 'مجاز'), ('REMOTE', 'مناوب / عن بُعد'), ('LEAVE_PENDING', 'إجازة قيد الاعتماد'), ('MISSING_PUNCH', 'دوام مكتبي بلا بصمة'), ('OFFICIAL_DUTY', 'مهمة / تدريب رسمي'), ('OFF', 'راحة / عطلة'), ('UNSCHEDULED', 'لا يوجد سجل')] %}
+        <option value="{{ code }}" {% if selected_category == code %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 d-flex flex-wrap gap-2 mt-3">
+      <button class="btn btn-primary" type="submit"><i class="bi bi-funnel"></i> عرض التقرير</button>
+      <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_report_administrative_affairs_daily', from_date=from_date, to_date=to_date) }}">مسح الفلاتر</a>
+    </div>
+  </form>
+
+  <div class="row g-2 mt-3">
+    {% for code, label, color in [
+      ('PRESENT', 'الحاضرون', 'success'),
+      ('LEAVE', 'المجازون', 'primary'),
+      ('REMOTE', 'المناوبون / عن بُعد', 'info'),
+      ('LEAVE_PENDING', 'إجازات قيد الاعتماد', 'warning'),
+      ('MISSING_PUNCH', 'دوام بلا بصمة', 'danger')
+    ] %}
+    <div class="col-6 col-md">
+      <div class="border rounded-3 p-3 h-100">
+        <div class="small text-muted">{{ label }}</div>
+        <div class="fs-4 fw-bold text-{{ color }}">{{ counts.get(code, 0) }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if can_reconcile %}
+  <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3 mb-0">
+    <div class="small">
+      <strong>مطابقة الغياب:</strong> تنشئ إجازة سنوية معتمدة تلقائياً لكل يوم مكتبي معتمد انتهى موعده بلا بصمة أو إجازة، وترسل الإشعارات المعتمدة.
+    </div>
+    <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_reconcile') }}">
+      <input type="hidden" name="from_date" value="{{ from_date }}">
+      <input type="hidden" name="to_date" value="{{ to_date }}">
+      <button class="btn btn-sm btn-warning" type="submit"><i class="bi bi-arrow-repeat"></i> تنفيذ المطابقة الآن</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="table-responsive mt-4">
+    <table class="table table-sm table-hover align-middle text-nowrap">
+      <thead>
+        <tr>
+          <th>التاريخ</th>
+          <th>الرقم</th>
+          <th>الموظف</th>
+          <th>الحالة</th>
+          <th>التفصيل</th>
+          <th>المصدر</th>
+          <th>الدخول</th>
+          <th>الخروج</th>
+          <th>الساعات</th>
+          <th>الجدول</th>
+          <th>موقع العمل</th>
+          <th>نوع التعيين</th>
+          <th>الهيكل التنظيمي</th>
+          <th>ملاحظة المطابقة</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td><code>{{ row.day }}</code></td>
+          <td>{{ row.employee_no or '—' }}</td>
+          <td class="fw-semibold">{{ row.name }}</td>
+          <td><span class="badge {{ category_badges.get(row.category, 'bg-secondary') }}">{{ row.category_label }}</span></td>
+          <td>{{ row.detail or '—' }}</td>
+          <td>
+            {{ row.source or '—' }}
+            {% if row.is_manual %}<span class="badge bg-warning text-dark ms-1"><i class="bi bi-pencil-square"></i> إدخال يدوي</span>{% endif %}
+          </td>
+          <td>{{ row.first_in.strftime('%H:%M') if row.first_in else '—' }}</td>
+          <td>{{ row.last_out.strftime('%H:%M') if row.last_out else '—' }}</td>
+          <td>{{ '%.2f'|format((row.work_minutes or 0) / 60) }}</td>
+          <td>{{ row.schedule or '—' }}</td>
+          <td>{{ row.work_location or '—' }}</td>
+          <td>{{ row.appointment_type or '—' }}</td>
+          <td>{{ ([row.organization, row.directorate, row.department]|select|join(' / ')) or '—' }}</td>
+          <td>{% if row.conflict_note %}<span class="text-danger small"><i class="bi bi-exclamation-triangle"></i> {{ row.conflict_note }}</span>{% else %}—{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="14" class="text-center text-muted py-5">لا توجد سجلات مطابقة للفلاتر المحددة.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="small text-muted">عدد الصفوف: {{ rows|length }}. الحد الأقصى للفترة في العرض الواحد 31 يوماً.</div>
+</div>
+{% endblock %}

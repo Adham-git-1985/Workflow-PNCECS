@@ -244,6 +244,8 @@
         </h2>
         <div id="hrRepAtt" class="accordion-collapse collapse" aria-labelledby="hrRepHeadAtt" data-bs-parent="#hrReportsAccordion">
           <div class="accordion-body">
+            <a class="list-group-item list-group-item-action fw-semibold" data-report-label="تقرير الشؤون الإدارية الموحد" href="{{ url_for('portal.hr_report_administrative_affairs_daily') }}"><i class="bi bi-clipboard2-data"></i> تقرير الشؤون الإدارية الموحّد</a>
+            <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="تقرير الغياب" href="{{ url_for('portal.hr_report_absence') }}"><i class="bi bi-person-x"></i> تقرير الغياب</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير البصمات" href="{{ url_for('portal.hr_report_fingerprints') }}"><i class="bi bi-fingerprint"></i> تقرير البصمات</a>
             <a class="list-group-item list-group-item-action" data-report-label="تقرير المغادرات مع البصمة" href="{{ url_for('portal.hr_report_permissions_fingerprint') }}"><i class="bi bi-arrow-left-right"></i> تقرير المغادرات مع البصمة</a>

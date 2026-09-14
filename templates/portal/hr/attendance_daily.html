@@ -110,6 +110,7 @@
           <th>م اليوم</th>
           <th>{{ portal_sort_link('اليوم', 'day') }}</th>
           <th>{{ portal_sort_link('الموظف', 'user') }}</th>
+          <th>المصدر</th>
           <th>{{ portal_sort_link('أول دخول', 'first_in') }}</th>
           <th>{{ portal_sort_link('آخر خروج', 'last_out') }}</th>
           <th>ساعات العمل</th>
@@ -129,6 +130,7 @@
           <td class="fw-semibold">{{ r.daily_employee_number or '—' }}</td>
           <td><code>{{ r.day }}</code></td>
           <td class="attendance-employee-name">{{ r.user.name or r.user.email }}</td>
+          <td>{% if r.manual_attendance %}<span class="badge bg-warning text-dark"><i class="bi bi-pencil-square"></i> إدخال يدوي</span>{% else %}<span class="text-muted">بصمة الساعة</span>{% endif %}</td>
           <td class="text-muted">{{ r.first_in.strftime('%H:%M') if r.first_in else '—' }}</td>
           <td class="text-muted">{{ r.last_out.strftime('%H:%M') if r.last_out else '—' }}</td>
           <td>{{ '%.2f'|format((r.work_minutes or 0) / 60) }}</td>

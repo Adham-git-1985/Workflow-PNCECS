@@ -116,6 +116,7 @@
           <th>الموظف</th>
           <th>التاريخ/الوقت</th>
           <th>الحركة</th>
+          <th>المصدر</th>
           <th>نوع المغادرة</th>
           <th>مصدر وأوقات المغادرة</th>
           {% if can_edit_attendance %}<th>إجراء</th>{% endif %}
@@ -139,6 +140,15 @@
               {% elif code in ('B', 'O', 'OUT', 'CHECKOUT') %}<span class="badge text-bg-danger">{{ event_labels.get(code, code) }}</span>
               {% elif code in ('C', 'D', 'E', 'F') %}<span class="badge text-bg-info text-dark">{{ event_labels.get(code, code) }}</span>
               {% else %}<span class="badge text-bg-secondary">{{ event_labels.get(code, code) }}</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if e.is_manual_attendance %}
+                <span class="badge bg-warning text-dark"><i class="bi bi-pencil-square"></i> إدخال يدوي</span>
+              {% elif e.id %}
+                <span class="text-muted">ساعة الدوام{% if e.device_id %} — {{ e.device_id }}{% endif %}</span>
+              {% else %}
+                <span class="text-muted">نظام مسار</span>
               {% endif %}
             </td>
             <td>
@@ -166,7 +176,7 @@
           </tr>
         {% endfor %}
         {% if not events %}
-          <tr><td colspan="{{ 7 if can_edit_attendance else 6 }}" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
+          <tr><td colspan="{{ 8 if can_edit_attendance else 7 }}" class="text-center text-muted py-4">لا توجد بيانات.</td></tr>
         {% endif %}
       </tbody>
     </table>

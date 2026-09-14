@@ -154,7 +154,9 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
             login_user(attendance_editor)
             self.assertTrue(_hr_can_edit_attendance())
-            self.assertFalse(_hr_can_approve_attendance_edit())
+            # The Secretary General is the final approver in the two-stage
+            # manual-attendance workflow.
+            self.assertTrue(_hr_can_approve_attendance_edit())
             logout_user()
 
             login_user(attendance_approver)

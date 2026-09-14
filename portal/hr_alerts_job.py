@@ -13,6 +13,7 @@ def _check_pending_leave_requests():
     result = process_pending_approvals(send_notifications=True)
     followup_reminders = 0
     schedule_reminders = 0
+    automatic_attendance_leaves = 0
     try:
         from portal.followups import send_followup_reminders
 
@@ -26,12 +27,22 @@ def _check_pending_leave_requests():
         schedule_reminders = send_attendance_schedule_reminders()
     except Exception:
         pass
+    try:
+        # Imported clock events, approved leave requests, and the final work
+        # schedule are reconciled together after the configured daily cutoff.
+        from portal.routes import _process_unrecorded_office_attendance
+
+        attendance_result = _process_unrecorded_office_attendance()
+        automatic_attendance_leaves = int(attendance_result.get("created", 0))
+    except Exception:
+        pass
     db.session.commit()
     return (
         int(result.get("reminded", 0))
         + int(result.get("escalated", 0))
         + int(followup_reminders)
         + int(schedule_reminders)
+        + int(automatic_attendance_leaves)
     )
 
 

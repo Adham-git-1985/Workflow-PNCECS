@@ -5,7 +5,7 @@
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2">
     <div>
       <h5 class="mb-1"><i class="bi bi-pencil-square"></i> تعديل دوام يدوي</h5>
-      <div class="text-muted small">يسجّل هذا التعديل كطلب مستقل ولا يغيّر سجل جهاز الدوام الخام. لا يصبح التعديل نافذاً قبل اعتماده.</div>
+      <div class="text-muted small">يسجّل هذا التعديل كطلب مستقل ولا يغيّر سجل جهاز الدوام الخام. يصبح نافذاً بعد اعتماد مدير الشؤون الإدارية ثم الأمين العام، ويظهر في التقارير بوضوح كإدخال يدوي.</div>
     </div>
     {% if can_view_attendance %}
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_daily', day_from=day, day_to=day, user_id=user_id or '') }}"><i class="bi bi-arrow-right"></i> العودة للملخص</a>
@@ -36,6 +36,7 @@
     <div class="col-md-6">
       <label class="form-label" for="manualAttendanceStart">وقت الحضور</label>
       <input class="form-control" type="time" id="manualAttendanceStart" name="start_time" value="{{ override.start_time if override and override.start_time else '' }}">
+      <div class="form-text">يمكن إدخال وقت الحضور فقط؛ بعد الاعتماد النهائي ينشأ سجل دخول ويُحتسب الموظف حاضراً بسجل غير مكتمل حتى تسجيل الخروج.</div>
     </div>
     <div class="col-md-6">
       <label class="form-label" for="manualAttendanceEnd">وقت الانصراف</label>
@@ -48,10 +49,12 @@
     </div>
     <div class="col-12 d-flex gap-2">
       <button class="btn btn-success" type="submit"><i class="bi bi-send-check"></i> تقديم للاعتماد</button>
-      {% if approval_status == 'PENDING' %}<span class="text-warning align-self-center small">هذا الطلب قيد الاعتماد ولم يطبّق بعد.</span>{% endif %}
+      {% if approval_status == 'PENDING' and approval_stage == 'SECRETARY_GENERAL' %}<span class="text-warning align-self-center small">اعتمدته الشؤون الإدارية، وهو بانتظار الاعتماد النهائي من الأمين العام ولم يطبّق بعد.</span>
+      {% elif approval_status == 'PENDING' %}<span class="text-warning align-self-center small">الطلب بانتظار اعتماد مدير الشؤون الإدارية ثم الأمين العام، ولم يطبّق بعد.</span>{% endif %}
       {% if approval_status == 'APPROVED' %}<span class="text-muted align-self-center small">ستنشئ عملية الحفظ طلب تعديل جديداً للاعتماد.</span>{% endif %}
       {% if approval_status == 'REJECTED' %}<span class="text-danger align-self-center small">تم رفض الطلب السابق؛ يمكنك تعديله وتقديمه مجدداً.</span>{% endif %}
       {% if override and override.approval_note %}<span class="text-muted align-self-center small">ملاحظة المراجع: {{ override.approval_note }}</span>{% endif %}
+      {% if override and override.final_approval_note %}<span class="text-muted align-self-center small">ملاحظة الأمين العام: {{ override.final_approval_note }}</span>{% endif %}
     </div>
   </form>
 </div>

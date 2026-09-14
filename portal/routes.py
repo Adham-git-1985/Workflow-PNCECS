@@ -51,6 +51,7 @@ from sqlalchemy.sql import exists
 from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
 from utils.role_codes import canonical_role_key, role_storage_variants
+from utils.timezone import app_timezone
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
 from utils.corr_refs import correspondence_reference_label
 from utils.file_uploads import (
@@ -330,6 +331,7 @@ from services.hr_request_workflow import (
     ESCALATION_UNITS,
     KIND_LEAVE,
     KIND_PERMISSION,
+    administrative_affairs_manager_user_ids,
     approval_candidate_names_map,
     approval_steps as hr_request_approval_steps,
     board_visible_user_ids,
@@ -343,7 +345,9 @@ from services.hr_request_workflow import (
     escalation_setting_key,
     get_escalation_policies,
     get_escalation_policy,
+    hr_notification_user_ids,
     is_special_leave,
+    is_sick_leave,
     normalize_escalation_target,
     process_pending_approvals,
     refresh_pending_escalation_deadlines,
@@ -9189,6 +9193,711 @@ def hr_report_permissions_fingerprint():
     )
 
 
+def _calendar_days_between(start_day: date, end_day: date) -> list[date]:
+    result = []
+    current_day = start_day
+    while current_day <= end_day:
+        result.append(current_day)
+        current_day += timedelta(days=1)
+    return result
+
+
+def _period_rows_by_user_day(rows, start_day: date, end_day: date) -> dict[tuple[int, str], object]:
+    """Expand short HR date ranges into a latest-row map for reporting."""
+    result = {}
+    for row in rows:
+        row_start = _parse_yyyy_mm_dd(
+            getattr(row, "source_attendance_day", None)
+            or getattr(row, "start_date", None)
+            or getattr(row, "day", None)
+        )
+        row_end = _parse_yyyy_mm_dd(
+            getattr(row, "source_attendance_day", None)
+            or getattr(row, "end_date", None)
+            or getattr(row, "day_to", None)
+            or getattr(row, "day", None)
+        )
+        if not row_start or not row_end:
+            continue
+        current_day = max(start_day, row_start)
+        final_day = min(end_day, row_end)
+        while current_day <= final_day:
+            result.setdefault((int(row.user_id), current_day.isoformat()), row)
+            current_day += timedelta(days=1)
+    return result
+
+
+def _approved_manual_attendance_map(
+    user_ids: list[int],
+    start_day: date,
+    end_day: date,
+) -> dict[tuple[int, str], HRAttendanceSpecialCase]:
+    if not user_ids:
+        return {}
+    rows = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.user_id.in_(user_ids))
+        .filter(HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE")
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.approval_status == "APPROVED")
+        .filter(HRAttendanceSpecialCase.day <= end_day.isoformat())
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= start_day.isoformat(),
+        ))
+        .order_by(HRAttendanceSpecialCase.created_at.desc(), HRAttendanceSpecialCase.id.desc())
+        .all()
+    )
+    return _period_rows_by_user_day(rows, start_day, end_day)
+
+
+def _attach_manual_attendance_flags(rows) -> None:
+    materialized = list(rows or [])
+    if not materialized:
+        return
+    user_ids = sorted({int(row.user_id) for row in materialized if row.user_id})
+    parsed_days = [_parse_yyyy_mm_dd(row.day) for row in materialized]
+    parsed_days = [day for day in parsed_days if day]
+    if not user_ids or not parsed_days:
+        return
+    manual_map = _approved_manual_attendance_map(user_ids, min(parsed_days), max(parsed_days))
+    for row in materialized:
+        correction = manual_map.get((int(row.user_id), row.day))
+        row.manual_attendance = bool(correction)
+        row.attendance_source = "MANUAL" if correction else "TIMECLOCK"
+        row.manual_attendance_id = correction.id if correction else None
+
+
+def _manual_attendance_event_rows_for_report(
+    start_day: date,
+    end_day: date,
+    *,
+    user_id: int | None = None,
+    work_location_id: int | None = None,
+    event_type: str = "",
+    device_id: str = "",
+    batch_id: int | None = None,
+    search: str = "",
+) -> list[SimpleNamespace]:
+    """Expose final manual corrections as synthetic IN/OUT report rows.
+
+    These rows deliberately do not enter ``attendance_event``: imported clock
+    evidence stays immutable, while the events screen and its exports still
+    show the approved manual source explicitly.
+    """
+    normalized_event_type = (event_type or "").strip().upper()
+    normalized_device_id = (device_id or "").strip().upper()
+    if batch_id or (normalized_device_id and normalized_device_id != "MANUAL"):
+        return []
+    if normalized_event_type and normalized_event_type not in {"I", "O"}:
+        return []
+
+    candidate_query = (
+        HRAttendanceSpecialCase.query
+        .filter(HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE")
+        .filter(HRAttendanceSpecialCase.applied.is_(True))
+        .filter(HRAttendanceSpecialCase.approval_status == "APPROVED")
+        .filter(HRAttendanceSpecialCase.day <= end_day.isoformat())
+        .filter(or_(
+            HRAttendanceSpecialCase.day_to.is_(None),
+            HRAttendanceSpecialCase.day_to >= start_day.isoformat(),
+        ))
+    )
+    if user_id:
+        candidate_query = candidate_query.filter(HRAttendanceSpecialCase.user_id == int(user_id))
+    if work_location_id:
+        candidate_query = (
+            candidate_query
+            .join(EmployeeFile, EmployeeFile.user_id == HRAttendanceSpecialCase.user_id)
+            .filter(EmployeeFile.work_location_lookup_id == int(work_location_id))
+        )
+    corrections = candidate_query.order_by(
+        HRAttendanceSpecialCase.created_at.desc(),
+        HRAttendanceSpecialCase.id.desc(),
+    ).all()
+    correction_map = _period_rows_by_user_day(corrections, start_day, end_day)
+
+    search_text = (search or "").strip().casefold()
+    search_users = {}
+    if search_text and correction_map:
+        search_user_ids = sorted({key[0] for key in correction_map})
+        search_users = {
+            int(user.id): user
+            for user in User.query.filter(User.id.in_(search_user_ids)).all()
+        }
+
+    rows = []
+    for (correction_user_id, day_text), correction in sorted(
+        correction_map.items(),
+        key=lambda item: (item[0][1], item[0][0]),
+    ):
+        user = search_users.get(correction_user_id)
+        haystack = " ".join((
+            str(correction.id),
+            correction.note or "",
+            correction.start_time or "",
+            correction.end_time or "",
+            getattr(user, "name", None) or "",
+            getattr(user, "email", None) or "",
+            "manual إدخال يدوي",
+        )).casefold()
+        if search_text and search_text not in haystack:
+            continue
+
+        movements = (
+            ("I", correction.start_time, "دخول يدوي"),
+            ("O", correction.end_time, "خروج يدوي"),
+        )
+        for movement_code, movement_time, movement_label in movements:
+            if not movement_time or (normalized_event_type and normalized_event_type != movement_code):
+                continue
+            try:
+                movement_dt = datetime.fromisoformat(f"{day_text}T{movement_time}:00")
+            except (TypeError, ValueError):
+                continue
+            rows.append(SimpleNamespace(
+                id=None,
+                user_id=correction_user_id,
+                event_dt=movement_dt,
+                event_type=movement_code,
+                batch_id=None,
+                device_id="MANUAL",
+                raw_line=f"MANUAL:{correction.id}",
+                display_event_code=movement_code,
+                display_event_label=movement_label,
+                departure_type_label="",
+                departure_display_lines=[],
+                departure_is_pending=False,
+                daily_employee_number=None,
+                is_manual_attendance=True,
+                manual_attendance_id=correction.id,
+            ))
+    return rows
+
+
+def _approved_schedule_day_map(
+    user_ids: list[int],
+    start_day: date,
+    end_day: date,
+) -> dict[tuple[int, str], HRAttendanceScheduleDay]:
+    if not user_ids:
+        return {}
+    rows = (
+        HRAttendanceScheduleDay.query
+        .join(HRAttendanceSchedulePlan, HRAttendanceSchedulePlan.id == HRAttendanceScheduleDay.plan_id)
+        .filter(HRAttendanceSchedulePlan.user_id.in_(user_ids))
+        .filter(HRAttendanceSchedulePlan.status == "FINAL_APPROVED")
+        .filter(HRAttendanceScheduleDay.work_date >= start_day.isoformat())
+        .filter(HRAttendanceScheduleDay.work_date <= end_day.isoformat())
+        .order_by(
+            HRAttendanceSchedulePlan.version_no.desc(),
+            HRAttendanceSchedulePlan.id.desc(),
+            HRAttendanceScheduleDay.id.desc(),
+        )
+        .all()
+    )
+    result = {}
+    for row in rows:
+        result.setdefault((int(row.plan.user_id), row.work_date), row)
+    return result
+
+
+def _administrative_affairs_daily_rows(
+    start_day: date,
+    end_day: date,
+    *,
+    user_ids: list[int] | None = None,
+) -> list[dict]:
+    """Combine every employee's clock, leave, and approved schedule per day."""
+    employee_query = User.query.join(EmployeeFile, EmployeeFile.user_id == User.id)
+    if user_ids is not None:
+        if not user_ids:
+            return []
+        employee_query = employee_query.filter(User.id.in_(user_ids))
+    employees = employee_query.order_by(func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc()).all()
+    employee_ids = [int(employee.id) for employee in employees]
+    if not employee_ids:
+        return []
+
+    start_text, end_text = start_day.isoformat(), end_day.isoformat()
+    summary_rows = (
+        AttendanceDailySummary.query
+        .filter(AttendanceDailySummary.user_id.in_(employee_ids))
+        .filter(AttendanceDailySummary.day >= start_text)
+        .filter(AttendanceDailySummary.day <= end_text)
+        .all()
+    )
+    summary_map = {(int(row.user_id), row.day): row for row in summary_rows}
+    manual_map = _approved_manual_attendance_map(employee_ids, start_day, end_day)
+    schedule_map = _approved_schedule_day_map(employee_ids, start_day, end_day)
+
+    leave_rows = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(employee_ids))
+        .filter(HRLeaveRequest.start_date <= end_text)
+        .filter(HRLeaveRequest.end_date >= start_text)
+        .filter(HRLeaveRequest.status == "APPROVED")
+        .order_by(HRLeaveRequest.id.desc())
+        .all()
+    )
+    leave_map = _period_rows_by_user_day(leave_rows, start_day, end_day)
+    pending_leave_rows = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(employee_ids))
+        .filter(HRLeaveRequest.start_date <= end_text)
+        .filter(HRLeaveRequest.end_date >= start_text)
+        .filter(HRLeaveRequest.status.in_(("DRAFT", "PENDING", "SUBMITTED")))
+        .order_by(HRLeaveRequest.id.desc())
+        .all()
+    )
+    pending_leave_map = _period_rows_by_user_day(pending_leave_rows, start_day, end_day)
+
+    event_rows = (
+        AttendanceEvent.query
+        .filter(AttendanceEvent.user_id.in_(employee_ids))
+        .filter(AttendanceEvent.event_dt >= datetime.combine(start_day, datetime.min.time()))
+        .filter(AttendanceEvent.event_dt < datetime.combine(end_day + timedelta(days=1), datetime.min.time()))
+        .order_by(AttendanceEvent.event_dt.asc())
+        .all()
+    )
+    events_map: dict[tuple[int, str], list[AttendanceEvent]] = {}
+    for event in event_rows:
+        if event.event_dt:
+            events_map.setdefault((int(event.user_id), event.event_dt.date().isoformat()), []).append(event)
+
+    lookup_ids = {
+        value
+        for employee in employees
+        for value in (
+            getattr(employee.employee_file, "work_location_lookup_id", None),
+            getattr(employee.employee_file, "appointment_type_lookup_id", None),
+        )
+        if value
+    }
+    lookups = {
+        int(item.id): item.label
+        for item in HRLookupItem.query.filter(HRLookupItem.id.in_(lookup_ids)).all()
+    } if lookup_ids else {}
+
+    report_rows = []
+    for work_day in _calendar_days_between(start_day, end_day):
+        day_text = work_day.isoformat()
+        for employee in employees:
+            key = (int(employee.id), day_text)
+            employee_file = employee.employee_file
+            summary = summary_map.get(key)
+            manual = manual_map.get(key)
+            events = events_map.get(key, [])
+            leave = leave_map.get(key)
+            pending_leave = pending_leave_map.get(key)
+            schedule_day = schedule_map.get(key)
+
+            first_in = getattr(summary, "first_in", None)
+            last_out = getattr(summary, "last_out", None)
+            if not first_in and manual and manual.start_time:
+                first_in = datetime.fromisoformat(f"{day_text}T{manual.start_time}:00")
+            if not last_out and manual and manual.end_time:
+                last_out = datetime.fromisoformat(f"{day_text}T{manual.end_time}:00")
+            if events and not first_in:
+                first_in = min(event.event_dt for event in events if event.event_dt)
+
+            has_attendance = bool(first_in or last_out or events or manual)
+            category = "UNSCHEDULED"
+            category_label = "لا يوجد سجل"
+            detail = ""
+            source_label = "—"
+            schedule_label = ""
+            conflict_note = ""
+
+            if schedule_day:
+                schedule_label = (
+                    getattr(schedule_day.schedule, "name", None)
+                    or ("عمل عن بُعد" if schedule_day.day_type == "REMOTE" else "جدول الدوام المعتمد")
+                )
+
+            if has_attendance:
+                category = "PRESENT"
+                category_label = "حاضر"
+                source_label = "إدخال يدوي" if manual else "بصمة الساعة"
+                detail = "دخول يدوي" if manual and manual.start_time and not manual.end_time else source_label
+                if leave:
+                    conflict_note = "يوجد أيضاً طلب إجازة معتمد لهذا اليوم"
+                elif schedule_day and schedule_day.day_type == "REMOTE":
+                    conflict_note = "سُجلت بصمة رغم أن اليوم مجدول عن بُعد"
+            elif leave:
+                category = "LEAVE"
+                category_label = "مجاز"
+                leave_name = getattr(leave.leave_type, "name_ar", None) or getattr(leave.leave_type, "code", None) or "إجازة"
+                detail = leave_name
+                if leave.source == ATTENDANCE_AUTO_LEAVE_SOURCE:
+                    source_label = "احتساب تلقائي — عدم تسجيل بصمة"
+                elif (leave.entered_by or "").upper() == "ADMIN":
+                    source_label = "الشؤون الإدارية"
+                else:
+                    source_label = "طلب الموظف"
+            elif schedule_day and schedule_day.day_type == "REMOTE":
+                category = "REMOTE"
+                category_label = "مناوب / عن بُعد"
+                detail = schedule_day.note or "حسب جدول الدوام المعتمد"
+                source_label = "جدول الدوام"
+            elif pending_leave:
+                category = "LEAVE_PENDING"
+                category_label = "إجازة قيد الاعتماد"
+                detail = getattr(pending_leave.leave_type, "name_ar", None) or "طلب إجازة"
+                source_label = "نظام الإجازات"
+            elif schedule_day and schedule_day.day_type == "OFF":
+                category = "OFF"
+                category_label = "راحة / عطلة مجدولة"
+                source_label = "جدول الدوام"
+            elif schedule_day and schedule_day.day_type == "WORK":
+                category = "MISSING_PUNCH"
+                category_label = "دوام مكتبي بلا بصمة"
+                detail = "بانتظار الاحتساب التلقائي أو المعالجة"
+                source_label = "جدول الدوام"
+            else:
+                exemption = _attendance_exemption_reason(employee.id, day_text)
+                if exemption in {"WEEKLY_OFF", "OFFICIAL_HOLIDAY", "PLANNED_OFF"}:
+                    category = "OFF"
+                    category_label = "عطلة / راحة"
+                    detail = exemption
+                elif exemption == "OFFICIAL_MISSION":
+                    category = "OFFICIAL_DUTY"
+                    category_label = "مهمة رسمية"
+                    source_label = "نظام المهام"
+                elif exemption == "OFFICIAL_TRAINING":
+                    category = "OFFICIAL_DUTY"
+                    category_label = "تدريب رسمي"
+                    source_label = "نظام التدريب"
+                else:
+                    effective_schedule = _effective_schedule_for_user(employee.id, day_text)
+                    if effective_schedule and (effective_schedule.kind or "").upper() == "REMOTE":
+                        category = "REMOTE"
+                        category_label = "مناوب / عن بُعد"
+                        detail = "حسب تكليف الدوام الفعّال"
+                        source_label = "جدول الدوام"
+                        schedule_label = effective_schedule.name or schedule_label
+                    elif effective_schedule:
+                        category = "MISSING_PUNCH"
+                        category_label = "دوام مكتبي بلا بصمة"
+                        detail = "لا توجد بصمة أو إجازة مسجلة"
+                        source_label = "تكليف الدوام"
+                        schedule_label = effective_schedule.name or schedule_label
+
+            report_rows.append({
+                "day": day_text,
+                "user_id": employee.id,
+                "employee_no": employee_file.employee_no or "",
+                "name": employee_file.full_name_quad or employee.full_name,
+                "work_location": lookups.get(employee_file.work_location_lookup_id, ""),
+                "appointment_type": lookups.get(employee_file.appointment_type_lookup_id, ""),
+                "organization": getattr(employee_file.organization, "name_ar", None) or "",
+                "directorate": getattr(employee_file.directorate, "name_ar", None) or "",
+                "department": getattr(employee_file.department, "name_ar", None) or "",
+                "schedule": schedule_label,
+                "category": category,
+                "category_label": category_label,
+                "detail": detail,
+                "source": source_label,
+                "is_manual": bool(manual),
+                "first_in": first_in,
+                "last_out": last_out,
+                "work_minutes": int(getattr(summary, "work_minutes", 0) or 0),
+                "leave_request_id": leave.id if leave else None,
+                "conflict_note": conflict_note,
+            })
+    return report_rows
+
+
+def _attendance_auto_leave_cutoff_reached(
+    work_day: date,
+    local_now: datetime,
+    schedule_day: HRAttendanceScheduleDay | None = None,
+) -> bool:
+    if work_day < local_now.date():
+        return True
+    if work_day > local_now.date():
+        return False
+    cutoff = (_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_CUTOFF") or "16:00").strip()
+    cutoff_minutes = _parse_hhmm_minutes(cutoff)
+    if cutoff_minutes is None:
+        cutoff_minutes = 16 * 60
+    # Never charge the current day before its actual office schedule ends.
+    # The default one-hour grace also gives a late timeclock sync a chance to
+    # arrive before the absence is converted into annual leave.
+    schedule_end = (
+        getattr(schedule_day, "end_time", None)
+        or getattr(getattr(schedule_day, "schedule", None), "end_time", None)
+    )
+    schedule_end_minutes = _parse_hhmm_minutes(schedule_end)
+    try:
+        grace_minutes = max(
+            0,
+            int((_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_GRACE_MINUTES") or "60").strip()),
+        )
+    except (TypeError, ValueError):
+        grace_minutes = 60
+    if schedule_end_minutes is not None:
+        cutoff_minutes = max(cutoff_minutes, schedule_end_minutes + grace_minutes)
+    return local_now.hour * 60 + local_now.minute >= cutoff_minutes
+
+
+def _process_unrecorded_office_attendance(
+    *,
+    reference_dt: datetime | None = None,
+    day_from: date | None = None,
+    day_to: date | None = None,
+) -> dict[str, int]:
+    """Charge one annual day for approved office duty with no attendance evidence."""
+    enabled = (_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_ENABLED") or "1").strip().lower()
+    if enabled not in {"1", "true", "yes", "on"}:
+        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 1, "missing_annual_type": 0}
+
+    local_now = reference_dt or datetime.now(app_timezone())
+    if local_now.tzinfo is None:
+        local_now = local_now.replace(tzinfo=app_timezone())
+    try:
+        lookback_days = min(31, max(0, int((_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_LOOKBACK_DAYS") or "7").strip())))
+    except (TypeError, ValueError):
+        lookback_days = 7
+    start_day = day_from or (local_now.date() - timedelta(days=lookback_days))
+    end_day = day_to or local_now.date()
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+
+    annual_type = _annual_leave_type()
+    if not annual_type:
+        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 0, "missing_annual_type": 1}
+
+    schedule_map = _approved_schedule_day_map(
+        [row.user_id for row in EmployeeFile.query.with_entities(EmployeeFile.user_id).all()],
+        start_day,
+        end_day,
+    )
+    office_keys = {
+        key for key, row in schedule_map.items()
+        if row.day_type == "WORK"
+        and _attendance_auto_leave_cutoff_reached(date.fromisoformat(key[1]), local_now, row)
+    }
+    if not office_keys:
+        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 0, "missing_annual_type": 0}
+
+    user_ids = sorted({key[0] for key in office_keys})
+    dt_start = datetime.combine(start_day, datetime.min.time())
+    dt_end = datetime.combine(end_day + timedelta(days=1), datetime.min.time())
+    punched_keys = {
+        (int(row.user_id), row.event_dt.date().isoformat())
+        for row in AttendanceEvent.query
+        .filter(AttendanceEvent.user_id.in_(user_ids))
+        .filter(AttendanceEvent.event_dt >= dt_start)
+        .filter(AttendanceEvent.event_dt < dt_end)
+        .all()
+        if row.event_dt
+    }
+    manual_keys = set(_approved_manual_attendance_map(user_ids, start_day, end_day))
+    existing_auto_rows = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(user_ids))
+        .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
+        .filter(HRLeaveRequest.source_attendance_day >= start_day.isoformat())
+        .filter(HRLeaveRequest.source_attendance_day <= end_day.isoformat())
+        .all()
+    )
+    existing_auto_keys = {
+        (int(row.user_id), row.source_attendance_day)
+        for row in existing_auto_rows
+    }
+    active_leave_rows = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(user_ids))
+        .filter(HRLeaveRequest.status.in_(("DRAFT", "PENDING", "SUBMITTED", "APPROVED")))
+        .filter(HRLeaveRequest.start_date <= end_day.isoformat())
+        .filter(HRLeaveRequest.end_date >= start_day.isoformat())
+        .order_by(HRLeaveRequest.id.desc())
+        .all()
+    )
+    active_leave_keys = set(_period_rows_by_user_day(active_leave_rows, start_day, end_day))
+    users = {int(user.id): user for user in User.query.filter(User.id.in_(user_ids)).all()}
+
+    reversed_count = 0
+    active_auto_rows = {
+        (int(row.user_id), row.source_attendance_day): row
+        for row in existing_auto_rows
+        if row.status == "APPROVED" and not row.replaced_at
+    }
+    for key in sorted(set(active_auto_rows) & (punched_keys | manual_keys), key=lambda value: (value[1], value[0])):
+        replacement_reason = "LATE_CLOCK_ATTENDANCE" if key in punched_keys else "MANUAL_ATTENDANCE_APPROVED"
+        reversed_rows = _replace_attendance_auto_annual_leaves(
+            key[0],
+            key[1],
+            key[1],
+            reason=replacement_reason,
+        )
+        if not reversed_rows:
+            continue
+        reversed_count += len(reversed_rows)
+        user = users.get(key[0])
+        _add_attendance_leave_notifications(
+            key[0],
+            (
+                f"ألغى النظام الإجازة السنوية المحتسبة تلقائياً للموظف "
+                f"{user.full_name if user else '#' + str(key[0])} بتاريخ {key[1]} "
+                "بعد ثبوت سجل حضور."
+            ),
+            event_key=f"att-auto-leave-reversed-{key[1]}-{key[0]}",
+            link_url="/portal/hr/attendance/events",
+        )
+        _upsert_summary(_summary_compute_one(key[0], key[1]))
+
+    created = 0
+    reviewed = 0
+    for user_id, day_text in sorted(office_keys, key=lambda key: (key[1], key[0])):
+        reviewed += 1
+        key = (user_id, day_text)
+        user = users.get(user_id)
+        if not user or _is_general_secretary(user):
+            continue
+        if key in punched_keys or key in manual_keys or key in existing_auto_keys or key in active_leave_keys:
+            continue
+        if _attendance_exemption_reason(user_id, day_text):
+            continue
+
+        now_utc = datetime.utcnow()
+        leave_row = HRLeaveRequest(
+            user_id=user_id,
+            leave_type_id=annual_type.id,
+            start_date=day_text,
+            end_date=day_text,
+            days=max(1, _calculate_leave_days(annual_type, day_text, day_text, user_id=user_id)),
+            entered_by="SYSTEM",
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day=day_text,
+            note="احتساب آلي لإجازة سنوية: يوم دوام مكتبي معتمد دون تسجيل بصمة حضور.",
+            status="APPROVED",
+            submitted_at=now_utc,
+            decided_at=now_utc,
+            updated_at=now_utc,
+        )
+        db.session.add(leave_row)
+        db.session.flush()
+        _add_attendance_leave_notifications(
+            user_id,
+            (
+                f"احتسب النظام إجازة سنوية تلقائياً للموظف {user.full_name} بتاريخ {day_text} "
+                "لوجود دوام مكتبي معتمد دون تسجيل بصمة. يمكن استبدالها بمرضية بعد تقديم المستند واعتماد الطلب نهائياً."
+            ),
+            event_key=f"att-auto-leave-{day_text}-{user_id}",
+            link_url=f"/portal/hr/approvals/leaves/{leave_row.id}",
+        )
+        _portal_audit(
+            "HR_ATTENDANCE_AUTO_ANNUAL_LEAVE",
+            f"user_id={user_id}; day={day_text}; leave_id={leave_row.id}",
+            target_type="LEAVE_REQUEST",
+            target_id=leave_row.id,
+        )
+        _upsert_summary(_summary_compute_one(user_id, day_text))
+        created += 1
+    return {
+        "created": created,
+        "reversed": reversed_count,
+        "reviewed": reviewed,
+        "disabled": 0,
+        "missing_annual_type": 0,
+    }
+
+
+@portal_bp.route('/hr/reports/administrative-affairs/daily', methods=['GET'])
+@login_required
+@_perm(HR_REPORTS_VIEW)
+def hr_report_administrative_affairs_daily():
+    today = date.today()
+    start_day = _parse_yyyy_mm_dd((request.args.get("from_date") or "").strip()) or today
+    end_day = _parse_yyyy_mm_dd((request.args.get("to_date") or "").strip()) or start_day
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    if (end_day - start_day).days > 30:
+        end_day = start_day + timedelta(days=30)
+        flash("تم تحديد التقرير بحد أقصى 31 يوماً في كل مرة.", "warning")
+
+    employee_raw = (request.args.get("user_id") or "").strip()
+    location_raw = (request.args.get("work_location_id") or "").strip()
+    appointment_raw = (request.args.get("appointment_type_id") or "").strip()
+    employee_id = int(employee_raw) if employee_raw.isdigit() else None
+    location_id = int(location_raw) if location_raw.isdigit() else None
+    appointment_id = int(appointment_raw) if appointment_raw.isdigit() else None
+    selected_user_ids = _filtered_user_ids(
+        employee_id=employee_id,
+        work_location_id=location_id,
+        appointment_type_id=appointment_id,
+    )
+    rows = _administrative_affairs_daily_rows(start_day, end_day, user_ids=selected_user_ids)
+    category = (request.args.get("category") or "").strip().upper()
+    if category:
+        rows = [row for row in rows if row["category"] == category]
+
+    counts = {}
+    for row in rows:
+        counts[row["category"]] = counts.get(row["category"], 0) + 1
+
+    if (request.args.get("export") or "").strip().lower() == "xlsx":
+        if not current_user.has_perm(HR_REPORTS_EXPORT):
+            abort(403)
+        headers = [
+            "التاريخ", "الرقم الوظيفي", "الموظف", "الحالة", "التفصيل", "المصدر",
+            "أول دخول", "آخر خروج", "ساعات العمل", "الجدول", "موقع العمل", "نوع التعيين",
+            "المؤسسة", "الإدارة العامة", "الدائرة", "ملاحظة المطابقة",
+        ]
+        export_rows = [[
+            row["day"], row["employee_no"], row["name"], row["category_label"], row["detail"], row["source"],
+            row["first_in"].strftime("%H:%M") if row["first_in"] else "",
+            row["last_out"].strftime("%H:%M") if row["last_out"] else "",
+            round(row["work_minutes"] / 60.0, 2), row["schedule"], row["work_location"], row["appointment_type"],
+            row["organization"], row["directorate"], row["department"], row["conflict_note"],
+        ] for row in rows]
+        return _export_xlsx("administrative_affairs_daily_report.xlsx", headers, export_rows)
+
+    return render_template(
+        "portal/hr/reports_administrative_affairs_daily.html",
+        rows=rows,
+        counts=counts,
+        from_date=start_day.isoformat(),
+        to_date=end_day.isoformat(),
+        users=_attendance_schedule_employee_users(),
+        work_locations=_hr_lookup_options("WORK_LOCATION"),
+        appointment_types=_hr_lookup_options("APPOINTMENT_TYPE"),
+        selected_user_id=employee_id,
+        selected_work_location_id=location_id,
+        selected_appointment_type_id=appointment_id,
+        selected_category=category,
+        can_export=current_user.has_perm(HR_REPORTS_EXPORT),
+        can_reconcile=_hr_can_manage_attendance(),
+    )
+
+
+@portal_bp.route('/hr/reports/administrative-affairs/daily/reconcile', methods=['POST'])
+@login_required
+@_perm_any(HR_ATT_CREATE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL)
+def hr_report_administrative_affairs_reconcile():
+    start_day = _parse_yyyy_mm_dd((request.form.get("from_date") or "").strip()) or date.today()
+    end_day = _parse_yyyy_mm_dd((request.form.get("to_date") or "").strip()) or start_day
+    result = _process_unrecorded_office_attendance(day_from=start_day, day_to=end_day)
+    db.session.commit()
+    if result["missing_annual_type"]:
+        flash("تعذر الاحتساب: لم يتم تعريف نوع إجازة سنوية فعال.", "danger")
+    elif result["disabled"]:
+        flash("الاحتساب التلقائي للإجازة السنوية معطّل من الإعدادات.", "warning")
+    else:
+        flash(
+            f"اكتملت المطابقة: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
+            f"{result['created']} إجازة سنوية تلقائية، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
+            "success",
+        )
+    return redirect(url_for(
+        "portal.hr_report_administrative_affairs_daily",
+        from_date=start_day.isoformat(),
+        to_date=end_day.isoformat(),
+    ))
+
+
 @portal_bp.route('/hr/reports/attendance/daily', methods=['GET'])
 @login_required
 @_perm(HR_REPORTS_VIEW)
@@ -10830,7 +11539,11 @@ def _hr_can_edit_attendance() -> bool:
 def _hr_can_approve_attendance_edit() -> bool:
     """Whether the user may approve or reject a pending attendance correction."""
     try:
-        return bool(current_user.has_perm(HR_ATT_EDIT_APPROVE))
+        return bool(
+            current_user.has_perm(HR_ATT_EDIT_APPROVE)
+            or int(current_user.id) in set(administrative_affairs_manager_user_ids())
+            or int(current_user.id) in set(secretary_general_user_ids())
+        )
     except Exception:
         return False
 
@@ -10986,7 +11699,49 @@ def _attendance_edit_approver_user_ids() -> list[int]:
     except Exception:
         pass
 
+    ids.update(administrative_affairs_manager_user_ids())
+    ids.update(secretary_general_user_ids())
     return sorted(ids)
+
+
+def _attendance_edit_final_approver_user_ids() -> list[int]:
+    """Secretary-General accounts eligible for the final manual-edit decision."""
+    return sorted({int(user_id) for user_id in secretary_general_user_ids() if user_id})
+
+
+def _attendance_edit_hr_approver_user_ids() -> list[int]:
+    """First-stage approvers; the Secretary General remains a separate gate."""
+    all_approvers = set(_attendance_edit_approver_user_ids())
+    final_approvers = set(_attendance_edit_final_approver_user_ids())
+    first_stage = (all_approvers - final_approvers) | set(administrative_affairs_manager_user_ids())
+    # Compatibility for installations that have not configured a Secretary
+    # General account yet: their existing explicit approver remains usable.
+    return sorted(first_stage or all_approvers)
+
+
+def _manual_attendance_review_stage(row: HRAttendanceSpecialCase | None) -> str | None:
+    if not row or _manual_attendance_approval_status(row) != "PENDING":
+        return None
+    return "SECRETARY_GENERAL" if getattr(row, "approved_at", None) else "HR"
+
+
+def _user_is_super_admin_account(user: User | None) -> bool:
+    role_key = canonical_role_key(getattr(user, "role", None)) if user else ""
+    return bool(role_key.startswith("SUPER") or role_key in {"ROOT", "SYSADMIN", "SYSTEMADMIN"})
+
+
+def _can_review_manual_attendance(row: HRAttendanceSpecialCase, user: User | None = None) -> bool:
+    selected_user = user or current_user
+    if not selected_user or not getattr(selected_user, "id", None):
+        return False
+    if _user_is_super_admin_account(selected_user):
+        return True
+    stage = _manual_attendance_review_stage(row)
+    if stage == "HR":
+        return int(selected_user.id) in set(_attendance_edit_hr_approver_user_ids())
+    if stage == "SECRETARY_GENERAL":
+        return int(selected_user.id) in set(_attendance_edit_final_approver_user_ids())
+    return False
 
 
 def _hr_lookup_items_for_category(category: str):
@@ -11235,16 +11990,19 @@ def hr_attendance_manual_edit():
         row.approved_by_id = None
         row.approved_at = None
         row.approval_note = None
+        row.final_approved_by_id = None
+        row.final_approved_at = None
+        row.final_approval_note = None
         db.session.flush()
 
         approval_url = url_for('portal.hr_attendance_manual_approval_queue')
         notifier_id = int(getattr(current_user, 'id', 0) or 0)
-        for approver_id in _attendance_edit_approver_user_ids():
+        for approver_id in _attendance_edit_hr_approver_user_ids():
             if approver_id == notifier_id:
                 continue
             db.session.add(Notification(
                 user_id=approver_id,
-                message=f'طلب تعديل دوام جديد #{row.id} بانتظار الاعتماد.',
+                message=f'طلب تعديل دوام جديد #{row.id} بانتظار اعتماد مدير الشؤون الإدارية.',
                 type='PORTAL',
                 source='portal',
                 is_read=False,
@@ -11293,36 +12051,44 @@ def hr_attendance_manual_edit():
         override=override,
         editable_override=bool(override and _manual_attendance_approval_status(override) == 'PENDING'),
         approval_status=_manual_attendance_approval_status(override) if override else None,
+        approval_stage=_manual_attendance_review_stage(override) if override else None,
         can_view_attendance=bool(current_user.has_perm(HR_ATT_READ)),
     )
 
 
 @portal_bp.route('/hr/attendance/manual/approvals', methods=['GET'])
 @login_required
-@_perm(HR_ATT_EDIT_APPROVE)
 def hr_attendance_manual_approval_queue():
     """Review queue for manual attendance corrections awaiting a decision."""
-    rows = (
+    if not _hr_can_approve_attendance_edit():
+        abort(403)
+    pending_rows = (
         HRAttendanceSpecialCase.query
         .filter(HRAttendanceSpecialCase.kind == 'MANUAL_ATTENDANCE')
         .filter(HRAttendanceSpecialCase.approval_status == 'PENDING')
         .order_by(HRAttendanceSpecialCase.created_at.asc(), HRAttendanceSpecialCase.id.asc())
         .all()
     )
+    rows = []
+    for row in pending_rows:
+        row.review_stage = _manual_attendance_review_stage(row)
+        if _can_review_manual_attendance(row):
+            rows.append(row)
     return render_template('portal/hr/attendance_manual_approval_queue.html', rows=rows)
 
 
 @portal_bp.route('/hr/attendance/manual/<int:row_id>/review', methods=['POST'])
 @login_required
-@_perm(HR_ATT_EDIT_APPROVE)
 def hr_attendance_manual_review(row_id: int):
-    """Approve or reject a submitted manual attendance correction."""
+    """Apply the HR decision first and the Secretary-General decision last."""
     row = HRAttendanceSpecialCase.query.get_or_404(row_id)
     if row.kind != 'MANUAL_ATTENDANCE':
         abort(404)
     if _manual_attendance_approval_status(row) != 'PENDING':
         flash('تم البت في هذا الطلب مسبقاً.', 'warning')
         return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
+    if not _can_review_manual_attendance(row):
+        abort(403)
 
     action = (request.form.get('action') or '').strip().lower()
     approval_note = (request.form.get('approval_note') or '').strip()
@@ -11332,31 +12098,79 @@ def hr_attendance_manual_review(row_id: int):
         flash('أدخل سبب الرفض.', 'danger')
         return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
 
-    row.approved_by_id = int(current_user.id)
-    row.approved_at = datetime.utcnow()
-    row.approval_note = approval_note or None
+    stage = _manual_attendance_review_stage(row)
+    now = datetime.utcnow()
+    if stage == 'HR':
+        row.approved_by_id = int(current_user.id)
+        row.approved_at = now
+        row.approval_note = approval_note or None
+    else:
+        row.final_approved_by_id = int(current_user.id)
+        row.final_approved_at = now
+        row.final_approval_note = approval_note or None
 
     if action == 'approve':
-        row.approval_status = 'APPROVED'
-        row.applied = True
-        db.session.flush()
-        affected_keys = _attendance_summary_keys_for_period(row.user_id, row.day, row.day_to)
-        _attendance_recompute_summaries_for_keys(affected_keys)
-        _portal_audit(
-            'HR_ATTENDANCE_MANUAL_EDIT_APPROVE',
-            f'manual attendance edit approved row_id={row.id} user_id={row.user_id} days={row.day}..{row.day_to or row.day}',
-            target_type='ATT_DAILY',
-            target_id=row.id,
-        )
-        result_message = 'تم اعتماد تعديل الدوام وإعادة احتساب الفترة.'
-        notification_message = f'تم اعتماد طلب تعديل الدوام #{row.id}.'
-        notification_type = 'SUCCESS'
+        final_approver_ids = _attendance_edit_final_approver_user_ids()
+        finalize_now = stage == 'SECRETARY_GENERAL' or not final_approver_ids
+        if finalize_now:
+            # Legacy installations without a configured Secretary General can
+            # still complete the request through their explicit approver.
+            if stage == 'HR' and not final_approver_ids:
+                row.final_approved_by_id = int(current_user.id)
+                row.final_approved_at = now
+                row.final_approval_note = approval_note or None
+            row.approval_status = 'APPROVED'
+            row.applied = True
+            _replace_attendance_auto_annual_leaves(
+                row.user_id,
+                row.day,
+                row.day_to or row.day,
+                reason='MANUAL_ATTENDANCE_APPROVED',
+                actor_id=int(current_user.id),
+            )
+            db.session.flush()
+            affected_keys = _attendance_summary_keys_for_period(row.user_id, row.day, row.day_to)
+            _attendance_recompute_summaries_for_keys(affected_keys)
+            _portal_audit(
+                'HR_ATTENDANCE_MANUAL_EDIT_FINAL_APPROVE',
+                f'manual attendance edit finally approved row_id={row.id} user_id={row.user_id} days={row.day}..{row.day_to or row.day}',
+                target_type='ATT_DAILY',
+                target_id=row.id,
+            )
+            result_message = 'تم الاعتماد النهائي لتعديل الدوام وإعادة احتساب الفترة.'
+            notification_message = f'تم اعتماد طلب تعديل الدوام #{row.id} نهائياً.'
+            notification_type = 'SUCCESS'
+        else:
+            row.approval_status = 'PENDING'
+            row.applied = False
+            approval_url = url_for('portal.hr_attendance_manual_approval_queue')
+            for approver_id in final_approver_ids:
+                if approver_id == int(current_user.id):
+                    continue
+                db.session.add(Notification(
+                    user_id=approver_id,
+                    message=f'طلب تعديل الدوام #{row.id} اعتمدته الشؤون الإدارية وبانتظار اعتمادك النهائي.',
+                    type='PORTAL',
+                    source='portal',
+                    is_read=False,
+                    link_url=approval_url,
+                    created_at=now,
+                ))
+            _portal_audit(
+                'HR_ATTENDANCE_MANUAL_EDIT_HR_APPROVE',
+                f'manual attendance edit HR-approved row_id={row.id}; pending secretary general',
+                target_type='ATT_DAILY',
+                target_id=row.id,
+            )
+            result_message = 'تم اعتماد الشؤون الإدارية، والطلب الآن بانتظار اعتماد الأمين العام.'
+            notification_message = f'اعتمدت الشؤون الإدارية طلب تعديل الدوام #{row.id} وهو بانتظار الاعتماد النهائي.'
+            notification_type = 'INFO'
     else:
         row.approval_status = 'REJECTED'
         row.applied = False
         _portal_audit(
             'HR_ATTENDANCE_MANUAL_EDIT_REJECT',
-            f'manual attendance edit rejected row_id={row.id} user_id={row.user_id}; note={approval_note}',
+            f'manual attendance edit rejected row_id={row.id} stage={stage} user_id={row.user_id}; note={approval_note}',
             target_type='ATT_DAILY',
             target_id=row.id,
         )
@@ -11364,9 +12178,14 @@ def hr_attendance_manual_review(row_id: int):
         notification_message = f'تم رفض طلب تعديل الدوام #{row.id}. السبب: {approval_note}'
         notification_type = 'WARNING'
 
-    if row.created_by_id and int(row.created_by_id) != int(current_user.id):
+    notification_recipient_ids = {
+        int(value)
+        for value in (row.created_by_id, row.user_id)
+        if value and int(value) != int(current_user.id)
+    }
+    for recipient_id in sorted(notification_recipient_ids):
         db.session.add(Notification(
-            user_id=int(row.created_by_id),
+            user_id=recipient_id,
             message=notification_message,
             type=notification_type,
             source='portal',
@@ -15543,6 +16362,11 @@ def hr_leave_request_new():
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
             return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
+        casual_policy_error = _casual_leave_policy_error(current_user.id, lt, start_d, end_d)
+        if casual_policy_error:
+            flash(casual_policy_error, "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+
         days = _calculate_leave_days(lt, start_s, end_s, user_id=current_user.id)
 
         statutory_error, statutory_details = _statutory_leave_validation(lt, start_d, end_d, request.form)
@@ -15730,6 +16554,16 @@ def hr_leave_request_edit(req_id: int):
             return render_form()
         if end_date < start_date:
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
+            return render_form()
+
+        casual_policy_error = _casual_leave_policy_error(
+            current_user.id,
+            leave_type,
+            start_date,
+            end_date,
+        )
+        if casual_policy_error:
+            flash(casual_policy_error, "danger")
             return render_form()
 
         days = _calculate_leave_days(leave_type, start_s, end_s, user_id=current_user.id)
@@ -16895,6 +17729,16 @@ def hr_approval_leave(req_id: int):
     if request.method == "POST":
         action = (request.form.get("action") or "").strip().upper()
         note = (request.form.get("decision_note") or "").strip()
+        if action == "APPROVE":
+            casual_policy_error = _casual_leave_policy_error(
+                r.user_id,
+                r.leave_type,
+                _parse_yyyy_mm_dd(r.start_date),
+                _parse_yyyy_mm_dd(r.end_date),
+            )
+            if casual_policy_error:
+                flash(casual_policy_error, "danger")
+                return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
         if note_required and action == "APPROVE" and not note:
             flash("ملاحظة القرار مطلوبة في مرحلة الموارد البشرية لهذه الحالة الاستثنائية.", "danger")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
@@ -16938,6 +17782,10 @@ def hr_approval_leave(req_id: int):
                             'danger',
                         )
                         return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+            converted_auto_days = _convert_auto_annual_leave_after_sick_approval(
+                r,
+                actor_id=getattr(current_user, "id", None),
+            )
             db.session.flush()
             _attendance_recompute_summaries_for_keys(
                 _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
@@ -16946,7 +17794,13 @@ def hr_approval_leave(req_id: int):
         if result == "NEXT":
             flash("تمت الموافقة وانتقل الطلب إلى المرحلة التالية.", "success")
         elif result == "APPROVED":
-            flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
+            if converted_auto_days:
+                flash(
+                    f"تم الاعتماد النهائي وتحويل {converted_auto_days} يوم محتسب تلقائياً من السنوية إلى المرضية.",
+                    "success",
+                )
+            else:
+                flash("تم الاعتماد النهائي وإرسال نسخة اطلاع للجهات المختصة.", "success")
         else:
             flash("تم رفض الطلب وإيقاف المسار.", "success")
         return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
@@ -20655,6 +21509,25 @@ def hr_attendance_events():
     # The default range is one day. For a user-selected range, retain every
     # migrated movement so the merged departure rows include all selected days.
     events = qry.order_by(AttendanceEvent.event_dt.desc()).all()
+    start_day_obj = _parse_yyyy_mm_dd(date_from)
+    end_day_obj = _parse_yyyy_mm_dd(date_to)
+    manual_events = []
+    if start_day_obj and end_day_obj:
+        manual_events = _manual_attendance_event_rows_for_report(
+            start_day_obj,
+            end_day_obj,
+            user_id=int(user_id) if user_id.isdigit() else None,
+            work_location_id=(
+                int(work_location_lookup_id)
+                if work_location_lookup_id.isdigit()
+                else None
+            ),
+            event_type=event_type,
+            device_id=device_id,
+            batch_id=int(batch_id) if batch_id.isdigit() else None,
+            search=q,
+        )
+        events.extend(manual_events)
     for event in events:
         # Display recovered legacy C/D codes without mutating the stored event.
         event.display_event_code = _attendance_event_code(event)
@@ -20683,6 +21556,16 @@ def hr_attendance_events():
                     .filter(EmployeeFile.work_location_lookup_id == int(work_location_lookup_id))
                 )
             stats_events = stats_q.order_by(AttendanceEvent.event_dt.asc()).all()
+            stats_events.extend(_manual_attendance_event_rows_for_report(
+                date.fromisoformat(selected_day),
+                date.fromisoformat(selected_day),
+                user_id=int(user_id) if user_id.isdigit() else None,
+                work_location_id=(
+                    int(work_location_lookup_id)
+                    if work_location_lookup_id.isdigit()
+                    else None
+                ),
+            ))
         except (TypeError, ValueError):
             selected_day = ''
 
@@ -20835,6 +21718,7 @@ def hr_attendance_events():
                 "البريد",
                 "التاريخ والوقت",
                 "الحركة",
+                "المصدر",
                 "نوع المغادرة",
                 "مصدر وأوقات المغادرة",
             ]
@@ -20847,6 +21731,11 @@ def hr_attendance_events():
                     (u.email if u else ""),
                     str(e.event_dt),
                     getattr(e, 'display_event_label', None) or _attendance_event_label(e),
+                    (
+                        'إدخال يدوي'
+                        if getattr(e, 'is_manual_attendance', False)
+                        else ('ساعة الدوام' if getattr(e, 'id', None) else 'نظام مسار')
+                    ),
                     e.departure_type_label or '',
                     ' | '.join(
                         f"{line['source_label']}: {line['time_range']}"
@@ -24620,6 +25509,11 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
             request_leave_type = getattr(r, "leave_type", None)
             if not _leave_type_deducts_from_balance(request_leave_type):
                 continue
+            # A system-generated annual day that was superseded by approved
+            # sick leave or verified manual attendance no longer consumes the
+            # annual balance, while the original row remains in the audit log.
+            if getattr(r, "replaced_at", None) or (getattr(r, "replacement_reason", None) or "").strip():
+                continue
             # Only count CANCELLED requests if they were cancelled after approval
             if r.status == "CANCELLED":
                 if (r.cancelled_from_status or "").upper() != "APPROVED":
@@ -24831,6 +25725,200 @@ def _is_annual_balance_type(leave_type: HRLeaveType | None) -> bool:
     code = (balance_type.code or "").strip().upper().replace("-", "_")
     name = (balance_type.name_ar or "").strip()
     return code in {"ANNUAL", "ANNUAL_LEAVE", "PERSONAL"} or "سنوي" in name
+
+
+def _annual_leave_type() -> HRLeaveType | None:
+    """Resolve the annual type used by automatic missed-punch charging."""
+    configured = (_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_LEAVE_TYPE_ID") or "").strip()
+    if configured.isdigit():
+        leave_type = db.session.get(HRLeaveType, int(configured))
+        if leave_type and leave_type.is_active and _is_annual_balance_type(leave_type):
+            return leave_type
+
+    rows = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all()
+    for leave_type in rows:
+        code = (leave_type.code or "").strip().upper().replace("-", "_")
+        if code in {"ANNUAL", "ANNUAL_LEAVE", "PERSONAL", "A", "L"} and _is_annual_balance_type(leave_type):
+            return leave_type
+    return next((leave_type for leave_type in rows if _is_annual_balance_type(leave_type)), None)
+
+
+def _is_casual_leave_type(leave_type: HRLeaveType | None) -> bool:
+    if not leave_type:
+        return False
+    code = re.sub(r"[^A-Z0-9]", "", (leave_type.code or "").strip().upper())
+    label = " ".join((leave_type.name_ar or "", leave_type.name_en or "")).casefold()
+    return (
+        code in {"T", "CASUAL", "CASUALLEAVE", "EMERGENCY", "EMERGENCYLEAVE"}
+        or "عارض" in label
+        or "طارئ" in label
+        or "casual" in label
+        or "emergency" in label
+    )
+
+
+def _employee_is_confirmed_for_casual_leave(user_id: int) -> bool:
+    """Casual/emergency leave is restricted to classified permanent staff."""
+    employee_file = db.session.get(EmployeeFile, int(user_id))
+    appointment_id = getattr(employee_file, "appointment_type_lookup_id", None)
+    appointment = db.session.get(HRLookupItem, appointment_id) if appointment_id else None
+    if not appointment:
+        return False
+
+    raw = " ".join((
+        appointment.code or "",
+        appointment.name_ar or "",
+        appointment.name_en or "",
+    )).casefold()
+    normalized = re.sub(r"[\s_\-]+", "", raw)
+    if any(token in normalized for token in ("مياوم", "يومي", "dailywage", "dayworker", "contract", "عقد")):
+        return False
+    return any(token in normalized for token in ("مثبت", "دائم", "permanent", "confirmed", "tenured"))
+
+
+def _casual_leave_policy_error(
+    user_id: int,
+    leave_type: HRLeaveType | None,
+    start_day: date | None,
+    end_day: date | None,
+) -> str | None:
+    """Validate employment class and annual exhaustion before casual leave."""
+    if not _is_casual_leave_type(leave_type):
+        return None
+    if not _employee_is_confirmed_for_casual_leave(user_id):
+        return "الإجازة العارضة/الطارئة متاحة للموظفين المثبتين فقط، ولا تشمل موظفي المياومة أو العقود."
+    if not start_day or not end_day:
+        return "تعذر التحقق من رصيد الإجازة السنوية لعدم اكتمال تاريخ الطلب."
+
+    annual_type = _annual_leave_type()
+    if not annual_type:
+        return "يجب تعريف نوع الإجازة السنوية في الإعدادات قبل تقديم إجازة عارضة/طارئة."
+
+    years = range(start_day.year, end_day.year + 1)
+    for leave_year in years:
+        entitlement = float(_leave_entitlement_days(user_id, annual_type, leave_year) or 0.0)
+        used = float(_leave_used_days(user_id, annual_type.id, leave_year) or 0.0)
+        remaining = entitlement - used
+        if remaining > 0.0001:
+            return (
+                "لا يمكن احتساب الإجازة العارضة/الطارئة قبل استنفاد رصيد الإجازة السنوية بالكامل. "
+                f"الرصيد المتبقي لعام {leave_year}: {remaining:g} يوم."
+            )
+    return None
+
+
+ATTENDANCE_AUTO_LEAVE_SOURCE = "ATTENDANCE_AUTO"
+
+
+def _attendance_leave_recipient_ids(employee_id: int) -> list[int]:
+    recipient_ids = {int(employee_id)}
+    recipient_ids.update(int(value) for value in hr_notification_user_ids())
+    recipient_ids.update(int(value) for value in secretary_general_user_ids())
+    return sorted(recipient_ids)
+
+
+def _add_attendance_leave_notifications(
+    employee_id: int,
+    message: str,
+    *,
+    event_key: str,
+    link_url: str | None = None,
+) -> int:
+    created = 0
+    safe_key = (event_key or "")[:64] or None
+    for recipient_id in _attendance_leave_recipient_ids(employee_id):
+        if safe_key and Notification.query.filter_by(user_id=recipient_id, event_key=safe_key).first():
+            continue
+        db.session.add(Notification(
+            user_id=recipient_id,
+            message=(message or "")[:255],
+            type="HR_ATTENDANCE_LEAVE",
+            source="portal",
+            link_url=safe_local_notification_url(link_url),
+            event_key=safe_key,
+            is_read=False,
+            created_at=datetime.utcnow(),
+        ))
+        created += 1
+    return created
+
+
+def _replace_attendance_auto_annual_leaves(
+    user_id: int,
+    start_day: str,
+    end_day: str,
+    *,
+    replacement_leave_request_id: int | None = None,
+    reason: str,
+    actor_id: int | None = None,
+) -> list[HRLeaveRequest]:
+    """Release auto annual charges while preserving their audit history."""
+    rows = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id == int(user_id))
+        .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
+        .filter(HRLeaveRequest.source_attendance_day >= start_day)
+        .filter(HRLeaveRequest.source_attendance_day <= end_day)
+        .filter(HRLeaveRequest.status == "APPROVED")
+        .filter(HRLeaveRequest.replaced_at.is_(None))
+        .order_by(HRLeaveRequest.source_attendance_day.asc(), HRLeaveRequest.id.asc())
+        .all()
+    )
+    now = datetime.utcnow()
+    for annual_row in rows:
+        annual_day = _parse_yyyy_mm_dd(annual_row.source_attendance_day or annual_row.start_date)
+        annual_row.cancelled_from_status = "APPROVED"
+        annual_row.status = "CANCELLED"
+        annual_row.cancelled_at = now
+        annual_row.cancelled_by_id = actor_id
+        annual_row.cancel_effective_date = (
+            (annual_day - timedelta(days=1)).isoformat() if annual_day else annual_row.start_date
+        )
+        annual_row.cancel_note = reason
+        annual_row.replaced_by_leave_request_id = replacement_leave_request_id
+        annual_row.replaced_at = now
+        annual_row.replacement_reason = reason[:80]
+        annual_row.updated_at = now
+        _portal_audit(
+            "HR_ATTENDANCE_AUTO_LEAVE_REPLACED",
+            (
+                f"auto_leave_id={annual_row.id}; day={annual_row.source_attendance_day}; "
+                f"replacement_leave_id={replacement_leave_request_id or ''}; reason={reason}"
+            ),
+            target_type="LEAVE_REQUEST",
+            target_id=annual_row.id,
+            user_id=actor_id,
+        )
+    return rows
+
+
+def _convert_auto_annual_leave_after_sick_approval(
+    sick_request: HRLeaveRequest,
+    *,
+    actor_id: int | None = None,
+) -> int:
+    if (sick_request.status or "").upper() != "APPROVED" or not is_sick_leave(sick_request):
+        return 0
+    rows = _replace_attendance_auto_annual_leaves(
+        sick_request.user_id,
+        sick_request.start_date,
+        sick_request.end_date,
+        replacement_leave_request_id=sick_request.id,
+        reason="APPROVED_SICK_LEAVE",
+        actor_id=actor_id,
+    )
+    if rows:
+        employee_name = sick_request.user.full_name if sick_request.user else f"#{sick_request.user_id}"
+        _add_attendance_leave_notifications(
+            sick_request.user_id,
+            (
+                f"تم تحويل {len(rows)} يوم من الإجازة السنوية المحتسبة تلقائياً للموظف "
+                f"{employee_name} إلى إجازة مرضية بعد اعتماد الطلب #{sick_request.id} نهائياً."
+            ),
+            event_key=f"att-sick-conversion-{sick_request.id}",
+            link_url=f"/portal/hr/approvals/leaves/{sick_request.id}",
+        )
+    return len(rows)
 
 
 def _leave_rollover_marker(source_year: int, target_year: int) -> str:
@@ -27005,6 +28093,7 @@ def hr_attendance_daily():
         qry.order_by(AttendanceDailySummary.day.desc()).limit(500).all()
     )
     _attach_reconciled_departures(rows, include_pending=True)
+    _attach_manual_attendance_flags(rows)
     # The filter needs only these three fields. Avoid materializing every
     # relationship on every user when the organization has a large directory.
     users = (
@@ -27102,13 +28191,14 @@ def hr_attendance_daily_export_xlsx():
 
     rows = qry.order_by(AttendanceDailySummary.day.desc()).limit(5000).all()
     _attach_reconciled_departures(rows)
+    _attach_manual_attendance_flags(rows)
 
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
     ws.title = 'Daily Attendance'
 
-    headers = ['اليوم', 'الموظف', 'البريد', 'الجدول', 'أول دخول', 'آخر خروج', 'ساعات عمل', 'استراحة (د)', 'تأخير (د)', 'خروج مبكر (د)', 'مغادرات شخصية (د)', 'مغادرات رسمية (د)', 'إضافي (د)', 'الحالة']
+    headers = ['اليوم', 'الموظف', 'البريد', 'المصدر', 'الجدول', 'أول دخول', 'آخر خروج', 'ساعات عمل', 'استراحة (د)', 'تأخير (د)', 'خروج مبكر (د)', 'مغادرات شخصية (د)', 'مغادرات رسمية (د)', 'إضافي (د)', 'الحالة']
     ws.append(headers)
 
     for r in rows:
@@ -27118,7 +28208,8 @@ def hr_attendance_daily_export_xlsx():
         fi = r.first_in.isoformat(sep=' ', timespec='minutes') if r.first_in else ''
         lo = r.last_out.isoformat(sep=' ', timespec='minutes') if r.last_out else ''
         hours = round((r.work_minutes or 0) / 60.0, 2)
-        ws.append([r.day, name, email, sched, fi, lo, hours, r.break_minutes or 0, r.late_minutes or 0, r.early_leave_minutes or 0, r.private_departure_minutes or 0, r.official_departure_minutes or 0, r.overtime_minutes or 0, r.status])
+        source = 'إدخال يدوي' if getattr(r, 'manual_attendance', False) else 'بصمة الساعة'
+        ws.append([r.day, name, email, source, sched, fi, lo, hours, r.break_minutes or 0, r.late_minutes or 0, r.early_leave_minutes or 0, r.private_departure_minutes or 0, r.official_departure_minutes or 0, r.overtime_minutes or 0, r.status])
 
     bio = BytesIO()
     wb.save(bio)
@@ -32117,7 +33208,8 @@ def _portal_perm_presets_defaults():
         "HR_ADMIN": {
             "label": "HR / Admin",
             "keys": _with_base([
-                HR_ATT_CREATE, HR_ATT_EXPORT,
+                HR_ATT_CREATE, HR_ATT_EXPORT, HR_ATT_EDIT, HR_ATT_EDIT_APPROVE,
+                HR_REPORTS_VIEW, HR_REPORTS_EXPORT,
                 HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
                 HR_ORG_READ, HR_ORG_MANAGE,
                 HR_LEAVE_BALANCES_MANAGE,
@@ -32158,7 +33250,9 @@ def _portal_perm_presets_defaults():
                 HR_SYSTEM_EVALUATION_VIEW,
                 HR_EVALUATIONS_MANAGE,
                 HR_ATT_EXPORT,
+                HR_ATT_EDIT_APPROVE,
                 HR_REPORTS_VIEW,
+                HR_REPORTS_EXPORT,
                 HR_EMP_READ,
                 HR_EMP_ATTACH,
                 HR_ORG_MANAGE,
@@ -35745,6 +36839,10 @@ def hr_leaves_admin_new():
         if end_day < start_day:
             flash('تاريخ النهاية يجب أن يكون بعد تاريخ البداية.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
+        casual_policy_error = _casual_leave_policy_error(int(user_id), lt, start_day, end_day)
+        if casual_policy_error:
+            flash(casual_policy_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
         days_val = _calculate_leave_days(lt, start_date, end_date, user_id=int(user_id))
         limit_error, limit_warning = _leave_duration_limit_messages(lt, days_val)
         if limit_error:
@@ -35915,6 +37013,16 @@ def hr_leaves_admin_edit(row_id: int):
             row.end_date,
             user_id=row.user_id,
         )
+        casual_policy_error = _casual_leave_policy_error(
+            row.user_id,
+            lt,
+            _parse_yyyy_mm_dd(row.start_date),
+            _parse_yyyy_mm_dd(row.end_date),
+        )
+        if casual_policy_error:
+            db.session.rollback()
+            flash(casual_policy_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
         limit_error, limit_warning = _leave_duration_limit_messages(lt, row.days)
         if limit_error:
             db.session.rollback()

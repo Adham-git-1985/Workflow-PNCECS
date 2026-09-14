@@ -652,6 +652,89 @@ def _is_hr_approver(user: User) -> bool:
         return False
 
 
+def _is_administrative_affairs_label(*values: str | None) -> bool:
+    label = " ".join(str(value or "") for value in values).casefold()
+    return bool(
+        ("شؤون" in label and ("إداري" in label or "اداري" in label))
+        or ("administrative" in label and "affairs" in label)
+    )
+
+
+def administrative_affairs_manager_user_ids() -> list[int]:
+    """Resolve the currently assigned Administrative Affairs manager(s)."""
+    manager_ids: set[int] = set()
+
+    # Optional explicit override supports organizations whose directory labels
+    # differ from the standard Administrative Affairs naming.
+    try:
+        setting_rows = SystemSetting.query.filter(SystemSetting.key.in_((
+            "HR_ADMINISTRATIVE_AFFAIRS_MANAGER_USER_IDS",
+            "HR_ATTENDANCE_EDIT_HR_APPROVER_USER_IDS",
+            "TRANSPORT_ADMIN_USER_ID",
+        ))).all()
+        for setting in setting_rows:
+            raw = (setting.value or "").strip()
+            if not raw:
+                continue
+            try:
+                decoded = json.loads(raw)
+            except (TypeError, ValueError):
+                decoded = raw.replace(";", ",").split(",")
+            if not isinstance(decoded, (list, tuple, set)):
+                decoded = [decoded]
+            manager_ids.update(int(value) for value in decoded if str(value).strip().isdigit())
+    except Exception:
+        pass
+
+    try:
+        dynamic_assignments = (
+            db.session.query(
+                OrgNodeManager.manager_user_id,
+                OrgNode.name_ar,
+                OrgNode.name_en,
+                OrgNode.code,
+            )
+            .join(OrgNode, OrgNode.id == OrgNodeManager.node_id)
+            .all()
+        )
+        for manager_user_id, name_ar, name_en, code in dynamic_assignments:
+            if manager_user_id and _is_administrative_affairs_label(
+                name_ar,
+                name_en,
+                code,
+            ):
+                manager_ids.add(int(manager_user_id))
+    except Exception:
+        pass
+
+    try:
+        for assignment in OrgUnitManager.query.filter(
+            OrgUnitManager.unit_type.in_(("DIRECTORATE", "DEPARTMENT"))
+        ).all():
+            unit_type = (assignment.unit_type or "").upper()
+            unit = (
+                db.session.get(Directorate, assignment.unit_id)
+                if unit_type == "DIRECTORATE"
+                else db.session.get(Department, assignment.unit_id)
+            )
+            if assignment.manager_user_id and unit and _is_administrative_affairs_label(
+                unit.name_ar,
+                unit.name_en,
+                unit.code,
+            ):
+                manager_ids.add(int(assignment.manager_user_id))
+    except Exception:
+        pass
+
+    # Role-based fallback covers installations that have not populated the
+    # organizational manager tables yet.
+    for user in User.query.all():
+        role = _normalize(getattr(user, "role", None))
+        if role in {"HRADMIN", "HRMANAGER", "ADMINISTRATIVEAFFAIRSMANAGER"}:
+            manager_ids.add(int(user.id))
+    return sorted(manager_ids)
+
+
 def _can_approve_all_requests(user: User) -> bool:
     if not user:
         return False
@@ -674,11 +757,12 @@ def hr_observer_user_ids() -> list[int]:
 
 
 def hr_notification_user_ids() -> list[int]:
-    """Return HR staff who may receive employee-request notifications.
+    """Return HR/Administrative Affairs staff for request notifications.
 
     Approval permissions are intentionally not enough here: those permissions
     are also assigned to directors and department heads.  Notifications for an
-    employee's leave or departure must stay within the HR department.
+    employee's leave or departure must stay within the responsible personnel
+    or Administrative Affairs department.
     """
     hr_department_ids: set[int] = set()
     for department in Department.query.filter_by(is_active=True).all():
@@ -687,7 +771,13 @@ def hr_notification_user_ids() -> list[int]:
             getattr(department, "name_en", "") or "",
             getattr(department, "code", "") or "",
         )).casefold()
-        if "الموارد البشرية" in label or "human resources" in label:
+        if any(value in label for value in (
+            "الموارد البشرية",
+            "human resources",
+            "الشؤون الإدارية",
+            "الشؤون الادارية",
+            "administrative affairs",
+        )):
             hr_department_ids.add(int(department.id))
 
     recipient_ids: set[int] = set()
@@ -703,6 +793,7 @@ def hr_notification_user_ids() -> list[int]:
         for employee_file in EmployeeFile.query.filter(EmployeeFile.department_id.in_(hr_department_ids)).all():
             if employee_file.user_id:
                 recipient_ids.add(int(employee_file.user_id))
+    recipient_ids.update(administrative_affairs_manager_user_ids())
     return sorted(recipient_ids)
 
 
@@ -721,6 +812,11 @@ def _stage_reminder_at(step: HRRequestApprovalStep) -> datetime:
 
 
 def is_special_leave(row: HRLeaveRequest) -> bool:
+    if is_sick_leave(row):
+        # Sick leave always continues through Administrative Affairs/HR and
+        # the Secretary General so an attendance-generated annual day can be
+        # replaced only after a fully approved medical request.
+        return True
     leave_type = getattr(row, "leave_type", None)
     if (getattr(leave_type, "code", None) or "").strip().upper() in {"UNPAID", "STUDY", "W", "U"}:
         # Statutory unpaid and study leave must be reviewed by HR and the
@@ -734,6 +830,16 @@ def is_special_leave(row: HRLeaveRequest) -> bool:
         return bool(leave_type and leave_type.max_days and row.days and int(row.days) > int(leave_type.max_days))
     except Exception:
         return False
+
+
+def is_sick_leave(row: HRLeaveRequest | None) -> bool:
+    leave_type = getattr(row, "leave_type", None) if row else None
+    code = _normalize(getattr(leave_type, "code", None))
+    names = " ".join((
+        getattr(leave_type, "name_ar", None) or "",
+        getattr(leave_type, "name_en", None) or "",
+    )).casefold()
+    return code in {"S", "SICK", "MEDICAL", "SICKLEAVE", "MEDICALLEAVE"} or "مرض" in names or "sick" in names or "medical" in names
 
 
 def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
@@ -785,7 +891,9 @@ def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
 
 def _step_specs(kind: str, row) -> list[tuple[str, str]]:
     specs = [(STAGE_DIRECT_MANAGER, SCOPE_USER)]
-    if kind == KIND_LEAVE and requires_secretary_general_leave_approval(row):
+    if kind == KIND_LEAVE and is_sick_leave(row):
+        specs.extend(((STAGE_HR, SCOPE_HR), (STAGE_SECRETARY_GENERAL, SCOPE_SECRETARY_GENERAL)))
+    elif kind == KIND_LEAVE and requires_secretary_general_leave_approval(row):
         # A minister, deputy/under-secretary, or director general submits
         # directly to the Secretary-General.  These positions do not need a
         # parallel direct-manager or unrelated HR review stage.

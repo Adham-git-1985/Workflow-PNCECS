@@ -10,7 +10,7 @@
   <div class="report-count"><strong>{{ events|length }}</strong><span>حركة</span></div>
 </header>
 <table class="compact">
-  <thead><tr><th>م اليوم</th><th>الموظف</th><th>التاريخ والوقت</th><th>الحركة</th><th>نوع المغادرة</th><th>المصدر والأوقات</th></tr></thead>
+  <thead><tr><th>م اليوم</th><th>الموظف</th><th>التاريخ والوقت</th><th>الحركة</th><th>مصدر الحركة</th><th>نوع المغادرة</th><th>المصدر والأوقات</th></tr></thead>
   <tbody>
     {% for event in events %}
       {% set user = users.get(event.user_id) %}
@@ -20,10 +20,11 @@
         <td><strong>{{ user.full_name if user else event.user_id }}</strong>{% if user and user.email %}<div class="small muted">{{ user.email }}</div>{% endif %}</td>
         <td class="center ltr">{{ event.event_dt.strftime('%Y-%m-%d %H:%M') if event.event_dt else '—' }}</td>
         <td class="center">{{ event.display_event_label or event_labels.get(code, code) }}</td>
+        <td class="center">{% if event.is_manual_attendance %}إدخال يدوي{% elif event.id %}ساعة الدوام{% else %}نظام مسار{% endif %}</td>
         <td class="center">{% if event.departure_type_label %}مغادرة {{ event.departure_type_label }}{% else %}—{% endif %}{% if event.departure_is_pending %}<div class="small">قيد الاعتماد</div>{% endif %}</td>
         <td>{% for detail in event.departure_display_lines|default([]) %}<div><strong>{{ detail.source_label }}:</strong> {{ detail.time_range }}</div>{% else %}—{% endfor %}</td>
       </tr>
-    {% else %}<tr><td colspan="6" class="center muted">لا توجد بيانات.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="7" class="center muted">لا توجد بيانات.</td></tr>{% endfor %}
   </tbody>
 </table>
 {% endblock %}

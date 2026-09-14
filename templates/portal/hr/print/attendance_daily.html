@@ -10,13 +10,14 @@
   <div class="report-count"><strong>{{ rows|length }}</strong><span>سجل دوام</span></div>
 </header>
 <table class="compact">
-  <thead><tr><th>#</th><th>اليوم</th><th>الموظف</th><th>أول دخول</th><th>آخر خروج</th><th>ساعات العمل</th><th>تأخير</th><th>خروج مبكر</th><th>مغادرة شخصية</th><th>مغادرة رسمية</th><th>إضافي</th><th>الحالة</th><th>الجدول</th></tr></thead>
+  <thead><tr><th>#</th><th>اليوم</th><th>الموظف</th><th>المصدر</th><th>أول دخول</th><th>آخر خروج</th><th>ساعات العمل</th><th>تأخير</th><th>خروج مبكر</th><th>مغادرة شخصية</th><th>مغادرة رسمية</th><th>إضافي</th><th>الحالة</th><th>الجدول</th></tr></thead>
   <tbody>
     {% for row in rows %}
     <tr>
       <td class="center">{{ row.daily_employee_number or '—' }}</td>
       <td class="ltr">{{ row.day }}</td>
       <td>{{ row.user.full_name or row.user.email }}</td>
+      <td class="center">{{ 'إدخال يدوي' if row.manual_attendance else 'بصمة الساعة' }}</td>
       <td class="center ltr">{{ row.first_in.strftime('%H:%M') if row.first_in else '—' }}</td>
       <td class="center ltr">{{ row.last_out.strftime('%H:%M') if row.last_out else '—' }}</td>
       <td class="center">{{ '%.2f'|format((row.work_minutes or 0) / 60) }}</td>
@@ -28,7 +29,7 @@
       <td class="center">{% if row.status == 'OK' %}<span class="badge success">مكتمل</span>{% elif row.status == 'INCOMPLETE' %}<span class="badge danger">غير مكتمل</span>{% else %}{{ row.status|ui_label }}{% endif %}</td>
       <td>{{ row.schedule.name if row.schedule else '—' }}</td>
     </tr>
-    {% else %}<tr><td colspan="13" class="center muted">لا توجد بيانات.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="14" class="center muted">لا توجد بيانات.</td></tr>{% endfor %}
   </tbody>
 </table>
 {% endblock %}

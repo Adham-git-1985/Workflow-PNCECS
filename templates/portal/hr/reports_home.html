@@ -80,6 +80,17 @@
 <h5 class="mb-2">الدوام</h5>
 <div class="row g-3 mb-4">
   <div class="col-12 col-md-6 col-lg-4">
+    <div class="p-3 bg-white rounded-3 shadow-sm h-100 border border-primary">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <i class="bi bi-clipboard2-data fs-4 text-primary"></i>
+        <div class="fw-bold">تقرير الشؤون الإدارية الموحّد</div>
+      </div>
+      <div class="text-muted small mb-3">جميع الموظفين يومياً: الحاضرون، المجازون، المناوبون عن بُعد، وحالات الدوام المكتبي بلا بصمة.</div>
+      <a class="btn btn-primary w-100" href="{{ url_for('portal.hr_report_administrative_affairs_daily') }}">فتح التقرير</a>
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6 col-lg-4">
     <div class="p-3 bg-white rounded-3 shadow-sm h-100">
       <div class="d-flex align-items-center gap-2 mb-2">
         <i class="bi bi-shield-check fs-4"></i>
