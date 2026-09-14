@@ -249,6 +249,15 @@
                        href="{{ url_for('workflow.preview_workflow_attachment', file_id=f.id) }}">
                       معاينة
                     </a>
+                    {% if a.id in can_delete_workflow_attachment_ids %}
+                      <form method="post"
+                            action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=a.id) }}"
+                            onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف المرفق من المسار">
+                          <i class="bi bi-trash"></i> حذف
+                        </button>
+                      </form>
+                    {% endif %}
                   </div>
                 {% endif %}
               </li>
@@ -390,6 +399,15 @@
                       <div class="text-nowrap ms-2">
                         <a class="btn btn-sm btn-outline-secondary py-0 px-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">عرض</a>
                         <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('workflow.download_workflow_attachment', file_id=it.file_id) }}">تنزيل</a>
+                        {% if it.attachment_id in can_delete_workflow_attachment_ids %}
+                          <form method="post" class="d-inline"
+                                action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=it.attachment_id) }}"
+                                onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                            <button class="btn btn-sm btn-outline-danger py-0 px-2" type="submit" title="حذف المرفق من المسار">
+                              <i class="bi bi-trash"></i> حذف
+                            </button>
+                          </form>
+                        {% endif %}
                       </div>
                     </div>
                     <div class="text-muted" style="font-size:12px">
@@ -561,6 +579,15 @@
                             <div class="text-nowrap ms-2">
                               <a class="btn btn-sm btn-outline-secondary py-0 px-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}">عرض</a>
                               <a class="btn btn-sm btn-outline-primary py-0 px-2" href="{{ url_for('workflow.download_workflow_attachment', file_id=it.file_id) }}">تنزيل</a>
+                              {% if it.attachment_id in can_delete_workflow_attachment_ids %}
+                                <form method="post" class="d-inline"
+                                      action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=it.attachment_id) }}"
+                                      onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                                  <button class="btn btn-sm btn-outline-danger py-0 px-2" type="submit" title="حذف المرفق من المسار">
+                                    <i class="bi bi-trash"></i> حذف
+                                  </button>
+                                </form>
+                              {% endif %}
                             </div>
                           </div>
                           <div class="text-muted" style="font-size:12px">

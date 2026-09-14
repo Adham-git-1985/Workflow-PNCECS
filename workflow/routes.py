@@ -2060,6 +2060,29 @@ def _get_request_files(req: WorkflowRequest):
     return []
 
 
+def _can_delete_workflow_attachment(user, req: WorkflowRequest, file: ArchivedFile) -> bool:
+    """Whether a user may remove one attachment link from a workflow request."""
+    if not user or not req or not file:
+        return False
+
+    if is_super_admin(user) or _is_admin(user):
+        return True
+
+    try:
+        user_id = int(user.id)
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+    return user_id in {
+        int(owner_id)
+        for owner_id in (
+            getattr(req, "requester_id", None),
+            getattr(file, "owner_id", None),
+        )
+        if owner_id
+    }
+
+
 # =========================
 # PDF Report
 # =========================
@@ -2419,6 +2442,62 @@ def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRe
     if not req or not _user_can_view_request(current_user, req):
         abort(403)
     return file, req
+
+
+@workflow_bp.route(
+    "/request/<int:request_id>/attachments/<int:attachment_id>/delete",
+    methods=["POST"],
+)
+@login_required
+def delete_workflow_attachment(request_id: int, attachment_id: int):
+    """Remove one attachment link from a workflow request.
+
+    The archived file is intentionally preserved. It may have originated in
+    the archive or be linked to another workflow request as well.
+    """
+    req = WorkflowRequest.query.get_or_404(request_id)
+    if not _user_can_view_request(current_user, req):
+        abort(403)
+
+    attachment = (
+        RequestAttachment.query
+        .filter_by(id=attachment_id, request_id=req.id)
+        .first_or_404()
+    )
+    file = ArchivedFile.query.filter(
+        ArchivedFile.id == attachment.archived_file_id,
+        ArchivedFile.is_deleted.is_(False),
+    ).first_or_404()
+
+    if not _can_delete_workflow_attachment(current_user, req, file):
+        abort(403)
+
+    try:
+        db.session.delete(attachment)
+        db.session.add(AuditLog(
+            request_id=req.id,
+            user_id=current_user.id,
+            action="WORKFLOW_ATTACHMENT_DELETED",
+            old_status=req.status,
+            new_status=req.status,
+            note=f"Attachment: {file.original_name} | file_id={file.id} | removed_from_workflow=True",
+            target_type="ARCHIVE_FILE",
+            target_id=file.id,
+            created_at=datetime.utcnow(),
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        logger.exception(
+            "Failed to remove workflow attachment %s from request %s",
+            attachment_id,
+            request_id,
+        )
+        flash("تعذر حذف المرفق من المسار.", "danger")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    flash("تم حذف المرفق من المسار، وبقي الملف محفوظًا في الأرشيف.", "success")
+    return redirect(url_for("workflow.view_request", request_id=req.id))
 
 
 @workflow_bp.route("/attachment/<int:file_id>/download")
@@ -4178,7 +4257,7 @@ def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, Arc
     """Return the useful, non-technical detail for the request activity feed."""
     raw_note = str(getattr(log, "note", None) or "").strip()
 
-    if action == "WORKFLOW_ATTACHMENT_UPLOADED":
+    if action in {"WORKFLOW_ATTACHMENT_UPLOADED", "WORKFLOW_ATTACHMENT_DELETED"}:
         file_item = files_map.get(int(getattr(log, "target_id", 0) or 0))
         filename = (
             getattr(file_item, "original_name", None)
@@ -5712,6 +5791,26 @@ def view_request(request_id):
         files = ArchivedFile.query.filter(ArchivedFile.id.in_(file_ids)).all()
         files_map = {f.id: f for f in files}
 
+    active_attachment_file_ids = {
+        int(file.id)
+        for file in files_map.values()
+        if not getattr(file, "is_deleted", False)
+    }
+
+    can_delete_workflow_attachment_ids = {
+        int(attachment.id)
+        for attachment in atts
+        if (
+            getattr(attachment, "archived_file", None)
+            and not getattr(attachment.archived_file, "is_deleted", False)
+            and _can_delete_workflow_attachment(
+                current_user,
+                req,
+                attachment.archived_file,
+            )
+        )
+    }
+
     audit = (
         AuditLog.query
         .filter_by(request_id=req.id)
@@ -5770,6 +5869,7 @@ def view_request(request_id):
         "PARALLEL_SYNC_AUTHORIZED": "تم توجيه الخطوة المتزامنة",
         "PARALLEL_SYNC_RESPONDED": "تمت متابعة الخطوة المتزامنة",
         "WORKFLOW_ATTACHMENT_UPLOADED": "تمت إضافة مرفق",
+        "WORKFLOW_ATTACHMENT_DELETED": "تم حذف مرفق من المسار",
     }
     user_audit = []
     for log in reversed(audit):
@@ -5813,6 +5913,11 @@ def view_request(request_id):
             .all()
         )
         for lg in attachment_upload_logs:
+            try:
+                if int(getattr(lg, "target_id", 0) or 0) not in active_attachment_file_ids:
+                    continue
+            except (TypeError, ValueError):
+                continue
             so, _src = _parse_attachment_meta(getattr(lg, 'note', None))
             if so is None:
                 continue
@@ -6541,6 +6646,11 @@ def request_attachments(request_id):
             uploaded_by = uploader.email or uploader.name
 
         items.append({
+            "attachment_id": int(next(
+                attachment.id
+                for attachment in atts
+                if int(attachment.archived_file_id) == int(f.id)
+            )),
             "file_id": int(f.id),
             "name": getattr(f, "original_name", None) or getattr(f, "stored_name", None) or f"File #{f.id}",
             "mime_type": getattr(f, "mime_type", None),
@@ -6581,6 +6691,19 @@ def request_attachments(request_id):
         template=template,
         groups=groups,
         total_count=total_count,
+        can_delete_workflow_attachment_ids={
+            int(attachment.id)
+            for attachment in atts
+            if (
+                getattr(attachment, "archived_file", None)
+                and not getattr(attachment.archived_file, "is_deleted", False)
+                and _can_delete_workflow_attachment(
+                    current_user,
+                    req,
+                    attachment.archived_file,
+                )
+            )
+        },
     )
 
 

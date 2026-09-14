@@ -83,6 +83,15 @@
                        href="{{ url_for('workflow.download_workflow_attachment', file_id=it.file_id) }}">
                       تنزيل
                     </a>
+                    {% if it.attachment_id in can_delete_workflow_attachment_ids %}
+                      <form method="post" class="d-inline"
+                            action="{{ url_for('workflow.delete_workflow_attachment', request_id=req.id, attachment_id=it.attachment_id) }}"
+                            onsubmit="return confirm('هل تريد حذف المرفق من المسار؟ سيبقى محفوظًا في الأرشيف.');">
+                        <button class="btn btn-sm btn-outline-danger" type="submit" title="حذف المرفق من المسار">
+                          <i class="bi bi-trash"></i> حذف
+                        </button>
+                      </form>
+                    {% endif %}
                   </td>
                 </tr>
               {% endfor %}
