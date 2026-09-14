@@ -102,7 +102,7 @@
                   <a class="btn btn-sm btn-outline-secondary disabled" href="#" title="تم تجهيز الأساسيات - يمكن توسيع التعديل لاحقاً">تعديل</a>
                 {% endif %}
                 {% if it.id in actionable_permit_ids %}
-                  <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.transport_permit_view', permit_id=it.id) }}#decision">اعتماد</a>
+                  <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.transport_permit_action', permit_id=it.id) }}">اعتماد</a>
                 {% endif %}
               </div>
             </td>

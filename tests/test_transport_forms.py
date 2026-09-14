@@ -423,12 +423,19 @@ class TransportReadyFormsTests(unittest.TestCase):
             self.assertEqual(listing.status_code, 200)
             listing_body = listing.get_data(as_text=True)
             self.assertIn(
-                f"/portal/transport/permits/{self.pending_transport_permit.id}#decision",
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
                 listing_body,
             )
 
+            tasks = client.get("/portal/transport/movement-tasks")
+            self.assertEqual(tasks.status_code, 200)
+            self.assertIn(
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/action",
+                tasks.get_data(as_text=True),
+            )
+
             detail = client.get(
-                f"/portal/transport/permits/{self.pending_transport_permit.id}"
+                f"/portal/transport/permits/{self.pending_transport_permit.id}/action"
             )
             self.assertEqual(detail.status_code, 200)
             self.assertIn('name="driver_id"', detail.get_data(as_text=True))
