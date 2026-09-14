@@ -50,8 +50,13 @@ def _user_is_super_admin(user) -> bool:
     except Exception:
         pass
 
+    # Very old installations used the first row as a bootstrap administrator.
+    # Keep that compatibility only when the account has no explicit role.  An
+    # account that was subsequently assigned a normal role (for example a
+    # directorate head) must not regain super-admin visibility merely because
+    # its database id happens to be 1.
     try:
-        if getattr(user, "id", None) == 1:
+        if getattr(user, "id", None) == 1 and not (getattr(user, "role", "") or "").strip():
             return True
     except Exception:
         pass

@@ -11,6 +11,7 @@ from workflow.temporary_delete import (
     can_delete_workflow_request,
     can_delete_workflow_template,
 )
+from permissions import _user_is_super_admin
 
 
 class WorkflowTemporaryDeleteTests(unittest.TestCase):
@@ -101,6 +102,19 @@ class WorkflowTemporaryDeleteTests(unittest.TestCase):
         )
 
         self.assertTrue(can_delete_workflow_request(self.super_admin, request_row, now=now))
+
+    def test_explicit_normal_role_overrides_legacy_id_one_fallback(self):
+        user = type(
+            "LegacyIdOneUser",
+            (),
+            {
+                "id": 1,
+                "role": "directorate_head",
+                "has_role": lambda self, role: False,
+            },
+        )()
+
+        self.assertFalse(_user_is_super_admin(user))
 
     def test_owner_can_revoke_template_during_first_hour(self):
         now = datetime.utcnow()
