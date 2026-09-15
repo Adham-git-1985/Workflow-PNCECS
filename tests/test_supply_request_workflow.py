@@ -14,7 +14,11 @@ from models import (
     InvEmployeeRequest,
     InvEmployeeRequestAction,
     InvEmployeeRequestLine,
+    InvIssueVoucher,
     InvItem,
+    InvStocktakeVoucher,
+    InvStocktakeVoucherLine,
+    InvWarehouse,
     User,
     UserPermission,
 )
@@ -66,7 +70,28 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.employee = User(email="employee@example.test", name="Employee", password_hash="x", role="employee")
         self.first_manager = User(email="manager-1@example.test", name="Manager One", password_hash="x", role="employee")
         self.second_manager = User(email="manager-2@example.test", name="Manager Two", password_hash="x", role="employee")
-        db.session.add_all((self.employee, self.first_manager, self.second_manager))
+        self.warehouse_manager = User(
+            email="warehouse-manager@example.test",
+            name="Warehouse Manager",
+            password_hash="x",
+            role="employee",
+        )
+        self.hr_director = User(
+            email="hr-director@example.test",
+            name="HR Director",
+            password_hash="x",
+            role="HR_MANAGER",
+        )
+        db.session.add_all((
+            self.employee,
+            self.first_manager,
+            self.second_manager,
+            self.warehouse_manager,
+            self.hr_director,
+        ))
+        db.session.flush()
+        self.warehouse = InvWarehouse(name="Main warehouse", code="MAIN", is_active=True)
+        db.session.add(self.warehouse)
         db.session.flush()
         self.request = InvEmployeeRequest(
             requester_user_id=self.employee.id,
@@ -90,6 +115,7 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         db.session.add_all((
             InvItem(name="Printer paper", code="PAPER-001", is_active=True),
             UserPermission(user_id=self.employee.id, key="PORTAL_READ", is_allowed=True),
+            UserPermission(user_id=self.warehouse_manager.id, key="INVENTORY_REQUEST_APPROVE", is_allowed=True),
         ))
         db.session.commit()
         self.client = self.app.test_client()
@@ -101,6 +127,20 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             session.clear()
             session["_user_id"] = str(user_id)
             session["_fresh"] = True
+
+    def _submit_warehouse_manager_request(self):
+        item = InvItem.query.filter_by(code="PAPER-001").one()
+        self._login(self.warehouse_manager.id)
+        response = self.client.post(
+            "/portal/inventory/employee-requests/new",
+            data={
+                "item_id": str(item.id),
+                "requested_qty": "3",
+                "purpose": "Warehouse manager request",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        return InvEmployeeRequest.query.order_by(InvEmployeeRequest.id.desc()).first()
 
     def test_one_of_the_direct_managers_can_approve_the_request(self):
         self._login(self.second_manager.id)
@@ -126,6 +166,59 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
             data={"note": "A second decision must not be accepted"},
         )
         self.assertEqual(duplicate.status_code, 403)
+
+    def test_warehouse_manager_request_uses_hr_fallback_and_not_self_approval(self):
+        row = self._submit_warehouse_manager_request()
+
+        self.assertEqual(row.requester_user_id, self.warehouse_manager.id)
+        self.assertEqual(row.approval_stage, "HR")
+
+        self._login(self.warehouse_manager.id)
+        self.assertEqual(
+            self.client.post(
+                f"/portal/inventory/employee-requests/{row.id}/approve",
+                data={"decision": "approve"},
+            ).status_code,
+            403,
+        )
+
+    def test_hr_fallback_creates_employee_issue_voucher(self):
+        row = self._submit_warehouse_manager_request()
+        line = row.lines[0]
+        stocktake = InvStocktakeVoucher(
+            voucher_no="STK-TEST-001",
+            voucher_date="2020-01-01",
+            warehouse_id=self.warehouse.id,
+            created_by_id=self.hr_director.id,
+        )
+        db.session.add(stocktake)
+        db.session.flush()
+        db.session.add(InvStocktakeVoucherLine(
+            voucher_id=stocktake.id,
+            item_id=line.item_id,
+            qty=10,
+        ))
+        db.session.commit()
+
+        self._login(self.hr_director.id)
+        response = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={
+                "decision": "approve",
+                "warehouse_id": str(self.warehouse.id),
+                f"approved_qty_{line.id}": "3",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        db.session.expire_all()
+        updated = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(updated.status, "APPROVED")
+        self.assertEqual(updated.approval_stage, "DONE")
+        voucher = InvIssueVoucher.query.one()
+        self.assertEqual(voucher.issue_kind, "EMPLOYEE")
+        self.assertEqual(voucher.from_warehouse_id, self.warehouse.id)
+        self.assertEqual(updated.lines[0].issue_voucher_id, voucher.id)
 
     def test_current_approver_can_reject_with_a_recorded_reason(self):
         self._login(self.second_manager.id)

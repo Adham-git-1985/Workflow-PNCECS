@@ -39,6 +39,7 @@ from utils.inventory_numbers import auto_inventory_voucher_no
 
 
 STAGES = {
+    "HR": "مدير الشؤون البشرية (بديل)",
     "MANAGER": "المسؤولون المباشرون",
     "WAREHOUSE": "مدير المستودع",
     "DONE": "مكتمل",
@@ -136,6 +137,130 @@ def _grant_permission(user_id, key):
         db.session.add(UserPermission(user_id=user_id, key=key, is_allowed=True))
 
 
+def _unique_user_ids(values, *, exclude_user_id=None):
+    excluded = {int(exclude_user_id)} if exclude_user_id else set()
+    result = []
+    seen = set()
+    for value in values:
+        try:
+            user_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if user_id <= 0 or user_id in excluded or user_id in seen:
+            continue
+        if db.session.get(User, user_id) is None:
+            continue
+        seen.add(user_id)
+        result.append(user_id)
+    return result
+
+
+def _user_has_permission_without_delegation(user, key):
+    """Check another user's permission without inheriting the current actor."""
+    try:
+        from flask import g, has_request_context
+
+        if not has_request_context():
+            return bool(user.has_perm(key))
+        marker = object()
+        effective_user = getattr(g, "effective_user", marker)
+        if effective_user is not marker:
+            delattr(g, "effective_user")
+        try:
+            return bool(user.has_perm(key))
+        finally:
+            if effective_user is not marker:
+                setattr(g, "effective_user", effective_user)
+    except Exception:
+        return False
+
+
+def _compact_user_text(value):
+    return "".join(character for character in str(value or "").upper() if character.isalnum())
+
+
+def _hr_fallback_approver_ids(exclude_user_id=None):
+    """Resolve the HR director used when the warehouse stage has no delegate."""
+    configured = _unique_user_ids(
+        [_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID")],
+        exclude_user_id=exclude_user_id,
+    )
+    if configured:
+        return configured
+
+    users = User.query.order_by(User.id.asc()).all()
+    title_markers = {
+        "مديرالشؤونالبشرية",
+        "مديرالمواردالبشرية",
+        "رئيسالمواردالبشرية",
+        "مديرالشؤونالإدارية",
+        "HRDIRECTOR",
+        "HUMANRESOURCESDIRECTOR",
+        "HUMANRESOURCESMANAGER",
+        "PERSONNELDIRECTOR",
+        "PERSONNELMANAGER",
+        "ADMINISTRATIVEAFFAIRSMANAGER",
+    }
+    title_candidates = [
+        user.id
+        for user in users
+        if any(
+            marker in _compact_user_text(getattr(user, "job_title", None))
+            for marker in title_markers
+        )
+    ]
+    if title_candidates:
+        return _unique_user_ids(title_candidates, exclude_user_id=exclude_user_id)
+
+    role_groups = (
+        {"HRDIRECTOR", "HUMANRESOURCESDIRECTOR"},
+        {"HRMANAGER", "HUMANRESOURCESMANAGER", "PERSONNELMANAGER"},
+        {"HRADMIN", "ADMINISTRATIVEAFFAIRSMANAGER"},
+        {"HR"},
+    )
+    for roles in role_groups:
+        candidates = [
+            user.id
+            for user in users
+            if _compact_user_text(getattr(user, "role", None)) in roles
+        ]
+        resolved = _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
+        if resolved:
+            return resolved
+
+    # Last automatic fallback: a user explicitly entrusted with HR request
+    # review and visibility, without widening the route to every administrator.
+    candidates = [
+        user.id
+        for user in users
+        if user.id != exclude_user_id
+        and _user_has_permission_without_delegation(user, "HR_REQUESTS_APPROVE")
+        and _user_has_permission_without_delegation(user, "HR_REQUESTS_VIEW_ALL")
+    ]
+    return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
+
+
+def _warehouse_approver_ids(exclude_user_id=None):
+    """Return warehouse approvers, excluding the requester to prevent self-approval."""
+    configured = _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID")
+    if configured and configured != exclude_user_id:
+        resolved = _unique_user_ids([configured], exclude_user_id=exclude_user_id)
+        if resolved:
+            return resolved
+
+    candidates = [
+        user.id
+        for user in User.query.all()
+        if user.id != exclude_user_id
+        and _user_has_permission_without_delegation(user, "INVENTORY_REQUEST_APPROVE")
+    ]
+    return _unique_user_ids(candidates, exclude_user_id=exclude_user_id)
+
+
+def _warehouse_or_hr_stage(exclude_user_id=None):
+    return "WAREHOUSE" if _warehouse_approver_ids(exclude_user_id) else "HR"
+
+
 def _manager_ids(row):
     """Return the direct-manager snapshot for a submitted materials request."""
     raw = (getattr(row, "manager_user_ids", None) or "").strip()
@@ -165,10 +290,9 @@ def _recipient_ids(row):
     if row.approval_stage == "MANAGER":
         return _manager_ids(row)
     if row.approval_stage == "WAREHOUSE":
-        configured = _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID")
-        if configured:
-            return [configured]
-        return [user.id for user in User.query.all() if user.has_perm("INVENTORY_REQUEST_APPROVE")]
+        return _warehouse_approver_ids(row.requester_user_id)
+    if row.approval_stage == "HR":
+        return _hr_fallback_approver_ids(row.requester_user_id)
     return []
 
 
@@ -180,8 +304,9 @@ def _can_process(row):
     if row.approval_stage == "MANAGER":
         return current_user.id in _manager_ids(row)
     if row.approval_stage == "WAREHOUSE":
-        configured = _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID")
-        return current_user.id == configured or current_user.has_perm("INVENTORY_REQUEST_APPROVE")
+        return current_user.id in _warehouse_approver_ids(row.requester_user_id)
+    if row.approval_stage == "HR":
+        return current_user.id in _hr_fallback_approver_ids(row.requester_user_id)
     return False
 
 
@@ -189,7 +314,13 @@ def _can_manage():
     configured_ids = {
         _setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
     }
-    return _is_system_admin(current_user) or current_user.id in configured_ids or current_user.has_perm("INVENTORY_REQUEST_APPROVE") or current_user.has_perm("STORE_MANAGE")
+    return (
+        _is_system_admin(current_user)
+        or current_user.id in configured_ids
+        or current_user.id in _hr_fallback_approver_ids()
+        or current_user.has_perm("INVENTORY_REQUEST_APPROVE")
+        or current_user.has_perm("STORE_MANAGE")
+    )
 
 
 def _can_manage_catalog():
@@ -219,7 +350,10 @@ def _supply_form_payload(row):
         default=None,
     )
     manager_action = _action_for_stage(row, "MANAGER", after=last_update)
-    warehouse_action = _action_for_stage(row, "WAREHOUSE", after=last_update)
+    warehouse_action = (
+        _action_for_stage(row, "WAREHOUSE", after=last_update)
+        or _action_for_stage(row, "HR", after=last_update)
+    )
     created_at = row.created_at or datetime.utcnow()
     return {
         "request_no": str(row.id),
@@ -398,7 +532,12 @@ def _create_issue_vouchers(row):
 def inventory_request_settings():
     if request.method == "POST":
         warehouse_manager_id = request.form.get("warehouse_manager_user_id") or ""
+        hr_fallback_user_id = request.form.get("hr_fallback_user_id") or ""
+        if hr_fallback_user_id and not hr_fallback_user_id.isdigit():
+            flash("اختر مستخدمًا صالحًا لمدير الشؤون البشرية البديل.", "warning")
+            return redirect(url_for("portal.inventory_request_settings"))
         _set_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID", warehouse_manager_id)
+        _set_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID", hr_fallback_user_id)
         _grant_permission(int(warehouse_manager_id) if warehouse_manager_id.isdigit() else None, "INVENTORY_REQUEST_APPROVE")
         _grant_permission(int(warehouse_manager_id) if warehouse_manager_id.isdigit() else None, "PORTAL_REPORTS_READ")
         db.session.commit()
@@ -408,6 +547,7 @@ def inventory_request_settings():
         "portal/inventory/request_settings.html",
         users=User.query.order_by(User.name.asc()).all(),
         warehouse_manager_id=_setting("INVENTORY_WAREHOUSE_MANAGER_USER_ID"),
+        hr_fallback_user_id=_setting("INVENTORY_REQUEST_HR_FALLBACK_USER_ID"),
     )
 
 
@@ -515,7 +655,7 @@ def inventory_employee_request_new():
             items_text="",
             purpose=purpose,
             note=(request.form.get("note") or "").strip() or None,
-            approval_stage="MANAGER" if manager_id else "WAREHOUSE",
+            approval_stage="MANAGER" if manager_id else _warehouse_or_hr_stage(current_user.id),
         )
         db.session.add(row)
         db.session.flush()
@@ -571,7 +711,7 @@ def inventory_employee_request_view(request_id):
         row.note = (request.form.get("note") or "").strip() or None
         if old_signature != new_signature:
             _replace_lines(row, requested_lines)
-            row.approval_stage = "MANAGER" if _manager_ids(row) else "WAREHOUSE"
+            row.approval_stage = "MANAGER" if _manager_ids(row) else _warehouse_or_hr_stage(row.requester_user_id)
             _notify(row, _recipient_ids(row), f"تم تعديل طلب المواد #{row.id} ويحتاج إعادة المتابعة لدى {STAGES[row.approval_stage]}.")
         db.session.add(InvEmployeeRequestAction(
             request_id=row.id,
@@ -670,8 +810,8 @@ def inventory_employee_request_approve(request_id):
     if decision != "approve":
         abort(400)
     if current_stage == "MANAGER":
-        row.approval_stage = "WAREHOUSE"
-    elif current_stage == "WAREHOUSE":
+        row.approval_stage = _warehouse_or_hr_stage(row.requester_user_id)
+    elif current_stage in {"WAREHOUSE", "HR"}:
         warehouse_id_raw = request.form.get("warehouse_id") or ""
         if not warehouse_id_raw.isdigit():
             flash("اختر مستودع الصرف.", "danger")

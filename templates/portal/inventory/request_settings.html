@@ -2,11 +2,17 @@
 {% block content %}
 <h4>مسؤول اعتماد طلبات المواد</h4>
 <div class="alert alert-info">يسير الطلب من الموظف إلى مسؤوليه المباشرين بالتوازي، ويكفي اعتماد أحدهم، ثم يصل إلى مدير المستودع للاعتماد والصرف النهائي.</div>
+<div class="alert alert-warning">إذا كان مقدم الطلب هو مدير المستودع نفسه، أو لم يوجد معتمد مستودع متاح، ينتقل الطلب تلقائيًا إلى مدير الشؤون البشرية البديل.</div>
 <form method="post" class="card card-body">
   <label class="form-label">مدير المستودع</label>
   <select class="form-select mb-3" name="warehouse_manager_user_id">
     <option value="">—</option>
     {% for user in users %}<option value="{{ user.id }}" {% if warehouse_manager_id == user.id %}selected{% endif %}>{{ user.name or user.email }}</option>{% endfor %}
+  </select>
+  <label class="form-label">مدير الشؤون البشرية البديل عند غياب معتمد المستودع</label>
+  <select class="form-select mb-3" name="hr_fallback_user_id">
+    <option value="">اكتشاف تلقائي حسب الدور/المسمى الوظيفي</option>
+    {% for user in users %}<option value="{{ user.id }}" {% if hr_fallback_user_id == user.id %}selected{% endif %}>{{ user.name or user.email }}{% if user.job_title %} — {{ user.job_title }}{% endif %}</option>{% endfor %}
   </select>
   <button class="btn btn-primary">حفظ</button>
 </form>

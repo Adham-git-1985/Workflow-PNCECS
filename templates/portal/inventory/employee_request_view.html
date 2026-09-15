@@ -40,14 +40,14 @@
     {% if can_process %}
     <div class="card shadow-sm mb-3" id="decision"><div class="card-header fw-bold">متابعة الاعتماد</div><div class="card-body">
       <form method="post" action="{{ url_for('portal.inventory_employee_request_approve', request_id=item.id) }}">
-        {% if item.approval_stage == 'WAREHOUSE' %}
+        {% if item.approval_stage in ['WAREHOUSE', 'HR'] %}
         <label class="form-label">مستودع الصرف *</label>
         <select class="form-select mb-3" name="warehouse_id" id="warehouseSelect" required><option value="">اختر المستودع</option>{% for warehouse in warehouses %}<option value="{{ warehouse.id }}">{{ warehouse.label }}</option>{% endfor %}</select>
         <div class="small text-muted mb-2">حدد الكمية التي سيصرفها المستودع:</div>
         {% for line in item.lines %}<div class="border rounded p-2 mb-2"><div class="fw-semibold">{{ line.item.label }}</div><div class="input-group mt-1"><span class="input-group-text">المعتمد</span><input class="form-control approved-qty" type="number" min="0" max="{{ line.requested_qty }}" step="0.01" name="approved_qty_{{ line.id }}" value="{{ line.requested_qty }}" data-item="{{ line.item_id }}"><span class="input-group-text stock-value">المتاح: —</span></div></div>{% endfor %}
         {% endif %}
         <label class="form-label mt-3">ملاحظة الاعتماد</label><textarea class="form-control mb-2" name="note" rows="2"></textarea>
-        <div class="d-grid gap-2"><button class="btn btn-success" name="decision" value="approve">{{ 'اعتماد وصرف المواد' if item.approval_stage == 'WAREHOUSE' else 'إحالة إلى مدير المستودع' }}</button><button class="btn btn-outline-danger" name="decision" value="reject" formnovalidate onclick="return confirm('هل تريد رفض طلب المواد؟ يجب كتابة سبب الرفض.');"><i class="bi bi-x-circle"></i> رفض الطلب</button></div>
+        <div class="d-grid gap-2"><button class="btn btn-success" name="decision" value="approve">{{ 'اعتماد وصرف المواد' if item.approval_stage in ['WAREHOUSE', 'HR'] else 'إحالة إلى مدير المستودع' }}</button><button class="btn btn-outline-danger" name="decision" value="reject" formnovalidate onclick="return confirm('هل تريد رفض طلب المواد؟ يجب كتابة سبب الرفض.');"><i class="bi bi-x-circle"></i> رفض الطلب</button></div>
       </form>
     </div></div>
     {% endif %}
