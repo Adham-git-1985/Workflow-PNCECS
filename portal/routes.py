@@ -9420,6 +9420,26 @@ def _approved_schedule_day_map(
     return result
 
 
+def _attendance_schedule_day_kind(schedule_day: HRAttendanceScheduleDay | None) -> str:
+    """Resolve the effective kind of a published attendance-schedule day.
+
+    Older rows can retain ``day_type=WORK`` after a remote schedule template
+    is attached.  The template is still authoritative for the location, so
+    those rows must not be treated as office days without a punch.
+    """
+    if not schedule_day:
+        return ""
+    day_type = (getattr(schedule_day, "day_type", None) or "").strip().upper()
+    if day_type == "OFF":
+        return "OFF"
+    schedule_kind = (
+        getattr(getattr(schedule_day, "schedule", None), "kind", None) or ""
+    ).strip().upper()
+    if day_type == "REMOTE" or schedule_kind == "REMOTE":
+        return "REMOTE"
+    return day_type
+
+
 def _administrative_affairs_exemption_map(
     employees: list[User],
     start_day: date,
@@ -9448,7 +9468,7 @@ def _administrative_affairs_exemption_map(
             result.setdefault((int(user_id), current_day.isoformat()), reason)
 
     for key, schedule_day in schedule_map.items():
-        if schedule_day.day_type == "OFF":
+        if _attendance_schedule_day_kind(schedule_day) == "OFF":
             result.setdefault(key, "PLANNED_OFF")
 
     try:
@@ -9660,13 +9680,14 @@ def _administrative_affairs_daily_rows(
             pending_leave = pending_leave_map.get(key)
             schedule_day = schedule_map.get(key)
             exemption = exemption_map.get(key)
+            schedule_day_kind = _attendance_schedule_day_kind(schedule_day)
             auto_leave_no_longer_applicable = bool(
                 leave
                 and leave.source == ATTENDANCE_AUTO_LEAVE_SOURCE
                 and (
                     exemption
                     or not schedule_day
-                    or schedule_day.day_type != "WORK"
+                    or schedule_day_kind != "WORK"
                 )
             )
 
@@ -9690,7 +9711,7 @@ def _administrative_affairs_daily_rows(
             if schedule_day:
                 schedule_label = (
                     getattr(schedule_day.schedule, "name", None)
-                    or ("عمل عن بُعد" if schedule_day.day_type == "REMOTE" else "جدول الدوام المعتمد")
+                    or ("عمل عن بُعد" if schedule_day_kind == "REMOTE" else "جدول الدوام المعتمد")
                 )
 
             if has_attendance:
@@ -9700,7 +9721,7 @@ def _administrative_affairs_daily_rows(
                 detail = "دخول يدوي" if manual and manual.start_time and not manual.end_time else source_label
                 if leave and not auto_leave_no_longer_applicable:
                     conflict_note = "يوجد أيضاً طلب إجازة معتمد لهذا اليوم"
-                elif schedule_day and schedule_day.day_type == "REMOTE":
+                elif schedule_day_kind == "REMOTE":
                     conflict_note = "سُجلت بصمة رغم أن اليوم مجدول عن بُعد"
             elif leave and not auto_leave_no_longer_applicable:
                 category = "LEAVE"
@@ -9735,7 +9756,7 @@ def _administrative_affairs_daily_rows(
                     category_label = "مجاز"
                     detail = "إجازة معتمدة"
                     source_label = "نظام الإجازات"
-                elif schedule_day and schedule_day.day_type == "REMOTE":
+                elif schedule_day_kind == "REMOTE":
                     category = "REMOTE"
                     category_label = "مناوب / عن بُعد"
                     detail = schedule_day.note or "حسب جدول الدوام المعتمد"
@@ -9745,23 +9766,37 @@ def _administrative_affairs_daily_rows(
                     category_label = "إجازة قيد الاعتماد"
                     detail = getattr(pending_leave.leave_type, "name_ar", None) or "طلب إجازة"
                     source_label = "نظام الإجازات"
-                elif schedule_day and schedule_day.day_type == "OFF":
+                elif schedule_day_kind == "OFF":
                     category = "OFF"
                     category_label = "راحة / عطلة مجدولة"
                     source_label = "جدول الدوام"
-                elif schedule_day and schedule_day.day_type == "WORK":
+                elif schedule_day_kind == "WORK":
                     category = "MISSING_PUNCH"
                     category_label = "دوام مكتبي بلا بصمة"
                     detail = "بانتظار الاحتساب التلقائي أو المعالجة"
                     source_label = "جدول الدوام"
                 else:
                     effective_schedule = _effective_schedule_for_user(employee.id, day_text)
-                    if effective_schedule and (effective_schedule.kind or "").upper() == "REMOTE":
+                    effective_schedule_kind = (
+                        getattr(effective_schedule, "kind", None) or ""
+                    ).strip().upper()
+                    effective_policy = (
+                        _effective_work_policy_for_user(employee.id, day_text)
+                        if effective_schedule_kind != "REMOTE"
+                        else None
+                    )
+                    policy_is_remote = bool(
+                        effective_policy
+                        and (
+                            getattr(effective_policy, "location_policy", None) or ""
+                        ).strip().upper() == "REMOTE"
+                    )
+                    if effective_schedule_kind == "REMOTE" or policy_is_remote:
                         category = "REMOTE"
                         category_label = "مناوب / عن بُعد"
                         detail = "حسب تكليف الدوام الفعّال"
                         source_label = "جدول الدوام"
-                        schedule_label = effective_schedule.name or schedule_label
+                        schedule_label = getattr(effective_schedule, "name", None) or schedule_label
                     elif effective_schedule:
                         category = "MISSING_PUNCH"
                         category_label = "دوام مكتبي بلا بصمة"
@@ -9872,7 +9907,7 @@ def _process_unrecorded_office_attendance(
     )
     office_keys = {
         key for key, row in schedule_map.items()
-        if row.day_type == "WORK"
+        if _attendance_schedule_day_kind(row) == "WORK"
         and _attendance_auto_leave_cutoff_reached(date.fromisoformat(key[1]), local_now, row)
     }
     existing_auto_rows = (
@@ -9950,10 +9985,14 @@ def _process_unrecorded_office_attendance(
             replacement_leave_id = int(replacement_leave.id)
         else:
             current_schedule_day = schedule_map.get(key)
+            current_schedule_kind = _attendance_schedule_day_kind(current_schedule_day)
             if not current_schedule_day:
                 replacement_reason = "SCHEDULE_NO_LONGER_OFFICE"
-            elif current_schedule_day.day_type != "WORK":
-                replacement_reason = f"SCHEDULE_RECLASSIFIED_{current_schedule_day.day_type or 'NON_WORK'}"
+            elif current_schedule_kind != "WORK":
+                replacement_reason = (
+                    f"SCHEDULE_RECLASSIFIED_"
+                    f"{current_schedule_kind or 'NON_WORK'}"
+                )
             else:
                 exemption = _attendance_exemption_reason(
                     key[0],
@@ -13918,8 +13957,14 @@ def _attendance_schedule_default_values(user_id: int, work_day: date) -> dict:
         if day_config:
             start_time = day_config.start_time
             end_time = day_config.end_time
+    policy = _effective_work_policy_for_user(int(user_id), work_day.isoformat())
+    is_remote = bool(
+        schedule and (getattr(schedule, "kind", "") or "").strip().upper() == "REMOTE"
+    ) or bool(
+        policy and (getattr(policy, "location_policy", "") or "").strip().upper() == "REMOTE"
+    )
     return {
-        "day_type": "REMOTE" if schedule and (schedule.kind or "").upper() == "REMOTE" else "WORK",
+        "day_type": "REMOTE" if is_remote else "WORK",
         "schedule_id": getattr(schedule, "id", None),
         "schedule_name": getattr(schedule, "name", None),
         "start_time": start_time or "08:00",

@@ -29,6 +29,8 @@ from models import (
     SystemSetting,
     User,
     UserPermission,
+    WorkAssignment,
+    WorkPolicy,
     WorkSchedule,
 )
 from portal import portal_bp
@@ -190,6 +192,93 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(categories[present.id], "PRESENT")
         self.assertEqual(categories[on_leave.id], "LEAVE")
         self.assertEqual(categories[remote.id], "REMOTE")
+
+    def test_remote_schedule_template_is_not_classified_as_missing_punch(self):
+        employee = self._user("remote-template@example.test", "موظف قالب عن بعد")
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="إجازة سنوية",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        remote_schedule = WorkSchedule(
+            name="قالب العمل عن بعد",
+            kind="REMOTE",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((annual, remote_schedule))
+        db.session.flush()
+        # Legacy/previously saved rows may still say WORK while pointing to a
+        # remote template. The template must keep the day out of office-missing.
+        self._final_schedule_day(
+            employee,
+            "2026-09-14",
+            "WORK",
+            schedule=remote_schedule,
+        )
+        db.session.commit()
+
+        processed = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 17, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+        )
+        report_row = _administrative_affairs_daily_rows(
+            date(2026, 9, 14),
+            date(2026, 9, 14),
+            user_ids=[employee.id],
+        )[0]
+
+        self.assertEqual(processed["created"], 0)
+        self.assertEqual(report_row["category"], "REMOTE")
+        self.assertNotEqual(report_row["category"], "MISSING_PUNCH")
+        self.assertEqual(
+            HRLeaveRequest.query.filter_by(
+                user_id=employee.id,
+                source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            ).count(),
+            0,
+        )
+
+    def test_remote_work_policy_is_respected_without_a_schedule_day(self):
+        employee = self._user("remote-policy@example.test", "موظف سياسة عن بعد")
+        schedule = WorkSchedule(
+            name="قالب ساعات العمل",
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        policy = WorkPolicy(
+            name="سياسة عن بعد",
+            days_policy="FIXED",
+            fixed_days_mask=1,
+            location_policy="REMOTE",
+            is_active=True,
+        )
+        db.session.add_all((schedule, policy))
+        db.session.flush()
+        db.session.add(WorkAssignment(
+            name="تكليف عن بعد",
+            schedule_id=schedule.id,
+            policy_id=policy.id,
+            target_type="USER",
+            target_user_id=employee.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            is_active=True,
+        ))
+        db.session.commit()
+
+        report_row = _administrative_affairs_daily_rows(
+            date(2026, 9, 14),
+            date(2026, 9, 14),
+            user_ids=[employee.id],
+        )[0]
+
+        self.assertEqual(report_row["category"], "REMOTE")
+        self.assertNotEqual(report_row["category"], "MISSING_PUNCH")
 
     def test_office_day_without_punch_creates_one_auto_annual_leave_and_notifications(self):
         employee = self._user("missing@example.test", "موظف بلا بصمة")
