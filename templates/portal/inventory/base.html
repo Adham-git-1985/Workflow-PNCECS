@@ -2,6 +2,48 @@
 
 {% block title %}المستودع{% endblock %}
 
+{% block head %}
+{{ super() }}
+<style>
+  /* Voucher line entry is intentionally wide on desktop so serials, dates,
+     and item details can be entered without fighting the table.  On smaller
+     screens the existing responsive wrapper provides horizontal scrolling. */
+  .inventory-voucher-lines {
+    min-width: 1540px;
+  }
+
+  .inventory-voucher-lines th,
+  .inventory-voucher-lines td {
+    vertical-align: middle;
+  }
+
+  .inventory-voucher-lines .form-control,
+  .inventory-voucher-lines .form-select {
+    min-height: 42px;
+  }
+
+  .inventory-voucher-lines textarea[name="details[]"] {
+    min-height: 72px;
+    min-width: 340px;
+    resize: vertical;
+  }
+
+  .inventory-voucher-lines th:nth-child(1),
+  .inventory-voucher-lines td:nth-child(1) { min-width: 360px; }
+  .inventory-voucher-lines th:nth-child(2),
+  .inventory-voucher-lines td:nth-child(2) { min-width: 130px; }
+  .inventory-voucher-lines th:nth-child(3),
+  .inventory-voucher-lines td:nth-child(3) { min-width: 220px; }
+  .inventory-voucher-lines th:nth-child(4),
+  .inventory-voucher-lines td:nth-child(4),
+  .inventory-voucher-lines th:nth-child(5),
+  .inventory-voucher-lines td:nth-child(5) { min-width: 190px; }
+  .inventory-voucher-lines th:nth-child(6),
+  .inventory-voucher-lines td:nth-child(6) { min-width: 360px; }
+
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="row g-3">
   <div class="col-lg-3">

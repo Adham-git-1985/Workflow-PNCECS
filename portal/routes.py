@@ -128,6 +128,7 @@ require_permissions = perm_required
 
 from utils.events import emit_event
 from utils.notification_links import notification_target_path, safe_local_notification_url
+from utils.inventory_numbers import auto_inventory_code, auto_inventory_voucher_no
 from utils.org_dynamic import (
     build_chart_tree,
     build_org_node_picker_tree,
@@ -39084,8 +39085,8 @@ def inventory_issue_voucher_new():
         to_room_name = (request.form.get("to_room_name") or "").strip()
         note = (request.form.get("note") or "").strip()
 
-        if not voucher_no or not voucher_date or not from_warehouse_id:
-            flash("يرجى تعبئة رقم السند + تاريخ السند + من مستودع.", "warning")
+        if not voucher_date or not from_warehouse_id:
+            flash("يرجى تعبئة تاريخ السند + من مستودع. سيتم توليد رقم السند تلقائياً.", "warning")
             return redirect(url_for("portal.inventory_issue_voucher_new"))
 
         try:
@@ -39126,7 +39127,7 @@ def inventory_issue_voucher_new():
         # Create voucher
         v = InvIssueVoucher(
             issue_kind=issue_kind,
-            voucher_no=voucher_no,
+            voucher_no=voucher_no or "",
             voucher_date=voucher_date,
             from_warehouse_id=from_warehouse_id,
             to_warehouse_id=to_warehouse_id_val,
@@ -39137,6 +39138,12 @@ def inventory_issue_voucher_new():
         )
         db.session.add(v)
         db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no(
+                "issue_transfer" if issue_kind == "WAREHOUSE" else ("employee" if issue_kind == "EMPLOYEE" else "issue"),
+                voucher_date,
+                v.id,
+            )
 
         any_line = False
         for i, raw_item_id in enumerate(item_ids):
@@ -39176,7 +39183,7 @@ def inventory_issue_voucher_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="INV_ISSUE_CREATE",
-                note=f"إنشاء سند صرف ({voucher_no})",
+                note=f"إنشاء سند صرف ({v.voucher_no})",
                 target_type="INV_ISSUE_VOUCHER",
                 target_id=v.id,
                 created_at=datetime.utcnow(),
@@ -39372,8 +39379,8 @@ def inventory_inbound_voucher_new():
         to_warehouse_id = request.form.get("to_warehouse_id")
         note = (request.form.get("note") or "").strip()
 
-        if not voucher_no or not voucher_date or not to_warehouse_id:
-            flash("يرجى تعبئة رقم السند + تاريخ السند + إلى مستودع.", "warning")
+        if not voucher_date or not to_warehouse_id:
+            flash("يرجى تعبئة تاريخ السند + إلى مستودع. سيتم توليد رقم السند تلقائياً.", "warning")
             return redirect(url_for("portal.inventory_inbound_voucher_new"))
 
         try:
@@ -39394,7 +39401,7 @@ def inventory_inbound_voucher_new():
             return redirect(url_for("portal.inventory_inbound_voucher_new"))
 
         v = InvInboundVoucher(
-            voucher_no=voucher_no,
+            voucher_no=voucher_no or "",
             voucher_date=voucher_date,
             to_warehouse_id=to_warehouse_id,
             note=note or None,
@@ -39403,6 +39410,8 @@ def inventory_inbound_voucher_new():
         )
         db.session.add(v)
         db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no("inbound", voucher_date, v.id)
 
         any_line = False
         for i, raw_item_id in enumerate(item_ids):
@@ -39441,7 +39450,7 @@ def inventory_inbound_voucher_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="INV_INBOUND_CREATE",
-                note=f"إنشاء سند إدخال ({voucher_no})",
+                note=f"إنشاء سند إدخال ({v.voucher_no})",
                 target_type="INV_INBOUND_VOUCHER",
                 target_id=v.id,
                 created_at=datetime.utcnow(),
@@ -39613,8 +39622,8 @@ def inventory_scrap_voucher_new():
         from_warehouse_id = request.form.get("from_warehouse_id")
         note = (request.form.get("note") or "").strip()
 
-        if not voucher_no or not voucher_date or not from_warehouse_id:
-            flash("يرجى تعبئة رقم السند + تاريخ السند + من مستودع.", "warning")
+        if not voucher_date or not from_warehouse_id:
+            flash("يرجى تعبئة تاريخ السند + من مستودع. سيتم توليد رقم السند تلقائياً.", "warning")
             return redirect(url_for("portal.inventory_scrap_voucher_new"))
 
         try:
@@ -39635,7 +39644,7 @@ def inventory_scrap_voucher_new():
             return redirect(url_for("portal.inventory_scrap_voucher_new"))
 
         v = InvScrapVoucher(
-            voucher_no=voucher_no,
+            voucher_no=voucher_no or "",
             voucher_date=voucher_date,
             from_warehouse_id=from_warehouse_id,
             note=note or None,
@@ -39644,6 +39653,8 @@ def inventory_scrap_voucher_new():
         )
         db.session.add(v)
         db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no("scrap", voucher_date, v.id)
 
         any_line = False
         for i, raw_item_id in enumerate(item_ids):
@@ -39682,7 +39693,7 @@ def inventory_scrap_voucher_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="INV_SCRAP_CREATE",
-                note=f"إنشاء سند إتلاف ({voucher_no})",
+                note=f"إنشاء سند إتلاف ({v.voucher_no})",
                 target_type="INV_SCRAP_VOUCHER",
                 target_id=v.id,
                 created_at=datetime.utcnow(),
@@ -39858,8 +39869,8 @@ def inventory_return_voucher_new():
         from_room_name = (request.form.get("from_room_name") or "").strip()
         note = (request.form.get("note") or "").strip()
 
-        if not voucher_no or not voucher_date or not to_warehouse_id:
-            flash("يرجى تعبئة رقم السند + تاريخ السند + إلى مستودع.", "warning")
+        if not voucher_date or not to_warehouse_id:
+            flash("يرجى تعبئة تاريخ السند + إلى مستودع. سيتم توليد رقم السند تلقائياً.", "warning")
             return redirect(url_for("portal.inventory_return_voucher_new"))
 
         try:
@@ -39884,7 +39895,7 @@ def inventory_return_voucher_new():
             return redirect(url_for("portal.inventory_return_voucher_new"))
 
         v = InvReturnVoucher(
-            voucher_no=voucher_no,
+            voucher_no=voucher_no or "",
             voucher_date=voucher_date,
             to_warehouse_id=to_warehouse_id,
             from_room_name=from_room_name,
@@ -39894,6 +39905,8 @@ def inventory_return_voucher_new():
         )
         db.session.add(v)
         db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no("return", voucher_date, v.id)
 
         any_line = False
         for i, raw_item_id in enumerate(item_ids):
@@ -39932,7 +39945,7 @@ def inventory_return_voucher_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="INV_RETURN_CREATE",
-                note=f"إنشاء سند إرجاع ({voucher_no})",
+                note=f"إنشاء سند إرجاع ({v.voucher_no})",
                 target_type="INV_RETURN_VOUCHER",
                 target_id=v.id,
                 created_at=datetime.utcnow(),
@@ -40124,7 +40137,7 @@ def inventory_admin_warehouses():
                 flash("المخزن غير موجود.", "warning")
                 return redirect(url_for("portal.inventory_admin_warehouses"))
             w.name = name
-            w.code = code
+            w.code = code or auto_inventory_code("warehouse", w.id)
             w.note = note
             w.is_active = is_active
             db.session.commit()
@@ -40133,6 +40146,9 @@ def inventory_admin_warehouses():
 
         w = InvWarehouse(name=name, code=code, note=note, is_active=is_active, created_at=datetime.utcnow())
         db.session.add(w)
+        db.session.flush()
+        if not w.code:
+            w.code = auto_inventory_code("warehouse", w.id)
         db.session.commit()
         flash("تم إضافة المخزن.", "success")
         return redirect(url_for("portal.inventory_admin_warehouses"))
@@ -40616,8 +40632,8 @@ def inventory_stocktake_voucher_new():
         warehouse_id = request.form.get("warehouse_id")
         note = (request.form.get("note") or "").strip()
 
-        if not voucher_no or not voucher_date or not warehouse_id:
-            flash("يرجى تعبئة رقم السند + تاريخ السند + المخزن.", "warning")
+        if not voucher_date or not warehouse_id:
+            flash("يرجى تعبئة تاريخ السند + المخزن. سيتم توليد رقم السند تلقائياً.", "warning")
             return redirect(url_for("portal.inventory_stocktake_voucher_new"))
 
         try:
@@ -40638,7 +40654,7 @@ def inventory_stocktake_voucher_new():
             return redirect(url_for("portal.inventory_stocktake_voucher_new"))
 
         v = InvStocktakeVoucher(
-            voucher_no=voucher_no,
+            voucher_no=voucher_no or "",
             voucher_date=voucher_date,
             warehouse_id=warehouse_id,
             note=note or None,
@@ -40647,6 +40663,8 @@ def inventory_stocktake_voucher_new():
         )
         db.session.add(v)
         db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no("stocktake", voucher_date, v.id)
 
         any_line = False
         for i, raw_item_id in enumerate(item_ids):
@@ -40685,7 +40703,7 @@ def inventory_stocktake_voucher_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="INV_STOCKTAKE_CREATE",
-                note=f"إنشاء سند جرد ({voucher_no})",
+                note=f"إنشاء سند جرد ({v.voucher_no})",
                 target_type="INV_STOCKTAKE_VOUCHER",
                 target_id=v.id,
                 created_at=datetime.utcnow(),
@@ -40845,8 +40863,8 @@ def inventory_custody_voucher_new():
         holder_room_id = request.form.get("holder_room_id")
         note = (request.form.get("note") or "").strip()
 
-        if not voucher_no or not voucher_date:
-            flash("يرجى تعبئة رقم السند + تاريخ السند.", "warning")
+        if not voucher_date:
+            flash("يرجى تعبئة تاريخ السند. سيتم توليد رقم السند تلقائياً.", "warning")
             return redirect(url_for("portal.inventory_custody_voucher_new"))
 
         holder_user_id_val = None
@@ -40877,7 +40895,7 @@ def inventory_custody_voucher_new():
 
         v = InvCustodyVoucher(
             holder_kind=holder_kind,
-            voucher_no=voucher_no,
+            voucher_no=voucher_no or "",
             voucher_date=voucher_date,
             holder_user_id=holder_user_id_val,
             holder_room_id=holder_room_id_val,
@@ -40887,6 +40905,8 @@ def inventory_custody_voucher_new():
         )
         db.session.add(v)
         db.session.flush()
+        if not v.voucher_no:
+            v.voucher_no = auto_inventory_voucher_no("custody", voucher_date, v.id)
 
         any_line = False
         for i, raw_item_id in enumerate(item_ids):
@@ -40925,7 +40945,7 @@ def inventory_custody_voucher_new():
             db.session.add(AuditLog(
                 user_id=current_user.id,
                 action="INV_CUSTODY_CREATE",
-                note=f"إنشاء سند عهدة ({voucher_no})",
+                note=f"إنشاء سند عهدة ({v.voucher_no})",
                 target_type="INV_CUSTODY_VOUCHER",
                 target_id=v.id,
                 created_at=datetime.utcnow(),
@@ -41752,7 +41772,7 @@ def inventory_admin_rooms():
                 flash("الغرفة غير موجودة.", "warning")
                 return redirect(url_for("portal.inventory_admin_rooms"))
             r.name = name
-            r.code = code
+            r.code = code or auto_inventory_code("room", r.id)
             r.unit_id = unit_id_val
             r.note = note
             r.is_active = is_active
@@ -41762,6 +41782,9 @@ def inventory_admin_rooms():
 
         r = InvRoom(name=name, code=code, unit_id=unit_id_val, note=note, is_active=is_active, created_at=datetime.utcnow())
         db.session.add(r)
+        db.session.flush()
+        if not r.code:
+            r.code = auto_inventory_code("room", r.id)
         db.session.commit()
         flash("تم إضافة الغرفة.", "success")
         return redirect(url_for("portal.inventory_admin_rooms"))

@@ -19,8 +19,8 @@
           <input class="form-control" name="name" required value="{{ edit.name if edit else '' }}">
         </div>
         <div class="col-md-3">
-          <label class="form-label">الكود</label>
-          <input class="form-control" name="code" value="{{ edit.code if edit else '' }}">
+          <label class="form-label">الكود (يُولّد تلقائياً إذا تُرك فارغاً)</label>
+          <input class="form-control" name="code" value="{{ edit.code if edit else '' }}" placeholder="يُولّد تلقائياً عند الحفظ">
         </div>
         <div class="col-md-3">
           <label class="form-label">الوحدة (اختياري)</label>

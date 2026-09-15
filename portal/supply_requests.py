@@ -35,6 +35,7 @@ from services.official_request_forms import (
     build_supply_request_pdf,
     official_form_filename,
 )
+from utils.inventory_numbers import auto_inventory_voucher_no
 
 
 STAGES = {
@@ -367,7 +368,7 @@ def _create_issue_vouchers(row):
             raise ValueError("الرصيد غير كافٍ: " + "؛ ".join(errors))
         voucher = InvIssueVoucher(
             issue_kind="EMPLOYEE",
-            voucher_no=f"EMP-{row.id}-{warehouse_id}",
+            voucher_no="",
             voucher_date=date.today().isoformat(),
             from_warehouse_id=warehouse_id,
             to_room_name=row.requester.full_name,
@@ -376,6 +377,11 @@ def _create_issue_vouchers(row):
         )
         db.session.add(voucher)
         db.session.flush()
+        voucher.voucher_no = auto_inventory_voucher_no(
+            "employee",
+            voucher.voucher_date,
+            voucher.id,
+        )
         for line in lines:
             db.session.add(InvIssueVoucherLine(
                 voucher_id=voucher.id,

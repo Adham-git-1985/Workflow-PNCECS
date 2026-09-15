@@ -14,8 +14,8 @@
     <form method="post" enctype="multipart/form-data">
       <div class="row g-2">
         <div class="col-md-3">
-          <label class="form-label">رقم السند</label>
-          <input name="voucher_no" class="form-control" value="{{ form.voucher_no|default('') }}" required>
+          <label class="form-label">رقم السند (تلقائي عند تركه فارغاً)</label>
+          <input name="voucher_no" class="form-control" value="{{ form.voucher_no|default('') }}" placeholder="يُولّد تلقائياً عند الحفظ">
         </div>
         <div class="col-md-3">
           <label class="form-label">تاريخ السند</label>
@@ -39,7 +39,7 @@
       <hr class="my-3">
       <div class="fw-bold mb-2">تفاصيل أصناف السند</div>
       <div class="table-responsive">
-        <table class="table table-sm align-middle">
+        <table class="table table-sm align-middle inventory-voucher-lines">
           <thead>
             <tr>
               <th style="min-width:240px;">الصنف</th>
@@ -66,7 +66,7 @@
               <td><input name="serial[]" class="form-control" value="{{ ln.serial|default('') }}"></td>
               <td><input name="w_start[]" class="form-control" value="{{ ln.w_start|default('') }}" type="date"></td>
               <td><input name="w_end[]" class="form-control" value="{{ ln.w_end|default('') }}" type="date"></td>
-              <td><input name="details[]" class="form-control" value="{{ ln.details|default('') }}"></td>
+              <td><textarea name="details[]" class="form-control" rows="2">{{ ln.details|default('') }}</textarea></td>
               <td class="text-center"><button class="btn btn-sm btn-outline-danger" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
             </tr>
             {% endfor %}
@@ -84,7 +84,7 @@
               <td><input name="serial[]" class="form-control"></td>
               <td><input name="w_start[]" class="form-control" type="date"></td>
               <td><input name="w_end[]" class="form-control" type="date"></td>
-              <td><input name="details[]" class="form-control"></td>
+              <td><textarea name="details[]" class="form-control" rows="2"></textarea></td>
               <td class="text-center"><button class="btn btn-sm btn-outline-danger" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
             </tr>
             {% endif %}
@@ -122,7 +122,7 @@
       <td><input name="serial[]" class="form-control"></td>
       <td><input name="w_start[]" class="form-control" type="date"></td>
       <td><input name="w_end[]" class="form-control" type="date"></td>
-      <td><input name="details[]" class="form-control"></td>
+      <td><textarea name="details[]" class="form-control" rows="2"></textarea></td>
       <td class="text-center"><button class="btn btn-sm btn-outline-danger" type="button" onclick="this.closest('tr').remove()"><i class="bi bi-x"></i></button></td>
     `;
     tbody.appendChild(tr);
