@@ -114,6 +114,12 @@ PERMS: Dict[str, List[PermDef]] = {
             "عرض التقييم النظامي الشهري/السنوي للموظف (من 5.0). يظهر للموظف ضمن صفحة \"تقييمي النظامي\".",
             module="HR_SYS_EVAL",
         ),
+        PermDef(
+            "HR_ACHIEVEMENTS_REVIEW",
+            "اعتماد إنجازات الموظفين",
+            "مراجعة إنجازات الموظفين المباشرين واعتمادها أو رفضها مع تحديد مستوى الإنجاز ونقاطه.",
+            module="HR_ACHIEVEMENTS",
+        ),
         PermDef("HR_ATTENDANCE_READ", "عرض الدوام", "عرض دفعات/أحداث الدوام وتقاريرها.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_CREATE", "استيراد الدوام", "استيراد بيانات ساعة الدوام (يدوي/تلقائي لاحقًا).", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_EDIT", "تعديل الدوام", "تقديم تعديل يدوي للحضور أو الانصراف. لا يصبح نافذاً قبل اعتماده.", module="HR_ATTENDANCE"),

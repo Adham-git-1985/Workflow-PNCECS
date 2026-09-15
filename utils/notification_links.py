@@ -42,6 +42,7 @@ def notification_target_path(target_type: str | None, target_id) -> str | None:
         "HRTRAININGPROGRAM": lambda value: f"/portal/hr/training/programs/{value}/info",
         "STOREFILE": lambda value: f"/portal/store/files/{value}/view",
         "EMPLOYEEFOLLOWUPREPORT": lambda value: f"/portal/followups/{value}",
+        "HREMPLOYEEACHIEVEMENT": lambda value: f"/portal/hr/achievements/{value}",
     }
     builder = builders.get(normalized)
     return builder(object_id) if builder else None

@@ -21,7 +21,7 @@
     <div class="card border-0 shadow-sm">
       <div class="card-body p-4">
         <h2 class="h5 mb-3"><i class="bi bi-plus-circle text-primary"></i> توثيق إنجاز جديد</h2>
-        <form method="post" class="row g-3">
+        <form method="post" enctype="multipart/form-data" class="row g-3">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
           <div class="col-12"><label class="form-label">نوع الإنجاز</label><select class="form-select" name="achievement_type">{% for key, meta in achievement_types.items() %}<option value="{{ key }}">{{ meta.label }}</option>{% endfor %}</select></div>
           <div class="col-12"><label class="form-label">عنوان الإنجاز</label><input class="form-control" name="title" maxlength="250" required placeholder="مثال: الفوز بجائزة أفضل مبادرة"></div>
@@ -29,6 +29,7 @@
           <div class="col-md-6"><label class="form-label">الجهة المانحة أو الناشرة</label><input class="form-control" name="issuer" maxlength="250"></div>
           <div class="col-12"><label class="form-label">وصف الأثر</label><textarea class="form-control" name="description" rows="4" placeholder="ما الذي تحقق؟ وما أثره على العمل أو المؤسسة؟"></textarea></div>
           <div class="col-12"><label class="form-label">الدليل أو المرجع</label><input class="form-control" name="evidence_reference" maxlength="500" placeholder="رابط، رقم كتاب، شهادة، أو مرجع يمكن التحقق منه"><div class="form-text">وجود دليل واضح يساعد في اعتماد مستوى الإنجاز.</div></div>
+          <div class="col-12"><label class="form-label">مرفقات الطلب</label><input class="form-control" type="file" name="attachments" multiple><div class="form-text">يمكن رفع حتى 10 مرفقات (25 م.ب للملف، و50 م.ب للإجمالي).</div></div>
           <div class="col-12 d-grid"><button class="btn btn-warning fw-bold" type="submit"><i class="bi bi-send"></i> إرسال للمراجعة</button></div>
         </form>
       </div>
@@ -48,8 +49,10 @@
                 <div><i class="bi {{ type_meta.icon }} text-warning"></i> <strong>{{ row.title }}</strong><div class="small text-muted">{{ type_meta.label }} · {{ row.achieved_on }}{% if row.issuer %} · {{ row.issuer }}{% endif %}</div></div>
                 <div><span class="badge text-bg-{{ status_meta.class }}">{{ status_meta.label }}</span>{% if row.status == 'APPROVED' %}<span class="badge text-bg-warning">{{ level_meta.label }} · +{{ '%.0f'|format(row.evaluation_points) }}</span>{% endif %}</div>
               </div>
+              <div class="mb-2"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_achievement_view', achievement_id=row.id) }}"><i class="bi bi-eye"></i> عرض الطلب ومسار الاعتماد</a></div>
               {% if row.description %}<p class="mb-2">{{ row.description }}</p>{% endif %}
               {% if row.evidence_reference %}<div class="small"><strong>الدليل:</strong> {% if row.evidence_reference.startswith('http://') or row.evidence_reference.startswith('https://') %}<a href="{{ row.evidence_reference }}" target="_blank" rel="noopener">فتح المرجع</a>{% else %}{{ row.evidence_reference }}{% endif %}</div>{% endif %}
+              {% if row.attachments %}<div class="small mt-2"><strong>المرفقات:</strong> {% for attachment in row.attachments %}<a class="badge text-bg-light border text-dark text-decoration-none me-1" href="{{ url_for('portal.hr_achievement_attachment_download', achievement_id=row.id, attachment_id=attachment.id) }}"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</a>{% endfor %}</div>{% endif %}
               {% if row.review_note %}<div class="small text-muted mt-2"><strong>ملاحظة المراجعة:</strong> {{ row.review_note }}</div>{% endif %}
             </article>
           {% else %}<div class="text-center text-muted py-5"><i class="bi bi-trophy fs-1 d-block mb-2"></i>لم تسجل إنجازات بعد.</div>{% endfor %}
@@ -58,4 +61,39 @@
     </div>
   </div>
 </div>
+
+{% if review_rows %}
+<section class="card border-0 shadow-sm mt-4">
+  <div class="card-body p-4">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h2 class="h5 mb-0"><i class="bi bi-check2-square text-success"></i> إنجازات بانتظار اعتمادي</h2>
+      <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_achievements_review_queue') }}">فتح قائمة الاعتماد</a>
+    </div>
+    <div class="list-group">
+      {% for step in review_rows %}
+      <a class="list-group-item list-group-item-action d-flex flex-wrap justify-content-between align-items-center gap-2" href="{{ url_for('portal.hr_achievement_view', achievement_id=step.achievement_id) }}">
+        <span><strong>{{ step.achievement.title }}</strong><span class="small text-muted d-block">{{ step.achievement.user.full_name }} · {{ step.achievement.achieved_on }}</span></span>
+        <span class="badge text-bg-warning">بانتظار القرار</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+
+{% if observer_rows %}
+<section class="card border-0 shadow-sm mt-4">
+  <div class="card-body p-4">
+    <h2 class="h5 mb-3"><i class="bi bi-eye text-info"></i> إنجازات للمتابعة والاطلاع</h2>
+    <div class="list-group">
+      {% for observer in observer_rows %}
+      <a class="list-group-item list-group-item-action d-flex flex-wrap justify-content-between align-items-center gap-2" href="{{ url_for('portal.hr_achievement_view', achievement_id=observer.achievement_id) }}">
+        <span><strong>{{ observer.achievement.title }}</strong><span class="small text-muted d-block">{{ observer.achievement.user.full_name }} · {{ observer.achievement.achieved_on }}</span></span>
+        <span class="badge text-bg-{{ achievement_statuses.get(observer.achievement.status, achievement_statuses.PENDING).class }}">{{ achievement_statuses.get(observer.achievement.status, achievement_statuses.PENDING).label }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
 {% endblock %}

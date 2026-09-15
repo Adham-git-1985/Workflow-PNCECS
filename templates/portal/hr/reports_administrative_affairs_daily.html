@@ -105,8 +105,16 @@
     <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_reconcile') }}">
       <input type="hidden" name="from_date" value="{{ from_date }}">
       <input type="hidden" name="to_date" value="{{ to_date }}">
-      <button class="btn btn-sm btn-warning" type="submit"><i class="bi bi-arrow-repeat"></i> تنفيذ المطابقة الآن</button>
+      <button class="btn btn-sm btn-warning" type="submit"><i class="bi bi-arrow-repeat"></i> تنفيذ المطابقة للجميع</button>
     </form>
+    {% if selected_user_id %}
+    <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_reconcile') }}">
+      <input type="hidden" name="from_date" value="{{ from_date }}">
+      <input type="hidden" name="to_date" value="{{ to_date }}">
+      <input type="hidden" name="user_id" value="{{ selected_user_id }}">
+      <button class="btn btn-sm btn-outline-warning" type="submit"><i class="bi bi-person-check"></i> مطابقة الموظف المحدد</button>
+    </form>
+    {% endif %}
   </div>
   {% endif %}
 
@@ -126,7 +134,6 @@
           <th>الجدول</th>
           <th>موقع العمل</th>
           <th>نوع التعيين</th>
-          <th>الهيكل التنظيمي</th>
           <th>ملاحظة المطابقة</th>
         </tr>
       </thead>
@@ -148,11 +155,10 @@
           <td>{{ row.schedule or '—' }}</td>
           <td>{{ row.work_location or '—' }}</td>
           <td>{{ row.appointment_type or '—' }}</td>
-          <td>{{ ([row.organization, row.directorate, row.department]|select|join(' / ')) or '—' }}</td>
           <td>{% if row.conflict_note %}<span class="text-danger small"><i class="bi bi-exclamation-triangle"></i> {{ row.conflict_note }}</span>{% else %}—{% endif %}</td>
         </tr>
         {% else %}
-        <tr><td colspan="14" class="text-center text-muted py-5">لا توجد سجلات مطابقة للفلاتر المحددة.</td></tr>
+        <tr><td colspan="13" class="text-center text-muted py-5">لا توجد سجلات مطابقة للفلاتر المحددة.</td></tr>
         {% endfor %}
       </tbody>
     </table>

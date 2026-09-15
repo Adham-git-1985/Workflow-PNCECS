@@ -115,9 +115,11 @@ from services.attendance_schedule import (
     notify_attendance_schedule_stakeholders,
 )
 from services.employee_achievements import (
+    ACHIEVEMENT_BONUS_CAP,
     ACHIEVEMENT_LEVELS,
     ACHIEVEMENT_STATUSES,
     ACHIEVEMENT_TYPES,
+    achievement_points,
 )
 
 # Backward-compatible alias: some routes historically used @require_permissions(...)
@@ -140,6 +142,8 @@ from models import (
     EmployeeAttachment,
     EmployeeEvaluationRun,
     HREmployeeAchievement,
+    HREmployeeAchievementAttachment,
+    HREmployeeAchievementApproval,
     HRLookupItem,
     EmployeeDependent,
     EmployeeQualification,
@@ -471,6 +475,7 @@ HR_PERF_MANAGE = "HR_PERFORMANCE_MANAGE"
 HR_EVALUATIONS_MANAGE = "HR_EVALUATIONS_MANAGE"
 HR_SYSTEM_EVALUATION_VIEW = "HR_SYSTEM_EVALUATION_VIEW"
 HR_PERF_EXPORT = "HR_PERFORMANCE_EXPORT"
+HR_ACHIEVEMENTS_REVIEW = "HR_ACHIEVEMENTS_REVIEW"
 
 # Reports / Compliance
 PORTAL_REPORTS_READ = "PORTAL_REPORTS_READ"
@@ -498,6 +503,7 @@ PORTAL_ADMIN_DASHBOARD_PERMS = (
     HR_MASTERDATA_MANAGE,
     HR_PERF_MANAGE,
     HR_EVALUATIONS_MANAGE,
+    HR_ACHIEVEMENTS_REVIEW,
     PORTAL_REPORTS_READ,
     PORTAL_AUDIT_READ,
     AUDIT_DASHBOARD_READ,
@@ -776,6 +782,7 @@ def _portal_flags():
         has(HR_DOCS_MANAGE),
         has(HR_REQUESTS_VIEW_ALL),
         has(HR_ABSENCE_BOARD_VIEW),
+        has(HR_ACHIEVEMENTS_REVIEW),
     ])
     can_store_manage = has('STORE_MANAGE')
     can_store = has('STORE_READ') or can_store_manage
@@ -7332,6 +7339,7 @@ def hr_home():
         HR_REPORTS_VIEW,
         HR_LEAVE_BALANCES_MANAGE,
         HR_MASTERDATA_MANAGE,
+        HR_ACHIEVEMENTS_REVIEW,
         HR_ABSENCE_BOARD_VIEW,
     ]
     allowed = False
@@ -7352,6 +7360,7 @@ def hr_home():
         HR_DISCIPLINE_READ, HR_DISCIPLINE_MANAGE,
         HR_DOCS_MANAGE,
         HR_PERF_MANAGE, HR_PERF_EXPORT,
+        HR_ACHIEVEMENTS_REVIEW,
         HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
         HR_ORG_READ, HR_ORG_MANAGE,
         HR_LEAVE_BALANCES_MANAGE,
@@ -7443,6 +7452,7 @@ def hr_home():
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
     add_item(HR_LEAVE_BALANCES_MANAGE, "تعبئة أرصدة الإجازات", "تعبئة وتعديل الرصيد الافتتاحي السنوي وتسجيل التصحيحات.", "bi-wallet2", "portal.hr_leave_balances", "الإجازات والمهام")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
+    add_item(HR_ACHIEVEMENTS_REVIEW, "اعتماد الإنجازات", "مراجعة إنجازات الموظفين وتحديد مستوى الإنجاز ونقاطه.", "bi-award", "portal.hr_achievements_review_queue", "البرامج الفرعية")
     add_item(
         HR_LEAVE_APPROVED_DELETE,
         "حذف الإجازات المعتمدة",
@@ -9820,8 +9830,13 @@ def _process_unrecorded_office_attendance(
     reference_dt: datetime | None = None,
     day_from: date | None = None,
     day_to: date | None = None,
+    target_user_id: int | None = None,
 ) -> dict[str, int]:
-    """Charge one annual day for approved office duty with no attendance evidence."""
+    """Charge one annual day for approved office duty with no attendance evidence.
+
+    When ``target_user_id`` is supplied, reconciliation is limited to that
+    employee. The background job leaves it unset and processes everyone.
+    """
     enabled = (_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_ENABLED") or "1").strip().lower()
     if enabled not in {"1", "true", "yes", "on"}:
         return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 1, "missing_annual_type": 0}
@@ -9838,9 +9853,12 @@ def _process_unrecorded_office_attendance(
     if end_day < start_day:
         start_day, end_day = end_day, start_day
 
+    employee_query = EmployeeFile.query.with_entities(EmployeeFile.user_id)
+    if target_user_id is not None:
+        employee_query = employee_query.filter(EmployeeFile.user_id == int(target_user_id))
     employee_user_ids = sorted({
         int(row.user_id)
-        for row in EmployeeFile.query.with_entities(EmployeeFile.user_id).all()
+        for row in employee_query.all()
         if row.user_id
     })
     if not employee_user_ids:
@@ -10073,14 +10091,14 @@ def hr_report_administrative_affairs_daily():
         headers = [
             "التاريخ", "الرقم الوظيفي", "الموظف", "الحالة", "التفصيل", "المصدر",
             "أول دخول", "آخر خروج", "ساعات العمل", "الجدول", "موقع العمل", "نوع التعيين",
-            "المؤسسة", "الإدارة العامة", "الدائرة", "ملاحظة المطابقة",
+            "ملاحظة المطابقة",
         ]
         export_rows = [[
             row["day"], row["employee_no"], row["name"], row["category_label"], row["detail"], row["source"],
             row["first_in"].strftime("%H:%M") if row["first_in"] else "",
             row["last_out"].strftime("%H:%M") if row["last_out"] else "",
             round(row["work_minutes"] / 60.0, 2), row["schedule"], row["work_location"], row["appointment_type"],
-            row["organization"], row["directorate"], row["department"], row["conflict_note"],
+            row["conflict_note"],
         ] for row in rows]
         return _export_xlsx("administrative_affairs_daily_report.xlsx", headers, export_rows)
 
@@ -10108,15 +10126,26 @@ def hr_report_administrative_affairs_daily():
 def hr_report_administrative_affairs_reconcile():
     start_day = _parse_yyyy_mm_dd((request.form.get("from_date") or "").strip()) or date.today()
     end_day = _parse_yyyy_mm_dd((request.form.get("to_date") or "").strip()) or start_day
-    result = _process_unrecorded_office_attendance(day_from=start_day, day_to=end_day)
+    target_user_raw = (request.form.get("user_id") or "").strip()
+    target_user_id = int(target_user_raw) if target_user_raw.isdigit() else None
+    result = _process_unrecorded_office_attendance(
+        day_from=start_day,
+        day_to=end_day,
+        target_user_id=target_user_id,
+    )
     db.session.commit()
     if result["missing_annual_type"]:
         flash("تعذر الاحتساب: لم يتم تعريف نوع إجازة سنوية فعال.", "danger")
     elif result["disabled"]:
         flash("الاحتساب التلقائي للإجازة السنوية معطّل من الإعدادات.", "warning")
     else:
+        scope_label = (
+            f"للموظف #{target_user_id}"
+            if target_user_id is not None
+            else "لجميع الموظفين"
+        )
         flash(
-            f"اكتملت المطابقة: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
+            f"اكتملت المطابقة {scope_label}: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
             f"{result['created']} إجازة سنوية تلقائية، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
             "success",
         )
@@ -10124,6 +10153,7 @@ def hr_report_administrative_affairs_reconcile():
         "portal.hr_report_administrative_affairs_daily",
         from_date=start_day.isoformat(),
         to_date=end_day.isoformat(),
+        user_id=target_user_id or "",
     ))
 
 
@@ -18628,11 +18658,263 @@ def hr_my_payslip_latest():
 # -------------------------
 # Employee: System Evaluations (KPI-based)
 # -------------------------
+ACHIEVEMENT_ATTACHMENT_MAX_FILES = 10
+ACHIEVEMENT_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024
+ACHIEVEMENT_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+
+
+def _achievement_storage_dir(achievement_id: int) -> Path:
+    root = (Path(current_app.instance_path) / "uploads" / "hr_achievements").resolve()
+    directory = (root / str(int(achievement_id))).resolve()
+    if directory.parent != root:
+        raise ValueError("invalid_achievement_storage_path")
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def _achievement_display_name(user) -> str:
+    if not user:
+        return "-"
+    return (getattr(user, "full_name", None) or getattr(user, "email", None) or f"#{user.id}").strip()
+
+
+def _achievement_notify(user_ids, message: str, ntype: str, row: HREmployeeAchievement) -> None:
+    """Send one portal notification per recipient with a safe achievement link."""
+    link = url_for("portal.hr_achievement_view", achievement_id=row.id)
+    actor_id = int(getattr(current_user, "id", 0) or 0)
+    now = datetime.utcnow()
+    seen = set()
+    for value in user_ids or []:
+        try:
+            user_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if user_id <= 0 or user_id == actor_id or user_id in seen:
+            continue
+        seen.add(user_id)
+        db.session.add(Notification(
+            user_id=user_id,
+            type=ntype,
+            message=str(message or "")[:255],
+            source="portal",
+            link_url=link,
+            is_read=False,
+            created_at=now,
+        ))
+
+
+def _achievement_privileged(user=None) -> bool:
+    user = user or current_user
+    try:
+        if user.has_role("SUPER_ADMIN") or user.has_role("SUPERADMIN"):
+            return True
+        return any(user.has_perm(key) for key in (
+            HR_ACHIEVEMENTS_REVIEW,
+            HR_EVALUATIONS_MANAGE,
+            HR_EMP_MANAGE,
+            HR_REQUESTS_VIEW_ALL,
+        ))
+    except Exception:
+        return False
+
+
+def _achievement_manager_ids(row: HREmployeeAchievement) -> list[int]:
+    try:
+        return [
+            int(manager.id)
+            for manager in resolve_responsible_managers(int(row.user_id))
+            if manager and int(manager.id) != int(row.user_id)
+        ]
+    except Exception:
+        return []
+
+
+def _ensure_achievement_approval_path(row: HREmployeeAchievement, *, now: datetime | None = None) -> list[HREmployeeAchievementApproval]:
+    """Snapshot direct managers and Secretary General observers for a submission."""
+    now = now or datetime.utcnow()
+    if (row.status or "").upper() != "PENDING":
+        return list(row.approval_steps or [])
+
+    manager_ids = list(dict.fromkeys(_achievement_manager_ids(row)))
+    existing = {
+        (str(step.approver_role or "").upper(), int(step.approver_user_id)): step
+        for step in (row.approval_steps or [])
+        if step.approver_user_id
+    }
+    for manager_id in manager_ids:
+        key = ("DIRECT_MANAGER", manager_id)
+        if key in existing:
+            continue
+        step = HREmployeeAchievementApproval(
+            achievement_id=row.id,
+            approver_user_id=manager_id,
+            approver_role="DIRECT_MANAGER",
+            status="PENDING",
+            assigned_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.session.add(step)
+        row.approval_steps.append(step)
+        existing[key] = step
+
+    manager_id_set = set(manager_ids)
+    for secretary_id in secretary_general_user_ids():
+        secretary_id = int(secretary_id)
+        if secretary_id == int(row.user_id) or secretary_id in manager_id_set:
+            continue
+        key = ("SECRETARY_GENERAL", secretary_id)
+        if key in existing:
+            continue
+        observer = HREmployeeAchievementApproval(
+            achievement_id=row.id,
+            approver_user_id=secretary_id,
+            approver_role="SECRETARY_GENERAL",
+            status="VIEW_ONLY",
+            assigned_at=now,
+            created_at=now,
+            updated_at=now,
+        )
+        db.session.add(observer)
+        row.approval_steps.append(observer)
+        existing[key] = observer
+    return list(row.approval_steps or [])
+
+
+def _achievement_access_level(row: HREmployeeAchievement, user=None) -> str | None:
+    user = user or current_user
+    if not user or not getattr(user, "id", None):
+        return None
+    user_id = int(user.id)
+    if int(row.user_id) == user_id:
+        return "employee"
+    if _achievement_privileged(user):
+        return "admin"
+    for step in row.approval_steps or []:
+        if int(step.approver_user_id or 0) != user_id:
+            continue
+        if (step.approver_role or "").upper() == "DIRECT_MANAGER":
+            return "manager"
+        if (step.approver_role or "").upper() == "SECRETARY_GENERAL":
+            return "observer"
+    return None
+
+
+def _achievement_period_total(user_id: int, achieved_on: str, *, exclude_id: int | None = None) -> float:
+    """Return the largest approved total in any matching evaluation period.
+
+    If a monthly/annual evaluation run already exists, its exact date range is
+    used. Before a run is generated, the achievement month is the stable
+    fallback period. Taking the largest matching total means an approval cannot
+    exceed +5 in either a monthly or an annual run.
+    """
+    try:
+        achievement_day = date.fromisoformat(str(achieved_on))
+    except (TypeError, ValueError):
+        return 0.0
+    ranges: list[tuple[str, str]] = []
+    try:
+        runs = EmployeeEvaluationRun.query.filter(EmployeeEvaluationRun.user_id == int(user_id)).all()
+        for run in runs:
+            start_at = getattr(run, "start_date", None)
+            end_at = getattr(run, "end_date", None)
+            if start_at and end_at and start_at.date() <= achievement_day < end_at.date():
+                ranges.append((start_at.date().isoformat(), end_at.date().isoformat()))
+    except Exception:
+        ranges = []
+    if not ranges:
+        month_start = achievement_day.replace(day=1)
+        next_month = (month_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+        ranges.append((month_start.isoformat(), next_month.isoformat()))
+
+    totals = []
+    for period_start, period_end in ranges:
+        query = (
+            HREmployeeAchievement.query
+            .filter(HREmployeeAchievement.user_id == int(user_id))
+            .filter(HREmployeeAchievement.status == "APPROVED")
+            .filter(HREmployeeAchievement.achieved_on >= period_start)
+            .filter(HREmployeeAchievement.achieved_on < period_end)
+        )
+        if exclude_id:
+            query = query.filter(HREmployeeAchievement.id != int(exclude_id))
+        totals.append(sum(float(item.evaluation_points or 0.0) for item in query.all()))
+    return round(max(totals or [0.0]), 2)
+
+
+def _save_achievement_attachments(row: HREmployeeAchievement, uploads) -> tuple[list[Path], int]:
+    candidates = [
+        upload for upload in (uploads or [])
+        if upload and clean_original_filename(getattr(upload, "filename", None))
+    ]
+    if not candidates:
+        return [], 0
+    if len(candidates) > ACHIEVEMENT_ATTACHMENT_MAX_FILES:
+        raise ValueError("too_many_achievement_attachments")
+
+    saved_paths: list[Path] = []
+    total_size = 0
+    try:
+        directory = _achievement_storage_dir(row.id)
+        for upload in candidates:
+            original_name = clean_original_filename(getattr(upload, "filename", None))
+            if not is_allowed_attachment(original_name):
+                continue
+            stored_name = random_storage_name(uuid.uuid4().hex, original_name)
+            saved_path = directory / stored_name
+            upload.save(str(saved_path))
+            saved_paths.append(saved_path)
+            file_size = saved_path.stat().st_size
+            if file_size > ACHIEVEMENT_ATTACHMENT_MAX_FILE_BYTES:
+                raise ValueError("achievement_attachment_too_large")
+            total_size += file_size
+            if total_size > ACHIEVEMENT_ATTACHMENT_MAX_TOTAL_BYTES:
+                raise ValueError("achievement_attachments_total_too_large")
+            mime_type = (getattr(upload, "mimetype", None) or "").strip()
+            if not mime_type:
+                mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+            db.session.add(HREmployeeAchievementAttachment(
+                achievement_id=row.id,
+                original_name=original_name[:255],
+                stored_name=stored_name,
+                mime_type=mime_type[:120],
+                file_size=file_size,
+                uploaded_by_id=current_user.id,
+                uploaded_at=datetime.utcnow(),
+            ))
+        return saved_paths, len(saved_paths)
+    except Exception:
+        for saved_path in saved_paths:
+            try:
+                saved_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+
+def _remove_achievement_paths(paths) -> None:
+    for saved_path in paths or []:
+        try:
+            Path(saved_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _achievement_review_rows_for_current_user() -> list[HREmployeeAchievementApproval]:
+    query = HREmployeeAchievementApproval.query.filter(
+        HREmployeeAchievementApproval.approver_role == "DIRECT_MANAGER",
+        HREmployeeAchievementApproval.status == "PENDING",
+    )
+    if not _achievement_privileged():
+        query = query.filter(HREmployeeAchievementApproval.approver_user_id == current_user.id)
+    return query.order_by(HREmployeeAchievementApproval.assigned_at.asc(), HREmployeeAchievementApproval.id.asc()).all()
+
+
 @portal_bp.route("/hr/me/achievements", methods=["GET", "POST"])
 @login_required
 @_perm(PORTAL_READ)
 def hr_my_achievements():
-    """Let employees document exceptional work for an auditable HR review."""
+    """Let employees submit achievements and expose manager/observer queues."""
     if request.method == "POST":
         achievement_type = (request.form.get("achievement_type") or "OTHER").strip().upper()
         title = (request.form.get("title") or "").strip()
@@ -18640,7 +18922,6 @@ def hr_my_achievements():
         achieved_on = (request.form.get("achieved_on") or "").strip()
         issuer = (request.form.get("issuer") or "").strip()[:250]
         evidence_reference = (request.form.get("evidence_reference") or "").strip()[:500]
-
         if achievement_type not in ACHIEVEMENT_TYPES:
             achievement_type = "OTHER"
         if not title or len(title) > 250:
@@ -18668,16 +18949,63 @@ def hr_my_achievements():
             status="PENDING",
             submitted_by_id=current_user.id,
         )
-        db.session.add(row)
-        db.session.flush()
-        _portal_audit(
-            "HR_ACHIEVEMENT_SUBMIT",
-            f"achievement submitted user_id={current_user.id} type={achievement_type}",
-            target_type="HR_EMPLOYEE_ACHIEVEMENT",
-            target_id=row.id,
-        )
-        db.session.commit()
-        flash("تم إرسال الإنجاز للمراجعة. لن يدخل في التقييم قبل اعتماده.", "success")
+        saved_paths = []
+        try:
+            db.session.add(row)
+            db.session.flush()
+            _ensure_achievement_approval_path(row)
+            saved_paths, attachment_count = _save_achievement_attachments(
+                row,
+                request.files.getlist("attachments"),
+            )
+            manager_ids = _achievement_manager_ids(row)
+            observer_ids = [
+                int(step.approver_user_id)
+                for step in row.approval_steps
+                if (step.approver_role or "").upper() == "SECRETARY_GENERAL"
+            ]
+            _achievement_notify(
+                manager_ids,
+                f"إنجاز جديد للموظف {_achievement_display_name(current_user)} بانتظار اعتمادك.",
+                "HR_ACHIEVEMENT_SUBMITTED",
+                row,
+            )
+            _achievement_notify(
+                observer_ids,
+                f"تمت إحالة إنجاز الموظف {_achievement_display_name(current_user)} إلى المدير للموافقة — نسخة للاطلاع.",
+                "HR_ACHIEVEMENT_COPIED",
+                row,
+            )
+            _portal_audit(
+                "HR_ACHIEVEMENT_SUBMIT",
+                f"achievement submitted user_id={current_user.id} type={achievement_type} attachments={attachment_count}",
+                target_type="HR_EMPLOYEE_ACHIEVEMENT",
+                target_id=row.id,
+            )
+            db.session.commit()
+        except ValueError as exc:
+            db.session.rollback()
+            _remove_achievement_paths(saved_paths)
+            messages = {
+                "too_many_achievement_attachments": f"يمكن إرفاق {ACHIEVEMENT_ATTACHMENT_MAX_FILES} ملفات كحد أقصى.",
+                "achievement_attachment_too_large": "حجم أحد المرفقات يتجاوز 25 م.ب.",
+                "achievement_attachments_total_too_large": "إجمالي حجم المرفقات يتجاوز 50 م.ب.",
+            }
+            flash(messages.get(str(exc), "تعذر حفظ مرفقات الإنجاز."), "danger")
+            return redirect(url_for("portal.hr_my_achievements"))
+        except Exception:
+            db.session.rollback()
+            _remove_achievement_paths(saved_paths)
+            current_app.logger.exception("Failed to submit employee achievement")
+            flash("تعذر إرسال الإنجاز للمراجعة حالياً.", "danger")
+            return redirect(url_for("portal.hr_my_achievements"))
+
+        if not manager_ids:
+            flash("تم حفظ الإنجاز، لكن لا يوجد مدير مباشر مضبوط في الهيكل التنظيمي لتوجيهه للاعتماد.", "warning")
+        elif attachment_count:
+            flash(f"تم إرسال الإنجاز للمراجعة مع رفع {attachment_count} مرفق(ات).", "success")
+        else:
+            flash("تم إرسال الإنجاز للمراجعة. لن يدخل في التقييم قبل اعتماده.", "success")
         return redirect(url_for("portal.hr_my_achievements"))
 
     rows = (
@@ -18686,14 +19014,292 @@ def hr_my_achievements():
         .order_by(HREmployeeAchievement.achieved_on.desc(), HREmployeeAchievement.id.desc())
         .all()
     )
+    path_changed = False
+    for own_row in rows:
+        if (own_row.status or "").upper() == "PENDING":
+            before = len(own_row.approval_steps or [])
+            _ensure_achievement_approval_path(own_row)
+            path_changed = path_changed or len(own_row.approval_steps or []) != before
+    is_secretary_general = int(current_user.id) in {int(value) for value in secretary_general_user_ids()}
+    if _achievement_privileged() or is_secretary_general or path_changed:
+        pending_rows = (
+            HREmployeeAchievement.query
+            .filter(HREmployeeAchievement.status == "PENDING")
+            .order_by(HREmployeeAchievement.id.asc())
+            .limit(500)
+            .all()
+        )
+        for pending_row in pending_rows:
+            before = len(pending_row.approval_steps or [])
+            _ensure_achievement_approval_path(pending_row)
+            path_changed = path_changed or len(pending_row.approval_steps or []) != before
+    if path_changed:
+        db.session.commit()
+    review_rows = _achievement_review_rows_for_current_user()
+    observer_rows = (
+        HREmployeeAchievementApproval.query
+        .filter(
+            HREmployeeAchievementApproval.approver_user_id == current_user.id,
+            HREmployeeAchievementApproval.approver_role == "SECRETARY_GENERAL",
+        )
+        .join(HREmployeeAchievement, HREmployeeAchievement.id == HREmployeeAchievementApproval.achievement_id)
+        .order_by(HREmployeeAchievementApproval.created_at.desc())
+        .limit(100)
+        .all()
+    )
     return render_template(
         "portal/hr/my_achievements.html",
         rows=rows,
+        review_rows=review_rows,
+        observer_rows=observer_rows,
         achievement_types=ACHIEVEMENT_TYPES,
         achievement_levels=ACHIEVEMENT_LEVELS,
         achievement_statuses=ACHIEVEMENT_STATUSES,
         today=date.today().isoformat(),
     )
+
+
+@portal_bp.route("/hr/achievements/review")
+@login_required
+@_perm(PORTAL_READ)
+def hr_achievements_review_queue():
+    path_changed = False
+    pending_rows = (
+        HREmployeeAchievement.query
+        .filter(HREmployeeAchievement.status == "PENDING")
+        .order_by(HREmployeeAchievement.id.asc())
+        .limit(500)
+        .all()
+    )
+    for pending_row in pending_rows:
+        before = len(pending_row.approval_steps or [])
+        _ensure_achievement_approval_path(pending_row)
+        path_changed = path_changed or len(pending_row.approval_steps or []) != before
+    if path_changed:
+        db.session.commit()
+    rows = _achievement_review_rows_for_current_user()
+    return render_template(
+        "portal/hr/achievement_review_queue.html",
+        rows=rows,
+        achievement_levels=ACHIEVEMENT_LEVELS,
+        achievement_statuses=ACHIEVEMENT_STATUSES,
+    )
+
+
+@portal_bp.route("/hr/achievements/<int:achievement_id>")
+@login_required
+@_perm(PORTAL_READ)
+def hr_achievement_view(achievement_id: int):
+    row = HREmployeeAchievement.query.get_or_404(achievement_id)
+    if (row.status or "").upper() == "PENDING":
+        _ensure_achievement_approval_path(row)
+        db.session.commit()
+    access_level = _achievement_access_level(row)
+    if not access_level:
+        abort(403)
+    observer_step = next(
+        (
+            step for step in (row.approval_steps or [])
+            if int(step.approver_user_id or 0) == int(current_user.id)
+            and (step.approver_role or "").upper() == "SECRETARY_GENERAL"
+        ),
+        None,
+    )
+    if observer_step and not observer_step.viewed_at:
+        observer_step.viewed_at = datetime.utcnow()
+        db.session.commit()
+    return render_template(
+        "portal/hr/achievement_detail.html",
+        row=row,
+        access_level=access_level,
+        can_review=(access_level in {"manager", "admin"} and row.status == "PENDING"),
+        achievement_levels=ACHIEVEMENT_LEVELS,
+        achievement_types=ACHIEVEMENT_TYPES,
+        achievement_statuses=ACHIEVEMENT_STATUSES,
+        period_total=_achievement_period_total(row.user_id, row.achieved_on, exclude_id=row.id),
+        period_cap=ACHIEVEMENT_BONUS_CAP,
+    )
+
+
+@portal_bp.route("/hr/achievements/<int:achievement_id>/attachments", methods=["POST"])
+@login_required
+@_perm(PORTAL_READ)
+def hr_achievement_attachments_upload(achievement_id: int):
+    row = HREmployeeAchievement.query.get_or_404(achievement_id)
+    if int(row.user_id) != int(current_user.id) or (row.status or "").upper() != "PENDING":
+        abort(403)
+    saved_paths = []
+    try:
+        saved_paths, added = _save_achievement_attachments(row, request.files.getlist("attachments"))
+        if not added:
+            flash("اختر ملفاً واحداً على الأقل للرفع.", "warning")
+            return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
+        _ensure_achievement_approval_path(row)
+        recipients = [
+            step.approver_user_id
+            for step in row.approval_steps
+            if step.approver_user_id
+            and (
+                ((step.approver_role or "").upper() == "DIRECT_MANAGER" and step.status == "PENDING")
+                or (step.approver_role or "").upper() == "SECRETARY_GENERAL"
+            )
+        ]
+        _achievement_notify(
+            recipients,
+            f"تمت إضافة مرفقات إلى إنجاز الموظف {_achievement_display_name(row.user)}؛ يرجى مراجعتها.",
+            "HR_ACHIEVEMENT_ATTACHMENT",
+            row,
+        )
+        db.session.commit()
+        flash(f"تم رفع {added} مرفق(ات).", "success")
+    except ValueError as exc:
+        db.session.rollback()
+        _remove_achievement_paths(saved_paths)
+        messages = {
+            "too_many_achievement_attachments": f"يمكن إرفاق {ACHIEVEMENT_ATTACHMENT_MAX_FILES} ملفات كحد أقصى.",
+            "achievement_attachment_too_large": "حجم أحد المرفقات يتجاوز 25 م.ب.",
+            "achievement_attachments_total_too_large": "إجمالي حجم المرفقات يتجاوز 50 م.ب.",
+        }
+        flash(messages.get(str(exc), "تعذر رفع المرفقات."), "danger")
+    except Exception:
+        db.session.rollback()
+        _remove_achievement_paths(saved_paths)
+        current_app.logger.exception("Failed to upload achievement attachments for %s", achievement_id)
+        flash("تعذر رفع المرفقات حالياً.", "danger")
+    return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
+
+
+@portal_bp.route("/hr/achievements/<int:achievement_id>/attachments/<int:attachment_id>/download")
+@login_required
+@_perm(PORTAL_READ)
+def hr_achievement_attachment_download(achievement_id: int, attachment_id: int):
+    row = HREmployeeAchievement.query.get_or_404(achievement_id)
+    if (row.status or "").upper() == "PENDING":
+        _ensure_achievement_approval_path(row)
+    if not _achievement_access_level(row):
+        abort(403)
+    attachment = HREmployeeAchievementAttachment.query.filter_by(
+        id=attachment_id,
+        achievement_id=row.id,
+    ).first_or_404()
+    response = send_from_directory(
+        str(_achievement_storage_dir(row.id)),
+        attachment.stored_name,
+        mimetype=attachment.mime_type or None,
+        as_attachment=True,
+        download_name=attachment.original_name,
+        max_age=0,
+    )
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@portal_bp.route("/hr/achievements/<int:achievement_id>/review", methods=["POST"])
+@login_required
+@_perm(PORTAL_READ)
+def hr_achievement_review(achievement_id: int):
+    row = HREmployeeAchievement.query.get_or_404(achievement_id)
+    if (row.status or "").upper() == "PENDING":
+        _ensure_achievement_approval_path(row)
+    access_level = _achievement_access_level(row)
+    if access_level not in {"manager", "admin"} or (row.status or "").upper() != "PENDING":
+        abort(403)
+
+    step = next(
+        (
+            candidate for candidate in (row.approval_steps or [])
+            if (candidate.approver_role or "").upper() == "DIRECT_MANAGER"
+            and candidate.status == "PENDING"
+            and (access_level == "admin" or int(candidate.approver_user_id) == int(current_user.id))
+        ),
+        None,
+    )
+    if not step:
+        abort(403)
+
+    action = (request.form.get("action") or "").strip().upper()
+    note = (request.form.get("decision_note") or "").strip()[:4000]
+    if action not in {"APPROVE", "REJECT"}:
+        flash("حدد قرار الاعتماد أو الرفض.", "warning")
+        return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
+    if action == "REJECT" and not note:
+        flash("سبب الرفض مطلوب حتى يظهر للموظف والأمين العام.", "warning")
+        return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
+
+    selected_level = (request.form.get("distinction_level") or "").strip().upper()
+    selected_points = 0.0
+    if action == "APPROVE":
+        if selected_level not in ACHIEVEMENT_LEVELS:
+            flash("اختر درجة إنجاز صحيحة.", "warning")
+            return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
+        selected_points = achievement_points(selected_level)
+        period_total = _achievement_period_total(row.user_id, row.achieved_on, exclude_id=row.id)
+        remaining = round(max(ACHIEVEMENT_BONUS_CAP - period_total, 0.0), 2)
+        if selected_points > remaining:
+            flash(
+                f"لا يمكن اعتماد +{selected_points:g} نقطة؛ المتبقي للموظف في فترة التقييم الحالية +{remaining:g} فقط.",
+                "warning",
+            )
+            return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
+
+    now = datetime.utcnow()
+    step.status = "APPROVED" if action == "APPROVE" else "REJECTED"
+    step.distinction_level = selected_level if action == "APPROVE" else None
+    step.evaluation_points = selected_points if action == "APPROVE" else 0.0
+    step.decision_note = note or None
+    step.decided_at = now
+    step.updated_at = now
+
+    row.status = "APPROVED" if action == "APPROVE" else "REJECTED"
+    row.distinction_level = selected_level if action == "APPROVE" else "NOTABLE"
+    row.evaluation_points = selected_points if action == "APPROVE" else 0.0
+    row.reviewed_by_id = current_user.id
+    row.review_note = note or None
+    row.reviewed_at = now
+    row.updated_at = now
+    for other in row.approval_steps or []:
+        if other.id != step.id and (other.approver_role or "").upper() == "DIRECT_MANAGER" and other.status == "PENDING":
+            other.status = "SKIPPED"
+            other.updated_at = now
+
+    employee_message = (
+        f"تم اعتماد إنجازك «{row.title}» بدرجة {ACHIEVEMENT_LEVELS[selected_level]['label']} (+{selected_points:g})."
+        if action == "APPROVE"
+        else f"تم رفض إنجازك «{row.title}». سبب الرفض: {note}"
+    )
+    observer_ids = [
+        approval.approver_user_id
+        for approval in (row.approval_steps or [])
+        if (approval.approver_role or "").upper() == "SECRETARY_GENERAL"
+    ]
+    _achievement_notify([row.user_id], employee_message, "HR_ACHIEVEMENT_DECISION", row)
+    _achievement_notify(
+        observer_ids,
+        (
+            f"قرار المدير في إنجاز «{row.title}»: موافقة بدرجة {ACHIEVEMENT_LEVELS[selected_level]['label']} (+{selected_points:g})."
+            if action == "APPROVE"
+            else f"قرار المدير في إنجاز «{row.title}»: رفض. السبب: {note}"
+        ),
+        "HR_ACHIEVEMENT_MANAGER_DECISION",
+        row,
+    )
+    _portal_audit(
+        "HR_ACHIEVEMENT_APPROVE" if action == "APPROVE" else "HR_ACHIEVEMENT_REJECT",
+        f"achievement decision={action} level={selected_level or '-'} points={selected_points:g} note={note[:250]}",
+        target_type="HR_EMPLOYEE_ACHIEVEMENT",
+        target_id=row.id,
+    )
+    db.session.commit()
+    if action == "APPROVE":
+        try:
+            from services.evaluation_service import refresh_achievement_bonus_for_existing_runs
+
+            refresh_achievement_bonus_for_existing_runs(row.user_id, row.achieved_on)
+        except Exception:
+            current_app.logger.exception("Failed to refresh evaluation bonus for achievement %s", row.id)
+    flash("تم حفظ قرار اعتماد الإنجاز وإبلاغ الموظف والأمين العام." if action == "APPROVE" else "تم رفض الإنجاز مع حفظ السبب وإبلاغ الموظف والأمين العام.", "success")
+    return redirect(url_for("portal.hr_achievement_view", achievement_id=row.id))
 
 
 @portal_bp.route("/hr/me/system-evaluations")

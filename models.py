@@ -6717,6 +6717,20 @@ class HREmployeeAchievement(db.Model):
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
     submitted_by = db.relationship("User", foreign_keys=[submitted_by_id], lazy="joined")
     reviewed_by = db.relationship("User", foreign_keys=[reviewed_by_id], lazy="joined")
+    attachments = db.relationship(
+        "HREmployeeAchievementAttachment",
+        back_populates="achievement",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="HREmployeeAchievementAttachment.uploaded_at.asc()",
+    )
+    approval_steps = db.relationship(
+        "HREmployeeAchievementApproval",
+        back_populates="achievement",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="HREmployeeAchievementApproval.id.asc()",
+    )
 
     __table_args__ = (
         db.CheckConstraint(
@@ -6736,4 +6750,87 @@ class HREmployeeAchievement(db.Model):
             name="ck_hr_employee_achievement_points",
         ),
         db.Index("ix_hr_achievement_user_date_status", "user_id", "achieved_on", "status"),
+    )
+
+
+class HREmployeeAchievementAttachment(db.Model):
+    """A private file attached to an employee achievement submission."""
+
+    __tablename__ = "hr_employee_achievement_attachment"
+
+    id = db.Column(db.Integer, primary_key=True)
+    achievement_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_employee_achievement.id"),
+        nullable=False,
+        index=True,
+    )
+    original_name = db.Column(db.String(255), nullable=False)
+    stored_name = db.Column(db.String(255), nullable=False, unique=True)
+    mime_type = db.Column(db.String(120), nullable=True)
+    file_size = db.Column(db.Integer, nullable=True)
+    uploaded_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    uploaded_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    achievement = db.relationship("HREmployeeAchievement", back_populates="attachments", lazy="joined")
+    uploaded_by = db.relationship("User", foreign_keys=[uploaded_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.Index("ix_hr_achievement_attachment_achievement", "achievement_id", "uploaded_at"),
+    )
+
+
+class HREmployeeAchievementApproval(db.Model):
+    """One direct-manager decision or Secretary General read-only copy."""
+
+    __tablename__ = "hr_employee_achievement_approval"
+
+    id = db.Column(db.Integer, primary_key=True)
+    achievement_id = db.Column(
+        db.Integer,
+        db.ForeignKey("hr_employee_achievement.id"),
+        nullable=False,
+        index=True,
+    )
+    approver_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    approver_role = db.Column(db.String(30), nullable=False, default="DIRECT_MANAGER", index=True)
+    # DIRECT_MANAGER rows are actionable; SECRETARY_GENERAL rows are read-only.
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+    distinction_level = db.Column(db.String(20), nullable=True)
+    evaluation_points = db.Column(db.Float, nullable=True, default=0.0)
+    decision_note = db.Column(db.Text, nullable=True)
+    assigned_at = db.Column(db.DateTime, nullable=True)
+    decided_at = db.Column(db.DateTime, nullable=True)
+    viewed_at = db.Column(db.DateTime, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    achievement = db.relationship("HREmployeeAchievement", back_populates="approval_steps", lazy="joined")
+    approver = db.relationship("User", foreign_keys=[approver_user_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "achievement_id",
+            "approver_user_id",
+            "approver_role",
+            name="uq_hr_achievement_approval_recipient",
+        ),
+        db.CheckConstraint(
+            "approver_role IN ('DIRECT_MANAGER','SECRETARY_GENERAL')",
+            name="ck_hr_achievement_approval_role",
+        ),
+        db.CheckConstraint(
+            "status IN ('PENDING','APPROVED','REJECTED','SKIPPED','VIEW_ONLY')",
+            name="ck_hr_achievement_approval_status",
+        ),
+        db.CheckConstraint(
+            "evaluation_points IS NULL OR (evaluation_points >= 0 AND evaluation_points <= 3)",
+            name="ck_hr_achievement_approval_points",
+        ),
+        db.Index(
+            "ix_hr_achievement_approval_user_status",
+            "approver_user_id",
+            "approver_role",
+            "status",
+        ),
     )
