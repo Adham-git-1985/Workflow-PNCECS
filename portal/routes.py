@@ -16,6 +16,7 @@ import json
 import calendar
 import base64
 import mimetypes
+import math
 import unicodedata
 from pathlib import Path
 from io import BytesIO
@@ -40400,6 +40401,32 @@ def _catalog_import_code(value) -> str:
     return code
 
 
+def _catalog_import_quantity(value) -> float | None:
+    """Parse an optional non-negative quantity from an inventory workbook."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if isinstance(value, bool):
+        raise ValueError("الكمية يجب أن تكون رقمًا أكبر من أو يساوي صفرًا.")
+
+    if isinstance(value, (int, float)):
+        quantity = float(value)
+    else:
+        normalized = str(value).strip()
+        normalized = normalized.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+        normalized = (
+            normalized
+            .replace(",", "")
+            .replace("،", "")
+            .replace("٬", "")
+            .replace("٫", ".")
+        )
+        quantity = float(normalized)
+
+    if not math.isfinite(quantity) or quantity < 0:
+        raise ValueError("الكمية يجب أن تكون رقمًا أكبر من أو يساوي صفرًا.")
+    return quantity
+
+
 def _catalog_import_header(value) -> str:
     text_value = unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
     text_value = text_value.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
@@ -40424,6 +40451,7 @@ def _read_ministry_catalog(uploaded_file) -> tuple[list[dict], list[str]]:
         "subcategory": {"التصنيفالفرعي", "التصنبفالفرعي", "subcategory", "subcat"},
         "consumable": {"مستهلك", "consumable"},
         "unit": {"الوحدة", "unit"},
+        "quantity": {"الكمية", "الرصيد", "الرصيدالافتتاحي", "qty", "quantity", "openingbalance", "openingqty"},
     }
     alias_lookup = {
         alias: key
@@ -40476,6 +40504,11 @@ def _read_ministry_catalog(uploaded_file) -> tuple[list[dict], list[str]]:
         if not code or not name or not category:
             errors.append(f"الصف {row_number}: رمز الصنف واسمه وتصنيفه الرئيسي مطلوبة.")
             continue
+        try:
+            quantity = _catalog_import_quantity(row.get("quantity"))
+        except (TypeError, ValueError):
+            errors.append(f"الصف {row_number}: الكمية يجب أن تكون رقمًا أكبر من أو يساوي صفرًا.")
+            continue
         fingerprint = (code.casefold(), name.casefold())
         if fingerprint in seen:
             continue
@@ -40487,6 +40520,7 @@ def _read_ministry_catalog(uploaded_file) -> tuple[list[dict], list[str]]:
             "subcategory": _catalog_import_text(row.get("subcategory"), 200),
             "consumable": _catalog_import_text(row.get("consumable"), 80),
             "unit": _catalog_import_text(row.get("unit"), 80),
+            "quantity": quantity,
         })
     return rows, errors
 
@@ -40495,9 +40529,12 @@ def _read_ministry_catalog(uploaded_file) -> tuple[list[dict], list[str]]:
 @login_required
 @_perm(STORE_MANAGE)
 def inventory_admin_items_import_catalog():
-    """Import the Ministry of Finance's inventory catalogue into the item master."""
+    """Import item definitions and optional opening balances from an XLSX file."""
     result = None
     server_catalog_path = Path(current_app.root_path) / "jard.xlsx"
+    warehouses = InvWarehouse.query.filter(InvWarehouse.is_active == True).order_by(InvWarehouse.name.asc()).all()  # noqa: E712
+    selected_warehouse_id = (request.form.get("warehouse_id") or "").strip()
+    voucher_date = (request.form.get("voucher_date") or date.today().isoformat()).strip()
     if request.method == "POST":
         import_from_server = request.form.get("source") == "server"
         uploaded_file = server_catalog_path if import_from_server else request.files.get("file")
@@ -40507,6 +40544,25 @@ def inventory_admin_items_import_catalog():
             if import_from_server
             else (uploaded_file.filename if uploaded_file else "")
         )
+        if not selected_warehouse_id:
+            flash("اختر المستودع الذي ستضاف إليه الكميات أولاً.", "warning")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
+        try:
+            selected_warehouse_id_int = int(selected_warehouse_id)
+        except (TypeError, ValueError):
+            selected_warehouse_id_int = 0
+        warehouse = InvWarehouse.query.filter(
+            InvWarehouse.id == selected_warehouse_id_int,
+            InvWarehouse.is_active == True,  # noqa: E712
+        ).first()
+        if warehouse is None:
+            flash("المستودع المحدد غير صالح أو غير فعّال.", "warning")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
+        try:
+            datetime.strptime(voucher_date, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            flash("تاريخ الرصيد الافتتاحي غير صالح.", "warning")
+            return redirect(url_for("portal.inventory_admin_items_import_catalog"))
         if import_from_server and not server_catalog_path.is_file():
             flash("ملف jard.xlsx غير موجود في مجلد النظام على الخادم.", "warning")
             return redirect(url_for("portal.inventory_admin_items_import_catalog"))
@@ -40553,46 +40609,91 @@ def inventory_admin_items_import_catalog():
             created = 0
             updated = 0
             skipped = 0
+            quantity_lines: list[tuple[InvItem, float]] = []
             for row in source_rows:
                 key = (row["code"].casefold(), row["name"].casefold())
                 category = category_by_name[row["category"].casefold()]
                 item = existing_by_key.get(key)
                 if item is not None and not update_existing:
                     skipped += 1
-                    continue
-                if item is None:
-                    item = InvItem(
-                        name=row["name"],
-                        code=row["code"],
-                        unit=row["unit"] or None,
-                        category_id=category.id,
-                        is_active=True,
-                        created_at=datetime.utcnow(),
-                    )
-                    db.session.add(item)
-                    existing_by_key[key] = item
-                    created += 1
                 else:
-                    item.name = row["name"]
-                    item.code = row["code"]
-                    item.unit = row["unit"] or None
-                    item.category_id = category.id
-                    item.is_active = True
-                    item.attributes.clear()
-                    updated += 1
+                    if item is None:
+                        item = InvItem(
+                            name=row["name"],
+                            code=row["code"],
+                            unit=row["unit"] or None,
+                            category_id=category.id,
+                            is_active=True,
+                            created_at=datetime.utcnow(),
+                        )
+                        db.session.add(item)
+                        existing_by_key[key] = item
+                        created += 1
+                    else:
+                        item.name = row["name"]
+                        item.code = row["code"]
+                        item.unit = row["unit"] or None
+                        item.category_id = category.id
+                        item.is_active = True
+                        item.attributes.clear()
+                        updated += 1
 
-                if row["subcategory"]:
-                    item.attributes.append(InvItemAttribute(
-                        name="التصنيف الفرعي",
-                        value=row["subcategory"],
-                        sort_order=0,
+                    if row["subcategory"]:
+                        item.attributes.append(InvItemAttribute(
+                            name="التصنيف الفرعي",
+                            value=row["subcategory"],
+                            sort_order=0,
+                        ))
+                    if row["consumable"]:
+                        item.attributes.append(InvItemAttribute(
+                            name="مستهلك",
+                            value=row["consumable"],
+                            sort_order=1,
+                        ))
+
+                if row.get("quantity") is not None:
+                    quantity_lines.append((item, float(row["quantity"])))
+
+            # Flush item definitions before creating the stocktake lines so that
+            # newly imported items have database identifiers.
+            db.session.flush()
+
+            stocktake_voucher = None
+            quantity_total = sum(quantity for _item, quantity in quantity_lines)
+            if quantity_lines:
+                stocktake_voucher = InvStocktakeVoucher(
+                    voucher_no="",
+                    voucher_date=voucher_date,
+                    warehouse_id=warehouse.id,
+                    note=f"استيراد رصيد افتتاحي من ملف {filename}",
+                    created_by_id=current_user.id,
+                    created_at=datetime.utcnow(),
+                )
+                db.session.add(stocktake_voucher)
+                db.session.flush()
+                stocktake_voucher.voucher_no = auto_inventory_voucher_no(
+                    "stocktake",
+                    voucher_date,
+                    stocktake_voucher.id,
+                )
+                for item, quantity in quantity_lines:
+                    db.session.add(InvStocktakeVoucherLine(
+                        voucher_id=stocktake_voucher.id,
+                        item_id=item.id,
+                        qty=quantity,
+                        details=f"استيراد مباشر من ملف {filename}",
                     ))
-                if row["consumable"]:
-                    item.attributes.append(InvItemAttribute(
-                        name="مستهلك",
-                        value=row["consumable"],
-                        sort_order=1,
+                try:
+                    db.session.add(AuditLog(
+                        user_id=current_user.id,
+                        action="INV_STOCKTAKE_CREATE",
+                        note=f"إنشاء سند رصيد افتتاحي بالاستيراد ({stocktake_voucher.voucher_no})",
+                        target_type="INV_STOCKTAKE_VOUCHER",
+                        target_id=stocktake_voucher.id,
+                        created_at=datetime.utcnow(),
                     ))
+                except Exception:
+                    pass
 
             db.session.commit()
             result = {
@@ -40601,8 +40702,20 @@ def inventory_admin_items_import_catalog():
                 "created": created,
                 "updated": updated,
                 "skipped": skipped,
+                "quantity_rows": len(quantity_lines),
+                "quantity_total": quantity_total,
+                "warehouse_name": warehouse.label,
+                "voucher_date": voucher_date if stocktake_voucher else None,
+                "stocktake_voucher_id": stocktake_voucher.id if stocktake_voucher else None,
+                "stocktake_voucher_no": stocktake_voucher.voucher_no if stocktake_voucher else None,
             }
-            flash("تم استيراد دليل الأصناف بنجاح.", "success")
+            if stocktake_voucher:
+                flash(
+                    f"تم استيراد الأصناف وإضافة {quantity_total:g} وحدة إلى المستودع «{warehouse.label}» ضمن سند الجرد {stocktake_voucher.voucher_no}.",
+                    "success",
+                )
+            else:
+                flash("تم استيراد الأصناف. لم يعثر الملف على كميات لإضافتها إلى رصيد المستودع.", "success")
         except (ValueError, IntegrityError) as exc:
             db.session.rollback()
             flash(str(exc) if isinstance(exc, ValueError) else "تعذر الاستيراد بسبب بيانات مكررة.", "danger")
@@ -40610,6 +40723,9 @@ def inventory_admin_items_import_catalog():
     return render_template(
         "portal/inventory/admin_items_import_catalog.html",
         result=result,
+        warehouses=warehouses,
+        selected_warehouse_id=selected_warehouse_id,
+        voucher_date=voucher_date,
         server_file_available=server_catalog_path.is_file(),
     )
 

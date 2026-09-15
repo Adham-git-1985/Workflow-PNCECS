@@ -3,8 +3,8 @@
 {% block inv_content %}
 <div class="d-flex align-items-center justify-content-between mb-3">
   <div>
-    <h5 class="m-0">استيراد دليل الأصناف من ملف الجرد</h5>
-    <div class="text-muted small mt-1">يقبل نموذج وزارة المالية الذي يحتوي على ورقة «الأصناف».</div>
+    <h5 class="m-0">استيراد الأصناف والأرصدة من Excel</h5>
+    <div class="text-muted small mt-1">اختر ملف الأصناف، وسيُنشئ النظام رصيدًا افتتاحيًا للكميات في المستودع المحدد.</div>
   </div>
   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_admin_items') }}">العودة إلى الأصناف</a>
 </div>
@@ -12,37 +12,71 @@
 <div class="card shadow-sm">
   <div class="card-body">
     <div class="alert alert-info">
-      سيُنشئ النظام التصنيفات الرئيسية والأصناف وأكوادها ووحداتها. ويحفظ التصنيف الفرعي وحالة «مستهلك» ضمن مواصفات الصنف. لا يحتوي هذا الملف على أرصدة فعلية، لذلك أدخل الكميات لاحقاً من سند الجرد لكل مستودع.
+      يستورد النظام تعريفات الأصناف والتصنيفات والوحدات وحالة «مستهلك». إذا احتوى الملف على عمود «الكمية»، فسيُنشئ النظام تلقائيًا سند جرد افتتاحيًا بهذه الكميات في المستودع المحدد.
     </div>
+    <div class="alert alert-warning py-2">
+      الغرفة الموجودة في الملف وصفٌ للجهة المطلوبة، ولا تُضاف إلى رصيد المستودع. بعد توفر الرصيد يمكن صرف المواد إلى الغرفة من سند الصرف.
+    </div>
+    {% if not warehouses %}
+    <div class="alert alert-danger">لا توجد مستودعات فعّالة. أضف مستودعًا من «إدارة المستودع» قبل الاستيراد.</div>
+    {% endif %}
     <form method="post" enctype="multipart/form-data" class="row g-3">
       {{ csrf_token() if csrf_token is defined else '' }}
+      <div class="col-md-4">
+        <label class="form-label" for="warehouseId">المستودع الذي ستضاف إليه الكميات</label>
+        <select class="form-select" name="warehouse_id" id="warehouseId" required>
+          <option value="">اختر المستودع</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}" {% if selected_warehouse_id|int == warehouse.id %}selected{% endif %}>{{ warehouse.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label" for="voucherDate">تاريخ الرصيد الافتتاحي</label>
+        <input class="form-control" type="date" name="voucher_date" id="voucherDate" value="{{ voucher_date }}" required>
+      </div>
       <div class="col-md-8">
-        <label class="form-label" for="catalogFile">ملف الجرد XLSX</label>
+        <label class="form-label" for="catalogFile">ملف الأصناف XLSX</label>
         <input class="form-control" type="file" name="file" id="catalogFile" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required>
+        <div class="form-text">اختر ملف «مواد_مستهلكة_طلب_المواد_غرفة_مدير_المستودع.xlsx» من جهازك.</div>
       </div>
       <div class="col-md-8">
         <div class="form-check">
           <input class="form-check-input" type="checkbox" name="update_existing" value="1" id="updateExisting">
-          <label class="form-check-label" for="updateExisting">تحديث الصنف المطابق في حال استيراد الملف مرة أخرى</label>
+          <label class="form-check-label" for="updateExisting">تحديث بيانات الصنف المطابق إذا كان موجودًا</label>
         </div>
       </div>
       <div class="col-12">
-        <button class="btn btn-primary" type="submit"><i class="bi bi-upload"></i> بدء الاستيراد</button>
+        <button class="btn btn-primary" type="submit" {% if not warehouses %}disabled{% endif %}><i class="bi bi-upload"></i> استيراد الأصناف والأرصدة</button>
       </div>
     </form>
+
     {% if server_file_available %}
     <hr>
-    <div class="d-flex align-items-center justify-content-between gap-3 flex-wrap">
-      <div>
-        <div class="fw-semibold">ملف jard.xlsx موجود في مجلد النظام على الخادم</div>
-        <div class="small text-muted">يمكن استيراده مباشرة دون رفعه من جهازك.</div>
-      </div>
-      <form method="post">
-        {{ csrf_token() if csrf_token is defined else '' }}
-        <input type="hidden" name="source" value="server">
-        <button class="btn btn-outline-success" type="submit"><i class="bi bi-database-add"></i> استيراد ملف الخادم</button>
-      </form>
+    <div class="mb-2">
+      <div class="fw-semibold">استيراد ملف النظام jard.xlsx</div>
+      <div class="small text-muted">هذا خيار منفصل لملف موجود على الخادم، وليس مطلوبًا لملف الأصناف المرفق.</div>
     </div>
+    <form method="post" class="row g-2 align-items-end">
+      {{ csrf_token() if csrf_token is defined else '' }}
+      <input type="hidden" name="source" value="server">
+      <div class="col-md-4">
+        <label class="form-label" for="serverWarehouseId">المستودع</label>
+        <select class="form-select" name="warehouse_id" id="serverWarehouseId" required>
+          <option value="">اختر المستودع</option>
+          {% for warehouse in warehouses %}
+          <option value="{{ warehouse.id }}">{{ warehouse.label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="col-md-4">
+        <label class="form-label" for="serverVoucherDate">تاريخ الرصيد الافتتاحي</label>
+        <input class="form-control" type="date" name="voucher_date" id="serverVoucherDate" value="{{ voucher_date }}" required>
+      </div>
+      <div class="col-md-auto">
+        <button class="btn btn-outline-success" type="submit" {% if not warehouses %}disabled{% endif %}><i class="bi bi-database-add"></i> استيراد ملف النظام</button>
+      </div>
+    </form>
     {% endif %}
   </div>
 </div>
@@ -57,7 +91,17 @@
       <div class="col-sm-4"><div class="border rounded p-2"><div class="text-muted small">أصناف جديدة</div><div class="fs-5">{{ result.created }}</div></div></div>
       <div class="col-sm-6"><div class="border rounded p-2"><div class="text-muted small">أصناف محدّثة</div><div class="fs-5">{{ result.updated }}</div></div></div>
       <div class="col-sm-6"><div class="border rounded p-2"><div class="text-muted small">أصناف مطابقة لم تتغير</div><div class="fs-5">{{ result.skipped }}</div></div></div>
+      <div class="col-sm-6"><div class="border rounded p-2"><div class="text-muted small">أصناف لها كمية</div><div class="fs-5">{{ result.quantity_rows }}</div></div></div>
+      <div class="col-sm-6"><div class="border rounded p-2"><div class="text-muted small">إجمالي الكمية</div><div class="fs-5">{{ result.quantity_total|round(2) }}</div></div></div>
     </div>
+    {% if result.stocktake_voucher_id %}
+    <div class="alert alert-success mt-3 mb-0">
+      أُضيف الرصيد إلى «{{ result.warehouse_name }}» بتاريخ {{ result.voucher_date }} ضمن سند الجرد {{ result.stocktake_voucher_no }}.
+      <a class="alert-link" href="{{ url_for('portal.inventory_stocktake_voucher_view', v_id=result.stocktake_voucher_id) }}">فتح السند</a>
+    </div>
+    {% else %}
+    <div class="alert alert-warning mt-3 mb-0">لم توجد كميات في الملف، لذلك لم يُنشأ سند رصيد.</div>
+    {% endif %}
   </div>
 </div>
 {% endif %}

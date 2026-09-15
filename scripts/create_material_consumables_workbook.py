@@ -2,9 +2,9 @@
 """Create the consumable-material catalogue prepared from the supplied image.
 
 The first worksheet deliberately uses the column names understood by the
-portal's inventory catalogue importer.  The quantity and room columns are
-kept in the same workbook for the subsequent opening-stock/room step; the
-current catalogue importer ignores those two columns by design.
+portal's inventory item importer.  The quantity column is imported as an
+opening stocktake balance after the user selects a warehouse; the room column
+remains a destination reference for a later issue voucher.
 """
 
 from __future__ import annotations
@@ -226,8 +226,8 @@ def build_workbook(output: Path) -> None:
     instructions.append(["عدد الأصناف", len(ITEMS)])
     instructions.append(["نوع الأصناف", "مستهلكة - YES"])
     instructions.append(["الغرفة المطلوبة", ROOM])
-    instructions.append(["رفع دليل الأصناف", "ارفع الملف من بوابة النظام > المستودع > إدارة الأصناف > استيراد دليل الجرد."])
-    instructions.append(["الرصيد", "المستورد الحالي ينشئ تعريف الأصناف فقط؛ استخدم ورقة الأرصدة الأولية لإدخال الكميات في سند جرد للمستودع."])
+    instructions.append(["رفع الأصناف والأرصدة", "ارفع الملف من بوابة النظام > المستودع > إدارة الأصناف > استيراد الأصناف والأرصدة، ثم اختر المستودع وتاريخ الرصيد."])
+    instructions.append(["الرصيد", "يقرأ المستورد عمود الكمية وينشئ سند جرد افتتاحيًا للمستودع المحدد. الغرفة تُستخدم لاحقًا عند إنشاء سند الصرف."])
     instructions.append(["الأكواد", "أكواد داخلية ثابتة PNCECS لأن الصورة المرفقة لا تحتوي على رموز أصناف رسمية."])
     _style_sheet(instructions, {1: 24, 2: 100})
     instructions.auto_filter.ref = "A1:B7"
