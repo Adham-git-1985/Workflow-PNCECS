@@ -1189,13 +1189,48 @@ def _ensure_runtime_schema():
                 ("hr_att_deduction_item", "salary_deduction_days", "REAL NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "remainder_minutes", "INTEGER NOT NULL DEFAULT 0"),
                 ("hr_att_deduction_item", "details_json", "TEXT"),
+                ("hr_leave_request", "source", "TEXT"),
+                ("hr_leave_request", "source_attendance_day", "TEXT"),
+                ("hr_leave_request", "replaced_by_leave_request_id", "INTEGER"),
+                ("hr_leave_request", "replaced_at", "TEXT"),
+                ("hr_leave_request", "replacement_reason", "TEXT"),
                 ("hr_att_special_case", "approval_status", "TEXT NOT NULL DEFAULT 'APPROVED'"),
                 ("hr_att_special_case", "approved_by_id", "INTEGER"),
                 ("hr_att_special_case", "approved_at", "TEXT"),
                 ("hr_att_special_case", "approval_note", "TEXT"),
+                ("hr_att_special_case", "final_approved_by_id", "INTEGER"),
+                ("hr_att_special_case", "final_approved_at", "TEXT"),
+                ("hr_att_special_case", "final_approval_note", "TEXT"),
             ]:
                 if not _col_exists(_table, _col):
                     _add_column_retry(_table, _col, _ctype)
+
+            # Runtime counterpart of migration j3c4d5e6f7g8.  Existing local
+            # SQLite databases may have the tables already, so create the new
+            # lookup/idempotency indexes separately from ``db.create_all``.
+            # Keep each statement isolated: a legacy duplicate auto-leave row
+            # must not prevent the ordinary lookup indexes from being added.
+            for _index_sql in [
+                "CREATE INDEX IF NOT EXISTS ix_hr_leave_request_source "
+                "ON hr_leave_request (source)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_leave_request_source_attendance_day "
+                "ON hr_leave_request (source_attendance_day)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_leave_request_replaced_by_leave_request_id "
+                "ON hr_leave_request (replaced_by_leave_request_id)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_leave_request_replaced_at "
+                "ON hr_leave_request (replaced_at)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_hr_leave_attendance_auto_day "
+                "ON hr_leave_request (user_id, source, source_attendance_day)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_att_special_case_final_approved_by_id "
+                "ON hr_att_special_case (final_approved_by_id)",
+                "CREATE INDEX IF NOT EXISTS ix_hr_att_special_case_final_approved_at "
+                "ON hr_att_special_case (final_approved_at)",
+            ]:
+                try:
+                    db.session.execute(text(_index_sql))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
 
             try:
                 db.session.execute(text(

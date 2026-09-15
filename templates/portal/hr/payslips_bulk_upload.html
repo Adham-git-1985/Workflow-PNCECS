@@ -3,80 +3,161 @@
 
 {% block hr_content %}
 <div class="p-4 bg-white rounded-3 shadow-sm mb-3">
-  <h4 class="mb-1"><i class="bi bi-upload"></i> رفع قسائم الرواتب (شهرياً)</h4>
+  <h4 class="mb-1"><i class="bi bi-upload"></i> رفع قسائم الرواتب والمياومة</h4>
   <div class="text-muted">
-    ارفع جميع قسائم الموظفين دفعة واحدة لشهر محدد. <b>شرط التسمية</b>: اسم كل ملف يجب أن يكون <b>الرقم الوظيفي</b> للموظف (مثال: <code>12345.pdf</code>).
-    بعد الرفع، تُحفظ القسائم كـ <b>مسودات</b> (لن يتم إرسالها تلقائياً). يمكنك لاحقاً إرسالها من صفحة <b>إرسال قسائم الرواتب</b>.
+    ارفع ملف PDF جماعياً واحداً أو عدة ملفات. يقرأ النظام <b>رقم الهوية من داخل كل صفحة</b>،
+    ويجمع صفحات الهوية نفسها ثم يوزع القسيمة على ملف الموظف المطابق. لا يعتمد التوزيع على اسم الملف.
+    تُحفظ النتائج كمسودات إلى أن يتم إرسالها من صفحة إرسال القسائم.
   </div>
 </div>
 
 <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
   <form method="post" enctype="multipart/form-data">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row g-3 align-items-end">
       <div class="col-md-3">
         <label class="form-label">السنة</label>
         <select class="form-select" name="year" required>
-          {% for y in range((default_year|int) - 3, (default_year|int) + 2) %}
-            <option value="{{ y }}" {% if y == (default_year|int) %}selected{% endif %}>{{ y }}</option>
+          {% for option_year in range((year|int) - 3, (year|int) + 2) %}
+            <option value="{{ option_year }}" {% if option_year == (year|int) %}selected{% endif %}>{{ option_year }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-md-3">
         <label class="form-label">الشهر</label>
         <select class="form-select" name="month" required>
-          {% for mm in range(1, 13) %}
-            <option value="{{ mm }}" {% if mm == (default_month|int) %}selected{% endif %}>{{ "%02d"|format(mm) }}</option>
+          {% for option_month in range(1, 13) %}
+            <option value="{{ option_month }}" {% if option_month == (month|int) %}selected{% endif %}>{{ "%02d"|format(option_month) }}</option>
           {% endfor %}
         </select>
       </div>
       <div class="col-md-6">
-        <label class="form-label">ملفات قسائم الرواتب (PDF)</label>
-        <input class="form-control" type="file" name="files" accept="application/pdf" multiple required>
+        <label class="form-label">ملفات القسائم (PDF)</label>
+        <input class="form-control" type="file" name="pdf_files" accept="application/pdf,.pdf" multiple required>
         <div class="form-text">
-          ارفع عدة ملفات PDF دفعة واحدة. كل ملف يجب أن يحمل الرقم الوظيفي كاسم للملف.
+          يمكن الجمع بين قسائم الموظفين والمياومة في العملية نفسها. يدعم النظام الملفات النصية والممسوحة ضوئياً.
         </div>
       </div>
-<div class="col-12">
-        <button class="btn btn-primary"><i class="bi bi-cloud-arrow-up"></i> تنفيذ الرفع</button>
+      <div class="col-12">
+        <button class="btn btn-primary"><i class="bi bi-cloud-arrow-up"></i> قراءة القسائم وتوزيعها</button>
         <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_home') }}">رجوع</a>
-        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=default_year, month=default_month) }}"><i class="bi bi-send"></i> صفحة الإرسال</a>
+        <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=year, month=month) }}">
+          <i class="bi bi-send"></i> صفحة الإرسال
+        </a>
       </div>
     </div>
   </form>
 </div>
 
-{% if results %}
-  <div class="bg-white rounded-3 shadow-sm p-4">
-    <h6 class="mb-3">نتيجة العملية</h6>
+{% if batch_id %}
+  <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+      <h5 class="mb-0">نتيجة العملية</h5>
+      <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_payslips_bulk_download_zip', batch_id=batch_id) }}">
+        <i class="bi bi-file-earmark-zip"></i> تنزيل القسائم المقسمة
+      </a>
+    </div>
     <div class="row g-3">
-      <div class="col-md-6">
-        <div class="p-3 border rounded">
-          <div class="text-muted">تم حفظ كمسودات</div>
-          <div class="fs-4 fw-bold">{{ results.saved or 0 }}</div>
+      <div class="col-md-4">
+        <div class="p-3 border rounded h-100">
+          <div class="text-muted">الصفحات المقروءة</div>
+          <div class="fs-4 fw-bold">{{ counters.pages or 0 }}</div>
         </div>
       </div>
-<div class="col-md-6">
-        <div class="p-3 border rounded">
-          <div class="text-muted">تم تخطي</div>
-          <div class="fs-4 fw-bold">{{ results.skipped or 0 }}</div>
+      <div class="col-md-4">
+        <div class="p-3 border border-success rounded h-100">
+          <div class="text-muted">تم حفظها كمسودات</div>
+          <div class="fs-4 fw-bold text-success">{{ counters.saved or 0 }}</div>
+        </div>
+      </div>
+      <div class="col-md-4">
+        <div class="p-3 border border-warning rounded h-100">
+          <div class="text-muted">تم تخطيها</div>
+          <div class="fs-4 fw-bold text-warning">{{ counters.skipped or 0 }}</div>
         </div>
       </div>
     </div>
 
-    {% if results.errors and results.errors|length > 0 %}
+    {% if warnings %}
       <div class="alert alert-warning mt-3 mb-0">
-        <div class="fw-semibold mb-2">ملاحظات/أخطاء</div>
+        <div class="fw-semibold mb-2">ملاحظات تحتاج إلى مراجعة</div>
         <ul class="mb-0">
-          {% for e in results.errors[:30] %}
-            <li>{{ e }}</li>
-          {% endfor %}
+          {% for warning in warnings[:50] %}<li>{{ warning }}</li>{% endfor %}
         </ul>
-        {% if results.errors|length > 30 %}
-          <div class="small text-muted mt-2">تم إظهار أول 30 ملاحظة فقط.</div>
+        {% if warnings|length > 50 %}
+          <div class="small text-muted mt-2">تم إظهار أول 50 ملاحظة فقط.</div>
         {% endif %}
       </div>
     {% endif %}
   </div>
+
+  {% if rows %}
+    <div class="bg-white rounded-3 shadow-sm p-4 mb-3">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead>
+            <tr>
+              <th>الملف المصدر</th>
+              <th>الصفحات</th>
+              <th>رقم الهوية</th>
+              <th>الرقم الوظيفي</th>
+              <th>الموظف</th>
+              <th>النتيجة</th>
+              <th>التفاصيل</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in rows %}
+              <tr>
+                <td class="small">{{ row.source_filename or '—' }}</td>
+                <td>{{ row.page }}</td>
+                <td><span class="font-monospace">{{ row.identity_number }}</span></td>
+                <td>{{ row.employee_no or '—' }}</td>
+                <td>{{ row.employee_name or '—' }}</td>
+                <td>
+                  {% if row.status == 'saved' %}
+                    <span class="badge text-bg-success">تم الحفظ</span>
+                  {% else %}
+                    <span class="badge text-bg-warning">تم التخطي</span>
+                  {% endif %}
+                </td>
+                <td class="small">{{ row.message }}</td>
+                <td>
+                  <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.hr_payslips_bulk_download_file', batch_id=batch_id, filename=row.filename) }}">
+                    PDF
+                  </a>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  {% endif %}
 {% endif %}
 
+{% if recent_months %}
+  <div class="bg-white rounded-3 shadow-sm p-4">
+    <h5 class="mb-3">آخر أشهر القسائم</h5>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead><tr><th>الفترة</th><th>الإجمالي</th><th>مسودات</th><th>مرسلة</th><th></th></tr></thead>
+        <tbody>
+          {% for item in recent_months %}
+            <tr>
+              <td>{{ "%04d-%02d"|format(item.year, item.month) }}</td>
+              <td>{{ item.total }}</td>
+              <td>{{ item.drafts }}</td>
+              <td>{{ item.sent }}</td>
+              <td>
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_payslips_send', year=item.year, month=item.month) }}">فتح الإرسال</a>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% endif %}
 {% endblock %}

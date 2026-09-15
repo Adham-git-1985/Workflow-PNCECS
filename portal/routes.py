@@ -2052,6 +2052,12 @@ def _save_leave_files(files, req_id: int, doc_type: str | None = None) -> int:
         stored_name = f"LEAVE_{req_id}_{uuid.uuid4().hex}{ext}"
         file_path = os.path.join(folder, stored_name)
         f.save(file_path)
+        if not os.path.isfile(file_path) or os.path.getsize(file_path) <= 0:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+            continue
 
         att = HRLeaveAttachment(
             request_id=req_id,
@@ -9402,6 +9408,150 @@ def _approved_schedule_day_map(
     return result
 
 
+def _administrative_affairs_exemption_map(
+    employees: list[User],
+    start_day: date,
+    end_day: date,
+    schedule_map: dict[tuple[int, str], HRAttendanceScheduleDay],
+) -> dict[tuple[int, str], str]:
+    """Bulk-load non-attendance reasons used by the unified daily report."""
+    employee_ids = {int(employee.id) for employee in employees}
+    if not employee_ids:
+        return {}
+    start_text, end_text = start_day.isoformat(), end_day.isoformat()
+    result: dict[tuple[int, str], str] = {}
+
+    def add_period(user_id: int, raw_start: str | None, raw_end: str | None, reason: str) -> None:
+        if int(user_id) not in employee_ids:
+            return
+        period_start = _parse_yyyy_mm_dd(raw_start)
+        period_end = _parse_yyyy_mm_dd(raw_end or raw_start)
+        if not period_start or not period_end:
+            return
+        period_start = max(period_start, start_day)
+        period_end = min(period_end, end_day)
+        if period_end < period_start:
+            return
+        for current_day in _calendar_days_between(period_start, period_end):
+            result.setdefault((int(user_id), current_day.isoformat()), reason)
+
+    for key, schedule_day in schedule_map.items():
+        if schedule_day.day_type == "OFF":
+            result.setdefault(key, "PLANNED_OFF")
+
+    try:
+        weekly_mask = _weekly_mask()
+        weekly_days = [
+            current_day.isoformat()
+            for current_day in _calendar_days_between(start_day, end_day)
+            if _is_weekly_off(current_day, weekly_mask)
+        ]
+        for employee_id in employee_ids:
+            for day_text in weekly_days:
+                result.setdefault((employee_id, day_text), "WEEKLY_OFF")
+    except Exception:
+        pass
+
+    try:
+        holiday_days = {
+            row.day
+            for row in HROfficialOccasion.query
+            .filter(HROfficialOccasion.day >= start_text)
+            .filter(HROfficialOccasion.day <= end_text)
+            .filter(HROfficialOccasion.is_day_off.is_(True))
+            .all()
+        }
+        for employee_id in employee_ids:
+            for day_text in holiday_days:
+                result.setdefault((employee_id, day_text), "OFFICIAL_HOLIDAY")
+    except Exception:
+        pass
+
+    try:
+        from models import HROfficialOccasionRange
+
+        ranged_holidays = (
+            HROfficialOccasionRange.query
+            .filter(HROfficialOccasionRange.start_day <= end_text)
+            .filter(HROfficialOccasionRange.end_day >= start_text)
+            .filter(HROfficialOccasionRange.is_day_off.is_(True))
+            .all()
+        )
+        for holiday in ranged_holidays:
+            for employee in employees:
+                employee_file = employee.employee_file
+                if (
+                    holiday.work_governorate_lookup_id
+                    and holiday.work_governorate_lookup_id
+                    != getattr(employee_file, "work_governorate_lookup_id", None)
+                ):
+                    continue
+                if (
+                    holiday.work_location_lookup_id
+                    and holiday.work_location_lookup_id
+                    != getattr(employee_file, "work_location_lookup_id", None)
+                ):
+                    continue
+                add_period(employee.id, holiday.start_day, holiday.end_day, "OFFICIAL_HOLIDAY")
+    except Exception:
+        pass
+
+    try:
+        missions = (
+            HROfficialMission.query
+            .filter(HROfficialMission.user_id.in_(employee_ids))
+            .filter(HROfficialMission.start_day <= end_text)
+            .filter(HROfficialMission.end_day >= start_text)
+            .all()
+        )
+        for mission in missions:
+            status_code = (getattr(getattr(mission, "status_def", None), "code", None) or "").upper()
+            if status_code in {"NEW", "SUBMITTED", "MANAGER_APPROVED", "REJECTED", "CANCELLED"}:
+                continue
+            add_period(mission.user_id, mission.start_day, mission.end_day, "OFFICIAL_MISSION")
+    except Exception:
+        pass
+
+    try:
+        enrollments = (
+            HRTrainingEnrollment.query
+            .join(HRTrainingProgram, HRTrainingProgram.id == HRTrainingEnrollment.program_id)
+            .filter(HRTrainingEnrollment.user_id.in_(employee_ids))
+            .filter(HRTrainingEnrollment.status.in_(("APPROVED", "COMPLETED")))
+            .filter(HRTrainingProgram.start_date <= end_text)
+            .filter(HRTrainingProgram.end_date >= start_text)
+            .all()
+        )
+        for enrollment in enrollments:
+            program = enrollment.program
+            add_period(enrollment.user_id, program.start_date, program.end_date, "OFFICIAL_TRAINING")
+    except Exception:
+        pass
+
+    try:
+        special_rows = (
+            HRAttendanceSpecialCase.query
+            .filter(HRAttendanceSpecialCase.user_id.in_(employee_ids))
+            .filter(HRAttendanceSpecialCase.kind == "STATUS")
+            .filter(HRAttendanceSpecialCase.applied.is_(True))
+            .filter(HRAttendanceSpecialCase.day <= end_text)
+            .filter(or_(
+                HRAttendanceSpecialCase.day_to.is_(None),
+                HRAttendanceSpecialCase.day_to >= start_text,
+            ))
+            .order_by(HRAttendanceSpecialCase.created_at.desc(), HRAttendanceSpecialCase.id.desc())
+            .all()
+        )
+        for special in special_rows:
+            status = (special.status or "").upper()
+            if status in _MY_ATTENDANCE_EXCUSED_STATUSES:
+                add_period(special.user_id, special.day, special.day_to, f"SPECIAL_{status}")
+    except Exception:
+        pass
+
+    return result
+
+
 def _administrative_affairs_daily_rows(
     start_day: date,
     end_day: date,
@@ -9430,6 +9580,12 @@ def _administrative_affairs_daily_rows(
     summary_map = {(int(row.user_id), row.day): row for row in summary_rows}
     manual_map = _approved_manual_attendance_map(employee_ids, start_day, end_day)
     schedule_map = _approved_schedule_day_map(employee_ids, start_day, end_day)
+    exemption_map = _administrative_affairs_exemption_map(
+        employees,
+        start_day,
+        end_day,
+        schedule_map,
+    )
 
     leave_rows = (
         HRLeaveRequest.query
@@ -9491,6 +9647,16 @@ def _administrative_affairs_daily_rows(
             leave = leave_map.get(key)
             pending_leave = pending_leave_map.get(key)
             schedule_day = schedule_map.get(key)
+            exemption = exemption_map.get(key)
+            auto_leave_no_longer_applicable = bool(
+                leave
+                and leave.source == ATTENDANCE_AUTO_LEAVE_SOURCE
+                and (
+                    exemption
+                    or not schedule_day
+                    or schedule_day.day_type != "WORK"
+                )
+            )
 
             first_in = getattr(summary, "first_in", None)
             last_out = getattr(summary, "last_out", None)
@@ -9520,11 +9686,11 @@ def _administrative_affairs_daily_rows(
                 category_label = "حاضر"
                 source_label = "إدخال يدوي" if manual else "بصمة الساعة"
                 detail = "دخول يدوي" if manual and manual.start_time and not manual.end_time else source_label
-                if leave:
+                if leave and not auto_leave_no_longer_applicable:
                     conflict_note = "يوجد أيضاً طلب إجازة معتمد لهذا اليوم"
                 elif schedule_day and schedule_day.day_type == "REMOTE":
                     conflict_note = "سُجلت بصمة رغم أن اليوم مجدول عن بُعد"
-            elif leave:
+            elif leave and not auto_leave_no_longer_applicable:
                 category = "LEAVE"
                 category_label = "مجاز"
                 leave_name = getattr(leave.leave_type, "name_ar", None) or getattr(leave.leave_type, "code", None) or "إجازة"
@@ -9535,39 +9701,47 @@ def _administrative_affairs_daily_rows(
                     source_label = "الشؤون الإدارية"
                 else:
                     source_label = "طلب الموظف"
-            elif schedule_day and schedule_day.day_type == "REMOTE":
-                category = "REMOTE"
-                category_label = "مناوب / عن بُعد"
-                detail = schedule_day.note or "حسب جدول الدوام المعتمد"
-                source_label = "جدول الدوام"
-            elif pending_leave:
-                category = "LEAVE_PENDING"
-                category_label = "إجازة قيد الاعتماد"
-                detail = getattr(pending_leave.leave_type, "name_ar", None) or "طلب إجازة"
-                source_label = "نظام الإجازات"
-            elif schedule_day and schedule_day.day_type == "OFF":
-                category = "OFF"
-                category_label = "راحة / عطلة مجدولة"
-                source_label = "جدول الدوام"
-            elif schedule_day and schedule_day.day_type == "WORK":
-                category = "MISSING_PUNCH"
-                category_label = "دوام مكتبي بلا بصمة"
-                detail = "بانتظار الاحتساب التلقائي أو المعالجة"
-                source_label = "جدول الدوام"
             else:
-                exemption = _attendance_exemption_reason(employee.id, day_text)
-                if exemption in {"WEEKLY_OFF", "OFFICIAL_HOLIDAY", "PLANNED_OFF"}:
+                if exemption in {
+                    "WEEKLY_OFF", "OFFICIAL_HOLIDAY", "PLANNED_OFF",
+                    "SPECIAL_HOLIDAY", "SPECIAL_OFF", "SPECIAL_SUSPENDED",
+                }:
                     category = "OFF"
                     category_label = "عطلة / راحة"
                     detail = exemption
-                elif exemption == "OFFICIAL_MISSION":
+                    source_label = "نظام الحضور" if exemption.startswith("SPECIAL_") else "التقويم الرسمي"
+                elif exemption in {"OFFICIAL_MISSION", "SPECIAL_MISSION"}:
                     category = "OFFICIAL_DUTY"
                     category_label = "مهمة رسمية"
                     source_label = "نظام المهام"
-                elif exemption == "OFFICIAL_TRAINING":
+                elif exemption in {"OFFICIAL_TRAINING", "SPECIAL_OFFICIAL_TRAINING"}:
                     category = "OFFICIAL_DUTY"
                     category_label = "تدريب رسمي"
                     source_label = "نظام التدريب"
+                elif exemption in {"APPROVED_LEAVE", "SPECIAL_LEAVE"}:
+                    category = "LEAVE"
+                    category_label = "مجاز"
+                    detail = "إجازة معتمدة"
+                    source_label = "نظام الإجازات"
+                elif schedule_day and schedule_day.day_type == "REMOTE":
+                    category = "REMOTE"
+                    category_label = "مناوب / عن بُعد"
+                    detail = schedule_day.note or "حسب جدول الدوام المعتمد"
+                    source_label = "جدول الدوام"
+                elif pending_leave:
+                    category = "LEAVE_PENDING"
+                    category_label = "إجازة قيد الاعتماد"
+                    detail = getattr(pending_leave.leave_type, "name_ar", None) or "طلب إجازة"
+                    source_label = "نظام الإجازات"
+                elif schedule_day and schedule_day.day_type == "OFF":
+                    category = "OFF"
+                    category_label = "راحة / عطلة مجدولة"
+                    source_label = "جدول الدوام"
+                elif schedule_day and schedule_day.day_type == "WORK":
+                    category = "MISSING_PUNCH"
+                    category_label = "دوام مكتبي بلا بصمة"
+                    detail = "بانتظار الاحتساب التلقائي أو المعالجة"
+                    source_label = "جدول الدوام"
                 else:
                     effective_schedule = _effective_schedule_for_user(employee.id, day_text)
                     if effective_schedule and (effective_schedule.kind or "").upper() == "REMOTE":
@@ -9656,20 +9830,23 @@ def _process_unrecorded_office_attendance(
     if local_now.tzinfo is None:
         local_now = local_now.replace(tzinfo=app_timezone())
     try:
-        lookback_days = min(31, max(0, int((_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_LOOKBACK_DAYS") or "7").strip())))
+        lookback_days = min(366, max(0, int((_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_LOOKBACK_DAYS") or "31").strip())))
     except (TypeError, ValueError):
-        lookback_days = 7
+        lookback_days = 31
     start_day = day_from or (local_now.date() - timedelta(days=lookback_days))
     end_day = day_to or local_now.date()
     if end_day < start_day:
         start_day, end_day = end_day, start_day
 
-    annual_type = _annual_leave_type()
-    if not annual_type:
-        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 0, "missing_annual_type": 1}
-
+    employee_user_ids = sorted({
+        int(row.user_id)
+        for row in EmployeeFile.query.with_entities(EmployeeFile.user_id).all()
+        if row.user_id
+    })
+    if not employee_user_ids:
+        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 0, "missing_annual_type": 0}
     schedule_map = _approved_schedule_day_map(
-        [row.user_id for row in EmployeeFile.query.with_entities(EmployeeFile.user_id).all()],
+        employee_user_ids,
         start_day,
         end_day,
     )
@@ -9678,10 +9855,27 @@ def _process_unrecorded_office_attendance(
         if row.day_type == "WORK"
         and _attendance_auto_leave_cutoff_reached(date.fromisoformat(key[1]), local_now, row)
     }
-    if not office_keys:
-        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 0, "missing_annual_type": 0}
+    existing_auto_rows = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.user_id.in_(employee_user_ids))
+        .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
+        .filter(HRLeaveRequest.source_attendance_day >= start_day.isoformat())
+        .filter(HRLeaveRequest.source_attendance_day <= end_day.isoformat())
+        .all()
+    )
+    user_ids = sorted(
+        {key[0] for key in office_keys}
+        | {int(row.user_id) for row in existing_auto_rows}
+    )
+    if not user_ids:
+        return {
+            "created": 0,
+            "reversed": 0,
+            "reviewed": 0,
+            "disabled": 0,
+            "missing_annual_type": 0,
+        }
 
-    user_ids = sorted({key[0] for key in office_keys})
     dt_start = datetime.combine(start_day, datetime.min.time())
     dt_end = datetime.combine(end_day + timedelta(days=1), datetime.min.time())
     punched_keys = {
@@ -9694,14 +9888,6 @@ def _process_unrecorded_office_attendance(
         if row.event_dt
     }
     manual_keys = set(_approved_manual_attendance_map(user_ids, start_day, end_day))
-    existing_auto_rows = (
-        HRLeaveRequest.query
-        .filter(HRLeaveRequest.user_id.in_(user_ids))
-        .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
-        .filter(HRLeaveRequest.source_attendance_day >= start_day.isoformat())
-        .filter(HRLeaveRequest.source_attendance_day <= end_day.isoformat())
-        .all()
-    )
     existing_auto_keys = {
         (int(row.user_id), row.source_attendance_day)
         for row in existing_auto_rows
@@ -9716,6 +9902,14 @@ def _process_unrecorded_office_attendance(
         .all()
     )
     active_leave_keys = set(_period_rows_by_user_day(active_leave_rows, start_day, end_day))
+    replacement_leave_map = _period_rows_by_user_day(
+        [
+            row for row in active_leave_rows
+            if row.status == "APPROVED" and row.source != ATTENDANCE_AUTO_LEAVE_SOURCE
+        ],
+        start_day,
+        end_day,
+    )
     users = {int(user.id): user for user in User.query.filter(User.id.in_(user_ids)).all()}
 
     reversed_count = 0
@@ -9724,12 +9918,37 @@ def _process_unrecorded_office_attendance(
         for row in existing_auto_rows
         if row.status == "APPROVED" and not row.replaced_at
     }
-    for key in sorted(set(active_auto_rows) & (punched_keys | manual_keys), key=lambda value: (value[1], value[0])):
-        replacement_reason = "LATE_CLOCK_ATTENDANCE" if key in punched_keys else "MANUAL_ATTENDANCE_APPROVED"
+    for key in sorted(active_auto_rows, key=lambda value: (value[1], value[0])):
+        replacement_leave = replacement_leave_map.get(key)
+        replacement_leave_id = None
+        if key in punched_keys:
+            replacement_reason = "LATE_CLOCK_ATTENDANCE"
+        elif key in manual_keys:
+            replacement_reason = "MANUAL_ATTENDANCE_APPROVED"
+        elif replacement_leave:
+            replacement_reason = "APPROVED_LEAVE_RECORDED"
+            replacement_leave_id = int(replacement_leave.id)
+        else:
+            current_schedule_day = schedule_map.get(key)
+            if not current_schedule_day:
+                replacement_reason = "SCHEDULE_NO_LONGER_OFFICE"
+            elif current_schedule_day.day_type != "WORK":
+                replacement_reason = f"SCHEDULE_RECLASSIFIED_{current_schedule_day.day_type or 'NON_WORK'}"
+            else:
+                exemption = _attendance_exemption_reason(
+                    key[0],
+                    key[1],
+                    ignore_attendance_auto_leave=True,
+                )
+                if not exemption or exemption == "APPROVED_LEAVE":
+                    continue
+                replacement_reason = f"ATTENDANCE_EXEMPTION_{exemption}"[:80]
+
         reversed_rows = _replace_attendance_auto_annual_leaves(
             key[0],
             key[1],
             key[1],
+            replacement_leave_request_id=replacement_leave_id,
             reason=replacement_reason,
         )
         if not reversed_rows:
@@ -9741,12 +9960,22 @@ def _process_unrecorded_office_attendance(
             (
                 f"ألغى النظام الإجازة السنوية المحتسبة تلقائياً للموظف "
                 f"{user.full_name if user else '#' + str(key[0])} بتاريخ {key[1]} "
-                "بعد ثبوت سجل حضور."
+                "بعد ثبوت حضور أو إجازة معتمدة أو تغيّر تصنيف جدول الدوام."
             ),
             event_key=f"att-auto-leave-reversed-{key[1]}-{key[0]}",
             link_url="/portal/hr/attendance/events",
         )
         _upsert_summary(_summary_compute_one(key[0], key[1]))
+
+    annual_type = _annual_leave_type()
+    if not annual_type:
+        return {
+            "created": 0,
+            "reversed": reversed_count,
+            "reviewed": 0,
+            "disabled": 0,
+            "missing_annual_type": 1,
+        }
 
     created = 0
     reviewed = 0
@@ -10320,6 +10549,34 @@ def _leave_type_requires_medical_report(leave_type) -> bool:
     """Sick leave always requires a medical report, regardless of metadata."""
     code = (getattr(leave_type, "code", None) or "").strip().upper()
     return code in {"S", "SICK", "SICK_LEAVE", "MEDICAL"} or _diwan_official_leave_symbol(leave_type) == "S"
+
+
+def _leave_type_requires_supporting_document(leave_type) -> bool:
+    return bool(
+        leave_type
+        and (
+            _leave_type_requires_medical_report(leave_type)
+            or getattr(leave_type, "requires_documents", False)
+        )
+    )
+
+
+def _leave_request_has_attachment(request_id: int | None) -> bool:
+    if not request_id:
+        return False
+    return bool(
+        HRLeaveAttachment.query
+        .filter(HRLeaveAttachment.request_id == int(request_id))
+        .filter(HRLeaveAttachment.stored_name.isnot(None))
+        .filter(func.length(func.trim(HRLeaveAttachment.stored_name)) > 0)
+        .first()
+    )
+
+
+def _required_leave_document_message(leave_type) -> str:
+    if _leave_type_requires_medical_report(leave_type):
+        return "الإجازة المرضية تتطلب تقريراً طبياً محفوظاً قبل إرسالها أو اعتمادها."
+    return "هذا النوع من الإجازات يتطلب مستنداً مؤيداً محفوظاً قبل إرسال الطلب أو اعتماده."
 
 
 def _diwan_weekly_holidays_mask() -> int:
@@ -11539,9 +11796,10 @@ def _hr_can_edit_attendance() -> bool:
 def _hr_can_approve_attendance_edit() -> bool:
     """Whether the user may approve or reject a pending attendance correction."""
     try:
+        if _user_is_super_admin_account(current_user):
+            return True
         return bool(
-            current_user.has_perm(HR_ATT_EDIT_APPROVE)
-            or int(current_user.id) in set(administrative_affairs_manager_user_ids())
+            int(current_user.id) in set(administrative_affairs_manager_user_ids())
             or int(current_user.id) in set(secretary_general_user_ids())
         )
     except Exception:
@@ -11710,13 +11968,12 @@ def _attendance_edit_final_approver_user_ids() -> list[int]:
 
 
 def _attendance_edit_hr_approver_user_ids() -> list[int]:
-    """First-stage approvers; the Secretary General remains a separate gate."""
-    all_approvers = set(_attendance_edit_approver_user_ids())
-    final_approvers = set(_attendance_edit_final_approver_user_ids())
-    first_stage = (all_approvers - final_approvers) | set(administrative_affairs_manager_user_ids())
-    # Compatibility for installations that have not configured a Secretary
-    # General account yet: their existing explicit approver remains usable.
-    return sorted(first_stage or all_approvers)
+    """Only Administrative Affairs managers may make the first decision."""
+    return sorted({
+        int(user_id)
+        for user_id in administrative_affairs_manager_user_ids()
+        if user_id
+    })
 
 
 def _manual_attendance_review_stage(row: HRAttendanceSpecialCase | None) -> str | None:
@@ -12099,6 +12356,11 @@ def hr_attendance_manual_review(row_id: int):
         return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
 
     stage = _manual_attendance_review_stage(row)
+    final_approver_ids = _attendance_edit_final_approver_user_ids()
+    if action == 'approve' and stage == 'HR' and not final_approver_ids:
+        flash('لا يمكن اعتماد تعديل الدوام قبل تعيين حساب الأمين العام للاعتماد النهائي.', 'danger')
+        return redirect(url_for('portal.hr_attendance_manual_approval_queue'))
+
     now = datetime.utcnow()
     if stage == 'HR':
         row.approved_by_id = int(current_user.id)
@@ -12110,15 +12372,8 @@ def hr_attendance_manual_review(row_id: int):
         row.final_approval_note = approval_note or None
 
     if action == 'approve':
-        final_approver_ids = _attendance_edit_final_approver_user_ids()
-        finalize_now = stage == 'SECRETARY_GENERAL' or not final_approver_ids
+        finalize_now = stage == 'SECRETARY_GENERAL'
         if finalize_now:
-            # Legacy installations without a configured Secretary General can
-            # still complete the request through their explicit approver.
-            if stage == 'HR' and not final_approver_ids:
-                row.final_approved_by_id = int(current_user.id)
-                row.final_approved_at = now
-                row.final_approval_note = approval_note or None
             row.approval_status = 'APPROVED'
             row.applied = True
             _replace_attendance_auto_annual_leaves(
@@ -16441,18 +16696,24 @@ def hr_leave_request_new():
             decided_at=decided_at,
             decided_by_id=decided_by_id,
         )
-        db.session.add(req)
-        db.session.flush()
-        start_request_flow(KIND_LEAVE, req)
-
-        # Save attachments after request id is available
-        saved_atts = 0
         try:
+            db.session.add(req)
+            db.session.flush()
+            start_request_flow(KIND_LEAVE, req)
             saved_atts = _save_leave_files(valid_files, req.id, doc_type="REPORT")
-        except Exception:
-            saved_atts = 0
-
-        db.session.commit()
+            if _leave_type_requires_supporting_document(lt) and saved_atts < 1:
+                raise ValueError(_required_leave_document_message(lt))
+            db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.warning("Leave request attachment save failed: %s", exc)
+            flash(
+                _required_leave_document_message(lt)
+                if _leave_type_requires_supporting_document(lt)
+                else "تعذر حفظ طلب الإجازة أو مرفقاته. حاول مرة أخرى.",
+                "danger",
+            )
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
         if status == "APPROVED":
             flash("تم اعتماد طلب الإجازة تلقائياً.", "success")
@@ -16523,6 +16784,7 @@ def hr_leave_request_edit(req_id: int):
         )
 
     if request.method == "POST":
+        original_leave_type = req.leave_type
         leave_type_id = (request.form.get("leave_type_id") or "").strip()
         start_s = (request.form.get("start_date") or "").strip()
         end_s = (request.form.get("end_date") or "").strip()
@@ -16579,13 +16841,24 @@ def hr_leave_request_edit(req_id: int):
             statutory_code == STUDY_LEAVE_CODE
             or (statutory_code == UNPAID_LEAVE_CODE and statutory_details.get("reason_kind", "").upper() in {"SPOUSE", "CHILDCARE"})
         )
-        has_existing_attachments = HRLeaveAttachment.query.filter_by(request_id=req.id).first() is not None
+        has_existing_attachments = _leave_request_has_attachment(req.id)
         if needs_statutory_documents and not (valid_files or has_existing_attachments):
             flash("أرفق المستندات المؤيدة للطلب؛ إجازة الدراسة تتطلب إثبات القبول/الاستمرار، ومرافقة الزوج تتطلب إثبات السفر ومدته.", "danger")
             return render_form()
         note = _statutory_note(statutory_code, statutory_details, note)
 
-        if (_leave_type_requires_medical_report(leave_type) or getattr(leave_type, "requires_documents", False)) and not (valid_files or has_existing_attachments):
+        requires_fresh_medical_report = (
+            _leave_type_requires_medical_report(leave_type)
+            and not _leave_type_requires_medical_report(original_leave_type)
+        )
+        has_required_edit_document = bool(
+            valid_files
+            or (has_existing_attachments and not requires_fresh_medical_report)
+        )
+        if (
+            _leave_type_requires_supporting_document(leave_type)
+            and not has_required_edit_document
+        ):
             flash("الإجازة المرضية تتطلب إرفاق تقرير طبي." if _leave_type_requires_medical_report(leave_type) else "هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند.", "danger")
             return render_form()
 
@@ -16604,6 +16877,9 @@ def hr_leave_request_edit(req_id: int):
         has_external_details = is_external_type or leave_place_value == "EXTERNAL"
 
         req.leave_type_id = leave_type.id
+        # Keep the already-loaded relationship in sync so the rebuilt
+        # approval route immediately sees whether the amended type is sick.
+        req.leave_type = leave_type
         req.start_date = start_date.strftime("%Y-%m-%d")
         req.end_date = end_date.strftime("%Y-%m-%d")
         req.days = days
@@ -16615,13 +16891,28 @@ def hr_leave_request_edit(req_id: int):
         req.travel_contact_phone = travel_contact_phone if has_external_details else None
         req.travel_purpose = travel_purpose if has_external_details else None
         req.border_crossing = border_crossing if has_external_details else None
-        req.updated_at = datetime.utcnow()
+        now = datetime.utcnow()
+        req.submitted_at = now
+        req.decided_at = None
+        req.decided_by_id = None
+        req.decision_note = None
+        req.covering_employee_name = None
+        req.updated_at = now
 
         try:
-            _save_leave_files(valid_files, req.id, doc_type="REPORT")
+            saved_files = _save_leave_files(valid_files, req.id, doc_type="REPORT")
+            if (
+                _leave_type_requires_supporting_document(leave_type)
+                and (not has_existing_attachments or requires_fresh_medical_report)
+                and saved_files < 1
+            ):
+                raise ValueError(_required_leave_document_message(leave_type))
+            db.session.flush()
+            start_request_flow(KIND_LEAVE, req, now=now, restart=True)
             db.session.commit()
-        except Exception:
+        except Exception as exc:
             db.session.rollback()
+            current_app.logger.warning("Edited leave request could not restart approval: %s", exc)
             flash("تعذر حفظ تعديل طلب الإجازة. حاول مرة أخرى.", "danger")
             return render_form()
 
@@ -17738,6 +18029,12 @@ def hr_approval_leave(req_id: int):
             )
             if casual_policy_error:
                 flash(casual_policy_error, "danger")
+                return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+            if (
+                _leave_type_requires_supporting_document(r.leave_type)
+                and not _leave_request_has_attachment(r.id)
+            ):
+                flash(_required_leave_document_message(r.leave_type), "danger")
                 return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
         if note_required and action == "APPROVE" and not note:
             flash("ملاحظة القرار مطلوبة في مرحلة الموارد البشرية لهذه الحالة الاستثنائية.", "danger")
@@ -25773,7 +26070,7 @@ def _employee_is_confirmed_for_casual_leave(user_id: int) -> bool:
     normalized = re.sub(r"[\s_\-]+", "", raw)
     if any(token in normalized for token in ("مياوم", "يومي", "dailywage", "dayworker", "contract", "عقد")):
         return False
-    return any(token in normalized for token in ("مثبت", "دائم", "permanent", "confirmed", "tenured"))
+    return any(token in normalized for token in ("مثبت", "تثبيت", "دائم", "permanent", "confirmed", "tenured"))
 
 
 def _casual_leave_policy_error(
@@ -25897,7 +26194,11 @@ def _convert_auto_annual_leave_after_sick_approval(
     *,
     actor_id: int | None = None,
 ) -> int:
-    if (sick_request.status or "").upper() != "APPROVED" or not is_sick_leave(sick_request):
+    if (
+        (sick_request.status or "").upper() != "APPROVED"
+        or not is_sick_leave(sick_request)
+        or not _leave_request_has_attachment(sick_request.id)
+    ):
         return 0
     rows = _replace_attendance_auto_annual_leaves(
         sick_request.user_id,
@@ -27534,7 +27835,12 @@ def _timeclock_sync_simple(
 # -------------------------
 
 
-def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
+def _attendance_exemption_reason(
+    user_id: int,
+    day_str: str,
+    *,
+    ignore_attendance_auto_leave: bool = False,
+) -> str | None:
     """Return why a day must not create attendance deductions."""
     day_obj = _parse_yyyy_mm_dd(day_str)
     if not day_obj:
@@ -27579,14 +27885,19 @@ def _attendance_exemption_reason(user_id: int, day_str: str) -> str | None:
         pass
 
     try:
-        approved_leave = (
+        approved_leave_query = (
             HRLeaveRequest.query
             .filter(HRLeaveRequest.user_id == user_id)
             .filter(HRLeaveRequest.status == "APPROVED")
             .filter(HRLeaveRequest.start_date <= day_str)
             .filter(HRLeaveRequest.end_date >= day_str)
-            .first()
         )
+        if ignore_attendance_auto_leave:
+            approved_leave_query = approved_leave_query.filter(or_(
+                HRLeaveRequest.source.is_(None),
+                HRLeaveRequest.source != ATTENDANCE_AUTO_LEAVE_SOURCE,
+            ))
+        approved_leave = approved_leave_query.first()
         if approved_leave:
             return "APPROVED_LEAVE"
     except Exception:
@@ -36824,8 +37135,12 @@ def hr_leaves_admin_new():
             flash('اختر نوع إجازة فعالاً.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
         submitted_files = [f for f in (request.files.getlist('attachments') or []) if f and (getattr(f, 'filename', '') or '').strip()]
-        if _leave_type_requires_medical_report(lt) and not submitted_files:
-            flash('الإجازة المرضية تتطلب إرفاق تقرير طبي.', 'danger')
+        if not submitted_files:
+            single_file = request.files.get('attachment')
+            if single_file and (getattr(single_file, 'filename', '') or '').strip():
+                submitted_files = [single_file]
+        if _leave_type_requires_supporting_document(lt) and not submitted_files:
+            flash(_required_leave_document_message(lt), 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
         if _statutory_leave_code(lt):
             flash('الإجازة الدراسية وبدون راتب تُقدمان من نموذج الموظف المخصص لضمان استكمال البيانات والمستندات ومسار الاعتماد القانوني.', 'danger')
@@ -36902,36 +37217,19 @@ def hr_leaves_admin_new():
             submitted_at=datetime.utcnow(),
             approver_user_id=(approver.id if approver else None),
         )
-        db.session.add(row)
-        db.session.flush()
-        start_request_flow(KIND_LEAVE, row)
-        db.session.commit()
-        files = []
         try:
-            files = request.files.getlist('attachments') or []
-        except Exception:
-            files = []
-        valid = [f for f in files if f and (getattr(f,'filename','') or '').strip()]
-        if not valid:
-            f1 = request.files.get('attachment')
-            if f1 and (getattr(f1,'filename','') or '').strip():
-                valid = [f1]
-
-        if valid:
-            folder = _leaves_upload_dir(row.id)
-            for f in valid:
-                orig = (f.filename or '').strip()
-                stored = f"{uuid.uuid4().hex}_{orig}"
-                f.save(str(folder / stored))
-                att = HRLeaveAttachment(
-                    request_id=row.id,
-                    doc_type="ADMIN_DOC",
-                    original_name=orig,
-                    stored_name=stored,
-                    uploaded_by_id=getattr(current_user,'id',None),
-                )
-                db.session.add(att)
+            db.session.add(row)
+            db.session.flush()
+            start_request_flow(KIND_LEAVE, row)
+            saved_files = _save_leave_files(submitted_files, row.id, doc_type="ADMIN_DOC")
+            if _leave_type_requires_supporting_document(lt) and saved_files < 1:
+                raise ValueError(_required_leave_document_message(lt))
             db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.warning("Administrative leave creation failed: %s", exc)
+            flash('تعذر حفظ الإجازة أو مستنداتها. لم يتم إنشاء الطلب.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
 
         flash('تم حفظ الإجازة.', 'success')
         return redirect(url_for('portal.hr_leaves_admin_log'))
@@ -36968,30 +37266,60 @@ def hr_leaves_admin_edit(row_id: int):
     if not _hr_can_manage():
         abort(403)
     row = HRLeaveRequest.query.get_or_404(row_id)
+    if (row.status or '').upper() not in {'DRAFT', 'SUBMITTED'}:
+        flash('لا يمكن تعديل إجازة معتمدة أو مغلقة. قدّم طلباً جديداً لتغيير نوع الإجازة.', 'warning')
+        return redirect(url_for('portal.hr_leaves_admin_log'))
 
     if request.method == 'POST':
-        requested_leave_type = HRLeaveType.query.get(int(request.form.get('leave_type_id') or row.leave_type_id))
+        original_leave_type = row.leave_type
+        try:
+            requested_leave_type = HRLeaveType.query.get(int(request.form.get('leave_type_id') or row.leave_type_id))
+        except (TypeError, ValueError):
+            requested_leave_type = None
+        if not requested_leave_type or not requested_leave_type.is_active:
+            flash('اختر نوع إجازة فعالاً.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
         if _statutory_leave_code(requested_leave_type):
             flash('لا يمكن تعديل الإجازة الدراسية أو بدون راتب من نموذج الإدارة القديم؛ استخدم مسار طلب الموظف ومراجعته.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_log'))
-        row.leave_type_id = int(request.form.get('leave_type_id') or row.leave_type_id)
-        row.start_date = (request.form.get('start_date') or row.start_date).strip()
-        row.end_date = (request.form.get('end_date') or row.end_date).strip()
+        requested_start_date = (request.form.get('start_date') or row.start_date).strip()
+        requested_end_date = (request.form.get('end_date') or row.end_date).strip()
+        parsed_start_date = _parse_yyyy_mm_dd(requested_start_date)
+        parsed_end_date = _parse_yyyy_mm_dd(requested_end_date)
+        if not parsed_start_date or not parsed_end_date or parsed_end_date < parsed_start_date:
+            flash('أدخل تاريخ بداية ونهاية صحيحين.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
+
+        row.leave_type_id = requested_leave_type.id
+        # ``row`` was loaded with its relationship; update both sides before
+        # rebuilding the workflow so a normal-to-sick edit cannot reuse the
+        # shorter normal-leave approval route.
+        row.leave_type = requested_leave_type
+        row.start_date = requested_start_date
+        row.end_date = requested_end_date
         row.note = (request.form.get('note') or '').strip() or None
         lp = (request.form.get('leave_place') or '').strip().upper()
         row.leave_place = lp if lp in ("INTERNAL","EXTERNAL") else None
 
         # External leave fields (optional)
-        lt = None
-        try:
-            lt = HRLeaveType.query.get(int(row.leave_type_id))
-        except Exception:
-            lt = None
+        lt = requested_leave_type
         new_files = [f for f in (request.files.getlist('attachments') or []) if f and (getattr(f, 'filename', '') or '').strip()]
-        existing_report = HRLeaveAttachment.query.filter_by(request_id=row.id).first() is not None
-        if lt and _leave_type_requires_medical_report(lt) and not (new_files or existing_report):
+        if not new_files:
+            single_file = request.files.get('attachment')
+            if single_file and (getattr(single_file, 'filename', '') or '').strip():
+                new_files = [single_file]
+        existing_report = _leave_request_has_attachment(row.id)
+        requires_fresh_medical_report = (
+            _leave_type_requires_medical_report(lt)
+            and not _leave_type_requires_medical_report(original_leave_type)
+        )
+        has_required_edit_document = bool(
+            new_files
+            or (existing_report and not requires_fresh_medical_report)
+        )
+        if _leave_type_requires_supporting_document(lt) and not has_required_edit_document:
             db.session.rollback()
-            flash('الإجازة المرضية تتطلب إرفاق تقرير طبي.', 'danger')
+            flash(_required_leave_document_message(lt), 'danger')
             return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
         is_external = bool(getattr(lt, 'is_external', False)) if lt else False
 
@@ -37039,38 +37367,34 @@ def hr_leaves_admin_edit(row_id: int):
                 id=requested_admin_status_id, entity="LEAVE", is_active=True
             ).first()
             if not leave_status:
+                db.session.rollback()
                 flash('حالة الإجازة المحددة غير صالحة.', 'danger')
                 return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
         row.admin_status_id = requested_admin_status_id
 
-        db.session.commit()
-
-        files = []
+        now = datetime.utcnow()
+        row.submitted_at = now
+        row.decided_at = None
+        row.decided_by_id = None
+        row.decision_note = None
+        row.covering_employee_name = None
+        row.updated_at = now
         try:
-            files = request.files.getlist('attachments') or []
-        except Exception:
-            files = []
-        valid = [f for f in files if f and (getattr(f,'filename','') or '').strip()]
-        if not valid:
-            f1 = request.files.get('attachment')
-            if f1 and (getattr(f1,'filename','') or '').strip():
-                valid = [f1]
-
-        if valid:
-            folder = _leaves_upload_dir(row.id)
-            for f in valid:
-                orig = (f.filename or '').strip()
-                stored = f"{uuid.uuid4().hex}_{orig}"
-                f.save(str(folder / stored))
-                att = HRLeaveAttachment(
-                    request_id=row.id,
-                    doc_type="ADMIN_DOC",
-                    original_name=orig,
-                    stored_name=stored,
-                    uploaded_by_id=getattr(current_user,'id',None),
-                )
-                db.session.add(att)
+            saved_files = _save_leave_files(new_files, row.id, doc_type="ADMIN_DOC")
+            if (
+                _leave_type_requires_supporting_document(lt)
+                and (not existing_report or requires_fresh_medical_report)
+                and saved_files < 1
+            ):
+                raise ValueError(_required_leave_document_message(lt))
+            db.session.flush()
+            start_request_flow(KIND_LEAVE, row, now=now, restart=True)
             db.session.commit()
+        except Exception as exc:
+            db.session.rollback()
+            current_app.logger.warning("Administrative leave edit failed: %s", exc)
+            flash('تعذر حفظ تعديل الإجازة أو مستنداتها. لم يتم تغيير الطلب.', 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
 
         flash('تم تحديث الإجازة.', 'success')
         return redirect(url_for('portal.hr_leaves_admin_log'))

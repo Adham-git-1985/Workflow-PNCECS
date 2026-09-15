@@ -35,7 +35,14 @@ def _check_pending_leave_requests():
         attendance_result = _process_unrecorded_office_attendance()
         automatic_attendance_leaves = int(attendance_result.get("created", 0))
     except Exception:
-        pass
+        # This reconciliation participates in the same unit of work as the
+        # pending-request updates above.  Do not commit those partial changes
+        # when attendance reconciliation fails.
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        raise
     db.session.commit()
     return (
         int(result.get("reminded", 0))

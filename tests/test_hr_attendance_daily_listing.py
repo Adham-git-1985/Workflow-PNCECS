@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 from flask import Flask
 from flask_login import LoginManager, login_user, logout_user
+from werkzeug.exceptions import Forbidden
 
 from extensions import db
 from models import (
@@ -124,13 +125,25 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             password_hash="x",
             role="HR",
         )
+        affairs_manager = User(
+            email="affairs-manager@example.test",
+            name="Administrative Affairs Manager",
+            password_hash="x",
+            role="HR_MANAGER",
+        )
         super_admin = User(
             email="superadmin@example.test",
             name="Super Admin",
             password_hash="x",
             role="SUPER_ADMIN",
         )
-        db.session.add_all((hr_user, attendance_editor, attendance_approver, super_admin))
+        db.session.add_all((
+            hr_user,
+            attendance_editor,
+            attendance_approver,
+            affairs_manager,
+            super_admin,
+        ))
         db.session.flush()
         db.session.add_all((
             UserPermission(
@@ -161,6 +174,11 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
             login_user(attendance_approver)
             self.assertFalse(_hr_can_edit_attendance())
+            self.assertFalse(_hr_can_approve_attendance_edit())
+            logout_user()
+
+            login_user(affairs_manager)
+            self.assertFalse(_hr_can_edit_attendance())
             self.assertTrue(_hr_can_approve_attendance_edit())
             logout_user()
 
@@ -172,12 +190,29 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
     def test_submitted_edit_affects_attendance_only_after_approval(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
         editor = User(email="editor@example.test", name="Editor", password_hash="x", role="HR")
-        approver = User(email="approver@example.test", name="Approver", password_hash="x", role="HR")
-        db.session.add_all((employee, editor, approver))
+        generic_approver = User(
+            email="generic-approver@example.test",
+            name="Generic attendance approver",
+            password_hash="x",
+            role="HR",
+        )
+        affairs_manager = User(
+            email="affairs-manager@example.test",
+            name="Administrative affairs manager",
+            password_hash="x",
+            role="HR_MANAGER",
+        )
+        secretary = User(
+            email="secretary@example.test",
+            name="Secretary General",
+            password_hash="x",
+            role="GENERAL_SECRETARY",
+        )
+        db.session.add_all((employee, editor, generic_approver, affairs_manager, secretary))
         db.session.flush()
         db.session.add_all((
             UserPermission(user_id=editor.id, key="HR_ATTENDANCE_EDIT", is_allowed=True),
-            UserPermission(user_id=approver.id, key="HR_ATTENDANCE_EDIT_APPROVE", is_allowed=True),
+            UserPermission(user_id=generic_approver.id, key="HR_ATTENDANCE_EDIT_APPROVE", is_allowed=True),
         ))
         db.session.commit()
 
@@ -208,16 +243,63 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             method="POST",
             data={"action": "approve", "approval_note": "تمت المراجعة"},
         ):
-            login_user(approver)
+            login_user(generic_approver)
+            with self.assertRaises(Forbidden):
+                hr_attendance_manual_review(correction.id)
+            logout_user()
+
+        correction = db.session.get(HRAttendanceSpecialCase, correction.id)
+        self.assertEqual(correction.approval_status, "PENDING")
+        self.assertFalse(correction.applied)
+        self.assertIsNone(correction.approved_by_id)
+        self.assertIsNone(
+            AttendanceDailySummary.query.filter_by(
+                user_id=employee.id,
+                day="2026-09-01",
+            ).first()
+        )
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "Administrative affairs approval"},
+        ):
+            login_user(affairs_manager)
             response = hr_attendance_manual_review(correction.id)
             self.assertEqual(response.status_code, 302)
             logout_user()
 
         correction = db.session.get(HRAttendanceSpecialCase, correction.id)
-        summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-01").one()
+        self.assertEqual(correction.approval_status, "PENDING")
+        self.assertFalse(correction.applied)
+        self.assertEqual(correction.approved_by_id, affairs_manager.id)
+        self.assertIsNone(correction.final_approved_by_id)
+        self.assertIsNone(
+            AttendanceDailySummary.query.filter_by(
+                user_id=employee.id,
+                day="2026-09-01",
+            ).first()
+        )
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "Secretary-General final approval"},
+        ):
+            login_user(secretary)
+            response = hr_attendance_manual_review(correction.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        correction = db.session.get(HRAttendanceSpecialCase, correction.id)
+        summary = AttendanceDailySummary.query.filter_by(
+            user_id=employee.id,
+            day="2026-09-01",
+        ).one()
         self.assertEqual(correction.approval_status, "APPROVED")
         self.assertTrue(correction.applied)
-        self.assertEqual(correction.approved_by_id, approver.id)
+        self.assertEqual(correction.approved_by_id, affairs_manager.id)
+        self.assertEqual(correction.final_approved_by_id, secretary.id)
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
 

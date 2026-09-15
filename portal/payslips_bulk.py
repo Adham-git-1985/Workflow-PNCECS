@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import threading
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +50,9 @@ _ARABIC_DIGITS_MAP = str.maketrans(
     "01234567890123456789",
 )
 
+_RAPID_OCR_ENGINE = None
+_RAPID_OCR_LOCK = threading.Lock()
+
 
 def _normalize_digits(value: str | None) -> str:
     return (value or "").translate(_ARABIC_DIGITS_MAP)
@@ -63,34 +67,87 @@ def _extract_identity_number(page_text: str | None) -> str | None:
     text = _normalize_digits(page_text or "")
     text = re.sub(r"\s+", " ", text)
 
+    digit_sequence = r"([0-9](?:[\s\-]?[0-9]){8})(?![\s\-]?[0-9])"
     patterns = [
-        r"رقم\s*الهوية\s*[:：]?\s*([0-9]{9})",
-        r"رقم\s*الهويه\s*[:：]?\s*([0-9]{9})",
-        r"الهوية\s*[:：]?\s*([0-9]{9})",
-        r"الهويه\s*[:：]?\s*([0-9]{9})",
+        rf"رقم\s*الهوية\s*[:：]?\s*{digit_sequence}",
+        rf"رقم\s*الهويه\s*[:：]?\s*{digit_sequence}",
+        rf"الهوية\s*[:：]?\s*{digit_sequence}",
+        rf"الهويه\s*[:：]?\s*{digit_sequence}",
+        rf"(?:national\s*(?:id|number)|identity(?:\s*(?:no|number))?|id\s*(?:no|number))\s*[:：#]?\s*{digit_sequence}",
     ]
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(pattern, text, flags=re.IGNORECASE)
         if match:
-            return match.group(1)
+            candidate = _digits_only(match.group(1))
+            if len(candidate) == 9:
+                return candidate
 
     # In some Arabic PDFs, text extraction may join fields without spaces.
     # Fallback: first 9-digit number near the top of the page.
     top_text = text[:1200]
     ids = re.findall(r"(?<!\d)([0-9]{9})(?!\d)", top_text)
-    return ids[0] if ids else None
+    for candidate in ids:
+        normalized = _digits_only(candidate)
+        if len(normalized) == 9:
+            return normalized
+    return None
+
+
+def _run_rapid_ocr_png(png_bytes: bytes) -> str:
+    """Run the bundled local OCR engine without sending payroll data outside."""
+    global _RAPID_OCR_ENGINE
+
+    with _RAPID_OCR_LOCK:
+        if _RAPID_OCR_ENGINE is None:
+            from rapidocr import RapidOCR
+
+            _RAPID_OCR_ENGINE = RapidOCR()
+        result = _RAPID_OCR_ENGINE(png_bytes)
+
+    return "\n".join(str(value) for value in (getattr(result, "txts", None) or ()))
 
 
 def _payslip_page_text(page) -> tuple[str, bool, str | None]:
-    """Read native PDF text, then OCR scanned Ministry payslips locally."""
-    page_text = page.get_text("text") or ""
-    if page_text.strip():
-        return page_text, False, None
+    """Read native PDF text, then OCR image-only Ministry payslips locally."""
+    native_text = page.get_text("text") or ""
+    if _extract_identity_number(native_text):
+        return native_text, False, None
 
     enabled_value = current_app.config.get("PAYSLIP_OCR_ENABLED", True)
     enabled = str(enabled_value).strip().lower() in {"1", "true", "yes", "on"}
     if not enabled:
-        return "", False, "ملف القسائم ممسوح كصور وقراءة OCR لقسائم الرواتب غير مفعّلة."
+        return native_text, False, "لم يظهر رقم الهوية في نص القسيمة وقراءة OCR غير مفعّلة."
+
+    # Identity and employee information are in the upper section. Cropping
+    # reduces OCR time and keeps bank/summary numbers from winning the
+    # nine-digit fallback match.
+    clip = fitz.Rect(
+        page.rect.x0,
+        page.rect.y0,
+        page.rect.x1,
+        page.rect.y0 + (page.rect.height * 0.68),
+    )
+    dpi = int(current_app.config.get("PAYSLIP_OCR_DPI", 200))
+    try:
+        png_bytes = page.get_pixmap(dpi=dpi, clip=clip, alpha=False).tobytes("png")
+    except Exception as exc:
+        current_app.logger.warning("Payslip page rendering failed: %s", exc)
+        return native_text, False, "تعذر تجهيز صفحة القسيمة للقراءة الضوئية."
+
+    rapid_enabled_value = current_app.config.get("PAYSLIP_RAPID_OCR_ENABLED", True)
+    rapid_enabled = str(rapid_enabled_value).strip().lower() in {"1", "true", "yes", "on"}
+    rapid_error = None
+    if rapid_enabled:
+        try:
+            rapid_text = _run_rapid_ocr_png(png_bytes)
+            combined_text = "\n".join(value for value in (native_text, rapid_text) if value.strip())
+            if _extract_identity_number(combined_text):
+                return combined_text, True, None
+        except (ImportError, ModuleNotFoundError) as exc:
+            rapid_error = exc
+        except Exception as exc:
+            rapid_error = exc
+            current_app.logger.warning("Payslip RapidOCR failed: %s", exc)
 
     config = OcrConfig(
         enabled=True,
@@ -102,7 +159,7 @@ def _payslip_page_text(page) -> tuple[str, bool, str | None]:
         # avoids requiring the optional Arabic Tesseract language package.
         languages="eng",
         max_pages=1,
-        dpi=int(current_app.config.get("PAYSLIP_OCR_DPI", 250)),
+        dpi=dpi,
         timeout_seconds=float(current_app.config.get("PAYSLIP_OCR_PAGE_TIMEOUT_SECONDS", 20)),
     )
     command = _resolve_tesseract_command(config)
@@ -113,32 +170,51 @@ def _payslip_page_text(page) -> tuple[str, bool, str | None]:
                 command = str(candidate.resolve())
                 break
     if not command:
-        return "", False, (
-            "ملف القسائم ممسوح كصور، لكن محرك Tesseract OCR غير متوفر على الخادم. "
-            "ثبّت Tesseract أو اضبط PAYSLIP_TESSERACT_CMD ثم أعد الرفع."
-        )
+        if rapid_error:
+            current_app.logger.warning("Bundled payslip OCR is unavailable: %s", rapid_error)
+            message = (
+                "تعذر تشغيل محرك OCR المحلي لقراءة رقم الهوية من القسيمة المصورة؛ "
+                "تحقق من تثبيت rapidocr وonnxruntime أو إعداد Tesseract."
+            )
+        elif rapid_enabled:
+            message = (
+                "تمت قراءة القسيمة المصورة بمحرك OCR المحلي، لكن تعذر تمييز رقم هوية "
+                "صالح فيها؛ راجع وضوح الصفحة ورقم الهوية."
+            )
+        else:
+            message = (
+                "لم يظهر رقم الهوية في نص القسيمة، ومحركات OCR المحلية الإضافية غير متاحة."
+            )
+        return native_text, False, message
 
     try:
-        # Identity and employee information are in the upper section. Cropping
-        # reduces OCR time and keeps the bank/summary numbers from winning the
-        # nine-digit fallback match.
-        clip = fitz.Rect(
-            page.rect.x0,
-            page.rect.y0,
-            page.rect.x1,
-            page.rect.y0 + (page.rect.height * 0.68),
-        )
-        pixmap = page.get_pixmap(dpi=config.dpi, clip=clip, alpha=False)
         page_text = _run_tesseract_png(
-            pixmap.tobytes("png"),
+            png_bytes,
             command,
             config,
             config.timeout_seconds,
         )
     except Exception as exc:
         current_app.logger.warning("Payslip OCR failed: %s", exc)
-        return "", False, "تعذر إجراء OCR لإحدى صفحات القسائم الممسوحة؛ راجع إعداد Tesseract وجودة الملف."
-    return page_text, bool(page_text.strip()), None
+        return native_text, False, "تعذر إجراء OCR لإحدى صفحات القسائم الممسوحة؛ راجع جودة الملف."
+    combined_text = "\n".join(value for value in (native_text, page_text) if value.strip())
+    return combined_text, bool(page_text.strip()), None
+
+
+def _uploaded_payslip_files(file_storage) -> list:
+    """Accept the current field plus legacy field names during deployment."""
+    uploads = []
+    seen = set()
+    for field_name in ("pdf_files", "pdf_file", "files"):
+        for uploaded in file_storage.getlist(field_name):
+            if not uploaded or not getattr(uploaded, "filename", None):
+                continue
+            marker = id(uploaded)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            uploads.append(uploaded)
+    return uploads
 
 
 def _payslip_batch_dir(batch_id: str) -> Path:
@@ -154,6 +230,44 @@ def _unique_pdf_path(output_dir: Path, identity_number: str) -> Path:
         target = output_dir / f"{safe_id}_{counter}.pdf"
         counter += 1
     return target
+
+
+def _combine_payslip_pdf_files(
+    sources: list[tuple[Path, str]],
+    combined_pdf_path: Path,
+) -> list[str]:
+    """Combine uploaded PDFs and retain the source filename for every page."""
+    combined_pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    combined_document = fitz.open()
+    source_filenames_by_page: list[str] = []
+
+    try:
+        for source_path, source_filename in sources:
+            source_document = None
+            try:
+                source_document = fitz.open(str(source_path))
+                if source_document.page_count < 1:
+                    raise ValueError("الملف لا يحتوي على صفحات.")
+                combined_document.insert_pdf(source_document)
+                source_filenames_by_page.extend(
+                    [str(source_filename or source_path.name)] * source_document.page_count
+                )
+            except Exception as exc:
+                raise ValueError(
+                    f"تعذر قراءة ملف PDF «{source_filename or source_path.name}»: {exc}"
+                ) from exc
+            finally:
+                if source_document is not None:
+                    source_document.close()
+
+        if combined_document.page_count < 1:
+            raise ValueError("ملفات القسائم لا تحتوي على صفحات قابلة للمعالجة.")
+
+        combined_document.save(str(combined_pdf_path), garbage=4, deflate=True)
+    finally:
+        combined_document.close()
+
+    return source_filenames_by_page
 
 
 def _find_employee_by_identity(identity_number: str | None) -> EmployeeFile | None:
@@ -264,6 +378,7 @@ def _register_or_replace_payslip(
     month: int,
     page_label: str,
     identity_number: str,
+    source_filenames: list[str] | None = None,
 ) -> EmployeeAttachment:
     user_id = int(emp.user_id)
     employee_dir = _employee_upload_dir(user_id)
@@ -278,16 +393,29 @@ def _register_or_replace_payslip(
         payslip_month=month,
     ).first()
 
+    unique_source_filenames = list(dict.fromkeys(
+        str(value).strip() for value in (source_filenames or []) if str(value).strip()
+    ))
+    source_note = ""
+    if unique_source_filenames:
+        source_note = f" - الملفات المصدرية: {'، '.join(unique_source_filenames)}"
+    # EmployeeAttachment.note is VARCHAR(255) in production.  Keep the
+    # identity at the beginning and bound optional page/source details so a
+    # batch containing many files cannot make an otherwise valid upload fail.
+    note = (
+        f"قسيمة راتب مستخرجة من ملف جماعي - رقم الهوية {identity_number} - "
+        f"الصفحات {page_label}{source_note}"
+    )[:255]
+
     if att:
-        try:
-            old_path = employee_dir / (att.stored_name or "")
-            if old_path.exists():
-                old_path.unlink()
-        except Exception:
-            pass
+        # Keep the prior file until the surrounding database transaction is
+        # known to have committed. A rollback must not leave the existing
+        # attachment pointing at a file that was already deleted.
+        previous_path = employee_dir / (att.stored_name or "")
+        att._payslip_obsolete_path = str(previous_path) if previous_path.is_file() else None
         att.original_name = original_name
         att.stored_name = stored_name
-        att.note = f"قسيمة راتب مستخرجة من ملف جماعي - الصفحات {page_label} - رقم الهوية {identity_number}"
+        att.note = note
         att.uploaded_by_id = current_user.id
         att.uploaded_at = datetime.utcnow()
     else:
@@ -296,7 +424,7 @@ def _register_or_replace_payslip(
             attachment_type="PAYSLIP",
             original_name=original_name,
             stored_name=stored_name,
-            note=f"قسيمة راتب مستخرجة من ملف جماعي - الصفحات {page_label} - رقم الهوية {identity_number}",
+            note=note,
             payslip_year=year,
             payslip_month=month,
             uploaded_by_id=current_user.id,
@@ -323,6 +451,7 @@ def _split_and_register_payslip_pdf(
     *,
     year: int,
     month: int,
+    source_filenames_by_page: list[str] | None = None,
 ) -> tuple[list[dict], list[str], dict]:
     """Group pages by identity, then save each grouped payslip as one draft attachment."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -380,6 +509,15 @@ def _split_and_register_payslip_pdf(
             page_indexes = group["page_indexes"]
             page_numbers = [page_index + 1 for page_index in page_indexes]
             page_label = "، ".join(str(page_number) for page_number in page_numbers)
+            source_filenames: list[str] = []
+            if source_filenames_by_page:
+                for page_index in page_indexes:
+                    if page_index >= len(source_filenames_by_page):
+                        continue
+                    source_filename = str(source_filenames_by_page[page_index] or "").strip()
+                    if source_filename and source_filename not in source_filenames:
+                        source_filenames.append(source_filename)
+            source_filename_label = "، ".join(source_filenames)
 
             split_pdf_path = _unique_pdf_path(output_dir, identity_number)
             grouped_pdf = fitz.open()
@@ -401,6 +539,8 @@ def _split_and_register_payslip_pdf(
                 "attachment_id": None,
                 "status": "skipped",
                 "message": "",
+                "source_filename": source_filename_label,
+                "source_filenames": source_filenames,
             }
 
             emp = _find_employee_by_identity(identity_number) if group["has_identity"] else None
@@ -418,16 +558,20 @@ def _split_and_register_payslip_pdf(
                 user = None
 
             try:
-                att = _register_or_replace_payslip(
-                    emp=emp,
-                    source_pdf=split_pdf_path,
-                    original_name=split_pdf_path.name,
-                    year=year,
-                    month=month,
-                    page_label=page_label,
-                    identity_number=identity_number,
-                )
-                db.session.flush()
+                # Isolate one employee from another so one malformed legacy
+                # record does not roll back every valid identity in the batch.
+                with db.session.begin_nested():
+                    att = _register_or_replace_payslip(
+                        emp=emp,
+                        source_pdf=split_pdf_path,
+                        original_name=split_pdf_path.name,
+                        year=year,
+                        month=month,
+                        page_label=page_label,
+                        identity_number=identity_number,
+                        source_filenames=source_filenames,
+                    )
+                    db.session.flush()
 
                 counters["saved"] += 1
                 row.update({
@@ -437,6 +581,7 @@ def _split_and_register_payslip_pdf(
                     "attachment_id": getattr(att, "id", None),
                     "status": "saved",
                     "message": f"تم حفظ قسيمة من {len(page_numbers)} صفحة كمسودة وستظهر في صفحة إرسال قسائم الرواتب.",
+                    "_obsolete_path": getattr(att, "_payslip_obsolete_path", None),
                 })
             except Exception as exc:
                 counters["skipped"] += 1
@@ -456,8 +601,8 @@ def _split_and_register_payslip_pdf(
 def hr_payslips_bulk_upload():
     """
     New HR payslip upload page:
-      - Upload one combined PDF.
-      - Split every page by the ID number inside the page.
+      - Upload one or more PDF files in one batch.
+      - Combine and split every page by the ID number inside the page.
       - Match ID number against EmployeeFile.national_id.
       - Save each matched slip as EmployeeAttachment(PAYSLIP) draft for the selected year/month.
       - The existing send page can then publish/send the drafts.
@@ -500,13 +645,18 @@ def hr_payslips_bulk_upload():
             flash("السنة/الشهر غير صالحين.", "danger")
             return redirect(url_for("portal.hr_payslips_bulk_upload"))
 
-        uploaded_file = request.files.get("pdf_file")
-        if not uploaded_file or not uploaded_file.filename:
-            flash("يرجى اختيار ملف PDF.", "danger")
+        uploaded_files = _uploaded_payslip_files(request.files)
+        if not uploaded_files:
+            flash("يرجى اختيار ملف PDF واحد على الأقل.", "danger")
             return redirect(url_for("portal.hr_payslips_bulk_upload", year=year, month=month))
 
-        if not uploaded_file.filename.lower().endswith(".pdf"):
-            flash("الملف يجب أن يكون بصيغة PDF فقط.", "danger")
+        invalid_names = [
+            uploaded.filename
+            for uploaded in uploaded_files
+            if not uploaded.filename.lower().endswith(".pdf")
+        ]
+        if invalid_names:
+            flash("جميع الملفات يجب أن تكون بصيغة PDF فقط.", "danger")
             return redirect(url_for("portal.hr_payslips_bulk_upload", year=year, month=month))
 
         batch_id = f"{year:04d}_{month:02d}_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
@@ -515,16 +665,32 @@ def hr_payslips_bulk_upload():
         output_dir = batch_dir / "output"
         input_dir.mkdir(parents=True, exist_ok=True)
 
-        original_filename = secure_filename(uploaded_file.filename) or "payslips.pdf"
-        input_pdf_path = input_dir / original_filename
-        uploaded_file.save(str(input_pdf_path))
-
         try:
+            uploaded_sources: list[tuple[Path, str]] = []
+            for upload_index, uploaded_file in enumerate(uploaded_files, start=1):
+                original_filename = secure_filename(uploaded_file.filename) or f"payslips_{upload_index}.pdf"
+                input_pdf_path = input_dir / original_filename
+                duplicate_number = 2
+                while input_pdf_path.exists():
+                    input_pdf_path = input_dir / (
+                        f"{Path(original_filename).stem}_{duplicate_number}"
+                        f"{Path(original_filename).suffix or '.pdf'}"
+                    )
+                    duplicate_number += 1
+                uploaded_file.save(str(input_pdf_path))
+                uploaded_sources.append((input_pdf_path, uploaded_file.filename))
+
+            combined_pdf_path = batch_dir / "combined_payslips.pdf"
+            source_filenames_by_page = _combine_payslip_pdf_files(
+                uploaded_sources,
+                combined_pdf_path,
+            )
             rows, warnings, counters = _split_and_register_payslip_pdf(
-                input_pdf_path,
+                combined_pdf_path,
                 output_dir,
                 year=year,
                 month=month,
+                source_filenames_by_page=source_filenames_by_page,
             )
 
             zip_path = batch_dir / "payslips_split.zip"
@@ -537,7 +703,11 @@ def hr_payslips_bulk_upload():
             try:
                 _portal_audit(
                     action="HR_PAYSLIPS_BULK_UPLOAD",
-                    note=f"رفع قسائم رواتب شهر {year:04d}-{month:02d} من ملف PDF جماعي (تم حفظ {counters['saved']} مسودة، تخطي {counters['skipped']})",
+                    note=(
+                        f"رفع قسائم رواتب شهر {year:04d}-{month:02d} من "
+                        f"{len(uploaded_files)} ملف PDF (تم حفظ {counters['saved']} مسودة، "
+                        f"تخطي {counters['skipped']})"
+                    ),
                     target_type="PAYSLIP",
                     target_id=0,
                 )
@@ -545,6 +715,20 @@ def hr_payslips_bulk_upload():
                 pass
 
             db.session.commit()
+            # Database references now point to the new files, so superseded
+            # copies can be removed without risking a broken attachment after
+            # a transaction rollback.
+            for item in rows:
+                obsolete_path = item.pop("_obsolete_path", None)
+                if not obsolete_path:
+                    continue
+                try:
+                    Path(obsolete_path).unlink(missing_ok=True)
+                except OSError:
+                    current_app.logger.warning(
+                        "Could not remove superseded payslip file: %s",
+                        obsolete_path,
+                    )
             flash(
                 f"تمت العملية لشهر {year:04d}-{month:02d}: حفظ {counters['saved']} مسودة، تخطي {counters['skipped']}.",
                 "success" if counters["saved"] else "warning",
@@ -557,7 +741,7 @@ def hr_payslips_bulk_upload():
             return redirect(url_for("portal.hr_payslips_bulk_upload", year=year, month=month))
 
     return render_template(
-        "portal/payslips_bulk_upload.html",
+        "portal/hr/payslips_bulk_upload.html",
         rows=rows,
         warnings=warnings,
         batch_id=batch_id,

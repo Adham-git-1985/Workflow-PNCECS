@@ -1,9 +1,12 @@
+import io
 import unittest
 from datetime import date, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from flask import Flask
 from flask_login import LoginManager, login_user, logout_user
+from werkzeug.exceptions import Forbidden
 
 from extensions import db
 from models import (
@@ -13,9 +16,11 @@ from models import (
     HRAttendanceScheduleDay,
     HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
+    HRLeaveAttachment,
     HRLeaveRequest,
     HRLeaveType,
     HRLookupItem,
+    HROfficialOccasion,
     HRRequestApprovalStep,
     Notification,
     OrgNode,
@@ -32,12 +37,16 @@ from portal.routes import (
     _administrative_affairs_daily_rows,
     _attach_manual_attendance_flags,
     _casual_leave_policy_error,
+    _can_review_manual_attendance,
     _convert_auto_annual_leave_after_sick_approval,
     _leave_used_days,
     _manual_attendance_event_rows_for_report,
     _process_unrecorded_office_attendance,
+    hr_approval_leave,
     hr_attendance_manual_edit,
     hr_attendance_manual_review,
+    hr_leaves_admin_edit,
+    hr_leave_request_edit,
 )
 from services.hr_request_workflow import (
     KIND_LEAVE,
@@ -260,6 +269,147 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(auto_leave.replacement_reason, "LATE_CLOCK_ATTENDANCE")
         self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
 
+    def test_auto_annual_is_reversed_when_office_schedule_changes_to_remote_or_off(self):
+        remote_employee = self._user(
+            "reclassified-remote@example.test",
+            "Reclassified remote employee",
+        )
+        off_employee = self._user(
+            "reclassified-off@example.test",
+            "Reclassified off employee",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        schedule = WorkSchedule(
+            name="Office schedule",
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((annual, schedule))
+        db.session.flush()
+        remote_day = self._final_schedule_day(
+            remote_employee,
+            "2026-09-14",
+            "WORK",
+            schedule=schedule,
+        )
+        off_day = self._final_schedule_day(
+            off_employee,
+            "2026-09-14",
+            "WORK",
+            schedule=schedule,
+        )
+        db.session.commit()
+
+        initial = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 17, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+        )
+        db.session.commit()
+        self.assertEqual(initial["created"], 2)
+
+        remote_day.day_type = "REMOTE"
+        remote_day.start_time = None
+        remote_day.end_time = None
+        off_day.day_type = "OFF"
+        off_day.start_time = None
+        off_day.end_time = None
+        db.session.commit()
+
+        reconciled = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 18, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+        )
+        db.session.commit()
+        auto_rows = (
+            HRLeaveRequest.query
+            .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
+            .order_by(HRLeaveRequest.user_id.asc())
+            .all()
+        )
+        categories = {
+            row["user_id"]: row["category"]
+            for row in _administrative_affairs_daily_rows(
+                date(2026, 9, 14),
+                date(2026, 9, 14),
+                user_ids=[remote_employee.id, off_employee.id],
+            )
+        }
+
+        self.assertEqual(reconciled["reversed"], 2)
+        self.assertEqual(len(auto_rows), 2)
+        self.assertTrue(all(row.status == "CANCELLED" for row in auto_rows))
+        self.assertTrue(all(row.replaced_at is not None for row in auto_rows))
+        self.assertEqual(categories[remote_employee.id], "REMOTE")
+        self.assertEqual(categories[off_employee.id], "OFF")
+
+    def test_official_holiday_takes_priority_over_work_schedule_in_report(self):
+        employee = self._user(
+            "holiday-work-schedule@example.test",
+            "Scheduled employee on holiday",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        schedule = WorkSchedule(
+            name="Office schedule",
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((
+            annual,
+            schedule,
+            HROfficialOccasion(
+                title="Official holiday",
+                day="2026-09-14",
+                is_day_off=True,
+            ),
+        ))
+        db.session.flush()
+        self._final_schedule_day(
+            employee,
+            "2026-09-14",
+            "WORK",
+            schedule=schedule,
+        )
+        db.session.commit()
+
+        processed = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 17, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+        )
+        db.session.commit()
+        report_row = _administrative_affairs_daily_rows(
+            date(2026, 9, 14),
+            date(2026, 9, 14),
+            user_ids=[employee.id],
+        )[0]
+
+        self.assertEqual(processed["created"], 0)
+        self.assertEqual(
+            HRLeaveRequest.query.filter_by(
+                user_id=employee.id,
+                source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            ).count(),
+            0,
+        )
+        self.assertEqual(report_row["category"], "OFF")
+        self.assertNotEqual(report_row["category"], "MISSING_PUNCH")
+
     def test_final_sick_approval_releases_the_auto_annual_charge(self):
         employee = self._user("sick@example.test", "موظف مريض")
         annual = HRLeaveType(
@@ -299,6 +449,14 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
             status="APPROVED",
         )
         db.session.add_all((automatic, sick_request))
+        db.session.flush()
+        db.session.add(HRLeaveAttachment(
+            request_id=sick_request.id,
+            doc_type="REPORT",
+            original_name="medical-report.pdf",
+            stored_name="medical-report.pdf",
+            uploaded_by_id=employee.id,
+        ))
         db.session.commit()
 
         converted = _convert_auto_annual_leave_after_sick_approval(sick_request)
@@ -310,6 +468,128 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(automatic.replaced_by_leave_request_id, sick_request.id)
         self.assertEqual(automatic.replacement_reason, "APPROVED_SICK_LEAVE")
         self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
+
+    def test_approved_sick_leave_without_supporting_document_does_not_release_auto_annual(self):
+        employee = self._user("sick-no-document@example.test", "Sick without document")
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        sick_type = HRLeaveType(
+            code="SICK",
+            name_ar="Sick",
+            requires_documents=True,
+            deduct_from_balance=False,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        db.session.add_all((annual, sick_type))
+        db.session.flush()
+        automatic = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            entered_by="SYSTEM",
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+            status="APPROVED",
+        )
+        sick_request = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=sick_type.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            entered_by="SELF",
+            status="APPROVED",
+        )
+        db.session.add_all((automatic, sick_request))
+        db.session.commit()
+
+        converted = _convert_auto_annual_leave_after_sick_approval(sick_request)
+        db.session.commit()
+        db.session.refresh(automatic)
+
+        self.assertEqual(converted, 0)
+        self.assertEqual(automatic.status, "APPROVED")
+        self.assertIsNone(automatic.replaced_by_leave_request_id)
+        self.assertIsNone(automatic.replaced_at)
+
+    def test_sick_leave_cannot_advance_approval_without_supporting_document(self):
+        manager = self._user(
+            "sick-document-manager@example.test",
+            "Direct manager",
+            "MANAGER",
+            employee_file=False,
+        )
+        employee = self._user(
+            "sick-document-employee@example.test",
+            "Sick employee",
+            direct_manager_user_id=manager.id,
+        )
+        self._user(
+            "sick-document-hr@example.test",
+            "Administrative affairs",
+            "HR_MANAGER",
+            employee_file=False,
+        )
+        self._user(
+            "sick-document-secretary@example.test",
+            "Secretary General",
+            "GENERAL_SECRETARY",
+            employee_file=False,
+        )
+        db.session.add(UserPermission(
+            user_id=manager.id,
+            key="PORTAL_READ",
+            is_allowed=True,
+        ))
+        sick_type = HRLeaveType(
+            code="SICK",
+            name_ar="Sick",
+            requires_documents=True,
+            deduct_from_balance=False,
+        )
+        db.session.add(sick_type)
+        db.session.flush()
+        sick_request = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=sick_type.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            entered_by="SELF",
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(sick_request)
+        db.session.flush()
+        steps = start_request_flow(KIND_LEAVE, sick_request)
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/approvals/leaves/{sick_request.id}",
+            method="POST",
+            data={
+                "action": "APPROVE",
+                "covering_employee_name": "Covering employee",
+                "decision_note": "Reviewed",
+            },
+        ):
+            login_user(manager)
+            response = hr_approval_leave(sick_request.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.refresh(sick_request)
+        db.session.refresh(steps[0])
+        self.assertEqual(sick_request.status, "SUBMITTED")
+        self.assertEqual(steps[0].status, "PENDING")
+        self.assertIsNone(steps[0].decided_at)
 
     def test_sick_leave_flow_includes_manager_hr_and_secretary_general(self):
         manager = self._user("manager@example.test", "المدير المباشر", "MANAGER", employee_file=False)
@@ -352,6 +632,285 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
             [STAGE_DIRECT_MANAGER, STAGE_HR, STAGE_SECRETARY_GENERAL],
         )
         self.assertEqual(HRRequestApprovalStep.query.filter_by(request_id=request_row.id).count(), 3)
+
+    def test_employee_edit_from_annual_to_sick_restarts_the_approval_route(self):
+        manager = self._user(
+            "edit-leave-manager@example.test",
+            "Direct manager",
+            "MANAGER",
+            employee_file=False,
+        )
+        employee = self._user(
+            "edit-leave-employee@example.test",
+            "Employee editing leave",
+            direct_manager_user_id=manager.id,
+        )
+        self._user(
+            "edit-leave-hr@example.test",
+            "Administrative affairs",
+            "HR_MANAGER",
+            employee_file=False,
+        )
+        self._user(
+            "edit-leave-secretary@example.test",
+            "Secretary General",
+            "GENERAL_SECRETARY",
+            employee_file=False,
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            requires_approval=True,
+            is_active=True,
+        )
+        sick = HRLeaveType(
+            code="SICK",
+            name_ar="Sick",
+            requires_approval=True,
+            requires_documents=True,
+            is_active=True,
+        )
+        db.session.add_all((annual, sick))
+        db.session.flush()
+        db.session.add_all([
+            UserPermission(user_id=employee.id, key=key, is_allowed=True)
+            for key in ("PORTAL_READ", "HR_READ", "HR_REQUESTS_CREATE")
+        ])
+        request_row = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        original_steps = start_request_flow(KIND_LEAVE, request_row)
+        original_step_ids = {step.id for step in original_steps}
+        db.session.commit()
+
+        def save_medical_report(files, request_id, *, doc_type):
+            self.assertTrue(files)
+            db.session.add(HRLeaveAttachment(
+                request_id=request_id,
+                doc_type=doc_type,
+                original_name="medical-report.pdf",
+                stored_name="medical-report.pdf",
+                uploaded_by_id=employee.id,
+            ))
+            db.session.flush()
+            return 1
+
+        with self.app.test_request_context(
+            f"/portal/hr/me/leaves/{request_row.id}/edit",
+            method="POST",
+            data={
+                "leave_type_id": str(sick.id),
+                "start_date": "2026-09-14",
+                "end_date": "2026-09-14",
+                "note": "Reported sick later that day",
+                "attachments": (io.BytesIO(b"medical evidence"), "medical-report.pdf"),
+            },
+            content_type="multipart/form-data",
+        ), patch("portal.routes._save_leave_files", side_effect=save_medical_report):
+            login_user(employee)
+            response = hr_leave_request_edit(request_row.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.expire_all()
+        updated = db.session.get(HRLeaveRequest, request_row.id)
+        all_steps = (
+            HRRequestApprovalStep.query
+            .filter_by(request_kind=KIND_LEAVE, request_id=request_row.id)
+            .order_by(HRRequestApprovalStep.step_order.asc())
+            .all()
+        )
+        restarted_steps = [step for step in all_steps if step.id not in original_step_ids]
+
+        self.assertEqual(updated.leave_type_id, sick.id)
+        self.assertEqual(updated.status, "SUBMITTED")
+        self.assertEqual([step.status for step in all_steps if step.id in original_step_ids], ["CANCELLED"])
+        self.assertEqual(
+            [step.stage_code for step in restarted_steps],
+            [STAGE_DIRECT_MANAGER, STAGE_HR, STAGE_SECRETARY_GENERAL],
+        )
+        self.assertEqual({step.flow_revision for step in restarted_steps}, {2})
+        self.assertEqual(restarted_steps[0].status, "PENDING")
+        self.assertTrue(all(step.status == "WAITING" for step in restarted_steps[1:]))
+        self.assertEqual(HRLeaveAttachment.query.filter_by(request_id=request_row.id).count(), 1)
+
+    def test_admin_cannot_edit_an_approved_leave_request(self):
+        admin = self._user(
+            "admin-edit-approved-leave@example.test",
+            "Administrative editor",
+            "ADMIN",
+            employee_file=False,
+        )
+        employee = self._user(
+            "approved-leave-employee@example.test",
+            "Employee with approved leave",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            requires_approval=True,
+            is_active=True,
+        )
+        db.session.add(annual)
+        db.session.flush()
+        request_row = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            note="Original approved request",
+            status="APPROVED",
+        )
+        db.session.add(request_row)
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/admin/{request_row.id}/edit",
+            method="POST",
+            data={
+                "leave_type_id": str(annual.id),
+                "start_date": "2026-09-15",
+                "end_date": "2026-09-15",
+                "note": "Must not be saved",
+            },
+        ), patch("portal.routes.start_request_flow") as restart_flow:
+            login_user(admin)
+            response = hr_leaves_admin_edit(request_row.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.expire_all()
+        unchanged = db.session.get(HRLeaveRequest, request_row.id)
+        self.assertEqual(unchanged.status, "APPROVED")
+        self.assertEqual(unchanged.start_date, "2026-09-14")
+        self.assertEqual(unchanged.end_date, "2026-09-14")
+        self.assertEqual(unchanged.note, "Original approved request")
+        restart_flow.assert_not_called()
+
+    def test_admin_edit_from_annual_to_sick_restarts_the_approval_route(self):
+        admin = self._user(
+            "admin-edit-submitted-leave@example.test",
+            "Administrative editor",
+            "ADMIN",
+            employee_file=False,
+        )
+        manager = self._user(
+            "admin-edit-leave-manager@example.test",
+            "Direct manager",
+            "MANAGER",
+            employee_file=False,
+        )
+        employee = self._user(
+            "admin-edit-leave-employee@example.test",
+            "Employee whose leave is edited",
+            direct_manager_user_id=manager.id,
+        )
+        self._user(
+            "admin-edit-leave-hr@example.test",
+            "Administrative affairs manager",
+            "HR_MANAGER",
+            employee_file=False,
+        )
+        self._user(
+            "admin-edit-leave-secretary@example.test",
+            "Secretary General",
+            "GENERAL_SECRETARY",
+            employee_file=False,
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            requires_approval=True,
+            is_active=True,
+        )
+        sick = HRLeaveType(
+            code="SICK",
+            name_ar="Sick",
+            requires_approval=True,
+            requires_documents=True,
+            is_active=True,
+        )
+        db.session.add_all((annual, sick))
+        db.session.flush()
+        request_row = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            note="Annual leave",
+            status="SUBMITTED",
+            submitted_at=datetime.utcnow(),
+        )
+        db.session.add(request_row)
+        db.session.flush()
+        original_steps = start_request_flow(KIND_LEAVE, request_row)
+        original_step_ids = {step.id for step in original_steps}
+        db.session.commit()
+
+        def save_medical_report(files, request_id, *, doc_type):
+            self.assertTrue(files)
+            self.assertEqual(doc_type, "ADMIN_DOC")
+            db.session.add(HRLeaveAttachment(
+                request_id=request_id,
+                doc_type=doc_type,
+                original_name="medical-report.pdf",
+                stored_name="medical-report.pdf",
+                uploaded_by_id=admin.id,
+            ))
+            db.session.flush()
+            return 1
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/admin/{request_row.id}/edit",
+            method="POST",
+            data={
+                "leave_type_id": str(sick.id),
+                "start_date": "2026-09-14",
+                "end_date": "2026-09-14",
+                "note": "Reported sick later that day",
+                "attachments": (io.BytesIO(b"medical evidence"), "medical-report.pdf"),
+            },
+            content_type="multipart/form-data",
+        ), patch("portal.routes._save_leave_files", side_effect=save_medical_report):
+            login_user(admin)
+            response = hr_leaves_admin_edit(request_row.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.expire_all()
+        updated = db.session.get(HRLeaveRequest, request_row.id)
+        all_steps = (
+            HRRequestApprovalStep.query
+            .filter_by(request_kind=KIND_LEAVE, request_id=request_row.id)
+            .order_by(HRRequestApprovalStep.step_order.asc())
+            .all()
+        )
+        old_steps = [step for step in all_steps if step.id in original_step_ids]
+        restarted_steps = [step for step in all_steps if step.id not in original_step_ids]
+
+        self.assertEqual(updated.leave_type_id, sick.id)
+        self.assertEqual(updated.status, "SUBMITTED")
+        self.assertTrue(old_steps)
+        self.assertTrue(all(step.status == "CANCELLED" for step in old_steps))
+        self.assertTrue(all(step.decided_at is not None for step in old_steps))
+        self.assertEqual(
+            [step.stage_code for step in restarted_steps],
+            [STAGE_DIRECT_MANAGER, STAGE_HR, STAGE_SECRETARY_GENERAL],
+        )
+        self.assertEqual({step.flow_revision for step in restarted_steps}, {2})
+        self.assertEqual(restarted_steps[0].status, "PENDING")
+        self.assertTrue(all(step.status == "WAITING" for step in restarted_steps[1:]))
+        self.assertEqual(HRLeaveAttachment.query.filter_by(request_id=request_row.id).count(), 1)
 
     def test_casual_leave_requires_confirmed_staff_and_zero_annual_balance(self):
         confirmed_type = HRLookupItem(
@@ -425,10 +984,156 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertIn("المثبتين فقط", contract_error)
         self.assertIsNone(exhausted_error)
 
+    def test_casual_leave_accepts_tathbeet_classification_after_annual_is_exhausted(self):
+        confirmed_type = HRLookupItem(
+            category="APPOINTMENT_TYPE",
+            code="CLASSIFIED_STAFF",
+            name_ar="\u062a\u062b\u0628\u064a\u062a",
+            name_en="",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            default_balance_days=1,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        casual = HRLeaveType(
+            code="CASUAL",
+            name_ar="Casual",
+            deduct_from_balance=False,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        db.session.add_all((confirmed_type, annual, casual))
+        db.session.flush()
+        employee = self._user(
+            "tathbeet@example.test",
+            "Tathbeet employee",
+            appointment_type_lookup_id=confirmed_type.id,
+        )
+        db.session.add(HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-01-05",
+            end_date="2026-01-05",
+            days=1,
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        policy_error = _casual_leave_policy_error(
+            employee.id,
+            casual,
+            date(2026, 9, 14),
+            date(2026, 9, 14),
+        )
+
+        self.assertIsNone(policy_error)
+
+    def test_generic_attendance_approver_cannot_take_administrative_affairs_stage(self):
+        employee = self._user("manual-scope-employee@example.test", "Manual scope employee")
+        generic_approver = self._user(
+            "manual-generic-approver@example.test",
+            "Generic attendance approver",
+            "EMPLOYEE",
+            employee_file=False,
+        )
+        affairs_manager = self._user(
+            "manual-affairs-manager@example.test",
+            "Administrative affairs manager",
+            "HR_MANAGER",
+            employee_file=False,
+        )
+        self._user(
+            "manual-scope-secretary@example.test",
+            "Secretary General",
+            "GENERAL_SECRETARY",
+            employee_file=False,
+        )
+        db.session.add(UserPermission(
+            user_id=generic_approver.id,
+            key="HR_ATTENDANCE_EDIT_APPROVE",
+            is_allowed=True,
+        ))
+        correction = HRAttendanceSpecialCase(
+            user_id=employee.id,
+            day="2026-09-14",
+            day_to="2026-09-14",
+            kind="MANUAL_ATTENDANCE",
+            start_time="08:05",
+            approval_status="PENDING",
+            applied=False,
+            created_by_id=generic_approver.id,
+        )
+        db.session.add(correction)
+        db.session.commit()
+
+        self.assertFalse(_can_review_manual_attendance(correction, generic_approver))
+        self.assertTrue(_can_review_manual_attendance(correction, affairs_manager))
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "Generic approval"},
+        ):
+            login_user(generic_approver)
+            with self.assertRaises(Forbidden):
+                hr_attendance_manual_review(correction.id)
+            logout_user()
+
+        db.session.refresh(correction)
+        self.assertEqual(correction.approval_status, "PENDING")
+        self.assertFalse(correction.applied)
+        self.assertIsNone(correction.approved_at)
+
+    def test_manual_attendance_does_not_skip_secretary_stage_when_unconfigured(self):
+        employee = self._user("manual-no-secretary-employee@example.test", "Manual employee")
+        affairs_manager = self._user(
+            "manual-no-secretary-manager@example.test",
+            "Administrative affairs manager",
+            "HR_MANAGER",
+            employee_file=False,
+        )
+        correction = HRAttendanceSpecialCase(
+            user_id=employee.id,
+            day="2026-09-14",
+            day_to="2026-09-14",
+            kind="MANUAL_ATTENDANCE",
+            start_time="08:05",
+            approval_status="PENDING",
+            applied=False,
+            created_by_id=affairs_manager.id,
+        )
+        db.session.add(correction)
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/manual/{correction.id}/review",
+            method="POST",
+            data={"action": "approve", "approval_note": "First-stage approval"},
+        ):
+            login_user(affairs_manager)
+            response = hr_attendance_manual_review(correction.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.refresh(correction)
+        self.assertEqual(correction.approval_status, "PENDING")
+        self.assertFalse(correction.applied)
+        self.assertIsNone(correction.approved_by_id)
+        self.assertIsNone(correction.approved_at)
+        self.assertIsNone(correction.final_approved_by_id)
+        self.assertIsNone(
+            AttendanceDailySummary.query.filter_by(
+                user_id=employee.id,
+                day="2026-09-14",
+            ).first()
+        )
+
     def test_start_only_manual_entry_needs_both_approvals_and_is_marked_manual(self):
         employee = self._user("manual-employee@example.test", "موظف يدوي")
         editor = self._user("manual-editor@example.test", "مدخل الدوام", "HR", employee_file=False)
-        hr_approver = self._user("manual-hr@example.test", "مدير الشؤون الإدارية", "HR", employee_file=False)
+        hr_approver = self._user("manual-hr@example.test", "مدير الشؤون الإدارية", "HR_MANAGER", employee_file=False)
         secretary = self._user(
             "manual-secretary@example.test",
             "الأمين العام",

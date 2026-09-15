@@ -926,6 +926,17 @@ def start_request_flow(
     if existing and not restart:
         return existing
 
+    if existing and restart:
+        # Preserve prior decisions as immutable history, but retire any open
+        # steps from the previous version so an edited request cannot still be
+        # approved through its stale (possibly shorter) route.
+        for prior_step in existing:
+            if (prior_step.status or "").upper() in {"PENDING", "WAITING"}:
+                prior_step.status = "CANCELLED"
+                prior_step.decided_at = now
+                prior_step.decision_note = "أُلغي مسار الاعتماد السابق بعد تعديل الطلب."
+                prior_step.updated_at = now
+
     # ``step_order`` is unique across the request for compatibility with the
     # initial flow schema.  A reopened request therefore appends its fresh
     # path, and ``flow_revision`` lets the UI show the path as a new round.
