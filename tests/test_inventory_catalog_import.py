@@ -49,7 +49,7 @@ class InventoryCatalogImportTests(unittest.TestCase):
         cls.app.register_blueprint(portal_bp)
         cls.app.jinja_loader = ChoiceLoader([
             DictLoader({
-                "portal/inventory/base.html": "{% block inv_content %}{% endblock %}",
+                "portal/inventory/base.html": "{% with messages = get_flashed_messages() %}{{ messages|join(' ') }}{% endwith %}{% block inv_content %}{% endblock %}",
             }),
             cls.app.jinja_loader,
         ])
@@ -146,6 +146,7 @@ class InventoryCatalogImportTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         self.assertEqual(sum(line.qty for line in lines), 19.0)
         self.assertEqual(_inv_build_balances()[(self.warehouse.id, lines[0].item_id)], lines[0].qty)
+        self.assertIn("2 صنفًا", response.get_data(as_text=True))
         self.assertIn("19", response.get_data(as_text=True))
 
     def test_reimport_does_not_add_the_same_opening_quantity_twice(self):

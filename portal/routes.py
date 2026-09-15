@@ -40711,7 +40711,7 @@ def inventory_admin_items_import_catalog():
             }
             if stocktake_voucher:
                 flash(
-                    f"تم استيراد الأصناف وإضافة {quantity_total:g} وحدة إلى المستودع «{warehouse.label}» ضمن سند الجرد {stocktake_voucher.voucher_no}.",
+                    f"تم استيراد {len(source_rows)} صنفًا وإضافة إجمالي {quantity_total:g} وحدة إلى المستودع «{warehouse.label}» ضمن سند الجرد {stocktake_voucher.voucher_no}.",
                     "success",
                 )
             else:
