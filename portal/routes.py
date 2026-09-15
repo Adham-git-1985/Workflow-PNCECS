@@ -159,6 +159,7 @@ from models import (
     OrgNodeType,
     OrgNodeAssignment,
     OrgNodeManager,
+    EmployeeResponsibleAssignment,
     Organization,
     Directorate,
     Department,
@@ -11757,6 +11758,12 @@ def _find_direct_manager(u: User):
     Priority: Department → Directorate → Organization.
     """
     try:
+        explicit_manager = resolve_direct_manager(int(u.id))
+        if explicit_manager and int(explicit_manager.id) != int(u.id):
+            return explicit_manager
+    except Exception:
+        pass
+    try:
         dept = Department.query.get(u.department_id) if getattr(u, "department_id", None) else None
         dir_ = None
         if getattr(u, "directorate_id", None):
@@ -13864,6 +13871,10 @@ def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
     manager_user_id = int(manager_user_id)
     return bool(
         EmployeeFile.query.filter_by(direct_manager_user_id=manager_user_id).first()
+        or EmployeeResponsibleAssignment.query.filter_by(
+            responsible_user_id=manager_user_id,
+            is_active=True,
+        ).first()
         or EmployeeSecondment.query.filter_by(direct_manager_user_id=manager_user_id).first()
         or OrgNodeManager.query.filter(or_(
             OrgNodeManager.manager_user_id == manager_user_id,
@@ -16470,6 +16481,10 @@ def hr_my_permissions():
             q = q.filter(
                 or_(
                     EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None),
+                    _employee_responsible_exists(
+                        HRPermissionRequest.user_id,
+                        getattr(current_user, 'id', None),
+                    ),
                     HRPermissionRequest.user_id == getattr(current_user, 'id', None),
                 )
             )
@@ -16513,7 +16528,10 @@ def hr_my_permissions():
             ulist = (
                 User.query
                 .join(EmployeeFile, EmployeeFile.user_id == User.id)
-                .filter(EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None))
+                .filter(or_(
+                    EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None),
+                    _employee_responsible_exists(User.id, getattr(current_user, 'id', None)),
+                ))
                 .order_by(User.name.asc(), User.email.asc())
                 .all()
             )
@@ -17187,7 +17205,10 @@ def hr_permission_request_new():
         # Limit to direct reports for managers
         users = (
             User.query.join(EmployeeFile, EmployeeFile.user_id == User.id)
-            .filter(EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None))
+            .filter(or_(
+                EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None),
+                _employee_responsible_exists(User.id, getattr(current_user, 'id', None)),
+            ))
             .order_by(User.name.asc(), User.email.asc())
             .all()
         )
@@ -17224,10 +17245,7 @@ def hr_permission_request_new():
 
             # Manager scope check (cannot pick outside team)
             if can_pick_team and (target_user_id != getattr(current_user, 'id', None)):
-                try:
-                    ok = EmployeeFile.query.filter_by(user_id=target_user_id, direct_manager_user_id=current_user.id).first() is not None
-                except Exception:
-                    ok = False
+                ok = _manager_can_access_employee(target_user_id, current_user.id)
                 if not ok:
                     flash('لا يمكنك إدخال مغادرة لموظف خارج صلاحيتك.', 'danger')
                     return render_template(
@@ -17414,10 +17432,7 @@ def hr_permission_request_edit(req_id: int):
         if r.user_id == getattr(current_user, 'id', None):
             ok = True
         else:
-            try:
-                ok = EmployeeFile.query.filter_by(user_id=r.user_id, direct_manager_user_id=current_user.id).first() is not None
-            except Exception:
-                ok = False
+            ok = _manager_can_access_employee(r.user_id, current_user.id)
         if not ok:
             abort(403)
     elif is_owner and status in {'DRAFT', 'SUBMITTED', 'APPROVED'}:
@@ -17446,7 +17461,10 @@ def hr_permission_request_edit(req_id: int):
     elif can_pick_team:
         users = (
             User.query.join(EmployeeFile, EmployeeFile.user_id == User.id)
-            .filter(EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None))
+            .filter(or_(
+                EmployeeFile.direct_manager_user_id == getattr(current_user, 'id', None),
+                _employee_responsible_exists(User.id, getattr(current_user, 'id', None)),
+            ))
             .order_by(User.name.asc(), User.email.asc())
             .all()
         )
@@ -17476,10 +17494,7 @@ def hr_permission_request_edit(req_id: int):
 
             # Manager scope check
             if can_pick_team and (target_user_id != getattr(current_user, 'id', None)):
-                try:
-                    ok = EmployeeFile.query.filter_by(user_id=target_user_id, direct_manager_user_id=current_user.id).first() is not None
-                except Exception:
-                    ok = False
+                ok = _manager_can_access_employee(target_user_id, current_user.id)
                 if not ok:
                     flash('لا يمكنك تعديل مغادرة لموظف خارج صلاحيتك.', 'danger')
                     return render_template(
@@ -22996,16 +23011,30 @@ def _employee_dynamic_node(
     # Employee files predate OrgNodeAssignment. Use their deepest named legacy
     # placement as a read-only fallback when it maps uniquely to a canonical node.
     employee_file = getattr(user, "employee_file", None)
-    if not employee_file:
-        return None
-    for field, type_code in (
-        ("division", "DIVISION"),
-        ("section", "SECTION"),
-        ("department", "DEPARTMENT"),
-        ("directorate", "DIRECTORATE"),
-        ("organization", "ORGANIZATION"),
+    if employee_file:
+        for field, type_code in (
+            ("division", "DIVISION"),
+            ("section", "SECTION"),
+            ("department", "DEPARTMENT"),
+            ("directorate", "DIRECTORATE"),
+            ("organization", "ORGANIZATION"),
+        ):
+            legacy_row = getattr(employee_file, field, None)
+            name_key = _org_name_key(getattr(legacy_row, "name_ar", None))
+            matches = node_ids_by_type_and_name.get((type_code, name_key), []) if name_key else []
+            if len(matches) == 1 and matches[0] in node_by_id:
+                return node_by_id[matches[0]]
+
+    # Some older accounts keep only the foreign-key pointers on User.
+    for field, type_code, model in (
+        ("division_id", "DIVISION", Division),
+        ("section_id", "SECTION", Section),
+        ("department_id", "DEPARTMENT", Department),
+        ("unit_id", "UNIT", Unit),
+        ("directorate_id", "DIRECTORATE", Directorate),
     ):
-        legacy_row = getattr(employee_file, field, None)
+        legacy_id = getattr(user, field, None)
+        legacy_row = db.session.get(model, int(legacy_id)) if legacy_id else None
         name_key = _org_name_key(getattr(legacy_row, "name_ar", None))
         matches = node_ids_by_type_and_name.get((type_code, name_key), []) if name_key else []
         if len(matches) == 1 and matches[0] in node_by_id:
@@ -23034,6 +23063,151 @@ def _dynamic_manager_columns(
         "code": (item.code or "NODE").strip().upper(),
         "label": (item.name_ar or item.code or "عنصر").strip(),
     } for item in ordered]
+
+
+def _employee_responsible_rows(user_id: int, *, active_only: bool = True) -> list[EmployeeResponsibleAssignment]:
+    query = EmployeeResponsibleAssignment.query.filter_by(employee_user_id=int(user_id))
+    if active_only:
+        query = query.filter_by(is_active=True)
+    return query.order_by(EmployeeResponsibleAssignment.id.asc()).all()
+
+
+def _employee_responsible_exists(employee_column, responsible_user_id: int):
+    """Return a correlated SQL predicate for an active employee override."""
+    return exists().where(
+        EmployeeResponsibleAssignment.employee_user_id == employee_column,
+        EmployeeResponsibleAssignment.responsible_user_id == int(responsible_user_id),
+        EmployeeResponsibleAssignment.is_active.is_(True),
+    )
+
+
+def _manager_can_access_employee(employee_user_id: int, manager_user_id: int) -> bool:
+    """Check direct-report scope using both legacy and explicit assignments."""
+    if int(employee_user_id) == int(manager_user_id):
+        return True
+    try:
+        if EmployeeFile.query.filter_by(
+            user_id=int(employee_user_id),
+            direct_manager_user_id=int(manager_user_id),
+        ).first():
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(EmployeeResponsibleAssignment.query.filter_by(
+            employee_user_id=int(employee_user_id),
+            responsible_user_id=int(manager_user_id),
+            is_active=True,
+        ).first())
+    except Exception:
+        return False
+
+
+def _build_dynamic_employee_detail(
+    user: User,
+    node: OrgNode | None,
+    node_by_id: dict[int, OrgNode],
+    manager_map: dict[int, OrgNodeManager],
+) -> dict:
+    """Build the selected employee's location and closest-to-highest chain."""
+    detail = {
+        "location_nodes": [],
+        "location_text": "غير معيّن هيكليًا",
+        "manager_chain": [],
+        "assigned_unit": "غير معيّن هيكليًا",
+    }
+
+    bottom_up_nodes: list[OrgNode] = []
+    current = node
+    visited: set[int] = set()
+    while current and int(current.id) not in visited:
+        visited.add(int(current.id))
+        bottom_up_nodes.append(current)
+        current = node_by_id.get(int(current.parent_id)) if current.parent_id else None
+
+    if bottom_up_nodes:
+        root_to_employee = list(reversed(bottom_up_nodes))
+        for current_node in root_to_employee:
+            current_type = getattr(current_node, "type", None)
+            type_name = (getattr(current_type, "name_ar", None) or "عنصر").strip()
+            detail["location_nodes"].append({
+                "id": int(current_node.id),
+                "type_name": type_name,
+                "name": current_node.name_ar or "—",
+                "code": current_node.code or "",
+            })
+
+        detail["location_text"] = " ← ".join(
+            f"{item['type_name']}: {item['name']}"
+            for item in detail["location_nodes"]
+        )
+        leaf = bottom_up_nodes[0]
+        leaf_type = getattr(leaf, "type", None)
+        detail["assigned_unit"] = (
+            f"{(getattr(leaf_type, 'name_ar', None) or 'عنصر').strip()}: {leaf.name_ar}"
+        )
+
+        for current_node in bottom_up_nodes:
+            current_type = getattr(current_node, "type", None)
+            type_name = (getattr(current_type, "name_ar", None) or "عنصر").strip()
+            manager_row = manager_map.get(int(current_node.id))
+            manager = getattr(manager_row, "manager_user", None) if manager_row else None
+            deputy = getattr(manager_row, "deputy_user", None) if manager_row else None
+            if manager or deputy:
+                detail["manager_chain"].append({
+                    "node_id": int(current_node.id),
+                    "level": type_name,
+                    "node_name": current_node.name_ar or "—",
+                    "manager": manager,
+                    "deputy": deputy,
+                })
+
+    # A legacy employee-file manager is still useful when the chart is being
+    # migrated, or when it differs from the manager configured on the node.
+    employee_file = getattr(user, "employee_file", None)
+    direct_manager = getattr(employee_file, "direct_manager", None) if employee_file else None
+    chain_manager_ids = {
+        int(person.id)
+        for item in detail["manager_chain"]
+        for person in (item.get("manager"), item.get("deputy"))
+        if person and getattr(person, "id", None)
+    }
+    if direct_manager and int(direct_manager.id) != int(user.id) and int(direct_manager.id) not in chain_manager_ids:
+        detail["manager_chain"].insert(0, {
+            "node_id": None,
+            "level": "المسؤول المباشر",
+            "node_name": "ملف الموظف",
+            "manager": direct_manager,
+            "deputy": None,
+        })
+
+    if not detail["location_nodes"] and employee_file:
+        legacy_nodes = []
+        for field, type_name in (
+            ("organization", "مؤسسة"),
+            ("directorate", "إدارة عامة"),
+            ("department", "دائرة"),
+            ("section", "قسم"),
+            ("division", "شعبة"),
+        ):
+            legacy_node = getattr(employee_file, field, None)
+            if legacy_node:
+                legacy_nodes.append({
+                    "id": int(getattr(legacy_node, "id", 0) or 0),
+                    "type_name": type_name,
+                    "name": getattr(legacy_node, "name_ar", None) or getattr(legacy_node, "name_en", None) or "—",
+                    "code": getattr(legacy_node, "code", None) or "",
+                })
+        if legacy_nodes:
+            detail["location_nodes"] = legacy_nodes
+            detail["location_text"] = " ← ".join(
+                f"{item['type_name']}: {item['name']}" for item in legacy_nodes
+            )
+            detail["assigned_unit"] = (
+                f"{legacy_nodes[-1]['type_name']}: {legacy_nodes[-1]['name']}"
+            )
+
+    return detail
 
 
 
@@ -23309,8 +23483,41 @@ def hr_org_structure():
 
     users = _all_users_for_select() if can_manage_org else []
 
-    employees = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
+    # Employee lookup is deliberately available to read-only HR users as well.
+    # It searches the account and the common HR employee identifiers, while
+    # keeping the full manager-chain table available when no search is entered.
+    employee_query_text = (request.args.get("q") or "").strip()
+    employee_search_results = []
+    if employee_query_text:
+        employee_search_query = User.query.outerjoin(
+            EmployeeFile,
+            EmployeeFile.user_id == User.id,
+        )
+        employee_search_query = apply_search_all_columns(
+            employee_search_query,
+            User,
+            employee_query_text,
+            exclude_columns={"password_hash"},
+            extra_columns=[
+                EmployeeFile.employee_no,
+                EmployeeFile.full_name_quad,
+                EmployeeFile.timeclock_code,
+            ],
+        )
+        employee_search_results = (
+            employee_search_query
+            .order_by(User.name.asc().nullslast(), User.email.asc(), User.id.asc())
+            .limit(50)
+            .all()
+        )
+
+    employees = (
+        employee_search_results
+        if employee_query_text
+        else User.query.order_by(User.name.asc().nullslast(), User.email.asc()).all()
+    )
     employee_rows = []
+    employee_details_by_id = {}
     for u in employees:
         employee_node = _employee_dynamic_node(
             u,
@@ -23318,12 +23525,69 @@ def hr_org_structure():
             dynamic_node_by_id,
             node_ids_by_type_and_name,
         )
+        employee_details_by_id[int(u.id)] = _build_dynamic_employee_detail(
+            u,
+            employee_node,
+            dynamic_node_by_id,
+            dynamic_manager_map,
+        )
         employee_rows.append(_build_dynamic_employee_row(
             u,
             employee_node,
             dynamic_node_by_id,
             dynamic_manager_map,
         ))
+
+    selected_employee_id = (request.args.get("employee_id") or "").strip()
+    selected_employee = None
+    if selected_employee_id.isdigit():
+        selected_employee = db.session.get(User, int(selected_employee_id))
+    elif employee_query_text and len(employee_search_results) == 1:
+        selected_employee = employee_search_results[0]
+
+    # A selected employee may be outside the current search result after a
+    # bookmarked link; still render the requested record when it exists.
+    selected_employee_detail = None
+    selected_responsible_rows = []
+    selected_effective_responsibles = []
+    if selected_employee:
+        selected_employee_detail = employee_details_by_id.get(int(selected_employee.id))
+        if selected_employee_detail is None:
+            employee_node = _employee_dynamic_node(
+                selected_employee,
+                primary_node_by_user,
+                dynamic_node_by_id,
+                node_ids_by_type_and_name,
+            )
+            selected_employee_detail = _build_dynamic_employee_detail(
+                selected_employee,
+                employee_node,
+                dynamic_node_by_id,
+                dynamic_manager_map,
+            )
+        selected_responsible_rows = _employee_responsible_rows(int(selected_employee.id))
+        try:
+            selected_effective_responsibles = resolve_responsible_managers(int(selected_employee.id))
+        except Exception:
+            selected_effective_responsibles = []
+
+    employee_search_rows = []
+    for u in employee_search_results:
+        detail = employee_details_by_id.get(int(u.id))
+        if detail is None:
+            employee_node = _employee_dynamic_node(
+                u,
+                primary_node_by_user,
+                dynamic_node_by_id,
+                node_ids_by_type_and_name,
+            )
+            detail = _build_dynamic_employee_detail(
+                u,
+                employee_node,
+                dynamic_node_by_id,
+                dynamic_manager_map,
+            )
+        employee_search_rows.append({"user": u, "detail": detail})
 
     independent_teams = [team for team in teams if not getattr(team, 'section_id', None)]
 
@@ -23340,12 +23604,210 @@ def hr_org_structure():
         assignments=mgr_map,
         users=users,
         employee_rows=employee_rows,
+        employee_query_text=employee_query_text,
+        employee_search_rows=employee_search_rows,
+        selected_employee=selected_employee,
+        selected_employee_detail=selected_employee_detail,
+        selected_responsible_rows=selected_responsible_rows,
+        selected_responsible_ids=[
+            int(row.responsible_user_id) for row in selected_responsible_rows
+        ],
+        selected_effective_responsibles=selected_effective_responsibles,
         manager_columns=manager_columns,
         org_tree=org_tree,
         include_people=include_people,
         can_manage_org=can_manage_org,
         legacy_locked=_legacy_org_locked(),
     )
+
+
+@portal_bp.route("/hr/org-structure/employee-responsibles", methods=["POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
+def hr_org_employee_responsibles_save():
+    """Replace the active direct-responsible set for one employee.
+
+    The historical rows are retained as inactive records.  This gives HR a
+    complete audit trail while keeping the active set unambiguous for routing.
+    """
+    employee_id_raw = (request.form.get("employee_user_id") or "").strip()
+    employee_id = int(employee_id_raw) if employee_id_raw.isdigit() else None
+    q = (request.form.get("q") or "").strip()
+
+    def back():
+        return redirect(url_for(
+            "portal.hr_org_structure",
+            q=q or None,
+            employee_id=employee_id,
+        ))
+
+    if not employee_id:
+        flash("معرف الموظف غير صحيح.", "danger")
+        return back()
+
+    employee = db.session.get(User, employee_id)
+    if not employee:
+        flash("الموظف غير موجود.", "danger")
+        return back()
+
+    raw_responsible_ids = request.form.getlist("responsible_user_ids")
+    responsible_ids: list[int] = []
+    for raw_id in raw_responsible_ids:
+        value = (raw_id or "").strip()
+        if not value.isdigit():
+            flash("قائمة المسؤولين تحتوي على قيمة غير صحيحة.", "danger")
+            return back()
+        user_id = int(value)
+        if user_id == employee_id:
+            flash("لا يمكن تعيين الموظف مسؤولاً عن نفسه.", "danger")
+            return back()
+        if user_id not in responsible_ids:
+            responsible_ids.append(user_id)
+
+    if not responsible_ids:
+        flash("اختر مسؤولاً واحداً على الأقل. لإلغاء مسؤول حالي استخدم زر الإلغاء بجانبه.", "warning")
+        return back()
+
+    responsible_users = {
+        int(user.id): user
+        for user in User.query.filter(User.id.in_(responsible_ids)).all()
+    }
+    if len(responsible_users) != len(responsible_ids):
+        flash("تعذر العثور على أحد المسؤولين المحددين.", "danger")
+        return back()
+
+    reason = (request.form.get("reason") or "").strip()
+    if len(reason) < 3:
+        flash("سبب التعيين مطلوب.", "danger")
+        return back()
+    if len(reason) > 2000:
+        flash("سبب التعيين طويل جداً (الحد الأقصى 2000 حرف).", "danger")
+        return back()
+
+    existing_rows = (
+        EmployeeResponsibleAssignment.query
+        .filter_by(employee_user_id=employee_id)
+        .order_by(EmployeeResponsibleAssignment.id.asc())
+        .all()
+    )
+    existing_by_responsible = {
+        int(row.responsible_user_id): row for row in existing_rows
+    }
+    selected_set = set(responsible_ids)
+    changes: list[tuple[str, str]] = []
+    now = datetime.utcnow()
+
+    # Omitted active people are deactivated, while their previous reason stays
+    # available in the row and in the audit log.
+    for row in existing_rows:
+        responsible_id = int(row.responsible_user_id)
+        if row.is_active and responsible_id not in selected_set:
+            old_reason = (row.reason or "").strip()
+            row.is_active = False
+            row.updated_at = now
+            row.updated_by_id = current_user.id
+            old_user = getattr(row, "responsible", None)
+            old_name = old_user.full_name if old_user else f"#{responsible_id}"
+            changes.append((
+                "HR_EMPLOYEE_RESPONSIBLE_REMOVE",
+                f"إلغاء مسؤول مباشر للموظف {employee.full_name}: {old_name}؛ السبب السابق: {old_reason}",
+            ))
+
+    for responsible_id in responsible_ids:
+        row = existing_by_responsible.get(responsible_id)
+        responsible = responsible_users[responsible_id]
+        if row is None:
+            row = EmployeeResponsibleAssignment(
+                employee_user_id=employee_id,
+                responsible_user_id=responsible_id,
+                reason=reason,
+                is_active=True,
+                created_at=now,
+                updated_at=now,
+                created_by_id=current_user.id,
+                updated_by_id=current_user.id,
+            )
+            db.session.add(row)
+            changes.append((
+                "HR_EMPLOYEE_RESPONSIBLE_ADD",
+                f"تعيين مسؤول مباشر للموظف {employee.full_name}: {responsible.full_name}؛ السبب: {reason}",
+            ))
+            continue
+
+        was_active = bool(row.is_active)
+        old_reason = (row.reason or "").strip()
+        row.is_active = True
+        row.reason = reason
+        row.updated_at = now
+        row.updated_by_id = current_user.id
+        if not was_active:
+            action = "HR_EMPLOYEE_RESPONSIBLE_ADD"
+            verb = "إعادة تفعيل مسؤول مباشر"
+        elif old_reason != reason:
+            action = "HR_EMPLOYEE_RESPONSIBLE_UPDATE"
+            verb = "تحديث سبب مسؤول مباشر"
+        else:
+            action = None
+            verb = ""
+        if action:
+            changes.append((
+                action,
+                f"{verb} للموظف {employee.full_name}: {responsible.full_name}؛ السبب: {reason}",
+            ))
+
+    if not changes:
+        flash("لم يطرأ تغيير على المسؤولين المعيّنين.", "info")
+        return back()
+
+    for action, note in changes:
+        _portal_audit(
+            action,
+            note,
+            target_type="EMPLOYEE_RESPONSIBILITY",
+            target_id=employee_id,
+        )
+
+    try:
+        db.session.commit()
+        flash("تم حفظ المسؤولين المباشرين للموظف، وستنعكس التعديلات على المسارات والاعتمادات الجديدة.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("تعذر حفظ المسؤولين المباشرين.", "danger")
+    return back()
+
+
+@portal_bp.route("/hr/org-structure/employee-responsibles/<int:assignment_id>/remove", methods=["POST"])
+@login_required
+@_perm_any(HR_ORG_MANAGE, HR_MASTERDATA_MANAGE)
+def hr_org_employee_responsible_remove(assignment_id: int):
+    row = EmployeeResponsibleAssignment.query.get_or_404(assignment_id)
+    q = (request.form.get("q") or "").strip()
+    employee_id = int(row.employee_user_id)
+    employee = getattr(row, "employee", None)
+    responsible = getattr(row, "responsible", None)
+
+    if not row.is_active:
+        flash("المسؤول غير فعّال أصلاً.", "info")
+        return redirect(url_for("portal.hr_org_structure", q=q or None, employee_id=employee_id))
+
+    row.is_active = False
+    row.updated_at = datetime.utcnow()
+    row.updated_by_id = current_user.id
+    employee_name = employee.full_name if employee else f"#{employee_id}"
+    responsible_name = responsible.full_name if responsible else f"#{row.responsible_user_id}"
+    _portal_audit(
+        "HR_EMPLOYEE_RESPONSIBLE_REMOVE",
+        f"إلغاء مسؤول مباشر للموظف {employee_name}: {responsible_name}؛ السبب السابق: {(row.reason or '').strip()}",
+        target_type="EMPLOYEE_RESPONSIBILITY",
+        target_id=employee_id,
+    )
+    try:
+        db.session.commit()
+        flash("تم إلغاء المسؤول المباشر مع الاحتفاظ بسجل التغيير.", "success")
+    except Exception:
+        db.session.rollback()
+        flash("تعذر إلغاء المسؤول المباشر.", "danger")
+    return redirect(url_for("portal.hr_org_structure", q=q or None, employee_id=employee_id))
 
 
 
@@ -36281,6 +36743,12 @@ def _unit_parents(unit_type: str, unit_id: int):
 def _find_direct_manager_for_user(user_id: int):
     """Resolve direct manager (or deputy) based on OrgUnitManager for the user's org unit chain."""
     try:
+        explicit_manager = resolve_direct_manager(int(user_id))
+        if explicit_manager and int(explicit_manager.id) != int(user_id):
+            return explicit_manager
+    except Exception:
+        pass
+    try:
         u = User.query.get(user_id)
         if not u:
             return None
@@ -36901,10 +37369,17 @@ def portal_admin_hr_perf_cycle_generate(cycle_id: int):
             existing.add(key)
             created += 1
 
-        # MANAGER
-        mgr = _find_direct_manager_for_user(uid)
-        if mgr and getattr(mgr, 'id', None):
-            mid = int(mgr.id)
+        # MANAGER: every active responsible person receives an evaluation.
+        managers = resolve_responsible_managers(uid)
+        manager_ids = {
+            int(manager.id)
+            for manager in managers
+            if manager and getattr(manager, 'id', None) and int(manager.id) != uid
+        }
+        for manager in managers:
+            if not manager or not getattr(manager, 'id', None):
+                continue
+            mid = int(manager.id)
             key = (uid, mid, 'MANAGER')
             if key not in existing:
                 db.session.add(HRPerformanceAssignment(
@@ -36919,9 +37394,7 @@ def portal_admin_hr_perf_cycle_generate(cycle_id: int):
                 created += 1
 
         # PEERS
-        exclude = {uid}
-        if mgr and getattr(mgr, 'id', None):
-            exclude.add(int(mgr.id))
+        exclude = {uid, *manager_ids}
         peers = _pick_peer_candidates(uid, peer_count, exclude_ids=exclude)
         for p in peers:
             pid = int(p.id)
@@ -37140,6 +37613,17 @@ def _audit_target_url_label(r):
             ef = EmployeeFile.query.get(int(tid))
             label = f"ملف موظف: {(getattr(ef, 'employee_no', None) or '')} {(getattr(ef, 'full_name_quad', None) or '')}".strip() if ef else f"ملف موظف #{tid}"
             return (url_for('portal.hr_employee_file', user_id=int(tid)), label)
+
+        if t in ("EMPLOYEE_RESPONSIBILITY",):
+            employee = User.query.get(int(tid))
+            label = (
+                f"مسؤولو الموظف: {employee.full_name}"
+                if employee else f"مسؤولو الموظف #{tid}"
+            )
+            return (
+                url_for("portal.hr_org_structure", employee_id=int(tid)),
+                label,
+            )
 
         if t in ("EMPLOYEE_ATTACHMENT",):
             att = EmployeeAttachment.query.get(int(tid))

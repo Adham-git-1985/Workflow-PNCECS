@@ -3,6 +3,7 @@ from __future__ import annotations
 import mimetypes
 import os
 import uuid
+import json
 from datetime import date, datetime, time, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -26,6 +27,7 @@ from services.transport_docx_forms import (
     build_movement_permit_docx,
     build_vehicle_license_docx,
 )
+from services.hr_request_workflow import resolve_responsible_managers
 from models import (
     TransportVehicle,
     TransportDriver,
@@ -190,13 +192,29 @@ def _has_transport_manager() -> bool:
     )
 
 
+def _movement_manager_ids(row: TransportPermit) -> list[int]:
+    """Return the frozen responsible-manager snapshot for a permit."""
+    raw = (getattr(row, "manager_user_ids", None) or "").strip()
+    values = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            parsed = parsed if isinstance(parsed, list) else [parsed]
+            values = [int(value) for value in parsed if str(value).strip().isdigit()]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = [int(value.strip()) for value in raw.split(",") if value.strip().isdigit()]
+    if not values and getattr(row, "manager_user_id", None):
+        values = [int(row.manager_user_id)]
+    return list(dict.fromkeys(values))
+
+
 def _can_process_movement(row: TransportPermit) -> bool:
     if row.status != "SUBMITTED":
         return False
     if row.requester_user_id == current_user.id:
         return False
     if row.approval_stage == "MANAGER":
-        return row.manager_user_id == current_user.id or current_user.has_perm("TRANSPORT_APPROVE")
+        return current_user.id in _movement_manager_ids(row) or current_user.has_perm("TRANSPORT_APPROVE")
     if row.approval_stage == "TRANSPORT":
         configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
@@ -261,7 +279,7 @@ def _record_movement_action(row: TransportPermit, action: str, note: str | None 
 
 def _movement_recipient_ids(row: TransportPermit) -> list[int]:
     if row.approval_stage == "MANAGER":
-        return [row.manager_user_id] if row.manager_user_id else []
+        return _movement_manager_ids(row)
     if row.approval_stage == "TRANSPORT":
         configured_manager = _to_int(_get_setting("TRANSPORT_MANAGER_USER_ID"))
         configured_director = _to_int(_get_setting("TRANSPORT_DIRECTOR_USER_ID"))
@@ -1319,7 +1337,13 @@ def transport_permit_new():
             return redirect(url_for("portal.transport_permit_new"))
 
         employee = EmployeeFile.query.get(current_user.id)
-        manager_id = employee.direct_manager_user_id if employee else None
+        responsible_managers = resolve_responsible_managers(current_user.id)
+        manager_ids = [
+            int(manager.id)
+            for manager in responsible_managers
+            if manager and int(manager.id) != int(current_user.id)
+        ]
+        manager_id = manager_ids[0] if manager_ids else None
         stage = "MANAGER" if manager_id else "TRANSPORT"
 
         row = TransportPermit(
@@ -1336,6 +1360,7 @@ def transport_permit_new():
             status="SUBMITTED",
             approval_stage=stage,
             manager_user_id=manager_id,
+            manager_user_ids=json.dumps(manager_ids, separators=(",", ":")) if manager_ids else None,
             submitted_at=datetime.utcnow(),
         )
         db.session.add(row)

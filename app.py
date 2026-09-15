@@ -1102,9 +1102,16 @@ def _ensure_runtime_schema():
             for col, ctype in [
                 ("approval_stage", "TEXT NOT NULL DEFAULT 'MANAGER'"),
                 ("manager_user_id", "INTEGER"),
+                ("manager_user_ids", "TEXT"),
             ]:
                 if not _col_exists("transport_permit", col):
                     _add_column_retry("transport_permit", col, ctype)
+
+            # Follow-up reports keep the same frozen multi-manager snapshot so
+            # later HR responsibility changes do not rewrite already-submitted
+            # reports, while new reports reach every active responsible person.
+            if not _col_exists("employee_followup_reports", "manager_user_ids"):
+                _add_column_retry("employee_followup_reports", "manager_user_ids", "TEXT")
 
             if not _col_exists("notification", "link_url"):
                 _add_column_retry("notification", "link_url", "TEXT")

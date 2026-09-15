@@ -1,8 +1,9 @@
-"""Employee accomplishment reports and direct-manager review workflow."""
+"""Employee accomplishment reports and responsible-manager review workflow."""
 
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+import json
 import mimetypes
 from pathlib import Path
 import shutil
@@ -16,6 +17,7 @@ from extensions import db
 from models import (
     AuditLog,
     EmployeeFile,
+    EmployeeResponsibleAssignment,
     EmployeeFollowupAttachment,
     EmployeeFollowupItem,
     EmployeeFollowupReport,
@@ -113,6 +115,26 @@ def _display_user(user: User | None) -> str:
     return (getattr(user, "full_name", "") or getattr(user, "email", "") or f"#{user.id}").strip()
 
 
+def _followup_manager_ids(report: EmployeeFollowupReport) -> list[int]:
+    """Return the managers captured for a report, with legacy fallback."""
+    raw = (getattr(report, "manager_user_ids", None) or "").strip()
+    values: list[int] = []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            parsed = parsed if isinstance(parsed, list) else [parsed]
+            values = [int(value) for value in parsed if str(value).strip().isdigit()]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = [
+                int(value.strip())
+                for value in raw.split(",")
+                if value.strip().isdigit()
+            ]
+    if not values and getattr(report, "manager_user_id", None):
+        values = [int(report.manager_user_id)]
+    return list(dict.fromkeys(values))
+
+
 def _access_level(report: EmployeeFollowupReport) -> str | None:
     user_id = int(current_user.id)
     if int(report.employee_user_id) == user_id:
@@ -120,8 +142,7 @@ def _access_level(report: EmployeeFollowupReport) -> str | None:
     if (
         _can_review()
         and report.status != "DRAFT"
-        and report.manager_user_id
-        and int(report.manager_user_id) == user_id
+        and user_id in _followup_manager_ids(report)
     ):
         return "manager"
     return None
@@ -419,11 +440,12 @@ def send_followup_reminders(today: date | None = None) -> int:
         EmployeeFollowupReport.submitted_at <= now - timedelta(days=3),
     ).all()
     for report in pending_reports:
-        if not report.manager_user_id:
+        manager_ids = _followup_manager_ids(report)
+        if not manager_ids:
             continue
         if report.last_manager_reminder_at and report.last_manager_reminder_at.date() == current_day:
             continue
-        _notify([report.manager_user_id], "تذكير: يوجد تقرير إنجاز بانتظار مراجعتك.", "REMINDER", report)
+        _notify(manager_ids, "تذكير: يوجد تقرير إنجاز بانتظار مراجعتك.", "REMINDER", report)
         report.last_manager_reminder_at = now
         sent += 1
 
@@ -444,9 +466,12 @@ def followups_dashboard():
     )
     review_reports = []
     if _can_review():
-        review_reports = (
+        review_candidates = (
             EmployeeFollowupReport.query
-            .filter(EmployeeFollowupReport.manager_user_id == current_user.id)
+            .filter(
+                (EmployeeFollowupReport.manager_user_id == current_user.id)
+                | EmployeeFollowupReport.manager_user_ids.isnot(None)
+            )
             .filter(EmployeeFollowupReport.status != "DRAFT")
             .order_by(
                 EmployeeFollowupReport.submitted_at.desc(),
@@ -454,6 +479,10 @@ def followups_dashboard():
             )
             .all()
         )
+        review_reports = [
+            report for report in review_candidates
+            if int(current_user.id) in _followup_manager_ids(report)
+        ]
 
     current_start, current_end = _month_bounds()
     metric_reports = review_reports if _can_review() else own_reports
@@ -484,16 +513,32 @@ def followups_dashboard():
                 .all()
             ) if user_id
         }
-        submitted_ids = {
+        direct_employee_ids.update(
             int(user_id) for (user_id,) in (
-                EmployeeFollowupReport.query
-                .filter(EmployeeFollowupReport.manager_user_id == current_user.id)
-                .filter(EmployeeFollowupReport.period_start <= current_end)
-                .filter(EmployeeFollowupReport.period_end >= current_start)
-                .filter(EmployeeFollowupReport.status.in_(("SUBMITTED", "NEEDS_REVISION", "REVIEWED")))
-                .with_entities(EmployeeFollowupReport.employee_user_id)
+                EmployeeResponsibleAssignment.query
+                .filter_by(responsible_user_id=current_user.id, is_active=True)
+                .with_entities(EmployeeResponsibleAssignment.employee_user_id)
                 .all()
             ) if user_id
+        )
+        submitted_candidates = (
+            EmployeeFollowupReport.query
+            .filter(
+                (EmployeeFollowupReport.manager_user_id == current_user.id)
+                | EmployeeFollowupReport.manager_user_ids.isnot(None)
+            )
+            .filter(EmployeeFollowupReport.period_start <= current_end)
+            .filter(EmployeeFollowupReport.period_end >= current_start)
+            .filter(EmployeeFollowupReport.status.in_((
+                "SUBMITTED", "NEEDS_REVISION", "REVIEWED"
+            )))
+            .all()
+        )
+        submitted_ids = {
+            int(report.employee_user_id)
+            for report in submitted_candidates
+            if report.employee_user_id
+            and int(current_user.id) in _followup_manager_ids(report)
         }
         missing_reports = len(direct_employee_ids - submitted_ids)
 
@@ -526,9 +571,18 @@ def followups_new():
         "period_end": request.form.get("period_end") or default_end.isoformat(),
     }
     manager_options = resolve_responsible_managers(current_user.id)
+    has_explicit_responsibles = EmployeeResponsibleAssignment.query.filter_by(
+        employee_user_id=int(current_user.id),
+        is_active=True,
+    ).first() is not None
+    manager_ids = [
+        int(manager.id)
+        for manager in manager_options
+        if manager and int(manager.id) != int(current_user.id)
+    ]
     form["manager_user_id"] = (
         request.form.get("manager_user_id")
-        or (str(manager_options[0].id) if manager_options else "")
+        or (str(manager_ids[0]) if manager_ids else "")
     )
     manager = _selected_direct_manager(form["manager_user_id"], manager_options)
     if request.method == "POST":
@@ -539,9 +593,18 @@ def followups_new():
         elif manager_options and not manager:
             flash("يرجى اختيار المدير المباشر لتوجيه التقرير عند إرساله للاعتماد.", "warning")
         else:
+            report_manager_ids = (
+                manager_ids
+                if has_explicit_responsibles
+                else ([int(manager.id)] if manager else [])
+            )
             report = EmployeeFollowupReport(
                 employee_user_id=current_user.id,
-                manager_user_id=getattr(manager, "id", None),
+                manager_user_id=(manager.id if manager else (manager_ids[0] if manager_ids else None)),
+                manager_user_ids=(
+                    json.dumps(report_manager_ids, separators=(",", ":"))
+                    if report_manager_ids else None
+                ),
                 period_start=period_start,
                 period_end=period_end,
                 status="DRAFT",
@@ -636,17 +699,38 @@ def followups_update(report_id: int):
             else:
                 flash("لا توجد صياغات مقترحة لتفريغها.", "info")
         elif action == "submit":
+            manager_options = resolve_responsible_managers(current_user.id)
+            has_explicit_responsibles = EmployeeResponsibleAssignment.query.filter_by(
+                employee_user_id=int(current_user.id),
+                is_active=True,
+            ).first() is not None
             manager = _selected_direct_manager(
                 report.manager_user_id,
-                resolve_responsible_managers(current_user.id),
+                manager_options,
             )
-            if not manager:
+            if not manager_options:
                 raise ValueError("manager_not_found")
+            if not manager:
+                manager = manager_options[0]
+            manager_ids = [
+                int(candidate.id)
+                for candidate in manager_options
+                if candidate and int(candidate.id) != int(current_user.id)
+            ]
+            report_manager_ids = (
+                manager_ids
+                if has_explicit_responsibles
+                else [int(manager.id)]
+            )
             report.manager_user_id = manager.id
+            report.manager_user_ids = (
+                json.dumps(report_manager_ids, separators=(",", ":"))
+                if report_manager_ids else None
+            )
             report.status = "SUBMITTED"
             report.submitted_at = datetime.utcnow()
             report.reviewed_at = None
-            recipients = {manager.id}
+            recipients = set(report_manager_ids or [manager.id])
             _notify(recipients, f"تم إرسال تقرير إنجاز من {_display_user(report.employee)} للمراجعة.", "FOLLOWUP_SUBMITTED", report)
             db.session.commit()
             flash("تم إرسال التقرير إلى المدير المباشر.", "success")

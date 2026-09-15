@@ -91,7 +91,7 @@ def init_database():
         User, ArchivedFile, FilePermission, AuditLog, Notification,
         WorkflowRequest, RequestAttachment,
         WorkflowTemplate, WorkflowTemplateStep, WorkflowInstance, WorkflowInstanceStep,
-        Organization, Directorate, Unit, Department,
+        Organization, Directorate, Unit, Department, EmployeeResponsibleAssignment,
         Role, RolePermission, RequestType, WorkflowRoutingRule, Committee, CommitteeAssignee
     )
 

@@ -15,7 +15,7 @@
         <div class="col-md-6"><label class="form-label">إلى تاريخ</label><input class="form-control" name="period_end" type="date" required value="{{ form.period_end }}"></div>
         <div class="col-12">
           {% if manager_options %}
-            <label class="form-label" for="managerUserId">المدير المباشر للاعتماد</label>
+            <label class="form-label" for="managerUserId">المسؤول الأساسي للاعتماد</label>
             <select class="form-select" id="managerUserId" name="manager_user_id" required>
               {% for option in manager_options %}
                 <option value="{{ option.id }}" {% if form.manager_user_id == option.id|string %}selected{% endif %}>
@@ -23,7 +23,7 @@
                 </option>
               {% endfor %}
             </select>
-            <div class="form-text">يظهر التقرير للمدير المختار فقط بعد إرساله للاعتماد.</div>
+            <div class="form-text">يظهر التقرير لجميع المسؤولين المباشرين المعيّنين للموظف بعد إرساله، مع حفظ الاختيار كمسؤول أساسي.</div>
           {% else %}
             <div class="alert alert-warning mb-0"><i class="bi bi-exclamation-triangle"></i> لا يوجد مدير مباشر محدد في الهيكل التنظيمي. يمكنك حفظ مسودة إلى حين تحديد المدير.</div>
           {% endif %}

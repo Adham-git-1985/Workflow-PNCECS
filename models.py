@@ -2178,6 +2178,62 @@ class OrgUnitAssignment(db.Model):
     )
 
 
+class EmployeeResponsibleAssignment(db.Model):
+    """An explicit, auditable responsible-person override for an employee.
+
+    The organizational chart remains the source of the employee's location and
+    manager chain.  When one or more active rows exist here, HR request routing
+    uses these people as the employee's effective responsible managers.
+    """
+
+    __tablename__ = "employee_responsible_assignment"
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    employee_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    responsible_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    reason = db.Column(db.Text, nullable=False)
+    is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    employee = db.relationship("User", foreign_keys=[employee_user_id], lazy="joined")
+    responsible = db.relationship("User", foreign_keys=[responsible_user_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "employee_user_id",
+            "responsible_user_id",
+            name="uq_employee_responsible_assignment_pair",
+        ),
+        db.Index(
+            "ix_employee_responsible_active_employee",
+            "employee_user_id",
+            "is_active",
+            "id",
+        ),
+        db.CheckConstraint(
+            "employee_user_id <> responsible_user_id",
+            name="ck_employee_responsible_not_self",
+        ),
+    )
+
+
 
 class HRLookupItem(db.Model):
     """Generic lookup item for HR employee file.
@@ -5344,7 +5400,7 @@ class PortalMeetingTask(db.Model):
 # Employee follow-up reports
 # ======================
 class EmployeeFollowupReport(db.Model):
-    """Employee accomplishment report reviewed by the direct manager only."""
+    """Employee accomplishment report reviewed by the responsible manager(s)."""
 
     __tablename__ = "employee_followup_reports"
 
@@ -5356,6 +5412,8 @@ class EmployeeFollowupReport(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     employee_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    # Frozen snapshot of all responsible managers for this submitted report.
+    manager_user_ids = db.Column(db.Text, nullable=True)
 
     period_start = db.Column(db.Date, nullable=False, index=True)
     period_end = db.Column(db.Date, nullable=False, index=True)
@@ -6128,6 +6186,8 @@ class TransportPermit(db.Model):
     status = db.Column(db.String(20), nullable=False, default="DRAFT", index=True)  # DRAFT/SUBMITTED/APPROVED/REJECTED/CANCELLED/COMPLETED
     approval_stage = db.Column(db.String(30), nullable=False, default="MANAGER", index=True)
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    # Frozen snapshot of all responsible managers for a submitted movement.
+    manager_user_ids = db.Column(db.Text, nullable=True)
 
     note = db.Column(db.Text, nullable=True)
 

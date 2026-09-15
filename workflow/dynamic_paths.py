@@ -10,6 +10,7 @@ from models import (
     Directorate,
     Division,
     EmployeeFile,
+    EmployeeResponsibleAssignment,
     EmployeeSecondment,
     OrgNode,
     OrgNodeAssignment,
@@ -417,6 +418,14 @@ def _user_manages_node(user_id: int | None, node: OrgNode | None) -> bool:
 def _user_is_direct_manager_of(manager_id: int | None, user_id: int | None) -> bool:
     if not manager_id or not user_id or int(manager_id) == int(user_id):
         return False
+
+    if EmployeeResponsibleAssignment.query.filter_by(
+        employee_user_id=int(user_id),
+        responsible_user_id=int(manager_id),
+        is_active=True,
+    ).first():
+        return True
+
     employee_file = db.session.get(EmployeeFile, int(user_id))
     if employee_file and int(employee_file.direct_manager_user_id or 0) == int(manager_id):
         return True
@@ -782,11 +791,45 @@ def _add_requester_manager_option(
 def requester_dynamic_manager_options(requester: User) -> list[dict]:
     """Resolve every active responsible manager for a requester.
 
-    The result combines the employee-file manager, active secondments, and
-    manager/deputy assignments across all organizational placements. Duplicate
-    people are collapsed into one deterministic choice.
+    An explicit HR assignment is an auditable override: while it has active
+    rows, those people are the only effective manager choices for the employee.
+    Otherwise the result combines the employee-file manager, active
+    secondments, and manager/deputy assignments across all organizational
+    placements. Duplicate people are collapsed into one deterministic choice.
     """
     options_by_user_id: dict[int, dict] = {}
+
+    explicit_assignments = (
+        EmployeeResponsibleAssignment.query
+        .filter_by(employee_user_id=int(requester.id), is_active=True)
+        .order_by(EmployeeResponsibleAssignment.id.asc())
+        .all()
+    )
+    if explicit_assignments:
+        for index, assignment in enumerate(explicit_assignments):
+            manager = getattr(assignment, "responsible", None)
+            if not manager or int(manager.id) == int(requester.id):
+                continue
+            _add_requester_manager_option(
+                options_by_user_id,
+                manager,
+                manager_role="مسؤول مخصص للموظف",
+                manager_node_id=None,
+                manager_node_name="تعيين مسؤول مباشر",
+                manager_node_label="",
+                assignment_node_id=None,
+                assignment_label="تعيين مباشر للموظف",
+                is_primary=index == 0,
+            )
+        if options_by_user_id:
+            return sorted(
+                options_by_user_id.values(),
+                key=lambda option: (
+                    0 if option["is_primary"] else 1,
+                    option["name"],
+                    option["user_id"],
+                ),
+            )
 
     employee_file = db.session.get(EmployeeFile, int(requester.id))
     if employee_file and employee_file.direct_manager_user_id:

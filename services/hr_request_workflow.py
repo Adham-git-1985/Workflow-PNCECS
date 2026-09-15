@@ -20,6 +20,7 @@ from models import (
     Department,
     Directorate,
     EmployeeFile,
+    EmployeeResponsibleAssignment,
     HRLeaveRequest,
     HRPermissionRequest,
     HRRequestApprovalStep,
@@ -432,6 +433,16 @@ def _manager_from_row(row, employee_user_id: int) -> User | None:
 
 def resolve_direct_manager(user_id: int) -> User | None:
     """Resolve the responsible manager from employee data and both org models."""
+    explicit = (
+        EmployeeResponsibleAssignment.query
+        .filter_by(employee_user_id=int(user_id), is_active=True)
+        .order_by(EmployeeResponsibleAssignment.id.asc())
+        .first()
+    )
+    explicit_manager = getattr(explicit, "responsible", None) if explicit else None
+    if explicit_manager and int(explicit_manager.id) != int(user_id):
+        return explicit_manager
+
     employee_file = db.session.get(EmployeeFile, int(user_id))
     if employee_file and employee_file.direct_manager_user_id:
         manager_id = int(employee_file.direct_manager_user_id)
@@ -465,6 +476,26 @@ def resolve_responsible_managers(user_id: int) -> list[User]:
     that has no dynamic placement continues to use the existing direct-manager
     resolution as a fallback.
     """
+    explicit_assignments = (
+        EmployeeResponsibleAssignment.query
+        .filter_by(employee_user_id=int(user_id), is_active=True)
+        .order_by(EmployeeResponsibleAssignment.id.asc())
+        .all()
+    )
+    if explicit_assignments:
+        explicit_managers: list[User] = []
+        seen_explicit_ids: set[int] = set()
+        for assignment in explicit_assignments:
+            manager = getattr(assignment, "responsible", None)
+            if not manager or int(manager.id) == int(user_id):
+                continue
+            if int(manager.id) in seen_explicit_ids:
+                continue
+            seen_explicit_ids.add(int(manager.id))
+            explicit_managers.append(manager)
+        if explicit_managers:
+            return explicit_managers
+
     user = db.session.get(User, int(user_id))
     manager_ids: list[int] = []
     if user:
