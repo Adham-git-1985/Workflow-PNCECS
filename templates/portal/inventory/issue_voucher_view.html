@@ -12,7 +12,7 @@
 <div class="card shadow-sm mb-3">
   <div class="card-body">
     <div class="row g-2">
-      <div class="col-md-3"><div class="small text-muted">نوع الصرف</div><div class="fw-semibold">{{ 'صرف إلى مستودع' if v.issue_kind=='WAREHOUSE' else 'صرف إلى غرفة' }}</div></div>
+      <div class="col-md-3"><div class="small text-muted">نوع الصرف</div><div class="fw-semibold">{{ 'صرف إلى مستودع' if v.issue_kind=='WAREHOUSE' else ('صرف لموظف' if v.issue_kind=='EMPLOYEE' else 'صرف إلى غرفة') }}</div></div>
       <div class="col-md-3"><div class="small text-muted">تاريخ السند</div><div class="fw-semibold">{{ v.voucher_date }}</div></div>
       <div class="col-md-3"><div class="small text-muted">من مستودع</div><div class="fw-semibold">{{ v.from_warehouse.label }}</div></div>
       <div class="col-md-3">

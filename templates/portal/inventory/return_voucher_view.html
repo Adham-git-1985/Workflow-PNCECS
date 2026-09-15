@@ -15,6 +15,7 @@
       <div class="col-md-3"><div class="small text-muted">تاريخ السند</div><div class="fw-semibold">{{ v.voucher_date }}</div></div>
       <div class="col-md-3"><div class="small text-muted">من</div><div class="fw-semibold">{{ v.from_room_name }}</div></div>
       <div class="col-md-3"><div class="small text-muted">إلى مستودع</div><div class="fw-semibold">{{ v.to_warehouse.label if v.to_warehouse else '-' }}</div></div>
+      {% if v.source_request_id %}<div class="col-md-3"><div class="small text-muted">طلب المواد المرتبط</div><div class="fw-semibold"><a href="{{ url_for('portal.inventory_employee_request_view', request_id=v.source_request_id) }}">#{{ v.source_request_id }}</a></div></div>{% endif %}
       <div class="col-12"><div class="small text-muted">ملاحظات</div><div>{{ v.note or '-' }}</div></div>
     </div>
   </div>

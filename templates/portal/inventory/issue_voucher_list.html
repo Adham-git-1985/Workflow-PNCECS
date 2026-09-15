@@ -90,7 +90,7 @@
                 {{ v.to_room_name or '-' }}
               {% endif %}
             </td>
-            <td>{{ 'صرف إلى مستودع' if v.issue_kind=='WAREHOUSE' else 'صرف إلى غرفة' }}</td>
+            <td>{{ 'صرف إلى مستودع' if v.issue_kind=='WAREHOUSE' else ('صرف لموظف' if v.issue_kind=='EMPLOYEE' else 'صرف إلى غرفة') }}</td>
             <td class="text-end">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_issue_voucher_view', v_id=v.id) }}"><i class="bi bi-eye"></i> عرض</a>
             </td>

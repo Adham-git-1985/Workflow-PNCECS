@@ -1,7 +1,7 @@
 import json
 import unittest
 from urllib.parse import unquote
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +15,8 @@ from models import (
     InvEmployeeRequestAction,
     InvEmployeeRequestLine,
     InvIssueVoucher,
+    InvReturnVoucher,
+    InvReturnVoucherLine,
     InvItem,
     InvStocktakeVoucher,
     InvStocktakeVoucherLine,
@@ -23,6 +25,7 @@ from models import (
     UserPermission,
 )
 from portal import portal_bp
+from portal.routes import _inv_build_balances
 
 
 class SupplyRequestWorkflowTests(unittest.TestCase):
@@ -219,6 +222,98 @@ class SupplyRequestWorkflowTests(unittest.TestCase):
         self.assertEqual(voucher.issue_kind, "EMPLOYEE")
         self.assertEqual(voucher.from_warehouse_id, self.warehouse.id)
         self.assertEqual(updated.lines[0].issue_voucher_id, voucher.id)
+
+    def test_same_day_issue_is_deducted_from_the_opening_balance(self):
+        row = self._submit_warehouse_manager_request()
+        line = row.lines[0]
+        stocktake = InvStocktakeVoucher(
+            voucher_no="STK-SAME-DAY",
+            voucher_date=date.today().isoformat(),
+            warehouse_id=self.warehouse.id,
+            created_by_id=self.hr_director.id,
+            created_at=datetime.utcnow() - timedelta(minutes=1),
+        )
+        db.session.add(stocktake)
+        db.session.flush()
+        db.session.add(InvStocktakeVoucherLine(
+            voucher_id=stocktake.id,
+            item_id=line.item_id,
+            qty=10,
+        ))
+        db.session.commit()
+
+        self._login(self.hr_director.id)
+        response = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={
+                "decision": "approve",
+                "warehouse_id": str(self.warehouse.id),
+                f"approved_qty_{line.id}": "3",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(_inv_build_balances()[(self.warehouse.id, line.item_id)], 7.0)
+
+    def test_full_employee_return_reverses_stock_and_removes_month_marker(self):
+        row = self._submit_warehouse_manager_request()
+        line = row.lines[0]
+        stocktake = InvStocktakeVoucher(
+            voucher_no="STK-RETURN-TEST",
+            voucher_date="2020-01-01",
+            warehouse_id=self.warehouse.id,
+            created_by_id=self.hr_director.id,
+        )
+        db.session.add(stocktake)
+        db.session.flush()
+        db.session.add(InvStocktakeVoucherLine(
+            voucher_id=stocktake.id,
+            item_id=line.item_id,
+            qty=10,
+        ))
+        db.session.commit()
+
+        self._login(self.hr_director.id)
+        approved = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/approve",
+            data={
+                "decision": "approve",
+                "warehouse_id": str(self.warehouse.id),
+                f"approved_qty_{line.id}": "3",
+            },
+        )
+        self.assertEqual(approved.status_code, 302)
+        self.assertEqual(_inv_build_balances()[(self.warehouse.id, line.item_id)], 7.0)
+
+        return_page = self.client.get(f"/portal/inventory/employee-requests/{row.id}/return")
+        self.assertEqual(return_page.status_code, 200)
+        self.assertIn("لا يلزم إدخال اسم غرفة", return_page.get_data(as_text=True))
+
+        return_data = {
+            "voucher_date": date.today().isoformat(),
+            f"return_qty_{line.id}": "3",
+        }
+        returned = self.client.post(
+            f"/portal/inventory/employee-requests/{row.id}/return",
+            data=return_data,
+        )
+        self.assertEqual(returned.status_code, 302)
+        db.session.expire_all()
+        updated = db.session.get(InvEmployeeRequest, row.id)
+        self.assertEqual(updated.status, "RETURNED")
+        voucher = InvReturnVoucher.query.one()
+        self.assertEqual(voucher.source_request_id, row.id)
+        self.assertEqual(voucher.to_warehouse_id, self.warehouse.id)
+        return_line = InvReturnVoucherLine.query.one()
+        self.assertEqual(return_line.source_request_line_id, line.id)
+        self.assertEqual(return_line.qty, 3.0)
+        self.assertEqual(_inv_build_balances()[(self.warehouse.id, line.item_id)], 10.0)
+
+        self._login(self.warehouse_manager.id)
+        marker = self.client.get(
+            "/portal/inventory/employee-requests/items/search.json?q=paper"
+        ).get_json()["items"][0]["last_request"]
+        self.assertIsNone(marker)
 
     def test_current_approver_can_reject_with_a_recorded_reason(self):
         self._login(self.second_manager.id)

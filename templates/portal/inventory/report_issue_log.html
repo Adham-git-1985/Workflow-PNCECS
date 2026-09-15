@@ -62,7 +62,7 @@
             <td>{{ v.voucher_no }}</td>
             <td>{{ v.from_warehouse.name if v.from_warehouse else '-' }}</td>
             <td>
-              {% if v.issue_kind=='ROOM' %}صرف إلى غرفة{% elif v.issue_kind=='WAREHOUSE' %}صرف إلى مستودع{% else %}-{% endif %}
+              {% if v.issue_kind=='ROOM' %}صرف إلى غرفة{% elif v.issue_kind=='WAREHOUSE' %}صرف إلى مستودع{% elif v.issue_kind=='EMPLOYEE' %}صرف لموظف{% else %}-{% endif %}
             </td>
             <td>{{ ln.item.label if ln.item else '-' }}</td>
             <td class="text-end">{{ '%.2f'|format(ln.qty or 0) }}</td>

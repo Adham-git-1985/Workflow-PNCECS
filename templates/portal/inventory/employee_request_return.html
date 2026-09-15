@@ -1,0 +1,66 @@
+{% extends "portal/inventory/base.html" %}
+{% block title %}إرجاع مواد طلب #{{ item.id }}{% endblock %}
+{% block inv_content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h4 class="mb-1">إرجاع مواد طلب #{{ item.id }}</h4>
+    <div class="text-muted">الموظف: {{ item.requester.full_name }} · تعاد كل كمية إلى مستودع الصرف الأصلي.</div>
+  </div>
+  <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_request_view', request_id=item.id) }}">رجوع إلى الطلب</a>
+</div>
+
+<div class="alert alert-info">
+  هذا المسار مخصص للمواد المصروفة على طلب موظف. لا يلزم إدخال اسم غرفة أو تعيين غرفة للموظف؛ يسجل النظام اسم الموظف تلقائيًا، ويحدد المستودع من سند الصرف الأصلي.
+</div>
+
+<div class="card shadow-sm">
+  <div class="card-body">
+    <form method="post">
+      <div class="row g-2 mb-3">
+        <div class="col-md-4">
+          <label class="form-label">تاريخ الإرجاع</label>
+          <input type="date" class="form-control" name="voucher_date" value="{{ today }}" required>
+        </div>
+        <div class="col-md-8">
+          <label class="form-label">ملاحظة</label>
+          <input class="form-control" name="note" value="" placeholder="سبب الإرجاع أو أي ملاحظة إضافية">
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-striped align-middle">
+          <thead>
+            <tr>
+              <th>الصنف</th>
+              <th>مستودع الإرجاع</th>
+              <th>المعتمد/المصروف</th>
+              <th>المعاد سابقًا</th>
+              <th style="width:150px;">كمية الإرجاع</th>
+              <th>المتبقي</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for line, already_returned, remaining in returnable_lines %}
+            <tr>
+              <td>{{ line.item.label }}{% if line.item.unit %} ({{ line.item.unit }}){% endif %}</td>
+              <td>{{ line.warehouse.label if line.warehouse else '-' }}</td>
+              <td>{{ '%.2f'|format(line.approved_qty or 0) }}</td>
+              <td>{{ '%.2f'|format(already_returned) }}</td>
+              <td><input class="form-control" type="number" min="0" max="{{ remaining }}" step="0.01" name="return_qty_{{ line.id }}" value="{{ remaining }}" required></td>
+              <td>{{ '%.2f'|format(remaining) }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="6" class="text-center text-muted">لا توجد كميات قابلة للإرجاع.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="d-flex justify-content-end gap-2">
+        <a class="btn btn-outline-secondary" href="{{ url_for('portal.inventory_employee_request_view', request_id=item.id) }}">إلغاء</a>
+        <button class="btn btn-primary" type="submit" {% if not returnable_lines %}disabled{% endif %}>حفظ سند الإرجاع</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

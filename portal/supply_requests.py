@@ -5,7 +5,7 @@ from datetime import date, datetime
 
 from flask import abort, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 
 from . import portal_bp
 from extensions import db
@@ -19,6 +19,8 @@ from models import (
     InvItem,
     InvItemAttribute,
     InvItemCategory,
+    InvReturnVoucher,
+    InvReturnVoucherLine,
     InvWarehouse,
     Message,
     MessageRecipient,
@@ -50,6 +52,8 @@ STATUS_LABELS = {
     "APPROVED": "معتمد ومصروف",
     "REJECTED": "مرفوض",
     "CANCELLED": "ملغى من الموظف",
+    "PARTIALLY_RETURNED": "معاد جزئيا",
+    "RETURNED": "معاد بالكامل",
 }
 
 
@@ -89,6 +93,7 @@ def _latest_item_request_history(requester_user_id, item_ids, *, exclude_request
         )
         .join(InvEmployeeRequest, InvEmployeeRequest.id == InvEmployeeRequestLine.request_id)
         .filter(InvEmployeeRequest.requester_user_id == int(requester_user_id))
+        .filter(InvEmployeeRequest.status != "RETURNED")
         .filter(InvEmployeeRequestLine.item_id.in_(item_ids))
     )
     if exclude_request_id:
@@ -491,6 +496,36 @@ def _stock_errors(lines, warehouse_id):
     return errors
 
 
+def _returned_quantities(line_ids):
+    """Return quantities already linked back to each employee-request line."""
+    line_ids = {int(line_id) for line_id in line_ids if line_id}
+    if not line_ids:
+        return {}
+    rows = (
+        db.session.query(
+            InvReturnVoucherLine.source_request_line_id,
+            func.sum(InvReturnVoucherLine.qty),
+        )
+        .filter(InvReturnVoucherLine.source_request_line_id.in_(line_ids))
+        .group_by(InvReturnVoucherLine.source_request_line_id)
+        .all()
+    )
+    return {int(line_id): float(quantity or 0) for line_id, quantity in rows if line_id}
+
+
+def _request_returnable_lines(row):
+    """Return (line, returned, remaining) tuples for an issued request."""
+    returned = _returned_quantities([line.id for line in row.lines])
+    result = []
+    for line in row.lines:
+        approved = float(line.approved_qty or 0)
+        already_returned = min(approved, float(returned.get(line.id, 0) or 0))
+        remaining = max(0.0, approved - already_returned)
+        if remaining > 1e-9 and line.warehouse_id:
+            result.append((line, already_returned, remaining))
+    return result
+
+
 def _create_issue_vouchers(row):
     grouped = defaultdict(list)
     for line in row.lines:
@@ -697,6 +732,11 @@ def inventory_employee_request_view(request_id):
         [line.item_id for line in row.lines],
         exclude_request_id=row.id,
     )
+    returnable_lines = (
+        _request_returnable_lines(row)
+        if row.status in {"APPROVED", "PARTIALLY_RETURNED"}
+        else []
+    )
     if request.method == "POST":
         if not can_edit:
             abort(403)
@@ -738,6 +778,128 @@ def inventory_employee_request_view(request_id):
         can_edit=can_edit,
         can_cancel=row.status == "SUBMITTED" and row.requester_user_id == current_user.id,
         can_manage_catalog=_can_manage_catalog(),
+        can_return=bool(_can_manage() and returnable_lines),
+        returnable_lines=returnable_lines,
+    )
+
+
+@portal_bp.route("/inventory/employee-requests/<int:request_id>/return", methods=["GET", "POST"])
+@login_required
+def inventory_employee_request_return(request_id):
+    """Return issued employee-request quantities to their original warehouse."""
+    row = InvEmployeeRequest.query.get_or_404(request_id)
+    if not _can_manage():
+        abort(403)
+    if row.status not in {"APPROVED", "PARTIALLY_RETURNED"}:
+        flash("لا يمكن إرجاع مواد لطلب غير معتمد ومصروف.", "warning")
+        return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+
+    returnable_lines = _request_returnable_lines(row)
+    if not returnable_lines:
+        flash("لا توجد كمية متبقية قابلة للإرجاع لهذا الطلب.", "warning")
+        return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+
+    if request.method == "POST":
+        voucher_date = (request.form.get("voucher_date") or "").strip() or date.today().isoformat()
+        note = (request.form.get("note") or "").strip() or "إرجاع مواد طلب الموظف إلى مستودع الصرف الأصلي."
+        selected = []
+        selected_by_line = {}
+        for line, already_returned, remaining in returnable_lines:
+            raw_quantity = (request.form.get(f"return_qty_{line.id}") or "0").strip()
+            try:
+                quantity = float(raw_quantity or 0)
+            except (TypeError, ValueError):
+                quantity = -1
+            if quantity < 0 or quantity > remaining + 1e-9:
+                flash(
+                    f"كمية الإرجاع للصنف {line.item.name} غير صحيحة؛ الحد المتبقي {remaining:g}.",
+                    "danger",
+                )
+                return redirect(url_for("portal.inventory_employee_request_return", request_id=row.id))
+            if quantity > 0:
+                selected.append((line, quantity))
+                selected_by_line[line.id] = quantity
+
+        if not selected:
+            flash("أدخل كمية إرجاع موجبة لصنف واحد على الأقل.", "danger")
+            return redirect(url_for("portal.inventory_employee_request_return", request_id=row.id))
+
+        grouped = defaultdict(list)
+        for line, quantity in selected:
+            grouped[line.warehouse_id].append((line, quantity))
+
+        voucher_nos = []
+        for warehouse_id, entries in grouped.items():
+            issue_ids = {line.issue_voucher_id for line, _quantity in entries if line.issue_voucher_id}
+            source_issue_voucher_id = issue_ids.pop() if len(issue_ids) == 1 else None
+            voucher = InvReturnVoucher(
+                voucher_no="",
+                voucher_date=voucher_date,
+                to_warehouse_id=warehouse_id,
+                from_room_name=row.requester.full_name,
+                source_request_id=row.id,
+                source_issue_voucher_id=source_issue_voucher_id,
+                note=f"{note} طلب المواد #{row.id}",
+                created_by_id=current_user.id,
+                created_at=datetime.utcnow(),
+            )
+            db.session.add(voucher)
+            db.session.flush()
+            voucher.voucher_no = auto_inventory_voucher_no("return", voucher_date, voucher.id)
+            voucher_nos.append(voucher.voucher_no)
+            for line, quantity in entries:
+                db.session.add(InvReturnVoucherLine(
+                    voucher_id=voucher.id,
+                    item_id=line.item_id,
+                    source_request_line_id=line.id,
+                    qty=quantity,
+                    details=f"إرجاع مقابل طلب المواد #{row.id}",
+                ))
+
+        returned_by_line = _returned_quantities([line.id for line in row.lines])
+        fully_returned = True
+        for line in row.lines:
+            approved = float(line.approved_qty or 0)
+            returned_after = float(returned_by_line.get(line.id, 0) or 0) + float(selected_by_line.get(line.id, 0) or 0)
+            if approved > returned_after + 1e-9:
+                fully_returned = False
+                break
+
+        row.status = "RETURNED" if fully_returned else "PARTIALLY_RETURNED"
+        row.approval_stage = "DONE"
+        row.decided_at = datetime.utcnow()
+        db.session.add(InvEmployeeRequestAction(
+            request_id=row.id,
+            stage="DONE",
+            action="RETURNED" if fully_returned else "PARTIALLY_RETURNED",
+            actor_user_id=current_user.id,
+            note=("تم إرجاع كامل الكميات. " if fully_returned else "تم إرجاع جزء من الكميات. ")
+            + "أرقام سندات الإرجاع: "
+            + ", ".join(voucher_nos),
+        ))
+        _notify(
+            row,
+            [row.requester_user_id],
+            (
+                f"تم إرجاع كامل مواد طلب المواد #{row.id} إلى المستودع الأصلي وإلغاء أثر الاعتماد."
+                if fully_returned
+                else f"تم إرجاع جزء من مواد طلب المواد #{row.id} إلى المستودع الأصلي."
+            ),
+        )
+        db.session.commit()
+        flash(
+            "تم إرجاع كامل المواد وإلغاء اعتماد الطلب وإخفاؤه من مؤشر الطلبات خلال الشهر."
+            if fully_returned
+            else "تم حفظ الإرجاع الجزئي وإضافة الكمية إلى المستودع الأصلي.",
+            "success",
+        )
+        return redirect(url_for("portal.inventory_employee_request_view", request_id=row.id))
+
+    return render_template(
+        "portal/inventory/employee_request_return.html",
+        item=row,
+        returnable_lines=returnable_lines,
+        today=date.today().isoformat(),
     )
 
 
@@ -904,7 +1066,10 @@ def inventory_employee_requests_report():
     query = (
         InvEmployeeRequestLine.query
         .join(InvEmployeeRequest, InvEmployeeRequest.id == InvEmployeeRequestLine.request_id)
-        .filter(InvEmployeeRequest.status == "APPROVED", InvEmployeeRequestLine.issue_voucher_id.isnot(None))
+        .filter(
+            InvEmployeeRequest.status.in_(("APPROVED", "PARTIALLY_RETURNED")),
+            InvEmployeeRequestLine.issue_voucher_id.isnot(None),
+        )
     )
     if selected_month:
         query = query.join(InvIssueVoucher, InvIssueVoucher.id == InvEmployeeRequestLine.issue_voucher_id).filter(
@@ -915,11 +1080,17 @@ def inventory_employee_requests_report():
     if selected_item_id.isdigit():
         query = query.filter(InvEmployeeRequestLine.item_id == int(selected_item_id))
     rows = query.order_by(InvEmployeeRequest.decided_at.desc(), InvEmployeeRequestLine.id.desc()).all()
+    returned_by_line = _returned_quantities([line.id for line in rows])
     item_summary = defaultdict(float)
     employee_summary = defaultdict(float)
     for line in rows:
-        item_summary[line.item.label] += float(line.approved_qty or 0)
-        employee_summary[line.request.requester.full_name] += float(line.approved_qty or 0)
+        line.returned_qty = min(
+            float(line.approved_qty or 0),
+            float(returned_by_line.get(line.id, 0) or 0),
+        )
+        line.consumed_qty = max(0.0, float(line.approved_qty or 0) - line.returned_qty)
+        item_summary[line.item.label] += line.consumed_qty
+        employee_summary[line.request.requester.full_name] += line.consumed_qty
     return render_template(
         "portal/inventory/employee_consumption_report.html",
         rows=rows,

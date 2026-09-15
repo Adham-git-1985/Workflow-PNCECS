@@ -55,6 +55,7 @@
             <th>تاريخ السند</th>
             <th>من</th>
             <th>إلى مستودع</th>
+            <th>طلب المواد</th>
             <th style="width:120px;"></th>
           </tr>
         </thead>
@@ -66,13 +67,14 @@
             <td>{{ v.voucher_date }}</td>
             <td>{{ v.from_room_name }}</td>
             <td>{{ v.to_warehouse.label if v.to_warehouse else '-' }}</td>
+            <td>{% if v.source_request_id %}<a href="{{ url_for('portal.inventory_employee_request_view', request_id=v.source_request_id) }}">#{{ v.source_request_id }}</a>{% else %}-{% endif %}</td>
             <td class="text-end">
               <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_return_voucher_view', v_id=v.id) }}"><i class="bi bi-eye"></i> عرض</a>
             </td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="6" class="text-center text-muted py-4">لا توجد بيانات.</td>
+            <td colspan="7" class="text-center text-muted py-4">لا توجد بيانات.</td>
           </tr>
           {% endfor %}
         </tbody>

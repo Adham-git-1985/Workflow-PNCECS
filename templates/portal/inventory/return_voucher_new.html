@@ -4,6 +4,10 @@
 {% set form_lines = (form.get('lines', []) if form is defined and form.get is defined else []) %}
 
 {% block inv_content %}
+<div class="alert alert-info d-flex justify-content-between align-items-center">
+  <span>لإرجاع مواد مصروفة على طلب موظف، افتح الطلب نفسه واضغط «إرجاع المواد»؛ سيحدد النظام الموظف ومستودع الصرف تلقائيًا، ولا يلزم تعيين غرفة.</span>
+  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_employee_requests') }}">طلبات المواد</a>
+</div>
 <div class="d-flex align-items-center justify-content-between mb-3">
   <h5 class="m-0">إدخال سند إرجاع</h5>
   <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_return_voucher_list') }}"><i class="bi bi-journal-text"></i> سجل السندات</a>
@@ -22,14 +26,14 @@
           <input type="date" name="voucher_date" class="form-control" value="{{ form.voucher_date|default('') }}" required>
         </div>
         <div class="col-md-3">
-          <label class="form-label">من جهة/غرفة</label>
+          <label class="form-label">من جهة/غرفة/موظف</label>
           <select id="fromRoomSelect" class="form-select mb-2">
             <option value="">بدون تحديد</option>
             {% for r in rooms|default([]) %}
               <option value="{{ r.label }}" {% if form.from_room_name==r.label %}selected{% endif %}>{{ r.label }}</option>
             {% endfor %}
           </select>
-          <input name="from_room_name" id="fromRoomName" class="form-control" value="{{ form.from_room_name|default('') }}" placeholder="اسم الجهة/الغرفة (أو اختر من القائمة أعلاه)" required>
+          <input name="from_room_name" id="fromRoomName" class="form-control" value="{{ form.from_room_name|default('') }}" placeholder="اسم الجهة/الغرفة/الموظف (أو اختر من القائمة أعلاه)" required>
         </div>
         <div class="col-md-3">
           <label class="form-label">إلى مستودع</label>

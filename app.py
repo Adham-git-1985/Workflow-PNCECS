@@ -1128,6 +1128,29 @@ def _ensure_runtime_schema():
             if not _col_exists("inv_item", "variant"):
                 _add_column_retry("inv_item", "variant", "TEXT")
 
+            # Employee-request returns can be linked back to the original
+            # request/issue without breaking legacy generic return vouchers.
+            for _table, _col, _ctype in [
+                ("inv_return_voucher", "source_request_id", "INTEGER"),
+                ("inv_return_voucher", "source_issue_voucher_id", "INTEGER"),
+                ("inv_return_voucher_line", "source_request_line_id", "INTEGER"),
+            ]:
+                if not _col_exists(_table, _col):
+                    _add_column_retry(_table, _col, _ctype)
+            for _index_sql in [
+                "CREATE INDEX IF NOT EXISTS ix_inv_return_voucher_source_request_id "
+                "ON inv_return_voucher (source_request_id)",
+                "CREATE INDEX IF NOT EXISTS ix_inv_return_voucher_source_issue_voucher_id "
+                "ON inv_return_voucher (source_issue_voucher_id)",
+                "CREATE INDEX IF NOT EXISTS ix_inv_return_voucher_line_source_request_line_id "
+                "ON inv_return_voucher_line (source_request_line_id)",
+            ]:
+                try:
+                    db.session.execute(text(_index_sql))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             for col, ctype in [
                 ("order_no", "TEXT"),
                 ("place_kind", "TEXT"),

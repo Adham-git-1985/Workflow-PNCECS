@@ -41355,6 +41355,7 @@ def _inv_build_balances():
 
     # 1) Stocktake baseline per (warehouse,item)
     baseline_date: dict[tuple[int, int], str] = {}
+    baseline_created_at: dict[tuple[int, int], datetime | None] = {}
     baseline_qty: dict[tuple[int, int], float] = {}
 
     st_rows = (
@@ -41363,6 +41364,7 @@ def _inv_build_balances():
             InvStocktakeVoucherLine.item_id,
             InvStocktakeVoucher.voucher_date,
             InvStocktakeVoucher.id,
+            InvStocktakeVoucher.created_at,
             func.sum(InvStocktakeVoucherLine.qty),
         )
         .join(InvStocktakeVoucherLine, InvStocktakeVoucherLine.voucher_id == InvStocktakeVoucher.id)
@@ -41371,57 +41373,103 @@ def _inv_build_balances():
             InvStocktakeVoucherLine.item_id,
             InvStocktakeVoucher.voucher_date,
             InvStocktakeVoucher.id,
+            InvStocktakeVoucher.created_at,
         )
         .all()
     )
     # keep (date, id) for baseline selection
     baseline_key: dict[tuple[int, int], tuple[str, int]] = {}
-    for wh_id, item_id, v_date, v_id, s in st_rows:
+    for wh_id, item_id, v_date, v_id, created_at, s in st_rows:
         if not wh_id or not item_id or not v_date:
             continue
         k = (int(wh_id), int(item_id))
-        cand = (str(v_date), int(v_id))
+        cand = (str(v_date), created_at or datetime.min, int(v_id))
         prev = baseline_key.get(k)
         if prev is None or cand > prev:
             baseline_key[k] = cand
             baseline_date[k] = str(v_date)
+            baseline_created_at[k] = created_at
             baseline_qty[k] = float(s or 0)
 
     for k, qty in baseline_qty.items():
         balances[k] = float(qty or 0)
 
-    def _after_baseline(wh_id: int, item_id: int, v_date: str) -> bool:
+    def _after_baseline(
+        wh_id: int,
+        item_id: int,
+        v_date: str,
+        movement_created_at: datetime | None = None,
+    ) -> bool:
         bd = baseline_date.get((wh_id, item_id))
-        return (not bd) or (v_date and v_date > bd)
+        if not bd:
+            return True
+        movement_date = str(v_date or "")
+        if movement_date > bd:
+            return True
+        if movement_date < bd:
+            return False
+        baseline_at = baseline_created_at.get((wh_id, item_id))
+        # A movement recorded on the same day as the opening count must still
+        # be applied when it was created afterwards.  The previous date-only
+        # comparison silently ignored same-day issue vouchers.
+        return baseline_at is None or movement_created_at is None or movement_created_at >= baseline_at
 
-    def _add(wh_id: int, item_id: int, v_date: str, delta: float):
+    def _add(
+        wh_id: int,
+        item_id: int,
+        v_date: str,
+        delta: float,
+        movement_created_at: datetime | None = None,
+    ):
         if not wh_id or not item_id or not v_date:
             return
         wh_id = int(wh_id)
         item_id = int(item_id)
-        if not _after_baseline(wh_id, item_id, str(v_date)):
+        if not _after_baseline(wh_id, item_id, str(v_date), movement_created_at):
             return
         balances[(wh_id, item_id)] = balances.get((wh_id, item_id), 0.0) + float(delta or 0)
 
     # 2) Inbound (+)
     inbound_rows = (
-        db.session.query(InvInboundVoucher.to_warehouse_id, InvInboundVoucherLine.item_id, InvInboundVoucher.voucher_date, func.sum(InvInboundVoucherLine.qty))
+        db.session.query(
+            InvInboundVoucher.to_warehouse_id,
+            InvInboundVoucherLine.item_id,
+            InvInboundVoucher.voucher_date,
+            InvInboundVoucher.created_at,
+            func.sum(InvInboundVoucherLine.qty),
+        )
         .join(InvInboundVoucherLine, InvInboundVoucherLine.voucher_id == InvInboundVoucher.id)
-        .group_by(InvInboundVoucher.to_warehouse_id, InvInboundVoucherLine.item_id, InvInboundVoucher.voucher_date)
+        .group_by(
+            InvInboundVoucher.to_warehouse_id,
+            InvInboundVoucherLine.item_id,
+            InvInboundVoucher.voucher_date,
+            InvInboundVoucher.created_at,
+        )
         .all()
     )
-    for wh_id, item_id, v_date, s in inbound_rows:
-        _add(wh_id, item_id, v_date, float(s or 0))
+    for wh_id, item_id, v_date, created_at, s in inbound_rows:
+        _add(wh_id, item_id, v_date, float(s or 0), created_at)
 
     # 3) Return (+)
     return_rows = (
-        db.session.query(InvReturnVoucher.to_warehouse_id, InvReturnVoucherLine.item_id, InvReturnVoucher.voucher_date, func.sum(InvReturnVoucherLine.qty))
+        db.session.query(
+            InvReturnVoucher.to_warehouse_id,
+            InvReturnVoucherLine.item_id,
+            InvReturnVoucher.voucher_date,
+            InvReturnVoucher.created_at,
+            func.sum(InvReturnVoucherLine.qty),
+        )
         .join(InvReturnVoucherLine, InvReturnVoucherLine.voucher_id == InvReturnVoucher.id)
-        .group_by(InvReturnVoucher.to_warehouse_id, InvReturnVoucherLine.item_id, InvReturnVoucher.voucher_date)
+        .group_by(
+            InvReturnVoucher.to_warehouse_id,
+            InvReturnVoucherLine.item_id,
+            InvReturnVoucher.voucher_date,
+            InvReturnVoucher.created_at,
+        )
         .all()
     )
-    for wh_id, item_id, v_date, s in return_rows:
-        _add(wh_id, item_id, v_date, float(s or 0))
+    for wh_id, item_id, v_date, created_at, s in return_rows:
+        _add(wh_id, item_id, v_date, float(s or 0), created_at)
 
     # 4) Issue (ROOM: -, WAREHOUSE transfer: -/+)
     issue_rows = (
@@ -41430,6 +41478,7 @@ def _inv_build_balances():
             InvIssueVoucher.from_warehouse_id,
             InvIssueVoucher.to_warehouse_id,
             InvIssueVoucher.voucher_date,
+            InvIssueVoucher.created_at,
             InvIssueVoucherLine.item_id,
             func.sum(InvIssueVoucherLine.qty),
         )
@@ -41439,25 +41488,37 @@ def _inv_build_balances():
             InvIssueVoucher.from_warehouse_id,
             InvIssueVoucher.to_warehouse_id,
             InvIssueVoucher.voucher_date,
+            InvIssueVoucher.created_at,
             InvIssueVoucherLine.item_id,
         )
         .all()
     )
-    for kind, from_wh, to_wh, v_date, item_id, s in issue_rows:
+    for kind, from_wh, to_wh, v_date, created_at, item_id, s in issue_rows:
         qty = float(s or 0)
-        _add(from_wh, item_id, v_date, -qty)
+        _add(from_wh, item_id, v_date, -qty, created_at)
         if (kind or "").upper() == "WAREHOUSE" and to_wh:
-            _add(to_wh, item_id, v_date, qty)
+            _add(to_wh, item_id, v_date, qty, created_at)
 
     # 5) Scrap (-)
     scrap_rows = (
-        db.session.query(InvScrapVoucher.from_warehouse_id, InvScrapVoucherLine.item_id, InvScrapVoucher.voucher_date, func.sum(InvScrapVoucherLine.qty))
+        db.session.query(
+            InvScrapVoucher.from_warehouse_id,
+            InvScrapVoucherLine.item_id,
+            InvScrapVoucher.voucher_date,
+            InvScrapVoucher.created_at,
+            func.sum(InvScrapVoucherLine.qty),
+        )
         .join(InvScrapVoucherLine, InvScrapVoucherLine.voucher_id == InvScrapVoucher.id)
-        .group_by(InvScrapVoucher.from_warehouse_id, InvScrapVoucherLine.item_id, InvScrapVoucher.voucher_date)
+        .group_by(
+            InvScrapVoucher.from_warehouse_id,
+            InvScrapVoucherLine.item_id,
+            InvScrapVoucher.voucher_date,
+            InvScrapVoucher.created_at,
+        )
         .all()
     )
-    for wh_id, item_id, v_date, s in scrap_rows:
-        _add(wh_id, item_id, v_date, -float(s or 0))
+    for wh_id, item_id, v_date, created_at, s in scrap_rows:
+        _add(wh_id, item_id, v_date, -float(s or 0), created_at)
 
     return balances
 
@@ -41939,6 +42000,19 @@ def inventory_admin_room_requesters():
 
         if not user_id_val:
             flash("يرجى اختيار المستخدم.", "warning")
+            return redirect(url_for("portal.inventory_admin_room_requesters"))
+
+        if action == "update":
+            rid = request.form.get("id")
+            rr = InvRoomRequester.query.get(int(rid)) if (rid and rid.isdigit()) else None
+            if not rr:
+                flash("سجل ربط المستخدم بالغرفة غير موجود.", "warning")
+                return redirect(url_for("portal.inventory_admin_room_requesters"))
+            rr.user_id = user_id_val
+            rr.room_id = room_id_val
+            rr.is_active = is_active
+            db.session.commit()
+            flash("تم تحديث ربط المستخدم بالغرفة.", "success")
             return redirect(url_for("portal.inventory_admin_room_requesters"))
 
         rr = InvRoomRequester(user_id=user_id_val, room_id=room_id_val, is_active=is_active, created_at=datetime.utcnow())

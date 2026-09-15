@@ -4051,7 +4051,7 @@ class InvIssueVoucher(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
 
-    # ROOM / WAREHOUSE / EMPLOYEE (future)
+    # ROOM / WAREHOUSE / EMPLOYEE
     issue_kind = db.Column(db.String(20), nullable=False, default="ROOM", index=True)
 
     voucher_no = db.Column(db.String(80), nullable=False, index=True)
@@ -4255,6 +4255,21 @@ class InvReturnVoucher(db.Model):
     to_warehouse_id = db.Column(db.Integer, db.ForeignKey("inv_warehouse.id"), nullable=False, index=True)
     from_room_name = db.Column(db.String(200), nullable=False)
 
+    # Optional links for returns generated from an employee materials request.
+    # Generic room/party returns continue to work without these fields.
+    source_request_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_employee_request.id"),
+        nullable=True,
+        index=True,
+    )
+    source_issue_voucher_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_issue_voucher.id"),
+        nullable=True,
+        index=True,
+    )
+
     note = db.Column(db.Text, nullable=True)
 
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
@@ -4262,6 +4277,8 @@ class InvReturnVoucher(db.Model):
 
     to_warehouse = db.relationship("InvWarehouse", foreign_keys=[to_warehouse_id], lazy="joined")
     created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    source_request = db.relationship("InvEmployeeRequest", foreign_keys=[source_request_id], lazy="joined")
+    source_issue_voucher = db.relationship("InvIssueVoucher", foreign_keys=[source_issue_voucher_id], lazy="joined")
 
     __table_args__ = (
         db.Index("ix_inv_return_voucher_date_no", "voucher_date", "voucher_no"),
@@ -4275,6 +4292,15 @@ class InvReturnVoucherLine(db.Model):
     voucher_id = db.Column(db.Integer, db.ForeignKey("inv_return_voucher.id"), nullable=False, index=True)
     item_id = db.Column(db.Integer, db.ForeignKey("inv_item.id"), nullable=False, index=True)
 
+    # When present, this line is an auditable reversal of the employee-request
+    # line rather than an unlinked manual return.
+    source_request_line_id = db.Column(
+        db.Integer,
+        db.ForeignKey("inv_employee_request_line.id"),
+        nullable=True,
+        index=True,
+    )
+
     qty = db.Column(db.Float, nullable=False, default=1.0)
     serial = db.Column(db.String(200), nullable=True)
     warranty_start = db.Column(db.String(10), nullable=True)  # YYYY-MM-DD
@@ -4283,6 +4309,7 @@ class InvReturnVoucherLine(db.Model):
 
     voucher = db.relationship("InvReturnVoucher", foreign_keys=[voucher_id], lazy="joined")
     item = db.relationship("InvItem", foreign_keys=[item_id], lazy="joined")
+    source_request_line = db.relationship("InvEmployeeRequestLine", foreign_keys=[source_request_line_id], lazy="joined")
 
 
 class InvReturnVoucherAttachment(db.Model):
