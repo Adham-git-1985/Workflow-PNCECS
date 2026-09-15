@@ -493,7 +493,7 @@
               <span class="badge text-bg-{{ plan_meta.class }}"><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</span>
               {% if plan %}<span class="ws-version-pill"><i class="bi bi-layers"></i> نسخة {{ plan.version_no }}</span>{% endif %}
             </div>
-            <div class="small text-muted">الشؤون الإدارية تطّلع فقط، والاعتماد النهائي للأمين العام أو السوبر أدمن.</div>
+            <div class="small text-muted">الشؤون الإدارية تطّلع فقط، والاعتماد النهائي للأمين العام.</div>
           </div>
           {% if published_plan and (not plan or published_plan.id != plan.id) %}
           <div class="alert alert-success py-2 px-3 mb-0 small"><i class="bi bi-shield-check"></i> النسخة {{ published_plan.version_no }} ما زالت سارية حتى اعتماد التعديل الجديد.</div>
@@ -507,7 +507,7 @@
             <div class="ws-flow-number">2</div><div><strong>اعتماد المدير</strong><small>مراجعة أو استبدال المقترح</small></div>
           </div>
           <div class="ws-flow-step {% if plan_status == 'FINAL_APPROVED' %}is-done{% elif plan_status == 'MANAGER_APPROVED' %}is-active{% endif %}">
-            <div class="ws-flow-number">3</div><div><strong>الاعتماد النهائي</strong><small>الأمين العام أو السوبر أدمن</small></div>
+            <div class="ws-flow-number">3</div><div><strong>الاعتماد النهائي</strong><small>الأمين العام</small></div>
           </div>
         </div>
       </div>

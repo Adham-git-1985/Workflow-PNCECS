@@ -14444,7 +14444,7 @@ def hr_work_schedule_update():
                     )
                     notify_attendance_schedule_stakeholders(
                         target_user,
-                        f"أرسل {target_user.full_name} جدول دوام أسبوعين إلى المديرين المسؤولين: {manager_names}.",
+                        f"تم إرسال جدول دوام {target_user.full_name} إلى المديرين المسؤولين: {manager_names}، وهو الآن بانتظار اعتماد المدير.",
                         level="INFO",
                         link_url=notification_link,
                         manager=manager,
@@ -14471,12 +14471,12 @@ def hr_work_schedule_update():
                 plan.manager_approved_by_id = current_user.id
                 notify_attendance_schedule_stakeholders(
                     target_user,
-                    f"اعتمد {current_user.full_name} جدول دوام {target_user.full_name} وأرسله للاعتماد النهائي.",
+                    f"اعتمد {current_user.full_name} جدول دوام {target_user.full_name}، وهو الآن بانتظار الاعتماد النهائي من الأمين العام.",
                     level="SUCCESS",
                     link_url=notification_link,
                     manager=manager,
                 )
-                flash("تم اعتماد الجدول وإرساله للأمين العام والسوبر أدمن.", "success")
+                flash("تم اعتماد الجدول وإرساله للأمين العام.", "success")
             else:
                 plan.status = "SUBMITTED"
                 plan.manager_approved_at = None
@@ -14498,7 +14498,7 @@ def hr_work_schedule_update():
                 plan.final_approved_by_id = current_user.id
                 notify_attendance_schedule_stakeholders(
                     target_user,
-                    f"اعتمد {current_user.full_name} جدول دوام {target_user.full_name} نهائيًا.",
+                    f"تم اعتماد جدول دوام {target_user.full_name} نهائيًا.",
                     level="SUCCESS",
                     link_url=notification_link,
                     manager=manager,
@@ -14512,7 +14512,7 @@ def hr_work_schedule_update():
                 plan.final_approved_by_id = current_user.id
                 notify_attendance_schedule_stakeholders(
                     target_user,
-                    f"عدّل {current_user.full_name} جدول دوام {target_user.full_name} المعتمد وأصدر نسخة معتمدة جديدة.",
+                    f"تم تحديث جدول دوام {target_user.full_name} المعتمد وإصدار نسخة معتمدة جديدة.",
                     level="INFO",
                     link_url=notification_link,
                     manager=manager,
@@ -14522,7 +14522,7 @@ def hr_work_schedule_update():
                 if changed:
                     notify_attendance_schedule_stakeholders(
                         target_user,
-                        f"حفظ {current_user.full_name} تعديلًا على جدول دوام {target_user.full_name}.",
+                        f"تم حفظ تعديل المعتمد النهائي على جدول دوام {target_user.full_name}.",
                         level="INFO",
                         link_url=notification_link,
                         manager=manager,
@@ -14569,7 +14569,7 @@ def hr_work_schedule_remind():
     manager = managers[0] if managers else None
     notify_attendance_schedule_stakeholders(
         target_user,
-        f"أرسل {current_user.full_name} تذكيرًا إلى {target_user.full_name} لإكمال جدول دوام الأسبوعين ابتداءً من {period_start.isoformat()}.",
+        f"تذكير: يرجى إكمال جدول دوام {target_user.full_name} للأسبوعين ابتداءً من {period_start.isoformat()}.",
         level="WARNING",
         link_url=url_for(
             "portal.hr_work_schedule",
@@ -14622,7 +14622,7 @@ def hr_work_schedule_final_approve_all():
                 continue
             notify_attendance_schedule_stakeholders(
                 employee,
-                f"اعتمد {current_user.full_name} جدول دوام {employee.full_name} نهائيًا ضمن الاعتماد الجماعي.",
+                f"تم اعتماد جدول دوام {employee.full_name} نهائيًا ضمن الاعتماد الجماعي.",
                 level="SUCCESS",
                 link_url=url_for(
                     "portal.hr_work_schedule",

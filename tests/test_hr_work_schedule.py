@@ -1,6 +1,6 @@
 import unittest
 import inspect
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -36,6 +36,7 @@ from portal.routes import (
     _attendance_schedule_week_rows,
     _effective_schedule_for_user,
     hr_work_schedule,
+    hr_work_schedule_update,
 )
 from services.attendance_schedule import (
     attendance_schedule_cycle_start,
@@ -318,6 +319,82 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
             attendance_schedule_final_approver_user_ids(),
         )
 
+    def test_secretary_general_is_a_final_approver_and_notification_stakeholder(self):
+        secretary = User(
+            email="schedule-secretary@example.test",
+            name="الأمين العام",
+            password_hash="not-used",
+            role="GENERAL_SECRETARY",
+        )
+        db.session.add(secretary)
+        db.session.commit()
+
+        self.assertTrue(_attendance_schedule_is_final_approver(secretary))
+        self.assertIn(secretary.id, attendance_schedule_final_approver_user_ids())
+        self.assertIn(
+            secretary.id,
+            attendance_schedule_stakeholder_user_ids(self.employee),
+        )
+
+    def test_secretary_general_final_approval_is_persisted_and_notifies(self):
+        secretary = User(
+            email="schedule-final-secretary@example.test",
+            name="الأمين العام",
+            password_hash="not-used",
+            role="GENERAL_SECRETARY",
+        )
+        db.session.add(secretary)
+        db.session.flush()
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            period_start="2026-09-06",
+            period_end="2026-09-19",
+            version_no=1,
+            status="MANAGER_APPROVED",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        db.session.add_all(
+            HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=(date(2026, 9, 6) + timedelta(days=offset)).isoformat(),
+                day_type="WORK",
+                schedule_id=self.schedule.id,
+                start_time="08:00",
+                end_time="15:00",
+            )
+            for offset in range(14)
+        )
+        db.session.commit()
+
+        undecorated_update = inspect.unwrap(hr_work_schedule_update)
+        with self.app.test_request_context(
+            "/portal/hr/attendance/work-schedule/update",
+            method="POST",
+            data={
+                "target_user_id": str(self.employee.id),
+                "period_start": "2026-09-06",
+                "plan_id": str(plan.id),
+                "action": "final_approve",
+            },
+        ):
+            with patch("portal.routes.current_user", secretary), patch(
+                "portal.routes.url_for",
+                return_value="/portal/hr/attendance/work-schedule",
+            ), patch("portal.routes.notify_attendance_schedule_stakeholders") as notify, patch(
+                "portal.routes._portal_audit"
+            ):
+                response = undecorated_update()
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(plan)
+        self.assertEqual(plan.status, "FINAL_APPROVED")
+        self.assertEqual(plan.final_approved_by_id, secretary.id)
+        notify.assert_called_once()
+        self.assertIn("تم اعتماد جدول دوام", notify.call_args.args[1])
+        self.assertNotIn("السوبر أدمن", notify.call_args.args[1])
+
     def test_week_rows_show_every_day_for_each_employee(self):
         final_plan = self._final_plan()
 
@@ -387,10 +464,11 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
             "data-copy-first-week",
             "ws-roster-table",
             "organization_loaded",
-            "السوبر أدمن",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, template)
+        self.assertIn("الاعتماد النهائي للأمين العام.", template)
+        self.assertNotIn("السوبر أدمن", template)
         self.assertIn("portal.hr_work_schedule", navigation)
         self.assertIn("جدول الدوام", navigation)
         self.assertIn("جدول دوام الموظفين", attendance_events)
