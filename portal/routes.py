@@ -13805,6 +13805,7 @@ _ATTENDANCE_SCHEDULE_DAY_META = {
     "REMOTE": {"label": "عمل عن بُعد", "short": "عن بُعد", "icon": "bi-house-laptop", "class": "remote"},
     "OFF": {"label": "راحة / عطلة", "short": "راحة", "icon": "bi-cup-hot", "class": "off"},
 }
+_ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES = {"SUBMITTED", "MANAGER_APPROVED"}
 
 
 def _attendance_schedule_is_final_approver(user=None) -> bool:
@@ -13944,6 +13945,36 @@ def _attendance_schedule_latest_map(
     for row in rows:
         result.setdefault(int(row.user_id), row)
     return result
+def _attendance_schedule_template_times(
+    schedule: WorkSchedule | None,
+    work_day: date,
+) -> tuple[str | None, str | None]:
+    """Return the configured times, including the weekday entry of a shift."""
+    if not schedule:
+        return None, None
+
+    start_time = getattr(schedule, "start_time", None)
+    end_time = getattr(schedule, "end_time", None)
+    if (getattr(schedule, "kind", "") or "").strip().upper() != "SHIFT":
+        return start_time, end_time
+
+    day_config = next(
+        (
+            item
+            for item in (getattr(schedule, "days", None) or [])
+            if int(getattr(item, "weekday", -1)) == int(work_day.weekday())
+        ),
+        None,
+    )
+    if day_config is None and getattr(schedule, "id", None):
+        day_config = WorkScheduleDay.query.filter_by(
+            schedule_id=int(schedule.id),
+            weekday=work_day.weekday(),
+        ).first()
+    if day_config:
+        start_time = getattr(day_config, "start_time", None) or start_time
+        end_time = getattr(day_config, "end_time", None) or end_time
+    return start_time, end_time
 
 
 def _attendance_schedule_default_values(user_id: int, work_day: date) -> dict:
@@ -13958,16 +13989,7 @@ def _attendance_schedule_default_values(user_id: int, work_day: date) -> dict:
         }
 
     schedule = _effective_schedule_for_user(int(user_id), work_day.isoformat())
-    start_time = getattr(schedule, "start_time", None) if schedule else None
-    end_time = getattr(schedule, "end_time", None) if schedule else None
-    if schedule and (getattr(schedule, "kind", "") or "").upper() == "SHIFT":
-        day_config = WorkScheduleDay.query.filter_by(
-            schedule_id=schedule.id,
-            weekday=work_day.weekday(),
-        ).first()
-        if day_config:
-            start_time = day_config.start_time
-            end_time = day_config.end_time
+    start_time, end_time = _attendance_schedule_template_times(schedule, work_day)
     policy = _effective_work_policy_for_user(int(user_id), work_day.isoformat())
     is_remote = bool(
         schedule and (getattr(schedule, "kind", "") or "").strip().upper() == "REMOTE"
@@ -14104,8 +14126,12 @@ def _attendance_schedule_apply_form(
         else:
             if schedule_id and not schedule:
                 raise ValueError("أحد قوالب الدوام المحددة غير متاح.")
-            start_time = start_time or (schedule.start_time if schedule else "")
-            end_time = end_time or (schedule.end_time if schedule else "")
+            template_start, template_end = _attendance_schedule_template_times(
+                schedule,
+                work_day,
+            )
+            start_time = start_time or template_start or ""
+            end_time = end_time or template_end or ""
             if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start_time or ""):
                 raise ValueError(f"وقت البداية غير صحيح ليوم {work_day.isoformat()}.")
             if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end_time or ""):
@@ -14179,18 +14205,31 @@ def _attendance_schedule_view_days(
     for work_day in selected_days:
         index = cycle_indexes.get(work_day, 0)
         row = day_rows.get(work_day.isoformat())
-        values = {
-            "day_type": row.day_type,
-            "schedule_id": row.schedule_id,
-            "schedule_name": row.schedule.name if row.schedule else None,
-            "start_time": row.start_time,
-            "end_time": row.end_time,
-            "note": row.note or "",
-            "edit_source": row.edit_source,
-        } if row else {
+        if row:
+            schedule = row.schedule
+            start_time = row.start_time
+            end_time = row.end_time
+            if (row.day_type or "").strip().upper() != "OFF" and schedule:
+                template_start, template_end = _attendance_schedule_template_times(
+                    schedule,
+                    work_day,
+                )
+                start_time = start_time or template_start
+                end_time = end_time or template_end
+            values = {
+                "day_type": row.day_type,
+                "schedule_id": row.schedule_id,
+                "schedule_name": schedule.name if schedule else None,
+                "start_time": start_time,
+                "end_time": end_time,
+                "note": row.note or "",
+                "edit_source": row.edit_source,
+            }
+        else:
+            values = {
             **_attendance_schedule_default_values(user_id, work_day),
             "edit_source": "EMPLOYEE",
-        }
+            }
         result.append({
             "date": work_day,
             "date_text": work_day.isoformat(),
@@ -14399,7 +14438,12 @@ def hr_work_schedule():
         manager_pending_count=sum(
             1 for row in report_plan_map.values() if row.status == "SUBMITTED"
         ),
-        ready_for_final_count=status_counts.get("MANAGER_APPROVED", 0),
+        ready_for_final_count=sum(
+            1
+            for row in all_plan_map.values()
+            if row.status in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
+            and len(row.days) == 14
+        ),
         reminder_due=reminder_due,
         today=date.today(),
     )
@@ -14547,8 +14591,8 @@ def hr_work_schedule_update():
                 flash("تم حفظ تعديلات المدير.", "success")
         else:
             if action == "final_approve":
-                if plan.status != "MANAGER_APPROVED":
-                    raise ValueError("يجب اعتماد الجدول من أحد المديرين المسؤولين قبل الاعتماد النهائي.")
+                if plan.status not in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES:
+                    raise ValueError("لا يمكن اعتماد الجدول نهائيًا في حالته الحالية.")
                 plan.status = "FINAL_APPROVED"
                 plan.final_approved_at = datetime.utcnow()
                 plan.final_approved_by_id = current_user.id
@@ -14661,7 +14705,7 @@ def hr_work_schedule_final_approve_all():
     latest_map = _attendance_schedule_latest_map(employees, period_start_text)
     ready_plans = [
         plan for plan in latest_map.values()
-        if plan.status == "MANAGER_APPROVED" and len(plan.days) == 14
+        if plan.status in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES and len(plan.days) == 14
     ]
     now = datetime.utcnow()
     for plan in ready_plans:
@@ -14697,7 +14741,7 @@ def hr_work_schedule_final_approve_all():
         db.session.commit()
         flash(f"تم اعتماد {len(ready_plans)} جدول دوام دفعة واحدة.", "success")
     else:
-        flash("لا توجد جداول مكتملة ومعتمدة من أحد المديرين المسؤولين بانتظار الاعتماد النهائي.", "info")
+        flash("لا توجد جداول مكتملة بانتظار الاعتماد النهائي.", "info")
     return redirect(url_for("portal.hr_work_schedule", start=period_start_text, view="all"))
 
 
@@ -25041,8 +25085,14 @@ def _approved_attendance_schedule_day(
 
 def _attendance_schedule_proxy(day_row: HRAttendanceScheduleDay):
     schedule = day_row.schedule
-    start_time = day_row.start_time or getattr(schedule, "start_time", None)
-    end_time = day_row.end_time or getattr(schedule, "end_time", None)
+    work_day = _parse_yyyy_mm_dd(getattr(day_row, "work_date", None))
+    template_start, template_end = (
+        _attendance_schedule_template_times(schedule, work_day)
+        if schedule and work_day
+        else (getattr(schedule, "start_time", None), getattr(schedule, "end_time", None))
+    )
+    start_time = day_row.start_time or template_start
+    end_time = day_row.end_time or template_end
     required_minutes = getattr(schedule, "required_minutes", None)
     if required_minutes is None:
         start_minutes = _parse_hhmm_minutes(start_time)

@@ -25,14 +25,17 @@ from models import (
     SystemSetting,
     User,
     WorkSchedule,
+    WorkScheduleDay,
 )
 from portal.routes import (
     _attendance_exemption_reason,
+    _attendance_schedule_apply_form,
     _attendance_schedule_direct_reports,
     _attendance_schedule_fork_plan,
     _attendance_schedule_is_final_approver,
     _attendance_schedule_latest_plan,
     _attendance_schedule_responsible_managers,
+    _attendance_schedule_view_days,
     _attendance_schedule_week_rows,
     _effective_schedule_for_user,
     hr_work_schedule,
@@ -394,6 +397,166 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         notify.assert_called_once()
         self.assertIn("تم اعتماد جدول دوام", notify.call_args.args[1])
         self.assertNotIn("السوبر أدمن", notify.call_args.args[1])
+
+    def test_secretary_general_can_final_approve_submitted_plan(self):
+        secretary = User(
+            email="schedule-submitted-secretary@example.test",
+            name="الأمين العام",
+            password_hash="not-used",
+            role="GENERAL_SECRETARY",
+        )
+        db.session.add(secretary)
+        db.session.flush()
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            period_start="2026-09-06",
+            period_end="2026-09-19",
+            version_no=1,
+            status="SUBMITTED",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        db.session.add_all(
+            HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=(date(2026, 9, 6) + timedelta(days=offset)).isoformat(),
+                day_type="WORK",
+                schedule_id=self.schedule.id,
+                start_time="08:00",
+                end_time="15:00",
+            )
+            for offset in range(14)
+        )
+        db.session.commit()
+
+        undecorated_update = inspect.unwrap(hr_work_schedule_update)
+        with self.app.test_request_context(
+            "/portal/hr/attendance/work-schedule/update",
+            method="POST",
+            data={
+                "target_user_id": str(self.employee.id),
+                "period_start": "2026-09-06",
+                "plan_id": str(plan.id),
+                "action": "final_approve",
+            },
+        ):
+            with patch("portal.routes.current_user", secretary), patch(
+                "portal.routes.url_for",
+                return_value="/portal/hr/attendance/work-schedule",
+            ), patch("portal.routes.notify_attendance_schedule_stakeholders") as notify, patch(
+                "portal.routes._portal_audit"
+            ):
+                response = undecorated_update()
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(plan)
+        self.assertEqual(plan.status, "FINAL_APPROVED")
+        self.assertEqual(plan.final_approved_by_id, secretary.id)
+        self.assertIsNone(plan.manager_approved_by_id)
+        notify.assert_called_once()
+        self.assertIn("تم اعتماد جدول دوام", notify.call_args.args[1])
+        self.assertNotIn("السوبر أدمن", notify.call_args.args[1])
+
+    def test_shift_times_are_visible_in_the_all_employees_report(self):
+        shift = WorkSchedule(
+            name="مناوبة المساء",
+            kind="SHIFT",
+            is_active=True,
+        )
+        db.session.add(shift)
+        db.session.flush()
+        db.session.add(WorkScheduleDay(
+            schedule_id=shift.id,
+            weekday=date(2026, 9, 6).weekday(),
+            start_time="16:00",
+            end_time="23:00",
+        ))
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            period_start="2026-09-06",
+            period_end="2026-09-19",
+            version_no=1,
+            status="SUBMITTED",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        db.session.add(HRAttendanceScheduleDay(
+            plan_id=plan.id,
+            work_date="2026-09-06",
+            day_type="WORK",
+            schedule_id=shift.id,
+            start_time=None,
+            end_time=None,
+        ))
+        db.session.commit()
+
+        days = _attendance_schedule_view_days(
+            self.employee.id,
+            date(2026, 9, 6),
+            plan,
+            work_days=[date(2026, 9, 6)],
+        )
+
+        self.assertEqual(days[0]["schedule_name"], "مناوبة المساء")
+        self.assertEqual(days[0]["start_time"], "16:00")
+        self.assertEqual(days[0]["end_time"], "23:00")
+
+    def test_shift_template_times_are_saved_when_form_times_are_empty(self):
+        shift = WorkSchedule(
+            name="مناوبة المساء",
+            kind="SHIFT",
+            is_active=True,
+        )
+        db.session.add(shift)
+        db.session.flush()
+        db.session.add(WorkScheduleDay(
+            schedule_id=shift.id,
+            weekday=date(2026, 9, 6).weekday(),
+            start_time="16:00",
+            end_time="23:00",
+        ))
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            period_start="2026-09-06",
+            period_end="2026-09-19",
+            version_no=1,
+            status="SUBMITTED",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        day = HRAttendanceScheduleDay(
+            plan_id=plan.id,
+            work_date="2026-09-06",
+            day_type="WORK",
+        )
+        db.session.add(day)
+        db.session.commit()
+
+        with self.app.test_request_context(
+            "/portal/hr/attendance/work-schedule/update",
+            method="POST",
+            data={
+                "day_type_2026_09_06": "WORK",
+                "schedule_id_2026_09_06": str(shift.id),
+                "start_time_2026_09_06": "",
+                "end_time_2026_09_06": "",
+                "note_2026_09_06": "",
+            },
+        ):
+            changed = _attendance_schedule_apply_form(
+                plan,
+                date(2026, 9, 6),
+                self.manager.id,
+                "MANAGER",
+            )
+
+        self.assertTrue(changed)
+        self.assertEqual(day.schedule_id, shift.id)
+        self.assertEqual(day.start_time, "16:00")
+        self.assertEqual(day.end_time, "23:00")
 
     def test_week_rows_show_every_day_for_each_employee(self):
         final_plan = self._final_plan()

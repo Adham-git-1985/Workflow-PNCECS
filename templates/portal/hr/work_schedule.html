@@ -610,7 +610,7 @@
               <button class="btn ws-primary-btn" name="action" value="manager_approve" type="submit"><i class="bi bi-person-check"></i> اعتماد وإرسال للاعتماد النهائي</button>
             {% elif editor_mode == 'SECRETARY_GENERAL' %}
               <button class="btn btn-outline-secondary" name="action" value="secretary_save" type="submit"><i class="bi bi-save"></i> حفظ تعديل المعتمد النهائي</button>
-              {% if plan and plan.status == 'MANAGER_APPROVED' %}<button class="btn ws-approve-btn" name="action" value="final_approve" type="submit"><i class="bi bi-patch-check-fill"></i> اعتماد نهائي</button>{% endif %}
+              {% if plan and plan.status in ['SUBMITTED', 'MANAGER_APPROVED'] %}<button class="btn ws-approve-btn" name="action" value="final_approve" type="submit"><i class="bi bi-patch-check-fill"></i> اعتماد نهائي</button>{% endif %}
             {% endif %}
           </div>
         </div>
