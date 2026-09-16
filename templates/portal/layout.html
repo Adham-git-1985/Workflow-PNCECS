@@ -305,7 +305,7 @@
 	        </li>
 	        {% endif %}
 
-        {% if au.has_perm('FOLLOWUPS_READ') or au.has_perm('FOLLOWUPS_CREATE') or au.has_perm('FOLLOWUPS_REVIEW') or au.has_perm('FOLLOWUPS_MANAGE') %}
+        {% if au.has_perm('FOLLOWUPS_READ') or au.has_perm('FOLLOWUPS_CREATE') or au.has_perm('FOLLOWUPS_REVIEW') or au.has_perm('FOLLOWUPS_MANAGE') or au.has_role('GENERAL_SECRETARY') or au.has_role('SECRETARY_GENERAL') %}
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('portal.followups_dashboard') }}">
             <i class="bi bi-clipboard-check"></i> متابعاتي

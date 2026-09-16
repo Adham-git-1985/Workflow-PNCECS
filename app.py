@@ -635,6 +635,24 @@ def _ensure_runtime_schema():
                     "CREATE INDEX IF NOT EXISTS ix_notification_poll_latest "
                     "ON notification (user_id, is_mirror, is_visible, id)",
                 ),
+                (
+                    "employee_followup_reports",
+                    ("status", "reviewed_at", "id"),
+                    "CREATE INDEX IF NOT EXISTS ix_followup_status_reviewed_id "
+                    "ON employee_followup_reports (status, reviewed_at, id)",
+                ),
+                (
+                    "employee_followup_reports",
+                    ("updated_at", "id"),
+                    "CREATE INDEX IF NOT EXISTS ix_followup_updated_id "
+                    "ON employee_followup_reports (updated_at, id)",
+                ),
+                (
+                    "employee_followup_items",
+                    ("report_id", "is_included", "status"),
+                    "CREATE INDEX IF NOT EXISTS ix_followup_item_report_included_status "
+                    "ON employee_followup_items (report_id, is_included, status)",
+                ),
             )
             try:
                 for table_name, columns, statement in performance_indexes:

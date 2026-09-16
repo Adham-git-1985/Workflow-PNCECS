@@ -146,6 +146,13 @@ class FollowupFlowTests(unittest.TestCase):
         with self.app.app_context():
             db.session.remove()
 
+    def _authenticated_client(self, user_id):
+        client = self.app.test_client()
+        with client.session_transaction() as session:
+            session["_user_id"] = str(user_id)
+            session["_fresh"] = True
+        return client
+
     def test_direct_manager_can_review_only_after_employee_submits(self):
         with self.app.app_context():
             db.session.add(UserPermission(
@@ -205,6 +212,157 @@ class FollowupFlowTests(unittest.TestCase):
             report = db.session.get(EmployeeFollowupReport, report_id)
             self.assertEqual(report.status, "REVIEWED")
             self.assertEqual(report.manager_comment, "Reviewed")
+
+    def test_manager_approval_notifies_secretary_and_secretary_sees_approved_reports(self):
+        with self.app.app_context():
+            secretary = User(
+                email="followup-secretary@example.test",
+                name="Secretary General",
+                password_hash="not-used-in-test",
+                role="General_secretary",
+            )
+            super_admin = User(
+                email="followup-super@example.test",
+                name="Super Admin",
+                password_hash="not-used-in-test",
+                role="SUPER_ADMIN",
+            )
+            approved_report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="SUBMITTED",
+                submitted_at=datetime(2026, 9, 5, 12, 0),
+            )
+            pending_report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 10, 1),
+                period_end=date(2026, 10, 5),
+                status="SUBMITTED",
+                submitted_at=datetime(2026, 10, 5, 12, 0),
+            )
+            db.session.add_all([secretary, super_admin, approved_report, pending_report])
+            db.session.commit()
+            approved_report_id = approved_report.id
+            pending_report_id = pending_report.id
+            secretary_id = secretary.id
+            super_admin_id = super_admin.id
+
+        response = self.manager_client.post(
+            f"/portal/followups/{approved_report_id}/review",
+            data={"action": "review", "manager_comment": "Approved"},
+        )
+        self.assertEqual(response.status_code, 302)
+
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, approved_report_id)
+            self.assertEqual(report.status, "REVIEWED")
+            self.assertEqual(
+                Notification.query.filter_by(
+                    user_id=secretary_id,
+                    type="FOLLOWUP_REVIEWED",
+                ).count(),
+                1,
+            )
+            self.assertEqual(
+                Notification.query.filter_by(
+                    user_id=super_admin_id,
+                    type="FOLLOWUP_REVIEWED",
+                ).count(),
+                1,
+            )
+
+        secretary_client = self._authenticated_client(secretary_id)
+        dashboard = secretary_client.get("/portal/followups")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn(b"Employee", dashboard.data)
+        self.assertEqual(
+            secretary_client.get(f"/portal/followups/{approved_report_id}").status_code,
+            200,
+        )
+        self.assertEqual(
+            secretary_client.get(f"/portal/followups/{pending_report_id}").status_code,
+            403,
+        )
+
+    def test_super_admin_can_approve_without_manager_and_page_is_paginated(self):
+        with self.app.app_context():
+            secretary = User(
+                email="followup-secretary-paging@example.test",
+                name="Secretary Paging",
+                password_hash="not-used-in-test",
+                role="General_secretary",
+            )
+            super_admin = User(
+                email="followup-super-paging@example.test",
+                name="Super Paging",
+                password_hash="not-used-in-test",
+                role="SUPER_ADMIN",
+            )
+            reports = [
+                EmployeeFollowupReport(
+                    employee_user_id=self.employee_id,
+                    period_start=date(2026, 11, index + 1),
+                    period_end=date(2026, 11, index + 2),
+                    status="REVIEWED",
+                    reviewed_at=datetime(2026, 11, index + 2, 12, 0),
+                )
+                for index in range(11)
+            ]
+            bypass_report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                period_start=date(2026, 12, 1),
+                period_end=date(2026, 12, 2),
+                status="DRAFT",
+            )
+            db.session.add_all([secretary, super_admin, *reports, bypass_report])
+            db.session.commit()
+            secretary_id = secretary.id
+            super_admin_id = super_admin.id
+            bypass_report_id = bypass_report.id
+
+        super_client = self._authenticated_client(super_admin_id)
+        self.assertEqual(
+            super_client.get(f"/portal/followups/{bypass_report_id}").status_code,
+            200,
+        )
+        response = super_client.post(
+            f"/portal/followups/{bypass_report_id}/review",
+            data={"action": "approve"},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, bypass_report_id)
+            self.assertEqual(report.status, "REVIEWED")
+            self.assertIsNotNone(report.reviewed_at)
+            self.assertEqual(
+                AuditLog.query.filter_by(
+                    target_type="EMPLOYEE_FOLLOWUP_REPORT",
+                    target_id=bypass_report_id,
+                    action="FOLLOWUP_SUPER_ADMIN_APPROVE",
+                ).count(),
+                1,
+            )
+
+        old_page_size = self.app.config.get("FOLLOWUPS_PAGE_SIZE")
+        self.app.config["FOLLOWUPS_PAGE_SIZE"] = 10
+        try:
+            dashboard = super_client.get("/portal/followups?secretary_page=2")
+        finally:
+            self.app.config["FOLLOWUPS_PAGE_SIZE"] = old_page_size
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn("صفحة 2 من 2".encode(), dashboard.data)
+
+        with self.app.app_context():
+            self.assertEqual(
+                Notification.query.filter_by(
+                    user_id=secretary_id,
+                    type="FOLLOWUP_REVIEWED",
+                ).count(),
+                1,
+            )
 
     def test_employee_can_choose_one_direct_manager_for_submission(self):
         with self.app.app_context():

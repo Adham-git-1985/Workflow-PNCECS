@@ -5407,6 +5407,8 @@ class EmployeeFollowupReport(db.Model):
     __table_args__ = (
         db.Index("ix_followup_employee_period", "employee_user_id", "period_start", "period_end"),
         db.Index("ix_followup_manager_status", "manager_user_id", "status"),
+        db.Index("ix_followup_status_reviewed_id", "status", "reviewed_at", "id"),
+        db.Index("ix_followup_updated_id", "updated_at", "id"),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -5466,6 +5468,7 @@ class EmployeeFollowupItem(db.Model):
 
     __table_args__ = (
         db.Index("ix_followup_item_report_status", "report_id", "status"),
+        db.Index("ix_followup_item_report_included_status", "report_id", "is_included", "status"),
         db.UniqueConstraint("report_id", "source_type", "source_id", name="uq_followup_item_source"),
     )
 

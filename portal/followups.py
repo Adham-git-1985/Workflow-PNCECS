@@ -11,7 +11,8 @@ import uuid
 
 from flask import abort, current_app, flash, redirect, render_template, request, send_from_directory, url_for
 from flask_login import current_user, login_required
-from sqlalchemy import and_, func, or_
+from sqlalchemy import and_, case, func, or_
+from sqlalchemy.orm import aliased
 
 from extensions import db
 from models import (
@@ -27,9 +28,13 @@ from models import (
 )
 from services.followup_assistant import build_followup_analysis
 from services.followup_docx import DOCX_MIME, build_followup_docx, is_valid_docx
-from services.hr_request_workflow import resolve_responsible_managers
+from services.hr_request_workflow import (
+    resolve_responsible_managers,
+    secretary_general_user_ids,
+)
 from utils.file_uploads import clean_original_filename, random_storage_name
 from utils.notification_links import notification_target_path
+from utils.role_codes import canonical_role_key
 
 from . import portal_bp
 
@@ -83,8 +88,68 @@ def _can_manage_all() -> bool:
     return _has_permission(FOLLOWUPS_MANAGE)
 
 
+def _is_super_admin_account(user: User | None = None) -> bool:
+    selected_user = user or current_user
+    role_key = canonical_role_key(getattr(selected_user, "role", None))
+    if role_key.startswith("SUPER") or role_key in {"ROOT", "SYSADMIN", "SYSTEMADMIN"}:
+        return True
+    try:
+        return bool(
+            selected_user.has_role("SUPER_ADMIN")
+            or selected_user.has_role("SUPERADMIN")
+        )
+    except Exception:
+        return False
+
+
+def _has_secretary_general_role(user: User | None = None) -> bool:
+    selected_user = user or current_user
+    role_key = canonical_role_key(getattr(selected_user, "role", None))
+    return role_key in {"GENERALSECRETARY", "SECRETARYGENERAL"}
+
+
+def _is_secretary_general_account(user: User | None = None) -> bool:
+    selected_user = user or current_user
+    if not selected_user or not getattr(selected_user, "id", None):
+        return False
+    if _has_secretary_general_role(selected_user):
+        return True
+    try:
+        return int(selected_user.id) in {
+            int(user_id) for user_id in secretary_general_user_ids() if user_id
+        }
+    except Exception:
+        return False
+
+
+def _can_view_secretary_reports() -> bool:
+    return _is_super_admin_account() or _is_secretary_general_account()
+
+
+def _followup_super_admin_user_ids() -> list[int]:
+    """Return super-admin recipients without loading User relationships."""
+    try:
+        rows = User.query.with_entities(User.id, User.role).all()
+    except Exception:
+        return []
+    return sorted({
+        int(user_id)
+        for user_id, role in rows
+        if user_id
+        and (
+            canonical_role_key(role).startswith("SUPER")
+            or canonical_role_key(role) in {"ROOT", "SYSADMIN", "SYSTEMADMIN"}
+        )
+    })
+
+
 def _require_followups_access() -> None:
-    if not (_has_permission(FOLLOWUPS_READ) or _can_create() or _can_review()):
+    if not (
+        _has_permission(FOLLOWUPS_READ)
+        or _can_create()
+        or _can_review()
+        or _can_view_secretary_reports()
+    ):
         abort(403)
 
 
@@ -135,8 +200,119 @@ def _followup_manager_ids(report: EmployeeFollowupReport) -> list[int]:
     return list(dict.fromkeys(values))
 
 
+def _manager_snapshot_contains(column, user_id: int):
+    """Match a manager id in both current JSON and legacy CSV snapshots."""
+    value = str(int(user_id))
+    return or_(
+        column == value,
+        column == f"[{value}]",
+        column.like(f"[{value},%"),
+        column.like(f"%,{value},%"),
+        column.like(f"%,{value}]"),
+        column.like(f"%, {value},%"),
+        column.like(f"%, {value}]"),
+        column.like(f"{value},%"),
+        column.like(f"%,{value}"),
+        column.like(f"%, {value}"),
+    )
+
+
+def _followup_summary_query():
+    """Build a lightweight report list query with no report relationships."""
+    employee = aliased(User)
+    manager = aliased(User)
+    return db.session.query(
+        EmployeeFollowupReport.id.label("report_id"),
+        EmployeeFollowupReport.period_start.label("period_start"),
+        EmployeeFollowupReport.period_end.label("period_end"),
+        EmployeeFollowupReport.status.label("status"),
+        EmployeeFollowupReport.submitted_at.label("submitted_at"),
+        EmployeeFollowupReport.reviewed_at.label("reviewed_at"),
+        EmployeeFollowupReport.updated_at.label("updated_at"),
+        func.coalesce(employee.name, employee.username, employee.email).label("employee_name"),
+        employee.email.label("employee_email"),
+        func.coalesce(manager.name, manager.username, manager.email).label("manager_name"),
+        manager.email.label("manager_email"),
+    ).select_from(EmployeeFollowupReport).join(
+        employee,
+        employee.id == EmployeeFollowupReport.employee_user_id,
+    ).outerjoin(
+        manager,
+        manager.id == EmployeeFollowupReport.manager_user_id,
+    )
+
+
+def _followup_page_size() -> int:
+    try:
+        configured = int(current_app.config.get("FOLLOWUPS_PAGE_SIZE", 50))
+    except (TypeError, ValueError):
+        configured = 50
+    return min(max(configured, 10), 100)
+
+
+def _paginate_followup_summary(query, page_arg: str, *order_by):
+    page = max(request.args.get(page_arg, type=int, default=1), 1)
+    per_page = _followup_page_size()
+    total = int(query.order_by(None).count() or 0)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    rows = (
+        query
+        .order_by(*order_by)
+        .offset((page - 1) * per_page)
+        .limit(per_page)
+        .all()
+    )
+    return rows, page, pages, total
+
+
+def _secretary_followup_reports_page():
+    query = _followup_summary_query().filter(
+        EmployeeFollowupReport.status == "REVIEWED"
+    )
+    return _paginate_followup_summary(
+        query,
+        "secretary_page",
+        EmployeeFollowupReport.reviewed_at.desc(),
+        EmployeeFollowupReport.id.desc(),
+    )
+
+
+def _super_admin_followup_reports_page():
+    # Include drafts so a super admin can approve a report even when it has
+    # never received a manager decision.
+    return _paginate_followup_summary(
+        _followup_summary_query(),
+        "admin_page",
+        EmployeeFollowupReport.updated_at.desc(),
+        EmployeeFollowupReport.id.desc(),
+    )
+
+
+def _approved_followup_item_counts() -> tuple[int, int]:
+    """Count approved-report items in SQL, without materializing report rows."""
+    completed_count, total_items = db.session.query(
+        func.coalesce(
+            func.sum(case((EmployeeFollowupItem.status == "COMPLETED", 1), else_=0)),
+            0,
+        ),
+        func.count(EmployeeFollowupItem.id),
+    ).join(
+        EmployeeFollowupReport,
+        EmployeeFollowupReport.id == EmployeeFollowupItem.report_id,
+    ).filter(
+        EmployeeFollowupReport.status == "REVIEWED",
+        EmployeeFollowupItem.is_included.is_(True),
+    ).one()
+    return int(completed_count or 0), int(total_items or 0)
+
+
 def _access_level(report: EmployeeFollowupReport) -> str | None:
     user_id = int(current_user.id)
+    if _is_super_admin_account():
+        return "super_admin"
+    if _is_secretary_general_account() and report.status == "REVIEWED":
+        return "secretary_general"
     if int(report.employee_user_id) == user_id:
         return "employee"
     if (
@@ -178,8 +354,13 @@ def _employee_can_edit(report: EmployeeFollowupReport) -> bool:
     )
 
 
-def _can_delete_followup_reports() -> bool:
-    return _has_permission(FOLLOWUPS_READ)
+def _can_delete_followup_reports(access_level: str | None = None) -> bool:
+    # The Secretary General has read-only visibility. Existing FOLLOWUPS_READ
+    # users retain the legacy delete capability, while the super admin is
+    # explicitly allowed to delete every report.
+    if access_level == "secretary_general":
+        return False
+    return _has_permission(FOLLOWUPS_READ) or _is_super_admin_account()
 
 
 def _remove_report_storage(report_id: int) -> None:
@@ -366,6 +547,31 @@ def _notify(user_ids, message: str, level: str, report: EmployeeFollowupReport) 
         ))
 
 
+def _notify_approved_report_observers(
+    report: EmployeeFollowupReport,
+    approver_label: str,
+) -> None:
+    """Notify Secretary-General and super-admin accounts after approval."""
+    recipient_ids = set()
+    try:
+        recipient_ids.update(secretary_general_user_ids())
+    except Exception:
+        current_app.logger.exception(
+            "Failed to resolve Secretary-General recipients for followup %s",
+            report.id,
+        )
+    recipient_ids.update(_followup_super_admin_user_ids())
+    _notify(
+        recipient_ids,
+        (
+            f"تم اعتماد تقرير إنجاز الموظف {_display_user(report.employee)} "
+            f"بواسطة {approver_label}، وأصبح متاحاً للاطلاع."
+        ),
+        "FOLLOWUP_REVIEWED",
+        report,
+    )
+
+
 def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
     report.employee_summary = (request.form.get("employee_summary") or "").strip() or None
     report.challenges = (request.form.get("challenges") or "").strip() or None
@@ -458,6 +664,15 @@ def send_followup_reminders(today: date | None = None) -> int:
 @login_required
 def followups_dashboard():
     _require_followups_access()
+    is_super_admin = _is_super_admin_account()
+    is_secretary_general = _is_secretary_general_account()
+    can_view_secretary_reports = is_super_admin or is_secretary_general
+
+    # Secretary-General visibility is read-only. Keep the existing manager
+    # queue separate so the two roles do not accidentally expose each other's
+    # actions in the dashboard.
+    manager_can_review = _can_review() and not is_super_admin and not is_secretary_general
+    current_user_id = int(current_user.id)
     own_reports = (
         EmployeeFollowupReport.query
         .filter(EmployeeFollowupReport.employee_user_id == current_user.id)
@@ -465,12 +680,17 @@ def followups_dashboard():
         .all()
     )
     review_reports = []
-    if _can_review():
+    if manager_can_review:
         review_candidates = (
             EmployeeFollowupReport.query
             .filter(
-                (EmployeeFollowupReport.manager_user_id == current_user.id)
-                | EmployeeFollowupReport.manager_user_ids.isnot(None)
+                or_(
+                    EmployeeFollowupReport.manager_user_id == current_user_id,
+                    _manager_snapshot_contains(
+                        EmployeeFollowupReport.manager_user_ids,
+                        current_user_id,
+                    ),
+                )
             )
             .filter(EmployeeFollowupReport.status != "DRAFT")
             .order_by(
@@ -481,30 +701,63 @@ def followups_dashboard():
         )
         review_reports = [
             report for report in review_candidates
-            if int(current_user.id) in _followup_manager_ids(report)
+            if current_user_id in _followup_manager_ids(report)
         ]
 
     current_start, current_end = _month_bounds()
-    metric_reports = review_reports if _can_review() else own_reports
-    metric_items = [item for report in metric_reports for item in (report.items or []) if item.is_included]
-    completed_count = sum(item.status == "COMPLETED" for item in metric_items)
-    incomplete_count = sum(item.status != "COMPLETED" for item in metric_items)
-    total_items = completed_count + incomplete_count
-    completion_rate = round((completed_count / total_items) * 100) if total_items else 0
-    if _can_review():
+    secretary_reports = []
+    secretary_page = secretary_pages = secretary_total = 0
+    admin_reports = []
+    admin_page = admin_pages = admin_total = 0
+
+    if can_view_secretary_reports:
+        # This is intentionally a lightweight, paginated tuple query. The
+        # report's item/attachment relationships contain large text and are
+        # only loaded on the detail page.
+        (
+            secretary_reports,
+            secretary_page,
+            secretary_pages,
+            secretary_total,
+        ) = _secretary_followup_reports_page()
+        if is_super_admin:
+            (
+                admin_reports,
+                admin_page,
+                admin_pages,
+                admin_total,
+            ) = _super_admin_followup_reports_page()
+        completed_count, total_items = _approved_followup_item_counts()
+        incomplete_count = max(total_items - completed_count, 0)
         overdue_count = incomplete_count
-        metric_scope_label = "فريقك"
+        metric_scope_label = "الموظفين"
     else:
-        overdue_count = PortalMeetingTask.query.filter(
-            PortalMeetingTask.assignee_user_id == current_user.id,
-            PortalMeetingTask.status.in_(("OPEN", "IN_PROGRESS")),
-            PortalMeetingTask.due_date.isnot(None),
-            PortalMeetingTask.due_date < date.today(),
-        ).count()
-        metric_scope_label = "مهامك"
+        metric_reports = review_reports if manager_can_review else own_reports
+        metric_items = [
+            item
+            for report in metric_reports
+            for item in (report.items or [])
+            if item.is_included
+        ]
+        completed_count = sum(item.status == "COMPLETED" for item in metric_items)
+        incomplete_count = sum(item.status != "COMPLETED" for item in metric_items)
+        total_items = completed_count + incomplete_count
+        if manager_can_review:
+            overdue_count = incomplete_count
+            metric_scope_label = "فريقك"
+        else:
+            overdue_count = PortalMeetingTask.query.filter(
+                PortalMeetingTask.assignee_user_id == current_user.id,
+                PortalMeetingTask.status.in_(("OPEN", "IN_PROGRESS")),
+                PortalMeetingTask.due_date.isnot(None),
+                PortalMeetingTask.due_date < date.today(),
+            ).count()
+            metric_scope_label = "مهامك"
+
+    completion_rate = round((completed_count / total_items) * 100) if total_items else 0
 
     missing_reports = 0
-    if _can_review():
+    if manager_can_review:
         direct_employee_ids = {
             int(user_id) for (user_id,) in (
                 EmployeeFile.query
@@ -524,21 +777,31 @@ def followups_dashboard():
         submitted_candidates = (
             EmployeeFollowupReport.query
             .filter(
-                (EmployeeFollowupReport.manager_user_id == current_user.id)
-                | EmployeeFollowupReport.manager_user_ids.isnot(None)
+                or_(
+                    EmployeeFollowupReport.manager_user_id == current_user_id,
+                    _manager_snapshot_contains(
+                        EmployeeFollowupReport.manager_user_ids,
+                        current_user_id,
+                    ),
+                )
             )
             .filter(EmployeeFollowupReport.period_start <= current_end)
             .filter(EmployeeFollowupReport.period_end >= current_start)
             .filter(EmployeeFollowupReport.status.in_((
                 "SUBMITTED", "NEEDS_REVISION", "REVIEWED"
             )))
+            .with_entities(
+                EmployeeFollowupReport.employee_user_id,
+                EmployeeFollowupReport.manager_user_id,
+                EmployeeFollowupReport.manager_user_ids,
+            )
             .all()
         )
         submitted_ids = {
             int(report.employee_user_id)
             for report in submitted_candidates
             if report.employee_user_id
-            and int(current_user.id) in _followup_manager_ids(report)
+            and current_user_id in _followup_manager_ids(report)
         }
         missing_reports = len(direct_employee_ids - submitted_ids)
 
@@ -554,8 +817,22 @@ def followups_dashboard():
         missing_reports=missing_reports,
         metric_scope_label=metric_scope_label,
         can_create=_can_create(),
-        can_review=_can_review(),
-        can_delete_followup_reports=_can_delete_followup_reports(),
+        can_review=manager_can_review,
+        can_admin_review=is_super_admin,
+        admin_reports=admin_reports,
+        admin_page=admin_page,
+        admin_pages=admin_pages,
+        admin_total=admin_total,
+        can_secretary_view=can_view_secretary_reports,
+        secretary_reports=secretary_reports,
+        secretary_page=secretary_page,
+        secretary_pages=secretary_pages,
+        secretary_total=secretary_total,
+        can_delete_followup_reports=_can_delete_followup_reports(
+            "secretary_general"
+            if is_secretary_general and not is_super_admin
+            else None
+        ),
     )
 
 
@@ -632,8 +909,13 @@ def followups_new():
 def followups_view(report_id: int):
     _require_followups_access()
     report, access_level = _get_report_or_abort(report_id)
-    can_edit = _employee_can_edit(report)
-    can_review = access_level == "manager" and _can_review() and report.status == "SUBMITTED"
+    # Keep the super-admin decision form visible even if the super admin is
+    # also the employee who owns this particular report.
+    can_edit = _employee_can_edit(report) and access_level != "super_admin"
+    can_review = _can_review() and (
+        access_level == "super_admin"
+        or (access_level == "manager" and report.status == "SUBMITTED")
+    )
     return render_template(
         "portal/followups/view.html",
         report=report,
@@ -644,7 +926,8 @@ def followups_view(report_id: int):
             (item.ai_suggestion or "").strip()
             for item in (report.items or [])
         ),
-        can_delete_followup_reports=_can_delete_followup_reports(),
+        can_delete_followup_reports=_can_delete_followup_reports(access_level),
+        is_super_admin_review=access_level == "super_admin",
         report_status_labels=REPORT_STATUS_LABELS,
         item_status_labels=ITEM_STATUS_LABELS,
         rating_labels=RATING_LABELS,
@@ -655,6 +938,8 @@ def followups_view(report_id: int):
 @login_required
 def followups_delete_report(report_id: int):
     _require_followups_access()
+    if _is_secretary_general_account() and not _is_super_admin_account():
+        abort(403)
     if not _can_delete_followup_reports():
         abort(403)
     report = EmployeeFollowupReport.query.get_or_404(report_id)
@@ -912,28 +1197,66 @@ def followups_export_docx(report_id: int):
 def followups_review(report_id: int):
     _require_followups_access()
     report, level = _get_report_or_abort(report_id)
-    if level != "manager" or not _can_review() or report.status != "SUBMITTED":
+    is_super_admin_review = level == "super_admin" and _is_super_admin_account()
+    if not _can_review() or (
+        not is_super_admin_review
+        and (level != "manager" or report.status != "SUBMITTED")
+    ):
         abort(403)
     action = (request.form.get("action") or "review").strip().lower()
-    report.manager_comment = (request.form.get("manager_comment") or "").strip() or None
-    rating = (request.form.get("manager_rating") or "").strip().upper()
-    report.manager_rating = rating if rating in RATING_LABELS else None
+    if "manager_comment" in request.form:
+        report.manager_comment = (request.form.get("manager_comment") or "").strip() or None
+    if "manager_rating" in request.form:
+        rating = (request.form.get("manager_rating") or "").strip().upper()
+        report.manager_rating = rating if rating in RATING_LABELS else None
     for item in report.items or []:
-        item.manager_comment = (request.form.get(f"manager_comment_{item.id}") or "").strip() or None
-        item_rating = (request.form.get(f"manager_rating_{item.id}") or "").strip().upper()
-        item.manager_rating = item_rating if item_rating in RATING_LABELS else None
-    report.reviewed_at = datetime.utcnow()
+        comment_field = f"manager_comment_{item.id}"
+        if comment_field in request.form:
+            item.manager_comment = (request.form.get(comment_field) or "").strip() or None
+        rating_field = f"manager_rating_{item.id}"
+        if rating_field in request.form:
+            item_rating = (request.form.get(rating_field) or "").strip().upper()
+            item.manager_rating = item_rating if item_rating in RATING_LABELS else None
+
+    old_status = report.status
+    now = datetime.utcnow()
+    report.reviewed_at = now
     if action == "return":
         report.status = "NEEDS_REVISION"
-        message = "تمت إعادة تقرير الإنجاز للتعديل مع ملاحظات المدير."
+        actor_label = "السوبر أدمن" if is_super_admin_review else "المدير"
+        message = f"تمت إعادة تقرير الإنجاز للتعديل مع ملاحظات {actor_label}."
         flash_message = "تمت إعادة التقرير للموظف للتعديل."
         notification_type = "FOLLOWUP_REVISION"
     else:
         report.status = "REVIEWED"
-        message = "تمت مراجعة تقرير الإنجاز واعتماده إلكترونياً من المدير."
+        actor_label = "السوبر أدمن" if is_super_admin_review else "المدير"
+        message = f"تمت مراجعة تقرير الإنجاز واعتماده إلكترونياً من {actor_label}."
         flash_message = "تمت مراجعة التقرير واعتماده إلكترونياً."
         notification_type = "FOLLOWUP_REVIEWED"
     _notify([report.employee_user_id], message, notification_type, report)
+    if action != "return":
+        _notify_approved_report_observers(report, actor_label)
+    db.session.add(AuditLog(
+        action=(
+            "FOLLOWUP_SUPER_ADMIN_APPROVE"
+            if is_super_admin_review and action != "return"
+            else "FOLLOWUP_SUPER_ADMIN_RETURN"
+            if is_super_admin_review
+            else "FOLLOWUP_MANAGER_APPROVE"
+            if action != "return"
+            else "FOLLOWUP_MANAGER_RETURN"
+        ),
+        user_id=current_user.id,
+        note=(
+            f"Follow-up report decision by {actor_label}; "
+            f"manager approval was {'present' if old_status == 'REVIEWED' else 'not required'}"
+        ),
+        old_status=old_status,
+        new_status=report.status,
+        target_type="EMPLOYEE_FOLLOWUP_REPORT",
+        target_id=report.id,
+        created_at=now,
+    ))
     db.session.commit()
     flash(flash_message, "success")
     return redirect(url_for("portal.followups_view", report_id=report.id))

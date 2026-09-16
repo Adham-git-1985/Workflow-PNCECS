@@ -34,6 +34,9 @@ class BaseConfig:
     WORKFLOW_FOLLOWING_PAGE_SIZE = int(
         os.getenv("WORKFLOW_FOLLOWING_PAGE_SIZE", "50")
     )
+    # Keep Secretary-General follow-up lists bounded; detail data is loaded on
+    # demand from the report page.
+    FOLLOWUPS_PAGE_SIZE = int(os.getenv("FOLLOWUPS_PAGE_SIZE", "50"))
 
     # Archive
     ARCHIVE_PURGE_DAYS = int(

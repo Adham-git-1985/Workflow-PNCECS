@@ -640,21 +640,23 @@ def resolve_general_director(user_id: int, exclude_ids: Iterable[int] = ()) -> U
 
 def secretary_general_user_ids() -> list[int]:
     ids: set[int] = set()
-    for user in User.query.all():
-        role = _normalize(user.role)
+    # This resolver is used by read-heavy pages as well as notifications. Only
+    # fetch the two columns needed here; loading full User objects also
+    # triggers their permission and employee-file relationships.
+    for user_id, role_value in User.query.with_entities(User.id, User.role).all():
+        role = _normalize(role_value)
         if role in {"GENERALSECRETARY", "SECRETARYGENERAL"}:
-            ids.add(int(user.id))
+            ids.add(int(user_id))
     try:
         rows = (
             OrgNodeManager.query
             .join(OrgNode, OrgNode.id == OrgNodeManager.node_id)
             .join(OrgNodeType, OrgNodeType.id == OrgNode.type_id)
             .filter(func.upper(OrgNodeType.code) == "SECRETARY_GENERAL")
+            .with_entities(OrgNodeManager.manager_user_id)
             .all()
         )
-        for row in rows:
-            if row.manager_user_id:
-                ids.add(int(row.manager_user_id))
+        ids.update(int(manager_id) for (manager_id,) in rows if manager_id)
     except Exception:
         # Relationship joins differ between SQLAlchemy versions; the role is
         # the stable fallback used by existing deployments.

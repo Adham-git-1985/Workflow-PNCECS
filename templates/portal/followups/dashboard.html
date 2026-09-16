@@ -88,5 +88,87 @@
     </div>
   </div>
   {% endif %}
+
+  {% if can_admin_review %}
+  <div class="card border-0 shadow-sm mt-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <h3 class="h6 mb-1">إدارة السوبر أدمن لتقارير الإنجاز</h3>
+        <div class="small text-muted">يمكن اعتماد التقرير مباشرة، حتى دون اعتماد المدير.</div>
+      </div>
+      <span class="text-muted small">{{ admin_total }} تقرير</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead><tr><th>الموظف</th><th>الفترة</th><th>الحالة</th><th>آخر تحديث</th><th></th></tr></thead>
+        <tbody>
+          {% for report in admin_reports %}
+          <tr>
+            <td>{{ report.employee_name or report.employee_email or '-' }}</td>
+            <td>{{ report.period_start }} إلى {{ report.period_end }}</td>
+            <td><span class="badge text-bg-{% if report.status == 'REVIEWED' %}success{% elif report.status == 'NEEDS_REVISION' %}warning{% elif report.status == 'SUBMITTED' %}primary{% else %}secondary{% endif %}">{{ report_status_labels.get(report.status, report.status) }}</span></td>
+            <td>{{ report.updated_at|local_datetime if report.updated_at else '-' }}</td>
+            <td class="text-nowrap">
+              <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.report_id) }}">فتح</a>
+              {% if can_delete_followup_reports %}
+              <form method="post" action="{{ url_for('portal.followups_delete_report', report_id=report.report_id) }}" class="d-inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('هل تريد حذف تقرير الإنجاز نهائياً؟');">حذف</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير حالياً.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if admin_pages > 1 %}
+    <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+      {% if admin_page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_dashboard', admin_page=admin_page - 1, secretary_page=secretary_page or 1) }}">السابق</a>{% else %}<span></span>{% endif %}
+      <span class="small text-muted">صفحة {{ admin_page }} من {{ admin_pages }}</span>
+      {% if admin_page < admin_pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_dashboard', admin_page=admin_page + 1, secretary_page=secretary_page or 1) }}">التالي</a>{% else %}<span></span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if can_secretary_view %}
+  <div class="card border-0 shadow-sm mt-4">
+    <div class="card-header bg-white d-flex justify-content-between align-items-center">
+      <div>
+        <h3 class="h6 mb-1">تقارير الإنجاز المعتمدة للأمين العام</h3>
+        <div class="small text-muted">تظهر هنا التقارير التي اعتمدها المدير أو السوبر أدمن، للقراءة فقط.</div>
+      </div>
+      <span class="text-muted small">{{ secretary_total }} تقرير</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table table-hover mb-0 align-middle">
+        <thead><tr><th>الموظف</th><th>الفترة</th><th>المدير</th><th>تاريخ الاعتماد</th><th></th></tr></thead>
+        <tbody>
+          {% for report in secretary_reports %}
+          <tr>
+            <td>{{ report.employee_name or report.employee_email or '-' }}</td>
+            <td>{{ report.period_start }} إلى {{ report.period_end }}</td>
+            <td>{{ report.manager_name or report.manager_email or 'غير محدد' }}</td>
+            <td>{{ report.reviewed_at|local_datetime if report.reviewed_at else '-' }}</td>
+            <td><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.followups_view', report_id=report.report_id) }}">فتح التقرير</a></td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا توجد تقارير إنجاز معتمدة بعد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if secretary_pages > 1 %}
+    <div class="card-footer bg-white d-flex justify-content-between align-items-center">
+      {% if secretary_page > 1 %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_dashboard', secretary_page=secretary_page - 1, admin_page=admin_page or 1) }}">السابق</a>{% else %}<span></span>{% endif %}
+      <span class="small text-muted">صفحة {{ secretary_page }} من {{ secretary_pages }}</span>
+      {% if secretary_page < secretary_pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.followups_dashboard', secretary_page=secretary_page + 1, admin_page=admin_page or 1) }}">التالي</a>{% else %}<span></span>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
 </div>
 {% endblock %}
