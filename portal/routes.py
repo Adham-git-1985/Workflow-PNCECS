@@ -137,7 +137,11 @@ from utils.org_dynamic import (
     sync_existing_legacy_node,
     sync_legacy_now,
 )
-from workflow.dynamic_paths import node_path_label, org_node_approver_names
+from workflow.dynamic_paths import (
+    _is_secretary_general_node,
+    node_path_label,
+    org_node_approver_names,
+)
 from models import (
     User,
     EmployeeFile,
@@ -13808,6 +13812,17 @@ _ATTENDANCE_SCHEDULE_DAY_META = {
 _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES = {"SUBMITTED", "MANAGER_APPROVED"}
 
 
+def _attendance_schedule_request_cache(name: str) -> dict:
+    """Return a request-local cache used by the schedule roster builders."""
+    if not has_request_context():
+        return {}
+    cache = getattr(g, "_attendance_schedule_cache", None)
+    if cache is None:
+        cache = {}
+        g._attendance_schedule_cache = cache
+    return cache.setdefault(name, {})
+
+
 def _attendance_schedule_is_final_approver(user=None) -> bool:
     selected_user = user or current_user
     try:
@@ -13857,14 +13872,457 @@ def _attendance_schedule_employee_users() -> list[User]:
 def _attendance_schedule_responsible_managers(user_id: int) -> list[User]:
     normalized_user_id = int(user_id)
     if has_request_context():
-        cache = getattr(g, "_attendance_schedule_manager_cache", None)
-        if cache is None:
-            cache = {}
-            g._attendance_schedule_manager_cache = cache
+        bulk_cache = _attendance_schedule_request_cache("bulk_managers")
+        if normalized_user_id in bulk_cache:
+            return bulk_cache[normalized_user_id]
+        cache = _attendance_schedule_request_cache("managers")
         if normalized_user_id not in cache:
             cache[normalized_user_id] = resolve_responsible_managers(normalized_user_id)
         return cache[normalized_user_id]
     return resolve_responsible_managers(normalized_user_id)
+
+
+def _attendance_schedule_responsible_managers_map(users: list[User]) -> dict[int, list[User]]:
+    """Resolve roster managers with scalar/bulk queries for the all-employees view."""
+    user_ids = tuple(sorted({int(user.id) for user in users if getattr(user, "id", None)}))
+    if not user_ids:
+        return {}
+    cache = _attendance_schedule_request_cache("manager_maps")
+    if user_ids in cache:
+        return cache[user_ids]
+
+    candidate_flags = {user_id: {} for user_id in user_ids}
+    explicit_by_user = {user_id: [] for user_id in user_ids}
+    manager_ids = set()
+
+    def add_candidate(employee_id: int, manager_id: int | None, is_primary: bool = False) -> None:
+        if not manager_id or int(manager_id) == int(employee_id):
+            return
+        normalized_manager_id = int(manager_id)
+        manager_ids.add(normalized_manager_id)
+        current = candidate_flags[int(employee_id)].get(normalized_manager_id, False)
+        candidate_flags[int(employee_id)][normalized_manager_id] = bool(current or is_primary)
+
+    try:
+        explicit_rows = (
+            db.session.query(
+                EmployeeResponsibleAssignment.employee_user_id,
+                EmployeeResponsibleAssignment.responsible_user_id,
+                EmployeeResponsibleAssignment.id,
+            )
+            .filter(
+                EmployeeResponsibleAssignment.employee_user_id.in_(user_ids),
+                EmployeeResponsibleAssignment.is_active.is_(True),
+            )
+            .order_by(
+                EmployeeResponsibleAssignment.employee_user_id.asc(),
+                EmployeeResponsibleAssignment.id.asc(),
+            )
+            .all()
+        )
+    except Exception:
+        explicit_rows = []
+    for row in explicit_rows:
+        employee_id = int(row.employee_user_id)
+        manager_id = int(row.responsible_user_id) if row.responsible_user_id else None
+        if manager_id and manager_id != employee_id:
+            explicit_by_user[employee_id].append(manager_id)
+            manager_ids.add(manager_id)
+
+    try:
+        direct_rows = (
+            db.session.query(
+                EmployeeFile.user_id,
+                EmployeeFile.direct_manager_user_id,
+            )
+            .filter(EmployeeFile.user_id.in_(user_ids))
+            .all()
+        )
+    except Exception:
+        direct_rows = []
+    for row in direct_rows:
+        add_candidate(row.user_id, row.direct_manager_user_id, True)
+
+    today_text = date.today().isoformat()
+    try:
+        secondment_rows = (
+            db.session.query(
+                EmployeeSecondment.user_id,
+                EmployeeSecondment.direct_manager_user_id,
+                EmployeeSecondment.date_from,
+                EmployeeSecondment.date_to,
+            )
+            .filter(EmployeeSecondment.user_id.in_(user_ids))
+            .all()
+        )
+    except Exception:
+        secondment_rows = []
+    for row in secondment_rows:
+        if (row.date_from and row.date_from > today_text) or (
+            row.date_to and row.date_to < today_text
+        ):
+            continue
+        add_candidate(row.user_id, row.direct_manager_user_id)
+
+    node_by_id = {}
+    node_manager_by_id = {}
+    placement_by_user = {user_id: [] for user_id in user_ids}
+    primary_node_by_user = {}
+    node_query_ok = True
+    try:
+        node_rows = (
+            db.session.query(
+                OrgNode.id,
+                OrgNode.parent_id,
+                OrgNode.type_id,
+                OrgNode.name_ar,
+                OrgNode.name_en,
+                OrgNode.is_active,
+                OrgNode.legacy_type,
+                OrgNode.legacy_id,
+                OrgNodeType.code,
+            )
+            .join(OrgNodeType, OrgNodeType.id == OrgNode.type_id)
+            .all()
+        )
+        node_by_id = {
+            int(row.id): SimpleNamespace(
+                id=int(row.id),
+                parent_id=int(row.parent_id) if row.parent_id else None,
+                type_code=(row.code or "").strip().upper(),
+                name_ar=row.name_ar or "",
+                name_en=row.name_en or "",
+                is_active=bool(row.is_active),
+                legacy_type=row.legacy_type,
+                legacy_id=int(row.legacy_id) if row.legacy_id else None,
+            )
+            for row in node_rows
+        }
+        node_manager_rows = db.session.query(
+            OrgNodeManager.node_id,
+            OrgNodeManager.manager_user_id,
+            OrgNodeManager.deputy_user_id,
+        ).all()
+        node_manager_by_id = {
+            int(row.node_id): (
+                int(row.manager_user_id) if row.manager_user_id else None,
+                int(row.deputy_user_id) if row.deputy_user_id else None,
+            )
+            for row in node_manager_rows
+        }
+        node_assignment_rows = (
+            db.session.query(
+                OrgNodeAssignment.user_id,
+                OrgNodeAssignment.node_id,
+                OrgNodeAssignment.is_primary,
+                OrgNodeAssignment.id,
+            )
+            .join(OrgNode, OrgNode.id == OrgNodeAssignment.node_id)
+            .filter(
+                OrgNodeAssignment.user_id.in_(user_ids),
+                OrgNode.is_active.is_(True),
+            )
+            .order_by(
+                OrgNodeAssignment.user_id.asc(),
+                OrgNodeAssignment.is_primary.desc(),
+                OrgNodeAssignment.id.asc(),
+            )
+            .all()
+        )
+    except Exception:
+        node_query_ok = False
+        node_assignment_rows = []
+
+    def add_placement(employee_id: int, node_id: int | None, is_primary: bool = False) -> None:
+        if not node_id or int(node_id) not in node_by_id:
+            return
+        node = node_by_id[int(node_id)]
+        if not node.is_active:
+            return
+        employee_id = int(employee_id)
+        for index, (existing_id, existing_primary) in enumerate(placement_by_user[employee_id]):
+            if int(existing_id) == int(node_id):
+                placement_by_user[employee_id][index] = (
+                    existing_id,
+                    bool(existing_primary or is_primary),
+                )
+                return
+        placement_by_user[employee_id].append((int(node_id), bool(is_primary)))
+
+    legacy_node_by_key = {}
+    if node_query_ok:
+        legacy_node_by_key = {
+            (node.legacy_type.strip().upper(), int(node.legacy_id)): int(node.id)
+            for node in node_by_id.values()
+            if getattr(node, "legacy_type", None) and getattr(node, "legacy_id", None)
+        }
+        primary_assignment_by_user = {}
+        for row in node_assignment_rows:
+            employee_id = int(row.user_id)
+            add_placement(employee_id, row.node_id, bool(row.is_primary))
+            if row.is_primary and (
+                employee_id not in primary_assignment_by_user
+                or int(row.id) > primary_assignment_by_user[employee_id][0]
+            ):
+                primary_assignment_by_user[employee_id] = (int(row.id), int(row.node_id))
+        primary_node_by_user.update({
+            employee_id: node_id
+            for employee_id, (_assignment_id, node_id) in primary_assignment_by_user.items()
+        })
+
+        for user in users:
+            employee_id = int(user.id)
+            if employee_id in primary_node_by_user:
+                continue
+            user_node_id = getattr(user, "org_node_id", None)
+            if user_node_id and int(user_node_id) in node_by_id and node_by_id[int(user_node_id)].is_active:
+                primary_node_by_user[employee_id] = int(user_node_id)
+                add_placement(employee_id, int(user_node_id), True)
+
+        # Some older users have no OrgNodeAssignment and keep only the legacy
+        # hierarchy fields on users.  This is the same fallback used by
+        # resolve_user_org_node_id().
+        for user in users:
+            employee_id = int(user.id)
+            if employee_id in primary_node_by_user:
+                continue
+            for unit_type, field_name in (
+                ("DIVISION", "division_id"),
+                ("SECTION", "section_id"),
+                ("UNIT", "unit_id"),
+                ("DEPARTMENT", "department_id"),
+                ("DIRECTORATE", "directorate_id"),
+            ):
+                legacy_id = getattr(user, field_name, None)
+                node_id = legacy_node_by_key.get((unit_type, int(legacy_id))) if legacy_id else None
+                if node_id:
+                    primary_node_by_user[employee_id] = int(node_id)
+                    add_placement(employee_id, int(node_id), True)
+                    break
+
+        for node_id, (manager_id, deputy_id) in node_manager_by_id.items():
+            node = node_by_id.get(node_id)
+            if not node or not node.is_active:
+                continue
+            for employee_id in (manager_id, deputy_id):
+                if employee_id in placement_by_user:
+                    add_placement(
+                        employee_id,
+                        node_id,
+                        node_id == primary_node_by_user.get(employee_id),
+                    )
+
+        def node_chain_leaf_first(start_node_id: int) -> list[int]:
+            chain = []
+            seen = set()
+            current_id = int(start_node_id)
+            while current_id and current_id not in seen and len(chain) < 200:
+                seen.add(current_id)
+                node = node_by_id.get(current_id)
+                if not node:
+                    break
+                chain.append(current_id)
+                current_id = int(node.parent_id or 0)
+            return chain
+
+        excluded_node_types = {"ORGANIZATION", "CHAIRPERSON", "SECRETARY_GENERAL"}
+        for employee_id, placements in placement_by_user.items():
+            for node_id, placement_is_primary in placements:
+                chain = node_chain_leaf_first(node_id)
+                first_candidate = None
+                for current_node_id in chain:
+                    first_manager, first_deputy = node_manager_by_id.get(
+                        current_node_id,
+                        (None, None),
+                    )
+                    for candidate in (first_manager, first_deputy):
+                        if candidate and int(candidate) != int(employee_id):
+                            first_candidate = int(candidate)
+                            break
+                    if first_candidate:
+                        break
+                if first_candidate:
+                    add_candidate(employee_id, first_candidate, placement_is_primary)
+                for current_node_id in chain:
+                    current_node = node_by_id.get(current_node_id)
+                    manager_row = node_manager_by_id.get(current_node_id)
+                    if not current_node or not manager_row:
+                        continue
+                    if current_node.type_code in excluded_node_types or _is_secretary_general_node(
+                        SimpleNamespace(
+                            type=SimpleNamespace(code=current_node.type_code),
+                            name_ar=current_node.name_ar,
+                            name_en=current_node.name_en,
+                        )
+                    ):
+                        continue
+                    for manager_id in manager_row:
+                        add_candidate(employee_id, manager_id, placement_is_primary)
+
+    # Legacy Portal org assignments are also part of the responsible-manager fallback.
+    legacy_assignment_rows = []
+    legacy_query_ok = True
+    try:
+        legacy_assignment_rows = (
+            db.session.query(
+                OrgUnitAssignment.user_id,
+                OrgUnitAssignment.unit_type,
+                OrgUnitAssignment.unit_id,
+                OrgUnitAssignment.is_primary,
+                OrgUnitAssignment.id,
+            )
+            .filter(
+                OrgUnitAssignment.user_id.in_(user_ids),
+                func.upper(OrgUnitAssignment.unit_type) != "TEAM",
+            )
+            .order_by(
+                OrgUnitAssignment.user_id.asc(),
+                OrgUnitAssignment.is_primary.desc(),
+                OrgUnitAssignment.id.asc(),
+            )
+            .all()
+        )
+    except Exception:
+        legacy_query_ok = False
+
+    legacy_parent = {}
+
+    def load_legacy_parents(model, unit_type: str, parent_fields: tuple[tuple[str, str], ...]) -> None:
+        try:
+            rows = db.session.query(
+                model.id,
+                *[getattr(model, field_name) for _parent_type, field_name in parent_fields],
+            ).all()
+        except Exception:
+            return
+        for row in rows:
+            values = list(row)
+            unit_id = int(values.pop(0))
+            for (parent_type, _field_name), parent_id in zip(parent_fields, values):
+                if parent_id:
+                    legacy_parent[(unit_type, unit_id)] = (parent_type, int(parent_id))
+                    break
+
+    load_legacy_parents(Directorate, "DIRECTORATE", (("ORGANIZATION", "organization_id"),))
+    load_legacy_parents(Unit, "UNIT", (("ORGANIZATION", "organization_id"),))
+    load_legacy_parents(Department, "DEPARTMENT", (("UNIT", "unit_id"), ("DIRECTORATE", "directorate_id")))
+    load_legacy_parents(Section, "SECTION", (("DEPARTMENT", "department_id"), ("UNIT", "unit_id"), ("DIRECTORATE", "directorate_id")))
+    load_legacy_parents(Division, "DIVISION", (("SECTION", "section_id"), ("DEPARTMENT", "department_id")))
+    load_legacy_parents(Team, "TEAM", (("DIVISION", "division_id"), ("SECTION", "section_id")))
+
+    legacy_manager_by_unit = {}
+    try:
+        legacy_manager_rows = db.session.query(
+            OrgUnitManager.unit_type,
+            OrgUnitManager.unit_id,
+            OrgUnitManager.manager_user_id,
+            OrgUnitManager.deputy_user_id,
+        ).all()
+        legacy_manager_by_unit = {
+            (
+                (row.unit_type or "").strip().upper(),
+                int(row.unit_id),
+            ): (
+                int(row.manager_user_id) if row.manager_user_id else None,
+                int(row.deputy_user_id) if row.deputy_user_id else None,
+            )
+            for row in legacy_manager_rows
+        }
+    except Exception:
+        legacy_query_ok = False
+
+    if legacy_query_ok:
+        for row in legacy_assignment_rows:
+            employee_id = int(row.user_id)
+            unit_type = (row.unit_type or "").strip().upper()
+            current_key = (unit_type, int(row.unit_id))
+            chain = []
+            seen = set()
+            while current_key[0] and current_key[1] and current_key not in seen:
+                seen.add(current_key)
+                chain.append(current_key)
+                current_key = legacy_parent.get(current_key, ("", 0))
+
+            for chain_key in chain:
+                manager_row = legacy_manager_by_unit.get(chain_key)
+                if not manager_row:
+                    continue
+                first_candidate = manager_row[0] or manager_row[1]
+                if first_candidate:
+                    add_candidate(employee_id, first_candidate, bool(row.is_primary))
+                    break
+            for chain_type, chain_id in chain:
+                if chain_type == "ORGANIZATION":
+                    continue
+                manager_row = legacy_manager_by_unit.get((chain_type, chain_id))
+                if not manager_row:
+                    continue
+                for manager_id in manager_row:
+                    add_candidate(employee_id, manager_id, bool(row.is_primary))
+
+    # Resolve legacy users to a dynamic node when they have no explicit node placement.
+    if node_query_ok:
+        for row in legacy_assignment_rows:
+            add_placement(
+                int(row.user_id),
+                legacy_node_by_key.get((
+                    (row.unit_type or "").strip().upper(),
+                    int(row.unit_id),
+                )),
+                bool(row.is_primary),
+            )
+
+    user_snapshots = {}
+    if manager_ids:
+        try:
+            rows = db.session.query(
+                User.id,
+                User.name,
+                User.username,
+                User.email,
+                User.job_title,
+            ).filter(User.id.in_(manager_ids)).all()
+        except Exception:
+            rows = []
+        user_snapshots = {
+            int(row.id): SimpleNamespace(
+                id=int(row.id),
+                name=row.name,
+                username=row.username,
+                email=row.email,
+                job_title=row.job_title,
+                full_name=(row.name or "").strip() or row.username or row.email or f"User #{row.id}",
+            )
+            for row in rows
+        }
+
+    result = {}
+    bulk_cache = _attendance_schedule_request_cache("bulk_managers")
+    for employee_id in user_ids:
+        explicit_ids = list(dict.fromkeys(
+            manager_id
+            for manager_id in explicit_by_user[employee_id]
+            if manager_id in user_snapshots
+        ))
+        if explicit_ids:
+            ordered_ids = explicit_ids
+            flags = {manager_id: index == 0 for index, manager_id in enumerate(ordered_ids)}
+        else:
+            flags = candidate_flags[employee_id]
+            ordered_ids = [manager_id for manager_id in flags if manager_id in user_snapshots]
+            ordered_ids.sort(
+                key=lambda manager_id: (
+                    0 if flags.get(manager_id) else 1,
+                    user_snapshots[manager_id].full_name,
+                    manager_id,
+                )
+            )
+        managers = [user_snapshots[manager_id] for manager_id in ordered_ids]
+        result[employee_id] = managers
+        bulk_cache[employee_id] = managers
+
+    cache[user_ids] = result
+    return result
 
 
 def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
@@ -13945,6 +14403,8 @@ def _attendance_schedule_latest_map(
     for row in rows:
         result.setdefault(int(row.user_id), row)
     return result
+
+
 def _attendance_schedule_template_times(
     schedule: WorkSchedule | None,
     work_day: date,
@@ -13978,8 +14438,13 @@ def _attendance_schedule_template_times(
 
 
 def _attendance_schedule_default_values(user_id: int, work_day: date) -> dict:
+    key = (int(user_id), work_day.isoformat())
+    cache = _attendance_schedule_request_cache("default_values")
+    if key in cache:
+        return dict(cache[key])
+
     if _is_weekly_off(work_day, _weekly_mask()):
-        return {
+        values = {
             "day_type": "OFF",
             "schedule_id": None,
             "schedule_name": None,
@@ -13987,16 +14452,23 @@ def _attendance_schedule_default_values(user_id: int, work_day: date) -> dict:
             "end_time": None,
             "note": "",
         }
+        cache[key] = values
+        return dict(values)
 
     schedule = _effective_schedule_for_user(int(user_id), work_day.isoformat())
     start_time, end_time = _attendance_schedule_template_times(schedule, work_day)
-    policy = _effective_work_policy_for_user(int(user_id), work_day.isoformat())
+    schedule_kind = (getattr(schedule, "kind", None) or "").strip().upper()
+    policy = (
+        None
+        if schedule_kind == "REMOTE"
+        else _effective_work_policy_for_user(int(user_id), work_day.isoformat())
+    )
     is_remote = bool(
-        schedule and (getattr(schedule, "kind", "") or "").strip().upper() == "REMOTE"
+        schedule_kind == "REMOTE"
     ) or bool(
         policy and (getattr(policy, "location_policy", "") or "").strip().upper() == "REMOTE"
     )
-    return {
+    values = {
         "day_type": "REMOTE" if is_remote else "WORK",
         "schedule_id": getattr(schedule, "id", None),
         "schedule_name": getattr(schedule, "name", None),
@@ -14004,6 +14476,8 @@ def _attendance_schedule_default_values(user_id: int, work_day: date) -> dict:
         "end_time": end_time or "15:00",
         "note": "",
     }
+    cache[key] = values
+    return dict(values)
 
 
 def _attendance_schedule_create_plan(
@@ -14313,6 +14787,8 @@ def hr_work_schedule():
 
     organization_loaded = bool(can_view_all and active_view == "all")
     all_users = _attendance_schedule_employee_users() if organization_loaded else []
+    if organization_loaded:
+        _attendance_schedule_responsible_managers_map(all_users)
     organization_count = (
         len(all_users)
         if organization_loaded
@@ -14376,7 +14852,7 @@ def hr_work_schedule():
         all_plan_map,
     ) if can_view_all else ([], [])
     organization_print_weeks = []
-    if organization_loaded:
+    if print_view and organization_loaded:
         for week_no in (1, 2):
             week_days, week_rows = _attendance_schedule_week_rows(
                 all_users,
@@ -24994,10 +25470,14 @@ def _work_policy_place_label(p: WorkPolicy | None) -> str:
 
 def _ensure_work_policy_tables():
     """Create missing *new* tables (for users on existing SQLite DBs without migrations)."""
+    cache = _attendance_schedule_request_cache("flags")
+    if cache.get("work_policy_tables_checked"):
+        return
     try:
-        # touch
-        WorkPolicy.query.limit(1).all()
-        WorkAssignment.query.limit(1).all()
+        # Touch the tables with scalar SQL so the compatibility check does not
+        # instantiate ORM relationships for every employee/day resolution.
+        db.session.execute(text("SELECT 1 FROM work_policy LIMIT 1")).first()
+        db.session.execute(text("SELECT 1 FROM work_assignment LIMIT 1")).first()
     except OperationalError:
         try:
             db.session.rollback()
@@ -25007,6 +25487,8 @@ def _ensure_work_policy_tables():
             db.create_all()
         except Exception:
             pass
+    finally:
+        cache["work_policy_tables_checked"] = True
 
 
 def _weekday_of(day_str: str) -> int:
@@ -25023,64 +25505,272 @@ def _portal_department_id_for_user(user_id: int) -> int | None:
 
     Uses the user's primary OrgUnitAssignment (TEAM/SECTION/DEPARTMENT) and walks up to DEPARTMENT.
     """
+    normalized_user_id = int(user_id)
+    cache = _attendance_schedule_request_cache("departments")
+    if normalized_user_id in cache:
+        return cache[normalized_user_id]
+
+    department_id = None
     try:
-        rows = (
-            OrgUnitAssignment.query
-            .filter_by(user_id=user_id)
-            .order_by(OrgUnitAssignment.is_primary.desc(), OrgUnitAssignment.id.desc())
-            .all()
+        assignment = (
+            db.session.query(
+                OrgUnitAssignment.unit_type,
+                OrgUnitAssignment.unit_id,
+            )
+            .filter(OrgUnitAssignment.user_id == normalized_user_id)
+            .order_by(
+                OrgUnitAssignment.is_primary.desc(),
+                OrgUnitAssignment.id.desc(),
+            )
+            .first()
         )
     except OperationalError:
-        return None
+        assignment = None
     except Exception:
+        assignment = None
+
+    if not assignment or not assignment.unit_type or not assignment.unit_id:
+        cache[normalized_user_id] = None
         return None
 
-    if not rows:
-        return None
-    a = next((r for r in rows if r.is_primary), rows[0])
-    if not a or not a.unit_type or not a.unit_id:
-        return None
-
-    ut = (a.unit_type or "").upper()
+    unit_type = (assignment.unit_type or "").upper()
+    unit_id = int(assignment.unit_id)
     try:
-        if ut == "DEPARTMENT":
-            return int(a.unit_id)
-        if ut == "SECTION":
-            sec = Section.query.get(int(a.unit_id))
-            return int(sec.department_id) if sec and sec.department_id else None
-        if ut == "TEAM":
-            tm = Team.query.get(int(a.unit_id))
-            if not tm or not tm.section_id:
-                return None
-            sec = Section.query.get(int(tm.section_id))
-            return int(sec.department_id) if sec and sec.department_id else None
+        if unit_type == "DEPARTMENT":
+            department_id = unit_id
+        elif unit_type == "SECTION":
+            department_id = db.session.query(Section.department_id).filter(
+                Section.id == unit_id,
+            ).scalar()
+        elif unit_type == "TEAM":
+            department_id = (
+                db.session.query(Section.department_id)
+                .join(Team, Team.section_id == Section.id)
+                .filter(Team.id == unit_id)
+                .scalar()
+            )
     except Exception:
+        department_id = None
+
+    cache[normalized_user_id] = int(department_id) if department_id else None
+    return cache[normalized_user_id]
+
+
+def _attendance_schedule_snapshot(schedule_id: int | None):
+    """Load only schedule fields needed by attendance calculations."""
+    if not schedule_id:
         return None
-    return None
+    normalized_schedule_id = int(schedule_id)
+    cache = _attendance_schedule_request_cache("schedule_snapshots")
+    if normalized_schedule_id in cache:
+        return cache[normalized_schedule_id]
+    try:
+        row = (
+            db.session.query(
+                WorkSchedule.id,
+                WorkSchedule.name,
+                WorkSchedule.kind,
+                WorkSchedule.start_time,
+                WorkSchedule.end_time,
+                WorkSchedule.required_minutes,
+                WorkSchedule.break_minutes,
+                WorkSchedule.grace_minutes,
+                WorkSchedule.start_grace_minutes,
+                WorkSchedule.end_grace_minutes,
+                WorkSchedule.overtime_threshold_minutes,
+            )
+            .filter(WorkSchedule.id == normalized_schedule_id)
+            .first()
+        )
+    except Exception:
+        row = None
+    schedule = (
+        SimpleNamespace(
+            id=row.id,
+            name=row.name,
+            kind=row.kind,
+            start_time=row.start_time,
+            end_time=row.end_time,
+            required_minutes=row.required_minutes,
+            break_minutes=row.break_minutes,
+            grace_minutes=row.grace_minutes,
+            start_grace_minutes=row.start_grace_minutes,
+            end_grace_minutes=row.end_grace_minutes,
+            overtime_threshold_minutes=row.overtime_threshold_minutes,
+        )
+        if row
+        else None
+    )
+    cache[normalized_schedule_id] = schedule
+    return schedule
+
+
+def _effective_work_assignment_candidates_for_user(user_id: int):
+    """Return lightweight active assignments once per request and employee."""
+    normalized_user_id = int(user_id)
+    cache = _attendance_schedule_request_cache("work_assignments")
+    if normalized_user_id in cache:
+        return cache[normalized_user_id]
+
+    try:
+        _ensure_work_policy_tables()
+        role = db.session.query(User.role).filter(User.id == normalized_user_id).scalar()
+        role = (role or "").strip() or None
+        department_id = _portal_department_id_for_user(normalized_user_id)
+        conditions = [and_(
+            WorkAssignment.target_type == "USER",
+            WorkAssignment.target_user_id == normalized_user_id,
+        )]
+        if role:
+            conditions.append(and_(
+                WorkAssignment.target_type == "ROLE",
+                WorkAssignment.target_role == role,
+            ))
+        if department_id:
+            conditions.append(and_(
+                WorkAssignment.target_type == "DEPARTMENT",
+                WorkAssignment.target_department_id == department_id,
+            ))
+
+        rows = (
+            db.session.query(
+                WorkAssignment.id.label("assignment_id"),
+                WorkAssignment.start_date.label("assignment_start_date"),
+                WorkAssignment.end_date.label("assignment_end_date"),
+                WorkAssignment.target_type.label("assignment_target_type"),
+                WorkAssignment.target_role.label("assignment_target_role"),
+                WorkAssignment.target_department_id.label("assignment_department_id"),
+                WorkAssignment.schedule_id.label("assignment_schedule_id"),
+                WorkAssignment.policy_id.label("assignment_policy_id"),
+                WorkSchedule.id.label("schedule_id"),
+                WorkSchedule.name.label("schedule_name"),
+                WorkSchedule.kind.label("schedule_kind"),
+                WorkSchedule.start_time.label("schedule_start_time"),
+                WorkSchedule.end_time.label("schedule_end_time"),
+                WorkSchedule.required_minutes.label("schedule_required_minutes"),
+                WorkSchedule.break_minutes.label("schedule_break_minutes"),
+                WorkSchedule.grace_minutes.label("schedule_grace_minutes"),
+                WorkSchedule.start_grace_minutes.label("schedule_start_grace_minutes"),
+                WorkSchedule.end_grace_minutes.label("schedule_end_grace_minutes"),
+                WorkSchedule.overtime_threshold_minutes.label("schedule_overtime_threshold_minutes"),
+                WorkPolicy.id.label("policy_id"),
+                WorkPolicy.name.label("policy_name"),
+                WorkPolicy.days_policy.label("policy_days_policy"),
+                WorkPolicy.fixed_days_mask.label("policy_fixed_days_mask"),
+                WorkPolicy.hybrid_office_days.label("policy_hybrid_office_days"),
+                WorkPolicy.hybrid_remote_days.label("policy_hybrid_remote_days"),
+                WorkPolicy.hybrid_selection_mode.label("policy_hybrid_selection_mode"),
+                WorkPolicy.hybrid_fixed_days_mask.label("policy_hybrid_fixed_days_mask"),
+                WorkPolicy.location_policy.label("policy_location_policy"),
+                WorkPolicy.is_active.label("policy_is_active"),
+            )
+            .select_from(WorkAssignment)
+            .outerjoin(WorkSchedule, WorkSchedule.id == WorkAssignment.schedule_id)
+            .outerjoin(WorkPolicy, WorkPolicy.id == WorkAssignment.policy_id)
+            .filter(WorkAssignment.is_active.is_(True))
+            .filter(or_(*conditions))
+            .order_by(
+                WorkAssignment.start_date.desc().nullslast(),
+                WorkAssignment.id.desc(),
+            )
+            .all()
+        )
+        candidates = []
+        for row in rows:
+            schedule = (
+                SimpleNamespace(
+                    id=row.schedule_id,
+                    name=row.schedule_name,
+                    kind=row.schedule_kind,
+                    start_time=row.schedule_start_time,
+                    end_time=row.schedule_end_time,
+                    required_minutes=row.schedule_required_minutes,
+                    break_minutes=row.schedule_break_minutes,
+                    grace_minutes=row.schedule_grace_minutes,
+                    start_grace_minutes=row.schedule_start_grace_minutes,
+                    end_grace_minutes=row.schedule_end_grace_minutes,
+                    overtime_threshold_minutes=row.schedule_overtime_threshold_minutes,
+                )
+                if row.schedule_id
+                else None
+            )
+            policy = (
+                SimpleNamespace(
+                    id=row.policy_id,
+                    name=row.policy_name,
+                    days_policy=row.policy_days_policy,
+                    fixed_days_mask=row.policy_fixed_days_mask,
+                    hybrid_office_days=row.policy_hybrid_office_days,
+                    hybrid_remote_days=row.policy_hybrid_remote_days,
+                    hybrid_selection_mode=row.policy_hybrid_selection_mode,
+                    hybrid_fixed_days_mask=row.policy_hybrid_fixed_days_mask,
+                    location_policy=row.policy_location_policy,
+                    is_active=row.policy_is_active,
+                )
+                if row.policy_id
+                else None
+            )
+            candidates.append(SimpleNamespace(
+                id=row.assignment_id,
+                start_date=row.assignment_start_date,
+                end_date=row.assignment_end_date,
+                target_type=row.assignment_target_type,
+                target_role=row.assignment_target_role,
+                target_department_id=row.assignment_department_id,
+                schedule_id=row.assignment_schedule_id,
+                policy_id=row.assignment_policy_id,
+                schedule=schedule,
+                policy=policy,
+            ))
+        cache[normalized_user_id] = candidates
+        return candidates
+    except Exception:
+        # Keep the legacy resolution path available on older databases.
+        cache[normalized_user_id] = None
+        return None
+
+
+def _attendance_schedule_default_schedule():
+    """Resolve the configured default schedule without loading ORM relations."""
+    cache = _attendance_schedule_request_cache("default_schedule")
+    if "value" in cache:
+        return cache["value"]
+    default_id = _setting_get("HR_DEFAULT_SCHEDULE_ID")
+    value = _attendance_schedule_snapshot(default_id) if str(default_id or "").isdigit() else None
+    cache["value"] = value
+    return value
 
 
 def _approved_attendance_schedule_day(
     user_id: int,
     day_str: str,
 ) -> HRAttendanceScheduleDay | None:
+    normalized_user_id = int(user_id)
+    cache = _attendance_schedule_request_cache("approved_days_by_user")
+    if normalized_user_id in cache:
+        return cache[normalized_user_id].get(day_str)
     try:
-        return (
+        rows = (
             HRAttendanceScheduleDay.query
             .join(
                 HRAttendanceSchedulePlan,
                 HRAttendanceSchedulePlan.id == HRAttendanceScheduleDay.plan_id,
             )
-            .filter(HRAttendanceSchedulePlan.user_id == int(user_id))
+            .filter(HRAttendanceSchedulePlan.user_id == normalized_user_id)
             .filter(HRAttendanceSchedulePlan.status == "FINAL_APPROVED")
-            .filter(HRAttendanceScheduleDay.work_date == day_str)
             .order_by(
                 HRAttendanceSchedulePlan.version_no.desc(),
                 HRAttendanceSchedulePlan.id.desc(),
             )
-            .first()
+            .all()
         )
     except Exception:
-        return None
+        rows = []
+    day_map = {}
+    for row in rows:
+        day_map.setdefault(row.work_date, row)
+    cache[normalized_user_id] = day_map
+    return day_map.get(day_str)
 
 
 def _attendance_schedule_proxy(day_row: HRAttendanceScheduleDay):
@@ -25115,33 +25805,23 @@ def _attendance_schedule_proxy(day_row: HRAttendanceScheduleDay):
 
 
 def _effective_schedule_for_user(user_id: int, day_str: str) -> WorkSchedule | None:
+    key = (int(user_id), day_str)
+    cache = _attendance_schedule_request_cache("effective_schedules")
+    if key in cache:
+        return cache[key]
+
     approved_day = _approved_attendance_schedule_day(user_id, day_str)
     if approved_day:
         if approved_day.day_type == "OFF":
+            cache[key] = None
             return None
-        return _attendance_schedule_proxy(approved_day)
+        result = _attendance_schedule_proxy(approved_day)
+        cache[key] = result
+        return result
 
     # 0) New: work assignments (user/role/department) with date ranges
-    try:
-        _ensure_work_policy_tables()
-        u = User.query.get(user_id)
-        role = (getattr(u, "role", None) or "").strip() or None
-        dept_id = _portal_department_id_for_user(user_id)
-
-        conds = [and_(WorkAssignment.target_type == "USER", WorkAssignment.target_user_id == user_id)]
-        if role:
-            conds.append(and_(WorkAssignment.target_type == "ROLE", WorkAssignment.target_role == role))
-        if dept_id:
-            conds.append(and_(WorkAssignment.target_type == "DEPARTMENT", WorkAssignment.target_department_id == dept_id))
-
-        candidates = (
-            WorkAssignment.query
-            .filter(WorkAssignment.is_active == True)
-            .filter(or_(*conds))
-            .order_by(WorkAssignment.start_date.desc().nullslast(), WorkAssignment.id.desc())
-            .all()
-        )
-
+    candidates = _effective_work_assignment_candidates_for_user(user_id)
+    if candidates is not None:
         def _prio(tt: str) -> int:
             tt = (tt or "").upper()
             if tt == "USER":
@@ -25154,73 +25834,93 @@ def _effective_schedule_for_user(user_id: int, day_str: str) -> WorkSchedule | N
 
         best = None
         best_key = None
-        for a in candidates:
-            if a.start_date and a.start_date > day_str:
+        for assignment in candidates:
+            if assignment.start_date and assignment.start_date > day_str:
                 continue
-            if a.end_date and a.end_date < day_str:
+            if assignment.end_date and assignment.end_date < day_str:
                 continue
-            key = (_prio(a.target_type), a.start_date or "", a.id)
-            if best_key is None or key > best_key:
-                best_key = key
-                best = a
+            candidate_key = (
+                _prio(assignment.target_type),
+                assignment.start_date or "",
+                assignment.id,
+            )
+            if best_key is None or candidate_key > best_key:
+                best_key = candidate_key
+                best = assignment
 
         if best:
-            return WorkSchedule.query.get(best.schedule_id)
-    except Exception:
-        # keep old logic if anything fails
-        pass
+            cache[key] = best.schedule
+            return best.schedule
 
     # 1) legacy assignment range (per-user only)
-    ass = (
-        EmployeeScheduleAssignment.query
-        .filter_by(user_id=user_id, is_active=True)
-        .order_by(EmployeeScheduleAssignment.start_date.desc().nullslast())
-        .all()
-    )
+    legacy_cache = _attendance_schedule_request_cache("legacy_assignments")
+    normalized_user_id = int(user_id)
+    if normalized_user_id not in legacy_cache:
+        try:
+            legacy_cache[normalized_user_id] = (
+                db.session.query(
+                    EmployeeScheduleAssignment.schedule_id,
+                    EmployeeScheduleAssignment.start_date,
+                    EmployeeScheduleAssignment.end_date,
+                )
+                .filter(
+                    EmployeeScheduleAssignment.user_id == normalized_user_id,
+                    EmployeeScheduleAssignment.is_active.is_(True),
+                )
+                .order_by(EmployeeScheduleAssignment.start_date.desc().nullslast())
+                .all()
+            )
+        except Exception:
+            legacy_cache[normalized_user_id] = None
+    ass = legacy_cache[normalized_user_id]
+    if ass is None:
+        ass = []
     for a in ass:
         if a.start_date and a.start_date > day_str:
             continue
         if a.end_date and a.end_date < day_str:
             continue
-        return WorkSchedule.query.get(a.schedule_id)
+        result = _attendance_schedule_snapshot(a.schedule_id)
+        cache[key] = result
+        return result
 
     # 2) default schedule id
-    default_id = _setting_get("HR_DEFAULT_SCHEDULE_ID")
-    if default_id and str(default_id).isdigit():
-        return WorkSchedule.query.get(int(default_id))
-    return None
+    result = _attendance_schedule_default_schedule()
+    cache[key] = result
+    return result
 
 
 def _effective_work_policy_for_user(user_id: int, day_str: str) -> WorkPolicy | None:
     """Resolve the active user/role/department policy for one day."""
-    try:
-        _ensure_work_policy_tables()
-        user = User.query.get(user_id)
-        role = (getattr(user, 'role', None) or '').strip() or None
-        department_id = _portal_department_id_for_user(user_id)
-        conditions = [and_(WorkAssignment.target_type == 'USER', WorkAssignment.target_user_id == user_id)]
-        if role:
-            conditions.append(and_(WorkAssignment.target_type == 'ROLE', WorkAssignment.target_role == role))
-        if department_id:
-            conditions.append(and_(WorkAssignment.target_type == 'DEPARTMENT', WorkAssignment.target_department_id == department_id))
+    key = (int(user_id), day_str)
+    cache = _attendance_schedule_request_cache("effective_policies")
+    if key in cache:
+        return cache[key]
 
-        priority = {'DEPARTMENT': 1, 'ROLE': 2, 'USER': 3}
-        candidates = (
-            WorkAssignment.query
-            .filter(WorkAssignment.is_active.is_(True))
-            .filter(or_(*conditions))
-            .filter(or_(WorkAssignment.start_date.is_(None), WorkAssignment.start_date <= day_str))
-            .filter(or_(WorkAssignment.end_date.is_(None), WorkAssignment.end_date >= day_str))
-            .all()
-        )
-        best = max(
-            candidates,
-            key=lambda item: (priority.get((item.target_type or '').upper(), 0), item.start_date or '', item.id),
-            default=None,
-        )
-        return best.policy if best and best.policy and best.policy.is_active else None
-    except Exception:
+    candidates = _effective_work_assignment_candidates_for_user(user_id)
+    if candidates is None:
+        cache[key] = None
         return None
+
+    priority = {"DEPARTMENT": 1, "ROLE": 2, "USER": 3}
+    eligible = [
+        assignment
+        for assignment in candidates
+        if (not assignment.start_date or assignment.start_date <= day_str)
+        and (not assignment.end_date or assignment.end_date >= day_str)
+    ]
+    best = max(
+        eligible,
+        key=lambda item: (
+            priority.get((item.target_type or "").upper(), 0),
+            item.start_date or "",
+            item.id,
+        ),
+        default=None,
+    )
+    result = best.policy if best and best.policy and best.policy.is_active else None
+    cache[key] = result
+    return result
 
 
 @portal_bp.route("/hr/masterdata")
@@ -37946,11 +38646,16 @@ def portal_admin_compliance_export_csv():
 # ===== Helpers =====
 def _weekly_mask() -> int:
     key = 'HR_WEEKLY_HOLIDAYS_MASK'
+    cache = _attendance_schedule_request_cache("weekly_mask")
+    if "value" in cache:
+        return cache["value"]
     row = SystemSetting.query.filter_by(key=key).first()
     try:
-        return int((row.value or '0').strip()) if row else 0
+        value = int((row.value or '0').strip()) if row else 0
     except Exception:
-        return 0
+        value = 0
+    cache["value"] = value
+    return value
 
 def _is_weekly_off(d: date, mask: int) -> bool:
     return bool(mask & (1 << d.weekday()))
