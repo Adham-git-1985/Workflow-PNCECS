@@ -319,8 +319,15 @@
                       {% else %}
                         بواسطة: <strong>النظام</strong>
                       {% endif %}
-                      {% if log.on_behalf_of_user %}
-                        <span class="badge bg-info text-dark ms-2">مفوّض عن {{ log.on_behalf_of_user.full_name }}</span>
+                      {% if log.acting_for_user or log.on_behalf_of_user %}
+                        {% set _principal = log.acting_for_user or log.on_behalf_of_user %}
+                        {% if log.formal_delegation %}
+                          <span class="badge bg-info text-dark ms-2">بموجب تفويض صادر عن {{ _principal.full_name }}</span>
+                          {% set _formal_reference = log.formal_delegation.decision_number or log.formal_delegation.legal_reference %}
+                          {% if _formal_reference %}<span class="badge bg-light text-dark border ms-1">المرجع {{ _formal_reference }}</span>{% endif %}
+                        {% else %}
+                          <span class="badge bg-info text-dark ms-2">بالنيابة عن {{ _principal.full_name }}</span>
+                        {% endif %}
                       {% endif %}
                     </div>
                   </div>
@@ -854,6 +861,17 @@
         <strong>✅ الإجراء (الخطوة {{ current_step.step_order }})</strong>
       </div>
       <div class="card-body">
+        {% if execution_context and execution_context.get('execution_context') != 'SELF' %}
+          <div class="alert alert-info py-2 small">
+            {% if execution_context.get('execution_context') == 'DELEGATED' %}
+              هذا الإجراء سيُسجّل بموجب تفويض صادر عن {{ execution_context.get('acting_for_user').full_name }}.
+            {% elif execution_context.get('execution_context') == 'ACTING_AND_DELEGATED' %}
+              هذا الإجراء سيُسجّل بالنيابة وبموجب تفويض عن {{ execution_context.get('acting_for_user').full_name }}.
+            {% else %}
+              هذا الإجراء سيُسجّل بالنيابة عن {{ execution_context.get('acting_for_user').full_name }}.
+            {% endif %}
+          </div>
+        {% endif %}
         <form method="post" enctype="multipart/form-data"
               action="{{ url_for('workflow.decide_request_step', request_id=req.id, step_order=current_step.step_order) }}">
           <div class="mb-3">
@@ -952,8 +970,12 @@
           </div>
 
           <div class="d-flex gap-2">
-            <button class="btn btn-success w-100" name="decision" value="APPROVED">متابعة</button>
-            <button class="btn btn-danger w-100" name="decision" value="REJECTED">توقيف المسار</button>
+            {% if execution_can_approve|default(true) %}
+              <button class="btn btn-success w-100" name="decision" value="APPROVED">متابعة</button>
+            {% endif %}
+            {% if execution_can_reject|default(true) %}
+              <button class="btn btn-danger w-100" name="decision" value="REJECTED">توقيف المسار</button>
+            {% endif %}
           </div>
         </form>
       </div>

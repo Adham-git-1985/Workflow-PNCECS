@@ -17,6 +17,15 @@
                         {% endif %}
                       </div>
                     {% endif %}
+                    {% if g.execution_context|default('SELF', true) != 'SELF' and g.acting_for_user|default(None, true) %}
+                      <div class="mt-2">
+                        {% if g.execution_context == 'DELEGATED' %}
+                          <span class="badge bg-info text-dark">بموجب تفويض عن {{ g.acting_for_user.full_name }}</span>
+                        {% else %}
+                          <span class="badge bg-warning text-dark">بالنيابة عن {{ g.acting_for_user.full_name }}</span>
+                        {% endif %}
+                      </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -365,6 +374,10 @@
 {% endif %}
 
 {% if can_delegations %}
+        <a href="{{ url_for('delegation.permissions_dashboard') }}"
+           class="{% if request.path.startswith('/delegation/permissions') or request.path.startswith('/delegation/dashboard') or request.path.startswith('/delegation/acting') %}active{% endif %}">
+             🛡️ الصلاحيات بالنيابة والتفويض
+        </a>
         <a href="{{ url_for('delegation.index') }}"
            class="{% if request.path.startswith('/delegation') %}active{% endif %}">
             🧑‍🤝‍🧑 التفويض

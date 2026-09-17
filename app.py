@@ -64,6 +64,7 @@ from assistant import assistant_bp
 
 from filters.request_filters import apply_request_filters
 from utils.permissions import get_effective_user
+from utils.acting_authorization import load_execution_context
 from utils.request_audit import register_request_audit
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
 from utils.timezone import format_local_datetime
@@ -328,6 +329,69 @@ def _ensure_runtime_schema():
                             continue
                         return False
                 return False
+
+            # Acting permissions/formal delegations and canonical execution
+            # metadata.  ``create_all`` above creates the two new tables for
+            # fresh databases; these guarded additions upgrade existing local
+            # SQLite installations without requiring a destructive reset.
+            if _col_exists("acting_permissions", "id") and not _col_exists("acting_permissions", "can_reopen"):
+                _add_column_retry("acting_permissions", "can_reopen", "BOOLEAN NOT NULL DEFAULT 0")
+            for _table, _col, _ctype in [
+                ("audit_log", "actual_user_id", "INTEGER"),
+                ("audit_log", "acting_for_user_id", "INTEGER"),
+                ("audit_log", "acting_permission_id", "INTEGER"),
+                ("audit_log", "formal_delegation_id", "INTEGER"),
+                ("audit_log", "execution_context", "TEXT DEFAULT 'SELF'"),
+                ("audit_log", "action_type", "TEXT"),
+                ("audit_log", "module_name", "TEXT"),
+                ("audit_log", "object_type", "TEXT"),
+                ("audit_log", "object_id", "INTEGER"),
+                ("audit_log", "ip_address", "TEXT"),
+                ("audit_log", "user_agent", "TEXT"),
+            ]:
+                if not _col_exists(_table, _col):
+                    _add_column_retry(_table, _col, _ctype)
+
+            # Backfill the canonical identity for historical rows.  This is
+            # intentionally idempotent and keeps ``user_id`` as the legacy
+            # source of truth when it is available.
+            try:
+                if _col_exists("audit_log", "actual_user_id"):
+                    db.session.execute(text(
+                        "UPDATE audit_log SET actual_user_id = user_id "
+                        "WHERE actual_user_id IS NULL AND user_id IS NOT NULL"
+                    ))
+                if _col_exists("audit_log", "action_type"):
+                    db.session.execute(text(
+                        "UPDATE audit_log SET action_type = action "
+                        "WHERE action_type IS NULL AND action IS NOT NULL"
+                    ))
+                if _col_exists("audit_log", "acting_for_user_id") and _col_exists("audit_log", "on_behalf_of_id"):
+                    db.session.execute(text(
+                        "UPDATE audit_log SET acting_for_user_id = on_behalf_of_id "
+                        "WHERE acting_for_user_id IS NULL AND on_behalf_of_id IS NOT NULL"
+                    ))
+                if _col_exists("audit_log", "execution_context"):
+                    db.session.execute(text(
+                        "UPDATE audit_log SET execution_context = "
+                        "CASE WHEN on_behalf_of_id IS NOT NULL THEN 'ACTING' ELSE 'SELF' END "
+                        "WHERE execution_context IS NULL OR TRIM(execution_context) = ''"
+                    ))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+
+            for _index_sql in [
+                "CREATE INDEX IF NOT EXISTS ix_audit_actual_user_created ON audit_log (actual_user_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_audit_acting_for_created ON audit_log (acting_for_user_id, created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_audit_execution_context_created ON audit_log (execution_context, created_at)",
+                "CREATE INDEX IF NOT EXISTS ix_audit_formal_delegation ON audit_log (formal_delegation_id, created_at)",
+            ]:
+                try:
+                    db.session.execute(text(_index_sql))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
 
             # Leave-type policy controls.  Keep existing SQLite deployments in
             # sync even when database migrations are not run manually.
@@ -1639,6 +1703,7 @@ def log_session():
     try:
         if getattr(current_user, 'is_authenticated', False):
             get_effective_user()  # loads g.delegation / g.effective_user
+            load_execution_context()  # loads explicit acting/formal context
     except Exception:
         pass
 

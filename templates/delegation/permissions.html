@@ -1,0 +1,304 @@
+{% extends "layout.html" %}
+{% block title %}الصلاحيات بالنيابة والتفويض{% endblock %}
+{% block content %}
+
+{% set ctx = execution_context or {} %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+  <div>
+    <h3 class="mb-1"><i class="bi bi-shield-check"></i> الصلاحيات بالنيابة والتفويض</h3>
+    <small class="text-muted">تمنح الصلاحية التشغيلية إجراءات محددة، بينما يستند التفويض إلى مرجعية إدارية أو قانونية مستقلة.</small>
+  </div>
+  {% if ctx.get('execution_context') == 'ACTING' %}
+    <span class="badge text-bg-warning p-2">أنت تعمل حاليًا بالنيابة عن {{ ctx.get('acting_for_user').full_name }}</span>
+  {% elif ctx.get('execution_context') == 'DELEGATED' %}
+    <span class="badge text-bg-info p-2">أنت تنفذ هذا الإجراء بموجب تفويض صادر عن {{ ctx.get('acting_for_user').full_name }}</span>
+  {% elif ctx.get('execution_context') == 'ACTING_AND_DELEGATED' %}
+    <span class="badge text-bg-info p-2">أنت تعمل بالنيابة وبموجب تفويض عن {{ ctx.get('acting_for_user').full_name }}</span>
+  {% else %}
+    <span class="badge text-bg-secondary p-2">العمل بصفتي الشخصية</span>
+  {% endif %}
+</div>
+
+<div class="alert alert-light border shadow-sm">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+    <div>
+      <strong>سياق التنفيذ الحالي:</strong>
+      {% if ctx.get('execution_context') == 'ACTING' %}
+        بالنيابة عن {{ ctx.get('acting_for_user').full_name }}
+      {% elif ctx.get('execution_context') == 'DELEGATED' %}
+        بموجب تفويض من {{ ctx.get('acting_for_user').full_name }}
+      {% elif ctx.get('execution_context') == 'ACTING_AND_DELEGATED' %}
+        بالنيابة وبموجب تفويض من {{ ctx.get('acting_for_user').full_name }}
+      {% else %}
+        الحساب الشخصي للمستخدم الحالي
+      {% endif %}
+    </div>
+    {% if ctx.get('execution_context') != 'SELF' %}
+      <form method="post" action="{{ url_for('delegation.clear_context') }}">
+        <button class="btn btn-sm btn-outline-secondary">العودة للعمل الشخصي</button>
+      </form>
+    {% endif %}
+  </div>
+  <div class="small text-muted mt-2">تبقى هوية تسجيل الدخول والمنفذ الفعلي هي {{ current_user.full_name }} في جميع الحالات.</div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-primary-subtle"><div class="card-body"><div class="small text-muted">صلاحيات بالنيابة نشطة</div><div class="fs-3 fw-bold text-primary">{{ active_acting_for_me|length }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-info-subtle"><div class="card-body"><div class="small text-muted">تفويضات رسمية سارية</div><div class="fs-3 fw-bold text-info">{{ active_formal_for_me|length }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-success-subtle"><div class="card-body"><div class="small text-muted">عمليات اليوم بالنيابة عني</div><div class="fs-3 fw-bold text-success">{{ acting_operations_today|default(0) }}</div></div></div></div>
+  <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-warning-subtle"><div class="card-body"><div class="small text-muted">عمليات اليوم بموجب تفويض</div><div class="fs-3 fw-bold text-warning-emphasis">{{ formal_operations_today|default(0) }}</div></div></div></div>
+</div>
+
+{% if admin_metrics %}
+<div class="card shadow-sm mb-4 border-dark-subtle">
+  <div class="card-header bg-dark text-white"><i class="bi bi-speedometer2"></i> لوحة الإدارة والرقابة</div>
+  <div class="card-body">
+    <div class="row g-3 small">
+      <div class="col-6 col-md-3"><span class="text-muted d-block">كل الصلاحيات النشطة</span><strong class="fs-5">{{ admin_metrics.active_acting_count }}</strong></div>
+      <div class="col-6 col-md-3"><span class="text-muted d-block">كل التفويضات النشطة</span><strong class="fs-5">{{ admin_metrics.active_formal_count }}</strong></div>
+      <div class="col-6 col-md-3"><span class="text-muted d-block">تنتهي خلال 7 أيام</span><strong class="fs-5 text-warning-emphasis">{{ admin_metrics.expiring_count }}</strong></div>
+      <div class="col-6 col-md-3"><span class="text-muted d-block">مراجع ناقصة</span><strong class="fs-5 text-danger">{{ admin_metrics.missing_reference_count }}</strong></div>
+    </div>
+    <div class="small text-muted mt-3">العمليات الحساسة بموجب تفويض اليوم: <strong>{{ admin_metrics.sensitive_count }}</strong></div>
+  </div>
+</div>
+{% endif %}
+
+<div class="row g-3 mb-4">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light"><strong>منح صلاحية بالنيابة</strong></div>
+      <div class="card-body">
+        <form method="post" action="{{ url_for('delegation.create_acting_permission') }}" class="row g-3">
+          {% if can_manage_acting %}
+          <div class="col-md-6">
+            <label class="form-label">صاحب الصلاحية</label>
+            <select class="form-select" name="principal_user_id" required>
+              <option value="">— اختر —</option>
+              {% for user in users %}
+                <option value="{{ user.id }}">{{ user.full_name }}{% if user.email %} — {{ user.email }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          {% else %}
+          <div class="col-md-6">
+            <label class="form-label">صاحب الصلاحية</label>
+            <input class="form-control" value="{{ current_user.full_name }}" disabled>
+            <input type="hidden" name="principal_user_id" value="{{ current_user.id }}">
+          </div>
+          {% endif %}
+          <div class="col-md-6">
+            <label class="form-label">المنفذ بالنيابة</label>
+            <select class="form-select" name="acting_user_id" required>
+              <option value="">— اختر —</option>
+              {% for user in users if user.id != current_user.id or can_manage_acting %}
+                <option value="{{ user.id }}">{{ user.full_name }}{% if user.email %} — {{ user.email }}{% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">النظام الفرعي/الوحدة</label>
+            <input class="form-control" name="module_id" placeholder="مثال: CORR أو HR">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">نوع النطاق</label>
+            <select class="form-select" name="scope_type">
+              <option value="ALL">النظام/النطاق العام</option>
+              <option value="UNIT">وحدة</option>
+              <option value="DEPARTMENT">دائرة</option>
+              <option value="PROJECT">مشروع</option>
+              <option value="TRANSACTION_TYPE">نوع معاملة</option>
+              <option value="REQUEST_TYPE">نوع طلب</option>
+              <option value="PROCEDURE">إجراء</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">معرّف النطاق</label>
+            <input class="form-control" name="scope_id" placeholder="اختياري، ويمكن إدخال عدة قيم بفاصلة">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">نوع المعاملة</label>
+            <input class="form-control" name="transaction_type">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">نوع الطلب</label>
+            <input class="form-control" name="request_type">
+          </div>
+          <div class="col-12">
+            <label class="form-label">الإجراءات التشغيلية المسموحة</label>
+            <div class="d-flex flex-wrap gap-3">
+              {% for action, label in action_labels.items() if action in ['VIEW','CREATE','EDIT','FORWARD','FOLLOW_UP','COMPLETE','EXECUTE_TASK','REOPEN','REJECT','CANCEL','CLOSE'] %}
+              <label class="form-check">
+                <input class="form-check-input" type="checkbox" name="actions" value="{{ action }}">
+                <span class="form-check-label">{{ label }}</span>
+              </label>
+              {% endfor %}
+            </div>
+            <div class="form-text">الاعتماد والتوقيع وإصدار القرار لا تُمنح هنا؛ لها شاشة التفويض الرسمي.</div>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">من</label>
+            <input class="form-control" type="datetime-local" name="start_at" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">إلى</label>
+            <input class="form-control" type="datetime-local" name="end_at" required>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">سبب الصلاحية</label>
+            <input class="form-control" name="reason">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">مرجع إداري</label>
+            <input class="form-control" name="reference_number">
+          </div>
+          <div class="col-12">
+            <label class="form-label">ملاحظات</label>
+            <textarea class="form-control" name="notes" rows="2"></textarea>
+          </div>
+          <div class="col-12 d-grid">
+            <button class="btn btn-primary"><i class="bi bi-person-check"></i> منح الصلاحية بالنيابة</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light"><strong>إنشاء تفويض رسمي مستقل</strong></div>
+      <div class="card-body">
+        {% if can_manage_formal %}
+        <form method="post" action="{{ url_for('delegation.create_formal_delegation') }}" class="row g-3">
+          {% if can_manage_formal and (current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN')) %}
+          <div class="col-md-6">
+            <label class="form-label">صاحب التفويض</label>
+            <select class="form-select" name="delegator_user_id" required>
+              <option value="">— اختر —</option>
+              {% for user in users %}<option value="{{ user.id }}">{{ user.full_name }}</option>{% endfor %}
+            </select>
+          </div>
+          {% else %}
+          <div class="col-md-6">
+            <label class="form-label">صاحب التفويض</label>
+            <input class="form-control" value="{{ current_user.full_name }}" disabled>
+            <input type="hidden" name="delegator_user_id" value="{{ current_user.id }}">
+          </div>
+          {% endif %}
+          <div class="col-md-6">
+            <label class="form-label">المفوض إليه</label>
+            <select class="form-select" name="delegate_user_id" required>
+              <option value="">— اختر —</option>
+              {% for user in users if user.id != current_user.id %}<option value="{{ user.id }}">{{ user.full_name }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">نوع التفويض</label>
+            <select class="form-select" name="delegation_type" required>
+              <option value="APPROVAL">اعتماد</option>
+              <option value="SIGNATURE">توقيع</option>
+              <option value="CONSENT">موافقة</option>
+              <option value="FINANCIAL_APPROVAL">اعتماد مالي</option>
+              <option value="ISSUE_DECISION">إصدار قرار</option>
+              <option value="ADMINISTRATIVE_AUTHORITY">صلاحية إدارية محددة</option>
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label class="form-label">النظام الفرعي/الوحدة</label>
+            <input class="form-control" name="module_id">
+          </div>
+          <div class="col-md-6"><label class="form-label">نوع المعاملة</label><input class="form-control" name="transaction_type"></div>
+          <div class="col-md-6"><label class="form-label">نوع الطلب</label><input class="form-control" name="request_type"></div>
+          <div class="col-md-6">
+            <label class="form-label">نوع النطاق</label>
+            <select class="form-select" name="scope_type">
+              <option value="ALL">النطاق العام</option>
+              <option value="UNIT">وحدة</option>
+              <option value="PROJECT">مشروع</option>
+              <option value="TRANSACTION_TYPE">نوع معاملة</option>
+              <option value="REQUEST_TYPE">نوع طلب</option>
+              <option value="PROCEDURE">إجراء</option>
+            </select>
+          </div>
+          <div class="col-md-6"><label class="form-label">معرّف النطاق</label><input class="form-control" name="scope_id"></div>
+          <div class="col-12"><label class="form-label">المرجعية القانونية أو الإدارية</label><textarea class="form-control" name="legal_reference" rows="2"></textarea><div class="form-text">أدخل المرجعية أو رقم القرار/الكتاب؛ يكفي أحدهما.</div></div>
+          <div class="col-md-4"><label class="form-label">رقم القرار/الكتاب</label><input class="form-control" name="decision_number"></div>
+          <div class="col-md-4"><label class="form-label">تاريخ القرار</label><input class="form-control" type="date" name="decision_date"></div>
+          <div class="col-md-4"><label class="form-label">الجهة المصدرة</label><input class="form-control" name="issuing_authority"></div>
+          <div class="col-md-6"><label class="form-label">معرّف مرفق القرار (اختياري)</label><input class="form-control" type="number" min="1" name="attachment_id"><div class="form-text">يرتبط بمرفق محفوظ في الأرشيف.</div></div>
+          <div class="col-md-6"><label class="form-label">تاريخ البداية</label><input class="form-control" type="datetime-local" name="start_at" required></div>
+          <div class="col-md-6"><label class="form-label">تاريخ الانتهاء</label><input class="form-control" type="datetime-local" name="end_at" required></div>
+          <div class="col-12"><label class="form-label">ملاحظات</label><textarea class="form-control" name="notes" rows="2"></textarea></div>
+          <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" name="allow_redelegation" value="1"><span class="form-check-label">السماح بإعادة التفويض (وفق المرجعية)</span></label></div>
+          <div class="col-12 d-grid"><button class="btn btn-info text-dark"><i class="bi bi-file-earmark-check"></i> إنشاء التفويض الرسمي</button></div>
+        </form>
+        {% else %}
+        <div class="text-muted py-4">لا تملك الصلاحية المستقلة <code>CAN_CREATE_DELEGATION</code> لإنشاء تفويض رسمي.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light"><strong>الصلاحيات الممنوحة لي</strong></div>
+      <div class="card-body p-0">
+        <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
+          <thead><tr><th>صاحب الصلاحية</th><th>النطاق</th><th>الفترة</th><th>إجراء</th></tr></thead>
+          <tbody>{% for row in active_acting_for_me %}
+            <tr>
+              <td>{{ row.principal_user.full_name }}</td>
+              <td>{{ row.module_name or row.module_id or 'عام' }} / {{ row.scope_type or 'ALL' }}{% if row.scope_id %}: {{ row.scope_id }}{% endif %}</td>
+              <td class="small">{{ row.start_at.strftime('%Y-%m-%d %H:%M') }}<br>{{ row.end_at.strftime('%Y-%m-%d %H:%M') }}</td>
+              <td>
+                {% if ctx.get('acting_permission_id') == row.id %}<span class="badge text-bg-success">مفعّل</span>{% else %}
+                <form method="post" action="{{ url_for('delegation.select_acting', permission_id=row.id) }}"><button class="btn btn-sm btn-outline-primary">العمل بها</button></form>{% endif %}
+              </td>
+            </tr>
+            <tr><td colspan="4" class="small text-muted">الإجراءات:
+              {% if row.can_view %}الاطلاع، {% endif %}
+              {% if row.can_create %}الإنشاء، {% endif %}
+              {% if row.can_edit %}التعديل، {% endif %}
+              {% if row.can_forward %}التحويل، {% endif %}
+              {% if row.can_follow_up %}المتابعة، {% endif %}
+              {% if row.can_reject %}الرفض، {% endif %}
+              {% if row.can_cancel %}الإلغاء، {% endif %}
+              {% if row.can_close %}الإغلاق، {% endif %}
+              {% if row.can_reopen %}إعادة الفتح{% endif %}
+            </td></tr>
+          {% else %}<tr><td colspan="4" class="text-center text-muted py-3">لا توجد صلاحيات نشطة.</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm h-100">
+      <div class="card-header bg-light"><strong>الصلاحيات المفوضة إليّ</strong></div>
+      <div class="card-body p-0">
+        <div class="table-responsive"><table class="table table-sm table-hover mb-0 align-middle">
+          <thead><tr><th>صاحب التفويض</th><th>النوع/المرجع</th><th>الفترة</th><th>إجراء</th></tr></thead>
+          <tbody>{% for row in active_formal_for_me %}
+            <tr><td>{{ row.delegator_user.full_name }}</td><td>{{ row.delegation_type }}<br><small>{{ row.decision_number or row.legal_reference }}</small></td><td class="small">{{ row.start_at.strftime('%Y-%m-%d %H:%M') }}<br>{{ row.end_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{% if ctx.get('formal_delegation_id') == row.id %}<span class="badge text-bg-info">مفعّل</span>{% else %}<form method="post" action="{{ url_for('delegation.select_formal', delegation_id=row.id) }}"><button class="btn btn-sm btn-outline-info">استخدام التفويض</button></form>{% endif %}</td></tr>
+          {% else %}<tr><td colspan="4" class="text-center text-muted py-3">لا توجد تفويضات سارية.</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mt-1">
+  <div class="col-xl-6">
+    <div class="card shadow-sm"><div class="card-header bg-light"><strong>الممنوحة مني</strong></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>المنفذ</th><th>النطاق/الحالة</th><th>إجراء</th></tr></thead><tbody>{% for row in granted_by_me %}<tr><td>{{ row.acting_user.full_name }}</td><td>{{ row.module_name or row.module_id or 'عام' }} / {{ row.scope_type or 'ALL' }}<br><span class="badge text-bg-{{ 'success' if row.is_active and row.is_effective_at(now) else 'secondary' }}">{{ 'نشطة' if row.is_active and row.is_effective_at(now) else row.status }}</span></td><td>{% if row.is_active %}<form method="post" action="{{ url_for('delegation.revoke_acting_permission', permission_id=row.id) }}"><button class="btn btn-sm btn-outline-danger">إلغاء</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="3" class="text-center text-muted py-3">لا توجد سجلات.</td></tr>{% endfor %}</tbody></table></div></div></div>
+  </div>
+  <div class="col-xl-6">
+    <div class="card shadow-sm"><div class="card-header bg-light"><strong>التفويضات الصادرة مني</strong></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>المفوض إليه</th><th>النوع/الحالة</th><th>إجراء</th></tr></thead><tbody>{% for row in formal_by_me %}<tr><td>{{ row.delegate_user.full_name }}</td><td>{{ row.delegation_type }} — {{ row.decision_number or row.legal_reference }}<br><span class="badge text-bg-{{ 'success' if row.is_active and row.is_effective_at(now) else 'secondary' }}">{{ 'نشط' if row.is_active and row.is_effective_at(now) else row.status }}</span></td><td>{% if row.is_active %}<form method="post" action="{{ url_for('delegation.revoke_formal_delegation', delegation_id=row.id) }}"><button class="btn btn-sm btn-outline-danger">إلغاء</button></form>{% endif %}</td></tr>{% else %}<tr><td colspan="3" class="text-center text-muted py-3">لا توجد سجلات.</td></tr>{% endfor %}</tbody></table></div></div></div>
+  </div>
+</div>
+
+<div class="card shadow-sm mt-3"><div class="card-header bg-light"><strong>العمليات المنفذة بالنيابة عني</strong></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>المنفذ الفعلي</th><th>الإجراء</th><th>المعاملة</th><th>الصلاحية/التفويض</th><th>التاريخ</th><th>السياق</th></tr></thead><tbody>{% for log in operations_for_me %}<tr><td>{{ log.actual_user.full_name if log.actual_user else (log.user.full_name if log.user else 'النظام') }}</td><td>{{ log.action_type or log.action }}</td><td>{% if log.request_id %}<a href="{{ url_for('workflow.view_request', request_id=log.request_id) }}">#{{ log.request_id }}</a>{% else %}—{% endif %}</td><td>{% if log.acting_permission_id %}#{{ log.acting_permission_id }}{% elif log.formal_delegation_id %}تفويض #{{ log.formal_delegation_id }}{% else %}—{% endif %}</td><td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ log.execution_context or 'ACTING' }}</td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-3">لا توجد عمليات.</td></tr>{% endfor %}</tbody></table></div></div></div>
+
+<div class="card shadow-sm mt-3"><div class="card-header bg-light"><strong>العمليات المنفذة بالنيابة عني أو بموجب تفويض مني</strong></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>المنفذ الفعلي</th><th>الإجراء</th><th>المعاملة</th><th>المرجع</th><th>التاريخ</th></tr></thead><tbody>{% for log in delegated_operations_by_me %}<tr><td>{{ log.actual_user.full_name if log.actual_user else (log.user.full_name if log.user else 'النظام') }}</td><td>{{ log.action_type or log.action }}</td><td>{% if log.request_id %}<a href="{{ url_for('workflow.view_request', request_id=log.request_id) }}">#{{ log.request_id }}</a>{% else %}—{% endif %}</td><td>{{ log.formal_delegation.decision_number if log.formal_delegation else '—' }}</td><td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد عمليات.</td></tr>{% endfor %}</tbody></table></div></div></div>
+
+{% endblock %}

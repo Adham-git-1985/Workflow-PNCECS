@@ -37,6 +37,14 @@ from extensions import db
 from utils.perms import perm_required
 from utils.role_codes import role_storage_variants, roles_equivalent
 from utils.permissions import can_access_request, get_effective_user, get_active_delegation, get_active_delegations
+from utils.acting_authorization import (
+    AuthorizationError,
+    authorize_action,
+    can_execute_action,
+    get_execution_context,
+    notify_principal_of_execution,
+    record_execution_audit,
+)
 from utils.audit_helpers import delegation_audit_fields
 from utils.events import emit_event
 from utils.notification_links import notification_target_path, safe_local_notification_url
@@ -2184,9 +2192,25 @@ def _workflow_pdf_step_action(step) -> str:
 @login_required
 def request_pdf(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
-
-    if not _user_can_view_request(current_user, req):
-        abort(403)
+    execution = get_execution_context()
+    if execution.get("execution_context") == "SELF":
+        if not _user_can_view_request(current_user, req):
+            abort(403)
+    else:
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
+        if not _actor_context_can_view_request(
+            req,
+            [current_user, execution.get("acting_for_user")],
+        ):
+            abort(403)
 
     inst = req.workflow_instance
     steps = list(inst.steps or []) if inst else []
@@ -2339,9 +2363,26 @@ def request_pdf(request_id):
 def upload_attachment(request_id):
     """Upload one or more attachments to an existing request (manual upload)."""
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
+    explicit_decision = None
 
-    if not _user_can_view_request(current_user, req):
-        abort(403)
+    if execution.get("execution_context") == "SELF":
+        if not _user_can_view_request(current_user, req):
+            abort(403)
+    else:
+        try:
+            explicit_decision = authorize_action(
+                "EDIT",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
+        if not _actor_context_can_view_request(
+            req,
+            [current_user, execution.get("acting_for_user")],
+        ):
+            abort(403)
 
     description = request.form.get("description")
 
@@ -2385,7 +2426,11 @@ def upload_attachment(request_id):
         _complete_mention_task_after_contribution(
             req,
             inst,
-            user_id=current_user.id,
+            user_id=(
+                execution.get("acting_for_user_id")
+                if execution.get("execution_context") != "SELF"
+                else current_user.id
+            ),
             step_order=step_order,
             contribution="مرفق",
         )
@@ -2404,6 +2449,18 @@ def upload_attachment(request_id):
             )
         except Exception:
             pass
+
+        if explicit_decision:
+            notify_principal_of_execution(
+                explicit_decision,
+                action="EDIT",
+                target_label=f"مرفقات الطلب #{req.id}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                link_url=url_for("workflow.view_request", request_id=req.id),
+                source="workflow",
+                sensitive=False,
+            )
 
         db.session.commit()
         flash("تم رفع المرفقات بنجاح", "success")
@@ -2439,8 +2496,27 @@ def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRe
         if att:
             req = WorkflowRequest.query.get_or_404(att.request_id)
 
-    if not req or not _user_can_view_request(current_user, req):
+    if not req:
         abort(403)
+    execution = get_execution_context()
+    if execution.get("execution_context") == "SELF":
+        if not _user_can_view_request(current_user, req):
+            abort(403)
+    else:
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
+        if not _actor_context_can_view_request(
+            req,
+            [current_user, execution.get("acting_for_user")],
+        ):
+            abort(403)
     return file, req
 
 
@@ -2456,8 +2532,24 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
     it leaves the active archive and remains recoverable from the recycle bin.
     """
     req = WorkflowRequest.query.get_or_404(request_id)
-    if not _user_can_view_request(current_user, req):
-        abort(403)
+    execution = get_execution_context()
+    delete_user = current_user
+    explicit_decision = None
+    if execution.get("execution_context") == "SELF":
+        if not _user_can_view_request(current_user, req):
+            abort(403)
+    else:
+        try:
+            authorize_action(
+                "EDIT",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
+        delete_user = execution.get("acting_for_user") or current_user
+        if not _actor_context_can_view_request(req, [current_user, delete_user]):
+            abort(403)
 
     attachment = (
         RequestAttachment.query
@@ -2469,7 +2561,7 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
         ArchivedFile.is_deleted.is_(False),
     ).first_or_404()
 
-    if not _can_delete_workflow_attachment(current_user, req, file):
+    if not _can_delete_workflow_attachment(delete_user, req, file):
         abort(403)
 
     other_attachment = (
@@ -2503,6 +2595,17 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
             target_id=file.id,
             created_at=datetime.utcnow(),
         ))
+        if execution.get("execution_context") != "SELF":
+            notify_principal_of_execution(
+                explicit_decision,
+                action="EDIT",
+                target_label=f"حذف مرفق من الطلب #{req.id}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                link_url=url_for("workflow.view_request", request_id=req.id),
+                source="workflow",
+                sensitive=False,
+            )
         db.session.commit()
     except Exception:
         db.session.rollback()
@@ -3304,6 +3407,8 @@ def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
 
     return False
 def _user_can_view_request(user, req: WorkflowRequest) -> bool:
+    if not user or not getattr(user, "id", None) or not req:
+        return False
     # Confidential correspondence is a mandatory outer gate.  Passing it does
     # not grant workflow visibility by itself; the normal owner/participant
     # rules below must still pass as well.
@@ -3393,6 +3498,13 @@ def _actor_context_can_view_request(req: WorkflowRequest, users) -> bool:
     if is_confidential_workflow(req):
         return _user_can_view_request(current_user, req)
     return any(_user_can_view_request(user, req) for user in (users or []) if user)
+
+
+def _workflow_authorization_module(req: WorkflowRequest | None = None) -> str:
+    """Return the stable subsystem code used by scoped acting grants."""
+    if req is not None and getattr(req, "source_corr_kind", None):
+        return "CORR"
+    return "WORKFLOW"
 
 
 def _actor_context_can_view_request_from_snapshot(
@@ -4295,11 +4407,12 @@ def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, Arc
         mentioned_name = (match.group(1).strip() if match else "")
         return f"المستخدم المذكور: {mentioned_name}" if mentioned_name else ""
 
-    return _clean_workflow_note(raw_note) if action in {
+    note_actions = {
         "WORKFLOW_COMMENT",
         "WORKFLOW_REPLY",
         "DYNAMIC_BRANCH_SELECTED",
-    } else ""
+    }
+    return _clean_workflow_note(raw_note) if action in note_actions else ""
 
 
 @workflow_bp.route("/inbox")
@@ -4311,9 +4424,17 @@ def inbox():
 
     effective_user = get_effective_user()
     delegations = get_active_delegations()
+    execution = get_execution_context()
 
     # Candidate "actors": myself + any active delegators I'm delegated from
     actor_users = [current_user]
+    explicit_context_actor = execution.get("acting_for_user")
+    if (
+        execution.get("execution_context") != "SELF"
+        and explicit_context_actor
+        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
+    ):
+        actor_users.append(explicit_context_actor)
     for d in (delegations or []):
         try:
             if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
@@ -4349,7 +4470,10 @@ def inbox():
         q = q.filter(or_(*conds))
 
     # If not SUPER_ADMIN, restrict by any actor context (self OR delegated-from users)
-    is_super = current_user.has_role("SUPER_ADMIN") or any(getattr(u, "has_role", lambda r: False)("SUPER_ADMIN") for u in actor_users)
+    is_super = current_user.has_role("SUPER_ADMIN") or (
+        execution.get("execution_context") == "SELF"
+        and any(getattr(u, "has_role", lambda r: False)("SUPER_ADMIN") for u in actor_users)
+    )
     if not is_super:
         all_clauses = []
 
@@ -4592,6 +4716,12 @@ def inbox():
     actor_super_admin_ids = set()
     for actor_user in actor_users:
         try:
+            if (
+                execution.get("execution_context") != "SELF"
+                and explicit_context_actor
+                and int(actor_user.id) == int(explicit_context_actor.id)
+            ):
+                continue
             if actor_user.has_role("SUPER_ADMIN"):
                 actor_super_admin_ids.add(int(actor_user.id))
         except Exception:
@@ -4606,6 +4736,18 @@ def inbox():
             actor_super_admin_ids,
         )
     ]
+
+    if execution.get("execution_context") != "SELF":
+        rows = [
+            (req, inst, step)
+            for req, inst, step in rows
+            if can_execute_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        ]
 
     # PARALLEL_SYNC: if the step is still pending but the current user already responded/bypassed,
     # hide it from their inbox (it will remain for other pending assignees).
@@ -4720,6 +4862,14 @@ def work_dashboard():
     search = (request.args.get("q") or "").strip()
 
     actor_users = [current_user]
+    execution = get_execution_context()
+    explicit_context_actor = execution.get("acting_for_user")
+    if (
+        execution.get("execution_context") != "SELF"
+        and explicit_context_actor
+        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
+    ):
+        actor_users.append(explicit_context_actor)
     for delegation in get_active_delegations() or []:
         delegated_user = getattr(delegation, "from_user", None)
         if delegated_user and delegated_user.id not in {user.id for user in actor_users}:
@@ -4761,6 +4911,12 @@ def work_dashboard():
     actor_super_admin_ids = set()
     for actor_user in actor_users:
         try:
+            if (
+                execution.get("execution_context") != "SELF"
+                and explicit_context_actor
+                and int(actor_user.id) == int(explicit_context_actor.id)
+            ):
+                continue
             if actor_user.has_role("SUPER_ADMIN"):
                 actor_super_admin_ids.add(int(actor_user.id))
         except Exception:
@@ -4769,6 +4925,16 @@ def work_dashboard():
     rows = []
     now = datetime.utcnow()
     for req in requests:
+        if (
+            execution.get("execution_context") != "SELF"
+            and not can_execute_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        ):
+            continue
         if not _actor_context_can_view_request_from_snapshot(
             req,
             actor_users,
@@ -5065,8 +5231,16 @@ def following():
 
     effective_user = get_effective_user()
     delegations = get_active_delegations()
+    execution = get_execution_context()
 
     actor_users = [current_user]
+    explicit_context_actor = execution.get("acting_for_user")
+    if (
+        execution.get("execution_context") != "SELF"
+        and explicit_context_actor
+        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
+    ):
+        actor_users.append(explicit_context_actor)
     for d in (delegations or []):
         try:
             if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
@@ -5359,6 +5533,12 @@ def following():
     actor_super_admin_ids = set()
     for actor_user in actor_users:
         try:
+            if (
+                execution.get("execution_context") != "SELF"
+                and explicit_context_actor
+                and int(actor_user.id) == int(explicit_context_actor.id)
+            ):
+                continue
             if actor_user.has_role("SUPER_ADMIN"):
                 actor_super_admin_ids.add(int(actor_user.id))
         except Exception:
@@ -5373,6 +5553,17 @@ def following():
             actor_super_admin_ids,
         )
     ]
+    if execution.get("execution_context") != "SELF":
+        rows = [
+            (req, inst, tpl)
+            for req, inst, tpl in rows
+            if can_execute_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        ]
 
     # SLA filter is applied after loading because it depends on template SLA + current time.
     now = datetime.utcnow()
@@ -5628,14 +5819,34 @@ def view_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
     effective_user = get_effective_user()
     delegations = get_active_delegations()
+    execution = get_execution_context()
+    explicit_context_actor = execution.get("acting_for_user")
 
     actor_users = [current_user]
+    if (
+        execution.get("execution_context") != "SELF"
+        and explicit_context_actor
+        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
+    ):
+        actor_users.append(explicit_context_actor)
     for d in (delegations or []):
         try:
             if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
                 actor_users.append(d.from_user)
         except Exception:
             pass
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            flash("لا تملك صلاحية الاطلاع ضمن سياق التنفيذ المحدد.", "danger")
+            return redirect(url_for("workflow.inbox"))
 
     if not _actor_context_can_view_request(req, actor_users):
         flash("غير مصرح لك بمراجعة هذا الطلب", "danger")
@@ -5686,6 +5897,8 @@ def view_request(request_id):
     steps = []
     current_step = None
     can_decide = False
+    execution_can_approve = True
+    execution_can_reject = True
     can_escalate = False
     next_parallel_step = None
     next_parallel_candidates = []
@@ -5706,6 +5919,18 @@ def view_request(request_id):
         current_step = next((s for s in steps if s.step_order == inst.current_step_order), None)
         if current_step and current_step.status == "PENDING":
             can_decide = any(_user_can_act_on_step(u, current_step) for u in actor_users)
+            if execution.get("execution_context") != "SELF":
+                execution_can_approve = can_execute_action(
+                    "APPROVE",
+                    module_id=_workflow_authorization_module(req),
+                    request_obj=req,
+                )
+                execution_can_reject = can_execute_action(
+                    "REJECT",
+                    module_id=_workflow_authorization_module(req),
+                    request_obj=req,
+                )
+                can_decide = can_decide and (execution_can_approve or execution_can_reject)
             if not can_decide:
                 hierarchy_bypass_step = resolve_hierarchy_bypass_step(
                     inst,
@@ -5751,16 +5976,32 @@ def view_request(request_id):
             can_escalate = False
 
     # Closing is a separate lifecycle action after the workflow has reached a
-    # final decision. It belongs exclusively to the original request creator;
-    # delegation does not transfer this permission.
+    # final decision.  Personal mode remains limited to the request creator;
+    # an explicit scoped acting permission may grant the same operation.
     can_close = (
-        int(getattr(current_user, "id", 0) or 0) == int(req.requester_id or 0)
+        (int(getattr(current_user, "id", 0) or 0) == int(req.requester_id or 0)
+         if execution.get("execution_context") == "SELF"
+         else can_execute_action(
+             "CLOSE",
+             module_id=_workflow_authorization_module(req),
+             request_obj=req,
+         ))
         and (req.status or "").strip().upper() in {"APPROVED", "REJECTED"}
     )
     can_delete_request = can_delete_workflow_request(current_user, req)
-    can_reopen_workflow = bool(
-        inst and steps and current_user.has_perm("WORKFLOW_REOPEN_TO_STEP")
-    )
+    can_reopen_workflow = bool(inst and steps)
+    if can_reopen_workflow:
+        if execution.get("execution_context") == "SELF":
+            can_reopen_workflow = bool(
+                _is_admin(current_user)
+                or current_user.has_perm("WORKFLOW_REOPEN_TO_STEP")
+            )
+        else:
+            can_reopen_workflow = can_execute_action(
+                "REOPEN",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
 
     # =========================
     # SLA helpers for UI (step SLA value + remaining days)
@@ -5845,6 +6086,10 @@ def view_request(request_id):
             "action": log.action,
             "user": log.user,
             "on_behalf_of_user": log.on_behalf_of_user,
+            "actual_user": log.actual_user or log.user,
+            "acting_for_user": log.acting_for_user or log.on_behalf_of_user,
+            "formal_delegation": log.formal_delegation,
+            "execution_context": log.execution_context or "SELF",
             "created_at": log.created_at,
             "note": _strip_workflow_operation_source(log.note),
             "is_workflow_comment": (log.action or "").upper()
@@ -5897,10 +6142,18 @@ def view_request(request_id):
         action = (log.action or "").upper()
         if action in technical_actions:
             continue
+        audit_actor = log.actual_user or log.user
+        audit_principal = log.acting_for_user or log.on_behalf_of_user
+        if log.formal_delegation and audit_actor and audit_principal:
+            audit_author = f"{audit_actor.full_name} بموجب تفويض عن {audit_principal.full_name}"
+        elif audit_actor and audit_principal:
+            audit_author = f"{audit_actor.full_name} بالنيابة عن {audit_principal.full_name}"
+        else:
+            audit_author = audit_actor.full_name if audit_actor else "النظام"
         user_audit.append({
             "id": log.id,
             "action": action_labels.get(action, ui_label(log.action)),
-            "author": log.user.full_name if log.user else "النظام",
+            "author": audit_author,
             "created_at": log.created_at,
             "note": _user_facing_audit_note(log, action, files_map),
             "is_workflow_comment": action in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
@@ -6351,7 +6604,9 @@ def view_request(request_id):
     try:
         if current_step and (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
             if my_parallel_task and (getattr(my_parallel_task, "status", "") or "") == "PENDING":
-                can_decide = True
+                can_decide = execution.get("execution_context") == "SELF" or (
+                    execution_can_approve or execution_can_reject
+                )
             else:
                 can_decide = False
     except Exception:
@@ -6417,6 +6672,9 @@ def view_request(request_id):
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
+        execution_context=execution,
+        execution_can_approve=execution_can_approve,
+        execution_can_reject=execution_can_reject,
         secretary_endorsements=(
             _get_secretary_endorsements()
             if _can_use_secretary_endorsements(current_user)
@@ -6432,9 +6690,26 @@ def view_request(request_id):
 def close_request(request_id):
     """Let the original creator close a request after its workflow is final."""
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
+    explicit_decision = None
 
-    if int(req.requester_id or 0) != int(current_user.id or 0):
-        abort(403)
+    if execution.get("execution_context") == "SELF":
+        if int(req.requester_id or 0) != int(current_user.id or 0):
+            abort(403)
+    else:
+        try:
+            explicit_decision = authorize_action(
+                "CLOSE",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
+        if not _actor_context_can_view_request(
+            req,
+            [current_user, execution.get("acting_for_user")],
+        ):
+            abort(403)
 
     current_status = (req.status or "").strip().upper()
     if current_status == "CLOSED":
@@ -6446,16 +6721,31 @@ def close_request(request_id):
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
     req.status = "CLOSED"
-    db.session.add(AuditLog(
-        request_id=req.id,
-        user_id=current_user.id,
+    record_execution_audit(
         action="REQUEST_CLOSED",
-        old_status=current_status,
-        new_status="CLOSED",
+        actual_user_id=current_user.id,
+        request_id=req.id,
         target_type="WorkflowRequest",
         target_id=req.id,
-        note="أغلق منشئ الطلب الطلب بعد انتهاء المسار.",
-    ))
+        old_status=current_status,
+        new_status="CLOSED",
+        note=(
+            "أغلق منشئ الطلب الطلب بعد انتهاء المسار."
+            if execution.get("execution_context") == "SELF"
+            else "أُغلق الطلب بصلاحية تشغيلية بالنيابة."
+        ),
+    )
+    if explicit_decision:
+        notify_principal_of_execution(
+            explicit_decision,
+            action="CLOSE",
+            target_label=f"الطلب #{req.id}",
+            target_type="WorkflowRequest",
+            target_id=req.id,
+            link_url=url_for("workflow.view_request", request_id=req.id),
+            source="workflow",
+            sensitive=True,
+        )
     db.session.commit()
 
     flash("تم إغلاق الطلب بنجاح.", "success")
@@ -6464,15 +6754,47 @@ def close_request(request_id):
 
 @workflow_bp.route("/request/<int:request_id>/reopen", methods=["POST"])
 @login_required
-@perm_required("WORKFLOW_REOPEN_TO_STEP")
 def reopen_request_to_step(request_id):
     """Reopen a workflow request and resume it from a selected prior step."""
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
+    explicit_decision = None
+    if execution.get("execution_context") == "SELF":
+        if not (_is_admin(current_user) or current_user.has_perm("WORKFLOW_REOPEN_TO_STEP")):
+            abort(403)
+    else:
+        try:
+            explicit_decision = authorize_action(
+                "REOPEN",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
+
     actor_users = [current_user]
+    explicit_context_actor = execution.get("acting_for_user")
+    if explicit_context_actor and explicit_context_actor not in actor_users:
+        actor_users.append(explicit_context_actor)
     for delegation in (get_active_delegations() or []):
         delegator = getattr(delegation, "from_user", None)
         if delegator and delegator.id not in [user.id for user in actor_users]:
             actor_users.append(delegator)
+
+    # A selected scoped context must explicitly grant viewing.  Formal
+    # delegations remain subject to the principal's normal visibility and
+    # confidentiality rules; this check validates the selected context/scope.
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            flash("لا تملك صلاحية الاطلاع ضمن سياق التنفيذ المحدد.", "danger")
+            return redirect(url_for("workflow.inbox"))
 
     if not _actor_context_can_view_request(req, actor_users):
         abort(403)
@@ -6490,6 +6812,11 @@ def reopen_request_to_step(request_id):
             auto_commit=False,
             sla_mode=sla_mode,
             sla_days=sla_days,
+            effective_user_id=(
+                execution.get("acting_for_user_id")
+                if execution.get("execution_context") != "SELF"
+                else None
+            ),
         )
         if is_sla_suspended(target_step.sla_days):
             sla_message = "تم تعليق SLA للخطوات المعاد فتحها."
@@ -6505,6 +6832,17 @@ def reopen_request_to_step(request_id):
                 f"{target_step.step_order}: {reason}. {sla_message}"
             ),
         )
+        if explicit_decision:
+            notify_principal_of_execution(
+                explicit_decision,
+                action="REOPEN",
+                target_label=f"إعادة فتح الطلب #{req.id}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                link_url=url_for("workflow.view_request", request_id=req.id),
+                source="workflow",
+                sensitive=True,
+            )
         db.session.commit()
         flash(
             f"تمت إعادة فتح المسار والعودة إلى الخطوة {target_step.step_order}. {sla_message}",
@@ -6532,16 +6870,25 @@ def reopen_request_to_step(request_id):
 @login_required
 def request_attachments(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
 
     
 
     # Delegation-aware viewer:
-    # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
+    # allow current_user + primary effective_user + the explicitly selected
+    # principal + ANY active legacy delegator (if multiple delegations exist)
     effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or (
-        not is_confidential_workflow(req)
-        and _user_can_view_request(effective_user, req)
-    )
+    context_users = [current_user, effective_user]
+    explicit_context_user = execution.get("acting_for_user")
+    if explicit_context_user and explicit_context_user not in context_users:
+        context_users.append(explicit_context_user)
+    can_view = _actor_context_can_view_request(req, context_users)
+    if (
+        not can_view
+        and execution.get("execution_context") != "SELF"
+        and not is_confidential_workflow(req)
+    ):
+        can_view = _user_can_view_request(execution.get("acting_for_user"), req)
     if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
@@ -6553,6 +6900,17 @@ def request_attachments(request_id):
 
     if not can_view:
         abort(403)
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
     template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
@@ -6735,6 +7093,7 @@ def request_attachments(request_id):
 @login_required
 def request_escalations(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
 
     
 
@@ -6745,6 +7104,14 @@ def request_escalations(request_id):
         not is_confidential_workflow(req)
         and _user_can_view_request(effective_user, req)
     )
+    explicit_context_user = execution.get("acting_for_user")
+    if (
+        not can_view
+        and explicit_context_user
+        and not is_confidential_workflow(req)
+        and _user_can_view_request(explicit_context_user, req)
+    ):
+        can_view = True
     if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
@@ -6756,6 +7123,17 @@ def request_escalations(request_id):
 
     if not can_view:
         abort(403)
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
 
     step_raw = (request.args.get('step') or '').strip()
     step_filter = None
@@ -7050,9 +7428,11 @@ def escalate_request(request_id):
       canonical organization hierarchy.
     - Creates a warning notification, and also a message in internal 'Messages' inbox.
     - Works against runtime steps, so predefined and dynamic routes share the
-      same behavior.
+    same behavior.
     """
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
+    explicit_decision = None
 
     
 
@@ -7063,6 +7443,14 @@ def escalate_request(request_id):
         not is_confidential_workflow(req)
         and _user_can_view_request(effective_user, req)
     )
+    explicit_context_user = execution.get("acting_for_user")
+    if (
+        not can_view
+        and explicit_context_user
+        and not is_confidential_workflow(req)
+        and _user_can_view_request(explicit_context_user, req)
+    ):
+        can_view = True
     if not can_view and not is_confidential_workflow(req):
         try:
             for d in (get_active_delegations() or []):
@@ -7078,6 +7466,16 @@ def escalate_request(request_id):
 
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
     template = WorkflowTemplate.query.get(inst.template_id) if (inst and inst.template_id) else None
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            explicit_decision = authorize_action(
+                "FOLLOW_UP",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
 
     if not inst or getattr(inst, 'is_completed', False):
         flash("لا يمكن إرسال تنبيه لطلب مكتمل أو بدون مسار.", "warning")
@@ -7353,6 +7751,18 @@ def escalate_request(request_id):
             except Exception:
                 pass
 
+        if explicit_decision:
+            notify_principal_of_execution(
+                explicit_decision,
+                action="FOLLOW_UP",
+                target_label=f"تنبيه الطلب #{req.id}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                link_url=url_for("workflow.view_request", request_id=req.id),
+                source="workflow",
+                sensitive=False,
+            )
+
         try:
             db.session.commit()
             flash(f"تم إرسال {alert_level_label} بنجاح.", "warning")
@@ -7503,14 +7913,34 @@ def decide_request_step(request_id, step_order):
     req = WorkflowRequest.query.get_or_404(request_id)
     effective_user = get_effective_user()
     delegations = get_active_delegations()
+    execution = get_execution_context()
+    explicit_decision = None
 
     actor_users = [current_user]
+    explicit_context_actor = execution.get("acting_for_user")
+    if (
+        execution.get("execution_context") != "SELF"
+        and explicit_context_actor
+        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
+    ):
+        actor_users.append(explicit_context_actor)
     for d in (delegations or []):
         try:
             if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
                 actor_users.append(d.from_user)
         except Exception:
             pass
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
 
     if not _actor_context_can_view_request(req, actor_users):
         abort(403)
@@ -7559,6 +7989,24 @@ def decide_request_step(request_id, step_order):
     if decision not in ("APPROVED", "REJECTED"):
         flash("قرار غير صالح.", "danger")
         return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    if execution.get("execution_context") != "SELF":
+        operation = "APPROVE" if decision == "APPROVED" else "REJECT"
+        try:
+            explicit_decision = authorize_action(
+                operation,
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
+
+        # The grant authorizes a bounded operation on behalf of the principal;
+        # the principal must still be the workflow actor for this step.
+        acting_user = execution.get("acting_for_user")
+        if not acting_user or not _user_can_act_on_step(acting_user, step):
+            abort(403)
+        used_delegation = None
 
     saved_paths = []
     attached_count = 0
@@ -7628,6 +8076,18 @@ def decide_request_step(request_id, step_order):
             decision=decision,
             actor_id=current_user.id,
         )
+
+        if explicit_decision:
+            notify_principal_of_execution(
+                explicit_decision,
+                action=("APPROVE" if decision == "APPROVED" else "REJECT"),
+                target_label=f"الطلب #{req.id}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                link_url=url_for("workflow.view_request", request_id=req.id),
+                source="workflow",
+                sensitive=True,
+            )
 
         db.session.commit()
         flash("تم حفظ الإجراء بنجاح.", "success")
@@ -8062,6 +8522,8 @@ def manage_secretary_endorsements():
 @login_required
 def add_request_note(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
+    explicit_decisions = []
 
     
 
@@ -8083,6 +8545,28 @@ def add_request_note(request_id):
 
     if not can_view:
         abort(403)
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
 
     endorsement_ids = request.form.getlist("endorsement_ids")
     if not endorsement_ids:
@@ -8107,6 +8591,24 @@ def add_request_note(request_id):
     if not note and not uploaded_files:
         flash("يرجى كتابة نص أو إرفاق ملف/ملفات.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    if execution.get("execution_context") != "SELF":
+        requested_actions = []
+        if note:
+            requested_actions.append("FOLLOW_UP")
+        if uploaded_files:
+            requested_actions.append("EDIT")
+        try:
+            for requested_action in requested_actions:
+                explicit_decisions.append(
+                    authorize_action(
+                        requested_action,
+                        module_id=_workflow_authorization_module(req),
+                        request_obj=req,
+                    )
+                )
+        except AuthorizationError:
+            abort(403)
 
     # determine current step order (best-effort)
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
@@ -8157,7 +8659,11 @@ def add_request_note(request_id):
         _complete_mention_task_after_contribution(
             req,
             inst,
-            user_id=current_user.id,
+            user_id=(
+                execution.get("acting_for_user_id")
+                if execution.get("execution_context") != "SELF"
+                else current_user.id
+            ),
             step_order=step_order,
             contribution=contribution,
         )
@@ -8256,6 +8762,18 @@ def add_request_note(request_id):
                     )
         except Exception:
             pass
+
+        for explicit_decision in explicit_decisions:
+            notify_principal_of_execution(
+                explicit_decision,
+                action=explicit_decision.action,
+                target_label=f"تحديث الطلب #{req.id}",
+                target_type="WorkflowRequest",
+                target_id=req.id,
+                link_url=url_for("workflow.view_request", request_id=req.id),
+                source="workflow",
+                sensitive=False,
+            )
 
         db.session.commit()
         flash("تم إرسال التحديث بنجاح.", "success")

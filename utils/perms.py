@@ -73,6 +73,31 @@ def perm_required(*keys):
             except Exception:
                 candidates = [base_user]
 
+            # A selected scoped acting/formal context can open the workflow
+            # dashboard for the principal's work even when the real actor does
+            # not have the principal's global dashboard permission.  The
+            # request rows are still filtered by the context's VIEW scope in
+            # the route itself; this only prevents the page-level decorator
+            # from blocking that route before it can apply the row filter.
+            if tuple(keys) == ("WORKFLOW_DASHBOARD_READ",):
+                try:
+                    from utils.acting_authorization import (
+                        can_execute_action,
+                        get_execution_context,
+                    )
+
+                    if (
+                        get_execution_context().get("execution_context") != "SELF"
+                        and can_execute_action(
+                            "VIEW",
+                            module_id="WORKFLOW",
+                            require_formal=False,
+                        )
+                    ):
+                        return f(*args, **kwargs)
+                except Exception:
+                    pass
+
             # Workflow ADMIN: allow only if all keys are NOT portal-like
             if keys and all(not _is_portal_key(k) for k in keys):
                 for candidate in candidates:

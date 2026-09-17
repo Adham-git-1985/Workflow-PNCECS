@@ -8,7 +8,7 @@ from utils.role_codes import canonical_role_key, role_storage_variants, roles_eq
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_login import UserMixin
 from sqlalchemy import event, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, synonym
 
 
 # ======================
@@ -566,6 +566,332 @@ class Delegation(db.Model):
     def __repr__(self) -> str:
         return f"<Delegation id={self.id} from={self.from_user_id} to={self.to_user_id} active={self.is_active}>"
 
+
+# ======================
+# Acting permissions and formal delegations
+# ======================
+class ActingPermission(db.Model):
+    """A scoped operational permission exercised by another user.
+
+    This table is deliberately separate from :class:`Delegation` and from
+    ``formal_delegations``.  An acting permission does not transfer the
+    principal's account or administrative authority; it only grants the
+    explicitly selected operational actions for a bounded scope and period.
+
+    ``created_by`` and ``revoked_by`` keep the proposal's column names while
+    the ``*_id`` attributes follow the naming convention used by the rest of
+    this application.  The aliases make both forms convenient for callers.
+    """
+
+    __tablename__ = "acting_permissions"
+
+    __table_args__ = (
+        db.Index(
+            "ix_acting_permissions_actor_window",
+            "acting_user_id",
+            "status",
+            "start_at",
+            "end_at",
+        ),
+        db.Index(
+            "ix_acting_permissions_principal_window",
+            "principal_user_id",
+            "status",
+            "start_at",
+            "end_at",
+        ),
+        db.CheckConstraint(
+            "principal_user_id <> acting_user_id",
+            name="ck_acting_permissions_not_self",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    principal_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    acting_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    # Module and scope are intentionally string based.  The application has
+    # several module families and some installations use numeric IDs while
+    # others use stable codes (CORR, HR, INVENTORY, ...).
+    module_id = db.Column(db.String(120), nullable=True, index=True)
+    module_name = db.Column(db.String(120), nullable=True)
+    scope_type = db.Column(db.String(50), nullable=True, default="ALL", index=True)
+    scope_id = db.Column(db.String(255), nullable=True)
+    transaction_type = db.Column(db.String(120), nullable=True, index=True)
+    request_type = db.Column(db.String(120), nullable=True, index=True)
+
+    # Operational actions.  Approval is retained as an explicit, disabled-by-
+    # default field for compatibility with old forms, but the authorization
+    # service never treats it as a formal delegation.
+    can_view = db.Column(db.Boolean, nullable=False, default=False)
+    can_create = db.Column(db.Boolean, nullable=False, default=False)
+    can_edit = db.Column(db.Boolean, nullable=False, default=False)
+    can_forward = db.Column(db.Boolean, nullable=False, default=False)
+    can_follow_up = db.Column(db.Boolean, nullable=False, default=False)
+    can_reject = db.Column(db.Boolean, nullable=False, default=False)
+    can_cancel = db.Column(db.Boolean, nullable=False, default=False)
+    can_close = db.Column(db.Boolean, nullable=False, default=False)
+    can_reopen = db.Column(db.Boolean, nullable=False, default=False)
+    can_approve = db.Column(db.Boolean, nullable=False, default=False)
+
+    start_at = db.Column(db.DateTime, nullable=False, index=True)
+    end_at = db.Column(db.DateTime, nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)
+
+    reason = db.Column(db.Text, nullable=True)
+    reference_number = db.Column(db.String(120), nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+
+    created_by_id = db.Column(
+        "created_by",
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by = synonym("created_by_id")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    revoked_by_id = db.Column(
+        "revoked_by",
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    revoked_by = synonym("revoked_by_id")
+    revoked_at = db.Column(db.DateTime, nullable=True)
+
+    principal_user = db.relationship("User", foreign_keys=[principal_user_id], lazy="joined")
+    acting_user = db.relationship("User", foreign_keys=[acting_user_id], lazy="joined")
+    created_by_user = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    revoked_by_user = db.relationship("User", foreign_keys=[revoked_by_id], lazy="joined")
+
+    @property
+    def principal(self):
+        return self.principal_user
+
+    @property
+    def actor(self):
+        return self.acting_user
+
+    @property
+    def starts_at(self):
+        """Backward-compatible alias used by older date-picker code."""
+        return self.start_at
+
+    @starts_at.setter
+    def starts_at(self, value):
+        self.start_at = value
+
+    @property
+    def expires_at(self):
+        """Backward-compatible alias used by older date-picker code."""
+        return self.end_at
+
+    @expires_at.setter
+    def expires_at(self, value):
+        self.end_at = value
+
+    @property
+    def is_active(self) -> bool:
+        return (self.status or "").strip().upper() == "ACTIVE"
+
+    @is_active.setter
+    def is_active(self, value):
+        self.status = "ACTIVE" if value else "REVOKED"
+
+    def is_effective_at(self, at=None) -> bool:
+        at = at or datetime.utcnow()
+        return bool(
+            self.is_active
+            and self.start_at
+            and self.end_at
+            and self.start_at <= at <= self.end_at
+        )
+
+    @property
+    def is_effective_now(self) -> bool:
+        return self.is_effective_at()
+
+    def __repr__(self) -> str:
+        return (
+            f"<ActingPermission id={self.id} principal={self.principal_user_id} "
+            f"actor={self.acting_user_id} status={self.status}>"
+        )
+
+
+class FormalDelegation(db.Model):
+    """A legally/administratively supported delegation.
+
+    Formal delegations are never inferred from an acting permission.  A
+    caller must select a valid row and the authorization service validates its
+    type, scope, dates and reference before allowing a delegated action.
+    """
+
+    __tablename__ = "formal_delegations"
+
+    __table_args__ = (
+        db.Index(
+            "ix_formal_delegations_delegate_window",
+            "delegate_user_id",
+            "status",
+            "start_at",
+            "end_at",
+        ),
+        db.Index(
+            "ix_formal_delegations_delegator_window",
+            "delegator_user_id",
+            "status",
+            "start_at",
+            "end_at",
+        ),
+        db.CheckConstraint(
+            "delegator_user_id <> delegate_user_id",
+            name="ck_formal_delegations_not_self",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+
+    delegator_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+    delegate_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=False,
+        index=True,
+    )
+
+    delegation_type = db.Column(db.String(80), nullable=False, index=True)
+    module_id = db.Column(db.String(120), nullable=True, index=True)
+    module_name = db.Column(db.String(120), nullable=True)
+    scope_type = db.Column(db.String(50), nullable=True, default="ALL", index=True)
+    scope_id = db.Column(db.String(255), nullable=True)
+    transaction_type = db.Column(db.String(120), nullable=True, index=True)
+    request_type = db.Column(db.String(120), nullable=True, index=True)
+
+    legal_reference = db.Column(db.Text, nullable=True)
+    decision_number = db.Column(db.String(120), nullable=True, index=True)
+    decision_date = db.Column(db.Date, nullable=True)
+    issuing_authority = db.Column(db.String(255), nullable=True)
+    attachment_id = db.Column(
+        db.Integer,
+        db.ForeignKey("archived_file.id"),
+        nullable=True,
+        index=True,
+    )
+
+    start_at = db.Column(db.DateTime, nullable=False, index=True)
+    end_at = db.Column(db.DateTime, nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="ACTIVE", index=True)
+    notes = db.Column(db.Text, nullable=True)
+    allow_redelegation = db.Column(db.Boolean, nullable=False, default=False)
+
+    created_by_id = db.Column(
+        "created_by",
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    created_by = synonym("created_by_id")
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    revoked_by_id = db.Column(
+        "revoked_by",
+        db.Integer,
+        db.ForeignKey("users.id"),
+        nullable=True,
+        index=True,
+    )
+    revoked_by = synonym("revoked_by_id")
+    revoked_at = db.Column(db.DateTime, nullable=True)
+
+    delegator_user = db.relationship("User", foreign_keys=[delegator_user_id], lazy="joined")
+    delegate_user = db.relationship("User", foreign_keys=[delegate_user_id], lazy="joined")
+    created_by_user = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+    revoked_by_user = db.relationship("User", foreign_keys=[revoked_by_id], lazy="joined")
+    attachment = db.relationship("ArchivedFile", foreign_keys=[attachment_id], lazy="joined")
+
+    # Common aliases used by the legacy delegation screens and API payloads.
+    from_user_id = synonym("delegator_user_id")
+    to_user_id = synonym("delegate_user_id")
+
+    @property
+    def from_user(self):
+        return self.delegator_user
+
+    @property
+    def to_user(self):
+        return self.delegate_user
+
+    @property
+    def starts_at(self):
+        return self.start_at
+
+    @starts_at.setter
+    def starts_at(self, value):
+        self.start_at = value
+
+    @property
+    def expires_at(self):
+        return self.end_at
+
+    @expires_at.setter
+    def expires_at(self, value):
+        self.end_at = value
+
+    @property
+    def is_active(self) -> bool:
+        return (self.status or "").strip().upper() == "ACTIVE"
+
+    @is_active.setter
+    def is_active(self, value):
+        self.status = "ACTIVE" if value else "REVOKED"
+
+    @property
+    def reference_number(self):
+        return self.decision_number
+
+    @reference_number.setter
+    def reference_number(self, value):
+        self.decision_number = value
+
+    def is_effective_at(self, at=None) -> bool:
+        at = at or datetime.utcnow()
+        return bool(
+            self.is_active
+            and self.start_at
+            and self.end_at
+            and self.start_at <= at <= self.end_at
+        )
+
+    @property
+    def is_effective_now(self) -> bool:
+        return self.is_effective_at()
+
+    def __repr__(self) -> str:
+        return (
+            f"<FormalDelegation id={self.id} delegator={self.delegator_user_id} "
+            f"delegate={self.delegate_user_id} type={self.delegation_type}>"
+        )
+
 class WorkflowRequest(db.Model):
     # NOTE: no __tablename__ => default table name will be "workflow_request"
     id = db.Column(db.Integer, primary_key=True)
@@ -663,6 +989,30 @@ class AuditLog(db.Model):
     on_behalf_of_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     delegation_id = db.Column(db.Integer, db.ForeignKey("delegations.id"), nullable=True)
 
+    # Canonical execution identity fields.  ``user_id`` and
+    # ``on_behalf_of_id`` remain for compatibility with existing log readers.
+    actual_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    acting_for_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    acting_permission_id = db.Column(
+        db.Integer,
+        db.ForeignKey("acting_permissions.id"),
+        nullable=True,
+        index=True,
+    )
+    formal_delegation_id = db.Column(
+        db.Integer,
+        db.ForeignKey("formal_delegations.id"),
+        nullable=True,
+        index=True,
+    )
+    execution_context = db.Column(db.String(30), nullable=True, default="SELF", index=True)
+    action_type = db.Column(db.String(100), nullable=True, index=True)
+    module_name = db.Column(db.String(120), nullable=True, index=True)
+    object_type = db.Column(db.String(80), nullable=True, index=True)
+    object_id = db.Column(db.Integer, nullable=True, index=True)
+    ip_address = db.Column(db.String(64), nullable=True)
+    user_agent = db.Column(db.String(500), nullable=True)
+
     note = db.Column(db.Text, nullable=True)
     action = db.Column(db.String(100), nullable=False)
 
@@ -678,12 +1028,93 @@ class AuditLog(db.Model):
 
     user = db.relationship("User", foreign_keys=[user_id])
     on_behalf_of_user = db.relationship("User", foreign_keys=[on_behalf_of_id], lazy="joined")
+    actual_user = db.relationship("User", foreign_keys=[actual_user_id], lazy="joined")
+    acting_for_user = db.relationship("User", foreign_keys=[acting_for_user_id], lazy="joined")
     delegation = db.relationship("Delegation", foreign_keys=[delegation_id], lazy="joined")
+    acting_permission = db.relationship("ActingPermission", foreign_keys=[acting_permission_id], lazy="joined")
+    formal_delegation = db.relationship("FormalDelegation", foreign_keys=[formal_delegation_id], lazy="joined")
     request = db.relationship("WorkflowRequest")
 
     # target reference (موجود عندك)
     target_type = db.Column(db.String(50))
     target_id = db.Column(db.Integer)
+
+
+@event.listens_for(AuditLog, "before_insert")
+def _populate_execution_audit_fields(mapper, connection, target):
+    """Fill canonical execution metadata for ORM-created audit rows.
+
+    Domain modules still create ``AuditLog`` with the historic fields.  This
+    listener makes the new identity columns consistent without requiring a
+    risky rewrite of every existing action path.  It only reads request-local
+    context; background jobs continue to use the explicitly supplied actor.
+    """
+    if getattr(target, "action_type", None) is None:
+        target.action_type = getattr(target, "action", None)
+    if getattr(target, "object_type", None) is None:
+        target.object_type = getattr(target, "target_type", None)
+    if getattr(target, "object_id", None) is None:
+        target.object_id = getattr(target, "target_id", None)
+
+    try:
+        from flask import g, has_request_context, request
+        from flask_login import current_user
+
+        if not has_request_context():
+            if getattr(target, "actual_user_id", None) is None:
+                target.actual_user_id = getattr(target, "user_id", None)
+            if getattr(target, "user_id", None) is None:
+                target.user_id = getattr(target, "actual_user_id", None)
+            return
+
+        actual_id = getattr(current_user, "id", None) if getattr(current_user, "is_authenticated", False) else None
+        context_actual_id = getattr(g, "actual_user_id", None) or actual_id
+        # In a web request the logged-in account is the technical actor even
+        # when a legacy caller populated ``user_id`` with the effective
+        # principal.  Never let the displayed/effective identity replace it.
+        if context_actual_id:
+            target.actual_user_id = int(context_actual_id)
+            target.user_id = int(context_actual_id)
+        elif getattr(target, "actual_user_id", None) is None:
+            target.actual_user_id = getattr(target, "user_id", None)
+        elif getattr(target, "user_id", None) is None:
+            target.user_id = getattr(target, "actual_user_id", None)
+
+        acting_for_id = getattr(g, "acting_for_user_id", None)
+        acting_for_id = acting_for_id or getattr(target, "acting_for_user_id", None)
+        acting_for_id = acting_for_id or getattr(target, "on_behalf_of_id", None)
+        if acting_for_id and context_actual_id and int(acting_for_id) != int(context_actual_id):
+            target.acting_for_user_id = int(acting_for_id)
+            if getattr(target, "on_behalf_of_id", None) is None:
+                target.on_behalf_of_id = int(acting_for_id)
+        acting_permission_id = getattr(g, "acting_permission_id", None)
+        if acting_permission_id and getattr(target, "acting_permission_id", None) is None:
+            target.acting_permission_id = int(acting_permission_id)
+        formal_delegation_id = getattr(g, "formal_delegation_id", None)
+        if formal_delegation_id and getattr(target, "formal_delegation_id", None) is None:
+            target.formal_delegation_id = int(formal_delegation_id)
+
+        execution_context = getattr(g, "execution_context", None)
+        if (
+            execution_context in (None, "SELF")
+            and acting_for_id
+            and context_actual_id
+            and int(acting_for_id) != int(context_actual_id)
+        ):
+            execution_context = "ACTING"
+        if execution_context:
+            target.execution_context = execution_context
+        elif getattr(target, "execution_context", None) is None:
+            target.execution_context = "SELF"
+
+        if getattr(target, "ip_address", None) is None:
+            target.ip_address = (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+                                 or request.remote_addr or "")[:64] or None
+        if getattr(target, "user_agent", None) is None:
+            target.user_agent = (request.headers.get("User-Agent", "") or "")[:500] or None
+    except Exception:
+        # Audit metadata must never break the business operation.
+        return
 
 
 class SystemSetting(db.Model):

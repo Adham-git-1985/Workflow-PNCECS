@@ -39,6 +39,7 @@ _TROUBLE_TICKET_ADMIN_ROLE_CODES = {"ADMIN", "SUPER_ADMIN", "SUPERADMIN"}
 _TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
 _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
 ATTENDANCE_SCHEDULE_EMAIL_MODE = "ATTENDANCE_SCHEDULE"
+DELEGATION_SENSITIVE_EMAIL_MODE = "DELEGATION_SENSITIVE"
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
 
@@ -151,10 +152,11 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
 
 
 def enqueue_notification_email(notification: Notification) -> bool:
-    """Queue email only for explicitly opted-in attendance notifications."""
+    """Queue email for explicitly enabled attendance or sensitive delegation notifications."""
     if not notification:
         return False
-    if (notification.email_delivery_mode or "").strip().upper() != ATTENDANCE_SCHEDULE_EMAIL_MODE:
+    mode = (notification.email_delivery_mode or "").strip().upper()
+    if mode not in {ATTENDANCE_SCHEDULE_EMAIL_MODE, DELEGATION_SENSITIVE_EMAIL_MODE}:
         return False
     if not email_delivery_enabled():
         return False
@@ -179,14 +181,14 @@ def enqueue_notification_email(notification: Notification) -> bool:
 def send_pending_notification_emails(limit: int = 100, now: datetime | None = None) -> int:
     """Send opted-in attendance mail and cancel legacy notification mail."""
     pending_deliveries = NotificationEmailDelivery.query.filter_by(status=PENDING).all()
-    attendance_deliveries = []
+    eligible_deliveries = []
     legacy_deliveries = []
     for delivery in pending_deliveries:
         mode = (
             getattr(delivery.notification, "email_delivery_mode", "") or ""
         ).strip().upper()
-        if mode == ATTENDANCE_SCHEDULE_EMAIL_MODE:
-            attendance_deliveries.append(delivery)
+        if mode in {ATTENDANCE_SCHEDULE_EMAIL_MODE, DELEGATION_SENSITIVE_EMAIL_MODE}:
+            eligible_deliveries.append(delivery)
         else:
             legacy_deliveries.append(delivery)
 
@@ -197,10 +199,10 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
     if legacy_deliveries:
         db.session.commit()
 
-    if not attendance_deliveries:
+    if not eligible_deliveries:
         return 0
     if not email_delivery_enabled():
-        for delivery in attendance_deliveries:
+        for delivery in eligible_deliveries:
             delivery.status = "CANCELLED"
             delivery.next_attempt_at = None
             delivery.last_error = EMAIL_DISABLED_REASON
@@ -212,7 +214,7 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
         return 0
 
     now = now or datetime.utcnow()
-    for delivery in attendance_deliveries:
+    for delivery in eligible_deliveries:
         if int(delivery.attempt_count or 0) >= MAX_ATTEMPTS:
             delivery.status = FAILED
             delivery.next_attempt_at = None
@@ -221,7 +223,7 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
 
     due_deliveries = [
         delivery
-        for delivery in attendance_deliveries
+        for delivery in eligible_deliveries
         if delivery.status == PENDING
         and int(delivery.attempt_count or 0) < MAX_ATTEMPTS
         and (delivery.next_attempt_at is None or delivery.next_attempt_at <= now)
@@ -263,7 +265,7 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
                 )
             db.session.commit()
             current_app.logger.warning(
-                "Attendance schedule email delivery failed id=%s attempt=%s",
+                "Notification email delivery failed id=%s attempt=%s",
                 delivery.id,
                 delivery.attempt_count,
             )

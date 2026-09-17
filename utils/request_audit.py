@@ -16,6 +16,7 @@ from flask_login import current_user
 from extensions import db
 from models import AuditLog
 from utils.audit_helpers import get_audit_source_summary
+from utils.acting_authorization import execution_audit_fields
 
 
 AUTOMATED_ENDPOINTS = {
@@ -265,6 +266,22 @@ def register_request_audit(app) -> None:
                 "target_type": target_type,
                 "target_id": target_id,
             }
+            # Keep the request-level safety-net audit aligned with the same
+            # canonical identity fields used by domain audit rows.  Core
+            # inserts do not invoke the ORM ``before_insert`` listener, so the
+            # values must be supplied explicitly here.
+            canonical = execution_audit_fields()
+            canonical.update({
+                "actual_user_id": int(user_id),
+                "action_type": action,
+                "module_name": (endpoint.split(".", 1)[0] or "").upper() or None,
+                "object_type": target_type,
+                "object_id": target_id,
+                "ip_address": (request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+                                or request.remote_addr or None),
+                "user_agent": (request.headers.get("User-Agent", "") or "")[:500] or None,
+            })
+            values.update({key: value for key, value in canonical.items() if value is not None})
             # Use an independent transaction so auditing never commits or rolls
             # back pending domain changes from the request's ORM session.
             with db.engine.begin() as connection:

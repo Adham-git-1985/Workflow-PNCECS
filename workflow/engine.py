@@ -1375,6 +1375,7 @@ def reopen_workflow_to_step(
     auto_commit: bool = False,
     sla_mode: str | None = "PRESERVE",
     sla_days: int | None = None,
+    effective_user_id: int | None = None,
 ) -> WorkflowInstanceStep:
     """Reopen a workflow and resume it from an existing step."""
     reason = (reason or "").strip()
@@ -1459,7 +1460,10 @@ def reopen_workflow_to_step(
     req.status = "IN_PROGRESS"
     inst.is_completed = False
     inst.current_step_order = target_order
-    inst.last_step_actor_id = int(actor_user_id)
+    # ``actor_user_id`` is the authenticated account.  When the caller is
+    # using an explicit acting context, the principal remains the workflow
+    # actor for subsequent routing while the audit keeps the real actor.
+    inst.last_step_actor_id = int(effective_user_id or actor_user_id)
     _activate_step_sla(target_step, started_at=now, reset=True)
 
     sla_note = {

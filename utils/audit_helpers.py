@@ -91,13 +91,26 @@ def get_audit_source_summary() -> str:
 
 
 def delegation_audit_fields() -> dict:
-    """Returns extra AuditLog fields when user is acting via delegation."""
+    """Return legacy and canonical fields for the active execution context."""
+    values = {}
     try:
         d = getattr(g, "delegation", None)
         eff = getattr(g, "effective_user", None)
         if d and eff and getattr(current_user, "is_authenticated", False):
             if getattr(eff, "id", None) and eff.id != current_user.id:
-                return {"on_behalf_of_id": eff.id, "delegation_id": d.id}
+                values.update({"on_behalf_of_id": eff.id, "delegation_id": d.id})
     except Exception:
         pass
-    return {}
+
+    # New scoped acting/formal context.  Import lazily to keep this helper
+    # usable during model/app bootstrap and by old deployments that have not
+    # yet run the schema migration.
+    try:
+        from utils.acting_authorization import execution_audit_fields
+
+        values.update(execution_audit_fields())
+    except Exception:
+        pass
+    # Callers historically pass ``user_id`` explicitly alongside this helper.
+    values.pop("user_id", None)
+    return values
