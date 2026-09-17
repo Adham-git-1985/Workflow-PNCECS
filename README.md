@@ -289,6 +289,23 @@ ASSISTANT_PROJECT_KNOWLEDGE_ENABLED=1
 ASSISTANT_INDEX_REFRESH_SECONDS=300
 ```
 
+زر «اقتراح الصياغة والتعديل» في تقرير الإنجاز يستخدم النموذج المهيأ لإعادة صياغة
+بنود الإنجاز بالعربية الرسمية المختصرة مع الحفاظ على الفكرة، ويعرض النتيجة للمراجعة
+قبل اعتمادها. يُرسل نص البنود المدرجة فقط عند الضغط على الزر، ويمكن إبقاء المعالجة
+محلية عبر `FOLLOWUPS_AI_EXTERNAL_ENABLED=0`؛ عند تعذر النموذج أو تعطيله يستخدم النظام
+البديل المحلي.
+
+```text
+FOLLOWUPS_AI_ENABLED=1
+FOLLOWUPS_AI_EXTERNAL_ENABLED=0
+FOLLOWUPS_AI_MODEL=gpt-5.6-luna
+FOLLOWUPS_AI_TIMEOUT=20
+FOLLOWUPS_AI_MAX_OUTPUT_TOKENS=1800
+FOLLOWUPS_AI_MAX_ITEMS=40
+FOLLOWUPS_AI_MAX_ITEM_CHARS=2400
+FOLLOWUPS_AI_MAX_SUGGESTION_CHARS=420
+```
+
 يجب ضبط هذه القيم كمتغيرات بيئة على الخادم ثم إعادة تشغيل التطبيق. لا تضع مفتاح
 OpenAI داخل الكود أو README ولا ترسله في محادثة عارف. إذا كان النموذج غير مفعّل
 تظهر الواجهة بوضوح أنها في «محادثة محلية»؛ وعند نجاح الاتصال تظهر «محادثة ذكية».

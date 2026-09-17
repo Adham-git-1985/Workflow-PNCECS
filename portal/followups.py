@@ -595,8 +595,9 @@ def _apply_employee_changes(report: EmployeeFollowupReport) -> None:
         item.is_included = request.form.get(f"included_{item.id}") == "1"
 
 
-def _run_local_assistant(report: EmployeeFollowupReport) -> None:
-    analysis = build_followup_analysis(report.items)
+def _run_followup_assistant(report: EmployeeFollowupReport) -> None:
+    """Prepare review-first rewrites without changing the original titles."""
+    analysis = build_followup_analysis(report.items, user=current_user)
     report.ai_summary = str(analysis["summary"])
     report.ai_notes = str(analysis["notes"])
     suggestions = analysis["suggestions"]
@@ -973,9 +974,9 @@ def followups_update(report_id: int):
     try:
         _apply_employee_changes(report)
         if action == "ai":
-            _run_local_assistant(report)
+            _run_followup_assistant(report)
             db.session.commit()
-            flash("تم اختصار المهام وإعداد صياغات محسّنة. عدّلها إن رغبت، ثم اضغط تفريغ الصياغات على المهام.", "success")
+            flash("تمت إعادة صياغة الإنجازات باختصار ووضوح. راجعها وعدّلها إن رغبت، ثم اضغط اعتماد الصياغات على الإنجازات.", "success")
         elif action == "apply_ai":
             applied_count = _apply_assistant_suggestions(report)
             db.session.commit()

@@ -104,6 +104,16 @@ class BaseConfig:
     ASSISTANT_MAX_MESSAGE_CHARS = int(os.getenv("ASSISTANT_MAX_MESSAGE_CHARS", "2000"))
     ASSISTANT_RATE_LIMIT = int(os.getenv("ASSISTANT_RATE_LIMIT", "20"))
     ASSISTANT_RATE_WINDOW_SECONDS = int(os.getenv("ASSISTANT_RATE_WINDOW_SECONDS", "60"))
+    # Follow-up rewriting is review-first. The hosted model is opt-in because
+    # the employee-entered accomplishment text may be internal.
+    FOLLOWUPS_AI_ENABLED = os.getenv("FOLLOWUPS_AI_ENABLED", "1")
+    FOLLOWUPS_AI_EXTERNAL_ENABLED = os.getenv("FOLLOWUPS_AI_EXTERNAL_ENABLED", "0")
+    FOLLOWUPS_AI_MODEL = os.getenv("FOLLOWUPS_AI_MODEL") or os.getenv("OPENAI_CHAT_MODEL")
+    FOLLOWUPS_AI_TIMEOUT = float(os.getenv("FOLLOWUPS_AI_TIMEOUT", os.getenv("ASSISTANT_AI_TIMEOUT", "20")))
+    FOLLOWUPS_AI_MAX_OUTPUT_TOKENS = int(os.getenv("FOLLOWUPS_AI_MAX_OUTPUT_TOKENS", "1800"))
+    FOLLOWUPS_AI_MAX_ITEMS = int(os.getenv("FOLLOWUPS_AI_MAX_ITEMS", "40"))
+    FOLLOWUPS_AI_MAX_ITEM_CHARS = int(os.getenv("FOLLOWUPS_AI_MAX_ITEM_CHARS", "2400"))
+    FOLLOWUPS_AI_MAX_SUGGESTION_CHARS = int(os.getenv("FOLLOWUPS_AI_MAX_SUGGESTION_CHARS", "420"))
     # Aref document analysis is entirely local. Uploaded files are read in
     # memory, bounded before extraction, and never stored or sent externally.
     ASSISTANT_ANALYSIS_MAX_FILE_BYTES = int(

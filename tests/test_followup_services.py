@@ -1,5 +1,6 @@
 from datetime import date
 from io import BytesIO
+import json
 from types import SimpleNamespace
 import unittest
 
@@ -7,6 +8,8 @@ from docx import Document
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
+from flask import Flask
+from unittest.mock import patch
 
 from services.followup_assistant import build_followup_analysis
 from services.followup_docx import build_followup_docx
@@ -63,6 +66,63 @@ class FollowupServicesTests(unittest.TestCase):
         self.assertNotIn("تفاصيل المعاملة:", analysis["suggestions"][2])
         self.assertIn("استكمال مراجعة المواصفات الفنية", analysis["suggestions"][2])
         self.assertIn("شملت أبرز الأعمال خلال الفترة", analysis["summary"])
+
+    def test_analysis_uses_openai_for_natural_rewrites_when_explicitly_enabled(self):
+        app = Flask(__name__)
+        app.config.update(
+            SECRET_KEY="followup-ai-test",
+            FOLLOWUPS_AI_ENABLED="1",
+            FOLLOWUPS_AI_EXTERNAL_ENABLED="1",
+            ASSISTANT_AI_PRIVACY_MODE="PUBLIC_ONLY",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+        )
+        first = self._item(7, "قمت بإعداد التقرير الشهري ومراجعة البيانات")
+        second = self._item(13, "متابعة طلب التوريد والتنسيق مع الجهة المختصة")
+        client_response = SimpleNamespace(output_text=json.dumps({
+            "suggestions": [
+                {"index": 1, "text": "أُعدّ التقرير الشهري ورُوجعت بياناته."},
+                {"index": 2, "text": "تمت متابعة طلب التوريد والتنسيق مع الجهة المختصة."},
+            ]
+        }, ensure_ascii=False))
+
+        client = unittest.mock.MagicMock()
+        client.responses.create.return_value = client_response
+        with (
+            app.app_context(),
+            patch("openai.OpenAI", return_value=client),
+            patch("assistant.service._openai_http_client", return_value=None),
+        ):
+            analysis = build_followup_analysis([first, second], user=SimpleNamespace(id=42))
+
+        self.assertEqual(analysis["provider"], "openai")
+        self.assertEqual(
+            analysis["suggestions"],
+            {
+                7: "أُعدّ التقرير الشهري ورُوجعت بياناته.",
+                13: "تمت متابعة طلب التوريد والتنسيق مع الجهة المختصة.",
+            },
+        )
+        payload = client.responses.create.call_args.kwargs
+        self.assertEqual(payload["model"], "test-model")
+        self.assertFalse(payload["store"])
+        self.assertEqual(payload["text"]["format"]["type"], "json_schema")
+        self.assertIn("قمت بإعداد التقرير الشهري", payload["input"][0]["content"])
+        self.assertNotIn("followup-ai-test", repr(payload))
+
+    def test_analysis_keeps_external_rewrite_opt_in(self):
+        app = Flask(__name__)
+        app.config.update(
+            FOLLOWUPS_AI_ENABLED="1",
+            FOLLOWUPS_AI_EXTERNAL_ENABLED="0",
+            ASSISTANT_OPENAI_API_KEY="test-key",
+            ASSISTANT_OPENAI_MODEL="test-model",
+        )
+        with app.app_context(), patch("openai.OpenAI") as openai_client:
+            analysis = build_followup_analysis([self._item(1, "إعداد التقرير")])
+
+        self.assertEqual(analysis["provider"], "local")
+        openai_client.assert_not_called()
 
     def test_docx_export_contains_report_details(self):
         report = SimpleNamespace(
