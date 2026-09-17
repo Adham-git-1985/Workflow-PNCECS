@@ -1,9 +1,10 @@
 import json
 import re
+from collections import Counter, defaultdict
 from flask import render_template, request, send_file
 from flask_login import login_required, current_user
-from datetime import datetime, timedelta
-from sqlalchemy import or_, func, and_
+from datetime import date, datetime, timedelta
+from sqlalchemy import or_, func, and_, case
 from sqlalchemy.orm import aliased, joinedload
 
 from io import BytesIO
@@ -33,6 +34,528 @@ def _apply_message_visibility_filter(query):
     if role != "SUPER_ADMIN":
         query = query.filter(~AuditLog.action.like("MESSAGE_%"))
     return query
+
+
+# ---------------------------------------------------------------------------
+# Usage/adoption dashboard helpers
+# ---------------------------------------------------------------------------
+# The audit table contains both domain events (for example WORKFLOW_STARTED)
+# and the application-wide request safety-net events (PAGE_VIEW and
+# USER_ACTION).  These helpers deliberately treat them as activity events,
+# while using the canonical actual_user_id when it is available.  That keeps
+# delegation from inflating the principal's usage or changing who actually
+# used the system.
+_DASHBOARD_PERIODS = {
+    "7": {"label": "آخر 7 أيام", "days": 7},
+    "30": {"label": "آخر 30 يومًا", "days": 30},
+    "90": {"label": "آخر 90 يومًا", "days": 90},
+    "365": {"label": "آخر سنة", "days": 365},
+    "all": {"label": "كل الفترة", "days": None},
+    "custom": {"label": "فترة مخصصة", "days": None},
+}
+
+_DASHBOARD_MODULE_LABELS = {
+    "WORKFLOW": "مسار",
+    "CORRESPONDENCE": "المراسلات",
+    "PORTAL": "البوابة",
+    "HR": "الموارد البشرية",
+    "ARCHIVE": "الأرشيف",
+    "STORE": "المستودع",
+    "TRANSPORT": "النقل",
+    "INVENTORY": "المخزون والأصول",
+    "MESSAGE": "الرسائل",
+    "DELEGATION": "الصلاحيات والتفويض",
+    "USER": "المستخدمون",
+    "MEETING": "الاجتماعات",
+    "SUPPORT": "الدعم الفني",
+    "EVALUATION": "التقييم",
+    "AUDIT": "التدقيق",
+    "ADMIN": "الإدارة",
+    "ACCESS": "الدخول والتصفح",
+    "OTHER": "أخرى",
+}
+
+_DASHBOARD_NON_OPERATION_ACTIONS = ("PAGE_VIEW", "USER_LOGIN", "USER_LOGOUT")
+
+
+def _dashboard_actor_expression():
+    """Return the canonical actor expression with legacy fallback."""
+    return func.coalesce(AuditLog.actual_user_id, AuditLog.user_id)
+
+
+def _dashboard_action_expression():
+    """Use action_type for new rows, falling back to the historic action."""
+    return func.upper(
+        func.coalesce(func.nullif(AuditLog.action_type, ""), AuditLog.action)
+    )
+
+
+def _dashboard_module_expression():
+    """Bucket audit rows into user-facing product areas.
+
+    Historical rows predate ``module_name`` and often have it NULL.  The
+    action prefix and request-audit endpoint/path therefore provide the
+    fallback so old data remains useful in the adoption report.
+    """
+    module = func.upper(
+        func.coalesce(func.nullif(AuditLog.module_name, ""), "")
+    )
+    action = _dashboard_action_expression()
+    target = func.upper(
+        func.coalesce(
+            func.nullif(AuditLog.object_type, ""),
+            func.nullif(AuditLog.target_type, ""),
+            "",
+        )
+    )
+    note = func.lower(func.coalesce(AuditLog.note, ""))
+
+    return case(
+        (module.like("WORKFLOW%"), "WORKFLOW"),
+        (module.like("CORR%"), "CORRESPONDENCE"),
+        (module.like("PORTAL%"), "PORTAL"),
+        (module.like("HR%"), "HR"),
+        (module.like("ARCHIVE%"), "ARCHIVE"),
+        (module.like("STORE%"), "STORE"),
+        (module.like("TRANSPORT%"), "TRANSPORT"),
+        (module.like("INVENTORY%"), "INVENTORY"),
+        (module.like("MESSAGE%"), "MESSAGE"),
+        (module.like("DELEGATION%"), "DELEGATION"),
+        (module.like("AUDIT%"), "AUDIT"),
+        (module.like("ADMIN%"), "ADMIN"),
+        (action.like("WORKFLOW%"), "WORKFLOW"),
+        (action.like("STEP_%"), "WORKFLOW"),
+        (action.like("PARALLEL%"), "WORKFLOW"),
+        (action.like("REQUEST_%"), "WORKFLOW"),
+        (action.like("CORR%"), "CORRESPONDENCE"),
+        (action.like("PORTAL%"), "PORTAL"),
+        (action.like("HR_%"), "HR"),
+        (action.like("TIMECLK%"), "HR"),
+        (action.like("ATTENDANCE%"), "HR"),
+        (action.like("LEAVE%"), "HR"),
+        (action.like("PAYSLIP%"), "HR"),
+        (action.like("EMPLOYEE%"), "HR"),
+        (action.like("ARCHIVE%"), "ARCHIVE"),
+        (action.like("STORE%"), "STORE"),
+        (action.like("TRANSPORT%"), "TRANSPORT"),
+        (action.like("INVENTORY%"), "INVENTORY"),
+        (action.like("ASSET%"), "INVENTORY"),
+        (action.like("SUPPLY%"), "INVENTORY"),
+        (action.like("MESSAGE%"), "MESSAGE"),
+        (action.like("DELEGATION%"), "DELEGATION"),
+        (action.like("MEETING%"), "MEETING"),
+        (action.like("TROUBLE%"), "SUPPORT"),
+        (action.like("EVALUATION%"), "EVALUATION"),
+        (action.like("AUDIT%"), "AUDIT"),
+        (action.like("PERMISSION%"), "USER"),
+        (action.like("ROLE%"), "USER"),
+        (target.like("WORKFLOW%"), "WORKFLOW"),
+        (target.like("CORR%"), "CORRESPONDENCE"),
+        (target.like("ARCHIVE%"), "ARCHIVE"),
+        # Request-audit notes carry the endpoint/path for legacy rows.
+        (note.like("%workflow.%"), "WORKFLOW"),
+        (note.like("%/workflow/%"), "WORKFLOW"),
+        (note.like("%portal.%"), "PORTAL"),
+        (note.like("%/portal/%"), "PORTAL"),
+        (note.like("%/hr/%"), "HR"),
+        (note.like("%hr.%"), "HR"),
+        (note.like("%/archive/%"), "ARCHIVE"),
+        (note.like("%/transport/%"), "TRANSPORT"),
+        (note.like("%/admin/%"), "ADMIN"),
+        (action.in_(["PAGE_VIEW", "USER_LOGIN", "USER_LOGOUT", "USER_ACTION", "USER_ACTION_FAILED"]), "ACCESS"),
+        else_="OTHER",
+    )
+
+
+def _dashboard_code(value):
+    try:
+        return str(value or "").strip().upper()
+    except Exception:
+        return ""
+
+
+def _dashboard_module_label(value):
+    code = _dashboard_code(value) or "OTHER"
+    return _DASHBOARD_MODULE_LABELS.get(code, str(value or "أخرى"))
+
+
+def _dashboard_int(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _dashboard_percent(value, total):
+    total = _dashboard_int(total)
+    if not total:
+        return 0.0
+    return round((_dashboard_int(value) * 100.0) / total, 1)
+
+
+def _dashboard_datetime_text(value):
+    if not value:
+        return "—"
+    try:
+        return value.strftime("%Y-%m-%d %H:%M")
+    except (AttributeError, ValueError):
+        return str(value)
+
+
+def _dashboard_usage_band(events):
+    events = _dashboard_int(events)
+    if events == 0:
+        return "none", "لم يستخدم"
+    if events <= 5:
+        return "low", "استخدام محدود (1–5)"
+    if events <= 20:
+        return "medium", "استخدام متوسط (6–20)"
+    return "high", "استخدام مرتفع (21 فأكثر)"
+
+
+def _dashboard_filter_state():
+    """Parse period/date query parameters into UTC-naive DB boundaries."""
+    today = datetime.utcnow().date()
+    raw_period = (request.args.get("period") or "").strip().lower()
+    raw_from = (request.args.get("date_from") or "").strip()
+    raw_to = (request.args.get("date_to") or "").strip()
+    period = raw_period or ("custom" if raw_from or raw_to else "30")
+    if period not in _DASHBOARD_PERIODS:
+        period = "30"
+
+    notice = None
+
+    def parse_day(raw):
+        if not raw:
+            return None
+        try:
+            return date.fromisoformat(raw)
+        except (TypeError, ValueError):
+            return None
+
+    if period == "all":
+        date_from = None
+        date_to = None
+    elif period == "custom":
+        date_from = parse_day(raw_from)
+        date_to = parse_day(raw_to)
+        if not date_from and not date_to:
+            period = "30"
+            date_from = today - timedelta(days=29)
+            date_to = today
+            notice = "لم تُحدّد فترة مخصصة؛ عُرضت آخر 30 يومًا."
+    else:
+        days = _DASHBOARD_PERIODS[period]["days"]
+        date_from = today - timedelta(days=max(0, days - 1))
+        date_to = today
+
+    if date_from and date_to and date_from > date_to:
+        date_from, date_to = date_to, date_from
+        notice = "تم ترتيب تاريخي البداية والنهاية تلقائيًا."
+
+    start_at = datetime.combine(date_from, datetime.min.time()) if date_from else None
+    end_at = (
+        datetime.combine(date_to + timedelta(days=1), datetime.min.time())
+        if date_to
+        else None
+    )
+    if date_from and date_to:
+        summary = f"من {date_from.isoformat()} إلى {date_to.isoformat()}"
+    elif date_from:
+        summary = f"من {date_from.isoformat()} فصاعدًا"
+    elif date_to:
+        summary = f"حتى {date_to.isoformat()}"
+    else:
+        summary = "كل الفترة المتاحة"
+
+    return {
+        "key": period,
+        "label": _DASHBOARD_PERIODS[period]["label"],
+        "date_from": date_from,
+        "date_to": date_to,
+        "date_from_value": date_from.isoformat() if date_from else "",
+        "date_to_value": date_to.isoformat() if date_to else "",
+        "summary": summary,
+        "start_at": start_at,
+        "end_at": end_at,
+        "notice": notice,
+    }
+
+
+def _dashboard_base_query(selected_user_id, filter_state):
+    actor_expr = _dashboard_actor_expression()
+    query = _apply_message_visibility_filter(AuditLog.query).filter(actor_expr.isnot(None))
+    if selected_user_id:
+        query = query.filter(actor_expr == int(selected_user_id))
+    if filter_state["start_at"]:
+        query = query.filter(AuditLog.created_at >= filter_state["start_at"])
+    if filter_state["end_at"]:
+        query = query.filter(AuditLog.created_at < filter_state["end_at"])
+    return query
+
+
+def _dashboard_user_label(user):
+    if not user:
+        return "مستخدم غير معروف"
+    return (
+        getattr(user, "full_name", None)
+        or getattr(user, "name", None)
+        or getattr(user, "username", None)
+        or getattr(user, "email", None)
+        or f"مستخدم #{getattr(user, 'id', '')}"
+    )
+
+
+def _build_audit_dashboard_report():
+    """Build all aggregates used by the HTML and Excel usage reports."""
+    filter_state = _dashboard_filter_state()
+    users = User.query.order_by(User.name.asc(), User.email.asc()).all()
+    users_by_id = {int(user.id): user for user in users if getattr(user, "id", None)}
+
+    selected_user_id = request.args.get("user_id", type=int)
+    if selected_user_id not in users_by_id:
+        selected_user_id = None
+    selected_user = users_by_id.get(selected_user_id) if selected_user_id else None
+
+    base = _dashboard_base_query(selected_user_id, filter_state)
+    actor_expr = _dashboard_actor_expression()
+    action_expr = _dashboard_action_expression()
+    module_expr = _dashboard_module_expression()
+    day_expr = func.date(AuditLog.created_at)
+
+    page_view_condition = action_expr == "PAGE_VIEW"
+    login_condition = action_expr == "USER_LOGIN"
+    logout_condition = action_expr == "USER_LOGOUT"
+    failure_condition = action_expr.like("%FAILED%")
+    operation_condition = ~action_expr.in_(_DASHBOARD_NON_OPERATION_ACTIONS)
+    delegated_condition = or_(
+        AuditLog.acting_for_user_id.isnot(None),
+        AuditLog.on_behalf_of_id.isnot(None),
+    )
+
+    summary_row = base.with_entities(
+        func.count(AuditLog.id).label("total_events"),
+        func.count(func.distinct(actor_expr)).label("active_users"),
+        func.count(func.distinct(day_expr)).label("active_days"),
+        func.coalesce(func.sum(case((page_view_condition, 1), else_=0)), 0).label("page_views"),
+        func.coalesce(func.sum(case((operation_condition, 1), else_=0)), 0).label("operations"),
+        func.coalesce(func.sum(case((failure_condition, 1), else_=0)), 0).label("failed_operations"),
+        func.coalesce(func.sum(case((login_condition, 1), else_=0)), 0).label("logins"),
+        func.coalesce(func.sum(case((logout_condition, 1), else_=0)), 0).label("logouts"),
+        func.coalesce(func.sum(case((delegated_condition, 1), else_=0)), 0).label("delegated_events"),
+    ).first()
+
+    summary = {
+        "total_events": _dashboard_int(getattr(summary_row, "total_events", 0)),
+        "active_users": _dashboard_int(getattr(summary_row, "active_users", 0)),
+        "active_days": _dashboard_int(getattr(summary_row, "active_days", 0)),
+        "page_views": _dashboard_int(getattr(summary_row, "page_views", 0)),
+        "operations": _dashboard_int(getattr(summary_row, "operations", 0)),
+        "failed_operations": _dashboard_int(getattr(summary_row, "failed_operations", 0)),
+        "logins": _dashboard_int(getattr(summary_row, "logins", 0)),
+        "logouts": _dashboard_int(getattr(summary_row, "logouts", 0)),
+        "delegated_events": _dashboard_int(getattr(summary_row, "delegated_events", 0)),
+    }
+
+    user_stat_rows = base.with_entities(
+        actor_expr.label("actor_id"),
+        func.count(AuditLog.id).label("events"),
+        func.count(func.distinct(day_expr)).label("active_days"),
+        func.coalesce(func.sum(case((page_view_condition, 1), else_=0)), 0).label("page_views"),
+        func.coalesce(func.sum(case((operation_condition, 1), else_=0)), 0).label("operations"),
+        func.coalesce(func.sum(case((failure_condition, 1), else_=0)), 0).label("failed_operations"),
+        func.coalesce(func.sum(case((delegated_condition, 1), else_=0)), 0).label("delegated_events"),
+        func.min(AuditLog.created_at).label("first_activity"),
+        func.max(AuditLog.created_at).label("last_activity"),
+    ).group_by(actor_expr).all()
+
+    stats_by_user = {}
+    for row in user_stat_rows:
+        actor_id = _dashboard_int(getattr(row, "actor_id", 0))
+        if not actor_id:
+            continue
+        stats_by_user[actor_id] = {
+            "events": _dashboard_int(getattr(row, "events", 0)),
+            "active_days": _dashboard_int(getattr(row, "active_days", 0)),
+            "page_views": _dashboard_int(getattr(row, "page_views", 0)),
+            "operations": _dashboard_int(getattr(row, "operations", 0)),
+            "failed_operations": _dashboard_int(getattr(row, "failed_operations", 0)),
+            "delegated_events": _dashboard_int(getattr(row, "delegated_events", 0)),
+            "first_activity": getattr(row, "first_activity", None),
+            "last_activity": getattr(row, "last_activity", None),
+        }
+
+    module_counts = Counter()
+    modules_by_user = defaultdict(Counter)
+    module_stat_rows = base.with_entities(
+        actor_expr.label("actor_id"),
+        module_expr.label("module_code"),
+        func.count(AuditLog.id).label("count"),
+    ).group_by(actor_expr, module_expr).all()
+    for row in module_stat_rows:
+        module_code = _dashboard_code(getattr(row, "module_code", None)) or "OTHER"
+        count = _dashboard_int(getattr(row, "count", 0))
+        module_counts[module_code] += count
+        actor_id = _dashboard_int(getattr(row, "actor_id", 0))
+        if actor_id:
+            modules_by_user[actor_id][module_code] += count
+
+    action_counts = Counter()
+    actions_by_user = defaultdict(Counter)
+    action_stat_rows = base.with_entities(
+        actor_expr.label("actor_id"),
+        action_expr.label("action_code"),
+        func.count(AuditLog.id).label("count"),
+    ).group_by(actor_expr, action_expr).all()
+    for row in action_stat_rows:
+        action_code = _dashboard_code(getattr(row, "action_code", None)) or "OTHER"
+        count = _dashboard_int(getattr(row, "count", 0))
+        action_counts[action_code] += count
+        actor_id = _dashboard_int(getattr(row, "actor_id", 0))
+        if actor_id:
+            actions_by_user[actor_id][action_code] += count
+
+    def sorted_counter(counter):
+        return sorted(counter.items(), key=lambda item: (-_dashboard_int(item[1]), str(item[0])))
+
+    all_module_count = sum(module_counts.values())
+    module_rows = [
+        {
+            "code": code,
+            "label": _dashboard_module_label(code),
+            "count": _dashboard_int(count),
+            "share_pct": _dashboard_percent(count, all_module_count),
+        }
+        for code, count in sorted_counter(module_counts)
+    ]
+
+    all_action_count = sum(action_counts.values())
+    action_rows = [
+        {
+            "code": code,
+            "label": ui_label(code) or code,
+            "count": _dashboard_int(count),
+            "share_pct": _dashboard_percent(count, all_action_count),
+        }
+        for code, count in sorted_counter(action_counts)
+    ]
+
+    candidate_users = [selected_user] if selected_user else list(users)
+    user_rows = []
+    for user in candidate_users:
+        user_id = int(user.id)
+        stats = stats_by_user.get(user_id, {})
+        events = _dashboard_int(stats.get("events"))
+        band_key, band_label = _dashboard_usage_band(events)
+        top_modules = [
+            {
+                "code": code,
+                "label": _dashboard_module_label(code),
+                "count": _dashboard_int(count),
+            }
+            for code, count in sorted_counter(modules_by_user.get(user_id, Counter()))[:3]
+        ]
+        top_actions = [
+            {
+                "code": code,
+                "label": ui_label(code) or code,
+                "count": _dashboard_int(count),
+            }
+            for code, count in sorted_counter(actions_by_user.get(user_id, Counter()))[:3]
+        ]
+        user_rows.append(
+            {
+                "id": user_id,
+                "name": _dashboard_user_label(user),
+                "email": getattr(user, "email", None) or "",
+                "events": events,
+                "active_days": _dashboard_int(stats.get("active_days")),
+                "page_views": _dashboard_int(stats.get("page_views")),
+                "operations": _dashboard_int(stats.get("operations")),
+                "failed_operations": _dashboard_int(stats.get("failed_operations")),
+                "delegated_events": _dashboard_int(stats.get("delegated_events")),
+                "first_activity": stats.get("first_activity"),
+                "last_activity": stats.get("last_activity"),
+                "band_key": band_key,
+                "band_label": band_label,
+                "top_modules": top_modules,
+                "top_actions": top_actions,
+            }
+        )
+
+    if not selected_user:
+        user_rows.sort(
+            key=lambda row: (
+                -_dashboard_int(row["events"]),
+                -_dashboard_int(row["active_days"]),
+                str(row["name"]).casefold(),
+            )
+        )
+
+    distribution_counts = Counter(row["band_key"] for row in user_rows)
+    distribution = [
+        {"key": "none", "label": "لم يستخدم", "count": distribution_counts["none"]},
+        {"key": "low", "label": "استخدام محدود (1–5)", "count": distribution_counts["low"]},
+        {"key": "medium", "label": "استخدام متوسط (6–20)", "count": distribution_counts["medium"]},
+        {"key": "high", "label": "استخدام مرتفع (21 فأكثر)", "count": distribution_counts["high"]},
+    ]
+
+    trend_rows_raw = (
+        base.with_entities(
+            day_expr.label("day"),
+            func.count(AuditLog.id).label("events"),
+            func.count(func.distinct(actor_expr)).label("active_users"),
+        )
+        .group_by(day_expr)
+        .order_by(day_expr.desc())
+        .limit(31)
+        .all()
+    )
+    trend_rows_raw.reverse()
+    trend_max = max((_dashboard_int(getattr(row, "events", 0)) for row in trend_rows_raw), default=0)
+    trend = []
+    for row in trend_rows_raw:
+        day = getattr(row, "day", None)
+        day_text = str(day)[:10] if day is not None else "—"
+        events = _dashboard_int(getattr(row, "events", 0))
+        trend.append(
+            {
+                "day": day_text,
+                "events": events,
+                "active_users": _dashboard_int(getattr(row, "active_users", 0)),
+                "bar_pct": round((events * 100.0 / trend_max), 1) if trend_max else 0,
+            }
+        )
+
+    scope_users_count = 1 if selected_user else len(users)
+    summary["scope_users_count"] = scope_users_count
+    summary["inactive_users"] = sum(1 for row in user_rows if not row["events"])
+    summary["active_rate_pct"] = _dashboard_percent(summary["active_users"], scope_users_count)
+    summary["failure_rate_pct"] = _dashboard_percent(summary["failed_operations"], summary["operations"])
+
+    return {
+        "summary": summary,
+        "users": user_rows,
+        "user_options": [
+            {
+                "id": int(user.id),
+                "name": _dashboard_user_label(user),
+                "email": getattr(user, "email", None) or "",
+            }
+            for user in users
+        ],
+        "modules": module_rows,
+        "actions": action_rows,
+        "trend": trend,
+        "distribution": distribution,
+        "selected_user": selected_user,
+        "selected_user_id": selected_user_id,
+        "scope_label": _dashboard_user_label(selected_user) if selected_user else "كل المستخدمين",
+        "period": filter_state,
+        "generated_at": datetime.utcnow(),
+        "generated_at_text": _dashboard_datetime_text(datetime.utcnow()),
+        "print_mode": request.args.get("print") in {"1", "true", "yes"},
+    }
 
 
 @audit_bp.route("/")
@@ -140,50 +663,23 @@ def list_audit_logs():
 @login_required
 @perm_required("AUDIT_DASHBOARD_READ")
 def audit_dashboard():
-    q = _apply_message_visibility_filter(AuditLog.query)
-
-    total_logs = q.count()
-
-    top_users = (
-        db.session.query(
-            User.email,
-            func.count(AuditLog.id)
-        )
-        .join(AuditLog, AuditLog.user_id == User.id)
-    )
-
-    # Hide message logs for non-super admin
-    if (getattr(current_user, "role", "") or "").strip().upper() != "SUPER_ADMIN":
-        top_users = top_users.filter(~AuditLog.action.like("MESSAGE_%"))
-
-    top_users = (
-        top_users
-        .group_by(User.email)
-        .order_by(func.count(AuditLog.id).desc())
-        .limit(5)
-        .all()
-    )
-
-    top_actions_q = db.session.query(
-        AuditLog.action,
-        func.count(AuditLog.id)
-    )
-    if (getattr(current_user, "role", "") or "").strip().upper() != "SUPER_ADMIN":
-        top_actions_q = top_actions_q.filter(~AuditLog.action.like("MESSAGE_%"))
-
-    top_actions = (
-        top_actions_q
-        .group_by(AuditLog.action)
-        .order_by(func.count(AuditLog.id).desc())
-        .limit(5)
-        .all()
-    )
-
+    report = _build_audit_dashboard_report()
     return render_template(
         "audit/dashboard.html",
-        total_logs=total_logs,
-        top_users=top_users,
-        top_actions=top_actions
+        report=report,
+        # Keep the old names available for extensions that included the
+        # previous dashboard context.
+        total_logs=report["summary"]["total_events"],
+        top_users=[
+            (row["email"] or row["name"], row["events"])
+            for row in report["users"][:5]
+            if row["events"]
+        ],
+        top_actions=[
+            (row["code"], row["count"])
+            for row in report["actions"][:5]
+        ],
+        hide_shell=report["print_mode"],
     )
 
 
@@ -191,64 +687,76 @@ def audit_dashboard():
 @login_required
 @perm_required("AUDIT_DASHBOARD_READ")
 def audit_dashboard_export_excel():
-    """Export Audit Dashboard aggregates to Excel."""
-    q = _apply_message_visibility_filter(AuditLog.query)
-
-    total_logs = q.count()
-
-    top_users_q = (
-        db.session.query(User.email, func.count(AuditLog.id))
-        .join(AuditLog, AuditLog.user_id == User.id)
-    )
-    if (getattr(current_user, "role", "") or "").strip().upper() != "SUPER_ADMIN":
-        top_users_q = top_users_q.filter(~AuditLog.action.like("MESSAGE_%"))
-
-    top_users_raw = (
-        top_users_q
-        .group_by(User.email)
-        .order_by(func.count(AuditLog.id).desc())
-        .limit(50)
-        .all()
-    )
-
-    top_actions_q = db.session.query(AuditLog.action, func.count(AuditLog.id))
-    if (getattr(current_user, "role", "") or "").strip().upper() != "SUPER_ADMIN":
-        top_actions_q = top_actions_q.filter(~AuditLog.action.like("MESSAGE_%"))
-
-    top_actions_raw = (
-        top_actions_q
-        .group_by(AuditLog.action)
-        .order_by(func.count(AuditLog.id).desc())
-        .limit(50)
-        .all()
-    )
-
-    top_users = [[email or "(no email)", int(cnt)] for email, cnt in top_users_raw]
-    top_actions = [[(action or "-"), int(cnt)] for action, cnt in top_actions_raw]
+    """Export the same filtered usage report shown on the dashboard."""
+    report = _build_audit_dashboard_report()
+    summary = report["summary"]
 
     sheets = [
         {
-            "name": "Summary",
-            "headers": ["Metric", "Value"],
+            "name": "الملخص",
+            "headers": ["المؤشر", "القيمة"],
             "rows": [
-                ["Total Logs", int(total_logs)],
-                ["Generated At (UTC)", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")],
+                ["نطاق المستخدمين", report["scope_label"]],
+                ["الفترة", report["period"]["summary"]],
+                ["إجمالي السجلات", summary["total_events"]],
+                ["المستخدمون ذوو النشاط", summary["active_users"]],
+                ["المستخدمون بلا نشاط", summary["inactive_users"]],
+                ["الأيام النشطة", summary["active_days"]],
+                ["فتح الصفحات", summary["page_views"]],
+                ["الإجراءات المسجلة", summary["operations"]],
+                ["المحاولات غير الناجحة", summary["failed_operations"]],
+                ["عمليات بالنيابة", summary["delegated_events"]],
+                ["نسبة النشاط", f"{summary['active_rate_pct']}%"],
+                ["نسبة المحاولات غير الناجحة", f"{summary['failure_rate_pct']}%"],
+                ["تاريخ إعداد التقرير", report["generated_at_text"]],
             ],
         },
         {
-            "name": "Top Users",
-            "headers": ["User", "Count"],
-            "rows": top_users,
+            "name": "المستخدمون",
+            "headers": [
+                "المستخدم", "البريد", "كل السجلات", "فتح الصفحات",
+                "الإجراءات", "غير الناجحة", "الأيام النشطة", "بالنيابة",
+                "الوحدات الأكثر استخدامًا", "الإجراءات الأكثر استخدامًا",
+                "أول نشاط", "آخر نشاط", "التصنيف",
+            ],
+            "rows": [
+                [
+                    row["name"],
+                    row["email"],
+                    row["events"],
+                    row["page_views"],
+                    row["operations"],
+                    row["failed_operations"],
+                    row["active_days"],
+                    row["delegated_events"],
+                    "، ".join(f"{item['label']} ({item['count']})" for item in row["top_modules"]),
+                    "، ".join(f"{item['label']} ({item['count']})" for item in row["top_actions"]),
+                    _dashboard_datetime_text(row["first_activity"]),
+                    _dashboard_datetime_text(row["last_activity"]),
+                    row["band_label"],
+                ]
+                for row in report["users"]
+            ],
         },
         {
-            "name": "Top Actions",
-            "headers": ["Action", "Count"],
-            "rows": top_actions,
+            "name": "الوحدات",
+            "headers": ["الوحدة", "عدد الاستخدام", "النسبة"],
+            "rows": [[row["label"], row["count"], f"{row['share_pct']}%"] for row in report["modules"]],
+        },
+        {
+            "name": "الإجراءات",
+            "headers": ["الإجراء", "عدد الاستخدام", "النسبة"],
+            "rows": [[row["label"], row["count"], f"{row['share_pct']}%"] for row in report["actions"]],
+        },
+        {
+            "name": "النشاط اليومي",
+            "headers": ["اليوم", "كل السجلات", "المستخدمون النشطون"],
+            "rows": [[row["day"], row["events"], row["active_users"]] for row in report["trend"]],
         },
     ]
 
     xlsx_bytes = make_xlsx_bytes_multi(sheets)
-    filename = f"audit_dashboard_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    filename = f"masar_usage_report_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
     return send_file(
         BytesIO(xlsx_bytes),
         mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
