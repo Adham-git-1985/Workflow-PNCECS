@@ -409,6 +409,142 @@
     white-space: nowrap;
   }
 
+  .audit-dashboard-transaction-summary {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(170px, 1fr));
+    gap: 13px;
+    margin-top: 18px;
+  }
+
+  .audit-dashboard-transaction-card {
+    min-height: 126px;
+    padding: 17px;
+    border: 1px solid #d9e7ed;
+    border-top: 4px solid var(--transaction-accent, #176b87);
+    border-radius: 17px;
+    background: linear-gradient(180deg, #fff, #f8fcfd);
+    box-shadow: 0 8px 22px rgba(13,59,102,.06);
+  }
+
+  .audit-dashboard-transaction-card__label {
+    color: #526b81;
+    font-size: .8rem;
+    font-weight: 800;
+  }
+
+  .audit-dashboard-transaction-card__value {
+    margin-top: 11px;
+    color: #102b49;
+    font-size: 1.8rem;
+    font-weight: 800;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .audit-dashboard-transaction-card__note {
+    margin-top: 9px;
+    color: #8292a2;
+    font-size: .72rem;
+    line-height: 1.55;
+  }
+
+  .audit-dashboard-transaction-panel {
+    margin-top: 18px;
+    border: 2px solid #cfe3ee;
+    box-shadow: 0 10px 26px rgba(13,59,102,.08);
+  }
+
+  .audit-dashboard-transaction-panel .audit-dashboard-panel__head h3 {
+    color: #0d5270;
+  }
+
+  .audit-dashboard-transaction-table {
+    min-width: 1080px;
+    margin: 0;
+    vertical-align: middle;
+  }
+
+  .audit-dashboard-transaction-table thead th {
+    padding: 10px 8px;
+    border-bottom: 2px solid #bcd5e1;
+    color: #35566d;
+    background: #eef8fb;
+    font-size: .72rem;
+    white-space: nowrap;
+  }
+
+  .audit-dashboard-transaction-table tbody td {
+    padding: 9px 8px;
+    border-color: #e0edf2;
+    color: #304a63;
+    font-size: .75rem;
+    white-space: nowrap;
+  }
+
+  .audit-dashboard-transaction-table tbody tr:nth-child(even) {
+    background: #fbfdfe;
+  }
+
+  .audit-dashboard-transaction-table tbody tr:hover {
+    background: #f0f9fb;
+  }
+
+  .audit-dashboard-transaction-day {
+    color: #173b5c;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .audit-dashboard-transaction-module {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    color: #176b87;
+    background: #e8f6fa;
+    font-size: .7rem;
+    font-weight: 800;
+  }
+
+  .audit-dashboard-transaction-module--portal {
+    color: #77601c;
+    background: #fff7dd;
+  }
+
+  .audit-dashboard-transaction-total {
+    color: #0d5270 !important;
+    font-size: .82rem !important;
+  }
+
+  .audit-dashboard-transaction-detail {
+    margin-top: 16px;
+  }
+
+  .audit-dashboard-transaction-detail .audit-dashboard-panel__head {
+    margin-bottom: 11px;
+  }
+
+  .audit-dashboard-transaction-detail .audit-dashboard-transaction-table {
+    min-width: 1160px;
+  }
+
+  .audit-dashboard-transaction-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+    color: #718397;
+    font-size: .72rem;
+  }
+
+  .audit-dashboard-transaction-legend span {
+    padding: 3px 7px;
+    border: 1px solid #dbe8ee;
+    border-radius: 7px;
+    background: #fbfdfe;
+  }
+
   .audit-dashboard-users-panel { margin-top: 16px; }
 
   .audit-dashboard-users-table thead th {
@@ -521,7 +657,8 @@
     .audit-dashboard-hero__actions { justify-content: flex-start; margin-top: 18px; }
     .audit-dashboard-stat-grid,
     .audit-dashboard-distribution,
-    .audit-dashboard-panels { grid-template-columns: 1fr 1fr; }
+    .audit-dashboard-panels,
+    .audit-dashboard-transaction-summary { grid-template-columns: 1fr 1fr; }
     .audit-dashboard-panel--full { grid-column: 1 / -1; }
     .audit-dashboard-trend__row { grid-template-columns: 78px minmax(50px, 1fr) 60px; }
     .audit-dashboard-trend__users { display: none; }
@@ -531,7 +668,8 @@
     .audit-dashboard-filter__grid,
     .audit-dashboard-stat-grid,
     .audit-dashboard-distribution,
-    .audit-dashboard-panels { grid-template-columns: 1fr; }
+    .audit-dashboard-panels,
+    .audit-dashboard-transaction-summary { grid-template-columns: 1fr; }
     .audit-dashboard-panel--full { grid-column: auto; }
     .audit-dashboard-bar { grid-template-columns: 110px minmax(60px, 1fr) 60px; }
     .audit-dashboard-section-title,
@@ -568,20 +706,36 @@
     .audit-dashboard-hero__meta strong { color: #173b5c; }
     .audit-dashboard-panel,
     .audit-dashboard-stat,
+    .audit-dashboard-transaction-card,
     .audit-dashboard-filter,
     .audit-dashboard-band { box-shadow: none; }
     .audit-dashboard-stat-grid { grid-template-columns: repeat(6, 1fr); }
     .audit-dashboard-stat { min-height: 105px; padding: 10px; }
     .audit-dashboard-stat__value { margin-top: 8px; font-size: 1.35rem; }
     .audit-dashboard-stat__note { margin-top: 5px; }
+    .audit-dashboard-transaction-summary { grid-template-columns: repeat(4, 1fr); }
+    .audit-dashboard-transaction-card { min-height: 90px; padding: 9px; }
+    .audit-dashboard-transaction-card__value { margin-top: 7px; font-size: 1.2rem; }
+    .audit-dashboard-transaction-card__note { margin-top: 5px; font-size: 6.5pt; }
     .audit-dashboard-section-title { margin-top: 16px; }
     .audit-dashboard-panels { grid-template-columns: 1fr 1fr; }
     .audit-dashboard-panel { padding: 12px; border-radius: 9px; }
     .audit-dashboard-panel--full { grid-column: 1 / -1; }
     .audit-dashboard-users-panel { break-before: page; }
-    .audit-dashboard-users-table { font-size: 7pt; }
+    .audit-dashboard-transaction-detail { break-before: page; }
+    .audit-dashboard-transaction-panel { border-width: 1px; }
+    .audit-dashboard-transaction-table { min-width: 0; width: 100%; table-layout: fixed; }
+    .audit-dashboard-transaction-table th,
+    .audit-dashboard-transaction-table td { white-space: normal; overflow-wrap: anywhere; }
+    .audit-dashboard-transaction-table thead { display: table-header-group; }
+    .audit-dashboard-transaction-table tbody tr { break-inside: avoid; }
+    .audit-dashboard-transaction-table tbody td,
+    .audit-dashboard-transaction-table thead th { padding: 5px 4px; font-size: 6.7pt; }
+    .audit-dashboard-transaction-module { padding: 2px 5px; font-size: 6.5pt; }
+    .audit-dashboard-transaction-detail .audit-dashboard-transaction-table { min-width: 0; }
+    .audit-dashboard-users-table { font-size: 7pt; table-layout: fixed; width: 100%; }
     .audit-dashboard-users-table tbody td,
-    .audit-dashboard-users-table thead th { padding: 6px 5px; font-size: 7pt; }
+    .audit-dashboard-users-table thead th { padding: 6px 5px; font-size: 7pt; white-space: normal; overflow-wrap: anywhere; }
     .audit-dashboard-pill { padding: 2px 4px; font-size: 6.5pt; }
     .audit-dashboard-note { margin-top: 10px; padding: 9px 12px; font-size: 7.5pt; }
     .audit-dashboard-footer { margin-top: 10px; }
@@ -597,8 +751,8 @@
         <span class="audit-dashboard-kicker"><i class="bi bi-bar-chart-line-fill"></i> تقرير قياس التفاعل</span>
         <h1>استخدام نظام مسار بالأرقام</h1>
         <p>
-          يوضح هذا التقرير من استخدم النظام، كم مرة استخدمه، وما الوحدات والإجراءات الأكثر استخدامًا،
-          لمساعدة الإدارة على اكتشاف الحاجة إلى تدريب أو دعم إضافي.
+          يوضح هذا التقرير أولًا عدد المعاملات التي تعامل معها كل مستخدم في «مسار» و«البوابة الإدارية»،
+          وما نوع الإجراء الذي قام به يوميًا، ثم يعرض فتح الصفحات كمؤشر مساند لاتخاذ قرار التدريب أو الدعم.
         </p>
       </div>
       <div class="audit-dashboard-hero__actions no-print">
@@ -701,6 +855,123 @@
 
   <div class="audit-dashboard-section-title">
     <div>
+      <h2>القسم الرئيسي: التعامل مع المعاملات</h2>
+      <p>الأرقام التالية أولوية الإدارة؛ أما فتح الصفحات فيظهر لاحقًا كمؤشر مساند لفهم التصفح.</p>
+    </div>
+  </div>
+
+  <section class="audit-dashboard-transaction-summary" aria-label="ملخص التعامل مع المعاملات">
+    {% for module in report.transaction_modules %}
+      <article class="audit-dashboard-transaction-card" style="--transaction-accent:{% if module.code == 'WORKFLOW' %}#176b87{% else %}#d39b2a{% endif %}">
+        <div class="audit-dashboard-transaction-card__label">
+          <i class="bi {% if module.code == 'WORKFLOW' %}bi-diagram-3{% else %}bi-building{% endif %}"></i>
+          تفاعلات معاملات {{ module.label }}
+        </div>
+        <div class="audit-dashboard-transaction-card__value">{{ number(module.transaction_interactions) }}</div>
+        <div class="audit-dashboard-transaction-card__note">
+          {{ number(module.unique_transactions) }} معاملة/مرجع فريد · {{ number(module.active_users) }} مستخدم · {{ number(module.active_days) }} يوم
+        </div>
+      </article>
+    {% endfor %}
+    <article class="audit-dashboard-transaction-card" style="--transaction-accent:#2a9d8f">
+      <div class="audit-dashboard-transaction-card__label"><i class="bi bi-hash"></i> معاملات فريدة متعامل معها</div>
+      <div class="audit-dashboard-transaction-card__value">{{ number(report.summary.unique_transactions) }}</div>
+      <div class="audit-dashboard-transaction-card__note">بحسب المستخدم والوحدة والمرجع خلال الفترة المحددة</div>
+    </article>
+    <article class="audit-dashboard-transaction-card" style="--transaction-accent:#6c8ebf">
+      <div class="audit-dashboard-transaction-card__label"><i class="bi bi-person-check"></i> مستخدمون تعاملوا مع معاملات</div>
+      <div class="audit-dashboard-transaction-card__value">{{ number(report.summary.transaction_active_users) }}</div>
+      <div class="audit-dashboard-transaction-card__note">من أصل {{ number(report.summary.scope_users_count) }} مستخدم في نطاق التقرير</div>
+    </article>
+  </section>
+
+  <section class="audit-dashboard-panel audit-dashboard-transaction-panel">
+    <div class="audit-dashboard-panel__head">
+      <div>
+        <h3><i class="bi bi-kanban"></i> المعاملات حسب اليوم والوحدة</h3>
+        <p>توضح الأرقام مقدار تعامل المستخدمين مع معاملات «مسار» و«البوابة الإدارية» في كل يوم، حسب نوع الإجراء.</p>
+      </div>
+      <span class="badge rounded-pill text-bg-light">{{ number(report.transactions_daily|length) }} صف يومي</span>
+    </div>
+    <div class="audit-dashboard-transaction-legend">
+      <span>المعاملة/المرجع الفريد لا يتكرر عند فتحه أكثر من مرة في اليوم نفسه.</span>
+      <span>إجمالي التفاعلات يجمع أنواع الإجراءات؛ وقد تظهر المعاملة نفسها في أكثر من نوع إذا تغير الإجراء عليها.</span>
+      <span>الأحداث المسجلة تشمل كل مرات التسجيل، وتُعرض للمقارنة فقط.</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table audit-dashboard-transaction-table">
+        <thead>
+          <tr>
+            <th>اليوم</th>
+            <th>الوحدة</th>
+            <th class="text-end">المستخدمون</th>
+            <th class="text-end">معاملات فريدة</th>
+            <th class="text-end">إجمالي التفاعلات</th>
+            {% for action in report.transaction_actions %}<th class="text-end">{{ action.label }}</th>{% endfor %}
+            <th class="text-end">الأحداث</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.transactions_daily %}
+            <tr>
+              <td class="audit-dashboard-transaction-day">{{ row.day }}</td>
+              <td><span class="audit-dashboard-transaction-module {% if row.module_code == 'ADMIN_PORTAL' %}audit-dashboard-transaction-module--portal{% endif %}"><i class="bi {% if row.module_code == 'WORKFLOW' %}bi-diagram-3{% else %}bi-building{% endif %}"></i>{{ row.module_label }}</span></td>
+              <td class="text-end audit-dashboard-number">{{ number(row.active_users) }}</td>
+              <td class="text-end audit-dashboard-number">{{ number(row.unique_transactions) }}</td>
+              <td class="text-end audit-dashboard-number audit-dashboard-transaction-total">{{ number(row.transaction_interactions) }}</td>
+              {% for action in report.transaction_actions %}<td class="text-end audit-dashboard-number">{{ number(row[action.key]) }}</td>{% endfor %}
+              <td class="text-end text-muted">{{ number(row.event_count) }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="{{ 6 + (report.transaction_actions|length) }}" class="audit-dashboard-empty">لا توجد معاملات مسجلة ضمن الفترة أو المستخدم المحدد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="audit-dashboard-panel audit-dashboard-transaction-detail">
+    <div class="audit-dashboard-panel__head">
+      <div>
+        <h3><i class="bi bi-person-vcard"></i> التفصيل اليومي حسب المستخدم</h3>
+        <p>هذا هو الجدول الرئيسي لتوجيه الموظفين: يبين ماذا فعل كل مستخدم في «مسار» أو «البوابة الإدارية» في كل يوم.</p>
+      </div>
+      <span class="badge rounded-pill text-bg-light">{{ number(report.transactions_daily_by_user|length) }} صف تفصيلي</span>
+    </div>
+    <div class="table-responsive">
+      <table class="table audit-dashboard-transaction-table">
+        <thead>
+          <tr>
+            <th>اليوم</th>
+            <th>المستخدم</th>
+            <th>الوحدة</th>
+            <th class="text-end">معاملات فريدة</th>
+            <th class="text-end">إجمالي التفاعلات</th>
+            {% for action in report.transaction_actions %}<th class="text-end">{{ action.label }}</th>{% endfor %}
+            <th class="text-end">الأحداث</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.transactions_daily_by_user %}
+            <tr>
+              <td class="audit-dashboard-transaction-day">{{ row.day }}</td>
+              <td class="audit-dashboard-user__name">{{ row.user_name }}</td>
+              <td><span class="audit-dashboard-transaction-module {% if row.module_code == 'ADMIN_PORTAL' %}audit-dashboard-transaction-module--portal{% endif %}">{{ row.module_label }}</span></td>
+              <td class="text-end audit-dashboard-number">{{ number(row.unique_transactions) }}</td>
+              <td class="text-end audit-dashboard-number audit-dashboard-transaction-total">{{ number(row.transaction_interactions) }}</td>
+              {% for action in report.transaction_actions %}<td class="text-end audit-dashboard-number">{{ number(row[action.key]) }}</td>{% endfor %}
+              <td class="text-end text-muted">{{ number(row.event_count) }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="{{ 6 + (report.transaction_actions|length) }}" class="audit-dashboard-empty">لا توجد معاملات مسجلة ضمن الفترة أو المستخدم المحدد.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="audit-dashboard-section-title">
+    <div>
       <h2>توزيع مستوى الاستخدام</h2>
       <p>تصنيف عددي مساعد لقراءة كثافة النشاط خلال الفترة المحددة.</p>
     </div>
@@ -762,7 +1033,7 @@
 
     <article class="audit-dashboard-panel audit-dashboard-panel--full">
       <div class="audit-dashboard-panel__head">
-        <div><h3><i class="bi bi-graph-up"></i> النشاط اليومي</h3><p>عدد السجلات والمستخدمين النشطين في كل يوم — آخر 31 يومًا من الفترة المختارة عند الحاجة.</p></div>
+        <div><h3><i class="bi bi-window-stack"></i> مؤشر فتح الصفحات (ثانوي)</h3><p>عدد مرات فتح الصفحات والسجلات العامة للمقارنة فقط؛ المؤشر الأهم للإدارة هو جدول المعاملات أعلاه.</p></div>
         <span class="badge rounded-pill text-bg-light">{{ number(report.trend|length) }} يومًا</span>
       </div>
       {% if report.trend %}
@@ -797,6 +1068,9 @@
             <th>#</th>
             <th>المستخدم</th>
             <th>التصنيف</th>
+            <th class="text-end">معاملات فريدة</th>
+            <th class="text-end">تفاعلات مسار</th>
+            <th class="text-end">تفاعلات البوابة</th>
             <th class="text-end">كل السجلات</th>
             <th class="text-end">الإجراءات</th>
             <th class="text-end">فتح الصفحات</th>
@@ -813,6 +1087,9 @@
               <td class="text-muted">{{ loop.index }}</td>
               <td><div class="audit-dashboard-user__name">{{ row.name }}</div>{% if row.email %}<span class="audit-dashboard-user__email">{{ row.email }}</span>{% endif %}</td>
               <td><span class="audit-dashboard-status audit-dashboard-status--{{ row.band_key }}">{{ row.band_label }}</span></td>
+              <td class="text-end audit-dashboard-number">{{ number(row.unique_transactions) }}</td>
+              <td class="text-end audit-dashboard-number">{{ number(row.workflow_transactions) }}</td>
+              <td class="text-end audit-dashboard-number">{{ number(row.portal_transactions) }}</td>
               <td class="text-end audit-dashboard-number">{{ number(row.events) }}</td>
               <td class="text-end audit-dashboard-number">{{ number(row.operations) }}</td>
               <td class="text-end audit-dashboard-number">{{ number(row.page_views) }}</td>
@@ -831,7 +1108,7 @@
               <td class="text-nowrap">{% if row.last_activity %}{{ row.last_activity.strftime('%Y-%m-%d %H:%M') }}{% else %}—{% endif %}</td>
             </tr>
           {% else %}
-            <tr><td colspan="11" class="audit-dashboard-empty">لا يوجد مستخدمون لعرضهم.</td></tr>
+            <tr><td colspan="14" class="audit-dashboard-empty">لا يوجد مستخدمون لعرضهم.</td></tr>
           {% endfor %}
         </tbody>
       </table>

@@ -77,6 +77,47 @@ _DASHBOARD_MODULE_LABELS = {
 
 _DASHBOARD_NON_OPERATION_ACTIONS = ("PAGE_VIEW", "USER_LOGIN", "USER_LOGOUT")
 
+# The executive view is transaction-first.  These categories intentionally
+# use a small, stable vocabulary even though the audit table contains many
+# domain-specific action codes.
+_DASHBOARD_TRANSACTION_ACTIONS = (
+    ("view", "VIEW", "اطلاع"),
+    ("create", "CREATE", "إنشاء"),
+    ("approve", "APPROVE", "اعتماد"),
+    ("reject", "REJECT", "رفض"),
+    ("reopen", "REOPEN", "إعادة فتح"),
+    ("follow_up", "FOLLOW_UP", "متابعة"),
+    ("mention", "MENTION", "ذكر أشخاص"),
+    ("other", "OTHER", "إجراءات أخرى"),
+)
+_DASHBOARD_TRANSACTION_ACTION_KEYS = tuple(
+    item[0] for item in _DASHBOARD_TRANSACTION_ACTIONS
+)
+_DASHBOARD_TRANSACTION_MODULES = ("WORKFLOW", "ADMIN_PORTAL")
+_DASHBOARD_TRANSACTION_MODULE_LABELS = {
+    "WORKFLOW": "مسار",
+    "ADMIN_PORTAL": "البوابة الإدارية",
+}
+_DASHBOARD_FOLLOW_UP_ACTIONS = frozenset(
+    {
+        "FOLLOW_UP",
+        "FOLLOWUP",
+        "REQUEST_ESCALATION",
+        "ESCALATED",
+        "WORKFLOW_REPLY",
+        "WORKFLOW_NOTE",
+        "WORKFLOW_COMMENT",
+        "WORKFLOW_REQUESTER_NOTE",
+        "WORKFLOW_FOLLOWER_UPDATE",
+        "HIERARCHY_BYPASS_FOLLOWER",
+        "ASSISTANT_SECRETARY_REDIRECT_FOLLOWER",
+        "CORR_FORWARD",
+        "CORR_RETURN",
+        "CORR_REQUEST_INFO",
+        "CORR_REPLY",
+    }
+)
+
 
 def _dashboard_actor_expression():
     """Return the canonical actor expression with legacy fallback."""
@@ -211,6 +252,72 @@ def _dashboard_usage_band(events):
     if events <= 20:
         return "medium", "استخدام متوسط (6–20)"
     return "high", "استخدام مرتفع (21 فأكثر)"
+
+
+def _dashboard_transaction_category(action_code):
+    """Map detailed audit actions to the executive transaction vocabulary.
+
+    ``None`` means that the row is not a transaction action.  Rows with a
+    transaction reference but without a known action are kept as ``other``;
+    this prevents a new domain action from silently disappearing from the
+    management report.
+    """
+    action = _dashboard_code(action_code)
+    if not action:
+        return None
+
+    # Mention actions contain words such as ACCESS/REVOKED, so classify them
+    # before the more general action suffixes below.
+    if "MENTION" in action:
+        return "mention"
+    if "REOPEN" in action:
+        return "reopen"
+    if (
+        action in {"APPROVE", "APPROVED", "APPROVAL", "STEP_APPROVED"}
+        or action.endswith("_APPROVE")
+        or action.endswith("_APPROVED")
+        or (action.endswith("_APPROVAL") and "SUBMIT" not in action)
+    ):
+        return "approve"
+    if (
+        action in {"REJECT", "REJECTED", "STEP_REJECTED"}
+        or action.endswith("_REJECT")
+        or action.endswith("_REJECTED")
+    ):
+        return "reject"
+    if (
+        action in {"CREATE", "CREATED", "REQUEST_CREATED", "WORKFLOW_STARTED"}
+        or action.endswith("_CREATE")
+        or action.endswith("_CREATED")
+    ):
+        return "create"
+    if action in _DASHBOARD_FOLLOW_UP_ACTIONS:
+        return "follow_up"
+    if (
+        action in {"PAGE_VIEW", "VIEW", "READ", "OPEN", "CORR_OPEN", "REQUEST_VIEWED"}
+        or action.endswith("_VIEW")
+        or action.endswith("_VIEWED")
+        or action.endswith("_OPEN")
+        or action.endswith("_OPENED")
+        or action.endswith("_READ")
+    ):
+        return "view"
+
+    # Keep known transaction actions (including a future action code) visible
+    # when the audit row carries a transaction reference.  The caller decides
+    # whether a reference is available before using this fallback.
+    return "other"
+
+
+def _dashboard_transaction_module(module_code, action_code):
+    """Roll detailed product buckets into the two executive product areas."""
+    module = _dashboard_code(module_code)
+    action = _dashboard_code(action_code)
+    if module == "WORKFLOW" or action.startswith(
+        ("WORKFLOW_", "STEP_", "REQUEST_", "PARALLEL_", "HIERARCHY_")
+    ):
+        return "WORKFLOW"
+    return "ADMIN_PORTAL"
 
 
 def _dashboard_filter_state():
@@ -440,11 +547,253 @@ def _build_audit_dashboard_report():
         for code, count in sorted_counter(action_counts)
     ]
 
+    # Transaction-first report.  The same transaction reference is counted
+    # once per user/day/module/action, even if the user opened it repeatedly
+    # that day.  When an older audit row has no reference, its event count is
+    # retained as an explicit fallback rather than being silently discarded.
+    transaction_ref_expr = func.coalesce(
+        AuditLog.request_id,
+        AuditLog.object_id,
+        AuditLog.target_id,
+    )
+    transaction_target_expr = func.upper(
+        func.coalesce(
+            func.nullif(AuditLog.object_type, ""),
+            func.nullif(AuditLog.target_type, ""),
+            "",
+        )
+    )
+    transaction_stat_rows = (
+        base.with_entities(
+            day_expr.label("day"),
+            actor_expr.label("actor_id"),
+            module_expr.label("module_code"),
+            action_expr.label("action_code"),
+            transaction_target_expr.label("target_code"),
+            transaction_ref_expr.label("transaction_ref"),
+            func.count(AuditLog.id).label("event_count"),
+        )
+        .group_by(
+            day_expr,
+            actor_expr,
+            module_expr,
+            action_expr,
+            transaction_target_expr,
+            transaction_ref_expr,
+        )
+        .all()
+    )
+
+    def new_transaction_bucket():
+        return {"references": set(), "unresolved_events": 0, "event_count": 0}
+
+    transaction_buckets = defaultdict(new_transaction_bucket)
+    daily_transaction_refs = defaultdict(set)
+    daily_transaction_unresolved = Counter()
+    user_transaction_refs = defaultdict(set)
+    user_transaction_unresolved = Counter()
+    module_transaction_refs = defaultdict(set)
+    module_transaction_unresolved = Counter()
+    module_active_users = defaultdict(set)
+    module_active_days = defaultdict(set)
+    transaction_user_ids = set()
+    transaction_days = set()
+
+    for row in transaction_stat_rows:
+        actor_id = _dashboard_int(getattr(row, "actor_id", 0))
+        if not actor_id:
+            continue
+        day_value = getattr(row, "day", None)
+        if day_value is None:
+            continue
+        day_text = str(day_value)[:10]
+        action_code = _dashboard_code(getattr(row, "action_code", None))
+        category = _dashboard_transaction_category(action_code)
+        reference = getattr(row, "transaction_ref", None)
+        # A generic page view without a request/object reference is a page
+        # metric, not evidence that a business transaction was viewed.
+        if category == "view" and reference is None:
+            continue
+        # Do not turn unrelated system actions with no object into a fake
+        # transaction.  Known create/decision/follow-up events are retained
+        # because some historic domain writers did not populate target_id.
+        if category == "other" and reference is None:
+            continue
+        if category is None:
+            continue
+
+        module_code = _dashboard_transaction_module(
+            getattr(row, "module_code", None), action_code
+        )
+        target_code = _dashboard_code(getattr(row, "target_code", None))
+        event_count = _dashboard_int(getattr(row, "event_count", 0))
+        if not event_count:
+            continue
+        group_key = (day_text, actor_id, module_code, category)
+        bucket = transaction_buckets[group_key]
+        bucket["event_count"] += event_count
+
+        daily_key = (day_text, actor_id, module_code)
+        user_key = (actor_id, module_code)
+        module_key = module_code
+        transaction_user_ids.add(actor_id)
+        transaction_days.add(day_text)
+        module_active_users[module_key].add(actor_id)
+        module_active_days[module_key].add(day_text)
+
+        if reference is None:
+            bucket["unresolved_events"] += event_count
+            daily_transaction_unresolved[daily_key] += event_count
+            user_transaction_unresolved[user_key] += event_count
+            module_transaction_unresolved[module_key] += event_count
+        else:
+            identity = (target_code, reference)
+            bucket["references"].add(identity)
+            daily_transaction_refs[daily_key].add(identity)
+            user_transaction_refs[user_key].add(identity)
+            module_transaction_refs[module_key].add((actor_id, target_code, reference))
+
+    def new_transaction_row(day_text, actor_id, module_code):
+        row = {
+            "day": day_text,
+            "actor_id": actor_id,
+            "user_name": _dashboard_user_label(users_by_id.get(actor_id)),
+            "module_code": module_code,
+            "module_label": _DASHBOARD_TRANSACTION_MODULE_LABELS[module_code],
+            "event_count": 0,
+            "transaction_interactions": 0,
+            "unique_transactions": 0,
+        }
+        row.update({key: 0 for key in _DASHBOARD_TRANSACTION_ACTION_KEYS})
+        return row
+
+    transaction_daily_by_user_map = {}
+    for (day_text, actor_id, module_code, category), bucket in transaction_buckets.items():
+        daily_key = (day_text, actor_id, module_code)
+        row = transaction_daily_by_user_map.setdefault(
+            daily_key,
+            new_transaction_row(day_text, actor_id, module_code),
+        )
+        count = len(bucket["references"]) + _dashboard_int(bucket["unresolved_events"])
+        row[category] += count
+        row["transaction_interactions"] += count
+        row["event_count"] += _dashboard_int(bucket["event_count"])
+
+    for daily_key, row in transaction_daily_by_user_map.items():
+        row["unique_transactions"] = (
+            len(daily_transaction_refs[daily_key])
+            + _dashboard_int(daily_transaction_unresolved[daily_key])
+        )
+
+    transaction_daily_by_user = list(transaction_daily_by_user_map.values())
+    transaction_daily_by_user.sort(
+        key=lambda row: str(row["user_name"]).casefold()
+    )
+    transaction_daily_by_user.sort(
+        key=lambda row: row["module_code"] != "WORKFLOW"
+    )
+    transaction_daily_by_user.sort(
+        key=lambda row: row["day"], reverse=True
+    )
+
+    transaction_daily_map = {}
+    daily_module_users = defaultdict(set)
+    for row in transaction_daily_by_user:
+        daily_key = (row["day"], row["module_code"])
+        summary_row = transaction_daily_map.setdefault(
+            daily_key,
+            {
+                "day": row["day"],
+                "module_code": row["module_code"],
+                "module_label": row["module_label"],
+                "active_users": 0,
+                "event_count": 0,
+                "transaction_interactions": 0,
+                "unique_transactions": 0,
+                **{key: 0 for key in _DASHBOARD_TRANSACTION_ACTION_KEYS},
+            },
+        )
+        daily_module_users[daily_key].add(row["actor_id"])
+        for key in _DASHBOARD_TRANSACTION_ACTION_KEYS:
+            summary_row[key] += _dashboard_int(row[key])
+        summary_row["event_count"] += _dashboard_int(row["event_count"])
+        summary_row["transaction_interactions"] += _dashboard_int(
+            row["transaction_interactions"]
+        )
+        summary_row["unique_transactions"] += _dashboard_int(
+            row["unique_transactions"]
+        )
+
+    for daily_key, row in transaction_daily_map.items():
+        row["active_users"] = len(daily_module_users[daily_key])
+
+    transaction_daily = list(transaction_daily_map.values())
+    transaction_daily.sort(key=lambda row: row["module_code"] != "WORKFLOW")
+    transaction_daily.sort(key=lambda row: row["day"], reverse=True)
+
+    transaction_module_rows = []
+    for module_code in _DASHBOARD_TRANSACTION_MODULES:
+        category_totals = Counter()
+        event_count = 0
+        interaction_count = 0
+        for row in transaction_daily:
+            if row["module_code"] != module_code:
+                continue
+            for key in _DASHBOARD_TRANSACTION_ACTION_KEYS:
+                category_totals[key] += _dashboard_int(row[key])
+            event_count += _dashboard_int(row["event_count"])
+            interaction_count += _dashboard_int(row["transaction_interactions"])
+        transaction_module_rows.append(
+            {
+                "code": module_code,
+                "label": _DASHBOARD_TRANSACTION_MODULE_LABELS[module_code],
+                "unique_transactions": len(module_transaction_refs[module_code])
+                + _dashboard_int(module_transaction_unresolved[module_code]),
+                "transaction_interactions": interaction_count,
+                "event_count": event_count,
+                "active_users": len(module_active_users[module_code]),
+                "active_days": len(module_active_days[module_code]),
+                **{
+                    key: _dashboard_int(category_totals[key])
+                    for key in _DASHBOARD_TRANSACTION_ACTION_KEYS
+                },
+            }
+        )
+
+    transaction_user_stats = defaultdict(
+        lambda: {
+            "transaction_interactions": 0,
+            "unique_transactions": 0,
+            "workflow_transactions": 0,
+            "portal_transactions": 0,
+        }
+    )
+    for row in transaction_daily_by_user:
+        stats = transaction_user_stats[row["actor_id"]]
+        stats["transaction_interactions"] += _dashboard_int(
+            row["transaction_interactions"]
+        )
+        if row["module_code"] == "WORKFLOW":
+            stats["workflow_transactions"] += _dashboard_int(
+                row["transaction_interactions"]
+            )
+        else:
+            stats["portal_transactions"] += _dashboard_int(
+                row["transaction_interactions"]
+            )
+    for (actor_id, module_code), references in user_transaction_refs.items():
+        transaction_user_stats[actor_id]["unique_transactions"] += len(references)
+    for (actor_id, module_code), unresolved in user_transaction_unresolved.items():
+        transaction_user_stats[actor_id]["unique_transactions"] += _dashboard_int(
+            unresolved
+        )
+
     candidate_users = [selected_user] if selected_user else list(users)
     user_rows = []
     for user in candidate_users:
         user_id = int(user.id)
         stats = stats_by_user.get(user_id, {})
+        transaction_stats = transaction_user_stats.get(user_id, {})
         events = _dashboard_int(stats.get("events"))
         band_key, band_label = _dashboard_usage_band(events)
         top_modules = [
@@ -474,6 +823,18 @@ def _build_audit_dashboard_report():
                 "operations": _dashboard_int(stats.get("operations")),
                 "failed_operations": _dashboard_int(stats.get("failed_operations")),
                 "delegated_events": _dashboard_int(stats.get("delegated_events")),
+                "transaction_interactions": _dashboard_int(
+                    transaction_stats.get("transaction_interactions")
+                ),
+                "unique_transactions": _dashboard_int(
+                    transaction_stats.get("unique_transactions")
+                ),
+                "workflow_transactions": _dashboard_int(
+                    transaction_stats.get("workflow_transactions")
+                ),
+                "portal_transactions": _dashboard_int(
+                    transaction_stats.get("portal_transactions")
+                ),
                 "first_activity": stats.get("first_activity"),
                 "last_activity": stats.get("last_activity"),
                 "band_key": band_key,
@@ -486,6 +847,7 @@ def _build_audit_dashboard_report():
     if not selected_user:
         user_rows.sort(
             key=lambda row: (
+                -_dashboard_int(row["transaction_interactions"]),
                 -_dashboard_int(row["events"]),
                 -_dashboard_int(row["active_days"]),
                 str(row["name"]).casefold(),
@@ -532,6 +894,24 @@ def _build_audit_dashboard_report():
     summary["inactive_users"] = sum(1 for row in user_rows if not row["events"])
     summary["active_rate_pct"] = _dashboard_percent(summary["active_users"], scope_users_count)
     summary["failure_rate_pct"] = _dashboard_percent(summary["failed_operations"], summary["operations"])
+    summary["transaction_interactions"] = sum(
+        row["transaction_interactions"] for row in transaction_module_rows
+    )
+    summary["unique_transactions"] = sum(
+        row["unique_transactions"] for row in transaction_module_rows
+    )
+    summary["transaction_active_users"] = len(transaction_user_ids)
+    summary["transaction_active_days"] = len(transaction_days)
+    summary["workflow_transaction_interactions"] = next(
+        row["transaction_interactions"]
+        for row in transaction_module_rows
+        if row["code"] == "WORKFLOW"
+    )
+    summary["portal_transaction_interactions"] = next(
+        row["transaction_interactions"]
+        for row in transaction_module_rows
+        if row["code"] == "ADMIN_PORTAL"
+    )
 
     return {
         "summary": summary,
@@ -546,6 +926,13 @@ def _build_audit_dashboard_report():
         ],
         "modules": module_rows,
         "actions": action_rows,
+        "transaction_actions": [
+            {"key": key, "code": code, "label": label}
+            for key, code, label in _DASHBOARD_TRANSACTION_ACTIONS
+        ],
+        "transaction_modules": transaction_module_rows,
+        "transactions_daily": transaction_daily,
+        "transactions_daily_by_user": transaction_daily_by_user,
         "trend": trend,
         "distribution": distribution,
         "selected_user": selected_user,
@@ -690,6 +1077,9 @@ def audit_dashboard_export_excel():
     """Export the same filtered usage report shown on the dashboard."""
     report = _build_audit_dashboard_report()
     summary = report["summary"]
+    transaction_action_headers = [
+        label for _key, _code, label in _DASHBOARD_TRANSACTION_ACTIONS
+    ]
 
     sheets = [
         {
@@ -706,6 +1096,12 @@ def audit_dashboard_export_excel():
                 ["الإجراءات المسجلة", summary["operations"]],
                 ["المحاولات غير الناجحة", summary["failed_operations"]],
                 ["عمليات بالنيابة", summary["delegated_events"]],
+                ["المعاملات الفريدة المتعامل معها", summary["unique_transactions"]],
+                ["إجمالي تفاعلات المعاملات", summary["transaction_interactions"]],
+                ["تفاعلات معاملات مسار", summary["workflow_transaction_interactions"]],
+                ["تفاعلات معاملات البوابة الإدارية", summary["portal_transaction_interactions"]],
+                ["المستخدمون المتعاملون مع معاملات", summary["transaction_active_users"]],
+                ["أيام التعامل مع معاملات", summary["transaction_active_days"]],
                 ["نسبة النشاط", f"{summary['active_rate_pct']}%"],
                 ["نسبة المحاولات غير الناجحة", f"{summary['failure_rate_pct']}%"],
                 ["تاريخ إعداد التقرير", report["generated_at_text"]],
@@ -716,6 +1112,7 @@ def audit_dashboard_export_excel():
             "headers": [
                 "المستخدم", "البريد", "كل السجلات", "فتح الصفحات",
                 "الإجراءات", "غير الناجحة", "الأيام النشطة", "بالنيابة",
+                "معاملات فريدة", "تفاعلات مسار", "تفاعلات البوابة",
                 "الوحدات الأكثر استخدامًا", "الإجراءات الأكثر استخدامًا",
                 "أول نشاط", "آخر نشاط", "التصنيف",
             ],
@@ -729,6 +1126,9 @@ def audit_dashboard_export_excel():
                     row["failed_operations"],
                     row["active_days"],
                     row["delegated_events"],
+                    row["unique_transactions"],
+                    row["workflow_transactions"],
+                    row["portal_transactions"],
                     "، ".join(f"{item['label']} ({item['count']})" for item in row["top_modules"]),
                     "، ".join(f"{item['label']} ({item['count']})" for item in row["top_actions"]),
                     _dashboard_datetime_text(row["first_activity"]),
@@ -736,6 +1136,63 @@ def audit_dashboard_export_excel():
                     row["band_label"],
                 ]
                 for row in report["users"]
+            ],
+        },
+        {
+            "name": "ملخص المعاملات",
+            "headers": [
+                "الوحدة", "معاملات فريدة", "إجمالي التفاعلات", *transaction_action_headers,
+                "الأحداث المسجلة", "المستخدمون", "الأيام",
+            ],
+            "rows": [
+                [
+                    row["label"],
+                    row["unique_transactions"],
+                    row["transaction_interactions"],
+                    *[row[key] for key in _DASHBOARD_TRANSACTION_ACTION_KEYS],
+                    row["event_count"],
+                    row["active_users"],
+                    row["active_days"],
+                ]
+                for row in report["transaction_modules"]
+            ],
+        },
+        {
+            "name": "معاملات يومية",
+            "headers": [
+                "اليوم", "الوحدة", "المستخدمون", "معاملات فريدة", "إجمالي التفاعلات",
+                *transaction_action_headers, "الأحداث المسجلة",
+            ],
+            "rows": [
+                [
+                    row["day"],
+                    row["module_label"],
+                    row["active_users"],
+                    row["unique_transactions"],
+                    row["transaction_interactions"],
+                    *[row[key] for key in _DASHBOARD_TRANSACTION_ACTION_KEYS],
+                    row["event_count"],
+                ]
+                for row in report["transactions_daily"]
+            ],
+        },
+        {
+            "name": "معاملات حسب المستخدم",
+            "headers": [
+                "اليوم", "المستخدم", "الوحدة", "معاملات فريدة", "إجمالي التفاعلات",
+                *transaction_action_headers, "الأحداث المسجلة",
+            ],
+            "rows": [
+                [
+                    row["day"],
+                    row["user_name"],
+                    row["module_label"],
+                    row["unique_transactions"],
+                    row["transaction_interactions"],
+                    *[row[key] for key in _DASHBOARD_TRANSACTION_ACTION_KEYS],
+                    row["event_count"],
+                ]
+                for row in report["transactions_daily_by_user"]
             ],
         },
         {
