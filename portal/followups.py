@@ -882,15 +882,21 @@ def _followup_org_contexts(reports) -> dict[int, dict[str, object]]:
 
 
 def _consolidated_followup_reports() -> tuple[list[EmployeeFollowupReport], dict[int, dict[str, object]]]:
-    """Return the approved reports visible to the current manager/secretary."""
-    is_secretary_or_admin = _can_view_secretary_reports()
-    if not is_secretary_or_admin and not _can_review():
+    """Return the consolidated reports visible to the current actor.
+
+    The Secretary General and managers receive approved reports only. The
+    super admin follows the existing admin queue and can include every report
+    state, including drafts that still need a direct admin decision.
+    """
+    is_super_admin = _is_super_admin_account()
+    is_secretary_general = _is_secretary_general_account()
+    if not (is_super_admin or is_secretary_general or _can_review()):
         abort(403)
 
-    query = EmployeeFollowupReport.query.filter(
-        EmployeeFollowupReport.status == "REVIEWED"
-    )
-    if not is_secretary_or_admin:
+    query = EmployeeFollowupReport.query
+    if not is_super_admin:
+        query = query.filter(EmployeeFollowupReport.status == "REVIEWED")
+    if not is_super_admin and not is_secretary_general:
         user_id = int(current_user.id)
         query = query.filter(
             or_(

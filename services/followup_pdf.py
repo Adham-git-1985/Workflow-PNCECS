@@ -337,7 +337,7 @@ def build_followups_bundle_pdf(
     story = [
         _paragraph(title, styles["title"]),
         _paragraph(
-            f"عدد الموظفين: {len(reports)} - التقارير المعتمدة المرتبة حسب الهيكل التنظيمي",
+            f"عدد الموظفين: {len(reports)} - تقارير الإنجاز المرتبة حسب الهيكل التنظيمي",
             styles["body_center"],
         ),
     ]

@@ -490,7 +490,7 @@ def build_followups_bundle_docx(
     title_paragraph.paragraph_format.space_after = Pt(8)
     _paragraph(
         document,
-        f"عدد الموظفين: {len(reports)} — التقارير المعتمدة المرتبة حسب الهيكل التنظيمي",
+        f"عدد الموظفين: {len(reports)} - تقارير الإنجاز المرتبة حسب الهيكل التنظيمي",
         size=14,
         center=True,
     )

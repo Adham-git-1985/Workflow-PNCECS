@@ -102,7 +102,13 @@
         <h3 class="h6 mb-1">إدارة السوبر أدمن لتقارير الإنجاز</h3>
         <div class="small text-muted">يمكن اعتماد التقرير مباشرة، حتى دون اعتماد المدير.</div>
       </div>
-      <span class="text-muted small">{{ admin_total }} تقرير</span>
+      <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+        {% if can_admin_review %}
+        <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.followups_export_consolidated_docx') }}" title="تنزيل تقارير الإنجاز في ملف واحد"><i class="bi bi-file-earmark-word"></i> Word موحّد</a>
+        <a class="btn btn-sm btn-outline-danger" href="{{ url_for('portal.followups_export_consolidated_pdf') }}" title="تنزيل تقارير الإنجاز في ملف واحد"><i class="bi bi-file-earmark-pdf"></i> PDF موحّد</a>
+        {% endif %}
+        <span class="text-muted small">{{ admin_total }} تقرير</span>
+      </div>
     </div>
     <div class="table-responsive">
       <table class="table table-hover mb-0 align-middle">
@@ -148,7 +154,7 @@
         <div class="small text-muted">تظهر هنا التقارير التي اعتمدها المدير أو السوبر أدمن، للقراءة فقط.</div>
       </div>
       <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
-        {% if can_export_consolidated %}
+        {% if can_export_consolidated and not can_admin_review %}
         <a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.followups_export_consolidated_docx') }}" title="تنزيل جميع التقارير المعتمدة في ملف واحد"><i class="bi bi-file-earmark-word"></i> Word موحّد</a>
         <a class="btn btn-sm btn-outline-danger" href="{{ url_for('portal.followups_export_consolidated_pdf') }}" title="تنزيل جميع التقارير المعتمدة في ملف واحد"><i class="bi bi-file-earmark-pdf"></i> PDF موحّد</a>
         {% endif %}
