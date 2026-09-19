@@ -320,3 +320,190 @@ def build_followup_docx(report, template_path: str | Path | None = None) -> byte
     stream = io.BytesIO()
     document.save(stream)
     return stream.getvalue()
+
+
+def _bundle_employee_name(report) -> str:
+    employee = getattr(report, "employee", None)
+    return (
+        getattr(employee, "full_name", None)
+        or getattr(employee, "name", None)
+        or getattr(employee, "email", None)
+        or "موظف غير محدد"
+    ).strip()
+
+
+def _bundle_manager_name(report) -> str:
+    manager = getattr(report, "manager", None)
+    return (
+        getattr(manager, "full_name", None)
+        or getattr(manager, "name", None)
+        or getattr(manager, "email", None)
+        or "غير محدد"
+    ).strip()
+
+
+def _bundle_org_label(report, organization_contexts) -> str:
+    contexts = organization_contexts or {}
+    context = contexts.get(getattr(report, "id", None))
+    if isinstance(context, dict):
+        value = context.get("label") or context.get("path")
+    else:
+        value = context
+    if isinstance(value, (list, tuple)):
+        value = " / ".join(str(part).strip() for part in value if str(part).strip())
+    return str(value or "غير محدد تنظيمياً").strip()
+
+
+def _report_status_label(value: str | None) -> str:
+    return {
+        "DRAFT": "مسودة",
+        "SUBMITTED": "مرسل للمدير",
+        "NEEDS_REVISION": "يحتاج تعديلاً",
+        "REVIEWED": "تمت المراجعة والاعتماد",
+    }.get((value or "").upper(), value or "-")
+
+
+def _prepare_bundle_document(document) -> None:
+    from docx.shared import Inches, Pt
+
+    for section in document.sections:
+        section.left_margin = Inches(DEFAULT_PAGE_MARGIN_INCHES)
+        section.right_margin = Inches(DEFAULT_PAGE_MARGIN_INCHES)
+        section.top_margin = Inches(DEFAULT_PAGE_MARGIN_INCHES)
+        section.bottom_margin = Inches(DEFAULT_PAGE_MARGIN_INCHES)
+    try:
+        normal = document.styles["Normal"]
+        normal.font.name = ARABIC_FONT
+        normal.font.size = Pt(DOCUMENT_FONT_SIZE)
+    except KeyError:
+        pass
+
+
+def _append_bundle_report(document, report, *, organization_label: str, number: int) -> None:
+    """Append one self-contained employee section to a consolidated document."""
+    from docx.shared import Pt
+
+    employee_name = _bundle_employee_name(report)
+    heading = _paragraph(
+        document,
+        f"تقرير الموظف رقم {number}: {employee_name}",
+        bold=True,
+        size=20,
+        center=True,
+    )
+    heading.paragraph_format.space_after = Pt(2)
+    org_heading = _paragraph(
+        document,
+        f"التبعية التنظيمية: {organization_label}",
+        bold=True,
+        size=14,
+        center=True,
+    )
+    org_heading.paragraph_format.space_after = Pt(12)
+
+    details_rows = [
+        ("الموظف", employee_name),
+        ("التبعية التنظيمية", organization_label),
+        ("المدير المباشر", _bundle_manager_name(report)),
+        (
+            "فترة التقرير",
+            f"{_date_label(getattr(report, 'period_start', None))} إلى "
+            f"{_date_label(getattr(report, 'period_end', None))}",
+        ),
+        ("الحالة", _report_status_label(getattr(report, "status", None))),
+    ]
+    details_table = _add_rtl_table(
+        document,
+        ("البيان", "التفاصيل"),
+        details_rows,
+        _fit_table_widths(document, (1.9, 3.8)),
+    )
+    _set_period_cell(
+        details_table.rows[4].cells[1],
+        getattr(report, "period_start", None),
+        getattr(report, "period_end", None),
+    )
+
+    completed_items = [
+        item
+        for item in (getattr(report, "items", None) or [])
+        if getattr(item, "is_included", True)
+        and (getattr(item, "status", "") or "").upper() == "COMPLETED"
+    ]
+    accomplishment_rows = [
+        (
+            getattr(item, "title", None) or "مهمة منجزة",
+            _date_label(getattr(item, "completed_on", None)),
+        )
+        for item in completed_items
+    ] or [("لا توجد مهام منجزة خلال فترة التقرير.", "-")]
+    _add_rtl_table(
+        document,
+        ("المهمة", "التاريخ"),
+        accomplishment_rows,
+        _fit_table_widths(document, (4.0, 1.7)),
+    )
+
+    employee_summary = (
+        getattr(report, "employee_summary", None)
+        or getattr(report, "ai_summary", None)
+        or "-"
+    )
+    _paragraph(document, "ملخص الإنجازات", bold=True)
+    _paragraph(document, employee_summary)
+    _paragraph(document, "التحديات أو الاحتياجات", bold=True)
+    _paragraph(document, getattr(report, "challenges", None) or "-")
+    _paragraph(document, "المطلوب من المدير", bold=True)
+    _paragraph(document, getattr(report, "manager_request", None) or "-")
+
+    manager_comment = getattr(report, "manager_comment", None)
+    manager_rating = getattr(report, "manager_rating", None)
+    if manager_comment or manager_rating:
+        _paragraph(document, "مراجعة المدير", bold=True)
+        _paragraph(document, manager_comment or "-")
+        _paragraph(document, f"التقييم المختصر: {manager_rating or '-'}")
+
+
+def build_followups_bundle_docx(
+    reports,
+    *,
+    organization_contexts: dict | None = None,
+    title: str = "تقرير الإنجاز الموحّد",
+) -> bytes:
+    """Build one Word file containing approved employee reports.
+
+    Every employee starts on a new page and carries its organizational path in
+    the heading and details table, so the document remains readable after it
+    is printed or shared outside the portal.
+    """
+    from docx import Document
+    from docx.shared import Pt
+
+    reports = list(reports or [])
+    if not reports:
+        raise ValueError("at least one report is required")
+
+    document = Document()
+    _prepare_bundle_document(document)
+
+    title_paragraph = _paragraph(document, title, bold=True, size=22, center=True)
+    title_paragraph.paragraph_format.space_after = Pt(8)
+    _paragraph(
+        document,
+        f"عدد الموظفين: {len(reports)} — التقارير المعتمدة المرتبة حسب الهيكل التنظيمي",
+        size=14,
+        center=True,
+    )
+
+    for index, report in enumerate(reports, start=1):
+        document.add_page_break()
+        _append_bundle_report(
+            document,
+            report,
+            organization_label=_bundle_org_label(report, organization_contexts),
+            number=index,
+        )
+
+    stream = io.BytesIO()
+    document.save(stream)
+    return stream.getvalue()

@@ -3,13 +3,24 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
+from io import BytesIO
 import json
 import mimetypes
 from pathlib import Path
 import shutil
 import uuid
 
-from flask import abort, current_app, flash, redirect, render_template, request, send_from_directory, url_for
+from flask import (
+    abort,
+    current_app,
+    flash,
+    redirect,
+    render_template,
+    request,
+    send_file,
+    send_from_directory,
+    url_for,
+)
 from flask_login import current_user, login_required
 from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import aliased
@@ -23,11 +34,27 @@ from models import (
     EmployeeFollowupItem,
     EmployeeFollowupReport,
     Notification,
+    Organization,
+    Directorate,
+    Unit,
+    Department,
+    Section,
+    Division,
+    Team,
+    OrgNode,
+    OrgNodeAssignment,
+    OrgUnitAssignment,
     PortalMeetingTask,
     User,
 )
 from services.followup_assistant import build_followup_analysis
-from services.followup_docx import DOCX_MIME, build_followup_docx, is_valid_docx
+from services.followup_docx import (
+    DOCX_MIME,
+    build_followup_docx,
+    build_followups_bundle_docx,
+    is_valid_docx,
+)
+from services.followup_pdf import PDF_MIME, build_followups_bundle_pdf
 from services.hr_request_workflow import (
     resolve_responsible_managers,
     secretary_general_user_ids,
@@ -37,6 +64,26 @@ from utils.notification_links import notification_target_path
 from utils.role_codes import canonical_role_key
 
 from . import portal_bp
+
+
+_FOLLOWUP_ORG_LEVELS = {
+    "ORGANIZATION": 10,
+    "UNIT": 20,
+    "DIRECTORATE": 30,
+    "DEPARTMENT": 40,
+    "SECTION": 50,
+    "DIVISION": 60,
+    "TEAM": 70,
+}
+_FOLLOWUP_ORG_MODELS = {
+    "ORGANIZATION": Organization,
+    "UNIT": Unit,
+    "DIRECTORATE": Directorate,
+    "DEPARTMENT": Department,
+    "SECTION": Section,
+    "DIVISION": Division,
+    "TEAM": Team,
+}
 
 
 FOLLOWUPS_READ = "FOLLOWUPS_READ"
@@ -624,6 +671,254 @@ def _followup_attachment_for_kind(report: EmployeeFollowupReport, kind: str) -> 
     return next((attachment for attachment in (report.attachments or []) if attachment.kind == kind), None)
 
 
+def _followup_org_unit_label(unit) -> str:
+    if not unit:
+        return ""
+    return (
+        getattr(unit, "name_ar", None)
+        or getattr(unit, "name_en", None)
+        or getattr(unit, "label", None)
+        or getattr(unit, "name", None)
+        or str(getattr(unit, "id", ""))
+    ).strip()
+
+
+def _followup_org_parent(unit_type: str, unit):
+    """Return the fixed-hierarchy parent for an organizational unit."""
+    if not unit:
+        return None, None
+    unit_type = (unit_type or "").strip().upper()
+    if unit_type == "TEAM":
+        if getattr(unit, "division_id", None) and getattr(unit, "division", None):
+            return "DIVISION", unit.division
+        if getattr(unit, "section_id", None) and getattr(unit, "section", None):
+            return "SECTION", unit.section
+    elif unit_type == "DIVISION":
+        if getattr(unit, "section_id", None) and getattr(unit, "section", None):
+            return "SECTION", unit.section
+        if getattr(unit, "department_id", None) and getattr(unit, "department", None):
+            return "DEPARTMENT", unit.department
+    elif unit_type == "SECTION":
+        if getattr(unit, "department_id", None) and getattr(unit, "department", None):
+            return "DEPARTMENT", unit.department
+        if getattr(unit, "unit_id", None) and getattr(unit, "unit", None):
+            return "UNIT", unit.unit
+        if getattr(unit, "directorate_id", None) and getattr(unit, "directorate", None):
+            return "DIRECTORATE", unit.directorate
+    elif unit_type == "DEPARTMENT":
+        if getattr(unit, "unit_id", None) and getattr(unit, "unit", None):
+            return "UNIT", unit.unit
+        if getattr(unit, "directorate_id", None) and getattr(unit, "directorate", None):
+            return "DIRECTORATE", unit.directorate
+    elif unit_type == "UNIT":
+        if getattr(unit, "organization_id", None) and getattr(unit, "organization", None):
+            return "ORGANIZATION", unit.organization
+    elif unit_type == "DIRECTORATE":
+        if getattr(unit, "organization_id", None) and getattr(unit, "organization", None):
+            return "ORGANIZATION", unit.organization
+    return None, None
+
+
+def _followup_fixed_org_path(employee) -> list[tuple[str, str]]:
+    """Resolve the legacy HR hierarchy used by the employee file."""
+    employee_file = getattr(employee, "employee_file", None)
+    candidates: dict[str, object] = {}
+    if employee_file:
+        for unit_type, attribute in (
+            ("ORGANIZATION", "organization"),
+            ("DIRECTORATE", "directorate"),
+            ("DEPARTMENT", "department"),
+            ("SECTION", "section"),
+            ("DIVISION", "division"),
+        ):
+            unit = getattr(employee_file, attribute, None)
+            if unit:
+                candidates[unit_type] = unit
+
+    # Older user rows keep only ids on users. Fill any missing placement from
+    # those columns so historical employees still sort correctly.
+    for unit_type, attribute in (
+        ("UNIT", "unit_id"),
+        ("DIRECTORATE", "directorate_id"),
+        ("DEPARTMENT", "department_id"),
+        ("SECTION", "section_id"),
+        ("DIVISION", "division_id"),
+    ):
+        if unit_type in candidates:
+            continue
+        unit_id = getattr(employee, attribute, None)
+        model = _FOLLOWUP_ORG_MODELS[unit_type]
+        if unit_id:
+            try:
+                unit = db.session.get(model, int(unit_id))
+            except (TypeError, ValueError):
+                unit = None
+            if unit:
+                candidates[unit_type] = unit
+
+    # The unified org-assignment table is another legacy-compatible source.
+    if not candidates:
+        try:
+            assignment = (
+                OrgUnitAssignment.query
+                .filter_by(user_id=int(employee.id), is_primary=True)
+                .order_by(OrgUnitAssignment.id.asc())
+                .first()
+                or OrgUnitAssignment.query
+                .filter_by(user_id=int(employee.id))
+                .order_by(OrgUnitAssignment.id.desc())
+                .first()
+            )
+        except Exception:
+            assignment = None
+        if assignment:
+            unit_type = (assignment.unit_type or "").strip().upper()
+            model = _FOLLOWUP_ORG_MODELS.get(unit_type)
+            if model:
+                try:
+                    unit = db.session.get(model, int(assignment.unit_id))
+                except (TypeError, ValueError):
+                    unit = None
+                if unit:
+                    candidates[unit_type] = unit
+
+    if not candidates:
+        return []
+
+    deepest_type, deepest_unit = max(
+        candidates.items(),
+        key=lambda item: _FOLLOWUP_ORG_LEVELS.get(item[0], 0),
+    )
+    chain: list[tuple[str, str]] = []
+    seen: set[tuple[str, int | str]] = set()
+    current_type, current_unit = deepest_type, deepest_unit
+    while current_type and current_unit:
+        unit_id = getattr(current_unit, "id", None)
+        key = (current_type, int(unit_id) if unit_id is not None else _followup_org_unit_label(current_unit))
+        if key in seen:
+            break
+        seen.add(key)
+        label = _followup_org_unit_label(current_unit)
+        if label:
+            chain.append((current_type, label))
+        parent_type, parent_unit = _followup_org_parent(current_type, current_unit)
+        if not parent_unit and parent_type in candidates:
+            parent_unit = candidates[parent_type]
+        current_type, current_unit = parent_type, parent_unit
+
+    # If the database contains a partially populated fixed hierarchy, retain
+    # the explicit labels that were not reachable through a relationship.
+    existing_types = {unit_type for unit_type, _label in chain}
+    for unit_type, unit in candidates.items():
+        if unit_type not in existing_types:
+            label = _followup_org_unit_label(unit)
+            if label:
+                chain.append((unit_type, label))
+    chain.reverse()
+    return chain
+
+
+def _followup_dynamic_org_path(employee) -> list[tuple[str, str]]:
+    """Resolve the newer, custom-depth organizational hierarchy."""
+    node = None
+    try:
+        assignment = (
+            OrgNodeAssignment.query
+            .filter_by(user_id=int(employee.id))
+            .order_by(OrgNodeAssignment.is_primary.desc(), OrgNodeAssignment.id.asc())
+            .first()
+        )
+        node = getattr(assignment, "node", None) if assignment else None
+    except Exception:
+        node = None
+    if not node and getattr(employee, "org_node_id", None):
+        try:
+            node = db.session.get(OrgNode, int(employee.org_node_id))
+        except (TypeError, ValueError):
+            node = None
+
+    chain: list[tuple[str, str]] = []
+    seen: set[int] = set()
+    while node and getattr(node, "id", None) not in seen:
+        node_id = int(node.id)
+        seen.add(node_id)
+        node_type = getattr(getattr(node, "type", None), "code", None) or "ORG"
+        label = _followup_org_unit_label(node)
+        if label:
+            chain.append((str(node_type).upper(), label))
+        parent = getattr(node, "parent", None)
+        if not parent and getattr(node, "parent_id", None):
+            try:
+                parent = db.session.get(OrgNode, int(node.parent_id))
+            except (TypeError, ValueError):
+                parent = None
+        node = parent
+    chain.reverse()
+    return chain
+
+
+def _followup_org_context(report: EmployeeFollowupReport) -> dict[str, object]:
+    employee = getattr(report, "employee", None)
+    dynamic_path = _followup_dynamic_org_path(employee) if employee else []
+    path = dynamic_path or (_followup_fixed_org_path(employee) if employee else [])
+    labels = [label for _unit_type, label in path if label]
+    label = " / ".join(labels) or "غير محدد تنظيمياً"
+    return {
+        "path": labels,
+        "label": label,
+        "sort_key": tuple(
+            f"{index:03d}:{value.casefold()}"
+            for index, value in enumerate(labels)
+        ) or ("999:غير محدد تنظيمياً",),
+    }
+
+
+def _followup_org_contexts(reports) -> dict[int, dict[str, object]]:
+    return {
+        int(report.id): _followup_org_context(report)
+        for report in reports
+        if getattr(report, "id", None) is not None
+    }
+
+
+def _consolidated_followup_reports() -> tuple[list[EmployeeFollowupReport], dict[int, dict[str, object]]]:
+    """Return the approved reports visible to the current manager/secretary."""
+    is_secretary_or_admin = _can_view_secretary_reports()
+    if not is_secretary_or_admin and not _can_review():
+        abort(403)
+
+    query = EmployeeFollowupReport.query.filter(
+        EmployeeFollowupReport.status == "REVIEWED"
+    )
+    if not is_secretary_or_admin:
+        user_id = int(current_user.id)
+        query = query.filter(
+            or_(
+                EmployeeFollowupReport.manager_user_id == user_id,
+                _manager_snapshot_contains(
+                    EmployeeFollowupReport.manager_user_ids,
+                    user_id,
+                ),
+            )
+        )
+
+    reports = query.all()
+    contexts = _followup_org_contexts(reports)
+    reports.sort(
+        key=lambda report: (
+            contexts.get(int(report.id), {}).get("sort_key", ("999:غير محدد تنظيمياً",)),
+            _display_user(getattr(report, "employee", None)).casefold(),
+            getattr(report, "period_start", None) or date.min,
+            int(report.id),
+        )
+    )
+    return reports, contexts
+
+
+def _consolidated_followups_filename(extension: str) -> str:
+    return f"تقرير_انجاز_موحد_للموظفين.{extension}"
+
+
 def send_followup_reminders(today: date | None = None) -> int:
     """Send one pre-deadline employee reminder and one manager review reminder."""
     current_day = today or date.today()
@@ -673,6 +968,7 @@ def followups_dashboard():
     # queue separate so the two roles do not accidentally expose each other's
     # actions in the dashboard.
     manager_can_review = _can_review() and not is_super_admin and not is_secretary_general
+    can_export_consolidated = manager_can_review or can_view_secretary_reports
     current_user_id = int(current_user.id)
     own_reports = (
         EmployeeFollowupReport.query
@@ -819,6 +1115,7 @@ def followups_dashboard():
         metric_scope_label=metric_scope_label,
         can_create=_can_create(),
         can_review=manager_can_review,
+        can_export_consolidated=can_export_consolidated,
         can_admin_review=is_super_admin,
         admin_reports=admin_reports,
         admin_page=admin_page,
@@ -1182,13 +1479,63 @@ def followups_export_docx(report_id: int):
         flash("تعذر إنشاء ملف Word للتقرير.", "danger")
         return redirect(url_for("portal.followups_view", report_id=report.id))
     filename = _report_docx_filename(report)
-    from io import BytesIO
-    from flask import send_file
     return send_file(
         BytesIO(document_bytes),
         mimetype=DOCX_MIME,
         as_attachment=True,
         download_name=filename,
+        max_age=0,
+    )
+
+
+@portal_bp.route("/followups/export-consolidated.docx")
+@login_required
+def followups_export_consolidated_docx():
+    _require_followups_access()
+    reports, organization_contexts = _consolidated_followup_reports()
+    if not reports:
+        flash("لا توجد تقارير إنجاز معتمدة ضمن نطاقك حالياً.", "info")
+        return redirect(url_for("portal.followups_dashboard"))
+    try:
+        document_bytes = build_followups_bundle_docx(
+            reports,
+            organization_contexts=organization_contexts,
+        )
+    except Exception:
+        current_app.logger.exception("Failed to create consolidated followup docx")
+        flash("تعذر إنشاء ملف Word الموحّد لتقارير الإنجاز.", "danger")
+        return redirect(url_for("portal.followups_dashboard"))
+    return send_file(
+        BytesIO(document_bytes),
+        mimetype=DOCX_MIME,
+        as_attachment=True,
+        download_name=_consolidated_followups_filename("docx"),
+        max_age=0,
+    )
+
+
+@portal_bp.route("/followups/export-consolidated.pdf")
+@login_required
+def followups_export_consolidated_pdf():
+    _require_followups_access()
+    reports, organization_contexts = _consolidated_followup_reports()
+    if not reports:
+        flash("لا توجد تقارير إنجاز معتمدة ضمن نطاقك حالياً.", "info")
+        return redirect(url_for("portal.followups_dashboard"))
+    try:
+        pdf_bytes = build_followups_bundle_pdf(
+            reports,
+            organization_contexts=organization_contexts,
+        )
+    except Exception:
+        current_app.logger.exception("Failed to create consolidated followup PDF")
+        flash("تعذر إنشاء ملف PDF الموحّد لتقارير الإنجاز.", "danger")
+        return redirect(url_for("portal.followups_dashboard"))
+    return send_file(
+        BytesIO(pdf_bytes),
+        mimetype=PDF_MIME,
+        as_attachment=True,
+        download_name=_consolidated_followups_filename("pdf"),
         max_age=0,
     )
 
