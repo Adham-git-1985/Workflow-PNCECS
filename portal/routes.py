@@ -109,6 +109,8 @@ from services.delivery_controls import (
 from services.workflow_task_email import resolve_user_delivery_email
 from services.attendance_schedule import (
     ATTENDANCE_SCHEDULE_DAY_TYPES,
+    ATTENDANCE_SCHEDULE_PERIOD_DAYS,
+    ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES,
     attendance_schedule_cycle_days,
     attendance_schedule_final_approver_user_ids,
     attendance_schedule_needs_reminder,
@@ -368,6 +370,7 @@ from services.hr_request_workflow import (
     request_ids_user_participated_in,
     reopen_permission_request,
     resolve_direct_manager,
+    resolve_general_director,
     resolve_responsible_managers,
     secretary_general_user_ids,
     stage_label as hr_stage_label,
@@ -9409,7 +9412,9 @@ def _approved_schedule_day_map(
         HRAttendanceScheduleDay.query
         .join(HRAttendanceSchedulePlan, HRAttendanceSchedulePlan.id == HRAttendanceScheduleDay.plan_id)
         .filter(HRAttendanceSchedulePlan.user_id.in_(user_ids))
-        .filter(HRAttendanceSchedulePlan.status == "FINAL_APPROVED")
+        .filter(
+            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
+        )
         .filter(HRAttendanceScheduleDay.work_date >= start_day.isoformat())
         .filter(HRAttendanceScheduleDay.work_date <= end_day.isoformat())
         .order_by(
@@ -13801,7 +13806,10 @@ _ATTENDANCE_SCHEDULE_STATUS_META = {
     "DRAFT": {"label": "مسودة", "class": "secondary", "icon": "bi-pencil"},
     "SUBMITTED": {"label": "بانتظار المدير", "class": "warning", "icon": "bi-hourglass-split"},
     "MANAGER_APPROVED": {"label": "بانتظار الاعتماد النهائي", "class": "info", "icon": "bi-person-check"},
+    "GENERAL_DIRECTOR_APPROVED": {"label": "بانتظار اعتماد الأمين العام", "class": "primary", "icon": "bi-person-check-fill"},
+    "ADMIN_APPROVED": {"label": "معتمد من الشؤون الإدارية", "class": "success", "icon": "bi-patch-check-fill"},
     "FINAL_APPROVED": {"label": "معتمد نهائيًا", "class": "success", "icon": "bi-patch-check-fill"},
+    "REJECTED": {"label": "مرفوض", "class": "danger", "icon": "bi-x-circle"},
 }
 
 _ATTENDANCE_SCHEDULE_DAY_META = {
@@ -13809,7 +13817,11 @@ _ATTENDANCE_SCHEDULE_DAY_META = {
     "REMOTE": {"label": "عمل عن بُعد", "short": "عن بُعد", "icon": "bi-house-laptop", "class": "remote"},
     "OFF": {"label": "راحة / عطلة", "short": "راحة", "icon": "bi-cup-hot", "class": "off"},
 }
-_ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES = {"SUBMITTED", "MANAGER_APPROVED"}
+_ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES = {
+    "SUBMITTED",
+    "MANAGER_APPROVED",
+    "GENERAL_DIRECTOR_APPROVED",
+}
 
 
 def _attendance_schedule_request_cache(name: str) -> dict:
@@ -13838,11 +13850,45 @@ def _attendance_schedule_is_final_approver(user=None) -> bool:
         return False
 
 
+def _attendance_schedule_is_hr_manager(user=None) -> bool:
+    selected_user = user or current_user
+    try:
+        role = canonical_role_key(getattr(selected_user, "role", None))
+        return bool(
+            role in {"HR", "HRMANAGER", "HRADMIN", "ADMINISTRATIVEAFFAIRS"}
+            or selected_user.has_perm(HR_MASTERDATA_MANAGE)
+            or selected_user.has_perm(HR_EMP_MANAGE)
+        )
+    except Exception:
+        return False
+
+
+def _attendance_schedule_is_general_director(user=None) -> bool:
+    selected_user = user or current_user
+    try:
+        role = canonical_role_key(getattr(selected_user, "role", None))
+        if role in {"GENERALDIRECTOR", "DIRECTORGENERAL"}:
+            return True
+        return bool(
+            db.session.query(OrgNodeManager.id)
+            .join(OrgNode, OrgNode.id == OrgNodeManager.node_id)
+            .join(OrgNodeType, OrgNodeType.id == OrgNode.type_id)
+            .filter(
+                OrgNodeManager.manager_user_id == int(selected_user.id),
+                func.upper(OrgNodeType.code).in_(("DIRECTORATE", "GENERAL_DIRECTOR", "GENERALDIRECTOR")),
+            )
+            .first()
+        )
+    except Exception:
+        return False
+
+
 def _attendance_schedule_can_view_all(user=None) -> bool:
     selected_user = user or current_user
     try:
         return bool(
             _attendance_schedule_is_final_approver(selected_user)
+            or _attendance_schedule_is_hr_manager(selected_user)
             or selected_user.has_perm(HR_REQUESTS_VIEW_ALL)
             or selected_user.has_perm(HR_MASTERDATA_MANAGE)
             or selected_user.has_perm(HR_EMP_MANAGE)
@@ -14328,7 +14374,7 @@ def _attendance_schedule_responsible_managers_map(users: list[User]) -> dict[int
 def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
     """Cheaply determine whether the team tab can apply to this user."""
     manager_user_id = int(manager_user_id)
-    return bool(
+    if bool(
         EmployeeFile.query.filter_by(direct_manager_user_id=manager_user_id).first()
         or EmployeeResponsibleAssignment.query.filter_by(
             responsible_user_id=manager_user_id,
@@ -14343,7 +14389,12 @@ def _attendance_schedule_has_reports(manager_user_id: int) -> bool:
             OrgUnitManager.manager_user_id == manager_user_id,
             OrgUnitManager.deputy_user_id == manager_user_id,
         )).first()
-    )
+    ):
+        return True
+    actor = db.session.get(User, manager_user_id)
+    if not _attendance_schedule_is_general_director(actor):
+        return False
+    return bool(_attendance_schedule_general_director_reports(manager_user_id))
 
 
 def _attendance_schedule_direct_reports(
@@ -14361,6 +14412,55 @@ def _attendance_schedule_direct_reports(
     return reports
 
 
+def _attendance_schedule_general_director_reports(
+    general_director_user_id: int,
+    employee_users: list[User] | None = None,
+) -> list[User]:
+    """Return employees whose resolved general director is the actor."""
+    reports = []
+    users = employee_users if employee_users is not None else _attendance_schedule_employee_users()
+    for user in users:
+        if int(user.id) == int(general_director_user_id):
+            continue
+        try:
+            director = resolve_general_director(int(user.id))
+        except Exception:
+            director = None
+        if director and int(director.id) == int(general_director_user_id):
+            reports.append(user)
+    return reports
+
+
+def _attendance_schedule_visible_reports(
+    user_id: int,
+    employee_users: list[User] | None = None,
+) -> list[User]:
+    """Return employees visible in the actor's direct hierarchy."""
+    users = employee_users if employee_users is not None else _attendance_schedule_employee_users()
+    reports = _attendance_schedule_direct_reports(user_id, users)
+    seen = {int(user.id) for user in reports}
+    actor = db.session.get(User, int(user_id))
+    if _attendance_schedule_is_general_director(actor):
+        for user in _attendance_schedule_general_director_reports(user_id, users):
+            if int(user.id) not in seen:
+                reports.append(user)
+                seen.add(int(user.id))
+    return reports
+
+
+def _attendance_schedule_can_view_user(actor: User, target: User) -> bool:
+    if not actor or not target:
+        return False
+    if int(actor.id) == int(target.id):
+        return True
+    if _attendance_schedule_can_view_all(actor) or _attendance_schedule_is_hr_manager(actor):
+        return True
+    return int(target.id) in {
+        int(user.id)
+        for user in _attendance_schedule_visible_reports(int(actor.id))
+    }
+
+
 def _attendance_schedule_latest_plan(
     user_id: int,
     period_start: str,
@@ -14372,7 +14472,9 @@ def _attendance_schedule_latest_plan(
         period_start=period_start,
     )
     if final_only:
-        query = query.filter_by(status="FINAL_APPROVED")
+        query = query.filter(
+            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
+        )
     return query.order_by(
         HRAttendanceSchedulePlan.version_no.desc(),
         HRAttendanceSchedulePlan.id.desc(),
@@ -14393,7 +14495,9 @@ def _attendance_schedule_latest_map(
         HRAttendanceSchedulePlan.period_start == period_start,
     )
     if final_only:
-        query = query.filter(HRAttendanceSchedulePlan.status == "FINAL_APPROVED")
+        query = query.filter(
+            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
+        )
     rows = query.order_by(
         HRAttendanceSchedulePlan.user_id.asc(),
         HRAttendanceSchedulePlan.version_no.desc(),
@@ -14484,28 +14588,49 @@ def _attendance_schedule_create_plan(
     user: User,
     period_start: date,
     actor_id: int,
+    *,
+    request_type: str = "BASELINE",
+    source_plan: HRAttendanceSchedulePlan | None = None,
 ) -> HRAttendanceSchedulePlan:
     period_start_text = period_start.isoformat()
     latest = _attendance_schedule_latest_plan(user.id, period_start_text)
     next_version = int(latest.version_no or 0) + 1 if latest else 1
     managers = _attendance_schedule_responsible_managers(int(user.id))
     manager = managers[0] if managers else None
+    general_director = resolve_general_director(int(user.id))
     plan = HRAttendanceSchedulePlan(
         user_id=user.id,
         manager_user_id=manager.id if manager else None,
+        general_director_user_id=general_director.id if general_director else None,
         period_start=period_start_text,
-        period_end=(period_start + timedelta(days=13)).isoformat(),
+        period_end=(period_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS - 1)).isoformat(),
         version_no=next_version,
         replaces_plan_id=latest.id if latest else None,
         status="DRAFT",
+        request_type=(request_type or "BASELINE").strip().upper(),
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
         updated_by_id=actor_id,
     )
     db.session.add(plan)
     db.session.flush()
+    source_days = {
+        row.work_date: row
+        for row in (getattr(source_plan, "days", None) or [])
+    }
     for work_day in attendance_schedule_cycle_days(period_start):
-        values = _attendance_schedule_default_values(user.id, work_day)
+        source_day = source_days.get(work_day.isoformat())
+        if source_day:
+            values = {
+                "day_type": source_day.day_type,
+                "schedule_id": source_day.schedule_id,
+                "schedule_name": getattr(source_day.schedule, "name", None),
+                "start_time": source_day.start_time,
+                "end_time": source_day.end_time,
+                "note": source_day.note or "",
+            }
+        else:
+            values = _attendance_schedule_default_values(user.id, work_day)
         db.session.add(HRAttendanceScheduleDay(
             plan_id=plan.id,
             work_date=work_day.isoformat(),
@@ -14514,7 +14639,7 @@ def _attendance_schedule_create_plan(
             start_time=values["start_time"],
             end_time=values["end_time"],
             note=values["note"],
-            edit_source="EMPLOYEE",
+            edit_source="HR" if request_type == "BASELINE" else "SYSTEM",
             updated_at=datetime.utcnow(),
             updated_by_id=actor_id,
         ))
@@ -14531,14 +14656,19 @@ def _attendance_schedule_fork_plan(
     next_version = int(latest.version_no or 0) + 1 if latest else int(source.version_no or 0) + 1
     managers = _attendance_schedule_responsible_managers(int(source.user_id))
     manager = managers[0] if managers else None
+    general_director = resolve_general_director(int(source.user_id))
     plan = HRAttendanceSchedulePlan(
         user_id=source.user_id,
         manager_user_id=manager.id if manager else source.manager_user_id,
+        general_director_user_id=(
+            general_director.id if general_director else source.general_director_user_id
+        ),
         period_start=source.period_start,
         period_end=source.period_end,
         version_no=next_version,
         replaces_plan_id=source.id,
         status="DRAFT",
+        request_type=getattr(source, "request_type", None) or "BASELINE",
         employee_note=source.employee_note,
         manager_note=source.manager_note,
         created_at=datetime.utcnow(),
@@ -14547,7 +14677,15 @@ def _attendance_schedule_fork_plan(
     )
     db.session.add(plan)
     db.session.flush()
+    source_period_start = _parse_yyyy_mm_dd(source.period_start)
+    source_week_dates = (
+        {work_day.isoformat() for work_day in attendance_schedule_cycle_days(source_period_start)}
+        if source_period_start
+        else None
+    )
     for source_day in source.days:
+        if source_week_dates is not None and source_day.work_date not in source_week_dates:
+            continue
         db.session.add(HRAttendanceScheduleDay(
             plan_id=plan.id,
             work_date=source_day.work_date,
@@ -14576,10 +14714,7 @@ def _attendance_schedule_apply_form(
         for row in WorkSchedule.query.filter_by(is_active=True).all()
     }
     changed = False
-    today = date.today()
     for work_day in attendance_schedule_cycle_days(period_start):
-        if edit_source == "EMPLOYEE" and work_day < today:
-            continue
         field_key = work_day.strftime("%Y_%m_%d")
         type_field = f"day_type_{field_key}"
         if type_field not in request.form:
@@ -14640,7 +14775,7 @@ def _attendance_schedule_apply_form(
         row.updated_by_id = actor_id
         changed = True
 
-    if edit_source == "EMPLOYEE":
+    if edit_source in {"EMPLOYEE", "EMPLOYEE_REQUEST"}:
         employee_note = (request.form.get("employee_note") or "").strip()
         if (plan.employee_note or "") != employee_note:
             plan.employee_note = employee_note
@@ -14709,7 +14844,7 @@ def _attendance_schedule_view_days(
             "date_text": work_day.isoformat(),
             "field_key": work_day.strftime("%Y_%m_%d"),
             "weekday": weekday_names[work_day.weekday()],
-            "week_no": 1 if index < 7 else 2,
+            "week_no": 1,
             "is_today": work_day == today,
             "is_past": work_day < today,
             **values,
@@ -14722,17 +14857,18 @@ def _attendance_schedule_week_rows(
     period_start: date,
     week_no: int,
     plan_map: dict[int, HRAttendanceSchedulePlan],
+    *,
+    status_plan_map: dict[int, HRAttendanceSchedulePlan] | None = None,
 ) -> tuple[list[date], list[dict]]:
-    selected_week = 2 if int(week_no or 1) == 2 else 1
-    week_start = period_start + timedelta(days=7 if selected_week == 2 else 0)
-    week_dates = [week_start + timedelta(days=offset) for offset in range(7)]
+    week_dates = attendance_schedule_cycle_days(period_start)
     rows = []
     for user in users:
-        plan = plan_map.get(int(user.id))
+        display_plan = plan_map.get(int(user.id))
+        plan = (status_plan_map or plan_map).get(int(user.id))
         days = _attendance_schedule_view_days(
             user.id,
             period_start,
-            plan,
+            display_plan,
             work_days=week_dates,
         )
         managers = _attendance_schedule_responsible_managers(int(user.id))
@@ -14753,9 +14889,11 @@ def _attendance_schedule_week_rows(
 def hr_work_schedule():
     period_start = normalize_attendance_schedule_cycle(request.args.get("start"))
     period_start_text = period_start.isoformat()
-    period_end = period_start + timedelta(days=13)
-    organization_week_no = 2 if request.args.get("week") == "2" else 1
+    period_end = period_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS - 1)
+    organization_week_no = 1
     is_final_approver = _attendance_schedule_is_final_approver()
+    is_hr_manager = _attendance_schedule_is_hr_manager()
+    is_general_director = _attendance_schedule_is_general_director()
     can_view_all = _attendance_schedule_can_view_all()
     print_view = (request.args.get("print") or "").strip().lower() in {"1", "true", "yes"}
     active_view = (request.args.get("view") or "schedule").strip().lower()
@@ -14772,7 +14910,7 @@ def hr_work_schedule():
     requested_user_id = (request.args.get("employee_id") or "").strip()
     requested_other_user = requested_user_id.isdigit() and int(requested_user_id) != int(current_user.id)
     reports_loaded = active_view == "team" or (requested_other_user and not can_view_all)
-    reports = _attendance_schedule_direct_reports(int(current_user.id)) if reports_loaded else []
+    reports = _attendance_schedule_visible_reports(int(current_user.id)) if reports_loaded else []
     report_ids = {int(user.id) for user in reports}
     has_reports = bool(reports) if reports_loaded else _attendance_schedule_has_reports(int(current_user.id))
     if active_view == "team" and not reports:
@@ -14781,9 +14919,10 @@ def hr_work_schedule():
     if requested_user_id.isdigit() and int(requested_user_id) != int(current_user.id):
         target_id = int(requested_user_id)
         is_employee = EmployeeFile.query.filter_by(user_id=target_id).first() is not None
-        if target_id not in report_ids and not (can_view_all and is_employee):
+        target_user_candidate = db.session.get(User, target_id) or abort(404)
+        if not is_employee or not _attendance_schedule_can_view_user(current_user, target_user_candidate):
             abort(403)
-        target_user = db.session.get(User, target_id) or abort(404)
+        target_user = target_user_candidate
 
     organization_loaded = bool(can_view_all and active_view == "all")
     all_users = _attendance_schedule_employee_users() if organization_loaded else []
@@ -14795,11 +14934,16 @@ def hr_work_schedule():
         else int(db.session.query(func.count(EmployeeFile.user_id)).scalar() or 0)
     ) if can_view_all else 0
 
-    if int(target_user.id) == int(current_user.id):
+    target_is_visible_report = int(target_user.id) in report_ids
+    if is_hr_manager:
+        editor_mode = "HR"
+    elif int(target_user.id) == int(current_user.id):
         editor_mode = "EMPLOYEE"
     elif is_final_approver:
         editor_mode = "SECRETARY_GENERAL"
-    elif int(target_user.id) in report_ids:
+    elif is_general_director and target_is_visible_report:
+        editor_mode = "GENERAL_DIRECTOR"
+    elif target_is_visible_report:
         editor_mode = "MANAGER"
     else:
         editor_mode = "VIEW_ONLY"
@@ -14828,6 +14972,15 @@ def hr_work_schedule():
         for user in reports
     ]
     all_plan_map = _attendance_schedule_latest_map(all_users, period_start_text) if can_view_all else {}
+    all_published_plan_map = (
+        _attendance_schedule_latest_map(
+            all_users,
+            period_start_text,
+            final_only=True,
+        )
+        if can_view_all
+        else {}
+    )
     organization_cards = [
         {
             "user": user,
@@ -14849,34 +15002,45 @@ def hr_work_schedule():
         all_users,
         period_start,
         organization_week_no,
-        all_plan_map,
+        all_published_plan_map,
+        status_plan_map=all_plan_map,
     ) if can_view_all else ([], [])
     organization_print_weeks = []
     if print_view and organization_loaded:
-        for week_no in (1, 2):
-            week_days, week_rows = _attendance_schedule_week_rows(
-                all_users,
-                period_start,
-                week_no,
-                all_plan_map,
-            )
-            organization_print_weeks.append({
-                "week_no": week_no,
-                "days": week_days,
-                "rows": week_rows,
-                "headers": week_rows[0]["days"] if week_rows else [],
-            })
+        week_days, week_rows = _attendance_schedule_week_rows(
+            all_users,
+            period_start,
+            1,
+            all_published_plan_map,
+            status_plan_map=all_plan_map,
+        )
+        organization_print_weeks.append({
+            "week_no": 1,
+            "days": week_days,
+            "rows": week_rows,
+            "headers": week_rows[0]["days"] if week_rows else [],
+        })
     history = (
         HRAttendanceSchedulePlan.query
         .filter_by(user_id=target_user.id, period_start=period_start_text)
         .order_by(HRAttendanceSchedulePlan.version_no.desc())
         .all()
     )
-    employee_can_edit = editor_mode != "EMPLOYEE" or period_end >= date.today()
-    reminder_due = (
-        int(target_user.id) == int(current_user.id)
-        and attendance_schedule_needs_reminder(plan, period_start, date.today())
+    active_plan_for_view = (
+        published_plan
+        if editor_mode == "EMPLOYEE"
+        else plan
     )
+    employee_can_request = editor_mode == "EMPLOYEE" and (
+        not plan or plan.status in (ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES | {"DRAFT", "REJECTED"})
+    )
+    can_edit_days = is_hr_manager
+    can_take_action = editor_mode in {
+        "HR",
+        "MANAGER",
+        "GENERAL_DIRECTOR",
+        "SECRETARY_GENERAL",
+    }
     return render_template(
         'portal/hr/print/work_schedule_all.html' if print_view else 'portal/hr/work_schedule.html',
         plan=plan,
@@ -14887,16 +15051,19 @@ def hr_work_schedule():
         selected_managers=selected_managers,
         period_start=period_start,
         period_end=period_end,
-        week1_end=period_start + timedelta(days=6),
-        week2_start=period_start + timedelta(days=7),
-        previous_start=period_start - timedelta(days=14),
-        next_start=period_start + timedelta(days=14),
-        days=_attendance_schedule_view_days(target_user.id, period_start, plan),
+        previous_start=period_start - timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS),
+        next_start=period_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS),
+        days=_attendance_schedule_view_days(target_user.id, period_start, active_plan_for_view),
         schedules=schedules,
         status_meta=_ATTENDANCE_SCHEDULE_STATUS_META,
         day_meta=_ATTENDANCE_SCHEDULE_DAY_META,
         editor_mode=editor_mode,
-        can_edit=editor_mode != "VIEW_ONLY" and employee_can_edit,
+        can_edit=can_take_action or employee_can_request,
+        can_edit_days=can_edit_days,
+        employee_can_request=employee_can_request,
+        active_plan_for_view=active_plan_for_view,
+        is_hr_manager=is_hr_manager,
+        is_general_director=is_general_director,
         is_final_approver=is_final_approver,
         can_view_all=can_view_all,
         active_view=active_view,
@@ -14918,44 +15085,55 @@ def hr_work_schedule():
             1
             for row in all_plan_map.values()
             if row.status in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
-            and len(row.days) == 14
+            and len(row.days) == ATTENDANCE_SCHEDULE_PERIOD_DAYS
         ),
-        reminder_due=reminder_due,
+        reminder_due=False,
         today=date.today(),
     )
 
 
-@portal_bp.route('/hr/attendance/work-schedule/update', methods=['POST'])
-@login_required
-@_perm(PORTAL_READ)
-def hr_work_schedule_update():
+def _attendance_schedule_update_weekly_workflow():
+    """Apply the weekly HR-owned schedule/change-request workflow."""
     period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
     period_start_text = period_start.isoformat()
     target_user_id = (request.form.get("target_user_id") or "").strip()
     if not target_user_id.isdigit():
         abort(400)
     target_user = db.session.get(User, int(target_user_id)) or abort(404)
-    reports = _attendance_schedule_direct_reports(int(current_user.id))
-    report_ids = {int(user.id) for user in reports}
+    if not EmployeeFile.query.filter_by(user_id=target_user.id).first():
+        abort(404)
+
+    visible_reports = _attendance_schedule_visible_reports(int(current_user.id))
+    visible_report_ids = {int(user.id) for user in visible_reports}
+    direct_report_ids = {
+        int(user.id)
+        for user in _attendance_schedule_direct_reports(int(current_user.id))
+    }
+    is_hr_manager = _attendance_schedule_is_hr_manager()
     is_final_approver = _attendance_schedule_is_final_approver()
-    if int(target_user.id) == int(current_user.id):
-        edit_source = "EMPLOYEE"
-        allowed_actions = {"save", "submit"}
+    is_general_director = _attendance_schedule_is_general_director()
+
+    if is_hr_manager:
+        editor_mode = "HR"
+        allowed_actions = {"hr_save", "hr_publish"}
+    elif int(target_user.id) == int(current_user.id):
+        editor_mode = "EMPLOYEE"
+        allowed_actions = {"request_change"}
     elif is_final_approver:
-        edit_source = "SECRETARY_GENERAL"
-        allowed_actions = {"secretary_save", "final_approve"}
-    elif int(target_user.id) in report_ids:
-        edit_source = "MANAGER"
-        allowed_actions = {"manager_save", "manager_approve"}
+        editor_mode = "SECRETARY_GENERAL"
+        allowed_actions = {"final_approve", "final_reject"}
+    elif is_general_director and int(target_user.id) in visible_report_ids:
+        editor_mode = "GENERAL_DIRECTOR"
+        allowed_actions = {"general_director_approve", "general_director_reject"}
+    elif int(target_user.id) in direct_report_ids:
+        editor_mode = "MANAGER"
+        allowed_actions = {"manager_approve", "manager_reject"}
     else:
         abort(403)
 
-    action = (request.form.get("action") or "save").strip()
+    action = (request.form.get("action") or "").strip()
     if action not in allowed_actions:
         abort(403)
-    if edit_source == "EMPLOYEE" and period_start + timedelta(days=13) < date.today():
-        flash("لا يمكن تعديل دورة انتهت بالكامل.", "warning")
-        return redirect(url_for("portal.hr_work_schedule", start=period_start_text))
 
     latest = _attendance_schedule_latest_plan(target_user.id, period_start_text)
     posted_plan_id = (request.form.get("plan_id") or "").strip()
@@ -14967,144 +15145,283 @@ def hr_work_schedule_update():
             employee_id=target_user.id if target_user.id != current_user.id else None,
         ))
 
-    try:
-        plan = latest or _attendance_schedule_create_plan(
-            target_user,
-            period_start,
-            int(current_user.id),
-        )
-        forked_from_final = bool(plan.status == "FINAL_APPROVED")
-        if forked_from_final:
-            plan = _attendance_schedule_fork_plan(
-                plan,
-                int(current_user.id),
-                edit_source,
-            )
-        changed = _attendance_schedule_apply_form(
-            plan,
-            period_start,
-            int(current_user.id),
-            edit_source,
-        )
-        managers = _attendance_schedule_responsible_managers(int(target_user.id))
-        manager = managers[0] if managers else None
-        if manager:
-            plan.manager_user_id = manager.id
-        notification_link = url_for(
-            "portal.hr_work_schedule",
-            start=period_start_text,
-            employee_id=target_user.id,
-        )
+    notification_link = url_for(
+        "portal.hr_work_schedule",
+        start=period_start_text,
+        employee_id=target_user.id,
+    )
+    managers = _attendance_schedule_responsible_managers(int(target_user.id))
+    manager = managers[0] if managers else None
+    general_director = resolve_general_director(int(target_user.id))
+    now = datetime.utcnow()
 
-        if edit_source == "EMPLOYEE":
+    try:
+        if editor_mode == "EMPLOYEE":
+            note = (request.form.get("employee_note") or "").strip()
+            if not note:
+                raise ValueError("يرجى توضيح التغيير المطلوب في طلب تغيير جدول الدوام.")
+            if latest and (getattr(latest, "request_type", None) or "BASELINE") == "CHANGE_REQUEST" and latest.status in {
+                "DRAFT",
+                "SUBMITTED",
+            }:
+                plan = latest
+            else:
+                published = _attendance_schedule_latest_plan(
+                    target_user.id,
+                    period_start_text,
+                    final_only=True,
+                )
+                plan = _attendance_schedule_create_plan(
+                    target_user,
+                    period_start,
+                    int(current_user.id),
+                    request_type="CHANGE_REQUEST",
+                    source_plan=published,
+                )
+            plan.request_type = "CHANGE_REQUEST"
+            plan.employee_note = note[:4000]
+            plan.manager_user_id = manager.id if manager else None
+            plan.general_director_user_id = general_director.id if general_director else None
+            if not manager:
+                plan.status = "DRAFT"
+                db.session.commit()
+                flash("تم حفظ الطلب، لكن لا يوجد مدير مباشر محدد للموظف.", "warning")
+                return redirect(url_for("portal.hr_work_schedule", start=period_start_text))
+            plan.status = "SUBMITTED"
+            plan.submitted_at = now
             plan.manager_approved_at = None
             plan.manager_approved_by_id = None
+            plan.general_director_approved_at = None
+            plan.general_director_approved_by_id = None
             plan.final_approved_at = None
             plan.final_approved_by_id = None
-            if action == "submit":
-                if not managers:
-                    plan.status = "DRAFT"
-                    notify_attendance_schedule_stakeholders(
-                        target_user,
-                        f"تعذر إرسال جدول دوام {target_user.full_name}: لا يوجد مدير مسؤول معيّن للموظف.",
-                        level="WARNING",
-                        link_url=notification_link,
-                    )
-                    flash("تم حفظ الجدول، لكن لا يوجد مدير مسؤول معيّن لإرساله إليه.", "warning")
-                else:
-                    plan.status = "SUBMITTED"
-                    plan.submitted_at = datetime.utcnow()
-                    manager_names = "، ".join(
-                        manager.full_name or manager.email or f"#{manager.id}"
-                        for manager in managers
-                    )
-                    notify_attendance_schedule_stakeholders(
-                        target_user,
-                        f"تم إرسال جدول دوام {target_user.full_name} إلى المديرين المسؤولين: {manager_names}، وهو الآن بانتظار اعتماد المدير.",
-                        level="INFO",
-                        link_url=notification_link,
-                        manager=manager,
-                    )
-                    flash("تم إرسال الجدول إلى جميع مديريك المسؤولين للاعتماد.", "success")
-            else:
-                if changed or plan.status not in {"DRAFT", "SUBMITTED"}:
-                    plan.status = "DRAFT"
-                if changed:
-                    notify_attendance_schedule_stakeholders(
-                        target_user,
-                        f"حفظ {target_user.full_name} تحديثًا على جدول دوامه المقترح.",
-                        level="INFO",
-                        link_url=notification_link,
-                        manager=manager,
-                    )
-                flash("تم حفظ جدول الدوام كمسودة.", "success")
-        elif edit_source == "MANAGER":
-            plan.final_approved_at = None
-            plan.final_approved_by_id = None
-            if action == "manager_approve":
-                plan.status = "MANAGER_APPROVED"
-                plan.manager_approved_at = datetime.utcnow()
-                plan.manager_approved_by_id = current_user.id
-                notify_attendance_schedule_stakeholders(
-                    target_user,
-                    f"اعتمد {current_user.full_name} جدول دوام {target_user.full_name}، وهو الآن بانتظار الاعتماد النهائي من الأمين العام.",
-                    level="SUCCESS",
-                    link_url=notification_link,
-                    manager=manager,
-                )
-                flash("تم اعتماد الجدول وإرساله للأمين العام.", "success")
-            else:
-                plan.status = "SUBMITTED"
-                plan.manager_approved_at = None
-                plan.manager_approved_by_id = None
-                notify_attendance_schedule_stakeholders(
-                    target_user,
-                    f"عدّل {current_user.full_name} جدول دوام {target_user.full_name} المقترح.",
-                    level="INFO",
-                    link_url=notification_link,
-                    manager=manager,
-                )
-                flash("تم حفظ تعديلات المدير.", "success")
-        else:
-            if action == "final_approve":
-                if plan.status not in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES:
-                    raise ValueError("لا يمكن اعتماد الجدول نهائيًا في حالته الحالية.")
-                plan.status = "FINAL_APPROVED"
-                plan.final_approved_at = datetime.utcnow()
-                plan.final_approved_by_id = current_user.id
-                notify_attendance_schedule_stakeholders(
-                    target_user,
-                    f"تم اعتماد جدول دوام {target_user.full_name} نهائيًا.",
-                    level="SUCCESS",
-                    link_url=notification_link,
-                    manager=manager,
-                )
-                flash("تم الاعتماد النهائي لجدول الموظف.", "success")
-            elif forked_from_final:
-                plan.status = "FINAL_APPROVED"
-                plan.manager_approved_at = datetime.utcnow()
-                plan.manager_approved_by_id = current_user.id
-                plan.final_approved_at = datetime.utcnow()
-                plan.final_approved_by_id = current_user.id
-                notify_attendance_schedule_stakeholders(
-                    target_user,
-                    f"تم تحديث جدول دوام {target_user.full_name} المعتمد وإصدار نسخة معتمدة جديدة.",
-                    level="INFO",
-                    link_url=notification_link,
-                    manager=manager,
-                )
-                flash("تم حفظ تعديل المعتمد النهائي كنسخة معتمدة جديدة.", "success")
-            else:
-                if changed:
-                    notify_attendance_schedule_stakeholders(
-                        target_user,
-                        f"تم حفظ تعديل المعتمد النهائي على جدول دوام {target_user.full_name}.",
-                        level="INFO",
-                        link_url=notification_link,
-                        manager=manager,
-                    )
-                flash("تم حفظ تعديل المعتمد النهائي.", "success")
+            plan.updated_at = now
+            plan.updated_by_id = current_user.id
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"تم تقديم طلب تغيير جدول دوام {target_user.full_name}، وهو بانتظار اعتماد المدير ثم المدير العام والأمين العام.",
+                level="INFO",
+                link_url=notification_link,
+                manager=manager,
+                include_general_director=True,
+                include_hr=True,
+            )
+            _portal_audit(
+                "HR_ATTENDANCE_SCHEDULE_CHANGE_REQUEST",
+                f"user_id={target_user.id}; period={period_start_text}; version={plan.version_no}",
+                target_type="HR_ATTENDANCE_SCHEDULE_PLAN",
+                target_id=plan.id,
+            )
+            db.session.commit()
+            flash("تم إنشاء طلب تغيير جدول الدوام وإرساله للاعتماد.", "success")
+            return redirect(url_for("portal.hr_work_schedule", start=period_start_text))
 
+        if editor_mode == "HR":
+            latest_request_type = (getattr(latest, "request_type", None) or "BASELINE").upper() if latest else "BASELINE"
+            if latest and latest.status in ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES:
+                plan = _attendance_schedule_fork_plan(latest, int(current_user.id), "HR")
+                plan.request_type = "BASELINE"
+            elif latest and latest_request_type == "CHANGE_REQUEST" and latest.status in {
+                "SUBMITTED",
+                "MANAGER_APPROVED",
+                "GENERAL_DIRECTOR_APPROVED",
+            }:
+                plan = latest
+            elif latest and latest_request_type != "CHANGE_REQUEST":
+                plan = latest
+            else:
+                published = _attendance_schedule_latest_plan(
+                    target_user.id,
+                    period_start_text,
+                    final_only=True,
+                )
+                plan = _attendance_schedule_create_plan(
+                    target_user,
+                    period_start,
+                    int(current_user.id),
+                    request_type="BASELINE",
+                    source_plan=published,
+                )
+            if manager:
+                plan.manager_user_id = manager.id
+            if general_director:
+                plan.general_director_user_id = general_director.id
+            changed = _attendance_schedule_apply_form(
+                plan,
+                period_start,
+                int(current_user.id),
+                "HR",
+            )
+            if plan.request_type == "CHANGE_REQUEST":
+                if changed and plan.status in {"MANAGER_APPROVED", "GENERAL_DIRECTOR_APPROVED"}:
+                    plan.status = "SUBMITTED"
+                    plan.manager_approved_at = None
+                    plan.manager_approved_by_id = None
+                    plan.general_director_approved_at = None
+                    plan.general_director_approved_by_id = None
+                if action == "hr_publish":
+                    raise ValueError("طلب التغيير يمر بالاعتماد أولًا، ثم يصبح نافذًا بعد اعتماد الأمين العام.")
+                plan.updated_at = now
+                plan.updated_by_id = current_user.id
+                db.session.commit()
+                flash("تم حفظ جدول التغيير لدى الشؤون البشرية، وبقي الطلب غير نافذ حتى اعتماده.", "success")
+            else:
+                if action == "hr_publish":
+                    if len(plan.days) != ATTENDANCE_SCHEDULE_PERIOD_DAYS:
+                        raise ValueError("يجب تعبئة أيام الأسبوع السبعة قبل اعتماد الجدول.")
+                    plan.status = "ADMIN_APPROVED"
+                    plan.admin_approved_at = now
+                    plan.admin_approved_by_id = current_user.id
+                    plan.final_approved_at = None
+                    plan.final_approved_by_id = None
+                    notify_attendance_schedule_stakeholders(
+                        target_user,
+                        f"تم اعتماد جدول دوام {target_user.full_name} من الشؤون الإدارية وأصبح نافذًا.",
+                        level="SUCCESS",
+                        link_url=notification_link,
+                        manager=manager,
+                    )
+                    flash("تم اعتماد جدول الدوام ونشره للموظف.", "success")
+                else:
+                    plan.status = "DRAFT"
+                    flash("تم حفظ جدول الدوام كمسودة لدى الشؤون البشرية.", "success")
+                plan.updated_at = now
+                plan.updated_by_id = current_user.id
+                db.session.commit()
+            _portal_audit(
+                "HR_ATTENDANCE_SCHEDULE_UPDATE",
+                f"action={action}; user_id={target_user.id}; period={period_start_text}; version={plan.version_no}",
+                target_type="HR_ATTENDANCE_SCHEDULE_PLAN",
+                target_id=plan.id,
+            )
+            db.session.commit()
+            return redirect(url_for(
+                "portal.hr_work_schedule",
+                start=period_start_text,
+                employee_id=target_user.id,
+            ))
+
+        legacy_plan_approval = bool(
+            latest
+            and (getattr(latest, "request_type", None) or "BASELINE") != "CHANGE_REQUEST"
+            and editor_mode == "SECRETARY_GENERAL"
+            and action in {"final_approve", "final_reject"}
+        )
+        if not latest or (
+            (getattr(latest, "request_type", None) or "BASELINE") != "CHANGE_REQUEST"
+            and not legacy_plan_approval
+        ):
+            raise ValueError("لا يوجد طلب تغيير جدول دوام قيد الاعتماد لهذا الأسبوع.")
+        plan = latest
+        if action == "manager_approve":
+            if plan.status != "SUBMITTED":
+                raise ValueError("لا يمكن اعتماد الطلب من المدير في حالته الحالية.")
+            plan.status = "MANAGER_APPROVED"
+            plan.manager_approved_at = now
+            plan.manager_approved_by_id = current_user.id
+            plan.general_director_user_id = general_director.id if general_director else None
+            next_label = "المدير العام" if general_director else "الأمين العام"
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"اعتمد {current_user.full_name} طلب تغيير جدول دوام {target_user.full_name}، وهو بانتظار {next_label}.",
+                level="SUCCESS",
+                link_url=notification_link,
+                manager=manager,
+                include_general_director=True,
+                include_hr=True,
+            )
+            flash("تم اعتماد طلب تغيير الدوام من المدير.", "success")
+        elif action == "manager_reject":
+            if plan.status != "SUBMITTED":
+                raise ValueError("لا يمكن رفض الطلب من المدير في حالته الحالية.")
+            plan.status = "REJECTED"
+            plan.manager_note = (request.form.get("manager_note") or "").strip()[:4000]
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من المدير.",
+                level="WARNING",
+                link_url=notification_link,
+                manager=manager,
+                include_hr=True,
+            )
+            flash("تم رفض طلب تغيير الدوام.", "success")
+        elif action == "general_director_approve":
+            if plan.status != "MANAGER_APPROVED":
+                raise ValueError("لا يمكن اعتماد الطلب من المدير العام في حالته الحالية.")
+            plan.status = "GENERAL_DIRECTOR_APPROVED"
+            plan.general_director_approved_at = now
+            plan.general_director_approved_by_id = current_user.id
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"اعتمد {current_user.full_name} طلب تغيير جدول دوام {target_user.full_name}، وهو بانتظار الأمين العام.",
+                level="SUCCESS",
+                link_url=notification_link,
+                manager=manager,
+                include_general_director=True,
+                include_hr=True,
+            )
+            flash("تم اعتماد طلب تغيير الدوام من المدير العام.", "success")
+        elif action == "general_director_reject":
+            if plan.status != "MANAGER_APPROVED":
+                raise ValueError("لا يمكن رفض الطلب من المدير العام في حالته الحالية.")
+            plan.status = "REJECTED"
+            plan.manager_note = (request.form.get("manager_note") or "").strip()[:4000]
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من المدير العام.",
+                level="WARNING",
+                link_url=notification_link,
+                manager=manager,
+                include_hr=True,
+            )
+            flash("تم رفض طلب تغيير الدوام.", "success")
+        elif action == "final_approve":
+            allowed_statuses = {"MANAGER_APPROVED", "GENERAL_DIRECTOR_APPROVED", "SUBMITTED"}
+            if plan.status not in allowed_statuses:
+                raise ValueError("لا يمكن اعتماد الطلب نهائيًا في حالته الحالية.")
+            if (
+                not legacy_plan_approval
+                and plan.general_director_user_id
+                and plan.status != "GENERAL_DIRECTOR_APPROVED"
+            ):
+                raise ValueError("\u064a\u062c\u0628 \u0627\u0639\u062a\u0645\u0627\u062f \u0637\u0644\u0628 \u062a\u063a\u064a\u064a\u0631 \u062c\u062f\u0648\u0644 \u0627\u0644\u062f\u0648\u0627\u0645 \u0645\u0646 \u0627\u0644\u0645\u062f\u064a\u0631 \u0627\u0644\u0639\u0627\u0645 \u0623\u0648\u0644\u0627\u064b.")
+            if not legacy_plan_approval and len(plan.days) != ATTENDANCE_SCHEDULE_PERIOD_DAYS:
+                raise ValueError("لا يمكن اعتماد طلب تغيير غير مكتمل لأيام الأسبوع السبعة.")
+            plan.status = "FINAL_APPROVED"
+            plan.final_approved_at = now
+            plan.final_approved_by_id = current_user.id
+            final_message = (
+                f"تم اعتماد جدول دوام {target_user.full_name} نهائيًا."
+                if legacy_plan_approval
+                else f"تم اعتماد طلب تغيير جدول دوام {target_user.full_name} نهائيًا وأصبح نافذًا."
+            )
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                final_message,
+                level="SUCCESS",
+                link_url=notification_link,
+                manager=manager,
+                include_general_director=True,
+                include_hr=True,
+            )
+            flash("تم الاعتماد النهائي وأصبح التغيير نافذًا.", "success")
+        elif action == "final_reject":
+            if plan.status not in {"MANAGER_APPROVED", "GENERAL_DIRECTOR_APPROVED", "SUBMITTED"}:
+                raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
+            plan.status = "REJECTED"
+            plan.manager_note = (request.form.get("manager_note") or "").strip()[:4000]
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من الأمين العام.",
+                level="WARNING",
+                link_url=notification_link,
+                manager=manager,
+                include_hr=True,
+            )
+            flash("تم رفض طلب تغيير الدوام.", "success")
+
+        plan.updated_at = now
+        plan.updated_by_id = current_user.id
         _portal_audit(
             "HR_ATTENDANCE_SCHEDULE_UPDATE",
             f"action={action}; user_id={target_user.id}; period={period_start_text}; version={plan.version_no}",
@@ -15126,6 +15443,13 @@ def hr_work_schedule_update():
     return redirect(url_for("portal.hr_work_schedule", **redirect_args))
 
 
+@portal_bp.route('/hr/attendance/work-schedule/update', methods=['POST'])
+@login_required
+@_perm(PORTAL_READ)
+def hr_work_schedule_update():
+    return _attendance_schedule_update_weekly_workflow()
+
+
 @portal_bp.route('/hr/attendance/work-schedule/remind', methods=['POST'])
 @login_required
 @_perm(PORTAL_READ)
@@ -15135,17 +15459,13 @@ def hr_work_schedule_remind():
     if not target_user_id.isdigit():
         abort(400)
     target_user = db.session.get(User, int(target_user_id)) or abort(404)
-    report_ids = {
-        int(user.id)
-        for user in _attendance_schedule_direct_reports(int(current_user.id))
-    }
-    if int(target_user.id) not in report_ids and not _attendance_schedule_is_final_approver():
+    if not _attendance_schedule_can_view_user(current_user, target_user):
         abort(403)
     managers = _attendance_schedule_responsible_managers(int(target_user.id))
     manager = managers[0] if managers else None
     notify_attendance_schedule_stakeholders(
         target_user,
-        f"تذكير: يرجى إكمال جدول دوام {target_user.full_name} للأسبوعين ابتداءً من {period_start.isoformat()}.",
+        f"تذكير: يرجى مراجعة جدول دوام {target_user.full_name} للأسبوع ابتداءً من {period_start.isoformat()}.",
         level="WARNING",
         link_url=url_for(
             "portal.hr_work_schedule",
@@ -15181,7 +15501,13 @@ def hr_work_schedule_final_approve_all():
     latest_map = _attendance_schedule_latest_map(employees, period_start_text)
     ready_plans = [
         plan for plan in latest_map.values()
-        if plan.status in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES and len(plan.days) == 14
+        if (getattr(plan, "request_type", None) or "BASELINE") == "CHANGE_REQUEST"
+        and plan.status in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
+        and (
+            not getattr(plan, "general_director_user_id", None)
+            or plan.status == "GENERAL_DIRECTOR_APPROVED"
+        )
+        and len(plan.days) == ATTENDANCE_SCHEDULE_PERIOD_DAYS
     ]
     now = datetime.utcnow()
     for plan in ready_plans:
@@ -25757,7 +26083,9 @@ def _approved_attendance_schedule_day(
                 HRAttendanceSchedulePlan.id == HRAttendanceScheduleDay.plan_id,
             )
             .filter(HRAttendanceSchedulePlan.user_id == normalized_user_id)
-            .filter(HRAttendanceSchedulePlan.status == "FINAL_APPROVED")
+            .filter(
+                HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
+            )
             .order_by(
                 HRAttendanceSchedulePlan.version_no.desc(),
                 HRAttendanceSchedulePlan.id.desc(),

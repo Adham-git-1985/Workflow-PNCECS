@@ -3317,13 +3317,19 @@ class EmployeeScheduleAssignment(db.Model):
 
 
 class HRAttendanceSchedulePlan(db.Model):
-    """A versioned two-week attendance schedule proposed for one employee."""
+    """A versioned weekly schedule or a weekly change request for one employee.
+
+    ``BASELINE`` rows are created and published by HR.  ``CHANGE_REQUEST``
+    rows are submitted by employees and remain non-effective until the
+    approval path reaches its final step.
+    """
 
     __tablename__ = "hr_attendance_schedule_plan"
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    general_director_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     period_start = db.Column(db.String(10), nullable=False, index=True)
     period_end = db.Column(db.String(10), nullable=False, index=True)
     version_no = db.Column(db.Integer, nullable=False, default=1)
@@ -3334,11 +3340,16 @@ class HRAttendanceSchedulePlan(db.Model):
         index=True,
     )
     status = db.Column(db.String(24), nullable=False, default="DRAFT", index=True)
+    request_type = db.Column(db.String(24), nullable=False, default="BASELINE", index=True)
     employee_note = db.Column(db.Text, nullable=True)
     manager_note = db.Column(db.Text, nullable=True)
     submitted_at = db.Column(db.DateTime, nullable=True)
     manager_approved_at = db.Column(db.DateTime, nullable=True)
     manager_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    general_director_approved_at = db.Column(db.DateTime, nullable=True)
+    general_director_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    admin_approved_at = db.Column(db.DateTime, nullable=True)
+    admin_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     final_approved_at = db.Column(db.DateTime, nullable=True)
     final_approved_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
@@ -3347,7 +3358,10 @@ class HRAttendanceSchedulePlan(db.Model):
 
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
     manager = db.relationship("User", foreign_keys=[manager_user_id], lazy="joined")
+    general_director = db.relationship("User", foreign_keys=[general_director_user_id], lazy="joined")
     manager_approved_by = db.relationship("User", foreign_keys=[manager_approved_by_id], lazy="joined")
+    general_director_approved_by = db.relationship("User", foreign_keys=[general_director_approved_by_id], lazy="joined")
+    admin_approved_by = db.relationship("User", foreign_keys=[admin_approved_by_id], lazy="joined")
     final_approved_by = db.relationship("User", foreign_keys=[final_approved_by_id], lazy="joined")
     updated_by = db.relationship("User", foreign_keys=[updated_by_id], lazy="joined")
 
@@ -3363,11 +3377,16 @@ class HRAttendanceSchedulePlan(db.Model):
             "period_start",
             "status",
         ),
+        db.Index(
+            "ix_hr_att_schedule_period_request_type",
+            "period_start",
+            "request_type",
+        ),
     )
 
 
 class HRAttendanceScheduleDay(db.Model):
-    """One day inside a versioned two-week attendance schedule."""
+    """One day inside a versioned weekly attendance schedule."""
 
     __tablename__ = "hr_attendance_schedule_day"
 

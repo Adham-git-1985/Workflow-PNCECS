@@ -11,7 +11,9 @@ from models import (
     User,
 )
 from services.hr_request_workflow import (
+    hr_notification_user_ids,
     resolve_responsible_managers,
+    resolve_general_director,
     secretary_general_user_ids,
 )
 from services.notification_email import (
@@ -26,9 +28,14 @@ ATTENDANCE_SCHEDULE_STATUSES = {
     "DRAFT",
     "SUBMITTED",
     "MANAGER_APPROVED",
+    "GENERAL_DIRECTOR_APPROVED",
+    "ADMIN_APPROVED",
     "FINAL_APPROVED",
+    "REJECTED",
 }
 ATTENDANCE_SCHEDULE_DAY_TYPES = {"WORK", "REMOTE", "OFF"}
+ATTENDANCE_SCHEDULE_PERIOD_DAYS = 7
+ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES = {"ADMIN_APPROVED", "FINAL_APPROVED"}
 _SUPER_ADMIN_ROLE_KEYS = {
     "SUPERADMIN",
     "SUPERADMINISTRATOR",
@@ -84,8 +91,16 @@ def attendance_schedule_stakeholder_user_ids(
     employee: User,
     manager: User | None = None,
     final_approver_user_ids: list[int] | None = None,
+    *,
+    include_general_director: bool = False,
+    include_hr: bool = False,
 ) -> list[int]:
-    """Return the employee, every responsible manager, and final approvers."""
+    """Return the users who need to know about a schedule event.
+
+    General directors and HR are opt-in recipients because ordinary schedule
+    notifications historically went only to the employee, direct managers,
+    and the final approver.  Change requests explicitly enable both groups.
+    """
     if not employee:
         return []
     selected_managers = resolve_responsible_managers(int(employee.id))
@@ -102,6 +117,12 @@ def attendance_schedule_stakeholder_user_ids(
         for selected_manager in selected_managers
         if selected_manager and selected_manager.id
     )
+    if include_general_director:
+        general_director = resolve_general_director(int(employee.id))
+        if general_director and general_director.id:
+            user_ids.add(int(general_director.id))
+    if include_hr:
+        user_ids.update(int(user_id) for user_id in hr_notification_user_ids() if user_id)
     return sorted(user_ids)
 
 
@@ -114,6 +135,8 @@ def notify_attendance_schedule_stakeholders(
     manager: User | None = None,
     event_key: str | None = None,
     final_approver_user_ids: list[int] | None = None,
+    include_general_director: bool = False,
+    include_hr: bool = False,
 ) -> int:
     safe_message = (message or "يوجد تحديث جديد على جدول الدوام.")[:255]
     safe_link = safe_local_notification_url(link_url)
@@ -123,6 +146,8 @@ def notify_attendance_schedule_stakeholders(
         employee,
         manager,
         final_approver_user_ids,
+        include_general_director=include_general_director,
+        include_hr=include_hr,
     ):
         if safe_event_key and Notification.query.filter_by(
             user_id=user_id,
@@ -150,8 +175,8 @@ def notify_attendance_schedule_stakeholders(
 def attendance_schedule_cycle_start(reference_day: date | None = None) -> date:
     selected_day = reference_day or date.today()
     anchor = date(2020, 1, 5)
-    cycle_number = (selected_day - anchor).days // 14
-    return anchor + timedelta(days=cycle_number * 14)
+    cycle_number = (selected_day - anchor).days // ATTENDANCE_SCHEDULE_PERIOD_DAYS
+    return anchor + timedelta(days=cycle_number * ATTENDANCE_SCHEDULE_PERIOD_DAYS)
 
 
 def normalize_attendance_schedule_cycle(
@@ -169,7 +194,10 @@ def normalize_attendance_schedule_cycle(
 
 
 def attendance_schedule_cycle_days(period_start: date) -> list[date]:
-    return [period_start + timedelta(days=offset) for offset in range(14)]
+    return [
+        period_start + timedelta(days=offset)
+        for offset in range(ATTENDANCE_SCHEDULE_PERIOD_DAYS)
+    ]
 
 
 def attendance_schedule_needs_reminder(
@@ -177,62 +205,13 @@ def attendance_schedule_needs_reminder(
     period_start: date,
     reference_day: date | None = None,
 ) -> bool:
-    today = reference_day or date.today()
-    second_week_start = period_start + timedelta(days=7)
-    days_until_second_week = (second_week_start - today).days
-    if days_until_second_week < 0 or days_until_second_week > 3:
-        return False
-    if plan is None or plan.status == "DRAFT":
-        return True
-    return len(plan.days) < 14
+    # Employees no longer complete weekly schedules.  HR owns the schedule,
+    # while employees submit change requests, so the old "complete the second
+    # week" reminder would be misleading and is intentionally disabled.
+    return False
 
 
 def send_attendance_schedule_reminders(reference_day: date | None = None) -> int:
-    today = reference_day or date.today()
-    period_start = attendance_schedule_cycle_start(today)
-    if not attendance_schedule_needs_reminder(None, period_start, today):
-        return 0
-
-    period_start_text = period_start.isoformat()
-    plans = {}
-    rows = (
-        HRAttendanceSchedulePlan.query
-        .filter_by(period_start=period_start_text)
-        .order_by(
-            HRAttendanceSchedulePlan.user_id.asc(),
-            HRAttendanceSchedulePlan.version_no.desc(),
-        )
-        .all()
-    )
-    for row in rows:
-        plans.setdefault(row.user_id, row)
-    sent = 0
-    final_approver_user_ids = attendance_schedule_final_approver_user_ids()
-    for employee_file in EmployeeFile.query.all():
-        user = employee_file.user
-        if not user or not attendance_schedule_needs_reminder(
-            plans.get(user.id),
-            period_start,
-            today,
-        ):
-            continue
-        event_key = f"att-schedule-reminder-{period_start_text}-{user.id}"[:64]
-        exists = Notification.query.filter_by(
-            user_id=user.id,
-            event_key=event_key,
-        ).first()
-        if exists:
-            continue
-        notify_attendance_schedule_stakeholders(
-            user,
-            f"تذكير بجدول دوام {user.full_name}: يرجى استكمال جدول الأسبوعين قبل بداية الأسبوع الثاني.",
-            level="WARNING",
-            link_url=(
-                "/portal/hr/attendance/work-schedule"
-                f"?start={period_start_text}&employee_id={user.id}"
-            ),
-            event_key=event_key,
-            final_approver_user_ids=final_approver_user_ids,
-        )
-        sent += 1
-    return sent
+    # Kept as a no-op for the scheduled job so existing deployments do not
+    # send stale employee-completion reminders after the workflow change.
+    return 0

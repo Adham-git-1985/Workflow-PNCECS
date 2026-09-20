@@ -2,7 +2,6 @@ import unittest
 import inspect
 from datetime import date, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 from flask import Flask
@@ -16,8 +15,6 @@ from models import (
     HRTrainingCourse,
     HRTrainingEnrollment,
     HRTrainingProgram,
-    Notification,
-    NotificationEmailDelivery,
     OrgNode,
     OrgNodeAssignment,
     OrgNodeManager,
@@ -54,27 +51,25 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class AttendanceScheduleCycleTests(unittest.TestCase):
-    def test_second_week_keeps_the_same_cycle(self):
+    def test_each_selected_date_resolves_to_its_own_week(self):
         self.assertEqual(
             attendance_schedule_cycle_start(date(2026, 9, 10)),
             date(2026, 9, 6),
         )
         self.assertEqual(
             attendance_schedule_cycle_start(date(2026, 9, 19)),
-            date(2026, 9, 6),
+            date(2026, 9, 13),
         )
         self.assertEqual(
             attendance_schedule_cycle_start(date(2026, 9, 20)),
             date(2026, 9, 20),
         )
 
-    def test_reminder_opens_three_days_before_second_week(self):
+    def test_employee_completion_reminders_are_disabled(self):
         period_start = date(2026, 9, 6)
         self.assertFalse(attendance_schedule_needs_reminder(None, period_start, date(2026, 9, 9)))
-        self.assertTrue(attendance_schedule_needs_reminder(None, period_start, date(2026, 9, 10)))
-        self.assertTrue(attendance_schedule_needs_reminder(None, period_start, date(2026, 9, 13)))
-        completed = SimpleNamespace(status="SUBMITTED", days=[object()] * 14)
-        self.assertFalse(attendance_schedule_needs_reminder(completed, period_start, date(2026, 9, 10)))
+        self.assertFalse(attendance_schedule_needs_reminder(None, period_start, date(2026, 9, 10)))
+        self.assertFalse(attendance_schedule_needs_reminder(None, period_start, date(2026, 9, 13)))
 
 
 class AttendanceSchedulePersistenceTests(unittest.TestCase):
@@ -282,16 +277,15 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
             final_plan.id,
         )
 
-    def test_automatic_reminder_is_deduplicated(self):
+    def test_automatic_employee_reminder_job_is_disabled(self):
         secondary_manager = self._secondary_manager()
 
         first = send_attendance_schedule_reminders(date(2026, 9, 10))
         second = send_attendance_schedule_reminders(date(2026, 9, 10))
         db.session.commit()
 
-        self.assertEqual(first, 1)
+        self.assertEqual(first, 0)
         self.assertEqual(second, 0)
-        self.assertEqual(Notification.query.filter_by(user_id=self.employee.id).count(), 1)
         expected_recipient_ids = {
             self.employee.id,
             self.manager.id,
@@ -300,14 +294,6 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         }
         self.assertEqual(
             set(attendance_schedule_stakeholder_user_ids(self.employee)),
-            expected_recipient_ids,
-        )
-        self.assertEqual(
-            {row.user_id for row in Notification.query.all()},
-            expected_recipient_ids,
-        )
-        self.assertEqual(
-            {row.user_id for row in NotificationEmailDelivery.query.all()},
             expected_recipient_ids,
         )
         self.assertIn(
@@ -619,19 +605,16 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
 
         Environment().parse(template)
         for token in (
-            "اقتراح الموظف",
-            "اعتماد المدير",
-            "الاعتماد النهائي",
-            "اعتماد الجاهز دفعة واحدة",
-            "عرض إداري فقط",
-            "data-copy-first-week",
+            "employee_note",
+            "request_change",
+            "hr_publish",
             "ws-roster-table",
             "organization_loaded",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, template)
-        self.assertIn("الاعتماد النهائي للأمين العام.", template)
-        self.assertNotIn("السوبر أدمن", template)
+        self.assertIn("الأمين العام", template)
+        self.assertNotIn("data-copy-first-week", template)
         self.assertIn("portal.hr_work_schedule", navigation)
         self.assertIn("جدول الدوام", navigation)
         self.assertIn("جدول دوام الموظفين", attendance_events)
