@@ -31223,6 +31223,19 @@ _ATTENDANCE_DAILY_STATUS_STYLES = {
     "OFF": (None, "bg-light text-dark border", "muted"),
 }
 
+_ATTENDANCE_DAILY_DASHBOARD_FILTER_CATEGORIES = frozenset({
+    "PRESENT",
+    "LEAVE",
+    "REMOTE",
+    "ABSENT",
+})
+
+
+def _attendance_daily_dashboard_category_filter(raw_category: str | None) -> str:
+    """Return a supported status-card filter, or an empty value for all rows."""
+    category = (raw_category or "").strip().upper()
+    return category if category in _ATTENDANCE_DAILY_DASHBOARD_FILTER_CATEGORIES else ""
+
 
 def _sort_and_number_attendance_daily_dashboard_rows(rows: list[dict]) -> list[dict]:
     """Sort the daily management view and number only recorded attendance.
@@ -31518,6 +31531,9 @@ def hr_attendance_daily():
     day_from = (request.args.get('day_from') or '').strip()
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
+    selected_category = _attendance_daily_dashboard_category_filter(
+        request.args.get('category')
+    )
 
     # This is the management snapshot: it intentionally includes employees
     # without a saved summary row, so leave, remote, and absence are visible
@@ -31535,14 +31551,18 @@ def hr_attendance_daily():
     day_to = end_day.isoformat()
 
     selected_user_ids = [int(user_id)] if user_id.isdigit() else None
-    rows = _attendance_daily_dashboard_rows(
+    all_rows = _attendance_daily_dashboard_rows(
         start_day,
         end_day,
         user_ids=selected_user_ids,
     )
     status_counts = {code: 0 for code in _ATTENDANCE_DAILY_STATUS_STYLES}
-    for row in rows:
+    for row in all_rows:
         status_counts[row['category']] = status_counts.get(row['category'], 0) + 1
+    rows = [
+        row for row in all_rows
+        if not selected_category or row['category'] == selected_category
+    ]
 
     # The filter needs only these three fields. Avoid materializing every
     # relationship on every user when the organization has a large directory.
@@ -31555,7 +31575,7 @@ def hr_attendance_daily():
     attendance_count_day = _attendance_count_day(day_from, day_to, today)
     attendance_count_today = sum(
         1
-        for row in rows
+        for row in all_rows
         if row['day'] == attendance_count_day
         and row['category'] == 'PRESENT'
         and row.get('first_in')
@@ -31568,6 +31588,11 @@ def hr_attendance_daily():
                            attendance_count_day=attendance_count_day,
                            attendance_count_today=attendance_count_today,
                            status_counts=status_counts,
+                           selected_category=selected_category,
+                           selected_category_label=(
+                               _ATTENDANCE_DAILY_STATUS_STYLES[selected_category][0]
+                               if selected_category else ''
+                           ),
                            can_manage=_hr_can_manage_attendance(),
                            can_edit_attendance=_hr_can_edit_attendance())
 
@@ -31579,6 +31604,7 @@ def hr_attendance_daily_recompute():
     day_from = (request.form.get('day_from') or '').strip()
     day_to = (request.form.get('day_to') or '').strip()
     user_id = (request.form.get('user_id') or '').strip()
+    category = _attendance_daily_dashboard_category_filter(request.form.get('category'))
 
     if not day_from or not day_to:
         flash('حدد تاريخ من/إلى.', 'danger')
@@ -31618,7 +31644,13 @@ def hr_attendance_daily_recompute():
 
     db.session.commit()
     flash(f'تمت إعادة الحساب ({count}).', 'success')
-    return redirect(url_for('portal.hr_attendance_daily', day_from=day_from, day_to=day_to, user_id=user_id))
+    return redirect(url_for(
+        'portal.hr_attendance_daily',
+        day_from=day_from,
+        day_to=day_to,
+        user_id=user_id,
+        category=category or None,
+    ))
 
 
 @portal_bp.route('/hr/attendance/daily/export.xlsx')
@@ -31628,6 +31660,9 @@ def hr_attendance_daily_export_xlsx():
     day_from = (request.args.get('day_from') or '').strip()
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
+    selected_category = _attendance_daily_dashboard_category_filter(
+        request.args.get('category')
+    )
 
     today_day = date.today()
     start_day = _parse_yyyy_mm_dd(day_from) or today_day
@@ -31641,6 +31676,8 @@ def hr_attendance_daily_export_xlsx():
         end_day,
         user_ids=[int(user_id)] if user_id.isdigit() else None,
     )
+    if selected_category:
+        rows = [row for row in rows if row['category'] == selected_category]
 
     from openpyxl import Workbook
     wb = Workbook()

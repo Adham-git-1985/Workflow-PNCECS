@@ -260,6 +260,22 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(categories[absent.id], "ABSENT")
         self.assertEqual(render.call_args.kwargs["status_counts"]["ABSENT"], 1)
 
+        with self.app.test_request_context(
+            "/portal/hr/attendance/daily?day_from=2026-09-14&day_to=2026-09-14&category=ABSENT",
+        ):
+            login_user(viewer)
+            with patch("portal.routes.render_template", return_value="filtered") as render:
+                response = hr_attendance_daily()
+            logout_user()
+
+        self.assertEqual(response, "filtered")
+        self.assertEqual(render.call_args.kwargs["selected_category"], "ABSENT")
+        self.assertEqual(render.call_args.kwargs["selected_category_label"], "غائب")
+        self.assertEqual(
+            [row["user_id"] for row in render.call_args.kwargs["rows"]],
+            [absent.id],
+        )
+
     def test_remote_schedule_template_is_not_classified_as_missing_punch(self):
         employee = self._user("remote-template@example.test", "موظف قالب عن بعد")
         annual = HRLeaveType(
