@@ -66,6 +66,9 @@
                   <td class="small">{{ current_stage_labels.get(('LEAVE', r.id), '-') }}</td>
                   <td>
                     <span class="badge bg-{{ badge }}">{{ st }}</span>
+                    {% if r.id in (view_only_leave_ids or []) %}
+                      <span class="badge text-bg-info">للاطلاع فقط</span>
+                    {% endif %}
                     {% if r.admin_status %}
                       <span class="badge bg-info text-dark">{{ r.admin_status.name_ar or r.admin_status.code }}</span>
                     {% endif %}

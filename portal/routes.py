@@ -344,6 +344,7 @@ from services.hr_request_workflow import (
     ESCALATION_UNITS,
     KIND_LEAVE,
     KIND_PERMISSION,
+    STAGE_ADMINISTRATIVE_AFFAIRS,
     administrative_affairs_manager_user_ids,
     approval_candidate_names_map,
     approval_steps as hr_request_approval_steps,
@@ -359,6 +360,7 @@ from services.hr_request_workflow import (
     get_escalation_policies,
     get_escalation_policy,
     hr_notification_user_ids,
+    is_compensatory_leave,
     is_special_leave,
     is_sick_leave,
     normalize_escalation_target,
@@ -7592,6 +7594,69 @@ def _add_months_safe(d: date, months: int):
 MATERNITY_LEAVE_CODE = "M"
 UNPAID_LEAVE_CODE = "UNPAID"
 STUDY_LEAVE_CODE = "STUDY"
+COMPENSATORY_LEAVE_CODE = "COMPENSATORY"
+
+
+def _is_compensatory_leave_type(leave_type: HRLeaveType | None) -> bool:
+    """Return whether this leave type consumes the compensatory balance."""
+    return bool(
+        leave_type
+        and is_compensatory_leave(SimpleNamespace(leave_type=leave_type))
+    )
+
+
+def _ensure_compensatory_leave_type() -> HRLeaveType | None:
+    """Provide the built-in compensatory-leave type on existing databases.
+
+    It deliberately starts with a zero balance.  Administrative Affairs adds
+    auditable credits per employee; the employee never receives an automatic
+    annual entitlement for this leave type.
+    """
+    try:
+        candidate_rows = HRLeaveType.query.order_by(HRLeaveType.id.asc()).all()
+        row = next(
+            (
+                candidate for candidate in candidate_rows
+                if _is_compensatory_leave_type(candidate)
+            ),
+            None,
+        )
+        changed = False
+        if row is None:
+            row = HRLeaveType(
+                code=COMPENSATORY_LEAVE_CODE,
+                name_ar="إجازة تعويضية",
+                name_en="Compensatory leave",
+                requires_approval=True,
+                default_balance_days=0,
+                deduct_from_balance=True,
+                balance_source_leave_type_id=None,
+                day_count_basis=LEAVE_DAY_COUNT_WORKING,
+                exclude_official_holidays=False,
+                is_active=True,
+                created_at=datetime.utcnow(),
+            )
+            db.session.add(row)
+            changed = True
+        else:
+            values = {
+                "requires_approval": True,
+                "deduct_from_balance": True,
+                "balance_source_leave_type_id": None,
+                "is_active": True,
+            }
+            if getattr(row, "default_balance_days", None) is None:
+                values["default_balance_days"] = 0
+            for field, value in values.items():
+                if getattr(row, field, None) != value:
+                    setattr(row, field, value)
+                    changed = True
+        if changed:
+            db.session.commit()
+        return row
+    except Exception:
+        db.session.rollback()
+        return None
 
 
 def _ensure_statutory_leave_types() -> None:
@@ -17498,6 +17563,7 @@ def hr_leave_request_new():
 
     _ensure_maternity_leave_type()
     _ensure_statutory_leave_types()
+    _ensure_compensatory_leave_type()
     types = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.name_ar.asc()).all()
     types_meta = {
         str(t.id): {
@@ -17564,6 +17630,16 @@ def hr_leave_request_new():
             return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
         days = _calculate_leave_days(lt, start_s, end_s, user_id=current_user.id)
+
+        compensatory_balance_error = _compensatory_leave_balance_error(
+            current_user.id,
+            lt,
+            start_d,
+            end_d,
+        )
+        if compensatory_balance_error:
+            flash(compensatory_balance_error, "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
         statutory_error, statutory_details = _statutory_leave_validation(lt, start_d, end_d, request.form)
         if statutory_error:
@@ -17689,6 +17765,7 @@ def hr_leave_request_edit(req_id: int):
 
     _ensure_maternity_leave_type()
     _ensure_statutory_leave_types()
+    _ensure_compensatory_leave_type()
 
     # Keep the selected type visible if it was subsequently disabled, while
     # still allowing the employee to choose any active type.
@@ -17770,6 +17847,16 @@ def hr_leave_request_edit(req_id: int):
             return render_form()
 
         days = _calculate_leave_days(leave_type, start_s, end_s, user_id=current_user.id)
+
+        compensatory_balance_error = _compensatory_leave_balance_error(
+            current_user.id,
+            leave_type,
+            start_date,
+            end_date,
+        )
+        if compensatory_balance_error:
+            flash(compensatory_balance_error, "danger")
+            return render_form()
 
         statutory_error, statutory_details = _statutory_leave_validation(
             leave_type, start_date, end_date, request.form, exclude_request_id=req.id,
@@ -18734,6 +18821,14 @@ def hr_approvals():
     pending_maternity_reqs = _visible_maternity_departures('PENDING')
     participated_leave_ids = set(request_ids_user_participated_in(current_user, KIND_LEAVE))
     participated_permission_ids = set(request_ids_user_participated_in(current_user, KIND_PERMISSION))
+    view_only_leave_ids = {
+        int(observer.request_id)
+        for observer in HRRequestObserver.query.filter_by(
+            request_kind=KIND_LEAVE,
+            user_id=current_user.id,
+            observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
+        ).all()
+    }
     has_request_history = bool(
         participated_leave_ids
         or participated_permission_ids
@@ -18758,7 +18853,15 @@ def hr_approvals():
 
     def _visible_ids(kind: str) -> set[int]:
         if status == "SUBMITTED":
-            return set(assigned_leave_ids if kind == KIND_LEAVE else assigned_permission_ids)
+            ids = set(assigned_leave_ids if kind == KIND_LEAVE else assigned_permission_ids)
+            ids.update(
+                int(row.request_id)
+                for row in HRRequestObserver.query.filter_by(
+                    request_kind=kind,
+                    user_id=current_user.id,
+                ).all()
+            )
+            return ids
         ids = set(participated_leave_ids if kind == KIND_LEAVE else participated_permission_ids)
         ids.update(
             int(row.request_id)
@@ -18800,6 +18903,7 @@ def hr_approvals():
         perm_reqs=perm_reqs,
         maternity_reqs=maternity_reqs,
         deletable_leave_ids=deletable_leave_ids,
+        view_only_leave_ids=view_only_leave_ids,
         current_stage_labels=current_stage_labels,
     )
 
@@ -18974,6 +19078,20 @@ def hr_approval_leave(req_id: int):
             ):
                 flash(_required_leave_document_message(r.leave_type), "danger")
                 return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
+            if (
+                step
+                and step.stage_code == STAGE_ADMINISTRATIVE_AFFAIRS
+                and _is_compensatory_leave_type(r.leave_type)
+            ):
+                compensatory_balance_error = _compensatory_leave_balance_error(
+                    r.user_id,
+                    r.leave_type,
+                    _parse_yyyy_mm_dd(r.start_date),
+                    _parse_yyyy_mm_dd(r.end_date),
+                )
+                if compensatory_balance_error:
+                    flash(compensatory_balance_error, "danger")
+                    return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
         if note_required and action == "APPROVE" and not note:
             flash("ملاحظة القرار مطلوبة في مرحلة الموارد البشرية لهذه الحالة الاستثنائية.", "danger")
             return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
@@ -26256,6 +26374,7 @@ def _effective_work_policy_for_user(user_id: int, day_str: str) -> WorkPolicy | 
 @_perm(HR_MASTERDATA_MANAGE)
 def hr_masterdata_index():
     _ensure_maternity_leave_type()
+    _ensure_compensatory_leave_type()
     schedules = WorkSchedule.query.order_by(WorkSchedule.id.desc()).all()
     perm_types = HRPermissionType.query.order_by(HRPermissionType.code.asc()).all()
     leave_types = HRLeaveType.query.order_by(HRLeaveType.code.asc()).all()
@@ -28097,6 +28216,45 @@ def _leave_used_days(user_id: int, leave_type_id: int, year: int) -> float:
         return 0.0
 
 
+def _compensatory_leave_balance_error(
+    user_id: int,
+    leave_type: HRLeaveType | None,
+    start_day: date | None,
+    end_day: date | None,
+) -> str | None:
+    """Validate that a compensatory request fits the manually issued balance."""
+    if not _is_compensatory_leave_type(leave_type):
+        return None
+    if not start_day or not end_day or end_day < start_day:
+        return "تعذر التحقق من رصيد الإجازة التعويضية لعدم اكتمال تاريخ الطلب."
+
+    balance_type = _leave_balance_source_type(leave_type)
+    if not balance_type or not _leave_type_owns_balance(balance_type):
+        return "نوع الإجازة التعويضية غير مضبوط كرصد مستقل. راجع إعدادات نوع الإجازة."
+
+    for leave_year in range(start_day.year, end_day.year + 1):
+        period_start = max(start_day, date(leave_year, 1, 1))
+        period_end = min(end_day, date(leave_year, 12, 31))
+        requested_days = float(_calculate_leave_days(
+            leave_type,
+            period_start.isoformat(),
+            period_end.isoformat(),
+            user_id=user_id,
+        ))
+        if requested_days <= 0:
+            continue
+        total_days = float(_leave_entitlement_days(user_id, balance_type, leave_year) or 0.0)
+        used_days = float(_leave_used_days(user_id, balance_type.id, leave_year) or 0.0)
+        remaining_days = max(0.0, total_days - used_days)
+        if requested_days > remaining_days + 0.0001:
+            return (
+                f"رصيد الإجازة التعويضية غير كافٍ لعام {leave_year}: "
+                f"المتاح {remaining_days:g} يوم، والمطلوب {requested_days:g} يوم. "
+                "يرجى مراجعة الشؤون الإدارية لإضافة الرصيد التعويضي."
+            )
+    return None
+
+
 
 def _hr_recipients_user_ids() -> list[int]:
     """Users considered HR recipients for automated HR alerts.
@@ -28492,6 +28650,7 @@ def _leave_rollover_rows(user_id: int, target_year: int, leave_types: list[HRLea
 @_perm_any(HR_REPORTS_VIEW, HR_LEAVE_BALANCES_MANAGE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL)
 def hr_leave_balances():
     """Manage/display leave balances (entitlements vs used/remaining)."""
+    _ensure_compensatory_leave_type()
     # Report viewers can inspect balances; edits require a management permission.
     can_manage = _can_manage_leave_balances()
     # Filters
@@ -28515,6 +28674,11 @@ def hr_leave_balances():
     from sqlalchemy import func
     users = User.query.order_by(func.coalesce(User.name, User.email).asc(), User.email.asc()).all()
     leave_types = HRLeaveType.query.filter(HRLeaveType.is_active == True).order_by(HRLeaveType.code.asc()).all()  # noqa: E712
+    compensatory_leave_type = next(
+        (leave_type for leave_type in leave_types if _is_compensatory_leave_type(leave_type)),
+        None,
+    )
+    compensatory_balance_type = _leave_balance_source_type(compensatory_leave_type)
 
     # POST: update entitlements for selected user
     if request.method == 'POST':
@@ -28612,6 +28776,52 @@ def hr_leave_balances():
                 flash('لم يتم حفظ قرارات جديدة؛ قد تكون القرارات محفوظة سابقًا أو لم تختر إجراءً.', 'info')
             return redirect(url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year) + '#leave-rollover')
 
+        if (request.form.get('action') or '').upper() == 'ADD_COMPENSATORY_CREDIT':
+            days_raw = (request.form.get('days_delta') or '').strip().replace(',', '.')
+            reason = (request.form.get('reason') or '').strip()
+            try:
+                days_delta = round(float(days_raw), 4)
+            except (TypeError, ValueError):
+                days_delta = 0.0
+
+            if not compensatory_balance_type or not _leave_type_owns_balance(compensatory_balance_type):
+                flash('تعذر تحديد نوع رصيد الإجازة التعويضية. راجع إعدادات أنواع الإجازات.', 'danger')
+            elif days_delta <= 0:
+                flash('أدخل عدد أيام تعويضية موجباً أكبر من صفر.', 'danger')
+            elif not reason:
+                flash('سبب إضافة الرصيد التعويضي مطلوب.', 'danger')
+            else:
+                adjustment = HRLeaveBalanceAdjustment(
+                    user_id=selected_user.id,
+                    leave_type_id=compensatory_balance_type.id,
+                    year=year,
+                    days_delta=days_delta,
+                    reason=f'إضافة رصيد تعويضي: {reason}',
+                    created_by_id=current_user.id,
+                )
+                db.session.add(adjustment)
+                _portal_audit(
+                    'HR_COMPENSATORY_LEAVE_CREDIT',
+                    (
+                        f'إضافة رصيد إجازة تعويضية للموظف #{selected_user.id}: '
+                        f'{days_delta:+.4f} يوم — {reason}'
+                    ),
+                    target_type='USER',
+                    target_id=selected_user.id,
+                )
+                _portal_notify(
+                    [selected_user.id],
+                    (
+                        f'أضافت الشؤون الإدارية إلى رصيد إجازتك التعويضية '
+                        f'{days_delta:g} يوم لعام {year}.'
+                    ),
+                    ntype='HR_COMPENSATORY_LEAVE_CREDIT',
+                    link_url=url_for('portal.hr_my_balances_deductions', year=year),
+                )
+                db.session.commit()
+                flash('تمت إضافة الرصيد التعويضي للموظف وتوثيق الحركة.', 'success')
+            return redirect(url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year) + '#compensatory-balance')
+
         if (request.form.get('action') or '').upper() == 'ADD_ADJUSTMENT':
             leave_type_id = (request.form.get('leave_type_id') or '').strip()
             delta_raw = (request.form.get('days_delta') or '').strip().replace(',', '.')
@@ -28701,9 +28911,14 @@ def hr_leave_balances():
                 'used': used,
                 'remaining': rem,
                 'deducts_from_balance': deducts_from_balance,
+                'is_compensatory': _is_compensatory_leave_type(lt),
             })
 
     adjustments = []
+    compensatory_row = next(
+        (row for row in rows if row.get('is_compensatory')),
+        None,
+    )
     if selected_user:
         adjustments = (
             HRLeaveBalanceAdjustment.query
@@ -28719,6 +28934,9 @@ def hr_leave_balances():
         selected_user=selected_user,
         year=year,
         leave_types=leave_types,
+        compensatory_leave_type=compensatory_leave_type,
+        compensatory_balance_type=compensatory_balance_type,
+        compensatory_row=compensatory_row,
         rows=rows,
         adjustments=adjustments,
         can_manage=can_manage,
@@ -39343,6 +39561,7 @@ def hr_leaves_admin_log():
 @login_required
 @_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
 def hr_leaves_admin_new():
+    _ensure_compensatory_leave_type()
     if request.method == 'POST':
         if not _hr_can_manage():
             abort(403)
@@ -39396,6 +39615,15 @@ def hr_leaves_admin_new():
             flash(casual_policy_error, 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
         days_val = _calculate_leave_days(lt, start_date, end_date, user_id=int(user_id))
+        compensatory_balance_error = _compensatory_leave_balance_error(
+            int(user_id),
+            lt,
+            start_day,
+            end_day,
+        )
+        if compensatory_balance_error:
+            flash(compensatory_balance_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
         limit_error, limit_warning = _leave_duration_limit_messages(lt, days_val)
         if limit_error:
             flash(limit_error, 'danger')
@@ -39500,6 +39728,7 @@ def hr_leaves_admin_new():
 @login_required
 @_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
 def hr_leaves_admin_edit(row_id: int):
+    _ensure_compensatory_leave_type()
     if not _hr_can_manage():
         abort(403)
     row = HRLeaveRequest.query.get_or_404(row_id)
@@ -39587,6 +39816,16 @@ def hr_leaves_admin_edit(row_id: int):
         if casual_policy_error:
             db.session.rollback()
             flash(casual_policy_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
+        compensatory_balance_error = _compensatory_leave_balance_error(
+            row.user_id,
+            lt,
+            _parse_yyyy_mm_dd(row.start_date),
+            _parse_yyyy_mm_dd(row.end_date),
+        )
+        if compensatory_balance_error:
+            db.session.rollback()
+            flash(compensatory_balance_error, 'danger')
             return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
         limit_error, limit_warning = _leave_duration_limit_messages(lt, row.days)
         if limit_error:

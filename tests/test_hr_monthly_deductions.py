@@ -33,6 +33,7 @@ from models import (
 from portal.routes import (
     HR_LEAVE_BALANCES_MANAGE,
     HR_REPORTS_VIEW,
+    _compensatory_leave_balance_error,
     _leave_entitlement_days,
     _leave_rollover_rows,
     _leave_used_days_as_of,
@@ -425,6 +426,61 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(balance.leave_type_id, leave_type.id)
         self.assertEqual(balance.year, 2026)
         self.assertEqual(balance.total_days, 18)
+
+    def test_compensatory_credit_is_audited_and_makes_balance_available(self):
+        administrative_affairs = User(
+            email="administrative-affairs@example.test",
+            name="Administrative Affairs",
+            password_hash="not-used",
+            role="HR_MANAGER",
+        )
+        db.session.add(administrative_affairs)
+        db.session.flush()
+        db.session.add(UserPermission(
+            user_id=administrative_affairs.id,
+            key=HR_LEAVE_BALANCES_MANAGE,
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data={
+                "action": "ADD_COMPENSATORY_CREDIT",
+                "user_id": str(self.user.id),
+                "year": "2026",
+                "days_delta": "2.5",
+                "reason": "عمل إضافي معتمد",
+            },
+        ):
+            login_user(administrative_affairs)
+            response = hr_leave_balances()
+            logout_user()
+
+        compensatory_type = HRLeaveType.query.filter_by(code="COMPENSATORY").one()
+        adjustment = HRLeaveBalanceAdjustment.query.filter_by(
+            user_id=self.user.id,
+            leave_type_id=compensatory_type.id,
+            year=2026,
+        ).one()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(adjustment.days_delta, 2.5)
+        self.assertEqual(adjustment.created_by_id, administrative_affairs.id)
+        self.assertIn("إضافة رصيد تعويضي", adjustment.reason)
+        self.assertEqual(_leave_entitlement_days(self.user.id, compensatory_type, 2026), 2.5)
+        self.assertIsNone(_compensatory_leave_balance_error(
+            self.user.id,
+            compensatory_type,
+            date(2026, 3, 1),
+            date(2026, 3, 2),
+        ))
+        self.assertIn("غير كافٍ", _compensatory_leave_balance_error(
+            self.user.id,
+            compensatory_type,
+            date(2026, 3, 1),
+            date(2026, 3, 4),
+        ) or "")
 
     def test_report_view_permission_cannot_change_opening_leave_balance(self):
         report_viewer = User(

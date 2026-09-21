@@ -42,14 +42,21 @@ KIND_LEAVE = "LEAVE"
 KIND_PERMISSION = "PERMISSION"
 
 STAGE_DIRECT_MANAGER = "DIRECT_MANAGER"
+STAGE_GENERAL_DIRECTOR = "GENERAL_DIRECTOR"
+STAGE_ADMINISTRATIVE_AFFAIRS = "ADMINISTRATIVE_AFFAIRS"
 STAGE_HR = "HR"
 STAGE_SECRETARY_GENERAL = "SECRETARY_GENERAL"
 
 SCOPE_USER = "USER"
+SCOPE_GENERAL_DIRECTOR = "GENERAL_DIRECTOR"
+SCOPE_ADMINISTRATIVE_AFFAIRS = "ADMINISTRATIVE_AFFAIRS"
 SCOPE_HR = "HR"
 SCOPE_SECRETARY_GENERAL = "SECRETARY_GENERAL"
 
-ACTIVE_STEP_STATUSES = {"PENDING", "WAITING"}
+# ``VIEW_ONLY`` is used for the Secretary-General copy of compensatory leave
+# requests.  It is never an actionable approval step, but it must be retired
+# when the request is cancelled or resubmitted.
+ACTIVE_STEP_STATUSES = {"PENDING", "WAITING", "VIEW_ONLY"}
 
 ESCALATION_LEVELS = (1, 2)
 ESCALATION_UNIT_MINUTES = "MINUTES"
@@ -304,6 +311,43 @@ def _notify(
             message=message,
             source="portal",
             link_url=link,
+            is_read=False,
+            created_at=now,
+        ))
+
+
+def _notify_view_only(
+    user_ids: Iterable[int],
+    message: str,
+    *,
+    kind: str,
+    request_id: int,
+    event_key: str | None = None,
+) -> None:
+    """Send a read-only request notice without making the recipient an approver.
+
+    ``_notify`` deliberately limits delivery to the requester and the active
+    approval stage.  Compensatory leave has an explicit Secretary-General
+    copy from the moment it is submitted, so it uses this narrowly scoped
+    helper instead.
+    """
+    try:
+        link = notification_target_path(
+            "HR_LEAVE_REQUEST" if kind == KIND_LEAVE else "HR_PERMISSION_REQUEST",
+            request_id,
+        ) or _request_link(kind, request_id)
+    except Exception:
+        link = _request_link(kind, request_id)
+
+    now = datetime.utcnow()
+    for user_id in sorted({int(value) for value in user_ids if value}):
+        db.session.add(Notification(
+            user_id=user_id,
+            type="HR_REQUEST_VIEW_ONLY",
+            message=message,
+            source="portal",
+            link_url=link,
+            event_key=event_key,
             is_read=False,
             created_at=now,
         ))
@@ -875,6 +919,26 @@ def is_sick_leave(row: HRLeaveRequest | None) -> bool:
     return code in {"S", "SICK", "MEDICAL", "SICKLEAVE", "MEDICALLEAVE"} or "مرض" in names or "sick" in names or "medical" in names
 
 
+def is_compensatory_leave(row: HRLeaveRequest | None) -> bool:
+    """Whether a leave request must use the compensatory-leave route.
+
+    ``COMPENSATORY`` is the built-in code.  The aliases and Arabic/English
+    labels keep the route compatible with existing databases where the leave
+    type was created manually before this feature was introduced.
+    """
+    leave_type = getattr(row, "leave_type", None) if row else None
+    code = _normalize(getattr(leave_type, "code", None))
+    names = " ".join((
+        getattr(leave_type, "name_ar", None) or "",
+        getattr(leave_type, "name_en", None) or "",
+    )).casefold()
+    return (
+        code in {"COMPENSATORY", "COMPENSATORYLEAVE", "COMPLEAVE", "COMP"}
+        or "تعويض" in names
+        or "compensatory" in names
+    )
+
+
 def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
     """Whether this requester must obtain the Secretary-General's approval.
 
@@ -924,6 +988,18 @@ def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
 
 def _step_specs(kind: str, row) -> list[tuple[str, str]]:
     specs = [(STAGE_DIRECT_MANAGER, SCOPE_USER)]
+    if kind == KIND_LEAVE and is_compensatory_leave(row):
+        # Compensatory leave is a separately controlled balance.  It must be
+        # reviewed in the employee's operational hierarchy, then by
+        # Administrative Affairs.  The Secretary General receives a tracked
+        # copy for information only; their VIEW_ONLY step never blocks final
+        # approval or exposes decision controls.
+        return [
+            (STAGE_DIRECT_MANAGER, SCOPE_USER),
+            (STAGE_GENERAL_DIRECTOR, SCOPE_GENERAL_DIRECTOR),
+            (STAGE_ADMINISTRATIVE_AFFAIRS, SCOPE_ADMINISTRATIVE_AFFAIRS),
+            (STAGE_SECRETARY_GENERAL, SCOPE_SECRETARY_GENERAL),
+        ]
     if kind == KIND_LEAVE and is_sick_leave(row):
         specs.extend(((STAGE_HR, SCOPE_HR), (STAGE_SECRETARY_GENERAL, SCOPE_SECRETARY_GENERAL)))
     elif kind == KIND_LEAVE and requires_secretary_general_leave_approval(row):
@@ -964,7 +1040,7 @@ def start_request_flow(
         # steps from the previous version so an edited request cannot still be
         # approved through its stale (possibly shorter) route.
         for prior_step in existing:
-            if (prior_step.status or "").upper() in {"PENDING", "WAITING"}:
+            if (prior_step.status or "").upper() in ACTIVE_STEP_STATUSES:
                 prior_step.status = "CANCELLED"
                 prior_step.decided_at = now
                 prior_step.decision_note = "أُلغي مسار الاعتماد السابق بعد تعديل الطلب."
@@ -1011,6 +1087,7 @@ def start_request_flow(
     first_approver_id = effective_approver_ids[0] if effective_approver_ids else None
 
     steps: list[HRRequestApprovalStep] = []
+    compensatory_leave = kind == KIND_LEAVE and is_compensatory_leave(row)
     for index, (stage_code, approver_scope) in enumerate(_step_specs(kind, row), start=0):
         order = first_step_order + index
         approver_user_id = None
@@ -1022,12 +1099,36 @@ def start_request_flow(
             hr_approver_ids = hr_notification_user_ids()
             approver_user_id = hr_approver_ids[0] if hr_approver_ids else None
             approver_user_ids = _serialize_approver_ids(hr_approver_ids)
+        elif stage_code == STAGE_GENERAL_DIRECTOR:
+            general_director = resolve_general_director(int(row.user_id))
+            if general_director:
+                delegation = _active_delegation_for(general_director.id, now)
+                general_director_id = int(
+                    delegation.to_user_id if delegation else general_director.id
+                )
+                approver_user_id = general_director_id
+                approver_user_ids = _serialize_approver_ids([general_director_id])
+        elif stage_code == STAGE_ADMINISTRATIVE_AFFAIRS:
+            administrative_ids: list[int] = []
+            for candidate_id in administrative_affairs_manager_user_ids():
+                if int(candidate_id) == int(row.user_id):
+                    continue
+                delegation = _active_delegation_for(int(candidate_id), now)
+                effective_id = int(delegation.to_user_id) if delegation else int(candidate_id)
+                if effective_id != int(row.user_id) and effective_id not in administrative_ids:
+                    administrative_ids.append(effective_id)
+            approver_user_id = administrative_ids[0] if administrative_ids else None
+            approver_user_ids = _serialize_approver_ids(administrative_ids)
         elif stage_code == STAGE_SECRETARY_GENERAL:
             secretary_ids = secretary_general_user_ids()
             approver_user_id = secretary_ids[0] if secretary_ids else None
             approver_user_ids = _serialize_approver_ids(secretary_ids)
 
         active = index == 0
+        is_view_only = bool(
+            compensatory_leave
+            and stage_code == STAGE_SECRETARY_GENERAL
+        )
         step = HRRequestApprovalStep(
             request_kind=kind,
             request_id=int(row.id),
@@ -1037,9 +1138,9 @@ def start_request_flow(
             approver_scope=approver_scope,
             approver_user_id=approver_user_id,
             approver_user_ids=approver_user_ids,
-            status="PENDING" if active else "WAITING",
-            assigned_at=now if active else None,
-            due_at=_stage_due_at(kind, stage_code, now) if active else None,
+            status="VIEW_ONLY" if is_view_only else ("PENDING" if active else "WAITING"),
+            assigned_at=now if (active or is_view_only) else None,
+            due_at=_stage_due_at(kind, stage_code, now) if active and not is_view_only else None,
             escalated_at=now if active and record_initial_escalation else None,
             escalated_from_user_id=(
                 original_manager_id
@@ -1051,6 +1152,13 @@ def start_request_flow(
         )
         db.session.add(step)
         steps.append(step)
+
+    view_only_recipient_ids = _record_compensatory_secretary_observers(
+        kind,
+        row,
+        steps,
+        now,
+    )
 
     row.status = "SUBMITTED"
     row.approver_user_id = first_approver_id
@@ -1081,6 +1189,17 @@ def start_request_flow(
             kind=kind,
             request_id=row.id,
             ntype="HR_REQUEST_ROUTING_ERROR",
+        )
+    if view_only_recipient_ids:
+        _notify_view_only(
+            view_only_recipient_ids,
+            (
+                f"قدم الموظف {_request_employee_name(row)} طلب إجازة تعويضية "
+                f"رقم #{row.id}. هذه نسخة للاطلاع فقط ولا تتطلب إجراءً منك."
+            ),
+            kind=kind,
+            request_id=row.id,
+            event_key=f"hr-compensatory-view-{row.id}-{flow_revision}",
         )
     return steps
 
@@ -1224,6 +1343,22 @@ def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetim
             return True
     except Exception:
         pass
+    # The Secretary-General receives compensatory leave submissions as a
+    # tracked copy only.  Enforce that distinction here as well as in the UI,
+    # so a broad HR permission cannot turn the observer copy into an approval
+    # action through a crafted request.
+    if step.request_kind == KIND_LEAVE:
+        row = _request(KIND_LEAVE, step.request_id)
+        if (
+            is_compensatory_leave(row)
+            and HRRequestObserver.query.filter_by(
+                request_kind=KIND_LEAVE,
+                request_id=step.request_id,
+                user_id=user.id,
+                observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
+            ).first()
+        ):
+            return False
     if _can_approve_all_requests(user):
         return True
     approver_ids = _step_approver_ids(step)
@@ -1295,6 +1430,8 @@ def _activate_next_step(kind: str, row, step: HRRequestApprovalStep, now: dateti
 def stage_label(stage_code: str | None) -> str:
     return {
         STAGE_DIRECT_MANAGER: "المسؤولون على الهيكلية",
+        STAGE_GENERAL_DIRECTOR: "المدير العام",
+        STAGE_ADMINISTRATIVE_AFFAIRS: "الشؤون الإدارية",
         STAGE_HR: "الموارد البشرية",
         STAGE_SECRETARY_GENERAL: "الأمين العام",
     }.get((stage_code or "").upper(), stage_code or "-")
@@ -1323,6 +1460,59 @@ def _observer_groups(kind: str, row) -> dict[str, set[int]]:
         if _is_secretariat(user):
             groups["SECRETARIAT"].add(int(user.id))
     return groups
+
+
+def _record_compensatory_secretary_observers(
+    kind: str,
+    row,
+    steps: Iterable[HRRequestApprovalStep],
+    now: datetime,
+) -> list[int]:
+    """Persist the Secretary-General's submission-time view-only copy.
+
+    The explicit observer row preserves read access even if the organizational
+    assignment changes later.  The matching ``VIEW_ONLY`` workflow step keeps
+    the copy visible in the request's approval trail.
+    """
+    if kind != KIND_LEAVE or not is_compensatory_leave(row):
+        return []
+
+    secretary_step = next(
+        (
+            step for step in steps
+            if step.stage_code == STAGE_SECRETARY_GENERAL
+            and (step.status or "").upper() == "VIEW_ONLY"
+        ),
+        None,
+    )
+    if not secretary_step:
+        return []
+
+    recipient_ids = [
+        user_id
+        for user_id in _step_approver_ids(secretary_step)
+        if int(user_id) != int(row.user_id)
+    ]
+    for user_id in recipient_ids:
+        observer = HRRequestObserver.query.filter_by(
+            request_kind=kind,
+            request_id=row.id,
+            user_id=user_id,
+        ).first()
+        if observer is None:
+            observer = HRRequestObserver(
+                request_kind=kind,
+                request_id=row.id,
+                user_id=user_id,
+                observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
+                notified_at=now,
+                created_at=now,
+            )
+            db.session.add(observer)
+        else:
+            observer.observer_scope = "SECRETARY_GENERAL_VIEW_ONLY"
+            observer.notified_at = now
+    return recipient_ids
 
 
 def _record_final_observers(kind: str, row, now: datetime) -> None:

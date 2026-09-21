@@ -19,6 +19,7 @@
       {% if step_status == 'PENDING' %}{% set color = 'warning' %}{% endif %}
       {% if step_status == 'APPROVED' %}{% set color = 'success' %}{% endif %}
       {% if step_status == 'REJECTED' %}{% set color = 'danger' %}{% endif %}
+      {% if step_status == 'VIEW_ONLY' %}{% set color = 'info' %}{% endif %}
       <div class="border rounded-3 p-3 {% if step_status == 'PENDING' %}border-warning bg-warning bg-opacity-10{% endif %}">
         <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
           <div>
@@ -42,6 +43,7 @@
             {% elif step_status == 'REJECTED' %}مرفوض
             {% elif step_status == 'SKIPPED' %}متوقف
             {% elif step_status == 'CANCELLED' %}ملغى
+            {% elif step_status == 'VIEW_ONLY' %}للاطلاع فقط
             {% else %}{{ step_status }}{% endif %}
           </span>
         </div>

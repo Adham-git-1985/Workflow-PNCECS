@@ -3889,7 +3889,7 @@ class HRRequestApprovalStep(db.Model):
     # the first approver for compatibility with legacy reports/screens.
     approver_user_ids = db.Column(db.Text, nullable=True)
 
-    # WAITING/PENDING/APPROVED/REJECTED/SKIPPED/CANCELLED
+    # WAITING/PENDING/VIEW_ONLY/APPROVED/REJECTED/SKIPPED/CANCELLED
     status = db.Column(db.String(20), nullable=False, default="WAITING", index=True)
     assigned_at = db.Column(db.DateTime, nullable=True)
     due_at = db.Column(db.DateTime, nullable=True, index=True)
@@ -3921,7 +3921,7 @@ class HRRequestApprovalStep(db.Model):
 
 
 class HRRequestObserver(db.Model):
-    """Read-only CC recipient recorded after final approval."""
+    """Read-only CC recipient recorded at submission or after final approval."""
 
     __tablename__ = "hr_request_observer"
 

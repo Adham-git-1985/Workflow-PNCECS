@@ -45,6 +45,43 @@
   <div class="alert alert-info">اختر موظفًا لعرض وإدارة أرصدة الإجازات الخاصة به.</div>
 {% else %}
 
+{% if compensatory_row %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3 border-start border-4 border-info" id="compensatory-balance">
+  <div class="d-flex align-items-start justify-content-between flex-wrap gap-3 mb-3">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-clock-history text-info"></i> رصيد الإجازة التعويضية</h5>
+      <div class="text-muted small">هذا الرصيد لا يُمنح تلقائيًا؛ تضيفه الشؤون الإدارية يدويًا للموظف، ثم تُخصم منه الإجازات التعويضية بعد اعتمادها النهائي.</div>
+    </div>
+    <div class="d-flex gap-2 flex-wrap small">
+      <span class="badge text-bg-primary">الرصيد {{ "%.2f"|format(compensatory_row.total or 0) }} يوم</span>
+      <span class="badge text-bg-secondary">المستهلك {{ "%.2f"|format(compensatory_row.used or 0) }} يوم</span>
+      <span class="badge {{ 'text-bg-danger' if (compensatory_row.remaining or 0) <= 0 else 'text-bg-success' }}">المتبقي {{ "%.2f"|format(compensatory_row.remaining or 0) }} يوم</span>
+    </div>
+  </div>
+
+  {% if can_manage %}
+  <form method="post" class="row g-2 align-items-end">
+    <input type="hidden" name="action" value="ADD_COMPENSATORY_CREDIT">
+    <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <div class="col-12 col-md-3">
+      <label class="form-label">أيام الرصيد المضافة</label>
+      <input class="form-control" type="number" name="days_delta" min="0.25" step="0.25" required placeholder="مثال: 1 أو 0.5">
+    </div>
+    <div class="col-12 col-md-6">
+      <label class="form-label">سبب الإضافة</label>
+      <input class="form-control" name="reason" required placeholder="مثال: دوام إضافي معتمد / تسوية إدارية">
+    </div>
+    <div class="col-12 col-md-3">
+      <button class="btn btn-info w-100" type="submit" onclick="return confirm('سيتم إضافة رصيد تعويضي موثق للموظف. متابعة؟')"><i class="bi bi-plus-circle"></i> إضافة الرصيد التعويضي</button>
+    </div>
+  </form>
+  {% else %}
+  <div class="alert alert-light border mb-0 small">إضافة الرصيد التعويضي متاحة للشؤون الإدارية المخولة بإدارة أرصدة الإجازات.</div>
+  {% endif %}
+</div>
+{% endif %}
+
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
     <div>
@@ -78,7 +115,10 @@
           {% for r in rows %}
             <tr>
               <td><code>{{ r.lt.code }}</code></td>
-              <td>{{ r.lt.name_ar }}</td>
+              <td>
+                {{ r.lt.name_ar }}
+                {% if r.is_compensatory %}<span class="badge text-bg-info ms-1">رصيد يدوي</span>{% endif %}
+              </td>
               <td>
                 {% if r.deducts_from_balance %}
                   <span class="badge bg-primary">تُخصم من الرصيد</span>

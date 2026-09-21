@@ -44,6 +44,9 @@ from services.hr_request_workflow import (
     ESCALATION_UNIT_MINUTES,
     KIND_LEAVE,
     KIND_PERMISSION,
+    STAGE_ADMINISTRATIVE_AFFAIRS,
+    STAGE_GENERAL_DIRECTOR,
+    STAGE_SECRETARY_GENERAL,
     board_visible_user_ids,
     can_user_act,
     current_step,
@@ -302,6 +305,58 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             ).all()
         }
         self.assertFalse(cc_ids)
+
+    def test_compensatory_leave_requires_hierarchy_and_administrative_affairs_with_secretary_view_only(self):
+        self.hr.role = "HR_MANAGER"
+        compensatory_type = HRLeaveType(
+            code="COMPENSATORY",
+            name_ar="إجازة تعويضية",
+            requires_approval=True,
+            default_balance_days=0,
+            deduct_from_balance=True,
+            is_active=True,
+        )
+        db.session.add(compensatory_type)
+        db.session.flush()
+
+        row = self._leave(compensatory_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+
+        self.assertEqual(
+            [step.stage_code for step in steps],
+            [
+                "DIRECT_MANAGER",
+                STAGE_GENERAL_DIRECTOR,
+                STAGE_ADMINISTRATIVE_AFFAIRS,
+                STAGE_SECRETARY_GENERAL,
+            ],
+        )
+        self.assertEqual(
+            [step.status for step in steps],
+            ["PENDING", "WAITING", "WAITING", "VIEW_ONLY"],
+        )
+        self.assertEqual(steps[1].approver_user_id, self.general_director.id)
+        self.assertEqual(steps[2].approver_user_id, self.hr.id)
+        self.assertEqual(steps[3].approver_user_id, self.secretary.id)
+        self.assertFalse(can_user_act(self.secretary, current_step(KIND_LEAVE, row.id)))
+
+        observer = HRRequestObserver.query.filter_by(
+            request_kind=KIND_LEAVE,
+            request_id=row.id,
+            user_id=self.secretary.id,
+            observer_scope="SECRETARY_GENERAL_VIEW_ONLY",
+        ).one()
+        self.assertIsNotNone(observer)
+        self.assertTrue(Notification.query.filter_by(
+            user_id=self.secretary.id,
+            type="HR_REQUEST_VIEW_ONLY",
+        ).first())
+
+        self.assertEqual(decide_request(KIND_LEAVE, row, self.manager, "APPROVE"), "NEXT")
+        self.assertEqual(decide_request(KIND_LEAVE, row, self.general_director, "APPROVE"), "NEXT")
+        self.assertEqual(decide_request(KIND_LEAVE, row, self.hr, "APPROVE"), "APPROVED")
+        self.assertEqual(row.status, "APPROVED")
+        self.assertEqual(steps[3].status, "VIEW_ONLY")
 
     def test_annual_leave_approval_cannot_exceed_60_days_in_a_calendar_year(self):
         row = self._leave(self.normal_type)
