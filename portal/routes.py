@@ -27630,6 +27630,20 @@ def _departure_source_start_times(record: dict) -> tuple[datetime, ...]:
 
 
 def _latest_effective_departure_checkout(events, departure_records) -> datetime | None:
+    # A normal checkout from the timeclock is the day's authoritative exit.
+    # Do not let a later request in Masar replace it: a permission describes an
+    # absence from work, whereas B/O is the actual fingerprinted checkout.
+    # ``_attendance_event_code`` also keeps legacy C/D records stored as O out
+    # of this list, so a mid-day departure cannot accidentally take priority.
+    clock_checkouts = [
+        event.event_dt
+        for event in events or []
+        if getattr(event, 'event_dt', None)
+        and _attendance_event_code(event) in {'B', 'O', 'OUT', 'CHECKOUT'}
+    ]
+    if clock_checkouts:
+        return max(clock_checkouts)
+
     event_times = [
         event.event_dt
         for event in events or []
@@ -27870,8 +27884,11 @@ def _attach_reconciled_departures(attendance_rows, *, include_pending: bool = Fa
             record for record in row.official_departure_details
             if include_pending and record.get('approval_status') in {'SUBMITTED', 'PENDING'}
         ]
-        if row.private_departure_minutes and getattr(row, 'early_leave_minutes', None):
-            row.early_leave_minutes = max(0, int(row.early_leave_minutes or 0) - row.private_departure_minutes)
+        # ``_summary_compute_one`` already subtracts only the part of a
+        # complete, approved departure that overlaps the early-exit window.
+        # Subtracting the day's aggregate private-departure minutes here made
+        # a morning C/D departure suppress an unrelated early checkout and
+        # caused the daily screen to disagree with the saved summary.
     return totals
 
 

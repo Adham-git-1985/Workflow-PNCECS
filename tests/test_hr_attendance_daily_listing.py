@@ -447,7 +447,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             datetime(2026, 9, 14, 15, 0),
         )
 
-    def test_later_system_departure_replaces_an_earlier_clock_checkout(self):
+    def test_clock_checkout_wins_over_a_later_approved_masar_departure(self):
         employee = User(email="latest-departure@example.test", name="Latest Departure", password_hash="x", role="USER")
         permission_type = HRPermissionType(code="LATEST", name_ar="مغادرة رسمية", counts_as_work=True)
         db.session.add_all((employee, permission_type))
@@ -461,13 +461,13 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
                 day="2026-09-14",
                 from_time="13:30",
                 to_time="15:00",
-                status="SUBMITTED",
+                status="APPROVED",
             ),
         ))
         db.session.commit()
 
         summary = _summary_compute_one(employee.id, "2026-09-14")
-        self.assertEqual(summary["last_out"], datetime(2026, 9, 14, 13, 30))
+        self.assertEqual(summary["last_out"], datetime(2026, 9, 14, 12, 0))
 
     def test_permission_submission_and_cancellation_recompute_daily_summary(self):
         employee = User(email="permission-lifecycle@example.test", name="Permission Lifecycle", password_hash="x", role="USER")
@@ -774,21 +774,47 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             result = _summary_compute_one(employee.id, "2026-09-10")
             self.assertEqual(result['early_leave_minutes'], 0)
             self.assertEqual(result['late_minutes'], 5)
-            # Existing reports must also correct old values, without subtracting twice.
+            # The display helper must not alter an already-computed result.
             row = SimpleNamespace(**result)
-            row.early_leave_minutes = 47
             _attach_reconciled_departures([row])
             _attach_reconciled_departures([row])
             self.assertEqual(row.early_leave_minutes, 0)
             self.assertEqual(row.private_departure_minutes, 60)
             schedule.grace_minutes = 0
-            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 0)
+            # The clock recorded an actual exit at 13:58, so the two minutes
+            # before the approved 14:00 departure remain an early exit.
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 2)
             permission.to_time = "14:30"
             db.session.flush()
-            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 30)
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 32)
             permission.status = "PENDING"
             db.session.flush()
-            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 60)
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 62)
+
+    def test_morning_clock_departure_does_not_reduce_an_unrelated_early_exit(self):
+        employee = User(email="morning-departure@example.test", name="Morning Departure", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 10, 8, 0), event_type="I"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 10, 10, 0), event_type="C"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 10, 11, 0), event_type="D"),
+            AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 10, 14, 0), event_type="O"),
+        ))
+        db.session.commit()
+
+        schedule = SimpleNamespace(
+            id=None, kind="FIXED", start_time="08:00", end_time="15:00",
+            break_minutes=0, grace_minutes=0, overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            result = _summary_compute_one(employee.id, "2026-09-10")
+            self.assertEqual(result["early_leave_minutes"], 60)
+
+            row = SimpleNamespace(**result)
+            _attach_reconciled_departures([row])
+            self.assertEqual(row.private_departure_minutes, 60)
+            self.assertEqual(row.early_leave_minutes, 60)
 
     def test_maternity_leave_uses_regular_leave_workflow_and_allows_shorter_period(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")
