@@ -4,12 +4,13 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from flask import Flask
+from flask import Flask, g
 from jinja2 import Environment
 
 from extensions import db
 from models import (
     EmployeeFile,
+    EmployeeResponsibleAssignment,
     HRAttendanceScheduleDay,
     HRAttendanceSchedulePlan,
     HRTrainingCourse,
@@ -591,6 +592,39 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
         load_reports.assert_not_called()
         load_all_users.assert_not_called()
 
+    def test_schedule_view_passes_all_direct_managers_to_the_template(self):
+        secondary_manager = self._secondary_manager()
+        db.session.add_all((
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=self.manager.id,
+                reason="Primary schedule manager",
+                created_by_id=self.super_admin.id,
+            ),
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=secondary_manager.id,
+                reason="Secondary schedule manager",
+                created_by_id=self.super_admin.id,
+            ),
+        ))
+        db.session.commit()
+        undecorated_view = inspect.unwrap(hr_work_schedule)
+        with self.app.test_request_context("/portal/hr/attendance/work-schedule"):
+            g._attendance_schedule_cache = {}
+            with patch("portal.routes.current_user", self.employee), patch(
+                "portal.routes.render_template",
+                return_value="rendered",
+            ) as render:
+                result = undecorated_view()
+
+        self.assertEqual(result, "rendered")
+        managers = render.call_args.kwargs["selected_managers"]
+        self.assertEqual(
+            {manager.id for manager in managers},
+            {self.manager.id, secondary_manager.id},
+        )
+
 
 class AttendanceScheduleTemplateTests(unittest.TestCase):
     def test_template_and_navigation_expose_the_full_workflow(self):
@@ -612,6 +646,8 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
             "organization_loaded",
             "can_edit_past_days",
             "past_day_locked",
+            "selected_managers",
+            "cancel_change",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, template)

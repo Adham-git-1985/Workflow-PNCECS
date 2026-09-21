@@ -143,6 +143,8 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
 
     def test_hr_publishes_baseline_and_employee_request_is_not_effective_before_final_approval(self):
         period_start = self._future_period_start()
+        changed_day = period_start + timedelta(days=1)
+        changed_day_key = changed_day.strftime("%Y_%m_%d")
         hr_data = {
             "target_user_id": str(self.employee.id),
             "period_start": period_start.isoformat(),
@@ -154,20 +156,34 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         self.assertEqual(baseline.status, "ADMIN_APPROVED")
         self.assertEqual(baseline.request_type, "BASELINE")
         self.assertEqual(len(baseline.days), 7)
-        self.assertEqual(_effective_schedule_for_user(self.employee.id, "2026-09-07").start_time, "08:00")
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
+            "08:00",
+        )
 
         request = self._post(self.employee, {
             "target_user_id": str(self.employee.id),
             "period_start": period_start.isoformat(),
             "plan_id": str(baseline.id),
             "action": "request_change",
+            **self._week_form(period_start),
+            f"start_time_{changed_day_key}": "09:00",
+            f"end_time_{changed_day_key}": "16:00",
             "employee_note": "أطلب تغيير دوامي يوم الاثنين إلى دوام عن بعد.",
         })
         self.assertEqual(request.status_code, 302)
         change = HRAttendanceSchedulePlan.query.order_by(HRAttendanceSchedulePlan.id.desc()).first()
         self.assertEqual(change.request_type, "CHANGE_REQUEST")
         self.assertEqual(change.status, "SUBMITTED")
-        self.assertEqual(_effective_schedule_for_user(self.employee.id, "2026-09-07").start_time, "08:00")
+        changed_request_day = next(
+            day for day in change.days if day.work_date == changed_day.isoformat()
+        )
+        self.assertEqual(changed_request_day.start_time, "09:00")
+        self.assertEqual(changed_request_day.end_time, "16:00")
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
+            "08:00",
+        )
 
         self._post(self.manager, {
             "target_user_id": str(self.employee.id),
@@ -186,6 +202,70 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         })
         db.session.refresh(change)
         self.assertEqual(change.status, "FINAL_APPROVED")
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
+            "09:00",
+        )
+
+    def test_employee_can_cancel_an_open_change_request_and_submit_a_new_one(self):
+        period_start = self._future_period_start()
+        changed_day = period_start + timedelta(days=1)
+        changed_day_key = changed_day.strftime("%Y_%m_%d")
+        self._post(self.hr, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "action": "hr_publish",
+            **self._week_form(period_start),
+        })
+        baseline = HRAttendanceSchedulePlan.query.filter_by(
+            user_id=self.employee.id,
+            request_type="BASELINE",
+        ).one()
+
+        self._post(self.employee, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(baseline.id),
+            "action": "request_change",
+            "employee_note": "أطلب تعديل وقت الدوام.",
+            **self._week_form(period_start),
+            f"start_time_{changed_day_key}": "09:00",
+            f"end_time_{changed_day_key}": "16:00",
+        })
+        request_plan = HRAttendanceSchedulePlan.query.order_by(
+            HRAttendanceSchedulePlan.id.desc(),
+        ).first()
+        self.assertEqual(request_plan.status, "SUBMITTED")
+
+        cancelled = self._post(self.employee, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(request_plan.id),
+            "action": "cancel_change",
+        })
+        self.assertEqual(cancelled.status_code, 302)
+        db.session.refresh(request_plan)
+        self.assertEqual(request_plan.status, "CANCELLED")
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
+            "08:00",
+        )
+
+        self._post(self.employee, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(request_plan.id),
+            "action": "request_change",
+            "employee_note": "أطلب تعديلًا جديدًا لوقت الدوام.",
+            **self._week_form(period_start),
+            f"start_time_{changed_day_key}": "10:00",
+            f"end_time_{changed_day_key}": "17:00",
+        })
+        replacement = HRAttendanceSchedulePlan.query.order_by(
+            HRAttendanceSchedulePlan.id.desc(),
+        ).first()
+        self.assertNotEqual(replacement.id, request_plan.id)
+        self.assertEqual(replacement.status, "SUBMITTED")
 
     def test_only_admin_and_super_admin_can_edit_past_days(self):
         today = date(2031, 6, 9)
@@ -198,6 +278,18 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             **self._week_form(period_start),
         }
         data[f"start_time_{past_key}"] = "09:00"
+
+        employee_data = {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "action": "request_change",
+            "employee_note": "أطلب تعديل يوم سابق.",
+            **self._week_form(period_start),
+        }
+        with patch("portal.routes._attendance_schedule_today", return_value=today):
+            employee_blocked = self._post(self.employee, employee_data)
+        self.assertEqual(employee_blocked.status_code, 302)
+        self.assertEqual(HRAttendanceSchedulePlan.query.count(), 0)
 
         with patch("portal.routes._attendance_schedule_today", return_value=today):
             blocked = self._post(self.hr, data)
@@ -252,6 +344,9 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
                 "period_start": period_start.isoformat(),
                 "plan_id": str(baseline.id),
                 "action": "request_change",
+                **self._week_form(period_start),
+                f"start_time_{(period_start + timedelta(days=1)).strftime('%Y_%m_%d')}": "09:00",
+                f"end_time_{(period_start + timedelta(days=1)).strftime('%Y_%m_%d')}": "16:00",
                 "employee_note": "\u0623\u0637\u0644\u0628 \u062a\u063a\u064a\u064a\u0631 \u0627\u0644\u062c\u062f\u0648\u0644.",
             })
             change = HRAttendanceSchedulePlan.query.order_by(

@@ -13875,6 +13875,7 @@ _ATTENDANCE_SCHEDULE_STATUS_META = {
     "ADMIN_APPROVED": {"label": "معتمد من الشؤون الإدارية", "class": "success", "icon": "bi-patch-check-fill"},
     "FINAL_APPROVED": {"label": "معتمد نهائيًا", "class": "success", "icon": "bi-patch-check-fill"},
     "REJECTED": {"label": "مرفوض", "class": "danger", "icon": "bi-x-circle"},
+    "CANCELLED": {"label": "ملغى من الموظف", "class": "secondary", "icon": "bi-slash-circle"},
 }
 
 _ATTENDANCE_SCHEDULE_DAY_META = {
@@ -13883,6 +13884,12 @@ _ATTENDANCE_SCHEDULE_DAY_META = {
     "OFF": {"label": "راحة / عطلة", "short": "راحة", "icon": "bi-cup-hot", "class": "off"},
 }
 _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES = {
+    "SUBMITTED",
+    "MANAGER_APPROVED",
+    "GENERAL_DIRECTOR_APPROVED",
+}
+_ATTENDANCE_SCHEDULE_CANCELABLE_CHANGE_REQUEST_STATUSES = {
+    "DRAFT",
     "SUBMITTED",
     "MANAGER_APPROVED",
     "GENERAL_DIRECTOR_APPROVED",
@@ -15112,15 +15119,31 @@ def hr_work_schedule():
         .order_by(HRAttendanceSchedulePlan.version_no.desc())
         .all()
     )
-    active_plan_for_view = (
-        published_plan
-        if editor_mode == "EMPLOYEE"
-        else plan
+    is_change_request = bool(
+        plan
+        and (getattr(plan, "request_type", None) or "").upper() == "CHANGE_REQUEST"
+    )
+    employee_change_request_is_open = bool(
+        is_change_request
+        and plan.status in _ATTENDANCE_SCHEDULE_CANCELABLE_CHANGE_REQUEST_STATUSES
     )
     employee_can_request = editor_mode == "EMPLOYEE" and (
-        not plan or plan.status in (ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES | {"DRAFT", "REJECTED"})
+        not plan
+        or plan.status in (ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES | {"REJECTED", "CANCELLED"})
+        or (is_change_request and plan.status == "DRAFT")
     )
-    can_edit_days = is_hr_manager
+    employee_can_cancel = bool(
+        editor_mode == "EMPLOYEE" and employee_change_request_is_open
+    )
+    active_plan_for_view = (
+        plan
+        if editor_mode == "EMPLOYEE" and employee_change_request_is_open
+        else (published_plan if editor_mode == "EMPLOYEE" else plan)
+    )
+    can_edit_days = bool(
+        is_hr_manager
+        or (editor_mode == "EMPLOYEE" and employee_can_request)
+    )
     can_take_action = editor_mode in {
         "HR",
         "MANAGER",
@@ -15144,9 +15167,11 @@ def hr_work_schedule():
         status_meta=_ATTENDANCE_SCHEDULE_STATUS_META,
         day_meta=_ATTENDANCE_SCHEDULE_DAY_META,
         editor_mode=editor_mode,
-        can_edit=can_take_action or employee_can_request,
+        can_edit=can_take_action or employee_can_request or employee_can_cancel,
         can_edit_days=can_edit_days,
         employee_can_request=employee_can_request,
+        employee_can_cancel=employee_can_cancel,
+        employee_change_request_is_open=employee_change_request_is_open,
         active_plan_for_view=active_plan_for_view,
         is_hr_manager=is_hr_manager,
         can_edit_past_days=can_edit_past_days,
@@ -15228,7 +15253,7 @@ def _attendance_schedule_update_weekly_workflow():
         allowed_actions = {"hr_save", "hr_publish"}
     elif int(target_user.id) == int(current_user.id):
         editor_mode = "EMPLOYEE"
-        allowed_actions = {"request_change"}
+        allowed_actions = {"request_change", "cancel_change"}
     elif is_final_approver:
         editor_mode = "SECRETARY_GENERAL"
         allowed_actions = {"final_approve", "final_reject"}
@@ -15266,23 +15291,63 @@ def _attendance_schedule_update_weekly_workflow():
     now = datetime.utcnow()
 
     try:
-        if editor_mode == "HR" and not can_edit_past_days:
+        if not can_edit_past_days:
             blocked_dates = _attendance_schedule_posted_past_day_dates(period_start)
             if blocked_dates:
                 dates_text = "، ".join(work_day.strftime("%d/%m/%Y") for work_day in blocked_dates)
                 raise ValueError(
-                    "لا يمكن للشؤون الإدارية تعديل جدول الدوام لتاريخ سابق: "
+                    "لا يمكن تعديل جدول الدوام لتاريخ سابق: "
                     f"{dates_text}. يقتصر ذلك على الأدمن والسوبر أدمن."
                 )
 
         if editor_mode == "EMPLOYEE":
+            latest_is_change_request = bool(
+                latest
+                and (getattr(latest, "request_type", None) or "").upper()
+                == "CHANGE_REQUEST"
+            )
+            if action == "cancel_change":
+                if not (
+                    latest_is_change_request
+                    and latest.status in _ATTENDANCE_SCHEDULE_CANCELABLE_CHANGE_REQUEST_STATUSES
+                ):
+                    raise ValueError("لا يوجد طلب تغيير مفتوح يمكن إلغاؤه.")
+                plan = latest
+                plan.status = "CANCELLED"
+                plan.updated_at = now
+                plan.updated_by_id = current_user.id
+                notify_attendance_schedule_stakeholders(
+                    target_user,
+                    f"ألغى الموظف {target_user.full_name} طلب تغيير جدول الدوام.",
+                    level="WARNING",
+                    link_url=notification_link,
+                    manager=manager,
+                    include_general_director=True,
+                    include_hr=True,
+                )
+                _portal_audit(
+                    "HR_ATTENDANCE_SCHEDULE_CHANGE_REQUEST_CANCEL",
+                    f"user_id={target_user.id}; period={period_start_text}; version={plan.version_no}",
+                    target_type="HR_ATTENDANCE_SCHEDULE_PLAN",
+                    target_id=plan.id,
+                )
+                db.session.commit()
+                flash("تم إلغاء طلب تغيير جدول الدوام. لم يتغير جدول الدوام الفعّال.", "success")
+                return redirect(url_for("portal.hr_work_schedule", start=period_start_text))
+
+            if (
+                latest_is_change_request
+                and latest.status in _ATTENDANCE_SCHEDULE_CANCELABLE_CHANGE_REQUEST_STATUSES
+                and latest.status != "DRAFT"
+            ):
+                raise ValueError(
+                    "يوجد طلب تغيير قيد الاعتماد لهذه الفترة. يمكنك إلغاؤه ثم إنشاء طلب جديد."
+                )
+
             note = (request.form.get("employee_note") or "").strip()
             if not note:
                 raise ValueError("يرجى توضيح التغيير المطلوب في طلب تغيير جدول الدوام.")
-            if latest and (getattr(latest, "request_type", None) or "BASELINE") == "CHANGE_REQUEST" and latest.status in {
-                "DRAFT",
-                "SUBMITTED",
-            }:
+            if latest_is_change_request and latest.status == "DRAFT":
                 plan = latest
             else:
                 published = _attendance_schedule_latest_plan(
@@ -15301,6 +15366,16 @@ def _attendance_schedule_update_weekly_workflow():
             plan.employee_note = note[:4000]
             plan.manager_user_id = manager.id if manager else None
             plan.general_director_user_id = general_director.id if general_director else None
+            changed = _attendance_schedule_apply_form(
+                plan,
+                period_start,
+                int(current_user.id),
+                "EMPLOYEE",
+            )
+            if not changed:
+                raise ValueError(
+                    "يرجى تعديل يوم واحد أو وقت دوام واحد على الأقل داخل الطلب المقترح."
+                )
             if not manager:
                 plan.status = "DRAFT"
                 db.session.commit()

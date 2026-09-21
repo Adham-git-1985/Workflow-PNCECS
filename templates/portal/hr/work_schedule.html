@@ -64,14 +64,14 @@
 {% block hr_content %}
 {% set plan_status = plan.status if plan else 'DRAFT' %}
 {% set plan_meta = status_meta.get(plan_status, status_meta.DRAFT) %}
-{% set is_change_request = plan and (plan.request_type or '') == 'CHANGE_REQUEST' and plan.status not in ['ADMIN_APPROVED','FINAL_APPROVED'] %}
+{% set is_change_request = plan and (plan.request_type or '') == 'CHANGE_REQUEST' and plan.status in ['DRAFT','SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}
 <div class="container-fluid py-3">
   <section class="ws-hero mb-3">
     <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
       <div>
         <div class="small opacity-75 mb-1"><i class="bi bi-calendar-week"></i> إدارة أسبوعية للدوام</div>
         <h1 class="ws-title h2 mb-2">جدول الدوام الأسبوعي</h1>
-        <p class="ws-subtitle mb-0">تعبئة الجدول تتم من الشؤون البشرية. الموظف يقدم طلب تغيير فقط، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد.</p>
+        <p class="ws-subtitle mb-0">تعبئة الجدول تتم من الشؤون البشرية. يحدد الموظف التعديل المقترح داخل طلب منفصل، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد.</p>
       </div>
       <form class="ws-date-box" method="get" action="{{ url_for('portal.hr_work_schedule') }}" aria-label="اختيار أسبوع الدوام">
         <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat(), view=active_view) }}" title="الأسبوع السابق"><i class="bi bi-chevron-right"></i></a>
@@ -84,13 +84,13 @@
     <div class="ws-kpis">
       <div class="ws-kpi"><span>الموظف المعروض</span><strong>{{ target_user.full_name }}</strong></div>
       <div class="ws-kpi"><span>حالة النسخة الحالية</span><strong><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</strong></div>
-      <div class="ws-kpi"><span>المسؤول المباشر</span><strong>{% if selected_manager %}{{ selected_manager.full_name }}{% else %}غير محدد{% endif %}</strong></div>
+      <div class="ws-kpi"><span>المدراء المباشرون</span><strong>{% if selected_managers %}{% for manager in selected_managers %}<span class="d-block">{{ manager.full_name }}</span>{% endfor %}{% else %}غير محدد{% endif %}</strong></div>
       <div class="ws-kpi"><span>النسخة الفعّالة</span><strong>{% if published_plan %}معتمدة{% else %}دوام مكتبي افتراضي{% endif %}</strong></div>
     </div>
   </section>
 
   {% if editor_mode == 'EMPLOYEE' %}
-  <div class="alert alert-info ws-alert"><i class="bi bi-info-circle me-1"></i> الجدول المعروض هو جدولك الفعّال. أي طلب تغيير يبقى غير نافذ حتى اعتماد المدير والمدير العام والأمين العام.</div>
+  <div class="alert alert-info ws-alert"><i class="bi bi-info-circle me-1"></i>{% if employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل هذا الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب.{% elif employee_can_cancel %}هذا هو الجدول المقترح في طلبك، وهو غير نافذ حتى الاعتماد. يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير يبقى غير نافذ حتى اعتماد المدير والمدير العام والأمين العام.{% endif %}</div>
   {% elif editor_mode == 'HR' %}
   <div class="alert alert-success ws-alert"><i class="bi bi-shield-check me-1"></i> أنت تعمل بصلاحية الشؤون البشرية؛ يمكنك تعبئة جدول الأسبوع ونشره بعد الاعتماد الإداري.</div>
   {% endif %}
@@ -98,7 +98,7 @@
   <div class="ws-panel p-3 mb-3">
     <div class="ws-flow">
       <div class="ws-flow-step"><strong>الشؤون البشرية</strong><small>تعبئة الجدول</small></div>
-      <div class="ws-flow-step"><strong>الموظف</strong><small>طلب تغيير فقط</small></div>
+      <div class="ws-flow-step"><strong>الموظف</strong><small>تحديد التغيير المقترح</small></div>
       <div class="ws-flow-step"><strong>المدير</strong><small>اعتماد أولي</small></div>
       <div class="ws-flow-step"><strong>المدير العام</strong><small>اعتماد تنظيمي</small></div>
       <div class="ws-flow-step"><strong>الأمين العام</strong><small>اعتماد نهائي</small></div>
@@ -114,7 +114,7 @@
   {% if active_view == 'schedule' %}
   <section class="ws-panel p-3 p-lg-4 mb-3">
     <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
-      <div><h4 class="fw-bold mb-1">{{ 'تعبئة جدول الموظف' if editor_mode == 'HR' else 'جدول الدوام' }}</h4><div class="text-muted small">{{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
+      <div><h4 class="fw-bold mb-1">{{ 'تعبئة جدول الموظف' if editor_mode == 'HR' else ('طلب تغيير جدول الدوام' if editor_mode == 'EMPLOYEE' and employee_can_request else 'جدول الدوام') }}</h4><div class="text-muted small">{{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
       {% if plan %}<span class="badge text-bg-{{ plan_meta.class }} fs-6"><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</span>{% elif published_plan %}<span class="badge text-bg-success fs-6">جدول فعّال</span>{% else %}<span class="badge text-bg-secondary fs-6">دوام مكتبي افتراضي</span>{% endif %}
     </div>
 
@@ -154,7 +154,7 @@
       <div class="row g-3 mt-2">
         <div class="col-lg-6">
           <label class="form-label fw-bold" for="employeeNote">طلب الموظف / التوضيح</label>
-          {% if editor_mode == 'EMPLOYEE' and employee_can_request %}<textarea class="form-control" id="employeeNote" name="employee_note" rows="4" maxlength="4000" placeholder="اكتب التغيير المطلوب، والأيام أو الفترة المعنية، وأي توضيحات لازمة..."></textarea>{% else %}<div class="form-control bg-light" style="min-height:104px">{{ plan.employee_note if plan and plan.employee_note else 'لا يوجد طلب تغيير مسجل.' }}</div>{% endif %}
+          {% if editor_mode == 'EMPLOYEE' and employee_can_request %}<textarea class="form-control" id="employeeNote" name="employee_note" rows="4" maxlength="4000" placeholder="اكتب سبب التغيير المقترح وأي توضيحات لازمة...">{{ plan.employee_note if is_change_request and plan.employee_note else '' }}</textarea>{% else %}<div class="form-control bg-light" style="min-height:104px">{{ plan.employee_note if plan and plan.employee_note else 'لا يوجد طلب تغيير مسجل.' }}</div>{% endif %}
         </div>
         <div class="col-lg-6">
           <label class="form-label fw-bold" for="managerNote">ملاحظة الاعتماد</label>
@@ -164,13 +164,14 @@
 
       {% if can_edit %}
       <div class="ws-action-bar mt-3">
-        <div><strong>{% if editor_mode == 'HR' %}إدارة جدول الشؤون البشرية{% elif editor_mode == 'EMPLOYEE' %}إنشاء طلب تغيير{% else %}إجراء الاعتماد{% endif %}</strong><div class="small text-muted">{% if editor_mode == 'HR' %}احفظ المسودة أو انشر الجدول بعد اعتماده إداريًا.{% elif editor_mode == 'EMPLOYEE' %}لن يتغير جدولك الفعّال عند تقديم الطلب.{% else %}أي تغيير في الأيام لا يصبح نافذًا قبل الاعتماد النهائي.{% endif %}</div></div>
+        <div><strong>{% if editor_mode == 'HR' %}إدارة جدول الشؤون البشرية{% elif editor_mode == 'EMPLOYEE' %}طلب تغيير جدول الدوام{% else %}إجراء الاعتماد{% endif %}</strong><div class="small text-muted">{% if editor_mode == 'HR' %}احفظ المسودة أو انشر الجدول بعد اعتماده إداريًا.{% elif editor_mode == 'EMPLOYEE' and employee_can_request %}عدّل الجدول المقترح ثم أرسل الطلب؛ لن يتغير جدولك الفعّال عند تقديمه.{% elif editor_mode == 'EMPLOYEE' and employee_can_cancel %}يمكنك إلغاء طلبك طالما لم يُعتمد نهائيًا.{% else %}أي تغيير في الأيام لا يصبح نافذًا قبل الاعتماد النهائي.{% endif %}</div></div>
         <div class="d-flex flex-wrap gap-2">
           {% if editor_mode == 'HR' %}
             <button class="btn btn-outline-secondary" name="action" value="hr_save" type="submit"><i class="bi bi-save"></i> حفظ المسودة</button>
             {% if not is_change_request %}<button class="btn btn-primary" name="action" value="hr_publish" type="submit"><i class="bi bi-patch-check"></i> اعتماد ونشر الجدول</button>{% endif %}
-          {% elif editor_mode == 'EMPLOYEE' and employee_can_request %}
-            <button class="btn btn-primary" name="action" value="request_change" type="submit"><i class="bi bi-send"></i> إرسال طلب تغيير الدوام</button>
+          {% elif editor_mode == 'EMPLOYEE' %}
+            {% if employee_can_request %}<button class="btn btn-primary" name="action" value="request_change" type="submit"><i class="bi bi-send"></i> إرسال طلب تغيير الدوام</button>{% endif %}
+            {% if employee_can_cancel %}<button class="btn btn-outline-danger" name="action" value="cancel_change" type="submit" formnovalidate><i class="bi bi-x-circle"></i> إلغاء طلب التغيير</button>{% endif %}
           {% elif editor_mode == 'MANAGER' and plan and plan.status == 'SUBMITTED' %}
             <button class="btn btn-outline-danger" name="action" value="manager_reject" type="submit"><i class="bi bi-x-circle"></i> رفض الطلب</button><button class="btn btn-primary" name="action" value="manager_approve" type="submit"><i class="bi bi-check2"></i> اعتماد وإرسال للمدير العام</button>
           {% elif editor_mode == 'GENERAL_DIRECTOR' and plan and plan.status == 'MANAGER_APPROVED' %}
