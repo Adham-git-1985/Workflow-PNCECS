@@ -1129,12 +1129,34 @@ class SystemSetting(db.Model):
 # Workflow quick endorsements
 # ======================
 class WorkflowQuickEndorsement(db.Model):
-    """Shared quick-comment choices for authorized workflow users."""
+    """Prepared workflow comments, separated by their intended audience."""
 
     __tablename__ = "workflow_quick_endorsements"
 
+    __table_args__ = (
+        db.UniqueConstraint(
+            "audience",
+            "text",
+            name="uq_workflow_quick_endorsements_audience_text",
+        ),
+        db.Index(
+            "ix_workflow_quick_endorsements_audience_active_order",
+            "audience",
+            "is_active",
+            "sort_order",
+        ),
+    )
+
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    text = db.Column(db.String(160), nullable=False, unique=True)
+    # A wording may legitimately exist in both lists.  The audience keeps the
+    # employee list independent from the Secretary-General list.
+    audience = db.Column(
+        db.String(20),
+        nullable=False,
+        default="SECRETARY",
+        server_default="SECRETARY",
+    )
+    text = db.Column(db.String(160), nullable=False)
     sort_order = db.Column(db.Integer, nullable=False, default=0)
     is_active = db.Column(db.Boolean, nullable=False, default=True, index=True)
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)

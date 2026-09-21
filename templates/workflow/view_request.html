@@ -989,61 +989,138 @@
 
     {% endif %}
 
-    {% if quick_endorsements or can_manage_quick_endorsements %}
+    {% if secretary_endorsements or employee_endorsements or can_use_secretary_endorsements or can_use_employee_endorsements or can_manage_quick_endorsements %}
     <div class="card shadow-sm mt-3 border-primary-subtle">
       <div class="card-header bg-primary-subtle d-flex justify-content-between align-items-center">
         <strong><i class="bi bi-pencil-square"></i> تأشيرات سريعة</strong>
         <span class="small text-muted">تُسجّل مباشرةً في التعليقات</span>
       </div>
       <div class="card-body">
-        {% if quick_endorsements %}
-        <form method="post" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
-          <div class="row g-2">
-          {% for endorsement in quick_endorsements %}
-          <div class="col-md-6">
-            <label class="btn btn-outline-primary w-100 text-start d-flex align-items-center gap-2">
-              <input class="form-check-input" type="checkbox" name="endorsement_ids" value="{{ endorsement.id }}">
-              <span><i class="bi bi-pencil-square"></i> {{ endorsement.text }}</span>
-            </label>
+        {% if can_use_secretary_endorsements or can_manage_quick_endorsements %}
+        <section{% if can_use_employee_endorsements or can_manage_quick_endorsements %} class="border-bottom pb-3"{% endif %}>
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <strong>تأشيرات الأمين العام</strong>
+            <span class="small text-muted">قائمة مستقلة للأمين العام</span>
           </div>
-          {% endfor %}
-          </div>
-          <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
-            <button type="submit" class="btn btn-primary">
-              <i class="bi bi-send"></i> إضافة التأشيرات المختارة
-            </button>
-            <span class="small text-muted">يمكن اختيار أكثر من تأشيرة؛ ستُسجل في تعليق واحد، كل تأشيرة في سطر.</span>
-          </div>
-        </form>
-        {% else %}
-        <div class="text-muted">لا توجد تأشيرات جاهزة حتى الآن.</div>
-        {% endif %}
-        {% if can_manage_quick_endorsements %}
-        <div class="border-top mt-3 pt-3">
-          <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}" class="row g-2 align-items-end">
-            <input type="hidden" name="request_id" value="{{ req.id }}">
-            <input type="hidden" name="action" value="ADD">
-            <div class="col-md">
-              <label class="form-label small mb-1" for="endorsementText">إضافة تأشيرة</label>
-              <input id="endorsementText" class="form-control" name="endorsement_text" maxlength="160" placeholder="مثال: للتحويل إلى الجهة المختصة" required>
-            </div>
-            <div class="col-md-auto">
-              <button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> إضافة</button>
-            </div>
-          </form>
-          <div class="d-flex flex-wrap gap-2 mt-3">
-            {% for endorsement in quick_endorsements %}
-            <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}">
-              <input type="hidden" name="request_id" value="{{ req.id }}">
-              <input type="hidden" name="action" value="REMOVE">
-              <input type="hidden" name="endorsement_id" value="{{ endorsement.id }}">
-              <button type="submit" class="btn btn-sm btn-outline-danger" title="إزالة التأشيرة: {{ endorsement.text }}">
-                <i class="bi bi-x-lg"></i> {{ endorsement.text }}
-              </button>
+          {% if can_use_secretary_endorsements %}
+            {% if secretary_endorsements %}
+            <form method="post" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
+              <input type="hidden" name="endorsement_audience" value="SECRETARY">
+              <div class="row g-2">
+              {% for endorsement in secretary_endorsements %}
+              <div class="col-md-6">
+                <label class="btn btn-outline-primary w-100 text-start d-flex align-items-center gap-2">
+                  <input class="form-check-input" type="checkbox" name="endorsement_ids" value="{{ endorsement.id }}">
+                  <span><i class="bi bi-pencil-square"></i> {{ endorsement.text }}</span>
+                </label>
+              </div>
+              {% endfor %}
+              </div>
+              <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                <button type="submit" class="btn btn-primary">
+                  <i class="bi bi-send"></i> إضافة التأشيرات المختارة
+                </button>
+                <span class="small text-muted">يمكن اختيار أكثر من تأشيرة؛ ستُسجل في تعليق واحد، كل تأشيرة في سطر.</span>
+              </div>
             </form>
-            {% endfor %}
+            {% else %}
+            <div class="text-muted">لا توجد تأشيرات جاهزة حتى الآن.</div>
+            {% endif %}
+          {% endif %}
+          {% if can_manage_quick_endorsements %}
+          <div class="border-top mt-3 pt-3">
+            <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}" class="row g-2 align-items-end">
+              <input type="hidden" name="request_id" value="{{ req.id }}">
+              <input type="hidden" name="action" value="ADD">
+              <input type="hidden" name="endorsement_audience" value="SECRETARY">
+              <div class="col-md">
+                <label class="form-label small mb-1" for="secretaryEndorsementText">إضافة تأشيرة للأمين العام</label>
+                <input id="secretaryEndorsementText" class="form-control" name="endorsement_text" maxlength="160" placeholder="مثال: للتحويل إلى الجهة المختصة" required>
+              </div>
+              <div class="col-md-auto">
+                <button class="btn btn-primary" type="submit"><i class="bi bi-plus-lg"></i> إضافة</button>
+              </div>
+            </form>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              {% for endorsement in secretary_endorsements %}
+              <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}">
+                <input type="hidden" name="request_id" value="{{ req.id }}">
+                <input type="hidden" name="action" value="REMOVE">
+                <input type="hidden" name="endorsement_audience" value="SECRETARY">
+                <input type="hidden" name="endorsement_id" value="{{ endorsement.id }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="إزالة التأشيرة: {{ endorsement.text }}">
+                  <i class="bi bi-x-lg"></i> {{ endorsement.text }}
+                </button>
+              </form>
+              {% endfor %}
+            </div>
           </div>
-        </div>
+          {% endif %}
+        </section>
+        {% endif %}
+
+        {% if can_use_employee_endorsements or can_manage_quick_endorsements %}
+        <section class="{% if can_use_secretary_endorsements or can_manage_quick_endorsements %}pt-3{% endif %}">
+          <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+            <strong>تأشيرات الموظفين</strong>
+            <span class="small text-muted">قائمة مشتركة لكل الموظفين المخوّلين</span>
+          </div>
+          {% if can_use_employee_endorsements %}
+            {% if employee_endorsements %}
+            <form method="post" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
+              <input type="hidden" name="endorsement_audience" value="EMPLOYEE">
+              <div class="row g-2">
+              {% for endorsement in employee_endorsements %}
+              <div class="col-md-6">
+                <label class="btn btn-outline-success w-100 text-start d-flex align-items-center gap-2">
+                  <input class="form-check-input" type="checkbox" name="endorsement_ids" value="{{ endorsement.id }}">
+                  <span><i class="bi bi-pencil-square"></i> {{ endorsement.text }}</span>
+                </label>
+              </div>
+              {% endfor %}
+              </div>
+              <div class="d-flex flex-wrap align-items-center gap-2 mt-3">
+                <button type="submit" class="btn btn-success">
+                  <i class="bi bi-send"></i> إضافة التأشيرات المختارة
+                </button>
+                <span class="small text-muted">يمكن اختيار أكثر من تأشيرة؛ ستُسجل في تعليق واحد، كل تأشيرة في سطر.</span>
+              </div>
+            </form>
+            {% else %}
+            <div class="text-muted">لا توجد تأشيرات موظفين جاهزة حتى الآن.</div>
+            {% endif %}
+          {% endif %}
+          {% if can_manage_quick_endorsements %}
+          <div class="border-top mt-3 pt-3">
+            <div class="small text-muted mb-2">تُدار هذه القائمة من هذا المسار، وتظهر بعدها لجميع الموظفين الذين لديهم صلاحية «تأشيرات الموظفين».</div>
+            <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}" class="row g-2 align-items-end">
+              <input type="hidden" name="request_id" value="{{ req.id }}">
+              <input type="hidden" name="action" value="ADD">
+              <input type="hidden" name="endorsement_audience" value="EMPLOYEE">
+              <div class="col-md">
+                <label class="form-label small mb-1" for="employeeEndorsementText">إضافة تأشيرة للموظفين</label>
+                <input id="employeeEndorsementText" class="form-control" name="endorsement_text" maxlength="160" placeholder="مثال: للمتابعة وإبداء الرأي" required>
+              </div>
+              <div class="col-md-auto">
+                <button class="btn btn-success" type="submit"><i class="bi bi-plus-lg"></i> إضافة</button>
+              </div>
+            </form>
+            <div class="d-flex flex-wrap gap-2 mt-3">
+              {% for endorsement in employee_endorsements %}
+              <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}">
+                <input type="hidden" name="request_id" value="{{ req.id }}">
+                <input type="hidden" name="action" value="REMOVE">
+                <input type="hidden" name="endorsement_audience" value="EMPLOYEE">
+                <input type="hidden" name="endorsement_id" value="{{ endorsement.id }}">
+                <button type="submit" class="btn btn-sm btn-outline-danger" title="إزالة تأشيرة الموظفين: {{ endorsement.text }}">
+                  <i class="bi bi-x-lg"></i> {{ endorsement.text }}
+                </button>
+              </form>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+        </section>
         {% endif %}
       </div>
     </div>

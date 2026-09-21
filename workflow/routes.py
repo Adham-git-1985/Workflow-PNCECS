@@ -298,6 +298,11 @@ MENTION_ACCESS_REVOKED_ACTION = "WORKFLOW_MENTION_ACCESS_REVOKED"
 MENTION_TASK_COMPLETED_ACTION = "WORKFLOW_MENTION_TASK_COMPLETED"
 SECRETARY_ENDORSEMENTS_PERMISSION = "WORKFLOW_SECRETARY_ENDORSEMENTS"
 EMPLOYEE_ENDORSEMENTS_PERMISSION = "WORKFLOW_EMPLOYEE_ENDORSEMENTS"
+ENDORSEMENT_AUDIENCE_SECRETARY = "SECRETARY"
+ENDORSEMENT_AUDIENCE_EMPLOYEE = "EMPLOYEE"
+_ENDORSEMENT_AUDIENCES = frozenset(
+    (ENDORSEMENT_AUDIENCE_SECRETARY, ENDORSEMENT_AUDIENCE_EMPLOYEE)
+)
 _DEFAULT_SECRETARY_ENDORSEMENTS = (
     "لاتخاذ اللازم",
     "للمتابعة",
@@ -371,11 +376,21 @@ def _can_use_secretary_endorsements(user: User | None) -> bool:
 
 
 def _can_use_employee_endorsements(user: User | None) -> bool:
-    """Employees with the explicit permission may add a prepared endorsement."""
+    """Only explicitly authorized user accounts may add employee endorsements."""
     if not user:
         return False
     try:
-        return bool(user.has_perm(EMPLOYEE_ENDORSEMENTS_PERMISSION))
+        # ``User.has_perm`` grants all permissions to administrators.  The
+        # employee list is intentionally a user-only capability, while admins
+        # and super admins remain its managers.
+        if _can_manage_quick_endorsements(user):
+            return False
+        return any(
+            bool(getattr(permission, "is_allowed", False))
+            and (getattr(permission, "key", "") or "").strip().upper()
+            == EMPLOYEE_ENDORSEMENTS_PERMISSION
+            for permission in (getattr(user, "permissions", None) or ())
+        )
     except Exception:
         return False
 
@@ -396,20 +411,32 @@ def _can_manage_quick_endorsements(user: User | None) -> bool:
         return False
 
 
-def _get_secretary_endorsements(
+def _normalize_endorsement_audience(value: str | None) -> str | None:
+    audience = (value or "").strip().upper()
+    return audience if audience in _ENDORSEMENT_AUDIENCES else None
+
+
+def _get_quick_endorsements(
+    audience: str,
     *,
     seed_defaults: bool = False,
     seeded_by: User | None = None,
 ) -> list[WorkflowQuickEndorsement]:
-    """Return shared active endorsements and seed defaults only when authorized."""
+    """Return active prepared comments for one independent audience only."""
+    audience = _normalize_endorsement_audience(audience)
+    if not audience:
+        return []
+
     try:
         if (
-            seed_defaults
+            audience == ENDORSEMENT_AUDIENCE_SECRETARY
+            and seed_defaults
             and _can_manage_quick_endorsements(seeded_by)
-            and WorkflowQuickEndorsement.query.count() == 0
+            and WorkflowQuickEndorsement.query.filter_by(audience=audience).count() == 0
         ):
             db.session.add_all(
                 WorkflowQuickEndorsement(
+                    audience=audience,
                     text=text,
                     sort_order=index,
                     created_by_id=seeded_by.id,
@@ -419,7 +446,7 @@ def _get_secretary_endorsements(
             db.session.commit()
         return (
             WorkflowQuickEndorsement.query
-            .filter_by(is_active=True)
+            .filter_by(audience=audience, is_active=True)
             .order_by(WorkflowQuickEndorsement.sort_order.asc(), WorkflowQuickEndorsement.id.asc())
             .all()
         )
@@ -428,16 +455,39 @@ def _get_secretary_endorsements(
         return []
 
 
+def _get_secretary_endorsements(
+    *,
+    seed_defaults: bool = False,
+    seeded_by: User | None = None,
+) -> list[WorkflowQuickEndorsement]:
+    """Return only the prepared comments intended for the Secretary General."""
+    return _get_quick_endorsements(
+        ENDORSEMENT_AUDIENCE_SECRETARY,
+        seed_defaults=seed_defaults,
+        seeded_by=seeded_by,
+    )
+
+
+def _get_employee_endorsements() -> list[WorkflowQuickEndorsement]:
+    """Return only the shared list prepared for employees with the permission."""
+    return _get_quick_endorsements(ENDORSEMENT_AUDIENCE_EMPLOYEE)
+
+
 def _secretary_endorsement_note(endorsement_id: str | int | None) -> str | None:
-    """Return an active configured endorsement by its trusted database ID."""
-    notes = _secretary_endorsement_notes([endorsement_id])
+    """Return an active Secretary-General endorsement by its trusted ID."""
+    notes = _quick_endorsement_notes([endorsement_id], ENDORSEMENT_AUDIENCE_SECRETARY)
     return notes[0] if notes else None
 
 
-def _secretary_endorsement_notes(
+def _quick_endorsement_notes(
     endorsement_ids: list[str | int | None],
+    audience: str,
 ) -> list[str] | None:
-    """Return active configured endorsements in the submitted order."""
+    """Return active configured endorsements for the submitted audience only."""
+    audience = _normalize_endorsement_audience(audience)
+    if not audience:
+        return None
+
     identifiers = []
     seen_identifiers = set()
     for endorsement_id in endorsement_ids:
@@ -454,6 +504,7 @@ def _secretary_endorsement_notes(
 
     rows = WorkflowQuickEndorsement.query.filter(
         WorkflowQuickEndorsement.id.in_(identifiers),
+        WorkflowQuickEndorsement.audience == audience,
         WorkflowQuickEndorsement.is_active.is_(True),
     ).all()
     notes_by_id = {
@@ -464,6 +515,26 @@ def _secretary_endorsement_notes(
     if len(notes_by_id) != len(identifiers):
         return None
     return [notes_by_id[identifier] for identifier in identifiers]
+
+
+def _secretary_endorsement_notes(
+    endorsement_ids: list[str | int | None],
+) -> list[str] | None:
+    """Backward-compatible Secretary-General-only lookup helper."""
+    return _quick_endorsement_notes(
+        endorsement_ids,
+        ENDORSEMENT_AUDIENCE_SECRETARY,
+    )
+
+
+def _employee_endorsement_notes(
+    endorsement_ids: list[str | int | None],
+) -> list[str] | None:
+    """Return active employee endorsements in the submitted order."""
+    return _quick_endorsement_notes(
+        endorsement_ids,
+        ENDORSEMENT_AUDIENCE_EMPLOYEE,
+    )
 
 
 def _endorsement_redirect(request_id: str | int | None):
@@ -6652,7 +6723,8 @@ def view_request(request_id):
         pass
 
     can_manage_quick_endorsements = _can_manage_quick_endorsements(current_user)
-    can_use_quick_endorsements = _can_use_quick_endorsements(current_user)
+    can_use_secretary_endorsements = _can_use_secretary_endorsements(current_user)
+    can_use_employee_endorsements = _can_use_employee_endorsements(current_user)
 
     return render_template(
         "workflow/view_request.html",
@@ -6716,14 +6788,21 @@ def view_request(request_id):
         execution_context=execution,
         execution_can_approve=execution_can_approve,
         execution_can_reject=execution_can_reject,
-        quick_endorsements=(
+        secretary_endorsements=(
             _get_secretary_endorsements(
                 seed_defaults=can_manage_quick_endorsements,
                 seeded_by=current_user,
             )
-            if can_use_quick_endorsements
+            if can_use_secretary_endorsements or can_manage_quick_endorsements
             else ()
         ),
+        employee_endorsements=(
+            _get_employee_endorsements()
+            if can_use_employee_endorsements or can_manage_quick_endorsements
+            else ()
+        ),
+        can_use_secretary_endorsements=can_use_secretary_endorsements,
+        can_use_employee_endorsements=can_use_employee_endorsements,
         can_manage_quick_endorsements=can_manage_quick_endorsements,
     )
 
@@ -8487,12 +8566,21 @@ def delete_workflow_comment(request_id, audit_log_id):
 @workflow_bp.route("/endorsements/manage", methods=["POST"])
 @login_required
 def manage_secretary_endorsements():
-    """Add or remove shared endorsement choices as an administrator."""
+    """Add or remove prepared endorsements for one selected audience."""
     if not _can_manage_quick_endorsements(current_user):
         abort(403)
 
     action = (request.form.get("action") or "").strip().upper()
     request_id = request.form.get("request_id")
+    raw_audience = request.form.get("endorsement_audience")
+    audience = _normalize_endorsement_audience(raw_audience)
+    # Forms from the old single-list screen continue to manage the Secretary
+    # General list.  New employee forms always submit their explicit audience.
+    if not audience:
+        if (raw_audience or "").strip():
+            abort(400)
+        audience = ENDORSEMENT_AUDIENCE_SECRETARY
+
     try:
         if action == "ADD":
             text = " ".join((request.form.get("endorsement_text") or "").split())
@@ -8501,6 +8589,7 @@ def manage_secretary_endorsements():
                 return _endorsement_redirect(request_id)
 
             row = WorkflowQuickEndorsement.query.filter(
+                WorkflowQuickEndorsement.audience == audience,
                 func.lower(WorkflowQuickEndorsement.text) == text.casefold()
             ).first()
             if row and row.is_active:
@@ -8509,14 +8598,19 @@ def manage_secretary_endorsements():
             if row:
                 row.is_active = True
                 row.sort_order = (
-                    db.session.query(func.max(WorkflowQuickEndorsement.sort_order)).scalar() or 0
+                    db.session.query(func.max(WorkflowQuickEndorsement.sort_order))
+                    .filter(WorkflowQuickEndorsement.audience == audience)
+                    .scalar() or 0
                 ) + 1
                 audit_action = "WORKFLOW_ENDORSEMENT_RESTORED"
             else:
                 row = WorkflowQuickEndorsement(
+                    audience=audience,
                     text=text,
                     sort_order=(
-                        db.session.query(func.max(WorkflowQuickEndorsement.sort_order)).scalar() or 0
+                        db.session.query(func.max(WorkflowQuickEndorsement.sort_order))
+                        .filter(WorkflowQuickEndorsement.audience == audience)
+                        .scalar() or 0
                     ) + 1,
                     created_by_id=current_user.id,
                 )
@@ -8528,7 +8622,7 @@ def manage_secretary_endorsements():
                 user_id=current_user.id,
                 action=audit_action,
                 note=text,
-                target_type="WORKFLOW_ENDORSEMENT",
+                target_type=f"WORKFLOW_{audience}_ENDORSEMENT",
                 target_id=row.id,
             ))
             db.session.commit()
@@ -8539,7 +8633,11 @@ def manage_secretary_endorsements():
                 endorsement_id = int(request.form.get("endorsement_id"))
             except (TypeError, ValueError):
                 abort(400)
-            row = WorkflowQuickEndorsement.query.filter_by(id=endorsement_id, is_active=True).first()
+            row = WorkflowQuickEndorsement.query.filter_by(
+                id=endorsement_id,
+                audience=audience,
+                is_active=True,
+            ).first()
             if not row:
                 abort(404)
             row.is_active = False
@@ -8547,7 +8645,7 @@ def manage_secretary_endorsements():
                 user_id=current_user.id,
                 action="WORKFLOW_ENDORSEMENT_REMOVED",
                 note=row.text,
-                target_type="WORKFLOW_ENDORSEMENT",
+                target_type=f"WORKFLOW_{audience}_ENDORSEMENT",
                 target_id=row.id,
             ))
             db.session.commit()
@@ -8616,12 +8714,45 @@ def add_request_note(request_id):
     if not endorsement_ids:
         legacy_endorsement_id = request.form.get("endorsement_id")
         endorsement_ids = [legacy_endorsement_id] if legacy_endorsement_id else []
-    endorsement_notes = _secretary_endorsement_notes(endorsement_ids)
+
+    raw_endorsement_audience = request.form.get("endorsement_audience")
+    endorsement_audience = _normalize_endorsement_audience(raw_endorsement_audience)
     if endorsement_ids:
-        if not _can_use_quick_endorsements(current_user):
+        if (raw_endorsement_audience or "").strip() and not endorsement_audience:
+            abort(400)
+
+        # Old clients did not submit an audience.  Resolve it only when the
+        # actor has exactly one list available, so an employee can never use
+        # a Secretary-General endorsement by supplying its database ID.
+        if not endorsement_audience:
+            allowed_audiences = []
+            if _can_use_secretary_endorsements(current_user):
+                allowed_audiences.append(ENDORSEMENT_AUDIENCE_SECRETARY)
+            if _can_use_employee_endorsements(current_user):
+                allowed_audiences.append(ENDORSEMENT_AUDIENCE_EMPLOYEE)
+            if len(allowed_audiences) != 1:
+                abort(403 if not allowed_audiences else 400)
+            endorsement_audience = allowed_audiences[0]
+
+        if (
+            endorsement_audience == ENDORSEMENT_AUDIENCE_SECRETARY
+            and not _can_use_secretary_endorsements(current_user)
+        ):
             abort(403)
+        if (
+            endorsement_audience == ENDORSEMENT_AUDIENCE_EMPLOYEE
+            and not _can_use_employee_endorsements(current_user)
+        ):
+            abort(403)
+
+        endorsement_notes = _quick_endorsement_notes(
+            endorsement_ids,
+            endorsement_audience,
+        )
         if endorsement_notes is None:
             abort(400)
+    else:
+        endorsement_notes = []
 
     note = "\n".join(endorsement_notes or []) or _strip_workflow_operation_source(
         request.form.get("note")

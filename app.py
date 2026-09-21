@@ -330,6 +330,153 @@ def _ensure_runtime_schema():
                         return False
                 return False
 
+            def _ensure_workflow_quick_endorsement_audiences() -> bool:
+                """Split the legacy shared endorsement table without losing rows.
+
+                Older SQLite databases have an anonymous ``UNIQUE(text)``
+                constraint.  Adding an audience column alone would still
+                prevent the same wording from being used independently by
+                employees and the Secretary General, so this one-time rebuild
+                replaces it with ``UNIQUE(audience, text)``.  All legacy rows
+                deliberately remain in the Secretary-General list.
+                """
+                table = "workflow_quick_endorsements"
+                temporary_table = "workflow_quick_endorsements__audience_upgrade"
+                connection = None
+                cursor = None
+                try:
+                    table_columns = db.session.execute(
+                        text(f"PRAGMA table_info({table})")
+                    ).all()
+                    column_names = {row[1] for row in table_columns}
+                    if "id" not in column_names:
+                        return True
+
+                    index_rows = db.session.execute(
+                        text(f"PRAGMA index_list({table})")
+                    ).all()
+                    has_scoped_unique = False
+                    has_legacy_text_unique = False
+                    for index_row in index_rows:
+                        index_name = index_row[1]
+                        is_unique = bool(index_row[2])
+                        if not is_unique:
+                            continue
+                        index_columns = tuple(
+                            row[2]
+                            for row in db.session.execute(
+                                text(f"PRAGMA index_info({index_name})")
+                            ).all()
+                        )
+                        if index_columns == ("audience", "text"):
+                            has_scoped_unique = True
+                        elif index_columns == ("text",):
+                            has_legacy_text_unique = True
+
+                    needs_rebuild = (
+                        "audience" not in column_names
+                        or not has_scoped_unique
+                        or has_legacy_text_unique
+                    )
+                    if not needs_rebuild:
+                        db.session.execute(text(
+                            f"UPDATE {table} SET audience = 'SECRETARY' "
+                            "WHERE audience IS NULL OR TRIM(audience) = ''"
+                        ))
+                        db.session.execute(text(
+                            "CREATE INDEX IF NOT EXISTS "
+                            "ix_workflow_quick_endorsements_audience_active_order "
+                            f"ON {table} (audience, is_active, sort_order)"
+                        ))
+                        db.session.commit()
+                        return True
+
+                    # Use one raw SQLite transaction for the table swap.  No
+                    # other table references this lookup table by FK, and the
+                    # fixed temporary name makes retries safe after a failed
+                    # prior startup attempt.
+                    db.session.rollback()
+                    connection = db.engine.raw_connection()
+                    cursor = connection.cursor()
+                    foreign_keys_enabled = int(
+                        cursor.execute("PRAGMA foreign_keys").fetchone()[0] or 0
+                    )
+                    cursor.execute("PRAGMA foreign_keys=OFF")
+                    cursor.execute("BEGIN IMMEDIATE")
+                    cursor.execute(f"DROP TABLE IF EXISTS {temporary_table}")
+                    cursor.execute(f"""
+                        CREATE TABLE {temporary_table} (
+                            id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+                            audience VARCHAR(20) NOT NULL DEFAULT 'SECRETARY',
+                            text VARCHAR(160) NOT NULL,
+                            sort_order INTEGER NOT NULL DEFAULT 0,
+                            is_active BOOLEAN NOT NULL DEFAULT 1,
+                            created_by_id INTEGER,
+                            created_at DATETIME NOT NULL,
+                            CONSTRAINT uq_workflow_quick_endorsements_audience_text
+                                UNIQUE (audience, text),
+                            FOREIGN KEY(created_by_id) REFERENCES users (id)
+                        )
+                    """)
+                    audience_value = (
+                        "COALESCE(NULLIF(TRIM(audience), ''), 'SECRETARY')"
+                        if "audience" in column_names
+                        else "'SECRETARY'"
+                    )
+                    cursor.execute(f"""
+                        INSERT INTO {temporary_table}
+                            (id, audience, text, sort_order, is_active, created_by_id, created_at)
+                        SELECT id,
+                               {audience_value},
+                               text,
+                               COALESCE(sort_order, 0),
+                               COALESCE(is_active, 1),
+                               created_by_id,
+                               COALESCE(created_at, CURRENT_TIMESTAMP)
+                          FROM {table}
+                    """)
+                    cursor.execute(f"DROP TABLE {table}")
+                    cursor.execute(f"ALTER TABLE {temporary_table} RENAME TO {table}")
+                    cursor.execute(
+                        "CREATE INDEX IF NOT EXISTS "
+                        "ix_workflow_quick_endorsements_is_active "
+                        f"ON {table} (is_active)"
+                    )
+                    cursor.execute(
+                        "CREATE INDEX IF NOT EXISTS "
+                        "ix_workflow_quick_endorsements_audience_active_order "
+                        f"ON {table} (audience, is_active, sort_order)"
+                    )
+                    connection.commit()
+                    if foreign_keys_enabled:
+                        cursor.execute("PRAGMA foreign_keys=ON")
+                    return True
+                except Exception:
+                    try:
+                        if connection is not None:
+                            connection.rollback()
+                    except Exception:
+                        pass
+                    app.logger.exception("Unable to split workflow quick endorsements by audience")
+                    return False
+                finally:
+                    try:
+                        if cursor is not None:
+                            cursor.close()
+                    except Exception:
+                        pass
+                    try:
+                        if connection is not None:
+                            connection.close()
+                    except Exception:
+                        pass
+                    try:
+                        db.session.remove()
+                    except Exception:
+                        pass
+
+            _ensure_workflow_quick_endorsement_audiences()
+
             # Acting permissions/formal delegations and canonical execution
             # metadata.  ``create_all`` above creates the two new tables for
             # fresh databases; these guarded additions upgrade existing local
