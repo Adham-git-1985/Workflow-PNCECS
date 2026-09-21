@@ -62,6 +62,18 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             password_hash="x",
             role="HR",
         )
+        self.admin = User(
+            email="weekly-admin@example.test",
+            name="Admin",
+            password_hash="x",
+            role="ADMIN",
+        )
+        self.super_admin = User(
+            email="weekly-super-admin@example.test",
+            name="Super Admin",
+            password_hash="x",
+            role="SUPER_ADMIN",
+        )
         self.secretary = User(
             email="weekly-secretary@example.test",
             name="الأمين العام",
@@ -75,7 +87,15 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             end_time="15:00",
             is_active=True,
         )
-        db.session.add_all((self.employee, self.manager, self.hr, self.secretary, self.schedule))
+        db.session.add_all((
+            self.employee,
+            self.manager,
+            self.hr,
+            self.admin,
+            self.super_admin,
+            self.secretary,
+            self.schedule,
+        ))
         db.session.flush()
         db.session.add_all((
             EmployeeFile(user_id=self.employee.id, direct_manager_user_id=self.manager.id),
@@ -113,13 +133,16 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             })
         return values
 
+    def _future_period_start(self):
+        return attendance_schedule_cycle_start(date.today() + timedelta(days=14))
+
     def test_date_selects_one_sunday_to_saturday_week(self):
         self.assertEqual(attendance_schedule_cycle_start(date(2026, 9, 10)), date(2026, 9, 6))
         self.assertEqual(attendance_schedule_cycle_start(date(2026, 9, 19)), date(2026, 9, 13))
         self.assertEqual(len(attendance_schedule_cycle_days(date(2026, 9, 6))), 7)
 
     def test_hr_publishes_baseline_and_employee_request_is_not_effective_before_final_approval(self):
-        period_start = date(2026, 9, 6)
+        period_start = self._future_period_start()
         hr_data = {
             "target_user_id": str(self.employee.id),
             "period_start": period_start.isoformat(),
@@ -164,6 +187,45 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         db.session.refresh(change)
         self.assertEqual(change.status, "FINAL_APPROVED")
 
+    def test_only_admin_and_super_admin_can_edit_past_days(self):
+        today = date(2031, 6, 9)
+        period_start = attendance_schedule_cycle_start(today - timedelta(days=7))
+        past_key = period_start.strftime("%Y_%m_%d")
+        data = {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "action": "hr_publish",
+            **self._week_form(period_start),
+        }
+        data[f"start_time_{past_key}"] = "09:00"
+
+        with patch("portal.routes._attendance_schedule_today", return_value=today):
+            blocked = self._post(self.hr, data)
+        self.assertEqual(blocked.status_code, 302)
+        self.assertEqual(HRAttendanceSchedulePlan.query.count(), 0)
+
+        with patch("portal.routes._attendance_schedule_today", return_value=today):
+            allowed_for_admin = self._post(self.admin, data)
+        self.assertEqual(allowed_for_admin.status_code, 302)
+        admin_plan = HRAttendanceSchedulePlan.query.one()
+        admin_day = next(day for day in admin_plan.days if day.work_date == period_start.isoformat())
+        self.assertEqual(admin_plan.status, "ADMIN_APPROVED")
+        self.assertEqual(admin_day.start_time, "09:00")
+
+        super_data = dict(data)
+        super_data[f"start_time_{past_key}"] = "10:00"
+        with patch("portal.routes._attendance_schedule_today", return_value=today):
+            allowed_for_super_admin = self._post(self.super_admin, super_data)
+        self.assertEqual(allowed_for_super_admin.status_code, 302)
+        super_admin_plan = HRAttendanceSchedulePlan.query.order_by(
+            HRAttendanceSchedulePlan.version_no.desc(),
+        ).first()
+        super_admin_day = next(
+            day for day in super_admin_plan.days if day.work_date == period_start.isoformat()
+        )
+        self.assertEqual(super_admin_plan.status, "ADMIN_APPROVED")
+        self.assertEqual(super_admin_day.start_time, "10:00")
+
     def test_secretary_waits_for_assigned_general_director(self):
         general_director = User(
             name="\u0627\u0644\u0645\u062f\u064a\u0631 \u0627\u0644\u0639\u0627\u0645",
@@ -173,7 +235,7 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         )
         db.session.add(general_director)
         db.session.commit()
-        period_start = date(2026, 9, 6)
+        period_start = self._future_period_start()
 
         with patch("portal.routes.resolve_general_director", return_value=general_director):
             self._post(self.hr, {

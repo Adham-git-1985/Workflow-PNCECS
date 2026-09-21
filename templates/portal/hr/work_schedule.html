@@ -127,9 +127,10 @@
       <div class="ws-day-grid">
         {% for day in days %}
         {% set meta = day_meta.get(day.day_type, day_meta.WORK) %}
+        {% set past_day_locked = day.is_past and not can_edit_past_days %}
         <article class="ws-day" data-kind="{{ day.day_type }}">
           <div class="ws-day-head"><div><div class="ws-day-name">{{ day.weekday }}</div><div class="ws-day-date">{{ day.date.strftime('%d/%m/%Y') }}</div></div>{% if day.is_today %}<span class="badge text-bg-warning">اليوم</span>{% endif %}</div>
-          {% if can_edit_days %}
+          {% if can_edit_days and not past_day_locked %}
           <label class="form-label small fw-bold" for="dayType{{ day.field_key }}">نوع اليوم</label>
           <select class="form-select form-select-sm mb-2" id="dayType{{ day.field_key }}" name="day_type_{{ day.field_key }}" data-day-type>
             {% for value, item_meta in day_meta.items() %}<option value="{{ value }}" {% if day.day_type == value %}selected{% endif %}>{{ item_meta.label }}</option>{% endfor %}
@@ -144,6 +145,7 @@
           {% else %}
           <div class="ws-day-readonly"><span class="badge rounded-pill text-bg-light"><i class="bi {{ meta.icon }}"></i> {{ meta.label }}</span><strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong><small class="text-muted">{% if day.day_type == 'OFF' %}لا يوجد دوام{% else %}{{ day.schedule_name or 'وقت مخصص' }}{% endif %}</small>{% if day.note %}<small class="ws-source">{{ day.note }}</small>{% endif %}</div>
           {% endif %}
+          {% if past_day_locked %}<div class="ws-source mt-2"><i class="bi bi-lock-fill"></i> تاريخ سابق: التعديل متاح للأدمن والسوبر أدمن فقط.</div>{% endif %}
           {% if day.edit_source %}<div class="ws-source mt-2"><i class="bi bi-clock-history"></i> آخر مصدر: {{ {'HR':'الشؤون البشرية','MANAGER':'المدير','GENERAL_DIRECTOR':'المدير العام','SECRETARY_GENERAL':'الأمين العام','SYSTEM':'النظام','EMPLOYEE':'الموظف'}.get(day.edit_source, day.edit_source) }}</div>{% endif %}
         </article>
         {% endfor %}

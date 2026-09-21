@@ -610,6 +610,8 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
             "hr_publish",
             "ws-roster-table",
             "organization_loaded",
+            "can_edit_past_days",
+            "past_day_locked",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, template)
