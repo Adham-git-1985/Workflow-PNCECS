@@ -15,6 +15,7 @@ from models import (
     WorkSchedule,
 )
 from portal.routes import (
+    _attendance_schedule_week_rows,
     _effective_schedule_for_user,
     hr_work_schedule_final_approve_all,
     hr_work_schedule_super_admin_publish_batch,
@@ -253,6 +254,119 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
             "09:00",
         )
+
+    def test_hr_schedule_pattern_remains_effective_after_a_month(self):
+        effective_start = date(2031, 9, 22)
+        remote_schedule = WorkSchedule(
+            name="دوام عن بعد مستمر",
+            kind="REMOTE",
+            start_time="08:00",
+            end_time="15:00",
+            is_active=True,
+        )
+        db.session.add(remote_schedule)
+        db.session.commit()
+        form = self._week_form_for_schedule(
+            effective_start,
+            remote_schedule,
+            "08:00",
+            "15:00",
+        )
+        for offset in range(7):
+            day_key = (effective_start + timedelta(days=offset)).strftime("%Y_%m_%d")
+            form[f"day_type_{day_key}"] = "REMOTE"
+
+        response = self._post(self.hr, {
+            "target_user_id": str(self.employee.id),
+            "period_start": effective_start.isoformat(),
+            "action": "hr_publish",
+            **form,
+        })
+
+        self.assertEqual(response.status_code, 302)
+        plan = HRAttendanceSchedulePlan.query.filter_by(user_id=self.employee.id).one()
+        self.assertEqual(plan.period_start, "2031-09-22")
+        after_one_month = date(2031, 10, 22)
+        effective = _effective_schedule_for_user(self.employee.id, after_one_month.isoformat())
+        self.assertEqual(effective.kind, "REMOTE")
+        self.assertEqual(effective.start_time, "08:00")
+
+        week_dates, rows = _attendance_schedule_week_rows(
+            [self.employee],
+            date(2031, 10, 19),
+            1,
+            {self.employee.id: plan},
+        )
+        self.assertEqual(len(week_dates), 7)
+        self.assertTrue(all(day["day_type"] == "REMOTE" for day in rows[0]["days"]))
+
+    def test_approved_employee_change_stays_effective_until_a_later_change(self):
+        remote_start = date(2031, 9, 22)
+        change_start = date(2031, 10, 1)
+        remote_schedule = WorkSchedule(
+            name="دوام عن بعد قبل التغيير",
+            kind="REMOTE",
+            start_time="08:00",
+            end_time="15:00",
+            is_active=True,
+        )
+        db.session.add(remote_schedule)
+        db.session.commit()
+
+        remote_form = self._week_form_for_schedule(
+            remote_start,
+            remote_schedule,
+            "08:00",
+            "15:00",
+        )
+        for offset in range(7):
+            day_key = (remote_start + timedelta(days=offset)).strftime("%Y_%m_%d")
+            remote_form[f"day_type_{day_key}"] = "REMOTE"
+        self._post(self.hr, {
+            "target_user_id": str(self.employee.id),
+            "period_start": remote_start.isoformat(),
+            "action": "hr_publish",
+            **remote_form,
+        })
+
+        request = self._post(self.employee, {
+            "target_user_id": str(self.employee.id),
+            "period_start": change_start.isoformat(),
+            "action": "request_change",
+            "employee_note": "طلب التحول إلى دوام مكتبي.",
+            **self._week_form(change_start),
+        })
+        self.assertEqual(request.status_code, 302)
+        change = HRAttendanceSchedulePlan.query.order_by(
+            HRAttendanceSchedulePlan.id.desc(),
+        ).first()
+        self.assertEqual(change.period_start, "2031-10-01")
+        self.assertEqual(change.status, "SUBMITTED")
+
+        december_day = date(2031, 12, 31)
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, december_day.isoformat()).kind,
+            "REMOTE",
+        )
+
+        self._post(self.manager, {
+            "target_user_id": str(self.employee.id),
+            "period_start": change_start.isoformat(),
+            "plan_id": str(change.id),
+            "action": "manager_approve",
+        })
+        self._post(self.secretary, {
+            "target_user_id": str(self.employee.id),
+            "period_start": change_start.isoformat(),
+            "plan_id": str(change.id),
+            "action": "final_approve",
+        })
+
+        db.session.refresh(change)
+        self.assertEqual(change.status, "FINAL_APPROVED")
+        effective = _effective_schedule_for_user(self.employee.id, december_day.isoformat())
+        self.assertEqual(effective.kind, "FIXED")
+        self.assertEqual(effective.start_time, "08:00")
 
     def test_super_admin_publishes_an_individual_schedule_directly(self):
         period_start = self._future_period_start()

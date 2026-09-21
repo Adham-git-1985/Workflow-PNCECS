@@ -1,5 +1,5 @@
 {% extends "portal/hr/base.html" %}
-{% block title %}جدول الدوام الأسبوعي{% endblock %}
+{% block title %}جدول الدوام{% endblock %}
 
 {% block head %}
   {{ super() }}
@@ -62,25 +62,25 @@
 {% endblock %}
 
 {% block hr_content %}
-{% set plan_status = plan.status if plan else 'DRAFT' %}
+{% set plan_status = (plan or published_plan).status if (plan or published_plan) else 'DRAFT' %}
 {% set plan_meta = status_meta.get(plan_status, status_meta.DRAFT) %}
 {% set is_change_request = plan and (plan.request_type or '') == 'CHANGE_REQUEST' and plan.status in ['DRAFT','SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}
 <div class="container-fluid py-3">
   <section class="ws-hero mb-3">
     <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3">
       <div>
-        <div class="small opacity-75 mb-1"><i class="bi bi-calendar-week"></i> إدارة أسبوعية للدوام</div>
-        <h1 class="ws-title h2 mb-2">جدول الدوام الأسبوعي</h1>
-        <p class="ws-subtitle mb-0">{% if is_super_admin %}أنت تعمل بصلاحية السوبر أدمن: يمكنك إدخال الجدول واعتماده ونشره مباشرةً، فرديًا أو للموظفين المختارين.{% else %}تعبئة الجدول تتم من الشؤون البشرية. يحدد الموظف التعديل المقترح داخل طلب منفصل، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد.{% endif %}</p>
+        <div class="small opacity-75 mb-1"><i class="bi bi-calendar-week"></i> إدارة جدول الدوام النافذ</div>
+        <h1 class="ws-title h2 mb-2">جدول الدوام</h1>
+        <p class="ws-subtitle mb-0">{% if is_super_admin %}أنت تعمل بصلاحية السوبر أدمن: يمكنك إدخال نمط الدوام واعتماده ونشره مباشرةً، فرديًا أو للموظفين المختارين.{% else %}تعبئة الجدول تتم من الشؤون البشرية. يحدد الموظف التعديل المقترح داخل طلب منفصل، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد. ويبقى آخر جدول معتمد ساريًا حتى يعتمد تغيير أحدث.{% endif %}</p>
       </div>
       <form class="ws-date-box" method="get" action="{{ url_for('portal.hr_work_schedule') }}" aria-label="اختيار أسبوع الدوام">
-        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat(), view=active_view) }}" title="الأسبوع السابق"><i class="bi bi-chevron-right"></i></a>
-        <label class="visually-hidden" for="weekDate">اختر تاريخًا من الأسبوع</label>
+        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat(), view=active_view) }}" title="الفترة السابقة"><i class="bi bi-chevron-right"></i></a>
+        <label class="visually-hidden" for="weekDate">اختر تاريخ بدء النفاذ أو العرض</label>
         <input id="weekDate" type="date" name="start" value="{{ period_start.isoformat() }}" onchange="this.form.submit()">
-        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=next_start.isoformat(), view=active_view) }}" title="الأسبوع التالي"><i class="bi bi-chevron-left"></i></a>
+        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=next_start.isoformat(), view=active_view) }}" title="الفترة التالية"><i class="bi bi-chevron-left"></i></a>
       </form>
     </div>
-    <div class="small mt-3 opacity-75">الأسبوع المحدد: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div>
+    <div class="small mt-3 opacity-75">تاريخ بدء النفاذ المختار: {{ period_start.strftime('%d/%m/%Y') }}. يعرض النمط سبعة أيام ويتكرر حتى اعتماد تغيير لاحق.</div>
     <div class="ws-kpis">
       <div class="ws-kpi"><span>الموظف المعروض</span><strong>{{ target_user.full_name }}</strong></div>
       <div class="ws-kpi"><span>حالة النسخة الحالية</span><strong><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</strong></div>
@@ -94,7 +94,7 @@
   {% elif editor_mode == 'EMPLOYEE' %}
   <div class="alert alert-info ws-alert"><i class="bi bi-info-circle me-1"></i>{% if employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل هذا الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب.{% elif employee_can_cancel %}هذا هو الجدول المقترح في طلبك، وهو غير نافذ حتى الاعتماد. يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير يبقى غير نافذ حتى اعتماد المدير والمدير العام والأمين العام.{% endif %}</div>
   {% elif editor_mode == 'HR' %}
-  <div class="alert alert-success ws-alert"><i class="bi bi-shield-check me-1"></i> أنت تعمل بصلاحية الشؤون البشرية؛ يمكنك تعبئة جدول الأسبوع ونشره بعد الاعتماد الإداري.</div>
+  <div class="alert alert-success ws-alert"><i class="bi bi-shield-check me-1"></i> أنت تعمل بصلاحية الشؤون البشرية؛ أدخل نمط الدوام من تاريخ البدء المختار. بعد نشره يصبح نافذًا ويبقى كذلك حتى تغيير معتمد أحدث.</div>
   {% endif %}
 
   <div class="ws-panel p-3 mb-3">
@@ -109,7 +109,7 @@
   </div>
 
   <div class="ws-tabs mb-3" role="tablist">
-    <a class="nav-link {% if active_view == 'schedule' %}active{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='schedule', employee_id=(target_user.id if target_user.id != current_user.id else None)) }}"><i class="bi bi-calendar3"></i> جدول الأسبوع</a>
+    <a class="nav-link {% if active_view == 'schedule' %}active{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='schedule', employee_id=(target_user.id if target_user.id != current_user.id else None)) }}"><i class="bi bi-calendar3"></i> جدول الدوام</a>
     {% if has_reports or reports_loaded %}<a class="nav-link {% if active_view == 'team' %}active{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='team') }}"><i class="bi bi-people"></i> الهيكل التابع <span class="badge rounded-pill text-bg-light">{{ report_cards|length }}</span></a>{% endif %}
     {% if can_view_all %}<a class="nav-link {% if active_view == 'all' %}active{% endif %}" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all') }}"><i class="bi bi-grid-3x3-gap"></i> جميع الموظفين <span class="badge rounded-pill text-bg-light">{{ organization_count }}</span></a>{% endif %}
   </div>
@@ -126,6 +126,8 @@
       <input type="hidden" name="target_user_id" value="{{ target_user.id }}">
       <input type="hidden" name="period_start" value="{{ period_start.isoformat() }}">
       {% if plan %}<input type="hidden" name="plan_id" value="{{ plan.id }}">{% endif %}
+
+      {% if can_edit_days %}<div class="alert alert-light border small mb-3"><i class="bi bi-calendar-check me-1"></i> يبدأ نفاذ هذا النمط من <strong>{{ period_start.strftime('%d/%m/%Y') }}</strong> ويستمر حتى نشر أو اعتماد تغيير أحدث.</div>{% endif %}
 
       <div class="ws-day-grid">
         {% for day in days %}
@@ -167,7 +169,7 @@
 
       {% if can_edit %}
       <div class="ws-action-bar mt-3">
-        <div><strong>{% if editor_mode == 'SUPER_ADMIN' %}اعتماد ونشر مباشر من السوبر أدمن{% elif editor_mode == 'HR' %}إدارة جدول الشؤون البشرية{% elif editor_mode == 'EMPLOYEE' %}طلب تغيير جدول الدوام{% else %}إجراء الاعتماد{% endif %}</strong><div class="small text-muted">{% if editor_mode == 'SUPER_ADMIN' %}الجدول الذي تنشره يصبح فعّالًا فورًا ولا يحتاج اعتماد أي جهة أخرى.{% elif editor_mode == 'HR' %}احفظ المسودة أو انشر الجدول بعد اعتماده إداريًا.{% elif editor_mode == 'EMPLOYEE' and employee_can_request %}عدّل الجدول المقترح ثم أرسل الطلب؛ لن يتغير جدولك الفعّال عند تقديمه.{% elif editor_mode == 'EMPLOYEE' and employee_can_cancel %}يمكنك إلغاء طلبك طالما لم يُعتمد نهائيًا.{% else %}أي تغيير في الأيام لا يصبح نافذًا قبل الاعتماد النهائي.{% endif %}</div></div>
+        <div><strong>{% if editor_mode == 'SUPER_ADMIN' %}اعتماد ونشر مباشر من السوبر أدمن{% elif editor_mode == 'HR' %}إدارة جدول الشؤون البشرية{% elif editor_mode == 'EMPLOYEE' %}طلب تغيير جدول الدوام{% else %}إجراء الاعتماد{% endif %}</strong><div class="small text-muted">{% if editor_mode == 'SUPER_ADMIN' %}الجدول الذي تنشره يصبح فعّالًا فورًا ولا يحتاج اعتماد أي جهة أخرى، ويستمر حتى تغيير أحدث.{% elif editor_mode == 'HR' %}احفظ المسودة أو انشر النمط؛ بعد الاعتماد الإداري يبقى نافذًا حتى تغيير أحدث.{% elif editor_mode == 'EMPLOYEE' and employee_can_request %}عدّل النمط المقترح ثم أرسل الطلب؛ لن يتغير جدولك الفعّال عند تقديمه، ويبدأ التغيير بعد اعتماده.{% elif editor_mode == 'EMPLOYEE' and employee_can_cancel %}يمكنك إلغاء طلبك طالما لم يُعتمد نهائيًا.{% else %}أي تغيير في الأيام لا يصبح نافذًا قبل الاعتماد النهائي.{% endif %}</div></div>
         <div class="d-flex flex-wrap gap-2">
           {% if editor_mode == 'SUPER_ADMIN' %}
             {% if plan and is_change_request and plan.status in ['SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}<button class="btn btn-outline-danger" name="action" value="final_reject" type="submit" formnovalidate><i class="bi bi-x-circle"></i> رفض طلب التغيير</button>{% endif %}
@@ -192,7 +194,7 @@
     </form>
   </section>
 
-  {% if history|length > 1 %}<details class="ws-panel p-3 mb-3"><summary class="fw-bold" style="cursor:pointer"><i class="bi bi-clock-history text-primary"></i> سجل نسخ جدول الأسبوع ({{ history|length }})</summary><div class="table-responsive mt-3"><table class="table table-sm align-middle mb-0"><thead><tr><th>النسخة</th><th>النوع</th><th>الحالة</th><th>آخر تحديث</th></tr></thead><tbody>{% for version in history %}<tr><td>#{{ version.version_no }}</td><td>{{ 'طلب تغيير' if (version.request_type or '') == 'CHANGE_REQUEST' else 'جدول أساسي' }}</td><td><span class="badge text-bg-{{ status_meta.get(version.status, status_meta.DRAFT).class }}">{{ status_meta.get(version.status, status_meta.DRAFT).label }}</span></td><td>{{ version.updated_at|local_datetime if version.updated_at else '—' }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
+  {% if history|length > 1 %}<details class="ws-panel p-3 mb-3"><summary class="fw-bold" style="cursor:pointer"><i class="bi bi-clock-history text-primary"></i> سجل التعديلات من هذا التاريخ ({{ history|length }})</summary><div class="table-responsive mt-3"><table class="table table-sm align-middle mb-0"><thead><tr><th>النسخة</th><th>النوع</th><th>الحالة</th><th>آخر تحديث</th></tr></thead><tbody>{% for version in history %}<tr><td>#{{ version.version_no }}</td><td>{{ 'طلب تغيير' if (version.request_type or '') == 'CHANGE_REQUEST' else 'جدول أساسي' }}</td><td><span class="badge text-bg-{{ status_meta.get(version.status, status_meta.DRAFT).class }}">{{ status_meta.get(version.status, status_meta.DRAFT).label }}</span></td><td>{{ version.updated_at|local_datetime if version.updated_at else '—' }}</td></tr>{% endfor %}</tbody></table></div></details>{% endif %}
 
   {% endif %}
 
@@ -206,7 +208,7 @@
     <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
       <div>
         <h4 class="fw-bold mb-1"><i class="bi bi-shield-fill-check text-dark"></i> إدخال واعتماد مباشر للموظفين المختارين</h4>
-        <div class="text-muted small">اختر موظفًا أو أكثر ثم أدخل جدول الأسبوع الموحد. سيصبح الجدول فعّالًا فورًا للموظفين المختارين فقط، ولن تتغير جداول بقية الموظفين.</div>
+        <div class="text-muted small">اختر موظفًا أو أكثر ثم أدخل نمط الدوام الموحد. يبدأ نفاذه من التاريخ المختار للموظفين المحددين فقط، ويبقى ساريًا حتى تغيير أحدث؛ ولن تتغير جداول بقية الموظفين.</div>
       </div>
       <span class="badge text-bg-dark align-self-start">صلاحية السوبر أدمن</span>
     </div>
@@ -245,11 +247,11 @@
         </article>
         {% endfor %}
       </div>
-      <div class="ws-action-bar mt-3"><div><strong>نشر مباشر للموظفين المختارين</strong><div class="small text-muted">العملية تنشئ أو تحدّث النسخة الأسبوعية للموظفين المحددين في هذه القائمة فقط.</div></div><button class="btn btn-success" type="submit"><i class="bi bi-shield-fill-check"></i> اعتماد ونشر للموظفين المختارين</button></div>
+      <div class="ws-action-bar mt-3"><div><strong>نشر مباشر للموظفين المختارين</strong><div class="small text-muted">العملية تنشئ أو تحدّث نمط الدوام النافذ للموظفين المحددين في هذه القائمة فقط، ويستمر حتى تغيير أحدث.</div></div><button class="btn btn-success" type="submit"><i class="bi bi-shield-fill-check"></i> اعتماد ونشر للموظفين المختارين</button></div>
     </form>
   </section>
   {% endif %}
-  <section class="ws-panel p-3 p-lg-4"><div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div><h4 class="fw-bold mb-1">جدول دوام جميع الموظفين</h4><div class="text-muted small">الأسبوع {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div><a class="btn btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all', print=1) }}"><i class="bi bi-printer"></i> طباعة الأسبوع</a></div><div class="row g-2 mb-3">{% for key,label,klass in [('DRAFT','غير منشورة','secondary'),('SUBMITTED','طلبات بانتظار المدير','warning'),('MANAGER_APPROVED','بانتظار المدير العام','info'),('GENERAL_DIRECTOR_APPROVED','بانتظار الأمين العام','primary'),('ADMIN_APPROVED','معتمدة إداريًا','success'),('FINAL_APPROVED','معتمدة نهائيًا','success')] %}<div class="col-6 col-lg-2"><div class="border rounded-3 p-2 text-center"><strong class="d-block text-{{ klass }}">{{ status_counts.get(key,0) }}</strong><small class="text-muted">{{ label }}</small></div></div>{% endfor %}</div><div class="mb-3"><input class="form-control" type="search" placeholder="ابحث في الموظفين..." data-person-search="#wsAllRoster"></div>{% if organization_week_rows %}<div class="ws-roster-wrap"><table class="table ws-roster-table"><thead><tr><th class="ws-roster-employee">الموظف</th>{% for day in organization_week_rows[0].days %}<th>{{ day.weekday }}<small class="d-block text-muted">{{ day.date.strftime('%d/%m/%Y') }}</small></th>{% endfor %}<th>الحالة</th></tr></thead><tbody id="wsAllRoster">{% for item in organization_week_rows %}{% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}<tr data-person-name="{{ (item.user.full_name ~ ' ' ~ (item.user.email or ''))|lower }}"><td class="ws-roster-employee"><div class="ws-person"><div class="ws-avatar">{{ item.user.full_name[:1] }}</div><div><div class="ws-person-name">{{ item.user.full_name }}</div><div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }}</div></div></div></td>{% for day in item.days %}{% set cell_meta = day_meta.get(day.day_type, day_meta.WORK) %}<td><div class="ws-cell" data-kind="{{ day.day_type }}"><span>{{ cell_meta.short }}</span><strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong><small>{{ day.schedule_name or '' }}</small></div></td>{% endfor %}<td><span class="badge text-bg-{{ item_meta.class }}">{{ item_meta.label if item.plan else 'دوام افتراضي' }}</span><a class="btn btn-sm btn-link d-block mx-auto" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}">فتح</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="text-muted">لا توجد ملفات موظفين للعرض.</div>{% endif %}</section>
+  <section class="ws-panel p-3 p-lg-4"><div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div><h4 class="fw-bold mb-1">جدول دوام جميع الموظفين</h4><div class="text-muted small">الفترة المعروضة {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div><a class="btn btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all', print=1) }}"><i class="bi bi-printer"></i> طباعة الفترة</a></div><div class="row g-2 mb-3">{% for key,label,klass in [('DRAFT','غير منشورة','secondary'),('SUBMITTED','طلبات بانتظار المدير','warning'),('MANAGER_APPROVED','بانتظار المدير العام','info'),('GENERAL_DIRECTOR_APPROVED','بانتظار الأمين العام','primary'),('ADMIN_APPROVED','معتمدة إداريًا','success'),('FINAL_APPROVED','معتمدة نهائيًا','success')] %}<div class="col-6 col-lg-2"><div class="border rounded-3 p-2 text-center"><strong class="d-block text-{{ klass }}">{{ status_counts.get(key,0) }}</strong><small class="text-muted">{{ label }}</small></div></div>{% endfor %}</div><div class="mb-3"><input class="form-control" type="search" placeholder="ابحث في الموظفين..." data-person-search="#wsAllRoster"></div>{% if organization_week_rows %}<div class="ws-roster-wrap"><table class="table ws-roster-table"><thead><tr><th class="ws-roster-employee">الموظف</th>{% for day in organization_week_rows[0].days %}<th>{{ day.weekday }}<small class="d-block text-muted">{{ day.date.strftime('%d/%m/%Y') }}</small></th>{% endfor %}<th>الحالة</th></tr></thead><tbody id="wsAllRoster">{% for item in organization_week_rows %}{% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}<tr data-person-name="{{ (item.user.full_name ~ ' ' ~ (item.user.email or ''))|lower }}"><td class="ws-roster-employee"><div class="ws-person"><div class="ws-avatar">{{ item.user.full_name[:1] }}</div><div><div class="ws-person-name">{{ item.user.full_name }}</div><div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }}</div></div></div></td>{% for day in item.days %}{% set cell_meta = day_meta.get(day.day_type, day_meta.WORK) %}<td><div class="ws-cell" data-kind="{{ day.day_type }}"><span>{{ cell_meta.short }}</span><strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong><small>{{ day.schedule_name or '' }}</small></div></td>{% endfor %}<td><span class="badge text-bg-{{ item_meta.class }}">{{ item_meta.label if item.plan else 'دوام افتراضي' }}</span><a class="btn btn-sm btn-link d-block mx-auto" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}">فتح</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="text-muted">لا توجد ملفات موظفين للعرض.</div>{% endif %}</section>
   {% endif %}
 </div>
 {% endblock %}

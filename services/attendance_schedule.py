@@ -35,6 +35,8 @@ ATTENDANCE_SCHEDULE_STATUSES = {
     "CANCELLED",
 }
 ATTENDANCE_SCHEDULE_DAY_TYPES = {"WORK", "REMOTE", "OFF"}
+# Each plan stores one seven-day pattern.  It repeats from the plan's
+# effective-from date until a later published plan replaces it.
 ATTENDANCE_SCHEDULE_PERIOD_DAYS = 7
 ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES = {"ADMIN_APPROVED", "FINAL_APPROVED"}
 _SUPER_ADMIN_ROLE_KEYS = {

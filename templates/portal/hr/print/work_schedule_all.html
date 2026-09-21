@@ -1,5 +1,5 @@
 {% extends "portal/hr/print/base.html" %}
-{% set print_title = "جدول الدوام الأسبوعي لجميع الموظفين" %}
+{% set print_title = "جدول الدوام لجميع الموظفين" %}
 {% set print_orientation = "landscape" %}
 {% block head %}
 <style>
@@ -15,7 +15,7 @@
 {% for week in organization_print_weeks %}
 <section class="print-page">
   <header class="report-header">
-    <div><h1>{{ print_title }}</h1><div class="report-subtitle">الأسبوع: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
+    <div><h1>{{ print_title }}</h1><div class="report-subtitle">الفترة المعروضة: {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
     <div class="report-count"><strong>{{ week.rows|length }}</strong><span>موظف</span></div>
   </header>
   <table class="schedule-table">

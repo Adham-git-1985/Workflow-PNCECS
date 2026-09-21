@@ -3317,11 +3317,13 @@ class EmployeeScheduleAssignment(db.Model):
 
 
 class HRAttendanceSchedulePlan(db.Model):
-    """A versioned weekly schedule or a weekly change request for one employee.
+    """A versioned recurring schedule or change request for one employee.
 
-    ``BASELINE`` rows are created and published by HR.  ``CHANGE_REQUEST``
-    rows are submitted by employees and remain non-effective until the
-    approval path reaches its final step.
+    ``period_start`` is the date from which the seven-day pattern becomes
+    effective.  The pattern remains in force until a later published plan
+    replaces it.  ``BASELINE`` rows are created and published by HR, while
+    ``CHANGE_REQUEST`` rows remain non-effective until the approval path
+    reaches its final step.
     """
 
     __tablename__ = "hr_attendance_schedule_plan"
@@ -3331,6 +3333,8 @@ class HRAttendanceSchedulePlan(db.Model):
     manager_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     general_director_user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     period_start = db.Column(db.String(10), nullable=False, index=True)
+    # Preserved for the stored seven-day template preview; it is not an
+    # expiration date for the recurring schedule.
     period_end = db.Column(db.String(10), nullable=False, index=True)
     version_no = db.Column(db.Integer, nullable=False, default=1)
     replaces_plan_id = db.Column(
@@ -3386,7 +3390,7 @@ class HRAttendanceSchedulePlan(db.Model):
 
 
 class HRAttendanceScheduleDay(db.Model):
-    """One day inside a versioned weekly attendance schedule."""
+    """One weekday template inside a versioned recurring attendance schedule."""
 
     __tablename__ = "hr_attendance_schedule_day"
 

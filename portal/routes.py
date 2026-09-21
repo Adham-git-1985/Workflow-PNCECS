@@ -114,7 +114,6 @@ from services.attendance_schedule import (
     attendance_schedule_cycle_days,
     attendance_schedule_final_approver_user_ids,
     attendance_schedule_needs_reminder,
-    normalize_attendance_schedule_cycle,
     notify_attendance_schedule_stakeholders,
 )
 from services.employee_achievements import (
@@ -14613,6 +14612,104 @@ def _attendance_schedule_latest_map(
     return result
 
 
+def _attendance_schedule_effective_plan(
+    user_id: int,
+    effective_day: str | date,
+    *,
+    final_only: bool = False,
+) -> HRAttendanceSchedulePlan | None:
+    """Return the last schedule that is in force on ``effective_day``.
+
+    A plan's ``period_start`` is its effective-from date.  Its seven rows are
+    a recurring weekday pattern, rather than a one-week-only assignment.
+    """
+    if isinstance(effective_day, date):
+        effective_day_text = effective_day.isoformat()
+    else:
+        parsed_day = _parse_yyyy_mm_dd(effective_day)
+        if not parsed_day:
+            return None
+        effective_day_text = parsed_day.isoformat()
+
+    cache = _attendance_schedule_request_cache("effective_plans")
+    cache_key = (int(user_id), effective_day_text, bool(final_only))
+    if cache_key in cache:
+        return cache[cache_key]
+
+    query = HRAttendanceSchedulePlan.query.filter(
+        HRAttendanceSchedulePlan.user_id == int(user_id),
+        HRAttendanceSchedulePlan.period_start <= effective_day_text,
+    )
+    if final_only:
+        query = query.filter(
+            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
+        )
+    plan = query.order_by(
+        HRAttendanceSchedulePlan.period_start.desc(),
+        HRAttendanceSchedulePlan.version_no.desc(),
+        HRAttendanceSchedulePlan.id.desc(),
+    ).first()
+    cache[cache_key] = plan
+    return plan
+
+
+def _attendance_schedule_effective_map(
+    users: list[User],
+    effective_day: str | date,
+    *,
+    final_only: bool = False,
+) -> dict[int, HRAttendanceSchedulePlan]:
+    """Return the effective plan per user for the selected date."""
+    user_ids = [int(user.id) for user in users]
+    if not user_ids:
+        return {}
+    if isinstance(effective_day, date):
+        effective_day_text = effective_day.isoformat()
+    else:
+        parsed_day = _parse_yyyy_mm_dd(effective_day)
+        if not parsed_day:
+            return {}
+        effective_day_text = parsed_day.isoformat()
+
+    query = HRAttendanceSchedulePlan.query.filter(
+        HRAttendanceSchedulePlan.user_id.in_(user_ids),
+        HRAttendanceSchedulePlan.period_start <= effective_day_text,
+    )
+    if final_only:
+        query = query.filter(
+            HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
+        )
+    rows = query.order_by(
+        HRAttendanceSchedulePlan.user_id.asc(),
+        HRAttendanceSchedulePlan.period_start.desc(),
+        HRAttendanceSchedulePlan.version_no.desc(),
+        HRAttendanceSchedulePlan.id.desc(),
+    ).all()
+    result = {}
+    for row in rows:
+        result.setdefault(int(row.user_id), row)
+    return result
+
+
+def _attendance_schedule_plan_day_for_date(
+    plan: HRAttendanceSchedulePlan | None,
+    work_day: date,
+) -> HRAttendanceScheduleDay | None:
+    """Resolve a recurring plan's template row for a concrete work date."""
+    if not plan or not work_day:
+        return None
+    exact_key = work_day.isoformat()
+    weekday = work_day.weekday()
+    weekday_row = None
+    for row in getattr(plan, "days", None) or []:
+        if row.work_date == exact_key:
+            return row
+        template_day = _parse_yyyy_mm_dd(row.work_date)
+        if template_day and template_day.weekday() == weekday and weekday_row is None:
+            weekday_row = row
+    return weekday_row
+
+
 def _attendance_schedule_template_times(
     schedule: WorkSchedule | None,
     work_day: date,
@@ -14698,6 +14795,11 @@ def _attendance_schedule_create_plan(
 ) -> HRAttendanceSchedulePlan:
     period_start_text = period_start.isoformat()
     latest = _attendance_schedule_latest_plan(user.id, period_start_text)
+    previous_effective_plan = _attendance_schedule_effective_plan(
+        user.id,
+        period_start,
+        final_only=True,
+    )
     next_version = int(latest.version_no or 0) + 1 if latest else 1
     managers = _attendance_schedule_responsible_managers(int(user.id))
     manager = managers[0] if managers else None
@@ -14709,7 +14811,11 @@ def _attendance_schedule_create_plan(
         period_start=period_start_text,
         period_end=(period_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS - 1)).isoformat(),
         version_no=next_version,
-        replaces_plan_id=latest.id if latest else None,
+        replaces_plan_id=(
+            latest.id if latest else (
+                previous_effective_plan.id if previous_effective_plan else None
+            )
+        ),
         status="DRAFT",
         request_type=(request_type or "BASELINE").strip().upper(),
         created_at=datetime.utcnow(),
@@ -14722,8 +14828,16 @@ def _attendance_schedule_create_plan(
         row.work_date: row
         for row in (getattr(source_plan, "days", None) or [])
     }
+    source_days_by_weekday = {}
+    for source_day in source_days.values():
+        source_day_date = _parse_yyyy_mm_dd(source_day.work_date)
+        if source_day_date:
+            source_days_by_weekday.setdefault(source_day_date.weekday(), source_day)
     for work_day in attendance_schedule_cycle_days(period_start):
-        source_day = source_days.get(work_day.isoformat())
+        source_day = (
+            source_days.get(work_day.isoformat())
+            or source_days_by_weekday.get(work_day.weekday())
+        )
         if source_day:
             values = {
                 "day_type": source_day.day_type,
@@ -14903,7 +15017,7 @@ def _attendance_schedule_super_admin_publish(
     general_director: User | None = None,
     now: datetime | None = None,
 ) -> HRAttendanceSchedulePlan:
-    """Apply the posted week and make it effective immediately for one employee.
+    """Apply the posted recurring pattern directly for one employee.
 
     A published plan is never edited in place.  An open employee change request
     is the exception: the super admin may edit and approve it directly, which
@@ -14932,7 +15046,7 @@ def _attendance_schedule_super_admin_publish(
     elif latest and latest_request_type != "CHANGE_REQUEST":
         plan = latest
     else:
-        published = _attendance_schedule_latest_plan(
+        published = _attendance_schedule_effective_plan(
             target_user.id,
             period_start_text,
             final_only=True,
@@ -14967,8 +15081,8 @@ def _attendance_schedule_view_days(
     period_start: date,
     plan: HRAttendanceSchedulePlan | None,
     work_days: list[date] | None = None,
+    effective_plan_by_date: dict[str, HRAttendanceSchedulePlan | None] | None = None,
 ) -> list[dict]:
-    day_rows = {row.work_date: row for row in plan.days} if plan else {}
     weekday_names = {
         6: "الأحد",
         0: "الإثنين",
@@ -14985,7 +15099,17 @@ def _attendance_schedule_view_days(
     cycle_indexes = {work_day: index for index, work_day in enumerate(cycle_days)}
     for work_day in selected_days:
         index = cycle_indexes.get(work_day, 0)
-        row = day_rows.get(work_day.isoformat())
+        effective_plan = plan
+        if effective_plan is None:
+            if effective_plan_by_date is not None:
+                effective_plan = effective_plan_by_date.get(work_day.isoformat())
+            else:
+                effective_plan = _attendance_schedule_effective_plan(
+                    user_id,
+                    work_day,
+                    final_only=True,
+                )
+        row = _attendance_schedule_plan_day_for_date(effective_plan, work_day)
         if row:
             schedule = row.schedule
             start_time = row.start_time
@@ -15025,7 +15149,7 @@ def _attendance_schedule_view_days(
 
 
 def _attendance_schedule_super_admin_entry_days(period_start: date) -> list[dict]:
-    """Build a neutral weekly template for direct super-admin batch publishing."""
+    """Build a neutral recurring pattern for direct super-admin publishing."""
     default_schedule = _attendance_schedule_default_schedule()
     weekly_mask = _weekly_mask()
     weekday_names = {
@@ -15072,15 +15196,30 @@ def _attendance_schedule_week_rows(
     status_plan_map: dict[int, HRAttendanceSchedulePlan] | None = None,
 ) -> tuple[list[date], list[dict]]:
     week_dates = attendance_schedule_cycle_days(period_start)
+    effective_plan_maps_by_date = {
+        work_day.isoformat(): _attendance_schedule_effective_map(
+            users,
+            work_day,
+            final_only=True,
+        )
+        for work_day in week_dates
+    }
     rows = []
     for user in users:
-        display_plan = plan_map.get(int(user.id))
         plan = (status_plan_map or plan_map).get(int(user.id))
+        # Resolve each displayed day from the plan in force on that day.  A
+        # later effective-dated change may begin in the middle of this view.
         days = _attendance_schedule_view_days(
             user.id,
             period_start,
-            display_plan,
+            None,
             work_days=week_dates,
+            effective_plan_by_date={
+                work_day.isoformat(): effective_plan_maps_by_date[
+                    work_day.isoformat()
+                ].get(int(user.id))
+                for work_day in week_dates
+            },
         )
         managers = _attendance_schedule_responsible_managers(int(user.id))
         manager = managers[0] if managers else (plan.manager if plan else None)
@@ -15098,7 +15237,10 @@ def _attendance_schedule_week_rows(
 @login_required
 @_perm(PORTAL_READ)
 def hr_work_schedule():
-    period_start = normalize_attendance_schedule_cycle(request.args.get("start"))
+    # The selected date is the effective-from date for an entered or requested
+    # change.  The seven visible rows are a recurring weekday pattern, not a
+    # one-week expiry window.
+    period_start = _parse_yyyy_mm_dd(request.args.get("start")) or _attendance_schedule_today()
     period_start_text = period_start.isoformat()
     period_end = period_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS - 1)
     organization_week_no = 1
@@ -15171,7 +15313,7 @@ def hr_work_schedule():
         editor_mode = "VIEW_ONLY"
 
     plan = _attendance_schedule_latest_plan(target_user.id, period_start_text)
-    published_plan = _attendance_schedule_latest_plan(
+    published_plan = _attendance_schedule_effective_plan(
         target_user.id,
         period_start_text,
         final_only=True,
@@ -15184,7 +15326,7 @@ def hr_work_schedule():
         .order_by(WorkSchedule.name.asc(), WorkSchedule.id.asc())
         .all()
     )
-    report_plan_map = _attendance_schedule_latest_map(reports, period_start_text)
+    report_plan_map = _attendance_schedule_effective_map(reports, period_start_text)
     report_cards = [
         {
             "user": user,
@@ -15193,9 +15335,9 @@ def hr_work_schedule():
         }
         for user in reports
     ]
-    all_plan_map = _attendance_schedule_latest_map(all_users, period_start_text) if can_view_all else {}
+    all_plan_map = _attendance_schedule_effective_map(all_users, period_start_text) if can_view_all else {}
     all_published_plan_map = (
-        _attendance_schedule_latest_map(
+        _attendance_schedule_effective_map(
             all_users,
             period_start_text,
             final_only=True,
@@ -15271,8 +15413,11 @@ def hr_work_schedule():
     )
     active_plan_for_view = (
         plan
-        if editor_mode == "EMPLOYEE" and employee_change_request_is_open
-        else (published_plan if editor_mode == "EMPLOYEE" else plan)
+        if plan and (
+            editor_mode != "EMPLOYEE"
+            or employee_change_request_is_open
+        )
+        else published_plan
     )
     can_edit_days = bool(
         is_super_admin
@@ -15343,12 +15488,16 @@ def hr_work_schedule():
 
 
 def _attendance_schedule_posted_past_day_dates(period_start: date) -> list[date]:
-    """Return past schedule dates whose day fields were submitted in this request."""
+    """Return a past effective-from date when the request edits its pattern.
+
+    The seven posted rows are recurring weekday templates.  Their labels can
+    include dates before today even when the requested effective-from date is
+    in the future, so only that effective date controls the past-date lock.
+    """
     today = _attendance_schedule_today()
-    submitted_dates = []
+    if period_start >= today:
+        return []
     for work_day in attendance_schedule_cycle_days(period_start):
-        if work_day >= today:
-            continue
         field_key = work_day.strftime("%Y_%m_%d")
         if any(
             f"{field_name}_{field_key}" in request.form
@@ -15360,13 +15509,13 @@ def _attendance_schedule_posted_past_day_dates(period_start: date) -> list[date]
                 "note",
             )
         ):
-            submitted_dates.append(work_day)
-    return submitted_dates
+            return [period_start]
+    return []
 
 
 def _attendance_schedule_update_weekly_workflow():
-    """Apply the weekly HR-owned schedule/change-request workflow."""
-    period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
+    """Apply the HR-owned recurring schedule/change-request workflow."""
+    period_start = _parse_yyyy_mm_dd(request.form.get("period_start")) or _attendance_schedule_today()
     period_start_text = period_start.isoformat()
     target_user_id = (request.form.get("target_user_id") or "").strip()
     if not target_user_id.isdigit():
@@ -15492,7 +15641,7 @@ def _attendance_schedule_update_weekly_workflow():
             if latest_is_change_request and latest.status == "DRAFT":
                 plan = latest
             else:
-                published = _attendance_schedule_latest_plan(
+                published = _attendance_schedule_effective_plan(
                     target_user.id,
                     period_start_text,
                     final_only=True,
@@ -15598,7 +15747,7 @@ def _attendance_schedule_update_weekly_workflow():
             elif latest and latest_request_type != "CHANGE_REQUEST":
                 plan = latest
             else:
-                published = _attendance_schedule_latest_plan(
+                published = _attendance_schedule_effective_plan(
                     target_user.id,
                     period_start_text,
                     final_only=True,
@@ -15835,11 +15984,11 @@ def hr_work_schedule_update():
 @login_required
 @_perm(PORTAL_READ)
 def hr_work_schedule_super_admin_publish_batch():
-    """Publish one posted week directly for exactly the employees selected by a super admin."""
+    """Publish one recurring pattern directly for the selected employees."""
     if not _attendance_schedule_is_super_admin():
         abort(403)
 
-    period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
+    period_start = _parse_yyyy_mm_dd(request.form.get("period_start")) or _attendance_schedule_today()
     period_start_text = period_start.isoformat()
     raw_user_ids = request.form.getlist("target_user_ids")
     selected_user_ids = []
@@ -15941,7 +16090,7 @@ def hr_work_schedule_super_admin_publish_batch():
 @_perm(PORTAL_READ)
 def hr_work_schedule_remind():
     target_user_id = (request.form.get("target_user_id") or "").strip()
-    period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
+    period_start = _parse_yyyy_mm_dd(request.form.get("period_start")) or _attendance_schedule_today()
     if not target_user_id.isdigit():
         abort(400)
     target_user = db.session.get(User, int(target_user_id)) or abort(404)
@@ -15982,7 +16131,7 @@ def hr_work_schedule_final_approve_all():
     if not _attendance_schedule_is_final_approver():
         abort(403)
     is_super_admin = _attendance_schedule_is_super_admin()
-    period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
+    period_start = _parse_yyyy_mm_dd(request.form.get("period_start")) or _attendance_schedule_today()
     period_start_text = period_start.isoformat()
     employees = _attendance_schedule_employee_users()
     latest_map = _attendance_schedule_latest_map(employees, period_start_text)
@@ -26614,32 +26763,25 @@ def _approved_attendance_schedule_day(
 ) -> HRAttendanceScheduleDay | None:
     normalized_user_id = int(user_id)
     cache = _attendance_schedule_request_cache("approved_days_by_user")
-    if normalized_user_id in cache:
-        return cache[normalized_user_id].get(day_str)
+    day_map = cache.setdefault(normalized_user_id, {})
+    if day_str in day_map:
+        return day_map[day_str]
+
+    work_day = _parse_yyyy_mm_dd(day_str)
+    if not work_day:
+        day_map[day_str] = None
+        return None
     try:
-        rows = (
-            HRAttendanceScheduleDay.query
-            .join(
-                HRAttendanceSchedulePlan,
-                HRAttendanceSchedulePlan.id == HRAttendanceScheduleDay.plan_id,
-            )
-            .filter(HRAttendanceSchedulePlan.user_id == normalized_user_id)
-            .filter(
-                HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
-            )
-            .order_by(
-                HRAttendanceSchedulePlan.version_no.desc(),
-                HRAttendanceSchedulePlan.id.desc(),
-            )
-            .all()
+        plan = _attendance_schedule_effective_plan(
+            normalized_user_id,
+            work_day,
+            final_only=True,
         )
+        row = _attendance_schedule_plan_day_for_date(plan, work_day)
     except Exception:
-        rows = []
-    day_map = {}
-    for row in rows:
-        day_map.setdefault(row.work_date, row)
-    cache[normalized_user_id] = day_map
-    return day_map.get(day_str)
+        row = None
+    day_map[day_str] = row
+    return row
 
 
 def _attendance_schedule_proxy(day_row: HRAttendanceScheduleDay):
