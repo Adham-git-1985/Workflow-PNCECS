@@ -17906,10 +17906,11 @@ def hr_my_balances_deductions():
         if _leave_type_redirects_balance(leave_type):
             continue
         deducts = _leave_type_deducts_from_balance(leave_type)
-        base_total = float(_leave_base_entitlement_days(user_id, leave_type, year)) if deducts else None
-        adjustments_total = float(_leave_balance_adjustment_days(user_id, leave_type.id, year)) if deducts else None
-        total = (base_total + adjustments_total) if deducts else None
-        used = float(_leave_used_days(user_id, leave_type.id, year)) if deducts else None
+        values = _leave_balance_display_values(user_id, leave_type, year) if deducts else None
+        base_total = float(values['base_total']) if values else None
+        adjustments_total = float(values['adjustments_total']) if values else None
+        total = float(values['total']) if values else None
+        used = float(values['used']) if values else None
         deduction_used = 0.0
         if deducts:
             deduction_used = float(
@@ -19317,8 +19318,9 @@ def _leave_request_form_payload(row: HRLeaveRequest) -> dict:
     entitlement = used = remaining = "-"
     if leave_type and _leave_type_deducts_from_balance(leave_type):
         balance_type = _leave_balance_source_type(leave_type)
-        total = _leave_entitlement_days(row.user_id, balance_type, year)
-        used_value = _leave_used_days(row.user_id, balance_type.id, year)
+        values = _leave_balance_display_values(row.user_id, balance_type, year)
+        total = float(values['total'])
+        used_value = float(values['used'])
         entitlement = f"{total:g} يوم"
         used = f"{used_value:g} يوم"
         remaining = f"{max(0, total - used_value):g} يوم"
@@ -28838,7 +28840,30 @@ def _leave_balance_usage_by_year(
         for run_year, run_month, days in deduction_rows:
             if int(run_year) == as_of.year and int(run_month) > as_of.month:
                 continue
-            used_by_year[int(run_year)] = used_by_year.get(int(run_year), 0.0) + float(days or 0.0)
+            run_year = int(run_year)
+            remaining_to_allocate = float(days or 0.0)
+            funding_years = [run_year]
+            if (
+                _is_annual_balance_type(balance_type)
+                and _annual_bucket_allocation(user_id, balance_type.id, run_year)
+            ):
+                # Annual deductions in a prepared year use the older live
+                # bucket first, exactly like approved annual leave requests.
+                funding_years.insert(0, run_year - 1)
+
+            for index, allocation_year in enumerate(funding_years):
+                year_entitlement = float(
+                    _leave_entitlement_days(user_id, balance_type, allocation_year) or 0.0
+                )
+                year_used = float(used_by_year.get(allocation_year, 0.0))
+                year_available = max(0.0, year_entitlement - year_used)
+                if index == len(funding_years) - 1:
+                    used_by_year[allocation_year] = year_used + remaining_to_allocate
+                    break
+                funded_days = min(remaining_to_allocate, year_available)
+                if funded_days > 0:
+                    used_by_year[allocation_year] = year_used + funded_days
+                    remaining_to_allocate -= funded_days
 
         requests = (
             HRLeaveRequest.query
@@ -28893,25 +28918,34 @@ def _leave_balance_usage_by_year(
             if requested_days <= 0:
                 continue
 
-            # A request contained within one year remains charged to that year
-            # even where it eventually exceeds the available balance.
-            if effective_end.year == start.year:
-                used_by_year[start.year] = used_by_year.get(start.year, 0.0) + requested_days
-                continue
+            # A prepared annual balance has two live buckets: the excess is
+            # held in the preceding year and must be consumed first.  This
+            # keeps a split such as 2026=30 and 2025=18 equal to one usable
+            # 48-day balance while the employee takes annual leave in 2026.
+            # Other leave types retain the normal start-year-first policy.
+            funding_years = [start.year]
+            if (
+                _is_annual_balance_type(balance_type)
+                and _annual_bucket_allocation(user_id, balance_type.id, start.year)
+            ):
+                funding_years.insert(0, start.year - 1)
 
-            # For a cross-year request, consume what is available from the
-            # start year.  Each intermediate year is exhausted in turn; the
-            # final year receives any unavoidable overage.
+            # For a cross-year request, consume any later balance years only
+            # after the start year's active annual buckets are exhausted.
+            funding_years.extend(range(start.year + 1, effective_end.year + 1))
+
             remaining_to_allocate = requested_days
-            allocation_year = start.year
-            while remaining_to_allocate > 0.0001:
+            for index, allocation_year in enumerate(funding_years):
                 year_entitlement = float(
                     _leave_entitlement_days(user_id, balance_type, allocation_year) or 0.0
                 )
                 year_used = float(used_by_year.get(allocation_year, 0.0))
                 year_available = max(0.0, year_entitlement - year_used)
 
-                if allocation_year >= effective_end.year:
+                # Keep the historic behaviour for an unfunded remainder: it
+                # is still charged to the final funding year, so reports show
+                # the overage instead of silently losing the request days.
+                if index == len(funding_years) - 1:
                     used_by_year[allocation_year] = year_used + remaining_to_allocate
                     break
 
@@ -28919,7 +28953,6 @@ def _leave_balance_usage_by_year(
                 if funded_days > 0:
                     used_by_year[allocation_year] = year_used + funded_days
                     remaining_to_allocate -= funded_days
-                allocation_year += 1
 
         return {key: float(value) for key, value in used_by_year.items()}
     except Exception:
@@ -28937,6 +28970,31 @@ def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: d
             return 0.0
         if as_of.year > year:
             as_of = date(year, 12, 31)
+        return float(_leave_balance_usage_by_year(user_id, balance_type, as_of).get(year, 0.0))
+    except Exception:
+        return 0.0
+
+
+def _leave_used_days_through(
+    user_id: int,
+    leave_type_id: int,
+    year: int,
+    as_of: date,
+) -> float:
+    """Return usage charged to a balance year through a later cutoff.
+
+    A prior annual bucket can fund leave taken in the following calendar
+    year.  The regular historical helper deliberately stops at that balance
+    year's 31 December; this helper is used only where both annual buckets
+    are being viewed or closed together.
+    """
+    try:
+        leave_type = HRLeaveType.query.get(int(leave_type_id))
+        if not leave_type or not _leave_type_deducts_from_balance(leave_type):
+            return 0.0
+        balance_type = _leave_balance_source_type(leave_type)
+        if not balance_type or as_of.year < year:
+            return 0.0
         return float(_leave_balance_usage_by_year(user_id, balance_type, as_of).get(year, 0.0))
     except Exception:
         return 0.0
@@ -29429,13 +29487,18 @@ def _annual_bucket_rows(user_id: int, year: int, leave_types: list[HRLeaveType])
     """Expose the two active annual buckets: selected year and prior year."""
     rows = []
     limit = _annual_current_year_limit()
+    closing_day = date(year, 12, 31)
     for balance_type in _annual_balance_types(leave_types):
         current_total = float(_leave_entitlement_days(user_id, balance_type, year) or 0.0)
-        current_used = float(_leave_used_days(user_id, balance_type.id, year) or 0.0)
+        current_used = float(
+            _leave_used_days_through(user_id, balance_type.id, year, closing_day) or 0.0
+        )
         current_remaining = max(0.0, current_total - current_used)
         previous_year = year - 1
         previous_total = float(_leave_entitlement_days(user_id, balance_type, previous_year) or 0.0)
-        previous_used = float(_leave_used_days(user_id, balance_type.id, previous_year) or 0.0)
+        previous_used = float(
+            _leave_used_days_through(user_id, balance_type.id, previous_year, closing_day) or 0.0
+        )
         previous_remaining = max(0.0, previous_total - previous_used)
         allocation = _annual_bucket_allocation(user_id, balance_type.id, year)
         rows.append({
@@ -29454,6 +29517,71 @@ def _annual_bucket_rows(user_id: int, year: int, leave_types: list[HRLeaveType])
             "prepared": allocation is not None,
         })
     return rows
+
+
+def _leave_balance_display_values(
+    user_id: int,
+    leave_type: HRLeaveType,
+    year: int,
+) -> dict[str, float | bool]:
+    """Return employee-facing annual balance values for a selected year.
+
+    Once an annual balance has been prepared, its current and previous-year
+    buckets are one usable balance.  The detail view still exposes the two
+    buckets, but every summary must show their combined total and consumption
+    so an employee sees 48, then 43 after five days of annual leave.
+    """
+    balance_type = _leave_balance_source_type(leave_type)
+    if not balance_type or not _leave_type_deducts_from_balance(balance_type):
+        return {
+            "base_total": 0.0,
+            "adjustments_total": 0.0,
+            "total": 0.0,
+            "used": 0.0,
+            "remaining": 0.0,
+            "prepared": False,
+        }
+
+    base_total = float(_leave_base_entitlement_days(user_id, balance_type, year) or 0.0)
+    adjustments_total = float(
+        _leave_balance_adjustment_days(user_id, balance_type.id, year) or 0.0
+    )
+    total = base_total + adjustments_total
+    used = float(_leave_used_days(user_id, balance_type.id, year) or 0.0)
+    prepared = bool(
+        _is_annual_balance_type(balance_type)
+        and _annual_bucket_allocation(user_id, balance_type.id, year)
+    )
+    if prepared:
+        previous_year = year - 1
+        closing_day = date(year, 12, 31)
+        current_total = float(_leave_entitlement_days(user_id, balance_type, year) or 0.0)
+        previous_total = float(
+            _leave_entitlement_days(user_id, balance_type, previous_year) or 0.0
+        )
+        current_used = float(
+            _leave_used_days_through(user_id, balance_type.id, year, closing_day) or 0.0
+        )
+        previous_used = float(
+            _leave_used_days_through(
+                user_id, balance_type.id, previous_year, closing_day
+            ) or 0.0
+        )
+        total = current_total + previous_total
+        used = current_used + previous_used
+        # The editable opening amount remains this year's base; represent the
+        # live prior-year bucket in the display correction so actual balance
+        # continues to show the combined amount.
+        adjustments_total = total - base_total
+
+    return {
+        "base_total": base_total,
+        "adjustments_total": adjustments_total,
+        "total": total,
+        "used": used,
+        "remaining": total - used,
+        "prepared": prepared,
+    }
 
 
 def _prepare_annual_balance_buckets(
@@ -29480,15 +29608,22 @@ def _prepare_annual_balance_buckets(
         current_total = float(_leave_entitlement_days(user_id, balance_type, year) or 0.0)
         current_used = float(_leave_used_days(user_id, balance_type.id, year) or 0.0)
         final_remaining = max(0.0, current_total - current_used)
-        current_remaining = min(final_remaining, limit)
+
+        # Move the entitlement itself into the two buckets, not merely the
+        # balance left at the instant HR presses the split button.  Recomputed
+        # annual usage then consumes the preceding-year bucket first, so the
+        # combined balance stays exact even when leave was already approved.
+        current_bucket_total = min(current_total, limit)
+        previous_bucket_total = max(0.0, current_total - current_bucket_total)
+        current_remaining = min(final_remaining, current_bucket_total)
         previous_remaining = max(0.0, final_remaining - current_remaining)
 
-        desired_current_total = current_used + current_remaining
+        desired_current_total = current_bucket_total
         current_delta = desired_current_total - current_total
 
         previous_total = float(_leave_entitlement_days(user_id, balance_type, previous_year) or 0.0)
         previous_used = float(_leave_used_days(user_id, balance_type.id, previous_year) or 0.0)
-        desired_previous_total = previous_used + previous_remaining
+        desired_previous_total = previous_used + previous_bucket_total
         previous_delta = desired_previous_total - previous_total
 
         detail = (
@@ -29690,7 +29825,12 @@ def _activate_due_leave_rollover_decisions(
             _leave_entitlement_days(decision.user_id, leave_type, decision.source_year) or 0.0
         )
         source_used = float(
-            _leave_used_days(decision.user_id, leave_type.id, decision.source_year) or 0.0
+            _leave_used_days_through(
+                decision.user_id,
+                leave_type.id,
+                decision.source_year,
+                date(decision.target_year - 1, 12, 31),
+            ) or 0.0
         )
         source_remaining = max(0.0, source_total - source_used)
         requested_transfer = (
@@ -29926,101 +30066,111 @@ def _leave_rollover_rows(
     *,
     as_of: date | None = None,
 ) -> list[dict]:
-    """Return a current or pre-recorded decision for the expiring old bucket.
+    """Return the two annual buckets that are resolved in ``target_year``.
 
-    A decision may be recorded before ``target_year``.  It does not change the
-    balance until 1 January of that year, when the activation helper writes the
-    actual balance movements.  Closing a year keeps the configured portion in
-    that year and places any excess in its preceding-year bucket.  Therefore,
-    the decision effective in 2027 concerns the 2025 bucket, while the 2026
-    bucket remains the employee's right through the end of 2027.
+    For example, the 2027 screen presents the 2026 bucket for transfer (up to
+    the 30-day annual cap) and the 2025 bucket for deletion.  The older bucket
+    cannot be transferred.  This is deliberately two separate ledger
+    decisions so activation can add only the permitted 2026 amount to 2027.
     """
     rows = []
-    source_year = target_year - 2
-    retained_year = source_year + 1
+    closing_day = date(target_year - 1, 12, 31)
     display_day = as_of or date.today()
+    current_year = target_year - 1
+    expired_year = target_year - 2
+    annual_limit = _annual_current_year_limit()
     for balance_type in _annual_balance_types(leave_types):
-        retained_total = float(
-            _leave_entitlement_days(user_id, balance_type, retained_year) or 0.0
-        )
-        retained_used = float(
-            _leave_used_days(user_id, balance_type.id, retained_year) or 0.0
-        )
-        retained_remaining = max(0.0, retained_total - retained_used)
-        total = float(_leave_entitlement_days(user_id, balance_type, source_year) or 0.0)
-        used = float(_leave_used_days(user_id, balance_type.id, source_year) or 0.0)
-        remaining = max(0.0, total - used)
-        record = _leave_rollover_decision_record(
-            user_id, balance_type.id, source_year, target_year
-        )
-        legacy = None if record else _legacy_leave_rollover_adjustment(
-            user_id, balance_type.id, source_year, target_year
-        )
-        is_active = bool(record and record.applied_at) or bool(legacy)
-        is_planned = bool(record and not record.applied_at)
-        decision_code = None
-        transfer_days = 0.0
-        applied_transfer_days = None
-        applied_source_days = None
-        note = None
-        updated_at = None
+        for source_year, required_decision, row_kind in (
+            (current_year, LEAVE_ROLLOVER_DECISION_TRANSFER, "TRANSFER_CURRENT"),
+            (expired_year, LEAVE_ROLLOVER_DECISION_DELETE, "DELETE_EXPIRED"),
+        ):
+            total = float(
+                _leave_entitlement_days(user_id, balance_type, source_year) or 0.0
+            )
+            used = float(
+                _leave_used_days_through(
+                    user_id, balance_type.id, source_year, closing_day
+                ) or 0.0
+            )
+            remaining = max(0.0, total - used)
+            record = _leave_rollover_decision_record(
+                user_id, balance_type.id, source_year, target_year
+            )
+            legacy = None if record else _legacy_leave_rollover_adjustment(
+                user_id, balance_type.id, source_year, target_year
+            )
+            is_active = bool(record and record.applied_at) or bool(legacy)
+            is_planned = bool(record and not record.applied_at)
+            decision_code = None
+            transfer_days = 0.0
+            applied_transfer_days = None
+            applied_source_days = None
+            note = None
+            updated_at = None
 
-        if record:
-            decision_code = record.decision
-            transfer_days = max(0.0, float(record.transfer_days or 0.0))
-            note = record.note
-            updated_at = record.updated_at
-            if record.applied_at:
-                applied_source_days = max(0.0, float(record.applied_source_days or 0.0))
-                applied_transfer_days = max(0.0, float(record.applied_transfer_days or 0.0))
-        elif legacy:
-            legacy_values = _legacy_leave_rollover_values(legacy, remaining)
-            decision_code = legacy_values["decision"]
-            transfer_days = legacy_values["transfer_days"]
-            applied_transfer_days = legacy_values["transfer_days"]
-            applied_source_days = legacy_values["source_days"]
-            updated_at = legacy.created_at
+            if record:
+                decision_code = record.decision
+                transfer_days = max(0.0, float(record.transfer_days or 0.0))
+                note = record.note
+                updated_at = record.updated_at
+                if record.applied_at:
+                    applied_source_days = max(0.0, float(record.applied_source_days or 0.0))
+                    applied_transfer_days = max(0.0, float(record.applied_transfer_days or 0.0))
+            elif legacy:
+                legacy_values = _legacy_leave_rollover_values(legacy, remaining)
+                decision_code = legacy_values["decision"]
+                transfer_days = legacy_values["transfer_days"]
+                applied_transfer_days = legacy_values["transfer_days"]
+                applied_source_days = legacy_values["source_days"]
+                updated_at = legacy.created_at
 
-        if is_active:
-            # The source adjustment has already removed this historic bucket.
-            # Restore its closing snapshot for display only.
-            source_snapshot = max(0.0, float(applied_source_days or 0.0))
-            total = used + source_snapshot
-            remaining = source_snapshot
+            if is_active:
+                # The source adjustment has already removed this bucket.
+                # Restore its closing snapshot for display only.
+                source_snapshot = max(0.0, float(applied_source_days or 0.0))
+                total = used + source_snapshot
+                remaining = source_snapshot
 
-        rows.append({
-            "leave_type": balance_type,
-            # Show the retained bucket beside the expiring bucket.  For the
-            # 2027 decision this makes the 2026 balance visible next to the
-            # 2025 balance that is being decided.
-            "retained_year": retained_year,
-            "retained_total": retained_total,
-            "retained_used": retained_used,
-            "retained_remaining": retained_remaining,
-            "source_year": source_year,
-            "target_year": target_year,
-            "total": total,
-            "used": used,
-            "remaining": remaining,
-            "decision": decision_code,
-            "transfer_days": transfer_days,
-            "applied_transfer_days": applied_transfer_days,
-            "deleted_days": (
-                max(0.0, remaining - float(applied_transfer_days or 0.0))
-                if is_active else None
-            ),
-            "is_planned": is_planned,
-            "is_active": is_active,
-            "is_due": _leave_rollover_is_due(target_year, display_day),
-            "effective_on": _leave_rollover_effective_day(target_year),
-            "transfer_max": applied_source_days if is_active else None,
-            "note": note,
-            "updated_at": updated_at,
-            # Decisions can always be saved or changed; a post-effective edit
-            # produces a correction instead of rewriting prior movements.
-            "can_edit": True,
-            "can_decide": True,
-        })
+            transfer_cap = (
+                max(0.0, float(applied_source_days or 0.0))
+                if is_active
+                else min(remaining, annual_limit)
+            )
+            suggested_transfer_days = (
+                min(transfer_cap, max(0.0, float(transfer_days or 0.0)))
+                if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER
+                else transfer_cap
+            )
+
+            rows.append({
+                "leave_type": balance_type,
+                "row_kind": row_kind,
+                "source_year": source_year,
+                "target_year": target_year,
+                "total": total,
+                "used": used,
+                "remaining": remaining,
+                "decision": decision_code,
+                "required_decision": required_decision,
+                "transfer_days": transfer_days,
+                "suggested_transfer_days": suggested_transfer_days,
+                "applied_transfer_days": applied_transfer_days,
+                "deleted_days": (
+                    max(0.0, remaining - float(applied_transfer_days or 0.0))
+                    if is_active else None
+                ),
+                "is_planned": is_planned,
+                "is_active": is_active,
+                "is_due": _leave_rollover_is_due(target_year, display_day),
+                "effective_on": _leave_rollover_effective_day(target_year),
+                "transfer_max": transfer_cap,
+                "note": note,
+                "updated_at": updated_at,
+                # These policy-controlled rows cannot be switched from one
+                # action to the other by a posted form value.
+                "can_edit": True,
+                "can_decide": True,
+            })
     return rows
 
 
@@ -30134,33 +30284,37 @@ def hr_leave_balances():
             planned_count = 0
             active_count = 0
             correction_total = 0.0
-            processed_type_ids = set()
-            for leave_type in leave_types:
-                if not _is_annual_balance_type(leave_type):
-                    continue
-                balance_type = _leave_balance_source_type(leave_type)
-                if not balance_type or balance_type.id in processed_type_ids:
-                    continue
-                processed_type_ids.add(balance_type.id)
-
-                # The selected screen year is the year in which this decision
-                # becomes effective.  It concerns the preceding-year annual
-                # bucket (for example, 2025 when the target year is 2027).
-                # HR may plan it before 1 January without moving a balance.
-                source_year = year - 2
+            rollover_rows = _leave_rollover_rows(
+                selected_user.id,
+                year,
+                leave_types,
+                as_of=date(year - 1, 12, 31),
+            )
+            for rollover in rollover_rows:
+                balance_type = rollover['leave_type']
+                source_year = rollover['source_year']
+                required_decision = rollover['required_decision']
                 choice = (request.form.get(
                     f'rollover_{source_year}_{balance_type.id}'
                 ) or '').upper()
                 if choice == 'KEEP':  # compatibility with the earlier UI
                     choice = LEAVE_ROLLOVER_DECISION_DELETE
                 if not choice:
-                    continue
-                if choice not in {
-                    LEAVE_ROLLOVER_DECISION_TRANSFER,
-                    LEAVE_ROLLOVER_DECISION_DELETE,
-                }:
+                    choice = required_decision
+                if choice != required_decision:
                     db.session.rollback()
-                    flash('اختر حذف الرصيد أو ترحيل عدد محدد من الأيام.', 'danger')
+                    if required_decision == LEAVE_ROLLOVER_DECISION_TRANSFER:
+                        flash(
+                            f'لا يمكن في {year} إلا ترحيل رصيد {source_year} '
+                            f'بحد أقصى {_annual_current_year_limit():g} يومًا.',
+                            'danger',
+                        )
+                    else:
+                        flash(
+                            f'رصيد {source_year} منتهي المدة حصرًا '
+                            f'ويُحذف في {year}؛ لا يُرحّل.',
+                            'danger',
+                        )
                     return redirect(url_for(
                         'portal.hr_leave_balances',
                         user_id=selected_user.id,
@@ -30172,10 +30326,29 @@ def hr_leave_balances():
                     transfer_raw = (request.form.get(
                         f'rollover_transfer_days_{source_year}_{balance_type.id}'
                     ) or '').strip().replace(',', '.')
-                    try:
-                        transfer_days = round(float(transfer_raw), 4)
-                    except (TypeError, ValueError):
-                        transfer_days = -1.0
+                    if transfer_raw:
+                        try:
+                            transfer_days = round(float(transfer_raw), 4)
+                        except (TypeError, ValueError):
+                            transfer_days = -1.0
+                    else:
+                        transfer_days = float(rollover['suggested_transfer_days'] or 0.0)
+                    if transfer_days > float(rollover['transfer_max'] or 0.0) + 0.0001:
+                        db.session.rollback()
+                        flash(
+                            f'الحد المسموح بترحيله من رصيد {source_year} '
+                            f'هو {float(rollover["transfer_max"] or 0.0):g} يومًا.',
+                            'danger',
+                        )
+                        return redirect(url_for(
+                            'portal.hr_leave_balances',
+                            user_id=selected_user.id,
+                            year=year,
+                        ) + '#leave-rollover')
+                    if transfer_days <= 0.0001:
+                        # There is no current-year bucket left to transfer.
+                        # Avoid recording an invalid zero-day transfer.
+                        continue
                 note = (request.form.get(
                     f'rollover_reason_{source_year}_{balance_type.id}'
                 ) or '').strip()
@@ -30350,10 +30523,14 @@ def hr_leave_balances():
             if _leave_type_redirects_balance(lt):
                 continue
             deducts_from_balance = _leave_type_deducts_from_balance(lt)
-            base_total = _leave_base_entitlement_days(selected_user.id, lt, year) if deducts_from_balance else None
-            adjustments_total = _leave_balance_adjustment_days(selected_user.id, lt.id, year) if deducts_from_balance else None
-            total = (base_total + adjustments_total) if deducts_from_balance else None
-            used = _leave_used_days(selected_user.id, lt.id, year) if deducts_from_balance else None
+            values = (
+                _leave_balance_display_values(selected_user.id, lt, year)
+                if deducts_from_balance else None
+            )
+            base_total = values['base_total'] if values else None
+            adjustments_total = values['adjustments_total'] if values else None
+            total = values['total'] if values else None
+            used = values['used'] if values else None
             rem = (total - used) if deducts_from_balance else None
             rows.append({
                 'lt': lt,
@@ -42186,10 +42363,11 @@ def hr_report_leave_employee_balances():
                 # requests but have no annual balance to report.
                 if not _leave_type_owns_balance(lt):
                     continue
-                total = float(_leave_entitlement_days(uid, lt, year) or 0.0)
+                values = _leave_balance_display_values(uid, lt, year)
+                total = float(values['total'])
                 # Available balance reserves every finally approved request,
                 # including leave whose start date is still in the future.
-                used = float(_leave_used_days(uid, lt.id, year) or 0.0)
+                used = float(values['used'])
                 if total == 0 and used == 0:
                     continue
                 remaining = float(total) - float(used)

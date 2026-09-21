@@ -202,7 +202,7 @@
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
     <div>
       <h5 class="mb-1"><i class="bi bi-arrow-left-right"></i> قرار الرصيد السنوي المنتهي</h5>
-      <p class="text-muted small mb-0">هذه قرارات تصبح نافذة في عام {{ year }} بشأن الرصيد المتبقي من {{ year - 2 }}. يمكن حفظ القرار مسبقًا في أي وقت؛ لا يتغير الرصيد فعليًا قبل 1/1/{{ year }}. بعد سريان القرار يمكن تعديله، ويُسجل النظام حركة تصحيح موثقة بدلًا من حذف الأثر السابق. يبقى رصيد {{ year - 1 }} حقًا للموظف حتى نهاية {{ year }}.</p>
+      <p class="text-muted small mb-0">في {{ year }} يُرحّل فقط المتبقي من رصيد {{ year - 1 }} وبحد أقصى {{ annual_current_year_limit|int }} يومًا، بينما يُحذف المتبقي من رصيد {{ year - 2 }} لأنه الأقدم. لا يمكن ترحيل رصيد السنة الأقدم، ولا يتغير الرصيد فعليًا قبل 1/1/{{ year }}.</p>
     </div>
     <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year + 1) }}#leave-rollover"><i class="bi bi-calendar-plus"></i> إعداد قرار مسبق لسنة {{ year + 1 }}</a>
   </div>
@@ -213,14 +213,7 @@
     <input type="hidden" name="year" value="{{ year }}">
     <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>سنة الرصيد</th><th>نوع الإجازة</th><th>المتبقي عند الإقفال</th><th>حالة القرار</th><th>القرار</th></tr></thead><tbody>
       {% for rollover in rollover_rows %}
-      <tr class="table-light">
-        <td>{{ rollover.retained_year }}</td>
-        <td>{{ rollover.leave_type.name_ar }}</td>
-        <td>{{ '%.2f'|format(rollover.retained_remaining) }} يوم</td>
-        <td><span class="badge text-bg-secondary">رصيد قائم</span></td>
-        <td><span class="text-muted small">يبقى للموظف ولا يُتخذ بشأنه قرار في {{ year }}.</span></td>
-      </tr>
-      <tr>
+      <tr class="{% if rollover.row_kind == 'TRANSFER_CURRENT' %}table-light{% endif %}">
         <td>{{ rollover.source_year }}</td>
         <td>{{ rollover.leave_type.name_ar }}</td>
         <td>{{ '%.2f'|format(rollover.remaining) }} يوم</td>
@@ -233,20 +226,26 @@
             {% if rollover.decision == 'TRANSFER' %}<div class="small text-muted mt-1">رُحّل فعليًا {{ '%.2f'|format(rollover.applied_transfer_days or 0) }} يوم</div>{% endif %}
             {% if rollover.deleted_days %}<div class="small text-muted">حُذف {{ '%.2f'|format(rollover.deleted_days) }} يوم</div>{% endif %}
           {% elif rollover.is_due %}
-            <span class="badge text-bg-warning">بانتظار حفظ القرار</span>
+            <span class="badge text-bg-warning">بانتظار الحفظ</span>
+          {% elif rollover.row_kind == 'TRANSFER_CURRENT' %}
+            <span class="badge text-bg-primary">سيُرحّل إلى {{ year }}</span>
           {% else %}
-            <span class="badge text-bg-secondary">لم يُحفظ قرار بعد</span>
-            <div class="small text-muted mt-1">يمكن حفظه مسبقًا حتى {{ rollover.effective_on }}</div>
+            <span class="badge text-bg-danger">سيُحذف في {{ year }}</span>
           {% endif %}
         </td>
         <td>
-          <select class="form-select form-select-sm mb-1" required name="rollover_{{ rollover.source_year }}_{{ rollover.leave_type.id }}">
-            <option value="">اختر القرار</option>
-            <option value="DELETE" {% if rollover.decision == 'DELETE' %}selected{% endif %}>حذف كامل الرصيد المتبقي</option>
-            <option value="TRANSFER" {% if rollover.decision == 'TRANSFER' %}selected{% endif %}>ترحيل عدد محدد من الأيام</option>
-          </select>
-          <input class="form-control form-control-sm mb-1" type="number" min="0.25" {% if rollover.transfer_max is not none %}max="{{ '%.2f'|format(rollover.transfer_max) }}"{% endif %} step="0.25" name="rollover_transfer_days_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" value="{{ '%.2f'|format(rollover.transfer_days) if rollover.decision == 'TRANSFER' else '' }}" placeholder="عدد الأيام المراد ترحيلها">
-          {% if rollover.transfer_max is not none %}<div class="form-text">الحد المتاح للتعديل بعد السريان: {{ '%.2f'|format(rollover.transfer_max) }} يوم.</div>{% else %}<div class="form-text">سيُراجع المتاح الفعلي عند تاريخ السريان.</div>{% endif %}
+          {% if rollover.row_kind == 'TRANSFER_CURRENT' %}
+            <input type="hidden" name="rollover_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" value="TRANSFER">
+            {% if rollover.transfer_max > 0 %}
+              <input type="hidden" name="rollover_transfer_days_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" value="{{ '%.2f'|format(rollover.suggested_transfer_days) }}">
+              <span class="text-success small">ترحيل {{ '%.2f'|format(rollover.suggested_transfer_days) }} يوم فقط إلى {{ year }}.</span>
+            {% else %}
+              <span class="text-muted small">لا يوجد رصيد متبقٍ للترحيل.</span>
+            {% endif %}
+          {% else %}
+            <input type="hidden" name="rollover_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" value="DELETE">
+            <span class="text-danger small">حذف الرصيد الأقدم المتبقي؛ لا يُرحّل إلى {{ year }}.</span>
+          {% endif %}
           <textarea class="form-control form-control-sm mt-1" name="rollover_reason_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" rows="2" placeholder="ملاحظة اختيارية للقرار">{{ rollover.note or '' }}</textarea>
         </td>
       </tr>

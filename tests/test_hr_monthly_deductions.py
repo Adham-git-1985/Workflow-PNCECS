@@ -37,6 +37,7 @@ from portal.routes import (
     _compensatory_leave_balance_error,
     _activate_due_leave_rollover_decisions,
     _annual_bucket_rows,
+    _leave_balance_display_values,
     _leave_balance_usage_by_year,
     _leave_entitlement_days,
     _leave_rollover_rows,
@@ -757,16 +758,15 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 30)
         self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2027), 20)
 
-        planned_row = _leave_rollover_rows(
+        planned_rows = _leave_rollover_rows(
             self.user.id,
             2027,
             [leave_type],
             as_of=date(2026, 12, 31),
-        )[0]
+        )
+        planned_row = next(row for row in planned_rows if row["source_year"] == 2025)
         self.assertEqual(planned_row["source_year"], 2025)
         self.assertEqual(planned_row["remaining"], 15)
-        self.assertEqual(planned_row["retained_year"], 2026)
-        self.assertEqual(planned_row["retained_remaining"], 30)
         self.assertEqual(planned_row["decision"], "TRANSFER")
         self.assertEqual(planned_row["transfer_days"], 7)
         self.assertTrue(planned_row["is_planned"])
@@ -783,12 +783,13 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 30)
         self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2027), 27)
 
-        active_row = _leave_rollover_rows(
+        active_rows = _leave_rollover_rows(
             self.user.id,
             2027,
             [leave_type],
             as_of=date(2027, 1, 1),
-        )[0]
+        )
+        active_row = next(row for row in active_rows if row["source_year"] == 2025)
         self.assertTrue(active_row["is_active"])
         self.assertEqual(active_row["applied_transfer_days"], 7)
         self.assertEqual(active_row["deleted_days"], 8)
@@ -817,10 +818,16 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         ).count())
 
         next_year_rows = _leave_rollover_rows(self.user.id, 2028, [leave_type])
-        self.assertEqual(len(next_year_rows), 1)
-        self.assertEqual(next_year_rows[0]["source_year"], 2026)
-        self.assertEqual(next_year_rows[0]["remaining"], 30)
-        self.assertTrue(next_year_rows[0]["can_decide"])
+        self.assertEqual(len(next_year_rows), 2)
+        next_year_current = next(
+            row for row in next_year_rows if row["source_year"] == 2027
+        )
+        next_year_expired = next(
+            row for row in next_year_rows if row["source_year"] == 2026
+        )
+        self.assertEqual(next_year_current["remaining"], 30)
+        self.assertEqual(next_year_expired["remaining"], 30)
+        self.assertTrue(next_year_current["can_decide"])
 
         # Replaying the activation job is safe and never duplicates the
         # transfer entries.
@@ -832,6 +839,192 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
             user_id=self.user.id,
             leave_type_id=leave_type.id,
         ).count(), 5)
+
+    def test_annual_48_day_balance_consumes_old_bucket_before_2027_deletion(self):
+        """A 2026 annual balance of 48 remains one declining balance.
+
+        The screen must expose 30 days as the 2026 bucket and 18 as the 2025
+        bucket.  Leave taken in 2026 uses the older 18 days first, and the
+        balance still left in that old bucket is the only amount deleted in
+        2027.
+        """
+        admin = User(
+            email="annual-48-admin@example.test",
+            name="Annual 48 Admin",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual leave",
+            deduct_from_balance=True,
+            default_balance_days=0,
+            day_count_basis="CALENDAR_DAYS",
+            is_active=True,
+        )
+        db.session.add_all((admin, leave_type))
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(user_id=admin.id, key=HR_LEAVE_BALANCES_MANAGE, is_allowed=True),
+            HRLeaveBalance(
+                user_id=self.user.id,
+                leave_type_id=leave_type.id,
+                year=2026,
+                total_days=30,
+            ),
+            HRLeaveBalanceAdjustment(
+                user_id=self.user.id,
+                leave_type_id=leave_type.id,
+                year=2026,
+                days_delta=18,
+                reason="رصيد مرحل مثبت قبل التقسيم",
+                created_by_id=admin.id,
+            ),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data={
+                "action": "PREPARE_ANNUAL_BALANCE_BUCKETS",
+                "user_id": str(self.user.id),
+                "year": "2026",
+            },
+        ):
+            login_user(admin)
+            response = hr_leave_balances()
+            logout_user()
+        self.assertEqual(response.status_code, 302)
+
+        # 30 + 18 is the same actual 48-day balance shown before splitting.
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 30)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2025), 18)
+        before_leave = _annual_bucket_rows(self.user.id, 2026, [leave_type])[0]
+        self.assertEqual(before_leave["current_remaining"], 30)
+        self.assertEqual(before_leave["previous_remaining"], 18)
+
+        # A five-day annual leave in 2026 uses the older bucket first.  The
+        # employee's total therefore changes from 48 to 43, not from 48 to
+        # 48 with an isolated 2026 balance.
+        db.session.add(HRLeaveRequest(
+            user_id=self.user.id,
+            leave_type_id=leave_type.id,
+            start_date="2026-02-01",
+            end_date="2026-02-05",
+            status="APPROVED",
+        ))
+        db.session.commit()
+        usage = _leave_balance_usage_by_year(
+            self.user.id,
+            leave_type,
+            date(2026, 12, 31),
+        )
+        self.assertEqual(usage[2025], 5)
+        self.assertEqual(usage.get(2026, 0), 0)
+
+        after_leave = _annual_bucket_rows(self.user.id, 2026, [leave_type])[0]
+        self.assertEqual(after_leave["current_remaining"], 30)
+        self.assertEqual(after_leave["previous_remaining"], 13)
+        self.assertEqual(
+            after_leave["current_remaining"] + after_leave["previous_remaining"],
+            43,
+        )
+        displayed = _leave_balance_display_values(self.user.id, leave_type, 2026)
+        self.assertEqual(displayed["total"], 48)
+        self.assertEqual(displayed["used"], 5)
+        self.assertEqual(displayed["remaining"], 43)
+
+        # The older 2025 bucket cannot be forged into a transfer decision.
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2027",
+            method="POST",
+            data={
+                "action": "SAVE_ROLLOVER_DECISION",
+                "user_id": str(self.user.id),
+                "year": "2027",
+                f"rollover_2026_{leave_type.id}": "TRANSFER",
+                f"rollover_transfer_days_2026_{leave_type.id}": "30",
+                f"rollover_2025_{leave_type.id}": "TRANSFER",
+                f"rollover_transfer_days_2025_{leave_type.id}": "13",
+            },
+        ):
+            login_user(admin)
+            rejected_response = hr_leave_balances()
+            logout_user()
+        self.assertEqual(rejected_response.status_code, 302)
+        self.assertEqual(HRLeaveRolloverDecision.query.count(), 0)
+
+        # Saving the 2027 screen creates two policy-controlled decisions:
+        # transfer only the 2026 bucket (30) and delete the older 2025
+        # bucket (13 after the five-day leave).
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2027",
+            method="POST",
+            data={
+                "action": "SAVE_ROLLOVER_DECISION",
+                "user_id": str(self.user.id),
+                "year": "2027",
+                f"rollover_2026_{leave_type.id}": "TRANSFER",
+                f"rollover_transfer_days_2026_{leave_type.id}": "30",
+                f"rollover_2025_{leave_type.id}": "DELETE",
+                f"rollover_reason_2025_{leave_type.id}": "حذف الرصيد الأقدم",
+            },
+        ):
+            login_user(admin)
+            response = hr_leave_balances()
+            logout_user()
+        self.assertEqual(response.status_code, 302)
+
+        decisions = {
+            row.source_year: row
+            for row in HRLeaveRolloverDecision.query.order_by(
+                HRLeaveRolloverDecision.source_year.asc()
+            ).all()
+        }
+        self.assertEqual(decisions[2026].decision, "TRANSFER")
+        self.assertEqual(decisions[2026].transfer_days, 30)
+        self.assertEqual(decisions[2025].decision, "DELETE")
+        self.assertEqual(decisions[2025].transfer_days, 0)
+
+        planned_rows = _leave_rollover_rows(
+            self.user.id,
+            2027,
+            [leave_type],
+            as_of=date(2026, 12, 31),
+        )
+        current_row = next(row for row in planned_rows if row["source_year"] == 2026)
+        expired_row = next(row for row in planned_rows if row["source_year"] == 2025)
+        self.assertEqual(current_row["remaining"], 30)
+        self.assertEqual(current_row["required_decision"], "TRANSFER")
+        self.assertEqual(current_row["suggested_transfer_days"], 30)
+        self.assertTrue(current_row["is_planned"])
+        self.assertEqual(expired_row["remaining"], 13)
+        self.assertEqual(expired_row["required_decision"], "DELETE")
+        self.assertTrue(expired_row["is_planned"])
+
+        activated = _activate_due_leave_rollover_decisions(
+            effective_day=date(2027, 1, 1),
+        )
+        self.assertEqual(
+            {item.source_year for item in activated},
+            {2025, 2026},
+        )
+        db.session.commit()
+
+        active_rows = _leave_rollover_rows(
+            self.user.id,
+            2027,
+            [leave_type],
+            as_of=date(2027, 1, 1),
+        )
+        active_current = next(row for row in active_rows if row["source_year"] == 2026)
+        active_expired = next(row for row in active_rows if row["source_year"] == 2025)
+        self.assertTrue(active_current["is_active"])
+        self.assertEqual(active_current["applied_transfer_days"], 30)
+        self.assertTrue(active_expired["is_active"])
+        self.assertEqual(active_expired["deleted_days"], 13)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2027), 30)
 
     def test_cross_year_leave_uses_start_year_balance_before_new_year_balance(self):
         sick_type = HRLeaveType(
