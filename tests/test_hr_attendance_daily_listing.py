@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -12,6 +12,8 @@ from models import (
     AttendanceDailySummary,
     AttendanceEvent,
     EmployeeFile,
+    HRAttendanceScheduleDay,
+    HRAttendanceSchedulePlan,
     HRAttendanceSpecialCase,
     HRLeaveRequest,
     HRLeaveType,
@@ -21,10 +23,12 @@ from models import (
     Notification,
     User,
     UserPermission,
+    WorkSchedule,
 )
 from portal import portal_bp
 from portal.routes import (
     _attendance_count_day,
+    _attendance_daily_dashboard_rows,
     _attendance_daily_without_absences,
     _attendance_absence_candidates,
     _attendance_event_date_range,
@@ -971,6 +975,81 @@ class AttendanceAbsenceCandidatesTests(unittest.TestCase):
 
         self.assertIsNone(excluded_reason)
         self.assertEqual([row.user_id for row in rows], [])
+
+    def test_daily_dashboard_includes_leave_remote_and_absent_employees(self):
+        present = User(email="present@example.test", name="Present", password_hash="x", role="USER")
+        on_leave = User(email="leave@example.test", name="On leave", password_hash="x", role="USER")
+        remote = User(email="remote@example.test", name="Remote", password_hash="x", role="USER")
+        absent = User(email="absent@example.test", name="Absent", password_hash="x", role="USER")
+        db.session.add_all((present, on_leave, remote, absent))
+        db.session.flush()
+        db.session.add_all((
+            EmployeeFile(user_id=present.id, full_name_quad="Present"),
+            EmployeeFile(user_id=on_leave.id, full_name_quad="On leave"),
+            EmployeeFile(user_id=remote.id, full_name_quad="Remote"),
+            EmployeeFile(user_id=absent.id, full_name_quad="Absent"),
+        ))
+        annual = HRLeaveType(code="ANNUAL", name_ar="إجازة سنوية", is_active=True)
+        remote_schedule = WorkSchedule(
+            name="عمل عن بُعد",
+            kind="REMOTE",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((annual, remote_schedule))
+        db.session.flush()
+        remote_plan = HRAttendanceSchedulePlan(
+            user_id=remote.id,
+            manager_user_id=remote.id,
+            period_start="2026-09-14",
+            period_end="2026-09-14",
+            version_no=1,
+            status="FINAL_APPROVED",
+        )
+        db.session.add(remote_plan)
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(
+                user_id=present.id,
+                event_dt=datetime(2026, 9, 14, 8, 5),
+                event_type="I",
+            ),
+            AttendanceDailySummary(
+                user_id=present.id,
+                day="2026-09-14",
+                first_in=datetime(2026, 9, 14, 8, 5),
+                status="OK",
+            ),
+            HRLeaveRequest(
+                user_id=on_leave.id,
+                leave_type_id=annual.id,
+                start_date="2026-09-14",
+                end_date="2026-09-14",
+                status="APPROVED",
+            ),
+            HRAttendanceScheduleDay(
+                plan_id=remote_plan.id,
+                work_date="2026-09-14",
+                day_type="REMOTE",
+                schedule_id=remote_schedule.id,
+            ),
+        ))
+        db.session.commit()
+
+        rows = _attendance_daily_dashboard_rows(
+            date(2026, 9, 14),
+            date(2026, 9, 14),
+        )
+        rows_by_user_id = {row["user_id"]: row for row in rows}
+
+        self.assertEqual(rows_by_user_id[present.id]["category"], "PRESENT")
+        self.assertEqual(rows_by_user_id[present.id]["daily_employee_number"], 1)
+        self.assertEqual(rows_by_user_id[on_leave.id]["category"], "LEAVE")
+        self.assertEqual(rows_by_user_id[remote.id]["category"], "REMOTE")
+        self.assertEqual(rows_by_user_id[absent.id]["category"], "ABSENT")
+        self.assertEqual(rows_by_user_id[absent.id]["category_label"], "غائب")
+        self.assertEqual(rows_by_user_id[absent.id]["status_badge_class"], "bg-danger")
+        self.assertIsNone(rows_by_user_id[absent.id]["daily_employee_number"])
 
     def test_daily_attendance_query_excludes_explicit_absence_rows(self):
         present = User(email="present@example.test", name="Present", password_hash="x", role="USER")

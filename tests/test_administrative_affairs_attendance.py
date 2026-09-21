@@ -45,6 +45,7 @@ from portal.routes import (
     _manual_attendance_event_rows_for_report,
     _process_unrecorded_office_attendance,
     hr_approval_leave,
+    hr_attendance_daily,
     hr_attendance_manual_edit,
     hr_attendance_manual_review,
     hr_leaves_admin_edit,
@@ -192,6 +193,72 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(categories[present.id], "PRESENT")
         self.assertEqual(categories[on_leave.id], "LEAVE")
         self.assertEqual(categories[remote.id], "REMOTE")
+
+    def test_daily_summary_passes_present_leave_remote_and_absent_statuses_to_template(self):
+        viewer = self._user(
+            "viewer@example.test",
+            "HR viewer",
+            "HR",
+            employee_file=False,
+        )
+        present = self._user("present@example.test", "Present")
+        on_leave = self._user("leave@example.test", "On leave")
+        remote = self._user("remote@example.test", "Remote")
+        absent = self._user("absent@example.test", "Absent")
+        annual = HRLeaveType(code="ANNUAL", name_ar="إجازة سنوية")
+        remote_schedule = WorkSchedule(
+            name="عمل عن بُعد",
+            kind="REMOTE",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((
+            annual,
+            remote_schedule,
+            UserPermission(
+                user_id=viewer.id,
+                key="HR_ATTENDANCE_READ",
+                is_allowed=True,
+            ),
+            AttendanceEvent(
+                user_id=present.id,
+                event_dt=datetime(2026, 9, 14, 8, 5),
+                event_type="I",
+            ),
+        ))
+        db.session.flush()
+        db.session.add(HRLeaveRequest(
+            user_id=on_leave.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            status="APPROVED",
+        ))
+        self._final_schedule_day(
+            remote,
+            "2026-09-14",
+            "REMOTE",
+            manager=viewer,
+            schedule=remote_schedule,
+        )
+        db.session.commit()
+
+        with self.app.test_request_context(
+            "/portal/hr/attendance/daily?day_from=2026-09-14&day_to=2026-09-14",
+        ):
+            login_user(viewer)
+            with patch("portal.routes.render_template", return_value="rendered") as render:
+                response = hr_attendance_daily()
+            logout_user()
+
+        rendered_rows = render.call_args.kwargs["rows"]
+        categories = {row["user_id"]: row["category"] for row in rendered_rows}
+        self.assertEqual(response, "rendered")
+        self.assertEqual(categories[present.id], "PRESENT")
+        self.assertEqual(categories[on_leave.id], "LEAVE")
+        self.assertEqual(categories[remote.id], "REMOTE")
+        self.assertEqual(categories[absent.id], "ABSENT")
+        self.assertEqual(render.call_args.kwargs["status_counts"]["ABSENT"], 1)
 
     def test_remote_schedule_template_is_not_classified_as_missing_punch(self):
         employee = self._user("remote-template@example.test", "موظف قالب عن بعد")

@@ -16,8 +16,8 @@
     <tr>
       <td class="center">{{ row.daily_employee_number or '—' }}</td>
       <td class="ltr">{{ row.day }}</td>
-      <td>{{ row.user.full_name or row.user.email }}</td>
-      <td class="center">{{ 'إدخال يدوي' if row.manual_attendance else 'بصمة الساعة' }}</td>
+      <td>{{ row.name or row.email }}</td>
+      <td class="center">{{ 'إدخال يدوي' if row.is_manual else (row.source or '—') }}</td>
       <td class="center ltr">{{ row.first_in.strftime('%H:%M') if row.first_in else '—' }}</td>
       <td class="center ltr">{{ row.last_out.strftime('%H:%M') if row.last_out else '—' }}</td>
       <td class="center">{{ '%.2f'|format((row.work_minutes or 0) / 60) }}</td>
@@ -26,8 +26,8 @@
       <td class="center">{% if row.private_departure_minutes %}{{ row.private_departure_minutes }} د{% elif row.pending_private_departure_details|default([]) %}قيد الاعتماد{% else %}—{% endif %}</td>
       <td class="center">{% if row.official_departure_minutes %}{{ row.official_departure_minutes }} د{% elif row.pending_official_departure_details|default([]) %}قيد الاعتماد{% else %}—{% endif %}</td>
       <td class="center">{{ (row.overtime_minutes|string ~ ' د') if row.overtime_minutes else '—' }}</td>
-      <td class="center">{% if row.status == 'OK' %}<span class="badge success">مكتمل</span>{% elif row.status == 'INCOMPLETE' %}<span class="badge danger">غير مكتمل</span>{% else %}{{ row.status|ui_label }}{% endif %}</td>
-      <td>{{ row.schedule.name if row.schedule else '—' }}</td>
+      <td class="center"><span class="badge {{ row.status_print_class }}">{{ row.category_label }}</span>{% if row.attendance_status == 'INCOMPLETE' %}<span class="badge warning">غير مكتمل</span>{% endif %}</td>
+      <td>{{ row.schedule or '—' }}</td>
     </tr>
     {% else %}<tr><td colspan="14" class="center muted">لا توجد بيانات.</td></tr>{% endfor %}
   </tbody>

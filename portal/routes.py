@@ -31211,6 +31211,149 @@ def _sort_and_number_attendance_daily_rows(rows):
     return ordered_rows
 
 
+_ATTENDANCE_DAILY_STATUS_STYLES = {
+    "PRESENT": ("حاضر", "bg-success", "success"),
+    "LEAVE": ("مجاز", "bg-primary", "info"),
+    "REMOTE": ("عن بُعد", "bg-info text-dark", "info"),
+    "ABSENT": ("غائب", "bg-danger", "danger"),
+    "LEAVE_PENDING": ("إجازة قيد الاعتماد", "bg-warning text-dark", "warning"),
+    # Keep the more specific labels supplied by the unified report, e.g.
+    # "تدريب رسمي" or "عطلة رسمية".
+    "OFFICIAL_DUTY": (None, "bg-secondary", "info"),
+    "OFF": (None, "bg-light text-dark border", "muted"),
+}
+
+
+def _sort_and_number_attendance_daily_dashboard_rows(rows: list[dict]) -> list[dict]:
+    """Sort the daily management view and number only recorded attendance.
+
+    The sequence is intentionally assigned only to employees with an actual
+    check-in.  Leave, remote, and absence rows remain visible but do not take
+    a place in the arrival order.
+    """
+    category_order = {
+        "PRESENT": 0,
+        "LEAVE": 1,
+        "REMOTE": 2,
+        "LEAVE_PENDING": 3,
+        "ABSENT": 4,
+        "OFFICIAL_DUTY": 5,
+        "OFF": 6,
+    }
+    ordered_rows = list(rows or [])
+    ordered_rows.sort(key=lambda row: (
+        0 if row.get("category") == "PRESENT" and row.get("first_in") else 1,
+        row.get("first_in") or datetime.max,
+        category_order.get(row.get("category"), 99),
+        (row.get("name") or "").casefold(),
+        row.get("user_id") or 0,
+    ))
+    ordered_rows.sort(key=lambda row: row.get("day") or "", reverse=True)
+
+    current_day = None
+    sequence = 0
+    for row in ordered_rows:
+        row_day = row.get("day")
+        if row_day != current_day:
+            current_day = row_day
+            sequence = 0
+        if row.get("category") == "PRESENT" and row.get("first_in"):
+            sequence += 1
+            row["daily_employee_number"] = sequence
+        else:
+            row["daily_employee_number"] = None
+    return ordered_rows
+
+
+def _attendance_daily_dashboard_rows(
+    start_day: date,
+    end_day: date,
+    *,
+    user_ids: list[int] | None = None,
+) -> list[dict]:
+    """Build the compact daily dashboard from the unified HR attendance data.
+
+    It keeps all existing attendance metrics for clocked employees, while also
+    adding every employee without a punch.  A missing punch is displayed as an
+    absence only when the unified data did not identify an approved leave,
+    remote assignment, holiday, or official duty.
+    """
+    rows = _administrative_affairs_daily_rows(
+        start_day,
+        end_day,
+        user_ids=user_ids,
+    )
+    if not rows:
+        return []
+
+    employee_ids = sorted({int(row["user_id"]) for row in rows if row.get("user_id")})
+    summaries = (
+        AttendanceDailySummary.query
+        .filter(AttendanceDailySummary.user_id.in_(employee_ids))
+        .filter(AttendanceDailySummary.day >= start_day.isoformat())
+        .filter(AttendanceDailySummary.day <= end_day.isoformat())
+        .all()
+    )
+    _attach_reconciled_departures(summaries, include_pending=True)
+    summary_by_key = {
+        (int(summary.user_id), summary.day): summary
+        for summary in summaries
+    }
+    users_by_id = {
+        int(user.id): user
+        for user in User.query.filter(User.id.in_(employee_ids)).all()
+    }
+
+    for row in rows:
+        summary = summary_by_key.get((int(row["user_id"]), row["day"]))
+        category = row.get("category") or "ABSENT"
+        if category in {"MISSING_PUNCH", "UNSCHEDULED"}:
+            category = "ABSENT"
+            row["detail"] = row.get("detail") or (
+                "لا توجد بصمة حضور أو إجازة معتمدة أو تكليف عمل عن بُعد"
+            )
+            if not row.get("source") or row["source"] == "—":
+                row["source"] = "ملخص الدوام"
+
+        style = _ATTENDANCE_DAILY_STATUS_STYLES.get(
+            category,
+            (row.get("category_label") or "غير محدد", "bg-secondary", "muted"),
+        )
+        row["category"] = category
+        row["category_label"] = style[0] or row.get("category_label") or "غير محدد"
+        row["status_badge_class"] = style[1]
+        row["status_print_class"] = style[2]
+        row["attendance_status"] = getattr(summary, "status", None) or ""
+        row["email"] = getattr(users_by_id.get(int(row["user_id"])), "email", "") or ""
+        row["is_manual"] = bool(row.get("is_manual"))
+
+        # The unified report already resolves presence from raw clock events
+        # and approved manual entries.  The saved summary supplies the rest of
+        # the original daily-screen metrics when it exists.
+        for field in (
+            "break_minutes",
+            "late_minutes",
+            "early_leave_minutes",
+            "overtime_minutes",
+            "private_departure_minutes",
+            "official_departure_minutes",
+        ):
+            row[field] = int(getattr(summary, field, 0) or 0)
+        for field in (
+            "private_departure_details",
+            "official_departure_details",
+            "pending_private_departure_details",
+            "pending_official_departure_details",
+        ):
+            row[field] = list(getattr(summary, field, []) or [])
+        if summary:
+            row["work_minutes"] = int(getattr(summary, "work_minutes", 0) or 0)
+            if not row.get("schedule") and getattr(summary, "schedule", None):
+                row["schedule"] = summary.schedule.name or ""
+
+    return _sort_and_number_attendance_daily_dashboard_rows(rows)
+
+
 def _attendance_count_day(day_from: str, day_to: str, today: str) -> str:
     """Choose the day shown in the attended-employees counter.
 
@@ -31376,28 +31519,31 @@ def hr_attendance_daily():
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
 
-    # The daily attendance screen should open on today's records.  Users can
-    # still replace either date through the existing filter form.
-    today = _as_yyyy_mm_dd(date.today())
-    if not day_from:
-        day_from = today
-    if not day_to:
-        day_to = today
+    # This is the management snapshot: it intentionally includes employees
+    # without a saved summary row, so leave, remote, and absence are visible
+    # beside clocked attendance on the same screen.
+    today_day = date.today()
+    today = _as_yyyy_mm_dd(today_day)
+    start_day = _parse_yyyy_mm_dd(day_from) or today_day
+    end_day = _parse_yyyy_mm_dd(day_to) or start_day
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    if (end_day - start_day).days > 30:
+        end_day = start_day + timedelta(days=30)
+        flash('تم تحديد الملخص بحد أقصى 31 يومًا في كل مرة.', 'warning')
+    day_from = start_day.isoformat()
+    day_to = end_day.isoformat()
 
-    qry = _attendance_daily_without_absences(AttendanceDailySummary.query)
-
-    if day_from:
-        qry = qry.filter(AttendanceDailySummary.day >= day_from)
-    if day_to:
-        qry = qry.filter(AttendanceDailySummary.day <= day_to)
-    if user_id.isdigit():
-        qry = qry.filter(AttendanceDailySummary.user_id == int(user_id))
-
-    rows = _sort_and_number_attendance_daily_rows(
-        qry.order_by(AttendanceDailySummary.day.desc()).limit(500).all()
+    selected_user_ids = [int(user_id)] if user_id.isdigit() else None
+    rows = _attendance_daily_dashboard_rows(
+        start_day,
+        end_day,
+        user_ids=selected_user_ids,
     )
-    _attach_reconciled_departures(rows, include_pending=True)
-    _attach_manual_attendance_flags(rows)
+    status_counts = {code: 0 for code in _ATTENDANCE_DAILY_STATUS_STYLES}
+    for row in rows:
+        status_counts[row['category']] = status_counts.get(row['category'], 0) + 1
+
     # The filter needs only these three fields. Avoid materializing every
     # relationship on every user when the organization has a large directory.
     users = (
@@ -31407,16 +31553,13 @@ def hr_attendance_daily():
         .all()
     )
     attendance_count_day = _attendance_count_day(day_from, day_to, today)
-    attendance_count_query = (
-        AttendanceDailySummary.query
-        .filter(AttendanceDailySummary.day == attendance_count_day)
-        .filter(AttendanceDailySummary.first_in.isnot(None))
+    attendance_count_today = sum(
+        1
+        for row in rows
+        if row['day'] == attendance_count_day
+        and row['category'] == 'PRESENT'
+        and row.get('first_in')
     )
-    if user_id.isdigit():
-        attendance_count_query = attendance_count_query.filter(
-            AttendanceDailySummary.user_id == int(user_id)
-        )
-    attendance_count_today = attendance_count_query.count()
 
     template_name = 'portal/hr/print/attendance_daily.html' if print_view else 'portal/hr/attendance_daily.html'
     return render_template(template_name, rows=rows, users=users,
@@ -31424,6 +31567,7 @@ def hr_attendance_daily():
                            today=today,
                            attendance_count_day=attendance_count_day,
                            attendance_count_today=attendance_count_today,
+                           status_counts=status_counts,
                            can_manage=_hr_can_manage_attendance(),
                            can_edit_attendance=_hr_can_edit_attendance())
 
@@ -31485,35 +31629,39 @@ def hr_attendance_daily_export_xlsx():
     day_to = (request.args.get('day_to') or '').strip()
     user_id = (request.args.get('user_id') or '').strip()
 
-    qry = _attendance_daily_without_absences(AttendanceDailySummary.query)
-    if day_from:
-        qry = qry.filter(AttendanceDailySummary.day >= day_from)
-    if day_to:
-        qry = qry.filter(AttendanceDailySummary.day <= day_to)
-    if user_id.isdigit():
-        qry = qry.filter(AttendanceDailySummary.user_id == int(user_id))
-
-    rows = qry.order_by(AttendanceDailySummary.day.desc()).limit(5000).all()
-    _attach_reconciled_departures(rows)
-    _attach_manual_attendance_flags(rows)
+    today_day = date.today()
+    start_day = _parse_yyyy_mm_dd(day_from) or today_day
+    end_day = _parse_yyyy_mm_dd(day_to) or start_day
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    if (end_day - start_day).days > 30:
+        end_day = start_day + timedelta(days=30)
+    rows = _attendance_daily_dashboard_rows(
+        start_day,
+        end_day,
+        user_ids=[int(user_id)] if user_id.isdigit() else None,
+    )
 
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
     ws.title = 'Daily Attendance'
 
-    headers = ['اليوم', 'الموظف', 'البريد', 'المصدر', 'الجدول', 'أول دخول', 'آخر خروج', 'ساعات عمل', 'استراحة (د)', 'تأخير (د)', 'خروج مبكر (د)', 'مغادرات شخصية (د)', 'مغادرات رسمية (د)', 'إضافي (د)', 'الحالة']
+    headers = ['م اليوم', 'اليوم', 'الموظف', 'البريد', 'المصدر', 'الجدول', 'أول دخول', 'آخر خروج', 'ساعات عمل', 'استراحة (د)', 'تأخير (د)', 'خروج مبكر (د)', 'مغادرات شخصية (د)', 'مغادرات رسمية (د)', 'إضافي (د)', 'الحالة', 'التفصيل']
     ws.append(headers)
 
     for r in rows:
-        name = getattr(r.user, 'name', '') or ''
-        email = getattr(r.user, 'email', '') or ''
-        sched = getattr(r.schedule, 'name', '') if r.schedule else ''
-        fi = r.first_in.isoformat(sep=' ', timespec='minutes') if r.first_in else ''
-        lo = r.last_out.isoformat(sep=' ', timespec='minutes') if r.last_out else ''
-        hours = round((r.work_minutes or 0) / 60.0, 2)
-        source = 'إدخال يدوي' if getattr(r, 'manual_attendance', False) else 'بصمة الساعة'
-        ws.append([r.day, name, email, source, sched, fi, lo, hours, r.break_minutes or 0, r.late_minutes or 0, r.early_leave_minutes or 0, r.private_departure_minutes or 0, r.official_departure_minutes or 0, r.overtime_minutes or 0, r.status])
+        fi = r['first_in'].isoformat(sep=' ', timespec='minutes') if r.get('first_in') else ''
+        lo = r['last_out'].isoformat(sep=' ', timespec='minutes') if r.get('last_out') else ''
+        hours = round((r.get('work_minutes') or 0) / 60.0, 2)
+        ws.append([
+            r.get('daily_employee_number') or '', r['day'], r.get('name') or '', r.get('email') or '',
+            r.get('source') or '', r.get('schedule') or '', fi, lo, hours,
+            r.get('break_minutes') or 0, r.get('late_minutes') or 0,
+            r.get('early_leave_minutes') or 0, r.get('private_departure_minutes') or 0,
+            r.get('official_departure_minutes') or 0, r.get('overtime_minutes') or 0,
+            r.get('category_label') or '', r.get('detail') or '',
+        ])
 
     bio = BytesIO()
     wb.save(bio)

@@ -32,6 +32,10 @@
     min-width: 12rem;
   }
 
+  .attendance-daily-table .attendance-status {
+    min-width: 7.5rem;
+  }
+
   .attendance-daily-table .attendance-schedule-column {
     display: none;
   }
@@ -82,6 +86,23 @@
     <strong class="fs-5">{{ attendance_count_today }}</strong>
   </div>
 
+  <div class="row g-2 mt-2">
+    {% for code, label, color in [
+      ('PRESENT', 'الحاضرون', 'success'),
+      ('LEAVE', 'المجازون', 'primary'),
+      ('REMOTE', 'عن بُعد', 'info'),
+      ('ABSENT', 'الغائبون', 'danger')
+    ] %}
+    <div class="col-6 col-md-3">
+      <div class="border rounded-3 px-3 py-2 h-100">
+        <div class="small text-muted">{{ label }}</div>
+        <div class="fs-4 fw-bold text-{{ color }}">{{ status_counts.get(code, 0) }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <div class="small text-muted mt-2">يُمنح رقم اليوم فقط لمن سجّل دخولًا فعليًا.</div>
+
   <div class="d-flex flex-wrap gap-2 mt-3">
     <form method="post" action="{{ url_for('portal.hr_attendance_daily_recompute') }}" class="d-inline">
       <input type="hidden" name="day_from" value="{{ day_from }}">
@@ -129,8 +150,12 @@
         <tr>
           <td class="fw-semibold">{{ r.daily_employee_number or '—' }}</td>
           <td><code>{{ r.day }}</code></td>
-          <td class="attendance-employee-name">{{ r.user.name or r.user.email }}</td>
-          <td>{% if r.manual_attendance %}<span class="badge bg-warning text-dark"><i class="bi bi-pencil-square"></i> إدخال يدوي</span>{% else %}<span class="text-muted">بصمة الساعة</span>{% endif %}</td>
+          <td class="attendance-employee-name">{{ r.name or r.email }}</td>
+          <td>
+            {% if r.is_manual %}<span class="badge bg-warning text-dark"><i class="bi bi-pencil-square"></i> إدخال يدوي</span>
+            {% elif r.source %}<span class="text-muted">{{ r.source }}</span>
+            {% else %}—{% endif %}
+          </td>
           <td class="text-muted">{{ r.first_in.strftime('%H:%M') if r.first_in else '—' }}</td>
           <td class="text-muted">{{ r.last_out.strftime('%H:%M') if r.last_out else '—' }}</td>
           <td>{{ '%.2f'|format((r.work_minutes or 0) / 60) }}</td>
@@ -143,17 +168,21 @@
             {{ departure_link(r, 'OFFICIAL', r.official_departure_minutes, r.official_departure_details|default([]), r.pending_official_departure_details|default([]), 'bg-info text-dark') }}
           </td>
           <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
-          <td>
-            {% if r.status == 'OK' %}<span class="badge bg-success">مكتمل</span>
-            {% elif r.status == 'INCOMPLETE' %}<span class="badge bg-danger">غير مكتمل</span>
-            {% else %}<span class="badge bg-secondary">{{ r.status|ui_label }}</span>
+          <td class="attendance-status">
+            <span class="badge {{ r.status_badge_class }}" title="{{ r.detail or '' }}">{{ r.category_label }}</span>
+            {% if r.attendance_status == 'INCOMPLETE' %}
+            <span class="badge bg-warning text-dark mt-1">غير مكتمل</span>
+            {% elif r.attendance_status and r.attendance_status not in ('OK', 'ABSENT') %}
+            <span class="badge bg-secondary mt-1">{{ r.attendance_status|ui_label }}</span>
             {% endif %}
           </td>
-          <td class="text-muted attendance-schedule-column">{{ r.schedule.name if r.schedule else '—' }}</td>
+          <td class="text-muted attendance-schedule-column">{{ r.schedule or '—' }}</td>
           {% if can_edit_attendance %}
           <td><a class="btn btn-sm btn-outline-success" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=r.user_id, day=r.day) }}"><i class="bi bi-pencil-square"></i> تعديل</a></td>
           {% endif %}
         </tr>
+        {% else %}
+        <tr><td colspan="{% if can_edit_attendance %}15{% else %}14{% endif %}" class="text-center text-muted py-4">لا توجد بيانات مطابقة للفلاتر المحددة.</td></tr>
         {% endfor %}
       </tbody>
     </table>
