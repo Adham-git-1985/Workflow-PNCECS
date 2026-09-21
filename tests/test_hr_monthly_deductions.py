@@ -18,6 +18,7 @@ from models import (
     HRAttendanceSpecialCase,
     HRLeaveBalance,
     HRLeaveBalanceAdjustment,
+    HRLeaveRolloverDecision,
     HRLeaveRequest,
     HRLeaveType,
     HROfficialMission,
@@ -34,10 +35,15 @@ from portal.routes import (
     HR_LEAVE_BALANCES_MANAGE,
     HR_REPORTS_VIEW,
     _compensatory_leave_balance_error,
+    _activate_due_leave_rollover_decisions,
+    _annual_bucket_rows,
+    _leave_balance_usage_by_year,
     _leave_entitlement_days,
     _leave_rollover_rows,
+    _save_leave_rollover_decision,
     _leave_used_days_as_of,
     _monthly_attendance_deduction_breakdown,
+    _one_time_leave_error,
     hr_deduction_approve,
     hr_deduction_reverse,
     hr_deductions_run,
@@ -45,6 +51,8 @@ from portal.routes import (
 )
 from portal import portal_bp
 from migrations.versions import h9i0j1k2l3m4_add_hr_deduction_details_and_reversal as deduction_migration
+from migrations.versions import z4a5b6c7d8e9_add_leave_balance_renewal_policy as renewal_policy_migration
+from migrations.versions import z5a6b7c8d9e0_add_leave_rollover_decisions as rollover_decision_migration
 
 
 class MonthlyAttendanceDeductionTests(unittest.TestCase):
@@ -366,6 +374,25 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
             f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
             method="POST",
             data={
+                "action": "SET_ANNUAL_CURRENT_YEAR_LIMIT",
+                "user_id": str(self.user.id),
+                "year": "2026",
+                "annual_current_year_limit": "30",
+            },
+        ):
+            login_user(admin)
+            response = hr_leave_balances()
+            logout_user()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            SystemSetting.query.filter_by(key="HR_ANNUAL_LEAVE_CURRENT_YEAR_LIMIT").one().value,
+            "30",
+        )
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data={
                 "action": "ADD_ADJUSTMENT",
                 "user_id": str(self.user.id),
                 "year": "2026",
@@ -649,6 +676,259 @@ class MonthlyAttendanceDeductionTests(unittest.TestCase):
         self.assertEqual(run.status, "FINAL")
 
 
+    def test_annual_balance_splits_2026_then_decides_2025_in_2027(self):
+        admin = User(
+            email="annual-rollover-admin@example.test",
+            name="Annual Rollover Admin",
+            password_hash="not-used",
+            role="EMPLOYEE",
+        )
+        leave_type = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual leave",
+            deduct_from_balance=True,
+            default_balance_days=0,
+            is_active=True,
+        )
+        db.session.add_all((admin, leave_type))
+        db.session.flush()
+        db.session.add_all((
+            UserPermission(user_id=admin.id, key=HR_LEAVE_BALANCES_MANAGE, is_allowed=True),
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=leave_type.id, year=2026, total_days=45),
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=leave_type.id, year=2027, total_days=20),
+        ))
+        db.session.commit()
+
+        with self.app.test_request_context(
+            f"/portal/hr/leaves/balances?user_id={self.user.id}&year=2026",
+            method="POST",
+            data={
+                "action": "PREPARE_ANNUAL_BALANCE_BUCKETS",
+                "user_id": str(self.user.id),
+                "year": "2026",
+            },
+        ):
+            login_user(admin)
+            response = hr_leave_balances()
+            logout_user()
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 30)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2025), 15)
+
+        bucket_row = _annual_bucket_rows(self.user.id, 2026, [leave_type])[0]
+        self.assertEqual(bucket_row["current_remaining"], 30)
+        self.assertEqual(bucket_row["previous_year"], 2025)
+        self.assertEqual(bucket_row["previous_remaining"], 15)
+
+        split_adjustments = HRLeaveBalanceAdjustment.query.filter_by(
+            user_id=self.user.id,
+            leave_type_id=leave_type.id,
+        ).order_by(HRLeaveBalanceAdjustment.year.asc()).all()
+        self.assertEqual([(row.year, row.days_delta) for row in split_adjustments], [
+            (2025, 15),
+            (2026, -15),
+        ])
+
+        decision, became_active, correction, error = _save_leave_rollover_decision(
+            self.user.id,
+            leave_type,
+            2025,
+            2027,
+            decision_code="TRANSFER",
+            transfer_days=7,
+            note="approved exception",
+            actor_id=admin.id,
+            effective_day=date(2026, 12, 31),
+        )
+        self.assertIsNone(error)
+        self.assertFalse(became_active)
+        self.assertEqual(correction, 0)
+        self.assertIsNotNone(decision)
+        db.session.commit()
+
+        saved_decision = HRLeaveRolloverDecision.query.one()
+        self.assertEqual(saved_decision.decision, "TRANSFER")
+        self.assertEqual(saved_decision.transfer_days, 7)
+        self.assertIsNone(saved_decision.applied_at)
+
+        # Saving early is purely a decision: it must not affect either year's
+        # balance before the first day of its target year.
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2025), 15)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 30)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2027), 20)
+
+        planned_row = _leave_rollover_rows(
+            self.user.id,
+            2027,
+            [leave_type],
+            as_of=date(2026, 12, 31),
+        )[0]
+        self.assertEqual(planned_row["source_year"], 2025)
+        self.assertEqual(planned_row["remaining"], 15)
+        self.assertEqual(planned_row["retained_year"], 2026)
+        self.assertEqual(planned_row["retained_remaining"], 30)
+        self.assertEqual(planned_row["decision"], "TRANSFER")
+        self.assertEqual(planned_row["transfer_days"], 7)
+        self.assertTrue(planned_row["is_planned"])
+        self.assertFalse(planned_row["is_active"])
+
+        activated = _activate_due_leave_rollover_decisions(
+            effective_day=date(2027, 1, 1),
+        )
+        self.assertEqual([item.id for item in activated], [saved_decision.id])
+        db.session.commit()
+        db.session.refresh(saved_decision)
+
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2025), 0)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2026), 30)
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2027), 27)
+
+        active_row = _leave_rollover_rows(
+            self.user.id,
+            2027,
+            [leave_type],
+            as_of=date(2027, 1, 1),
+        )[0]
+        self.assertTrue(active_row["is_active"])
+        self.assertEqual(active_row["applied_transfer_days"], 7)
+        self.assertEqual(active_row["deleted_days"], 8)
+
+        # A later authorised change does not rewrite the activation entries;
+        # it appends a correction to the target-year balance.
+        revised, became_active, correction, error = _save_leave_rollover_decision(
+            self.user.id,
+            leave_type,
+            2025,
+            2027,
+            decision_code="TRANSFER",
+            transfer_days=10,
+            note="expanded exception",
+            actor_id=admin.id,
+            effective_day=date(2027, 1, 2),
+        )
+        self.assertIsNone(error)
+        self.assertTrue(became_active)
+        self.assertEqual(correction, 3)
+        self.assertEqual(revised.applied_transfer_days, 10)
+        db.session.commit()
+        self.assertEqual(_leave_entitlement_days(self.user.id, leave_type, 2027), 30)
+        self.assertTrue(HRLeaveBalanceAdjustment.query.filter(
+            HRLeaveBalanceAdjustment.reason.contains("DECISION_REVISION=1")
+        ).count())
+
+        next_year_rows = _leave_rollover_rows(self.user.id, 2028, [leave_type])
+        self.assertEqual(len(next_year_rows), 1)
+        self.assertEqual(next_year_rows[0]["source_year"], 2026)
+        self.assertEqual(next_year_rows[0]["remaining"], 30)
+        self.assertTrue(next_year_rows[0]["can_decide"])
+
+        # Replaying the activation job is safe and never duplicates the
+        # transfer entries.
+        self.assertEqual(
+            _activate_due_leave_rollover_decisions(effective_day=date(2027, 1, 3)),
+            [],
+        )
+        self.assertEqual(HRLeaveBalanceAdjustment.query.filter_by(
+            user_id=self.user.id,
+            leave_type_id=leave_type.id,
+        ).count(), 5)
+
+    def test_cross_year_leave_uses_start_year_balance_before_new_year_balance(self):
+        sick_type = HRLeaveType(
+            code="SICK",
+            name_ar="Sick leave",
+            deduct_from_balance=True,
+            default_balance_days=10,
+            balance_renewal_policy="YEARLY",
+            day_count_basis="CALENDAR_DAYS",
+            is_active=True,
+        )
+        db.session.add(sick_type)
+        db.session.flush()
+        db.session.add_all((
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=sick_type.id, year=2026, total_days=2),
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=sick_type.id, year=2027, total_days=10),
+            HRLeaveRequest(
+                user_id=self.user.id,
+                leave_type_id=sick_type.id,
+                start_date="2026-12-30",
+                end_date="2027-01-03",
+                status="APPROVED",
+            ),
+        ))
+        db.session.commit()
+
+        usage = _leave_balance_usage_by_year(
+            self.user.id,
+            sick_type,
+            date(2027, 12, 31),
+        )
+        self.assertEqual(usage[2026], 2)
+        self.assertEqual(usage[2027], 3)
+        self.assertEqual(
+            _leave_used_days_as_of(self.user.id, sick_type.id, 2026, date(2026, 12, 31)),
+            2,
+        )
+        self.assertEqual(
+            _leave_used_days_as_of(self.user.id, sick_type.id, 2027, date(2027, 12, 31)),
+            3,
+        )
+        self.assertEqual(_leave_entitlement_days(self.user.id, sick_type, 2028), 10)
+
+    def test_compensatory_balance_is_manual_but_can_fund_a_cross_year_request(self):
+        compensatory_type = HRLeaveType(
+            code="COMPENSATORY",
+            name_ar="Compensatory leave",
+            deduct_from_balance=True,
+            default_balance_days=20,
+            balance_renewal_policy="MANUAL",
+            day_count_basis="CALENDAR_DAYS",
+            is_active=True,
+        )
+        db.session.add(compensatory_type)
+        db.session.flush()
+        db.session.add_all((
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=compensatory_type.id, year=2026, total_days=2),
+            HRLeaveBalance(user_id=self.user.id, leave_type_id=compensatory_type.id, year=2027, total_days=3),
+        ))
+        db.session.commit()
+
+        self.assertEqual(_leave_entitlement_days(self.user.id, compensatory_type, 2028), 0)
+        self.assertIsNone(_compensatory_leave_balance_error(
+            self.user.id,
+            compensatory_type,
+            date(2026, 12, 30),
+            date(2027, 1, 3),
+        ))
+        self.assertIsNotNone(_compensatory_leave_balance_error(
+            self.user.id,
+            compensatory_type,
+            date(2026, 12, 29),
+            date(2027, 1, 3),
+        ))
+
+    def test_hajj_leave_is_rejected_after_an_approved_previous_request(self):
+        hajj_type = HRLeaveType(
+            code="H",
+            name_ar="Hajj leave",
+            deduct_from_balance=False,
+            balance_renewal_policy="ONCE",
+            is_active=True,
+        )
+        db.session.add(hajj_type)
+        db.session.flush()
+        db.session.add(HRLeaveRequest(
+            user_id=self.user.id,
+            leave_type_id=hajj_type.id,
+            start_date="2024-06-10",
+            end_date="2024-06-15",
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        self.assertIsNotNone(_one_time_leave_error(self.user.id, hajj_type))
+
+    @unittest.skip("Superseded by the annual-bucket rollover policy test above.")
     def test_leave_rollover_records_transfer_and_no_transfer_once(self):
         admin = User(
             email="rollover-admin@example.test",
@@ -782,6 +1062,90 @@ class MonthlyDeductionMigrationTests(unittest.TestCase):
                 column["name"] for column in inspector.get_columns("hr_att_deduction_run")
             })
             self.assertIn("hr_leave_balance_adjustment", inspector.get_table_names())
+
+
+class LeaveBalanceRenewalPolicyMigrationTests(unittest.TestCase):
+    def test_upgrade_adds_policy_and_normalizes_configured_leave_types(self):
+        engine = sa.create_engine("sqlite:///:memory:")
+        metadata = sa.MetaData()
+        leave_type = sa.Table(
+            "hr_leave_type",
+            metadata,
+            sa.Column("id", sa.Integer, primary_key=True),
+            sa.Column("code", sa.String(50)),
+            sa.Column("deduct_from_balance", sa.Boolean, nullable=False, default=False),
+        )
+        metadata.create_all(engine)
+        with engine.begin() as connection:
+            connection.execute(leave_type.insert(), [
+                {"code": "SICK", "deduct_from_balance": False},
+                {"code": "M", "deduct_from_balance": False},
+                {"code": "Y", "deduct_from_balance": False},
+                {"code": "COMPENSATORY", "deduct_from_balance": True},
+                {"code": "H", "deduct_from_balance": False},
+            ])
+            operations = Operations(MigrationContext.configure(connection))
+            original_operations = renewal_policy_migration.op
+            renewal_policy_migration.op = operations
+            try:
+                renewal_policy_migration.upgrade()
+                renewal_policy_migration.upgrade()
+            finally:
+                renewal_policy_migration.op = original_operations
+
+            inspector = sa.inspect(connection)
+            self.assertIn("balance_renewal_policy", {
+                column["name"] for column in inspector.get_columns("hr_leave_type")
+            })
+            rows = connection.execute(sa.text(
+                "SELECT code, deduct_from_balance, balance_renewal_policy "
+                "FROM hr_leave_type ORDER BY id"
+            )).mappings().all()
+            self.assertEqual(rows[0]["balance_renewal_policy"], "YEARLY")
+            self.assertTrue(rows[0]["deduct_from_balance"])
+            self.assertEqual(rows[1]["balance_renewal_policy"], "YEARLY")
+            self.assertTrue(rows[1]["deduct_from_balance"])
+            self.assertEqual(rows[2]["balance_renewal_policy"], "YEARLY")
+            self.assertTrue(rows[2]["deduct_from_balance"])
+            self.assertEqual(rows[3]["balance_renewal_policy"], "MANUAL")
+            self.assertEqual(rows[4]["balance_renewal_policy"], "ONCE")
+
+
+class LeaveRolloverDecisionMigrationTests(unittest.TestCase):
+    def test_upgrade_creates_planned_rollover_decision_table(self):
+        engine = sa.create_engine("sqlite:///:memory:")
+        metadata = sa.MetaData()
+        sa.Table("users", metadata, sa.Column("id", sa.Integer, primary_key=True))
+        sa.Table("hr_leave_type", metadata, sa.Column("id", sa.Integer, primary_key=True))
+        metadata.create_all(engine)
+
+        with engine.begin() as connection:
+            operations = Operations(MigrationContext.configure(connection))
+            original_operations = rollover_decision_migration.op
+            rollover_decision_migration.op = operations
+            try:
+                # It may run after a runtime schema upgrade, so it is safe to
+                # invoke more than once.
+                rollover_decision_migration.upgrade()
+                rollover_decision_migration.upgrade()
+            finally:
+                rollover_decision_migration.op = original_operations
+
+            inspector = sa.inspect(connection)
+            self.assertIn("hr_leave_rollover_decision", inspector.get_table_names())
+            columns = {
+                column["name"]
+                for column in inspector.get_columns("hr_leave_rollover_decision")
+            }
+            self.assertTrue({
+                "source_year",
+                "target_year",
+                "decision",
+                "transfer_days",
+                "applied_at",
+                "created_by_id",
+                "updated_by_id",
+            }.issubset(columns))
 
 
 if __name__ == "__main__":

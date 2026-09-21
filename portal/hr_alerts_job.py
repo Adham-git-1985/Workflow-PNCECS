@@ -3,13 +3,23 @@ import threading
 import time
 
 from extensions import db
-from portal.routes import _setting_get  # reuse SystemSetting helper (SystemSetting table)
+from portal.routes import (  # reuse leave helpers and SystemSetting table
+    _activate_due_leave_rollover_decisions,
+    _setting_get,
+)
 from services.attendance_schedule import send_attendance_schedule_reminders
 from services.hr_request_workflow import process_pending_approvals
 
 _HR_ALERTS_STARTED = False
 
 def _check_pending_leave_requests():
+    rollover_activations = 0
+    try:
+        rollover_activations = len(_activate_due_leave_rollover_decisions())
+    except Exception:
+        # Do not let a legacy database that has not yet received the new table
+        # prevent the rest of the HR reminders from running.
+        db.session.rollback()
     result = process_pending_approvals(send_notifications=True)
     followup_reminders = 0
     schedule_reminders = 0
@@ -47,6 +57,7 @@ def _check_pending_leave_requests():
     return (
         int(result.get("reminded", 0))
         + int(result.get("escalated", 0))
+        + int(rollover_activations)
         + int(followup_reminders)
         + int(schedule_reminders)
         + int(automatic_attendance_leaves)

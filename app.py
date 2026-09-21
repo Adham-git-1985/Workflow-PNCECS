@@ -400,6 +400,7 @@ def _ensure_runtime_schema():
                 ("deduct_from_balance", "BOOLEAN NOT NULL DEFAULT 1"),
                 ("day_count_basis", "TEXT NOT NULL DEFAULT 'WORKING_DAYS'"),
                 ("exclude_official_holidays", "BOOLEAN NOT NULL DEFAULT 0"),
+                ("balance_renewal_policy", "TEXT NOT NULL DEFAULT 'YEARLY'"),
             ]:
                 if not _col_exists("hr_leave_type", _col):
                     if _add_column_retry("hr_leave_type", _col, _ctype):
@@ -410,15 +411,31 @@ def _ensure_runtime_schema():
             # overwritten at startup.
             if _new_leave_policy_columns:
                 try:
-                    if "deduct_from_balance" in _new_leave_policy_columns:
-                        db.session.execute(text(
-                            "UPDATE hr_leave_type SET deduct_from_balance = 0 "
-                            "WHERE UPPER(code) IN ('M', 'MATERNITY', 'P', 'PATERNITY', 'PATERNITY_LEAVE')"
-                        ))
                     if "day_count_basis" in _new_leave_policy_columns:
                         db.session.execute(text(
                             "UPDATE hr_leave_type SET day_count_basis = 'CALENDAR_DAYS' "
                             "WHERE UPPER(code) IN ('M', 'MATERNITY')"
+                        ))
+                    if "balance_renewal_policy" in _new_leave_policy_columns:
+                        # The renewed-balance rule applies to the leave types
+                        # named by the administrative policy.  This one-time
+                        # upgrade does not overwrite later HR decisions.
+                        db.session.execute(text(
+                            "UPDATE hr_leave_type "
+                            "SET balance_renewal_policy = 'YEARLY', deduct_from_balance = 1 "
+                            "WHERE UPPER(code) IN ("
+                            "'S', 'SICK', 'SICK_LEAVE', 'MEDICAL', "
+                            "'M', 'MATERNITY', "
+                            "'P', 'Y', 'PATERNITY', 'PATERNITY_LEAVE'"
+                            ")"
+                        ))
+                        db.session.execute(text(
+                            "UPDATE hr_leave_type SET balance_renewal_policy = 'MANUAL' "
+                            "WHERE UPPER(code) IN ('COMPENSATORY', 'COMPENSATION')"
+                        ))
+                        db.session.execute(text(
+                            "UPDATE hr_leave_type SET balance_renewal_policy = 'ONCE' "
+                            "WHERE UPPER(code) IN ('H', 'HAJJ', 'HAJJ_LEAVE')"
                         ))
                     db.session.commit()
                 except Exception:

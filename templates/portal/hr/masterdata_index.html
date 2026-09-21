@@ -263,6 +263,13 @@
             </select>
           </div>
           <div class="col-md-3">
+            <select class="form-select" name="balance_renewal_policy">
+              <option value="YEARLY" selected>الرصيد يتجدد سنويًا</option>
+              <option value="MANUAL">الرصيد يدوي فقط</option>
+              <option value="ONCE">استحقاق لمرة واحدة</option>
+            </select>
+          </div>
+          <div class="col-md-3">
             <select class="form-select" name="balance_source_leave_type_id">
               <option value="">الخصم من رصيد النوع نفسه</option>
               {% for source in balance_source_types %}
@@ -303,7 +310,7 @@
 
         <div class="table-responsive mt-3">
           <table class="table table-sm align-middle">
-            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد أيام', 'max_days') }}</th><th>حد استثنائي</th><th>الرصيد السنوي</th><th>رصيد الخصم</th><th>العطل الأسبوعية</th><th>العطل الرسمية</th><th>خارجية</th><th>مرفقات</th><th>نشط</th><th></th></tr></thead>
+            <thead><tr><th>{{ portal_sort_link('CODE', 'code') }}</th><th>{{ portal_sort_link('الاسم', 'name_ar') }}</th><th>موافقة</th><th>{{ portal_sort_link('حد أيام', 'max_days') }}</th><th>حد استثنائي</th><th>الرصيد السنوي</th><th>رصيد الخصم</th><th>التجديد</th><th>العطل الأسبوعية</th><th>العطل الرسمية</th><th>خارجية</th><th>مرفقات</th><th>نشط</th><th></th></tr></thead>
             <tbody>
               {% for t in leave_types %}
               <tr>
@@ -322,6 +329,7 @@
                     رصيد النوع نفسه
                   {% endif %}
                 </td>
+                <td>{% if t.balance_renewal_policy == 'MANUAL' %}يدوي{% elif t.balance_renewal_policy == 'ONCE' %}مرة واحدة{% else %}سنوي{% endif %}</td>
                 <td>{{ 'تُحتسب' if t.day_count_basis == 'CALENDAR_DAYS' else 'لا تُحتسب' }}</td>
                 <td>{{ 'مستبعدة' if t.exclude_official_holidays else 'ضمن المدة' }}</td>
                 <td>{{ 'نعم' if t.is_external else 'لا' }}</td>

@@ -71,7 +71,17 @@
           <option value="1" {% if row.deduct_from_balance %}selected{% endif %}>نعم، تُخصم من الرصيد</option>
           <option value="0" {% if not row.deduct_from_balance %}selected{% endif %}>لا، لا تُخصم من الرصيد</option>
         </select>
-        <div class="form-text">مثال: إجازتا الأمومة والأبوة لا تستهلكان الرصيد عند اختيار «لا».</div>
+        <div class="form-text">المرضية والأمومة والأبوة تُضبط عادةً لتُخصم من رصيدها السنوي المتجدد.</div>
+      </div>
+
+      <div class="col-12 col-md-3">
+        <label class="form-label">تجديد الرصيد</label>
+        <select class="form-select" name="balance_renewal_policy">
+          <option value="YEARLY" {% if row.balance_renewal_policy != 'MANUAL' and row.balance_renewal_policy != 'ONCE' %}selected{% endif %}>يتجدد مع بداية كل سنة</option>
+          <option value="MANUAL" {% if row.balance_renewal_policy == 'MANUAL' %}selected{% endif %}>يدوي فقط</option>
+          <option value="ONCE" {% if row.balance_renewal_policy == 'ONCE' %}selected{% endif %}>استحقاق لمرة واحدة</option>
+        </select>
+        <div class="form-text">التعويضية يدوي فقط، وإجازة الحج لمرة واحدة. يُحدَّد الرصيد السنوي من الحقل أعلاه أو حسب الدرجة/الموظف.</div>
       </div>
 
       <div class="col-12 col-md-3">

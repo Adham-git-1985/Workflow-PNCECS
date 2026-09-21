@@ -1,10 +1,27 @@
 from flask import Blueprint, request, url_for
 from markupsafe import Markup, escape
 
+from extensions import db
 from utils.timezone import format_local_datetime
 
 portal_bp = Blueprint("portal", __name__, url_prefix="/portal")
 portal_bp.add_app_template_filter(format_local_datetime, "local_datetime")
+
+
+@portal_bp.before_request
+def activate_due_leave_rollover_decisions():
+    """Make pre-recorded annual leave decisions effective on their due year."""
+    try:
+        # Imported lazily so defining the blueprint never creates a circular
+        # import with ``portal.routes``.
+        from .routes import _activate_due_leave_rollover_decisions
+
+        if _activate_due_leave_rollover_decisions():
+            db.session.commit()
+    except Exception:
+        # A partly upgraded legacy database must remain usable; the regular
+        # runtime migration and the next request will retry safely.
+        db.session.rollback()
 
 
 @portal_bp.app_context_processor

@@ -186,6 +186,7 @@ from models import (
     HRLeaveAttachment,
     HRLeaveBalance,
     HRLeaveBalanceAdjustment,
+    HRLeaveRolloverDecision,
     HRRequestApprovalStep,
     HRRequestObserver,
     HRMonthlyPermissionAllowance,
@@ -7594,6 +7595,25 @@ MATERNITY_LEAVE_CODE = "M"
 UNPAID_LEAVE_CODE = "UNPAID"
 STUDY_LEAVE_CODE = "STUDY"
 COMPENSATORY_LEAVE_CODE = "COMPENSATORY"
+LEAVE_BALANCE_RENEWAL_YEARLY = "YEARLY"
+LEAVE_BALANCE_RENEWAL_MANUAL = "MANUAL"
+LEAVE_BALANCE_RENEWAL_ONCE = "ONCE"
+
+
+def _leave_balance_renewal_policy(leave_type: HRLeaveType | None) -> str:
+    """Return a validated balance-renewal policy for a leave type."""
+    policy = (getattr(leave_type, "balance_renewal_policy", None) or "").strip().upper()
+    if policy in {
+        LEAVE_BALANCE_RENEWAL_YEARLY,
+        LEAVE_BALANCE_RENEWAL_MANUAL,
+        LEAVE_BALANCE_RENEWAL_ONCE,
+    }:
+        return policy
+    return LEAVE_BALANCE_RENEWAL_YEARLY
+
+
+def _leave_type_renews_yearly(leave_type: HRLeaveType | None) -> bool:
+    return _leave_balance_renewal_policy(leave_type) == LEAVE_BALANCE_RENEWAL_YEARLY
 
 
 def _is_compensatory_leave_type(leave_type: HRLeaveType | None) -> bool:
@@ -7602,6 +7622,48 @@ def _is_compensatory_leave_type(leave_type: HRLeaveType | None) -> bool:
         leave_type
         and is_compensatory_leave(SimpleNamespace(leave_type=leave_type))
     )
+
+
+def _is_hajj_leave_type(leave_type: HRLeaveType | None) -> bool:
+    """Recognise the built-in Hajj leave even on legacy databases."""
+    if not leave_type:
+        return False
+    code = re.sub(r"[^A-Z0-9]", "", (leave_type.code or "").strip().upper())
+    label = " ".join((leave_type.name_ar or "", leave_type.name_en or "")).casefold()
+    return code in {"H", "HAJJ", "HAJJLEAVE"} or "حج" in label or "hajj" in label
+
+
+def _one_time_leave_error(
+    user_id: int,
+    leave_type: HRLeaveType | None,
+    *,
+    exclude_request_id: int | None = None,
+) -> str | None:
+    """Return an error when a Hajj leave has already been finally approved.
+
+    Draft, rejected and cancelled requests intentionally do not consume the
+    once-only entitlement.  This keeps a cancelled request reversible while
+    preventing a second approved Hajj leave for the same employee.
+    """
+    if not _is_hajj_leave_type(leave_type):
+        return None
+    try:
+        query = (
+            HRLeaveRequest.query
+            .join(HRLeaveType, HRLeaveType.id == HRLeaveRequest.leave_type_id)
+            .filter(HRLeaveRequest.user_id == int(user_id))
+            .filter(HRLeaveRequest.status == "APPROVED")
+            .order_by(HRLeaveRequest.id.asc())
+        )
+        if exclude_request_id:
+            query = query.filter(HRLeaveRequest.id != int(exclude_request_id))
+        for previous_request in query.all():
+            if _is_hajj_leave_type(getattr(previous_request, "leave_type", None)):
+                return "إجازة الحج استحقاق لمرة واحدة فقط للموظف، ويوجد طلب حج معتمد سابقًا."
+    except Exception:
+        # A failed validation lookup must never grant a once-only entitlement.
+        return "تعذر التحقق من سجل إجازة الحج؛ يرجى المحاولة لاحقًا أو مراجعة الشؤون الإدارية."
+    return None
 
 
 def _ensure_compensatory_leave_type() -> HRLeaveType | None:
@@ -7629,6 +7691,7 @@ def _ensure_compensatory_leave_type() -> HRLeaveType | None:
                 requires_approval=True,
                 default_balance_days=0,
                 deduct_from_balance=True,
+                balance_renewal_policy=LEAVE_BALANCE_RENEWAL_MANUAL,
                 balance_source_leave_type_id=None,
                 day_count_basis=LEAVE_DAY_COUNT_WORKING,
                 exclude_official_holidays=False,
@@ -7641,6 +7704,7 @@ def _ensure_compensatory_leave_type() -> HRLeaveType | None:
             values = {
                 "requires_approval": True,
                 "deduct_from_balance": True,
+                "balance_renewal_policy": LEAVE_BALANCE_RENEWAL_MANUAL,
                 "balance_source_leave_type_id": None,
                 "is_active": True,
             }
@@ -7863,7 +7927,8 @@ def _ensure_maternity_leave_type() -> HRLeaveType | None:
             name_ar="إجازة أمومة",
             name_en="Maternity leave",
             requires_approval=True,
-            deduct_from_balance=False,
+            deduct_from_balance=True,
+            balance_renewal_policy=LEAVE_BALANCE_RENEWAL_YEARLY,
             day_count_basis=LEAVE_DAY_COUNT_CALENDAR,
             exclude_official_holidays=False,
             is_active=True,
@@ -18196,6 +18261,11 @@ def hr_leave_request_new():
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
             return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
 
+        one_time_error = _one_time_leave_error(current_user.id, lt)
+        if one_time_error:
+            flash(one_time_error, "danger")
+            return render_template("portal/hr/leave_request_new.html", types=types, types_meta=types_meta)
+
         casual_policy_error = _casual_leave_policy_error(current_user.id, lt, start_d, end_d)
         if casual_policy_error:
             flash(casual_policy_error, "danger")
@@ -18406,6 +18476,15 @@ def hr_leave_request_edit(req_id: int):
             return render_form()
         if end_date < start_date:
             flash("تاريخ النهاية يجب أن يكون بعد تاريخ البداية.", "danger")
+            return render_form()
+
+        one_time_error = _one_time_leave_error(
+            current_user.id,
+            leave_type,
+            exclude_request_id=req.id,
+        )
+        if one_time_error:
+            flash(one_time_error, "danger")
             return render_form()
 
         casual_policy_error = _casual_leave_policy_error(
@@ -19635,6 +19714,14 @@ def hr_approval_leave(req_id: int):
         action = (request.form.get("action") or "").strip().upper()
         note = (request.form.get("decision_note") or "").strip()
         if action == "APPROVE":
+            one_time_error = _one_time_leave_error(
+                r.user_id,
+                r.leave_type,
+                exclude_request_id=r.id,
+            )
+            if one_time_error:
+                flash(one_time_error, "danger")
+                return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
             casual_policy_error = _casual_leave_policy_error(
                 r.user_id,
                 r.leave_type,
@@ -27652,6 +27739,13 @@ def hr_leave_type_new():
     max_days = (request.form.get("max_days") or "").strip()
     default_balance = (request.form.get("default_balance_days") or "").strip()
     deduct_from_balance = (request.form.get("deduct_from_balance") or "1") == "1"
+    balance_renewal_policy = (request.form.get("balance_renewal_policy") or LEAVE_BALANCE_RENEWAL_YEARLY).strip().upper()
+    if balance_renewal_policy not in {
+        LEAVE_BALANCE_RENEWAL_YEARLY,
+        LEAVE_BALANCE_RENEWAL_MANUAL,
+        LEAVE_BALANCE_RENEWAL_ONCE,
+    }:
+        balance_renewal_policy = LEAVE_BALANCE_RENEWAL_YEARLY
     balance_source_id_raw = (request.form.get("balance_source_leave_type_id") or "").strip()
     day_count_basis = (request.form.get("day_count_basis") or LEAVE_DAY_COUNT_WORKING).strip().upper()
     if day_count_basis not in {LEAVE_DAY_COUNT_CALENDAR, LEAVE_DAY_COUNT_WORKING}:
@@ -27678,6 +27772,11 @@ def hr_leave_type_new():
         return redirect(url_for("portal.hr_masterdata_index"))
     if balance_source:
         deduct_from_balance = True
+    if _is_compensatory_leave_type(SimpleNamespace(code=code, name_ar=name_ar, name_en=name_en)):
+        balance_renewal_policy = LEAVE_BALANCE_RENEWAL_MANUAL
+        deduct_from_balance = True
+    elif _is_hajj_leave_type(SimpleNamespace(code=code, name_ar=name_ar, name_en=name_en)):
+        balance_renewal_policy = LEAVE_BALANCE_RENEWAL_ONCE
 
     md = int(max_days) if max_days.isdigit() else None
     dbd = int(default_balance) if default_balance.isdigit() else None
@@ -27698,6 +27797,7 @@ def hr_leave_type_new():
         max_days=md,
         default_balance_days=dbd,
         deduct_from_balance=deduct_from_balance,
+        balance_renewal_policy=balance_renewal_policy,
         balance_source_leave_type_id=(balance_source.id if balance_source else None),
         day_count_basis=day_count_basis,
         exclude_official_holidays=exclude_official_holidays,
@@ -27743,6 +27843,13 @@ def hr_leave_type_edit(lt_id: int):
         max_days = (request.form.get("max_days") or "").strip()
         default_balance = (request.form.get("default_balance_days") or "").strip()
         deduct_from_balance = (request.form.get("deduct_from_balance") or "1") == "1"
+        balance_renewal_policy = (request.form.get("balance_renewal_policy") or LEAVE_BALANCE_RENEWAL_YEARLY).strip().upper()
+        if balance_renewal_policy not in {
+            LEAVE_BALANCE_RENEWAL_YEARLY,
+            LEAVE_BALANCE_RENEWAL_MANUAL,
+            LEAVE_BALANCE_RENEWAL_ONCE,
+        }:
+            balance_renewal_policy = LEAVE_BALANCE_RENEWAL_YEARLY
         balance_source_id_raw = (request.form.get("balance_source_leave_type_id") or "").strip()
         day_count_basis = (request.form.get("day_count_basis") or LEAVE_DAY_COUNT_WORKING).strip().upper()
         if day_count_basis not in {LEAVE_DAY_COUNT_CALENDAR, LEAVE_DAY_COUNT_WORKING}:
@@ -27773,6 +27880,11 @@ def hr_leave_type_edit(lt_id: int):
             balance_source = None
         elif balance_source:
             deduct_from_balance = True
+        if _is_compensatory_leave_type(SimpleNamespace(code=code, name_ar=name_ar, name_en=name_en)):
+            balance_renewal_policy = LEAVE_BALANCE_RENEWAL_MANUAL
+            deduct_from_balance = True
+        elif _is_hajj_leave_type(SimpleNamespace(code=code, name_ar=name_ar, name_en=name_en)):
+            balance_renewal_policy = LEAVE_BALANCE_RENEWAL_ONCE
 
         other = HRLeaveType.query.filter(HRLeaveType.code == code, HRLeaveType.id != row.id).first()
         if other:
@@ -27792,6 +27904,7 @@ def hr_leave_type_edit(lt_id: int):
         row.max_days = md
         row.default_balance_days = dbd
         row.deduct_from_balance = deduct_from_balance
+        row.balance_renewal_policy = balance_renewal_policy
         row.balance_source_leave_type_id = balance_source.id if balance_source else None
         row.day_count_basis = day_count_basis
         row.exclude_official_holidays = exclude_official_holidays
@@ -27940,6 +28053,12 @@ def _leave_base_entitlement_days(user_id: int, lt: HRLeaveType, year: int) -> fl
             return float(row.total_days)
     except Exception:
         pass
+
+    # Manual balances (notably compensatory leave) never receive an implicit
+    # new-year entitlement.  Their only balance comes from explicit HR input
+    # or the immutable credit adjustments recorded for the employee.
+    if not _leave_type_renews_yearly(lt):
+        return 0.0
 
     # 2) per-grade entitlement
     try:
@@ -28665,100 +28784,160 @@ def _permission_excess_leave_type_id() -> int | None:
         return None
 
 
+def _leave_balance_usage_by_year(
+    user_id: int,
+    balance_type: HRLeaveType,
+    as_of: date,
+) -> dict[int, float]:
+    """Allocate approved leave usage to the balance year that funds it.
+
+    A normal request consumes the balance of its own calendar year.  A request
+    that crosses New Year is different: it first exhausts the balance of the
+    year in which it started, then records the remainder against the following
+    year.  This is intentionally based on the request's *start* year rather
+    than splitting the request simply by its calendar dates.
+
+    The returned mapping is also used for balances that renew each year (sick,
+    maternity and paternity).  Compensatory leave has no automatic entitlement,
+    so only manually issued balance is available to it.
+    """
+    used_by_year: dict[int, float] = {}
+    try:
+        # A final annual view reserves every approved request that has started
+        # by the close of that year, including the part that continues into the
+        # following year.  Point-in-time reports remain day-by-day.
+        reserve_full_request = as_of == date(as_of.year, 12, 31)
+
+        # Approved attendance-deduction runs consume their own run year.  Add
+        # them before allocating cross-year requests so they reduce the source
+        # year's available balance as well.
+        deduction_rows = (
+            db.session.query(
+                HRAttendanceDeductionRun.year,
+                HRAttendanceDeductionRun.month,
+                func.coalesce(func.sum(HRAttendanceDeductionItem.leave_deduction_days), 0.0),
+            )
+            .join(
+                HRAttendanceDeductionRun,
+                HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id,
+            )
+            .join(
+                HRLeaveType,
+                HRLeaveType.id == HRAttendanceDeductionItem.deduction_leave_type_id,
+            )
+            .filter(HRAttendanceDeductionItem.user_id == user_id)
+            .filter(or_(
+                HRLeaveType.id == balance_type.id,
+                HRLeaveType.balance_source_leave_type_id == balance_type.id,
+            ))
+            .filter(HRAttendanceDeductionRun.status == "FINAL")
+            .filter(HRAttendanceDeductionRun.year <= as_of.year)
+            .group_by(HRAttendanceDeductionRun.year, HRAttendanceDeductionRun.month)
+            .all()
+        )
+        for run_year, run_month, days in deduction_rows:
+            if int(run_year) == as_of.year and int(run_month) > as_of.month:
+                continue
+            used_by_year[int(run_year)] = used_by_year.get(int(run_year), 0.0) + float(days or 0.0)
+
+        requests = (
+            HRLeaveRequest.query
+            .join(HRLeaveType, HRLeaveRequest.leave_type_id == HRLeaveType.id)
+            .filter(HRLeaveRequest.user_id == user_id)
+            .filter(or_(
+                HRLeaveType.id == balance_type.id,
+                HRLeaveType.balance_source_leave_type_id == balance_type.id,
+            ))
+            .filter(HRLeaveRequest.status.in_(["APPROVED", "CANCELLED"]))
+            .order_by(HRLeaveRequest.start_date.asc(), HRLeaveRequest.id.asc())
+            .all()
+        )
+
+        for leave_request in requests:
+            request_leave_type = getattr(leave_request, "leave_type", None)
+            if not _leave_type_deducts_from_balance(request_leave_type):
+                continue
+            # A system-generated annual day that was superseded by approved
+            # sick leave or verified manual attendance stays in the audit log,
+            # but must no longer consume a leave balance.
+            if (
+                getattr(leave_request, "replaced_at", None)
+                or (getattr(leave_request, "replacement_reason", None) or "").strip()
+            ):
+                continue
+            if (
+                leave_request.status == "CANCELLED"
+                and (leave_request.cancelled_from_status or "").upper() != "APPROVED"
+            ):
+                continue
+
+            start = _parse_yyyy_mm_dd(leave_request.start_date)
+            end = _parse_yyyy_mm_dd(leave_request.end_date)
+            if not start or not end or start > as_of:
+                continue
+
+            effective_end = end if reserve_full_request else min(end, as_of)
+            if leave_request.status == "CANCELLED" and leave_request.cancel_effective_date:
+                cancelled_end = _parse_yyyy_mm_dd(leave_request.cancel_effective_date)
+                if cancelled_end:
+                    effective_end = min(effective_end, cancelled_end)
+            if effective_end < start:
+                continue
+
+            requested_days = float(_calculate_leave_days(
+                request_leave_type,
+                start.isoformat(),
+                effective_end.isoformat(),
+                user_id=user_id,
+            ))
+            if requested_days <= 0:
+                continue
+
+            # A request contained within one year remains charged to that year
+            # even where it eventually exceeds the available balance.
+            if effective_end.year == start.year:
+                used_by_year[start.year] = used_by_year.get(start.year, 0.0) + requested_days
+                continue
+
+            # For a cross-year request, consume what is available from the
+            # start year.  Each intermediate year is exhausted in turn; the
+            # final year receives any unavoidable overage.
+            remaining_to_allocate = requested_days
+            allocation_year = start.year
+            while remaining_to_allocate > 0.0001:
+                year_entitlement = float(
+                    _leave_entitlement_days(user_id, balance_type, allocation_year) or 0.0
+                )
+                year_used = float(used_by_year.get(allocation_year, 0.0))
+                year_available = max(0.0, year_entitlement - year_used)
+
+                if allocation_year >= effective_end.year:
+                    used_by_year[allocation_year] = year_used + remaining_to_allocate
+                    break
+
+                funded_days = min(remaining_to_allocate, year_available)
+                if funded_days > 0:
+                    used_by_year[allocation_year] = year_used + funded_days
+                    remaining_to_allocate -= funded_days
+                allocation_year += 1
+
+        return {key: float(value) for key, value in used_by_year.items()}
+    except Exception:
+        return {}
+
+
 def _leave_used_days_as_of(user_id: int, leave_type_id: int, year: int, as_of: date) -> float:
-    """Compute used leave days for a given year up to a specific date (day-by-day)."""
+    """Compute committed usage for a balance year at a specific cutoff date."""
     try:
         leave_type = HRLeaveType.query.get(int(leave_type_id))
         if not leave_type or not _leave_type_deducts_from_balance(leave_type):
             return 0.0
         balance_type = _leave_balance_source_type(leave_type)
-        if not balance_type:
-            return 0.0
-
-        # Bound as_of to the requested year
-        if as_of.year < year:
+        if not balance_type or as_of.year < year:
             return 0.0
         if as_of.year > year:
             as_of = date(year, 12, 31)
-
-        y_start = date(year, 1, 1)
-        y_end = date(year, 12, 31)
-        as_of_str = as_of.strftime("%Y-%m-%d")
-
-        total = 0.0
-        q = (HRLeaveRequest.query
-             .join(HRLeaveType, HRLeaveRequest.leave_type_id == HRLeaveType.id)
-             .filter(HRLeaveRequest.user_id == user_id)
-             .filter(or_(
-                 HRLeaveType.id == balance_type.id,
-                 HRLeaveType.balance_source_leave_type_id == balance_type.id,
-             ))
-             .filter(HRLeaveRequest.status.in_(["APPROVED", "CANCELLED"]))
-             .order_by(HRLeaveRequest.id.asc()))
-
-        for r in q.all():
-            request_leave_type = getattr(r, "leave_type", None)
-            if not _leave_type_deducts_from_balance(request_leave_type):
-                continue
-            # A system-generated annual day that was superseded by approved
-            # sick leave or verified manual attendance no longer consumes the
-            # annual balance, while the original row remains in the audit log.
-            if getattr(r, "replaced_at", None) or (getattr(r, "replacement_reason", None) or "").strip():
-                continue
-            # Only count CANCELLED requests if they were cancelled after approval
-            if r.status == "CANCELLED":
-                if (r.cancelled_from_status or "").upper() != "APPROVED":
-                    continue
-
-            start = _parse_yyyy_mm_dd(r.start_date)
-            end = _parse_yyyy_mm_dd(r.end_date)
-            if not start or not end:
-                continue
-
-            # Day-by-day: only count days up to as_of (and stop at cancellation effective date)
-            effective_end = min(end, as_of)
-            if r.status == "CANCELLED" and r.cancel_effective_date:
-                ce = _parse_yyyy_mm_dd(r.cancel_effective_date)
-                if ce:
-                    effective_end = min(effective_end, ce)
-
-            # Intersect with requested year
-            s = max(start, y_start)
-            e = min(effective_end, y_end)
-            if e < s:
-                continue
-
-            total += float(
-                _calculate_leave_days(
-                    request_leave_type,
-                    s.isoformat(),
-                    e.isoformat(),
-                    user_id=user_id,
-                )
-            )
-
-        # Add only approved deduction runs. Draft previews must never affect
-        # leave balances or salary reports.
-        try:
-            approved_days = (
-                db.session.query(func.coalesce(func.sum(HRAttendanceDeductionItem.leave_deduction_days), 0.0))
-                .join(HRAttendanceDeductionRun, HRAttendanceDeductionRun.id == HRAttendanceDeductionItem.run_id)
-                .join(HRLeaveType, HRLeaveType.id == HRAttendanceDeductionItem.deduction_leave_type_id)
-                .filter(HRAttendanceDeductionItem.user_id == user_id)
-                .filter(or_(
-                    HRLeaveType.id == balance_type.id,
-                    HRLeaveType.balance_source_leave_type_id == balance_type.id,
-                ))
-                .filter(HRAttendanceDeductionRun.status == 'FINAL')
-                .filter(HRAttendanceDeductionRun.year == year)
-                .filter(HRAttendanceDeductionRun.month <= as_of.month)
-                .scalar()
-            )
-            total += float(approved_days or 0.0)
-        except Exception:
-            pass
-
-        return float(total)
+        return float(_leave_balance_usage_by_year(user_id, balance_type, as_of).get(year, 0.0))
     except Exception:
         return 0.0
 
@@ -28781,43 +28960,77 @@ def _leave_used_days(user_id: int, leave_type_id: int, year: int) -> float:
         return 0.0
 
 
+def _leave_balance_request_funding_error(
+    user_id: int,
+    leave_type: HRLeaveType | None,
+    start_day: date | None,
+    end_day: date | None,
+    *,
+    label: str,
+) -> str | None:
+    """Verify a request can be funded using its start year before later years.
+
+    This mirrors the actual balance allocation.  An absence that starts in
+    2026 and continues into 2027 consumes all available 2026 balance first;
+    only then does it draw from 2027.  It deliberately does not split the
+    request solely by calendar dates.
+    """
+    if not start_day or not end_day or end_day < start_day:
+        return f"تعذر التحقق من رصيد {label} لعدم اكتمال تاريخ الطلب."
+
+    balance_type = _leave_balance_source_type(leave_type)
+    if not balance_type or not _leave_type_owns_balance(balance_type):
+        return f"نوع {label} غير مضبوط كرصد مستقل. راجع إعدادات نوع الإجازة."
+
+    requested_days = float(_calculate_leave_days(
+        leave_type,
+        start_day.isoformat(),
+        end_day.isoformat(),
+        user_id=user_id,
+    ))
+    if requested_days <= 0:
+        return None
+
+    # Use a year-end cutoff so existing approved future requests reserve their
+    # balance just as the regular balance screen and approval flow do.
+    usage = _leave_balance_usage_by_year(
+        user_id,
+        balance_type,
+        date(end_day.year, 12, 31),
+    )
+    remaining_to_fund = requested_days
+    for leave_year in range(start_day.year, end_day.year + 1):
+        total_days = float(_leave_entitlement_days(user_id, balance_type, leave_year) or 0.0)
+        used_days = float(usage.get(leave_year, 0.0))
+        available_days = max(0.0, total_days - used_days)
+        funded_days = min(remaining_to_fund, available_days)
+        remaining_to_fund -= funded_days
+        if remaining_to_fund <= 0.0001:
+            return None
+
+    return (
+        f"رصيد {label} غير كافٍ: المطلوب {requested_days:g} يوم. "
+        f"يُستهلك المتاح من رصيد {start_day.year} أولًا ثم من السنوات التالية، "
+        "ويرجى مراجعة الشؤون الإدارية لإضافة الرصيد اللازم."
+    )
+
+
 def _compensatory_leave_balance_error(
     user_id: int,
     leave_type: HRLeaveType | None,
     start_day: date | None,
     end_day: date | None,
 ) -> str | None:
-    """Validate that a compensatory request fits the manually issued balance."""
+    """Validate manually issued compensatory balance, including a year boundary."""
     if not _is_compensatory_leave_type(leave_type):
         return None
-    if not start_day or not end_day or end_day < start_day:
-        return "تعذر التحقق من رصيد الإجازة التعويضية لعدم اكتمال تاريخ الطلب."
-
-    balance_type = _leave_balance_source_type(leave_type)
-    if not balance_type or not _leave_type_owns_balance(balance_type):
-        return "نوع الإجازة التعويضية غير مضبوط كرصد مستقل. راجع إعدادات نوع الإجازة."
-
-    for leave_year in range(start_day.year, end_day.year + 1):
-        period_start = max(start_day, date(leave_year, 1, 1))
-        period_end = min(end_day, date(leave_year, 12, 31))
-        requested_days = float(_calculate_leave_days(
-            leave_type,
-            period_start.isoformat(),
-            period_end.isoformat(),
-            user_id=user_id,
-        ))
-        if requested_days <= 0:
-            continue
-        total_days = float(_leave_entitlement_days(user_id, balance_type, leave_year) or 0.0)
-        used_days = float(_leave_used_days(user_id, balance_type.id, leave_year) or 0.0)
-        remaining_days = max(0.0, total_days - used_days)
-        if requested_days > remaining_days + 0.0001:
-            return (
-                f"رصيد الإجازة التعويضية غير كافٍ لعام {leave_year}: "
-                f"المتاح {remaining_days:g} يوم، والمطلوب {requested_days:g} يوم. "
-                "يرجى مراجعة الشؤون الإدارية لإضافة الرصيد التعويضي."
-            )
-    return None
+    return _leave_balance_request_funding_error(
+        user_id,
+        leave_type,
+        start_day,
+        end_day,
+        label="الإجازة التعويضية",
+    )
 
 
 
@@ -28954,7 +29167,12 @@ def _is_annual_balance_type(leave_type: HRLeaveType | None) -> bool:
         return False
     code = (balance_type.code or "").strip().upper().replace("-", "_")
     name = (balance_type.name_ar or "").strip()
-    return code in {"ANNUAL", "ANNUAL_LEAVE", "PERSONAL"} or "سنوي" in name
+    label = " ".join((balance_type.name_ar or "", balance_type.name_en or "")).casefold()
+    return (
+        code in {"A", "L", "ANNUAL", "ANNUAL_LEAVE", "PERSONAL"}
+        or "سنوي" in name
+        or "annual" in label
+    )
 
 
 def _annual_leave_type() -> HRLeaveType | None:
@@ -29155,11 +29373,181 @@ def _convert_auto_annual_leave_after_sick_approval(
     return len(rows)
 
 
+ANNUAL_CURRENT_YEAR_LIMIT_SETTING = "HR_ANNUAL_LEAVE_CURRENT_YEAR_LIMIT"
+
+
+def _annual_current_year_limit() -> float:
+    """Configured maximum portion of a final annual balance kept in its year."""
+    return max(0.0, float(_setting_get_int(ANNUAL_CURRENT_YEAR_LIMIT_SETTING, 30)))
+
+
+def _annual_balance_types(leave_types: list[HRLeaveType]) -> list[HRLeaveType]:
+    """Return each independent annual balance type once."""
+    rows = []
+    seen_type_ids = set()
+    for leave_type in leave_types:
+        if not _is_annual_balance_type(leave_type):
+            continue
+        balance_type = _leave_balance_source_type(leave_type)
+        if not balance_type or balance_type.id in seen_type_ids:
+            continue
+        seen_type_ids.add(balance_type.id)
+        rows.append(balance_type)
+    return rows
+
+
+def _annual_bucket_marker(year: int) -> str:
+    return f"[HR-ANNUAL-BUCKET-ALLOCATION:{int(year)}]"
+
+
+def _annual_bucket_allocation(user_id: int, leave_type_id: int, year: int):
+    marker = _annual_bucket_marker(year)
+    return (
+        HRLeaveBalanceAdjustment.query
+        .filter_by(user_id=user_id, leave_type_id=leave_type_id)
+        .filter(HRLeaveBalanceAdjustment.reason.contains(marker))
+        .order_by(HRLeaveBalanceAdjustment.id.asc())
+        .first()
+    )
+
+
+def _marker_number(text_value: str | None, key: str) -> float | None:
+    """Read a numeric field written into an auditable adjustment marker."""
+    match = re.search(
+        rf"(?:^|\s){re.escape(key)}=(-?\d+(?:\.\d+)?)",
+        text_value or "",
+    )
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
+def _annual_bucket_rows(user_id: int, year: int, leave_types: list[HRLeaveType]) -> list[dict]:
+    """Expose the two active annual buckets: selected year and prior year."""
+    rows = []
+    limit = _annual_current_year_limit()
+    for balance_type in _annual_balance_types(leave_types):
+        current_total = float(_leave_entitlement_days(user_id, balance_type, year) or 0.0)
+        current_used = float(_leave_used_days(user_id, balance_type.id, year) or 0.0)
+        current_remaining = max(0.0, current_total - current_used)
+        previous_year = year - 1
+        previous_total = float(_leave_entitlement_days(user_id, balance_type, previous_year) or 0.0)
+        previous_used = float(_leave_used_days(user_id, balance_type.id, previous_year) or 0.0)
+        previous_remaining = max(0.0, previous_total - previous_used)
+        allocation = _annual_bucket_allocation(user_id, balance_type.id, year)
+        rows.append({
+            "leave_type": balance_type,
+            "year": year,
+            "previous_year": previous_year,
+            "current_total": current_total,
+            "current_used": current_used,
+            "current_remaining": current_remaining,
+            "previous_total": previous_total,
+            "previous_used": previous_used,
+            "previous_remaining": previous_remaining,
+            "limit": limit,
+            "planned_current_remaining": min(current_remaining, limit),
+            "planned_previous_remaining": max(0.0, current_remaining - limit),
+            "prepared": allocation is not None,
+        })
+    return rows
+
+
+def _prepare_annual_balance_buckets(
+    user_id: int,
+    year: int,
+    leave_types: list[HRLeaveType],
+    *,
+    actor_id: int,
+) -> list[dict]:
+    """Split a closed annual balance into its current and prior-year buckets.
+
+    The current year keeps the configurable cap.  Every remaining day is
+    recorded as the previous year's balance.  Adjustments make the migration
+    auditable and avoid overwriting the original opening-balance records.
+    """
+    prepared = []
+    limit = _annual_current_year_limit()
+    previous_year = year - 1
+    marker = _annual_bucket_marker(year)
+    for balance_type in _annual_balance_types(leave_types):
+        if _annual_bucket_allocation(user_id, balance_type.id, year):
+            continue
+
+        current_total = float(_leave_entitlement_days(user_id, balance_type, year) or 0.0)
+        current_used = float(_leave_used_days(user_id, balance_type.id, year) or 0.0)
+        final_remaining = max(0.0, current_total - current_used)
+        current_remaining = min(final_remaining, limit)
+        previous_remaining = max(0.0, final_remaining - current_remaining)
+
+        desired_current_total = current_used + current_remaining
+        current_delta = desired_current_total - current_total
+
+        previous_total = float(_leave_entitlement_days(user_id, balance_type, previous_year) or 0.0)
+        previous_used = float(_leave_used_days(user_id, balance_type.id, previous_year) or 0.0)
+        desired_previous_total = previous_used + previous_remaining
+        previous_delta = desired_previous_total - previous_total
+
+        detail = (
+            f"{marker} FINAL_REMAINING={final_remaining:.4f} "
+            f"CURRENT_REMAINING={current_remaining:.4f} "
+            f"PREVIOUS_REMAINING={previous_remaining:.4f} LIMIT={limit:.4f}; "
+            f"تقسيم الرصيد النهائي للإجازة السنوية: {current_remaining:g} يومًا لعام {year} "
+            f"و{previous_remaining:g} يومًا لعام {previous_year}."
+        )
+        # Always add the current-year marker, including a zero adjustment, so
+        # the allocation cannot accidentally be applied twice.
+        db.session.add(HRLeaveBalanceAdjustment(
+            user_id=user_id,
+            leave_type_id=balance_type.id,
+            year=year,
+            days_delta=current_delta,
+            reason=detail + " [CURRENT]",
+            created_by_id=actor_id,
+        ))
+        if abs(previous_delta) > 0.0001:
+            db.session.add(HRLeaveBalanceAdjustment(
+                user_id=user_id,
+                leave_type_id=balance_type.id,
+                year=previous_year,
+                days_delta=previous_delta,
+                reason=detail + " [PREVIOUS]",
+                created_by_id=actor_id,
+            ))
+        prepared.append({
+            "leave_type": balance_type,
+            "current_remaining": current_remaining,
+            "previous_remaining": previous_remaining,
+        })
+    return prepared
+
+
 def _leave_rollover_marker(source_year: int, target_year: int) -> str:
     return f"[HR-LEAVE-ROLLOVER:{int(source_year)}:{int(target_year)}]"
 
 
-def _leave_rollover_decision(user_id: int, leave_type_id: int, source_year: int, target_year: int):
+LEAVE_ROLLOVER_DECISION_DELETE = "DELETE"
+LEAVE_ROLLOVER_DECISION_TRANSFER = "TRANSFER"
+
+
+def _leave_rollover_effective_day(target_year: int) -> date:
+    return date(int(target_year), 1, 1)
+
+
+def _leave_rollover_is_due(target_year: int, effective_day: date | None = None) -> bool:
+    return (effective_day or date.today()) >= _leave_rollover_effective_day(target_year)
+
+
+def _legacy_leave_rollover_adjustment(
+    user_id: int,
+    leave_type_id: int,
+    source_year: int,
+    target_year: int,
+):
+    """Return a decision made by the earlier immediate-rollover screen."""
     marker = _leave_rollover_marker(source_year, target_year)
     return (
         HRLeaveBalanceAdjustment.query
@@ -29170,43 +29558,469 @@ def _leave_rollover_decision(user_id: int, leave_type_id: int, source_year: int,
     )
 
 
-def _leave_rollover_rows(user_id: int, target_year: int, leave_types: list[HRLeaveType]) -> list[dict]:
-    """Show the two preceding annual balances and any already recorded decision."""
-    rows = []
-    seen_type_ids = set()
-    for leave_type in leave_types:
-        if not _is_annual_balance_type(leave_type):
+def _leave_rollover_decision_record(
+    user_id: int,
+    leave_type_id: int,
+    source_year: int,
+    target_year: int,
+) -> HRLeaveRolloverDecision | None:
+    return (
+        HRLeaveRolloverDecision.query
+        .filter_by(
+            user_id=int(user_id),
+            leave_type_id=int(leave_type_id),
+            source_year=int(source_year),
+            target_year=int(target_year),
+        )
+        .first()
+    )
+
+
+def _legacy_leave_rollover_values(
+    adjustment: HRLeaveBalanceAdjustment | None,
+    fallback_source_days: float,
+) -> dict:
+    """Read the old marker format without changing historical adjustments."""
+    text_value = (adjustment.reason or "") if adjustment else ""
+    transfer = "DECISION=TRANSFER" in text_value
+    deleted = "DECISION=DELETE" in text_value or "DECISION=KEEP" in text_value
+    source_days = _marker_number(text_value, "SOURCE_REMAINING")
+    if source_days is None and adjustment and float(adjustment.days_delta or 0.0) < 0:
+        source_days = abs(float(adjustment.days_delta or 0.0))
+    source_days = max(0.0, float(source_days if source_days is not None else fallback_source_days))
+    transfer_days = _marker_number(text_value, "TRANSFER_DAYS")
+    if transfer_days is None:
+        transfer_days = abs(float(adjustment.days_delta or 0.0)) if adjustment and transfer else 0.0
+    transfer_days = max(0.0, min(float(transfer_days or 0.0), source_days))
+    return {
+        "decision": LEAVE_ROLLOVER_DECISION_TRANSFER if transfer else (
+            LEAVE_ROLLOVER_DECISION_DELETE if deleted else None
+        ),
+        "source_days": source_days,
+        "transfer_days": transfer_days,
+    }
+
+
+def _bootstrap_legacy_leave_rollover_decision(
+    user_id: int,
+    leave_type_id: int,
+    source_year: int,
+    target_year: int,
+    *,
+    actor_id: int,
+) -> HRLeaveRolloverDecision | None:
+    """Create an editable decision record for a historically applied row.
+
+    Old immediate decisions remain immutable ledger entries.  The new record
+    only tracks their already-applied values so an authorised user can later
+    make a documented correction to the target-year balance.
+    """
+    existing = _leave_rollover_decision_record(
+        user_id, leave_type_id, source_year, target_year
+    )
+    if existing:
+        return existing
+
+    adjustment = _legacy_leave_rollover_adjustment(
+        user_id, leave_type_id, source_year, target_year
+    )
+    if not adjustment:
+        return None
+    values = _legacy_leave_rollover_values(adjustment, 0.0)
+    if not values["decision"]:
+        return None
+
+    now = datetime.utcnow()
+    decision = HRLeaveRolloverDecision(
+        user_id=int(user_id),
+        leave_type_id=int(leave_type_id),
+        source_year=int(source_year),
+        target_year=int(target_year),
+        decision=values["decision"],
+        transfer_days=values["transfer_days"],
+        note="قرار مرَحّل من سجل الترحيل السابق.",
+        applied_source_days=values["source_days"],
+        applied_transfer_days=values["transfer_days"],
+        applied_at=adjustment.created_at or now,
+        created_at=adjustment.created_at or now,
+        created_by_id=int(adjustment.created_by_id or actor_id),
+        updated_at=now,
+        updated_by_id=int(actor_id),
+    )
+    db.session.add(decision)
+    db.session.flush()
+    return decision
+
+
+def _activate_due_leave_rollover_decisions(
+    *,
+    effective_day: date | None = None,
+    decision_ids: list[int] | None = None,
+) -> list[HRLeaveRolloverDecision]:
+    """Apply pre-recorded annual rollover decisions once their year begins.
+
+    This function is deliberately idempotent: an applied decision is never
+    applied again.  It is called by the portal and the hourly HR job, so a
+    decision becomes active even when no one happens to open the balance page
+    on 1 January itself.
+    """
+    on_day = effective_day or date.today()
+    query = (
+        HRLeaveRolloverDecision.query
+        .filter(HRLeaveRolloverDecision.target_year <= int(on_day.year))
+        .filter(HRLeaveRolloverDecision.applied_at.is_(None))
+        .order_by(
+            HRLeaveRolloverDecision.target_year.asc(),
+            HRLeaveRolloverDecision.id.asc(),
+        )
+    )
+    if decision_ids is not None:
+        clean_ids = [int(value) for value in decision_ids if value]
+        if not clean_ids:
+            return []
+        query = query.filter(HRLeaveRolloverDecision.id.in_(clean_ids))
+
+    activated: list[HRLeaveRolloverDecision] = []
+    for decision in query.all():
+        leave_type = decision.leave_type or db.session.get(HRLeaveType, decision.leave_type_id)
+        if not leave_type or not _is_annual_balance_type(leave_type):
             continue
-        balance_type = _leave_balance_source_type(leave_type)
-        if not balance_type or balance_type.id in seen_type_ids:
-            continue
-        seen_type_ids.add(balance_type.id)
-        for source_year in (target_year - 1, target_year - 2):
-            total = float(_leave_entitlement_days(user_id, balance_type, source_year) or 0.0)
-            used = float(_leave_used_days(user_id, balance_type.id, source_year) or 0.0)
-            remaining = max(0.0, total - used)
-            decision = _leave_rollover_decision(
-                user_id, balance_type.id, source_year, target_year
+
+        source_total = float(
+            _leave_entitlement_days(decision.user_id, leave_type, decision.source_year) or 0.0
+        )
+        source_used = float(
+            _leave_used_days(decision.user_id, leave_type.id, decision.source_year) or 0.0
+        )
+        source_remaining = max(0.0, source_total - source_used)
+        requested_transfer = (
+            max(0.0, float(decision.transfer_days or 0.0))
+            if decision.decision == LEAVE_ROLLOVER_DECISION_TRANSFER
+            else 0.0
+        )
+        transfer_days = min(requested_transfer, source_remaining)
+        marker = _leave_rollover_marker(decision.source_year, decision.target_year)
+        detail = (
+            f"{marker} DECISION={decision.decision} DECISION_ID={decision.id} "
+            f"SOURCE_REMAINING={source_remaining:.4f} REQUESTED_TRANSFER_DAYS={requested_transfer:.4f} "
+            f"TRANSFER_DAYS={transfer_days:.4f} DELETE_DAYS={source_remaining - transfer_days:.4f}; "
+            f"تفعيل تلقائي لقرار الرصيد السنوي بتاريخ {on_day.isoformat()}."
+        )
+        actor_id = int(decision.updated_by_id or decision.created_by_id)
+        if source_remaining > 0.0001:
+            db.session.add(HRLeaveBalanceAdjustment(
+                user_id=decision.user_id,
+                leave_type_id=leave_type.id,
+                year=decision.source_year,
+                days_delta=-source_remaining,
+                reason=detail + " [SOURCE]",
+                created_by_id=actor_id,
+            ))
+        if transfer_days > 0.0001:
+            db.session.add(HRLeaveBalanceAdjustment(
+                user_id=decision.user_id,
+                leave_type_id=leave_type.id,
+                year=decision.target_year,
+                days_delta=transfer_days,
+                reason=detail + " [TARGET]",
+                created_by_id=actor_id,
+            ))
+
+        # Keep the editable value aligned with the amount that was actually
+        # available on the effective date; the original requested amount is
+        # retained in the immutable adjustment reason above.
+        decision.transfer_days = transfer_days
+        decision.applied_source_days = source_remaining
+        decision.applied_transfer_days = transfer_days
+        decision.applied_at = datetime.utcnow()
+        decision.updated_at = datetime.utcnow()
+        decision.updated_by_id = actor_id
+        _portal_audit(
+            "HR_LEAVE_ROLLOVER_ACTIVATED",
+            (
+                f"تفعيل قرار ترحيل الرصيد للموظف #{decision.user_id}: "
+                f"من {decision.source_year} إلى {decision.target_year}; "
+                f"المرحّل={transfer_days:.4f}; المحذوف={source_remaining - transfer_days:.4f}"
+            ),
+            target_type="HR_LEAVE_ROLLOVER_DECISION",
+            target_id=decision.id,
+            user_id=actor_id,
+        )
+        activated.append(decision)
+    return activated
+
+
+def _reconcile_active_leave_rollover_decision(
+    decision: HRLeaveRolloverDecision,
+    *,
+    actor_id: int,
+) -> tuple[float, str | None]:
+    """Apply the delta of an edited decision that is already effective."""
+    source_cap = max(0.0, float(decision.applied_source_days or 0.0))
+    desired_transfer = (
+        max(0.0, min(float(decision.transfer_days or 0.0), source_cap))
+        if decision.decision == LEAVE_ROLLOVER_DECISION_TRANSFER
+        else 0.0
+    )
+    applied_transfer = max(0.0, float(decision.applied_transfer_days or 0.0))
+    delta = round(desired_transfer - applied_transfer, 4)
+    if abs(delta) <= 0.0001:
+        decision.applied_transfer_days = desired_transfer
+        return 0.0, None
+
+    leave_type = decision.leave_type or db.session.get(HRLeaveType, decision.leave_type_id)
+    if not leave_type:
+        return 0.0, "تعذر تحديد نوع الإجازة لقرار الترحيل."
+
+    if delta < 0:
+        target_total = float(
+            _leave_entitlement_days(decision.user_id, leave_type, decision.target_year) or 0.0
+        )
+        target_used = float(
+            _leave_used_days(decision.user_id, leave_type.id, decision.target_year) or 0.0
+        )
+        if target_total + delta < target_used - 0.0001:
+            return 0.0, (
+                "لا يمكن تخفيض الأيام المرحلة لأن جزءًا من رصيد سنة النفاذ "
+                "اُستهلك بالفعل."
             )
-            decision_text = (decision.reason or "") if decision else ""
-            transferred = "DECISION=TRANSFER" in decision_text
-            kept = "DECISION=KEEP" in decision_text
-            transfer_days = abs(float(decision.days_delta or 0.0)) if decision else 0.0
-            if transferred:
-                # The source-year adjustment has already removed the approved
-                # carryover; add it back for the historical closing snapshot.
-                total += transfer_days
-            rows.append({
-                "leave_type": balance_type,
-                "source_year": source_year,
-                "target_year": target_year,
-                "total": total,
-                "used": used,
-                "remaining": transfer_days if decision and transferred else remaining,
-                "decision": "TRANSFER" if transferred else ("KEEP" if kept else None),
-                "transfer_days": transfer_days,
-                "can_decide": not decision and remaining > 0.0001,
-            })
+
+    marker = _leave_rollover_marker(decision.source_year, decision.target_year)
+    db.session.add(HRLeaveBalanceAdjustment(
+        user_id=decision.user_id,
+        leave_type_id=leave_type.id,
+        year=decision.target_year,
+        days_delta=delta,
+        reason=(
+            f"{marker} DECISION={decision.decision} DECISION_ID={decision.id} "
+            f"DECISION_REVISION=1 PREVIOUS_TRANSFER_DAYS={applied_transfer:.4f} "
+            f"TRANSFER_DAYS={desired_transfer:.4f}; "
+            "تصحيح موثق لتعديل قرار ترحيل أصبح ساريًا."
+        ),
+        created_by_id=int(actor_id),
+    ))
+    decision.applied_transfer_days = desired_transfer
+    decision.updated_at = datetime.utcnow()
+    decision.updated_by_id = int(actor_id)
+    _portal_audit(
+        "HR_LEAVE_ROLLOVER_DECISION_REVISED",
+        (
+            f"تعديل قرار ترحيل الموظف #{decision.user_id}: "
+            f"من {decision.source_year} إلى {decision.target_year}; "
+            f"التصحيح={delta:+.4f}"
+        ),
+        target_type="HR_LEAVE_ROLLOVER_DECISION",
+        target_id=decision.id,
+        user_id=int(actor_id),
+    )
+    return delta, None
+
+
+def _save_leave_rollover_decision(
+    user_id: int,
+    leave_type: HRLeaveType,
+    source_year: int,
+    target_year: int,
+    *,
+    decision_code: str,
+    transfer_days: float,
+    note: str | None,
+    actor_id: int,
+    effective_day: date | None = None,
+) -> tuple[HRLeaveRolloverDecision | None, bool, float, str | None]:
+    """Save a planned decision, or reconcile it if it is already effective."""
+    decision_code = (decision_code or "").strip().upper()
+    if decision_code not in {
+        LEAVE_ROLLOVER_DECISION_DELETE,
+        LEAVE_ROLLOVER_DECISION_TRANSFER,
+    }:
+        return None, False, 0.0, "اختر حذف الرصيد أو ترحيل عدد محدد من الأيام."
+    if transfer_days < 0:
+        return None, False, 0.0, "أدخل عدد أيام صالحًا للترحيل."
+    if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER and transfer_days <= 0.0001:
+        return None, False, 0.0, "أدخل عدد أيام أكبر من صفر للترحيل أو اختر حذف الرصيد."
+
+    record = _leave_rollover_decision_record(
+        user_id, leave_type.id, source_year, target_year
+    )
+    if record is None:
+        record = _bootstrap_legacy_leave_rollover_decision(
+            user_id,
+            leave_type.id,
+            source_year,
+            target_year,
+            actor_id=actor_id,
+        )
+
+    already_active = bool(record and record.applied_at)
+    if already_active:
+        transfer_cap = max(0.0, float(record.applied_source_days or 0.0))
+        if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER and transfer_days > transfer_cap + 0.0001:
+            return None, False, 0.0, (
+                f"يمكن تعديل القرار إلى حد أقصى {transfer_cap:g} يومًا، "
+                "وهو الرصيد الذي كان متاحًا عند سريان القرار."
+            )
+
+    now = datetime.utcnow()
+    if record is None:
+        record = HRLeaveRolloverDecision(
+            user_id=int(user_id),
+            leave_type_id=int(leave_type.id),
+            source_year=int(source_year),
+            target_year=int(target_year),
+            decision=decision_code,
+            transfer_days=float(transfer_days if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER else 0.0),
+            note=note or None,
+            created_at=now,
+            created_by_id=int(actor_id),
+            updated_at=now,
+            updated_by_id=int(actor_id),
+        )
+        db.session.add(record)
+    else:
+        record.decision = decision_code
+        record.transfer_days = float(
+            transfer_days if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER else 0.0
+        )
+        record.note = note or None
+        record.updated_at = now
+        record.updated_by_id = int(actor_id)
+    db.session.flush()
+
+    became_active = False
+    correction = 0.0
+    if _leave_rollover_is_due(target_year, effective_day):
+        if not record.applied_at:
+            activated = _activate_due_leave_rollover_decisions(
+                effective_day=effective_day,
+                decision_ids=[record.id],
+            )
+            became_active = any(item.id == record.id for item in activated)
+        else:
+            correction, error = _reconcile_active_leave_rollover_decision(
+                record,
+                actor_id=actor_id,
+            )
+            if error:
+                return None, False, 0.0, error
+            became_active = True
+
+    _portal_audit(
+        "HR_LEAVE_ROLLOVER_DECISION_SAVE",
+        (
+            f"حفظ قرار ترحيل للموظف #{user_id}: من {source_year} إلى {target_year}; "
+            f"القرار={record.decision}; الأيام={record.transfer_days:.4f}; "
+            f"حالة السريان={'ACTIVE' if record.applied_at else 'PLANNED'}"
+        ),
+        target_type="HR_LEAVE_ROLLOVER_DECISION",
+        target_id=record.id,
+        user_id=int(actor_id),
+    )
+    return record, became_active, correction, None
+
+
+def _leave_rollover_rows(
+    user_id: int,
+    target_year: int,
+    leave_types: list[HRLeaveType],
+    *,
+    as_of: date | None = None,
+) -> list[dict]:
+    """Return a current or pre-recorded decision for the expiring old bucket.
+
+    A decision may be recorded before ``target_year``.  It does not change the
+    balance until 1 January of that year, when the activation helper writes the
+    actual balance movements.  Closing a year keeps the configured portion in
+    that year and places any excess in its preceding-year bucket.  Therefore,
+    the decision effective in 2027 concerns the 2025 bucket, while the 2026
+    bucket remains the employee's right through the end of 2027.
+    """
+    rows = []
+    source_year = target_year - 2
+    retained_year = source_year + 1
+    display_day = as_of or date.today()
+    for balance_type in _annual_balance_types(leave_types):
+        retained_total = float(
+            _leave_entitlement_days(user_id, balance_type, retained_year) or 0.0
+        )
+        retained_used = float(
+            _leave_used_days(user_id, balance_type.id, retained_year) or 0.0
+        )
+        retained_remaining = max(0.0, retained_total - retained_used)
+        total = float(_leave_entitlement_days(user_id, balance_type, source_year) or 0.0)
+        used = float(_leave_used_days(user_id, balance_type.id, source_year) or 0.0)
+        remaining = max(0.0, total - used)
+        record = _leave_rollover_decision_record(
+            user_id, balance_type.id, source_year, target_year
+        )
+        legacy = None if record else _legacy_leave_rollover_adjustment(
+            user_id, balance_type.id, source_year, target_year
+        )
+        is_active = bool(record and record.applied_at) or bool(legacy)
+        is_planned = bool(record and not record.applied_at)
+        decision_code = None
+        transfer_days = 0.0
+        applied_transfer_days = None
+        applied_source_days = None
+        note = None
+        updated_at = None
+
+        if record:
+            decision_code = record.decision
+            transfer_days = max(0.0, float(record.transfer_days or 0.0))
+            note = record.note
+            updated_at = record.updated_at
+            if record.applied_at:
+                applied_source_days = max(0.0, float(record.applied_source_days or 0.0))
+                applied_transfer_days = max(0.0, float(record.applied_transfer_days or 0.0))
+        elif legacy:
+            legacy_values = _legacy_leave_rollover_values(legacy, remaining)
+            decision_code = legacy_values["decision"]
+            transfer_days = legacy_values["transfer_days"]
+            applied_transfer_days = legacy_values["transfer_days"]
+            applied_source_days = legacy_values["source_days"]
+            updated_at = legacy.created_at
+
+        if is_active:
+            # The source adjustment has already removed this historic bucket.
+            # Restore its closing snapshot for display only.
+            source_snapshot = max(0.0, float(applied_source_days or 0.0))
+            total = used + source_snapshot
+            remaining = source_snapshot
+
+        rows.append({
+            "leave_type": balance_type,
+            # Show the retained bucket beside the expiring bucket.  For the
+            # 2027 decision this makes the 2026 balance visible next to the
+            # 2025 balance that is being decided.
+            "retained_year": retained_year,
+            "retained_total": retained_total,
+            "retained_used": retained_used,
+            "retained_remaining": retained_remaining,
+            "source_year": source_year,
+            "target_year": target_year,
+            "total": total,
+            "used": used,
+            "remaining": remaining,
+            "decision": decision_code,
+            "transfer_days": transfer_days,
+            "applied_transfer_days": applied_transfer_days,
+            "deleted_days": (
+                max(0.0, remaining - float(applied_transfer_days or 0.0))
+                if is_active else None
+            ),
+            "is_planned": is_planned,
+            "is_active": is_active,
+            "is_due": _leave_rollover_is_due(target_year, display_day),
+            "effective_on": _leave_rollover_effective_day(target_year),
+            "transfer_max": applied_source_days if is_active else None,
+            "note": note,
+            "updated_at": updated_at,
+            # Decisions can always be saved or changed; a post-effective edit
+            # produces a correction instead of rewriting prior movements.
+            "can_edit": True,
+            "can_decide": True,
+        })
     return rows
 
 
@@ -29245,17 +30059,81 @@ def hr_leave_balances():
     )
     compensatory_balance_type = _leave_balance_source_type(compensatory_leave_type)
 
+    # A pre-recorded decision becomes effective on 1 January even if nobody
+    # opened this particular employee's screen at that exact moment.
+    try:
+        if _activate_due_leave_rollover_decisions():
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Unable to activate due leave rollover decisions")
+
     # POST: update entitlements for selected user
     if request.method == 'POST':
         if not can_manage:
             abort(403)
+
+        action = (request.form.get('action') or '').upper()
+        if action == 'SET_ANNUAL_CURRENT_YEAR_LIMIT':
+            limit_raw = (request.form.get('annual_current_year_limit') or '').strip()
+            try:
+                limit = int(limit_raw)
+            except (TypeError, ValueError):
+                limit = -1
+            if limit < 0:
+                flash('أدخل حدًا صحيحًا من صفر أو أكثر لأيام الرصيد السنوي المحتفظ بها في سنة الاستحقاق.', 'danger')
+            else:
+                _setting_set(ANNUAL_CURRENT_YEAR_LIMIT_SETTING, str(limit))
+                _portal_audit(
+                    'HR_ANNUAL_BALANCE_LIMIT_UPDATE',
+                    f'تعديل حد رصيد الإجازة السنوية المحتفظ به في سنة الاستحقاق إلى {limit} يومًا.',
+                    target_type='SYSTEM_SETTING',
+                )
+                db.session.commit()
+                flash(f'تم حفظ حد الرصيد السنوي: {limit} يومًا.', 'success')
+            return redirect(url_for(
+                'portal.hr_leave_balances',
+                user_id=(selected_user.id if selected_user else None),
+                year=year,
+            ) + '#annual-policy')
+
         if not selected_user:
             flash('\u0627\u062e\u062a\u0631 \u0645\u0648\u0638\u0641\u0627\u064b \u0623\u0648\u0644\u0627\u064b.', 'danger')
             return redirect(url_for('portal.hr_leave_balances', year=year))
 
-        if (request.form.get('action') or '').upper() == 'ROLLOVER':
-            decisions = 0
-            transferred_total = 0.0
+        if action == 'PREPARE_ANNUAL_BALANCE_BUCKETS':
+            prepared = _prepare_annual_balance_buckets(
+                selected_user.id,
+                year,
+                leave_types,
+                actor_id=current_user.id,
+            )
+            if prepared:
+                summary = ', '.join(
+                    (
+                        f"{item['leave_type'].name_ar}: {item['current_remaining']:g} لعام {year} "
+                        f"و{item['previous_remaining']:g} لعام {year - 1}"
+                    )
+                    for item in prepared
+                )
+                _portal_audit(
+                    'HR_ANNUAL_BALANCE_BUCKET_PREPARE',
+                    f'تقسيم الرصيد النهائي للإجازة السنوية للموظف #{selected_user.id}: {summary}',
+                    target_type='USER',
+                    target_id=selected_user.id,
+                )
+                db.session.commit()
+                flash('تم تقسيم الرصيد النهائي إلى رصيد السنة الحالية ورصيد السنة السابقة وتوثيق العملية.', 'success')
+            else:
+                db.session.rollback()
+                flash('لا يوجد تقسيم جديد للحفظ؛ ربما تم تجهيز رصيد هذه السنة سابقًا أو لا يوجد نوع إجازة سنوية مضبوط.', 'info')
+            return redirect(url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year) + '#annual-buckets')
+
+        if action in {'ROLLOVER', 'SAVE_ROLLOVER_DECISION'}:
+            saved_count = 0
+            planned_count = 0
+            active_count = 0
+            correction_total = 0.0
             processed_type_ids = set()
             for leave_type in leave_types:
                 if not _is_annual_balance_type(leave_type):
@@ -29264,81 +30142,90 @@ def hr_leave_balances():
                 if not balance_type or balance_type.id in processed_type_ids:
                     continue
                 processed_type_ids.add(balance_type.id)
-                for source_year in (year - 1, year - 2):
-                    choice = (request.form.get(f'rollover_{source_year}_{balance_type.id}') or '').upper()
-                    if choice not in {'TRANSFER', 'KEEP'}:
-                        continue
-                    reason = (request.form.get(f'rollover_reason_{source_year}_{balance_type.id}') or '').strip()
-                    if choice == 'TRANSFER' and not reason:
-                        db.session.rollback()
-                        flash('اكتب سبب ترحيل الرصيد المرتبط بمصلحة العمل وفق المادة 83.', 'danger')
-                        return redirect(url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year) + '#leave-rollover')
-                    if _leave_rollover_decision(
-                        selected_user.id, balance_type.id, source_year, year
-                    ):
-                        continue
 
-                    marker = _leave_rollover_marker(source_year, year)
-                    total = float(_leave_entitlement_days(selected_user.id, balance_type, source_year) or 0.0)
-                    used = float(_leave_used_days(selected_user.id, balance_type.id, source_year) or 0.0)
-                    remaining = max(0.0, total - used)
-                    if choice == 'TRANSFER' and remaining > 0.0001:
-                        detail = (
-                            f'{marker} DECISION=TRANSFER DAYS={remaining:.4f}; '
-                            f'ترحيل رصيد {balance_type.name_ar} من {source_year} إلى {year} '
-                            f'باعتماد {current_user.full_name or current_user.name or current_user.email}. '
-                            f'سبب الترحيل: {reason}'
-                        )
-                        db.session.add(HRLeaveBalanceAdjustment(
-                            user_id=selected_user.id,
-                            leave_type_id=balance_type.id,
-                            year=source_year,
-                            days_delta=-remaining,
-                            reason=detail + ' [SOURCE]',
-                            created_by_id=current_user.id,
-                        ))
-                        db.session.add(HRLeaveBalanceAdjustment(
-                            user_id=selected_user.id,
-                            leave_type_id=balance_type.id,
-                            year=year,
-                            days_delta=remaining,
-                            reason=detail + ' [TARGET]',
-                            created_by_id=current_user.id,
-                        ))
-                        transferred_total += remaining
-                    else:
-                        decision_text = 'KEEP' if choice == 'KEEP' else 'TRANSFER'
-                        db.session.add(HRLeaveBalanceAdjustment(
-                            user_id=selected_user.id,
-                            leave_type_id=balance_type.id,
-                            year=year,
-                            days_delta=0,
-                            reason=(
-                                f'{marker} DECISION={decision_text} DAYS=0; '
-                                f'لا يوجد رصيد قابل للترحيل من {source_year} إلى {year}. '
-                                f'ملاحظة القرار: {reason}'
-                            ),
-                            created_by_id=current_user.id,
-                        ))
-                    decisions += 1
+                # The selected screen year is the year in which this decision
+                # becomes effective.  It concerns the preceding-year annual
+                # bucket (for example, 2025 when the target year is 2027).
+                # HR may plan it before 1 January without moving a balance.
+                source_year = year - 2
+                choice = (request.form.get(
+                    f'rollover_{source_year}_{balance_type.id}'
+                ) or '').upper()
+                if choice == 'KEEP':  # compatibility with the earlier UI
+                    choice = LEAVE_ROLLOVER_DECISION_DELETE
+                if not choice:
+                    continue
+                if choice not in {
+                    LEAVE_ROLLOVER_DECISION_TRANSFER,
+                    LEAVE_ROLLOVER_DECISION_DELETE,
+                }:
+                    db.session.rollback()
+                    flash('اختر حذف الرصيد أو ترحيل عدد محدد من الأيام.', 'danger')
+                    return redirect(url_for(
+                        'portal.hr_leave_balances',
+                        user_id=selected_user.id,
+                        year=year,
+                    ) + '#leave-rollover')
 
-            if decisions:
-                _portal_audit(
-                    'HR_LEAVE_ROLLOVER_APPROVAL',
-                    f'اعتماد قرارات ترحيل أرصدة الإجازة للموظف #{selected_user.id} إلى عام {year}; '
-                    f'الأيام المرحلة: {transferred_total:.4f}',
-                    target_type='USER',
-                    target_id=selected_user.id,
+                transfer_days = 0.0
+                if choice == LEAVE_ROLLOVER_DECISION_TRANSFER:
+                    transfer_raw = (request.form.get(
+                        f'rollover_transfer_days_{source_year}_{balance_type.id}'
+                    ) or '').strip().replace(',', '.')
+                    try:
+                        transfer_days = round(float(transfer_raw), 4)
+                    except (TypeError, ValueError):
+                        transfer_days = -1.0
+                note = (request.form.get(
+                    f'rollover_reason_{source_year}_{balance_type.id}'
+                ) or '').strip()
+                record, became_active, correction, error = _save_leave_rollover_decision(
+                    selected_user.id,
+                    balance_type,
+                    source_year,
+                    year,
+                    decision_code=choice,
+                    transfer_days=transfer_days,
+                    note=note,
+                    actor_id=current_user.id,
                 )
+                if error:
+                    db.session.rollback()
+                    flash(error, 'danger')
+                    return redirect(url_for(
+                        'portal.hr_leave_balances',
+                        user_id=selected_user.id,
+                        year=year,
+                    ) + '#leave-rollover')
+                if not record:
+                    continue
+                saved_count += 1
+                correction_total += correction
+                if became_active:
+                    active_count += 1
+                else:
+                    planned_count += 1
+
+            if saved_count:
                 db.session.commit()
-                flash(
-                    f'تم حفظ {decisions} قرار/قرارات ترحيل. مجموع الأيام المرحلة إلى {year}: '
-                    f'{transferred_total:g} يوم.',
-                    'success',
-                )
+                if planned_count and not active_count:
+                    flash(
+                        f'تم حفظ {saved_count} قرار/قرارات مسبقة. لن يتغير الرصيد قبل 1/1/{year}.',
+                        'success',
+                    )
+                elif correction_total:
+                    flash(
+                        f'تم حفظ القرار وتسجيل تصحيح موثق بمقدار {correction_total:+g} يوم في رصيد {year}.',
+                        'success',
+                    )
+                else:
+                    flash(
+                        f'تم حفظ {saved_count} قرار/قرارات. القرارات المستحقة أصبحت سارية.',
+                        'success',
+                    )
             else:
                 db.session.rollback()
-                flash('لم يتم حفظ قرارات جديدة؛ قد تكون القرارات محفوظة سابقًا أو لم تختر إجراءً.', 'info')
+                flash('لم يتم حفظ قرار؛ اختر إجراءً واحدًا على الأقل.', 'info')
             return redirect(url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year) + '#leave-rollover')
 
         if (request.form.get('action') or '').upper() == 'ADD_COMPENSATORY_CREDIT':
@@ -29502,6 +30389,8 @@ def hr_leave_balances():
         compensatory_leave_type=compensatory_leave_type,
         compensatory_balance_type=compensatory_balance_type,
         compensatory_row=compensatory_row,
+        annual_current_year_limit=_annual_current_year_limit(),
+        annual_bucket_rows=_annual_bucket_rows(selected_user.id, year, leave_types) if selected_user else [],
         rows=rows,
         adjustments=adjustments,
         can_manage=can_manage,
@@ -40360,6 +41249,11 @@ def hr_leaves_admin_new():
         if end_day < start_day:
             flash('تاريخ النهاية يجب أن يكون بعد تاريخ البداية.', 'danger')
             return redirect(url_for('portal.hr_leaves_admin_new'))
+        one_time_error = _one_time_leave_error(int(user_id), lt)
+        if one_time_error:
+            flash(one_time_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_new'))
+
         casual_policy_error = _casual_leave_policy_error(int(user_id), lt, start_day, end_day)
         if casual_policy_error:
             flash(casual_policy_error, 'danger')
@@ -40557,6 +41451,16 @@ def hr_leaves_admin_edit(row_id: int):
             row.end_date,
             user_id=row.user_id,
         )
+        one_time_error = _one_time_leave_error(
+            row.user_id,
+            lt,
+            exclude_request_id=row.id,
+        )
+        if one_time_error:
+            db.session.rollback()
+            flash(one_time_error, 'danger')
+            return redirect(url_for('portal.hr_leaves_admin_edit', row_id=row.id))
+
         casual_policy_error = _casual_leave_policy_error(
             row.user_id,
             lt,
@@ -41278,8 +42182,8 @@ def hr_report_leave_employee_balances():
             wl_name = loc_map.get(getattr(ef, 'work_location_lookup_id', None), '') if ef else ''
             ap_name = app_map.get(getattr(ef, 'appointment_type_lookup_id', None), '') if ef else ''
             for lt in leave_types:
-                # Informational leave types (for example maternity/paternity)
-                # are documented as requests but have no annual balance to report.
+                # Non-deductible informational leave types are documented as
+                # requests but have no annual balance to report.
                 if not _leave_type_owns_balance(lt):
                     continue
                 total = float(_leave_entitlement_days(uid, lt, year) or 0.0)

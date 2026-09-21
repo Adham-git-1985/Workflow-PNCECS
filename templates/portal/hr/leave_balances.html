@@ -164,26 +164,95 @@
 </div>
 
 {% if can_manage %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="annual-policy">
+  <h5 class="mb-1"><i class="bi bi-sliders"></i> إعداد الرصيد السنوي المحتفظ به</h5>
+  <div class="text-muted small mb-3">تحدد الشؤون الإدارية أو السوبر أدمن الحد الذي يبقى من الرصيد النهائي في سنة الاستحقاق. يوضع ما زاد في رصيد السنة السابقة.</div>
+  <form method="post" class="row g-2 align-items-end">
+    <input type="hidden" name="action" value="SET_ANNUAL_CURRENT_YEAR_LIMIT">
+    {% if selected_user %}<input type="hidden" name="user_id" value="{{ selected_user.id }}">{% endif %}
+    <input type="hidden" name="year" value="{{ year }}">
+    <div class="col-12 col-md-4"><label class="form-label">الحد المحتفظ به في سنة الاستحقاق</label><input class="form-control" name="annual_current_year_limit" type="number" min="0" step="1" required value="{{ annual_current_year_limit|int }}"></div>
+    <div class="col-12 col-md-3"><button class="btn btn-outline-primary w-100" type="submit"><i class="bi bi-save"></i> حفظ الحد</button></div>
+  </form>
+</div>
+{% endif %}
+
+{% if annual_bucket_rows %}
+<div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="annual-buckets">
+  <h5 class="mb-1"><i class="bi bi-calendar-range"></i> تقسيم الرصيد السنوي النهائي</h5>
+  <p class="text-muted small mb-2">عند إقفال عام {{ year }}، يبقى للموظف حد {{ annual_current_year_limit|int }} يومًا كرصيد {{ year }}، وما زاد يُسجل كرصد {{ year - 1 }}. لا يُنفذ التقسيم إلا مرة واحدة ويوثق كتسوية رصيد.</p>
+  <div class="table-responsive"><table class="table table-sm align-middle mb-2"><thead><tr><th>نوع الإجازة</th><th>رصيد {{ year }} المتبقي</th><th>رصيد {{ year - 1 }} المتبقي</th><th>نتيجة التقسيم</th></tr></thead><tbody>
+    {% for bucket in annual_bucket_rows %}
+    <tr>
+      <td>{{ bucket.leave_type.name_ar }}</td>
+      <td>{{ '%.2f'|format(bucket.current_remaining) }} يوم</td>
+      <td>{{ '%.2f'|format(bucket.previous_remaining) }} يوم</td>
+      <td>{% if bucket.prepared %}<span class="badge text-bg-success">تم التقسيم</span>{% else %}<span class="text-muted">سيصبح {{ '%.2f'|format(bucket.planned_current_remaining) }} لعام {{ year }} و{{ '%.2f'|format(bucket.planned_previous_remaining) }} لعام {{ year - 1 }}</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </tbody></table></div>
+  {% if can_manage and annual_bucket_rows|rejectattr('prepared')|list %}
+  <form method="post"><input type="hidden" name="action" value="PREPARE_ANNUAL_BALANCE_BUCKETS"><input type="hidden" name="user_id" value="{{ selected_user.id }}"><input type="hidden" name="year" value="{{ year }}"><button class="btn btn-primary" type="submit" onclick="return confirm('سيتم تثبيت تقسيم الرصيد النهائي لهذه السنة. متابعة؟')"><i class="bi bi-check2-circle"></i> تقسيم رصيد نهاية {{ year }}</button></form>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if can_manage and rollover_rows %}
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3" id="leave-rollover">
-  <h5 class="mb-1"><i class="bi bi-arrow-left-right"></i> اعتماد ترحيل الإجازة السنوية</h5>
-  <p class="text-muted small mb-2">وفق المادة 83، اعرض رصيد السنتين السابقتين للموظف، واختر لكل سنة ونوع رصيد ما إذا كان سيُرحّل إلى سنة {{ year }}. يسجل النظام قرار الترحيل أو عدمه مرة واحدة مع اسم المعتمد، ويضيف الأيام المرحلة إلى رصيد سنة {{ year }}.</p>
-  <div class="alert alert-info py-2">يُستخدم الرصيد المرحّل حتى نفاده مع استحقاق السنة، على ألا يتجاوز مجموع الإجازة السنوية المستخدمة 60 يومًا في السنة.</div>
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+    <div>
+      <h5 class="mb-1"><i class="bi bi-arrow-left-right"></i> قرار الرصيد السنوي المنتهي</h5>
+      <p class="text-muted small mb-0">هذه قرارات تصبح نافذة في عام {{ year }} بشأن الرصيد المتبقي من {{ year - 2 }}. يمكن حفظ القرار مسبقًا في أي وقت؛ لا يتغير الرصيد فعليًا قبل 1/1/{{ year }}. بعد سريان القرار يمكن تعديله، ويُسجل النظام حركة تصحيح موثقة بدلًا من حذف الأثر السابق. يبقى رصيد {{ year - 1 }} حقًا للموظف حتى نهاية {{ year }}.</p>
+    </div>
+    <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year + 1) }}#leave-rollover"><i class="bi bi-calendar-plus"></i> إعداد قرار مسبق لسنة {{ year + 1 }}</a>
+  </div>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
-    <input type="hidden" name="action" value="ROLLOVER">
+    <input type="hidden" name="action" value="SAVE_ROLLOVER_DECISION">
     <input type="hidden" name="user_id" value="{{ selected_user.id }}">
     <input type="hidden" name="year" value="{{ year }}">
-    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>سنة الرصيد</th><th>نوع الإجازة</th><th>المستحق</th><th>المستخدم</th><th>المتبقي عند الإقفال</th><th>قرار الترحيل إلى {{ year }}</th></tr></thead><tbody>
+    <div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>سنة الرصيد</th><th>نوع الإجازة</th><th>المتبقي عند الإقفال</th><th>حالة القرار</th><th>القرار</th></tr></thead><tbody>
       {% for rollover in rollover_rows %}
-      <tr><td>{{ rollover.source_year }}</td><td>{{ rollover.leave_type.name_ar }}</td><td>{{ '%.2f'|format(rollover.total) }}</td><td>{{ '%.2f'|format(rollover.used) }}</td><td>{{ '%.2f'|format(rollover.remaining) }} يوم</td><td>
-        {% if rollover.decision == 'TRANSFER' %}<span class="badge text-bg-success">رُحّل {{ '%.2f'|format(rollover.transfer_days) }} يوم</span>
-        {% elif rollover.decision == 'KEEP' %}<span class="badge text-bg-secondary">اعتمد عدم الترحيل</span>
-        {% elif rollover.can_decide %}<select class="form-select form-select-sm mb-1" required name="rollover_{{ rollover.source_year }}_{{ rollover.leave_type.id }}"><option value="">اختر القرار</option><option value="TRANSFER">ترحيل الرصيد المتبقي</option><option value="KEEP">عدم ترحيله</option></select><textarea class="form-control form-control-sm" name="rollover_reason_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" rows="2" placeholder="سبب قوي لمصلحة العمل (مطلوب عند الترحيل)"></textarea>
-        {% else %}<span class="text-muted">لا يوجد رصيد متبقٍ للقرار</span>{% endif %}
-      </td></tr>
-      {% else %}<tr><td colspan="6" class="text-center text-muted py-3">لا توجد أنواع إجازة سنوية خاضعة للرصيد.</td></tr>{% endfor %}
+      <tr class="table-light">
+        <td>{{ rollover.retained_year }}</td>
+        <td>{{ rollover.leave_type.name_ar }}</td>
+        <td>{{ '%.2f'|format(rollover.retained_remaining) }} يوم</td>
+        <td><span class="badge text-bg-secondary">رصيد قائم</span></td>
+        <td><span class="text-muted small">يبقى للموظف ولا يُتخذ بشأنه قرار في {{ year }}.</span></td>
+      </tr>
+      <tr>
+        <td>{{ rollover.source_year }}</td>
+        <td>{{ rollover.leave_type.name_ar }}</td>
+        <td>{{ '%.2f'|format(rollover.remaining) }} يوم</td>
+        <td>
+          {% if rollover.is_planned %}
+            <span class="badge text-bg-info">قرار مسبق</span>
+            <div class="small text-muted mt-1">يسري في {{ rollover.effective_on }}</div>
+          {% elif rollover.is_active %}
+            <span class="badge text-bg-success">ساري</span>
+            {% if rollover.decision == 'TRANSFER' %}<div class="small text-muted mt-1">رُحّل فعليًا {{ '%.2f'|format(rollover.applied_transfer_days or 0) }} يوم</div>{% endif %}
+            {% if rollover.deleted_days %}<div class="small text-muted">حُذف {{ '%.2f'|format(rollover.deleted_days) }} يوم</div>{% endif %}
+          {% elif rollover.is_due %}
+            <span class="badge text-bg-warning">بانتظار حفظ القرار</span>
+          {% else %}
+            <span class="badge text-bg-secondary">لم يُحفظ قرار بعد</span>
+            <div class="small text-muted mt-1">يمكن حفظه مسبقًا حتى {{ rollover.effective_on }}</div>
+          {% endif %}
+        </td>
+        <td>
+          <select class="form-select form-select-sm mb-1" required name="rollover_{{ rollover.source_year }}_{{ rollover.leave_type.id }}">
+            <option value="">اختر القرار</option>
+            <option value="DELETE" {% if rollover.decision == 'DELETE' %}selected{% endif %}>حذف كامل الرصيد المتبقي</option>
+            <option value="TRANSFER" {% if rollover.decision == 'TRANSFER' %}selected{% endif %}>ترحيل عدد محدد من الأيام</option>
+          </select>
+          <input class="form-control form-control-sm mb-1" type="number" min="0.25" {% if rollover.transfer_max is not none %}max="{{ '%.2f'|format(rollover.transfer_max) }}"{% endif %} step="0.25" name="rollover_transfer_days_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" value="{{ '%.2f'|format(rollover.transfer_days) if rollover.decision == 'TRANSFER' else '' }}" placeholder="عدد الأيام المراد ترحيلها">
+          {% if rollover.transfer_max is not none %}<div class="form-text">الحد المتاح للتعديل بعد السريان: {{ '%.2f'|format(rollover.transfer_max) }} يوم.</div>{% else %}<div class="form-text">سيُراجع المتاح الفعلي عند تاريخ السريان.</div>{% endif %}
+          <textarea class="form-control form-control-sm mt-1" name="rollover_reason_{{ rollover.source_year }}_{{ rollover.leave_type.id }}" rows="2" placeholder="ملاحظة اختيارية للقرار">{{ rollover.note or '' }}</textarea>
+        </td>
+      </tr>
+      {% endfor %}
     </tbody></table></div>
-    {% if rollover_rows|selectattr('can_decide')|list %}<button class="btn btn-primary" type="submit" onclick="return confirm('سيتم تثبيت قرارات الترحيل وعدم الترحيل لهذه الأرصدة. متابعة؟')"><i class="bi bi-check2-circle"></i> اعتماد قرارات الترحيل</button>{% endif %}
+    <button class="btn btn-primary" type="submit" onclick="return confirm('سيتم حفظ القرارات المحددة. القرارات المستقبلية لا تؤثر في الرصيد قبل سنة النفاذ. متابعة؟')"><i class="bi bi-check2-circle"></i> حفظ القرارات</button>
   </form>
 </div>
 {% endif %}

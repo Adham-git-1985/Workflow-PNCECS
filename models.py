@@ -3522,8 +3522,16 @@ class HRLeaveType(db.Model):
     # Default annual balance (days). Optional; used for leave balance reports/alerts.
     default_balance_days = db.Column(db.Integer, nullable=True)
     # Whether approved days from this type consume the employee's leave balance.
-    # Examples: annual leave normally consumes balance; maternity/paternity may not.
+    # Examples: annual, sick, maternity and paternity leave normally consume a balance.
     deduct_from_balance = db.Column(db.Boolean, default=True, nullable=False)
+    # Determines whether a new annual balance is made available automatically
+    # for this leave type.  MANUAL is used for compensatory leave and ONCE for
+    # Hajj; YEARLY is used by annual, sick, maternity and paternity balances.
+    balance_renewal_policy = db.Column(
+        db.String(20),
+        default="YEARLY",
+        nullable=False,
+    )
     balance_source_leave_type_id = db.Column(
         db.Integer,
         db.ForeignKey("hr_leave_type.id"),
@@ -3764,6 +3772,57 @@ class HRLeaveBalanceAdjustment(db.Model):
             'leave_type_id',
         ),
     )
+
+
+class HRLeaveRolloverDecision(db.Model):
+    """A planned or effective annual-leave rollover decision.
+
+    The decision can be recorded before its target year begins.  Balance
+    adjustments are created only when the target year becomes effective, while
+    later changes retain the original movement and add an auditable correction.
+    """
+
+    __tablename__ = 'hr_leave_rollover_decision'
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    leave_type_id = db.Column(db.Integer, db.ForeignKey('hr_leave_type.id'), nullable=False, index=True)
+    source_year = db.Column(db.Integer, nullable=False, index=True)
+    target_year = db.Column(db.Integer, nullable=False, index=True)
+    decision = db.Column(db.String(20), nullable=False)  # DELETE / TRANSFER
+    transfer_days = db.Column(db.Float, nullable=False, default=0.0)
+    note = db.Column(db.Text, nullable=True)
+
+    # Set only when the decision becomes effective on 1 January of target_year.
+    applied_source_days = db.Column(db.Float, nullable=True)
+    applied_transfer_days = db.Column(db.Float, nullable=True)
+    applied_at = db.Column(db.DateTime, nullable=True, index=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[user_id], lazy='joined')
+    leave_type = db.relationship('HRLeaveType', foreign_keys=[leave_type_id], lazy='joined')
+    created_by = db.relationship('User', foreign_keys=[created_by_id], lazy='joined')
+    updated_by = db.relationship('User', foreign_keys=[updated_by_id], lazy='joined')
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            'user_id',
+            'leave_type_id',
+            'source_year',
+            'target_year',
+            name='uq_hr_leave_rollover_decision_scope',
+        ),
+        db.Index(
+            'ix_hr_leave_rollover_due',
+            'target_year',
+            'applied_at',
+        ),
+    )
+
 
 class HRPermissionRequest(db.Model):
     """Employee permission/moghadera request (طلب مغادرة/إذن)."""

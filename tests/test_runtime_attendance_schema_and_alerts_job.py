@@ -125,6 +125,11 @@ class HRAlertsJobAtomicityTests(unittest.TestCase):
         with (
             patch.object(
                 hr_alerts_job,
+                "_activate_due_leave_rollover_decisions",
+                return_value=[],
+            ),
+            patch.object(
+                hr_alerts_job,
                 "process_pending_approvals",
                 return_value={"reminded": 1, "escalated": 0},
             ),
