@@ -13912,17 +13912,29 @@ def _attendance_schedule_today() -> date:
     return datetime.now(app_timezone()).date()
 
 
+def _attendance_schedule_is_super_admin(user=None) -> bool:
+    """Return whether the selected user can publish attendance schedules directly."""
+    selected_user = user or current_user
+    try:
+        return bool(
+            selected_user.has_role("SUPER_ADMIN")
+            or selected_user.has_role("SUPERADMIN")
+            or _user_is_super_admin_account(selected_user)
+        )
+    except Exception:
+        return _user_is_super_admin_account(selected_user)
+
+
 def _attendance_schedule_is_final_approver(user=None) -> bool:
     selected_user = user or current_user
     try:
+        if _attendance_schedule_is_super_admin(selected_user):
+            return True
         if int(selected_user.id) in set(attendance_schedule_final_approver_user_ids()):
             return True
         if canonical_role_key(getattr(selected_user, "role", None)) == "GENERALSECRETARY":
             return True
-        return bool(
-            selected_user.has_role("SUPER_ADMIN")
-            or selected_user.has_role("SUPERADMIN")
-        )
+        return False
     except Exception:
         return False
 
@@ -14882,6 +14894,74 @@ def _attendance_schedule_apply_form(
     return changed
 
 
+def _attendance_schedule_super_admin_publish(
+    target_user: User,
+    period_start: date,
+    actor_id: int,
+    *,
+    manager: User | None = None,
+    general_director: User | None = None,
+    now: datetime | None = None,
+) -> HRAttendanceSchedulePlan:
+    """Apply the posted week and make it effective immediately for one employee.
+
+    A published plan is never edited in place.  An open employee change request
+    is the exception: the super admin may edit and approve it directly, which
+    keeps the employee's request history intact while bypassing later stages.
+    """
+    period_start_text = period_start.isoformat()
+    latest = _attendance_schedule_latest_plan(target_user.id, period_start_text)
+    latest_request_type = (
+        (getattr(latest, "request_type", None) or "BASELINE").upper()
+        if latest
+        else "BASELINE"
+    )
+    open_change_request = bool(
+        latest
+        and latest_request_type == "CHANGE_REQUEST"
+        and latest.status in _ATTENDANCE_SCHEDULE_CANCELABLE_CHANGE_REQUEST_STATUSES
+    )
+
+    if latest and latest.status in ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES:
+        plan = _attendance_schedule_fork_plan(latest, actor_id, "SUPER_ADMIN")
+        plan.request_type = "BASELINE"
+        plan.employee_note = None
+        plan.manager_note = None
+    elif open_change_request:
+        plan = latest
+    elif latest and latest_request_type != "CHANGE_REQUEST":
+        plan = latest
+    else:
+        published = _attendance_schedule_latest_plan(
+            target_user.id,
+            period_start_text,
+            final_only=True,
+        )
+        plan = _attendance_schedule_create_plan(
+            target_user,
+            period_start,
+            actor_id,
+            request_type="BASELINE",
+            source_plan=published,
+        )
+
+    plan.manager_user_id = manager.id if manager else None
+    plan.general_director_user_id = general_director.id if general_director else None
+    _attendance_schedule_apply_form(plan, period_start, actor_id, "SUPER_ADMIN")
+    if len(plan.days) != ATTENDANCE_SCHEDULE_PERIOD_DAYS:
+        raise ValueError("يجب تعبئة أيام الأسبوع السبعة قبل النشر المباشر.")
+
+    approved_at = now or datetime.utcnow()
+    plan.status = "FINAL_APPROVED"
+    plan.admin_approved_at = approved_at
+    plan.admin_approved_by_id = actor_id
+    plan.final_approved_at = approved_at
+    plan.final_approved_by_id = actor_id
+    plan.updated_at = approved_at
+    plan.updated_by_id = actor_id
+    return plan
+
+
 def _attendance_schedule_view_days(
     user_id: int,
     period_start: date,
@@ -14944,6 +15024,45 @@ def _attendance_schedule_view_days(
     return result
 
 
+def _attendance_schedule_super_admin_entry_days(period_start: date) -> list[dict]:
+    """Build a neutral weekly template for direct super-admin batch publishing."""
+    default_schedule = _attendance_schedule_default_schedule()
+    weekly_mask = _weekly_mask()
+    weekday_names = {
+        6: "الأحد",
+        0: "الإثنين",
+        1: "الثلاثاء",
+        2: "الأربعاء",
+        3: "الخميس",
+        4: "الجمعة",
+        5: "السبت",
+    }
+    today = _attendance_schedule_today()
+    result = []
+    for work_day in attendance_schedule_cycle_days(period_start):
+        is_off = _is_weekly_off(work_day, weekly_mask)
+        start_time, end_time = _attendance_schedule_template_times(default_schedule, work_day)
+        schedule_kind = (getattr(default_schedule, "kind", None) or "").strip().upper()
+        day_type = "OFF" if is_off else ("REMOTE" if schedule_kind == "REMOTE" else "WORK")
+        result.append({
+            "date": work_day,
+            "date_text": work_day.isoformat(),
+            "field_key": work_day.strftime("%Y_%m_%d"),
+            "weekday": weekday_names[work_day.weekday()],
+            "week_no": 1,
+            "is_today": work_day == today,
+            "is_past": work_day < today,
+            "day_type": day_type,
+            "schedule_id": None if is_off else getattr(default_schedule, "id", None),
+            "schedule_name": None if is_off else getattr(default_schedule, "name", None),
+            "start_time": None if is_off else (start_time or "08:00"),
+            "end_time": None if is_off else (end_time or "15:00"),
+            "note": "",
+            "edit_source": "SUPER_ADMIN",
+        })
+    return result
+
+
 def _attendance_schedule_week_rows(
     users: list[User],
     period_start: date,
@@ -14983,6 +15102,7 @@ def hr_work_schedule():
     period_start_text = period_start.isoformat()
     period_end = period_start + timedelta(days=ATTENDANCE_SCHEDULE_PERIOD_DAYS - 1)
     organization_week_no = 1
+    is_super_admin = _attendance_schedule_is_super_admin()
     is_final_approver = _attendance_schedule_is_final_approver()
     is_hr_manager = _attendance_schedule_is_hr_manager()
     can_edit_past_days = _attendance_schedule_can_edit_past_days()
@@ -15001,6 +15121,13 @@ def hr_work_schedule():
 
     target_user = current_user
     requested_user_id = (request.args.get("employee_id") or "").strip()
+    if (
+        is_super_admin
+        and active_view == "schedule"
+        and not requested_user_id
+        and not EmployeeFile.query.filter_by(user_id=current_user.id).first()
+    ):
+        active_view = "all"
     requested_other_user = requested_user_id.isdigit() and int(requested_user_id) != int(current_user.id)
     reports_loaded = active_view == "team" or (requested_other_user and not can_view_all)
     reports = _attendance_schedule_visible_reports(int(current_user.id)) if reports_loaded else []
@@ -15028,7 +15155,9 @@ def hr_work_schedule():
     ) if can_view_all else 0
 
     target_is_visible_report = int(target_user.id) in report_ids
-    if is_hr_manager:
+    if is_super_admin:
+        editor_mode = "SUPER_ADMIN"
+    elif is_hr_manager:
         editor_mode = "HR"
     elif int(target_user.id) == int(current_user.id):
         editor_mode = "EMPLOYEE"
@@ -15098,6 +15227,11 @@ def hr_work_schedule():
         all_published_plan_map,
         status_plan_map=all_plan_map,
     ) if can_view_all else ([], [])
+    super_admin_entry_days = (
+        _attendance_schedule_super_admin_entry_days(period_start)
+        if is_super_admin and organization_loaded
+        else []
+    )
     organization_print_weeks = []
     if print_view and organization_loaded:
         week_days, week_rows = _attendance_schedule_week_rows(
@@ -15141,10 +15275,12 @@ def hr_work_schedule():
         else (published_plan if editor_mode == "EMPLOYEE" else plan)
     )
     can_edit_days = bool(
-        is_hr_manager
+        is_super_admin
+        or is_hr_manager
         or (editor_mode == "EMPLOYEE" and employee_can_request)
     )
     can_take_action = editor_mode in {
+        "SUPER_ADMIN",
         "HR",
         "MANAGER",
         "GENERAL_DIRECTOR",
@@ -15174,6 +15310,7 @@ def hr_work_schedule():
         employee_change_request_is_open=employee_change_request_is_open,
         active_plan_for_view=active_plan_for_view,
         is_hr_manager=is_hr_manager,
+        is_super_admin=is_super_admin,
         can_edit_past_days=can_edit_past_days,
         is_general_director=is_general_director,
         is_final_approver=is_final_approver,
@@ -15188,6 +15325,7 @@ def hr_work_schedule():
         organization_week_no=organization_week_no,
         organization_week_days=organization_week_days,
         organization_week_rows=organization_week_rows,
+        super_admin_entry_days=super_admin_entry_days,
         organization_print_weeks=organization_print_weeks,
         status_counts=status_counts,
         manager_pending_count=sum(
@@ -15243,12 +15381,16 @@ def _attendance_schedule_update_weekly_workflow():
         int(user.id)
         for user in _attendance_schedule_direct_reports(int(current_user.id))
     }
+    is_super_admin = _attendance_schedule_is_super_admin()
     is_hr_manager = _attendance_schedule_is_hr_manager()
     can_edit_past_days = _attendance_schedule_can_edit_past_days()
     is_final_approver = _attendance_schedule_is_final_approver()
     is_general_director = _attendance_schedule_is_general_director()
 
-    if is_hr_manager:
+    if is_super_admin:
+        editor_mode = "SUPER_ADMIN"
+        allowed_actions = {"super_publish", "hr_publish", "final_approve", "final_reject"}
+    elif is_hr_manager:
         editor_mode = "HR"
         allowed_actions = {"hr_save", "hr_publish"}
     elif int(target_user.id) == int(current_user.id):
@@ -15410,6 +15552,38 @@ def _attendance_schedule_update_weekly_workflow():
             flash("تم إنشاء طلب تغيير جدول الدوام وإرساله للاعتماد.", "success")
             return redirect(url_for("portal.hr_work_schedule", start=period_start_text))
 
+        if editor_mode == "SUPER_ADMIN" and action in {"super_publish", "hr_publish"}:
+            plan = _attendance_schedule_super_admin_publish(
+                target_user,
+                period_start,
+                int(current_user.id),
+                manager=manager,
+                general_director=general_director,
+                now=now,
+            )
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"تم اعتماد ونشر جدول دوام {target_user.full_name} مباشرةً من السوبر أدمن.",
+                level="SUCCESS",
+                link_url=notification_link,
+                manager=manager,
+                include_general_director=True,
+                include_hr=True,
+            )
+            _portal_audit(
+                "HR_ATTENDANCE_SCHEDULE_SUPER_ADMIN_PUBLISH",
+                f"user_id={target_user.id}; period={period_start_text}; version={plan.version_no}",
+                target_type="HR_ATTENDANCE_SCHEDULE_PLAN",
+                target_id=plan.id,
+            )
+            db.session.commit()
+            flash("تم اعتماد جدول الدوام ونشره مباشرةً؛ لا يلزم أي اعتماد إضافي.", "success")
+            return redirect(url_for(
+                "portal.hr_work_schedule",
+                start=period_start_text,
+                employee_id=target_user.id,
+            ))
+
         if editor_mode == "HR":
             latest_request_type = (getattr(latest, "request_type", None) or "BASELINE").upper() if latest else "BASELINE"
             if latest and latest.status in ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES:
@@ -15498,7 +15672,7 @@ def _attendance_schedule_update_weekly_workflow():
         legacy_plan_approval = bool(
             latest
             and (getattr(latest, "request_type", None) or "BASELINE") != "CHANGE_REQUEST"
-            and editor_mode == "SECRETARY_GENERAL"
+            and editor_mode in {"SECRETARY_GENERAL", "SUPER_ADMIN"}
             and action in {"final_approve", "final_reject"}
         )
         if not latest or (
@@ -15571,10 +15745,13 @@ def _attendance_schedule_update_weekly_workflow():
             flash("تم رفض طلب تغيير الدوام.", "success")
         elif action == "final_approve":
             allowed_statuses = {"MANAGER_APPROVED", "GENERAL_DIRECTOR_APPROVED", "SUBMITTED"}
+            if legacy_plan_approval:
+                allowed_statuses.add("ADMIN_APPROVED")
             if plan.status not in allowed_statuses:
                 raise ValueError("لا يمكن اعتماد الطلب نهائيًا في حالته الحالية.")
             if (
                 not legacy_plan_approval
+                and not is_super_admin
                 and plan.general_director_user_id
                 and plan.status != "GENERAL_DIRECTOR_APPROVED"
             ):
@@ -15589,6 +15766,11 @@ def _attendance_schedule_update_weekly_workflow():
                 if legacy_plan_approval
                 else f"تم اعتماد طلب تغيير جدول دوام {target_user.full_name} نهائيًا وأصبح نافذًا."
             )
+            if is_super_admin:
+                final_message = (
+                    f"تم اعتماد طلب تغيير جدول دوام {target_user.full_name} "
+                    "نهائيًا من السوبر أدمن وأصبح نافذًا."
+                )
             notify_attendance_schedule_stakeholders(
                 target_user,
                 final_message,
@@ -15604,9 +15786,14 @@ def _attendance_schedule_update_weekly_workflow():
                 raise ValueError("لا يمكن رفض الطلب في حالته الحالية.")
             plan.status = "REJECTED"
             plan.manager_note = (request.form.get("manager_note") or "").strip()[:4000]
+            final_reject_message = (
+                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من السوبر أدمن."
+                if is_super_admin
+                else f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من الأمين العام."
+            )
             notify_attendance_schedule_stakeholders(
                 target_user,
-                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من الأمين العام.",
+                final_reject_message,
                 level="WARNING",
                 link_url=notification_link,
                 manager=manager,
@@ -15642,6 +15829,111 @@ def _attendance_schedule_update_weekly_workflow():
 @_perm(PORTAL_READ)
 def hr_work_schedule_update():
     return _attendance_schedule_update_weekly_workflow()
+
+
+@portal_bp.route('/hr/attendance/work-schedule/super-admin-publish-batch', methods=['POST'])
+@login_required
+@_perm(PORTAL_READ)
+def hr_work_schedule_super_admin_publish_batch():
+    """Publish one posted week directly for exactly the employees selected by a super admin."""
+    if not _attendance_schedule_is_super_admin():
+        abort(403)
+
+    period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
+    period_start_text = period_start.isoformat()
+    raw_user_ids = request.form.getlist("target_user_ids")
+    selected_user_ids = []
+    seen_user_ids = set()
+    for raw_user_id in raw_user_ids:
+        value = (raw_user_id or "").strip()
+        if not value.isdigit():
+            continue
+        user_id = int(value)
+        if user_id not in seen_user_ids:
+            seen_user_ids.add(user_id)
+            selected_user_ids.append(user_id)
+
+    if not selected_user_ids:
+        flash("اختر موظفًا واحدًا على الأقل للنشر المباشر.", "warning")
+        return redirect(url_for(
+            "portal.hr_work_schedule",
+            start=period_start_text,
+            view="all",
+        ))
+
+    target_users = (
+        User.query
+        .join(EmployeeFile, EmployeeFile.user_id == User.id)
+        .filter(User.id.in_(selected_user_ids))
+        .all()
+    )
+    users_by_id = {int(user.id): user for user in target_users}
+    missing_user_ids = [
+        user_id for user_id in selected_user_ids if user_id not in users_by_id
+    ]
+    if missing_user_ids:
+        abort(404)
+    target_users = [users_by_id[user_id] for user_id in selected_user_ids]
+
+    now = datetime.utcnow()
+    published = []
+    try:
+        for target_user in target_users:
+            managers = _attendance_schedule_responsible_managers(int(target_user.id))
+            manager = managers[0] if managers else None
+            general_director = resolve_general_director(int(target_user.id))
+            plan = _attendance_schedule_super_admin_publish(
+                target_user,
+                period_start,
+                int(current_user.id),
+                manager=manager,
+                general_director=general_director,
+                now=now,
+            )
+            published.append((target_user, plan, manager))
+
+        for target_user, plan, manager in published:
+            notify_attendance_schedule_stakeholders(
+                target_user,
+                f"تم اعتماد ونشر جدول دوام {target_user.full_name} مباشرةً من السوبر أدمن.",
+                level="SUCCESS",
+                link_url=url_for(
+                    "portal.hr_work_schedule",
+                    start=period_start_text,
+                    employee_id=target_user.id,
+                ),
+                manager=manager,
+                include_general_director=True,
+                include_hr=True,
+            )
+        _portal_audit(
+            "HR_ATTENDANCE_SCHEDULE_SUPER_ADMIN_BATCH_PUBLISH",
+            (
+                f"period={period_start_text}; user_ids="
+                f"{','.join(str(user.id) for user, _plan, _manager in published)}"
+            ),
+            target_type="HR_ATTENDANCE_SCHEDULE_PERIOD",
+            target_id=None,
+        )
+        db.session.commit()
+        flash(
+            f"تم اعتماد ونشر جدول الدوام مباشرةً لـ {len(published)} موظف/موظفين؛ "
+            "لم تتغير جداول بقية الموظفين.",
+            "success",
+        )
+    except ValueError as error:
+        db.session.rollback()
+        flash(str(error), "danger")
+    except Exception:
+        db.session.rollback()
+        current_app.logger.exception("Super admin attendance schedule batch publish failed")
+        flash("تعذر النشر المباشر لجداول الدوام. حاول مرة أخرى.", "danger")
+
+    return redirect(url_for(
+        "portal.hr_work_schedule",
+        start=period_start_text,
+        view="all",
+    ))
 
 
 @portal_bp.route('/hr/attendance/work-schedule/remind', methods=['POST'])
@@ -15689,6 +15981,7 @@ def hr_work_schedule_remind():
 def hr_work_schedule_final_approve_all():
     if not _attendance_schedule_is_final_approver():
         abort(403)
+    is_super_admin = _attendance_schedule_is_super_admin()
     period_start = normalize_attendance_schedule_cycle(request.form.get("period_start"))
     period_start_text = period_start.isoformat()
     employees = _attendance_schedule_employee_users()
@@ -15698,7 +15991,8 @@ def hr_work_schedule_final_approve_all():
         if (getattr(plan, "request_type", None) or "BASELINE") == "CHANGE_REQUEST"
         and plan.status in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES
         and (
-            not getattr(plan, "general_director_user_id", None)
+            is_super_admin
+            or not getattr(plan, "general_director_user_id", None)
             or plan.status == "GENERAL_DIRECTOR_APPROVED"
         )
         and len(plan.days) == ATTENDANCE_SCHEDULE_PERIOD_DAYS

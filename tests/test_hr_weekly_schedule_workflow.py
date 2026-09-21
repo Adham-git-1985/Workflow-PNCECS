@@ -8,12 +8,18 @@ from flask import Flask
 from extensions import db
 from models import (
     EmployeeFile,
+    HRAttendanceScheduleDay,
     HRAttendanceSchedulePlan,
     SystemSetting,
     User,
     WorkSchedule,
 )
-from portal.routes import _effective_schedule_for_user, hr_work_schedule_update
+from portal.routes import (
+    _effective_schedule_for_user,
+    hr_work_schedule_final_approve_all,
+    hr_work_schedule_super_admin_publish_batch,
+    hr_work_schedule_update,
+)
 from services.attendance_schedule import (
     attendance_schedule_cycle_days,
     attendance_schedule_cycle_start,
@@ -119,6 +125,21 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             ):
                 return fn()
 
+    def _post_batch(self, actor, data):
+        fn = inspect.unwrap(hr_work_schedule_super_admin_publish_batch)
+        with self.app.test_request_context(
+            "/portal/hr/attendance/work-schedule/super-admin-publish-batch",
+            method="POST",
+            data=data,
+        ):
+            with patch("portal.routes.current_user", actor), patch(
+                "portal.routes.url_for",
+                return_value="/portal/hr/attendance/work-schedule",
+            ), patch("portal.routes.notify_attendance_schedule_stakeholders"), patch(
+                "portal.routes._portal_audit"
+            ):
+                return fn()
+
     def _week_form(self, start):
         values = {}
         for offset in range(7):
@@ -132,6 +153,32 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
                 f"note_{key}": "",
             })
         return values
+
+    def _week_form_for_schedule(self, start, schedule, start_time, end_time):
+        values = self._week_form(start)
+        for offset in range(7):
+            day = start + timedelta(days=offset)
+            key = day.strftime("%Y_%m_%d")
+            values[f"schedule_id_{key}"] = str(schedule.id)
+            values[f"start_time_{key}"] = start_time
+            values[f"end_time_{key}"] = end_time
+        return values
+
+    def _add_employee(self, suffix):
+        employee = User(
+            email=f"weekly-employee-{suffix}@example.test",
+            name=f"موظف أسبوعي {suffix}",
+            password_hash="x",
+            role="EMPLOYEE",
+        )
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add(EmployeeFile(
+            user_id=employee.id,
+            direct_manager_user_id=self.manager.id,
+        ))
+        db.session.commit()
+        return employee
 
     def _future_period_start(self):
         return attendance_schedule_cycle_start(date.today() + timedelta(days=14))
@@ -205,6 +252,189 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         self.assertEqual(
             _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
             "09:00",
+        )
+
+    def test_super_admin_publishes_an_individual_schedule_directly(self):
+        period_start = self._future_period_start()
+        changed_day = period_start + timedelta(days=1)
+        changed_day_key = changed_day.strftime("%Y_%m_%d")
+
+        response = self._post(self.super_admin, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "action": "super_publish",
+            **self._week_form(period_start),
+            f"start_time_{changed_day_key}": "09:00",
+            f"end_time_{changed_day_key}": "16:00",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        plan = HRAttendanceSchedulePlan.query.filter_by(user_id=self.employee.id).one()
+        self.assertEqual(plan.status, "FINAL_APPROVED")
+        self.assertEqual(plan.final_approved_by_id, self.super_admin.id)
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
+            "09:00",
+        )
+
+    def test_super_admin_can_final_approve_a_change_without_general_director_approval(self):
+        general_director = User(
+            email="weekly-super-general-director@example.test",
+            name="مدير عام",
+            password_hash="x",
+            role="GENERAL_DIRECTOR",
+        )
+        db.session.add(general_director)
+        db.session.commit()
+        period_start = self._future_period_start()
+        changed_day_key = (period_start + timedelta(days=1)).strftime("%Y_%m_%d")
+
+        self._post(self.hr, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "action": "hr_publish",
+            **self._week_form(period_start),
+        })
+        baseline = HRAttendanceSchedulePlan.query.filter_by(
+            user_id=self.employee.id,
+            request_type="BASELINE",
+        ).one()
+        self._post(self.employee, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(baseline.id),
+            "action": "request_change",
+            "employee_note": "أطلب تغيير وقت الدوام.",
+            **self._week_form(period_start),
+            f"start_time_{changed_day_key}": "09:00",
+            f"end_time_{changed_day_key}": "16:00",
+        })
+        change = HRAttendanceSchedulePlan.query.order_by(
+            HRAttendanceSchedulePlan.id.desc(),
+        ).first()
+        change.general_director_user_id = general_director.id
+        db.session.commit()
+
+        response = self._post(self.super_admin, {
+            "target_user_id": str(self.employee.id),
+            "period_start": period_start.isoformat(),
+            "plan_id": str(change.id),
+            "action": "final_approve",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(change)
+        self.assertEqual(change.status, "FINAL_APPROVED")
+        self.assertEqual(change.final_approved_by_id, self.super_admin.id)
+
+    def test_super_admin_bulk_final_approval_bypasses_general_director(self):
+        period_start = self._future_period_start()
+        plan = HRAttendanceSchedulePlan(
+            user_id=self.employee.id,
+            manager_user_id=self.manager.id,
+            general_director_user_id=self.manager.id,
+            period_start=period_start.isoformat(),
+            period_end=(period_start + timedelta(days=6)).isoformat(),
+            version_no=1,
+            status="SUBMITTED",
+            request_type="CHANGE_REQUEST",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        db.session.add_all(
+            HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date=(period_start + timedelta(days=offset)).isoformat(),
+                day_type="WORK",
+                schedule_id=self.schedule.id,
+                start_time="08:00",
+                end_time="15:00",
+            )
+            for offset in range(7)
+        )
+        db.session.commit()
+
+        fn = inspect.unwrap(hr_work_schedule_final_approve_all)
+        with self.app.test_request_context(
+            "/portal/hr/attendance/work-schedule/final-approve-all",
+            method="POST",
+            data={"period_start": period_start.isoformat()},
+        ):
+            with patch("portal.routes.current_user", self.super_admin), patch(
+                "portal.routes.url_for",
+                return_value="/portal/hr/attendance/work-schedule",
+            ), patch("portal.routes.notify_attendance_schedule_stakeholders"), patch(
+                "portal.routes._portal_audit"
+            ):
+                response = fn()
+
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(plan)
+        self.assertEqual(plan.status, "FINAL_APPROVED")
+        self.assertEqual(plan.final_approved_by_id, self.super_admin.id)
+
+    def test_super_admin_batch_publish_only_changes_selected_employees(self):
+        selected_employee = self._add_employee("selected")
+        untouched_employee = self._add_employee("untouched")
+        untouched_schedule = WorkSchedule(
+            name="دوام الموظف غير المختار",
+            kind="FIXED",
+            start_time="07:00",
+            end_time="14:00",
+            is_active=True,
+        )
+        db.session.add(untouched_schedule)
+        db.session.commit()
+        period_start = self._future_period_start()
+        observed_day = period_start + timedelta(days=1)
+
+        self._post(self.hr, {
+            "target_user_id": str(untouched_employee.id),
+            "period_start": period_start.isoformat(),
+            "action": "hr_publish",
+            **self._week_form_for_schedule(
+                period_start,
+                untouched_schedule,
+                "07:00",
+                "14:00",
+            ),
+        })
+        untouched_plan = HRAttendanceSchedulePlan.query.filter_by(
+            user_id=untouched_employee.id,
+        ).one()
+
+        response = self._post_batch(self.super_admin, {
+            "period_start": period_start.isoformat(),
+            "target_user_ids": [str(self.employee.id), str(selected_employee.id)],
+            **self._week_form_for_schedule(period_start, self.schedule, "10:00", "17:00"),
+        })
+
+        self.assertEqual(response.status_code, 302)
+        published_plans = HRAttendanceSchedulePlan.query.filter(
+            HRAttendanceSchedulePlan.user_id.in_((self.employee.id, selected_employee.id)),
+        ).all()
+        self.assertEqual(len(published_plans), 2)
+        self.assertTrue(all(plan.status == "FINAL_APPROVED" for plan in published_plans))
+        self.assertTrue(
+            all(plan.final_approved_by_id == self.super_admin.id for plan in published_plans)
+        )
+        self.assertEqual(
+            _effective_schedule_for_user(self.employee.id, observed_day.isoformat()).start_time,
+            "10:00",
+        )
+        self.assertEqual(
+            _effective_schedule_for_user(selected_employee.id, observed_day.isoformat()).start_time,
+            "10:00",
+        )
+        self.assertEqual(
+            HRAttendanceSchedulePlan.query.filter_by(user_id=untouched_employee.id).count(),
+            1,
+        )
+        db.session.refresh(untouched_plan)
+        self.assertEqual(untouched_plan.status, "ADMIN_APPROVED")
+        self.assertEqual(
+            _effective_schedule_for_user(untouched_employee.id, observed_day.isoformat()).start_time,
+            "07:00",
         )
 
     def test_employee_can_cancel_an_open_change_request_and_submit_a_new_one(self):
@@ -315,7 +545,7 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
         super_admin_day = next(
             day for day in super_admin_plan.days if day.work_date == period_start.isoformat()
         )
-        self.assertEqual(super_admin_plan.status, "ADMIN_APPROVED")
+        self.assertEqual(super_admin_plan.status, "FINAL_APPROVED")
         self.assertEqual(super_admin_day.start_time, "10:00")
 
     def test_secretary_waits_for_assigned_general_director(self):

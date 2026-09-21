@@ -22,7 +22,7 @@
     .ws-tabs .nav-link { color:#667085; font-weight:700; white-space:nowrap; border-radius:11px; }
     .ws-tabs .nav-link.active { color:#fff; background:linear-gradient(120deg,var(--ws-primary),var(--ws-blue)); }
     .ws-alert { border-radius:16px; }
-    .ws-flow { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.45rem; }
+    .ws-flow { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:.45rem; }
     .ws-flow-step { padding:.65rem; border:1px solid var(--ws-border); border-radius:14px; background:#fafbfe; text-align:center; font-size:.76rem; }
     .ws-flow-step strong { display:block; color:var(--ws-ink); }
     .ws-flow-step small { color:var(--ws-muted); }
@@ -71,7 +71,7 @@
       <div>
         <div class="small opacity-75 mb-1"><i class="bi bi-calendar-week"></i> إدارة أسبوعية للدوام</div>
         <h1 class="ws-title h2 mb-2">جدول الدوام الأسبوعي</h1>
-        <p class="ws-subtitle mb-0">تعبئة الجدول تتم من الشؤون البشرية. يحدد الموظف التعديل المقترح داخل طلب منفصل، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد.</p>
+        <p class="ws-subtitle mb-0">{% if is_super_admin %}أنت تعمل بصلاحية السوبر أدمن: يمكنك إدخال الجدول واعتماده ونشره مباشرةً، فرديًا أو للموظفين المختارين.{% else %}تعبئة الجدول تتم من الشؤون البشرية. يحدد الموظف التعديل المقترح داخل طلب منفصل، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد.{% endif %}</p>
       </div>
       <form class="ws-date-box" method="get" action="{{ url_for('portal.hr_work_schedule') }}" aria-label="اختيار أسبوع الدوام">
         <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat(), view=active_view) }}" title="الأسبوع السابق"><i class="bi bi-chevron-right"></i></a>
@@ -89,7 +89,9 @@
     </div>
   </section>
 
-  {% if editor_mode == 'EMPLOYEE' %}
+  {% if editor_mode == 'SUPER_ADMIN' %}
+  <div class="alert alert-dark ws-alert"><i class="bi bi-shield-fill-check me-1"></i> أي جدول تنشره يصبح فعّالًا فورًا وباعتمادك النهائي، ولا يمر بمسار اعتماد إضافي.</div>
+  {% elif editor_mode == 'EMPLOYEE' %}
   <div class="alert alert-info ws-alert"><i class="bi bi-info-circle me-1"></i>{% if employee_can_request %}عدّل الأيام أو الأوقات المقترحة داخل هذا الطلب؛ سيبقى جدولك الفعّال دون تغيير إلى أن يُعتمد الطلب.{% elif employee_can_cancel %}هذا هو الجدول المقترح في طلبك، وهو غير نافذ حتى الاعتماد. يمكنك إلغاء الطلب ما دام قيد الاعتماد.{% else %}الجدول المعروض هو جدولك الفعّال. أي طلب تغيير يبقى غير نافذ حتى اعتماد المدير والمدير العام والأمين العام.{% endif %}</div>
   {% elif editor_mode == 'HR' %}
   <div class="alert alert-success ws-alert"><i class="bi bi-shield-check me-1"></i> أنت تعمل بصلاحية الشؤون البشرية؛ يمكنك تعبئة جدول الأسبوع ونشره بعد الاعتماد الإداري.</div>
@@ -97,6 +99,7 @@
 
   <div class="ws-panel p-3 mb-3">
     <div class="ws-flow">
+      {% if is_super_admin %}<div class="ws-flow-step"><strong>السوبر أدمن</strong><small>اعتماد ونشر مباشر</small></div>{% endif %}
       <div class="ws-flow-step"><strong>الشؤون البشرية</strong><small>تعبئة الجدول</small></div>
       <div class="ws-flow-step"><strong>الموظف</strong><small>تحديد التغيير المقترح</small></div>
       <div class="ws-flow-step"><strong>المدير</strong><small>اعتماد أولي</small></div>
@@ -114,7 +117,7 @@
   {% if active_view == 'schedule' %}
   <section class="ws-panel p-3 p-lg-4 mb-3">
     <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
-      <div><h4 class="fw-bold mb-1">{{ 'تعبئة جدول الموظف' if editor_mode == 'HR' else ('طلب تغيير جدول الدوام' if editor_mode == 'EMPLOYEE' and employee_can_request else 'جدول الدوام') }}</h4><div class="text-muted small">{{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
+      <div><h4 class="fw-bold mb-1">{{ 'إدخال واعتماد مباشر لجدول الموظف' if editor_mode == 'SUPER_ADMIN' else ('تعبئة جدول الموظف' if editor_mode == 'HR' else ('طلب تغيير جدول الدوام' if editor_mode == 'EMPLOYEE' and employee_can_request else 'جدول الدوام')) }}</h4><div class="text-muted small">{{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div>
       {% if plan %}<span class="badge text-bg-{{ plan_meta.class }} fs-6"><i class="bi {{ plan_meta.icon }}"></i> {{ plan_meta.label }}</span>{% elif published_plan %}<span class="badge text-bg-success fs-6">جدول فعّال</span>{% else %}<span class="badge text-bg-secondary fs-6">دوام مكتبي افتراضي</span>{% endif %}
     </div>
 
@@ -146,7 +149,7 @@
           <div class="ws-day-readonly"><span class="badge rounded-pill text-bg-light"><i class="bi {{ meta.icon }}"></i> {{ meta.label }}</span><strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong><small class="text-muted">{% if day.day_type == 'OFF' %}لا يوجد دوام{% else %}{{ day.schedule_name or 'وقت مخصص' }}{% endif %}</small>{% if day.note %}<small class="ws-source">{{ day.note }}</small>{% endif %}</div>
           {% endif %}
           {% if past_day_locked %}<div class="ws-source mt-2"><i class="bi bi-lock-fill"></i> تاريخ سابق: التعديل متاح للأدمن والسوبر أدمن فقط.</div>{% endif %}
-          {% if day.edit_source %}<div class="ws-source mt-2"><i class="bi bi-clock-history"></i> آخر مصدر: {{ {'HR':'الشؤون البشرية','MANAGER':'المدير','GENERAL_DIRECTOR':'المدير العام','SECRETARY_GENERAL':'الأمين العام','SYSTEM':'النظام','EMPLOYEE':'الموظف'}.get(day.edit_source, day.edit_source) }}</div>{% endif %}
+          {% if day.edit_source %}<div class="ws-source mt-2"><i class="bi bi-clock-history"></i> آخر مصدر: {{ {'HR':'الشؤون البشرية','MANAGER':'المدير','GENERAL_DIRECTOR':'المدير العام','SECRETARY_GENERAL':'الأمين العام','SUPER_ADMIN':'السوبر أدمن','SYSTEM':'النظام','EMPLOYEE':'الموظف'}.get(day.edit_source, day.edit_source) }}</div>{% endif %}
         </article>
         {% endfor %}
       </div>
@@ -158,15 +161,18 @@
         </div>
         <div class="col-lg-6">
           <label class="form-label fw-bold" for="managerNote">ملاحظة الاعتماد</label>
-          {% if editor_mode in ['MANAGER','GENERAL_DIRECTOR','SECRETARY_GENERAL'] and plan %}<textarea class="form-control" id="managerNote" name="manager_note" rows="4" maxlength="4000" placeholder="ملاحظة اختيارية على الاعتماد أو الرفض..."></textarea>{% else %}<div class="form-control bg-light" style="min-height:104px">{{ plan.manager_note if plan and plan.manager_note else 'لا توجد ملاحظة اعتماد.' }}</div>{% endif %}
+          {% if editor_mode in ['MANAGER','GENERAL_DIRECTOR','SECRETARY_GENERAL','SUPER_ADMIN'] and plan %}<textarea class="form-control" id="managerNote" name="manager_note" rows="4" maxlength="4000" placeholder="ملاحظة اختيارية على الاعتماد أو الرفض...">{{ plan.manager_note if editor_mode == 'SUPER_ADMIN' and plan.manager_note else '' }}</textarea>{% else %}<div class="form-control bg-light" style="min-height:104px">{{ plan.manager_note if plan and plan.manager_note else 'لا توجد ملاحظة اعتماد.' }}</div>{% endif %}
         </div>
       </div>
 
       {% if can_edit %}
       <div class="ws-action-bar mt-3">
-        <div><strong>{% if editor_mode == 'HR' %}إدارة جدول الشؤون البشرية{% elif editor_mode == 'EMPLOYEE' %}طلب تغيير جدول الدوام{% else %}إجراء الاعتماد{% endif %}</strong><div class="small text-muted">{% if editor_mode == 'HR' %}احفظ المسودة أو انشر الجدول بعد اعتماده إداريًا.{% elif editor_mode == 'EMPLOYEE' and employee_can_request %}عدّل الجدول المقترح ثم أرسل الطلب؛ لن يتغير جدولك الفعّال عند تقديمه.{% elif editor_mode == 'EMPLOYEE' and employee_can_cancel %}يمكنك إلغاء طلبك طالما لم يُعتمد نهائيًا.{% else %}أي تغيير في الأيام لا يصبح نافذًا قبل الاعتماد النهائي.{% endif %}</div></div>
+        <div><strong>{% if editor_mode == 'SUPER_ADMIN' %}اعتماد ونشر مباشر من السوبر أدمن{% elif editor_mode == 'HR' %}إدارة جدول الشؤون البشرية{% elif editor_mode == 'EMPLOYEE' %}طلب تغيير جدول الدوام{% else %}إجراء الاعتماد{% endif %}</strong><div class="small text-muted">{% if editor_mode == 'SUPER_ADMIN' %}الجدول الذي تنشره يصبح فعّالًا فورًا ولا يحتاج اعتماد أي جهة أخرى.{% elif editor_mode == 'HR' %}احفظ المسودة أو انشر الجدول بعد اعتماده إداريًا.{% elif editor_mode == 'EMPLOYEE' and employee_can_request %}عدّل الجدول المقترح ثم أرسل الطلب؛ لن يتغير جدولك الفعّال عند تقديمه.{% elif editor_mode == 'EMPLOYEE' and employee_can_cancel %}يمكنك إلغاء طلبك طالما لم يُعتمد نهائيًا.{% else %}أي تغيير في الأيام لا يصبح نافذًا قبل الاعتماد النهائي.{% endif %}</div></div>
         <div class="d-flex flex-wrap gap-2">
-          {% if editor_mode == 'HR' %}
+          {% if editor_mode == 'SUPER_ADMIN' %}
+            {% if plan and is_change_request and plan.status in ['SUBMITTED','MANAGER_APPROVED','GENERAL_DIRECTOR_APPROVED'] %}<button class="btn btn-outline-danger" name="action" value="final_reject" type="submit" formnovalidate><i class="bi bi-x-circle"></i> رفض طلب التغيير</button>{% endif %}
+            <button class="btn btn-success" name="action" value="super_publish" type="submit"><i class="bi bi-shield-fill-check"></i> {{ 'اعتماد طلب التغيير ونشره مباشرةً' if plan and is_change_request else 'اعتماد ونشر الجدول مباشرةً' }}</button>
+          {% elif editor_mode == 'HR' %}
             <button class="btn btn-outline-secondary" name="action" value="hr_save" type="submit"><i class="bi bi-save"></i> حفظ المسودة</button>
             {% if not is_change_request %}<button class="btn btn-primary" name="action" value="hr_publish" type="submit"><i class="bi bi-patch-check"></i> اعتماد ونشر الجدول</button>{% endif %}
           {% elif editor_mode == 'EMPLOYEE' %}
@@ -195,6 +201,54 @@
   {% endif %}
 
   {% if active_view == 'all' and organization_loaded %}
+  {% if is_super_admin %}
+  <section class="ws-panel p-3 p-lg-4 mb-3 border border-dark-subtle">
+    <div class="d-flex flex-wrap justify-content-between gap-2 mb-3">
+      <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-shield-fill-check text-dark"></i> إدخال واعتماد مباشر للموظفين المختارين</h4>
+        <div class="text-muted small">اختر موظفًا أو أكثر ثم أدخل جدول الأسبوع الموحد. سيصبح الجدول فعّالًا فورًا للموظفين المختارين فقط، ولن تتغير جداول بقية الموظفين.</div>
+      </div>
+      <span class="badge text-bg-dark align-self-start">صلاحية السوبر أدمن</span>
+    </div>
+    <form method="post" action="{{ url_for('portal.hr_work_schedule_super_admin_publish_batch') }}" id="superAdminBatchScheduleForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+      <input type="hidden" name="period_start" value="{{ period_start.isoformat() }}">
+      <div class="row g-3 mb-3">
+        <div class="col-lg-6">
+          <label class="form-label fw-bold" for="superAdminScheduleTargets">الموظفون المستهدفون</label>
+          <div class="d-flex gap-2 mb-2"><button class="btn btn-sm btn-outline-secondary" type="button" data-select-all="#superAdminScheduleTargets">تحديد الجميع</button><button class="btn btn-sm btn-outline-secondary" type="button" data-clear-selection="#superAdminScheduleTargets">إلغاء التحديد</button></div>
+          <select class="form-select" id="superAdminScheduleTargets" name="target_user_ids" multiple size="8" required>
+            {% for item in organization_cards %}<option value="{{ item.user.id }}">{{ item.user.full_name }}{% if item.user.job_title %} — {{ item.user.job_title }}{% endif %}</option>{% endfor %}
+          </select>
+          <div class="form-text">استخدم Ctrl أو ⌘ لاختيار أكثر من موظف، أو زر «تحديد الجميع».</div>
+        </div>
+        <div class="col-lg-6">
+          <div class="alert alert-warning h-100 mb-0"><i class="bi bi-exclamation-triangle me-1"></i> النشر هنا نهائي وفوري. إذا كان لدى موظف مختار طلب تغيير مفتوح، يستطيع السوبر أدمن اعتماد محتواه أو تعديله ضمن الجدول المنشور مباشرةً.</div>
+        </div>
+      </div>
+      <div class="ws-day-grid">
+        {% for day in super_admin_entry_days %}
+        {% set meta = day_meta.get(day.day_type, day_meta.WORK) %}
+        <article class="ws-day" data-kind="{{ day.day_type }}">
+          <div class="ws-day-head"><div><div class="ws-day-name">{{ day.weekday }}</div><div class="ws-day-date">{{ day.date.strftime('%d/%m/%Y') }}</div></div></div>
+          <label class="form-label small fw-bold" for="batchDayType{{ day.field_key }}">نوع اليوم</label>
+          <select class="form-select form-select-sm mb-2" id="batchDayType{{ day.field_key }}" name="day_type_{{ day.field_key }}" data-day-type>
+            {% for value, item_meta in day_meta.items() %}<option value="{{ value }}" {% if day.day_type == value %}selected{% endif %}>{{ item_meta.label }}</option>{% endfor %}
+          </select>
+          <label class="form-label small fw-bold" for="batchSchedule{{ day.field_key }}">قالب الدوام</label>
+          <select class="form-select form-select-sm mb-2" id="batchSchedule{{ day.field_key }}" name="schedule_id_{{ day.field_key }}" data-schedule {% if day.day_type == 'OFF' %}disabled{% endif %}>
+            <option value="">وقت مخصص</option>
+            {% for schedule in schedules %}<option value="{{ schedule.id }}" data-start="{{ schedule.start_time or '' }}" data-end="{{ schedule.end_time or '' }}" data-kind="{{ schedule.kind or 'FIXED' }}" {% if day.schedule_id == schedule.id %}selected{% endif %}>{{ schedule.name }}</option>{% endfor %}
+          </select>
+          <div class="ws-time-row"><div><label class="form-label small" for="batchStart{{ day.field_key }}">من</label><input class="form-control form-control-sm" id="batchStart{{ day.field_key }}" type="time" name="start_time_{{ day.field_key }}" value="{{ day.start_time or '' }}" data-start-time {% if day.day_type == 'OFF' %}disabled{% endif %}></div><div><label class="form-label small" for="batchEnd{{ day.field_key }}">إلى</label><input class="form-control form-control-sm" id="batchEnd{{ day.field_key }}" type="time" name="end_time_{{ day.field_key }}" value="{{ day.end_time or '' }}" data-end-time {% if day.day_type == 'OFF' %}disabled{% endif %}></div></div>
+          <label class="form-label small fw-bold mt-2" for="batchNote{{ day.field_key }}">ملاحظة</label><input class="form-control form-control-sm" id="batchNote{{ day.field_key }}" name="note_{{ day.field_key }}" value="{{ day.note }}" maxlength="255">
+        </article>
+        {% endfor %}
+      </div>
+      <div class="ws-action-bar mt-3"><div><strong>نشر مباشر للموظفين المختارين</strong><div class="small text-muted">العملية تنشئ أو تحدّث النسخة الأسبوعية للموظفين المحددين في هذه القائمة فقط.</div></div><button class="btn btn-success" type="submit"><i class="bi bi-shield-fill-check"></i> اعتماد ونشر للموظفين المختارين</button></div>
+    </form>
+  </section>
+  {% endif %}
   <section class="ws-panel p-3 p-lg-4"><div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3"><div><h4 class="fw-bold mb-1">جدول دوام جميع الموظفين</h4><div class="text-muted small">الأسبوع {{ period_start.strftime('%d/%m/%Y') }} — {{ period_end.strftime('%d/%m/%Y') }}</div></div><a class="btn btn-outline-primary" target="_blank" rel="noopener" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), view='all', print=1) }}"><i class="bi bi-printer"></i> طباعة الأسبوع</a></div><div class="row g-2 mb-3">{% for key,label,klass in [('DRAFT','غير منشورة','secondary'),('SUBMITTED','طلبات بانتظار المدير','warning'),('MANAGER_APPROVED','بانتظار المدير العام','info'),('GENERAL_DIRECTOR_APPROVED','بانتظار الأمين العام','primary'),('ADMIN_APPROVED','معتمدة إداريًا','success'),('FINAL_APPROVED','معتمدة نهائيًا','success')] %}<div class="col-6 col-lg-2"><div class="border rounded-3 p-2 text-center"><strong class="d-block text-{{ klass }}">{{ status_counts.get(key,0) }}</strong><small class="text-muted">{{ label }}</small></div></div>{% endfor %}</div><div class="mb-3"><input class="form-control" type="search" placeholder="ابحث في الموظفين..." data-person-search="#wsAllRoster"></div>{% if organization_week_rows %}<div class="ws-roster-wrap"><table class="table ws-roster-table"><thead><tr><th class="ws-roster-employee">الموظف</th>{% for day in organization_week_rows[0].days %}<th>{{ day.weekday }}<small class="d-block text-muted">{{ day.date.strftime('%d/%m/%Y') }}</small></th>{% endfor %}<th>الحالة</th></tr></thead><tbody id="wsAllRoster">{% for item in organization_week_rows %}{% set item_meta = status_meta.get(item.plan.status if item.plan else 'DRAFT', status_meta.DRAFT) %}<tr data-person-name="{{ (item.user.full_name ~ ' ' ~ (item.user.email or ''))|lower }}"><td class="ws-roster-employee"><div class="ws-person"><div class="ws-avatar">{{ item.user.full_name[:1] }}</div><div><div class="ws-person-name">{{ item.user.full_name }}</div><div class="ws-person-meta">{{ item.user.job_title or item.user.email or 'موظف' }}</div></div></div></td>{% for day in item.days %}{% set cell_meta = day_meta.get(day.day_type, day_meta.WORK) %}<td><div class="ws-cell" data-kind="{{ day.day_type }}"><span>{{ cell_meta.short }}</span><strong>{% if day.day_type == 'OFF' %}راحة{% else %}{{ day.start_time or '—' }} – {{ day.end_time or '—' }}{% endif %}</strong><small>{{ day.schedule_name or '' }}</small></div></td>{% endfor %}<td><span class="badge text-bg-{{ item_meta.class }}">{{ item_meta.label if item.plan else 'دوام افتراضي' }}</span><a class="btn btn-sm btn-link d-block mx-auto" href="{{ url_for('portal.hr_work_schedule', start=period_start.isoformat(), employee_id=item.user.id) }}">فتح</a></td></tr>{% endfor %}</tbody></table></div>{% else %}<div class="text-muted">لا توجد ملفات موظفين للعرض.</div>{% endif %}</section>
   {% endif %}
 </div>
@@ -212,6 +266,20 @@
           list.querySelectorAll('[data-person-name]').forEach(function (item) {
             item.classList.toggle('d-none', query && item.dataset.personName.indexOf(query) === -1);
           });
+        });
+      });
+      document.querySelectorAll('[data-select-all]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var select = document.querySelector(button.dataset.selectAll);
+          if (!select) return;
+          Array.prototype.forEach.call(select.options, function (option) { option.selected = true; });
+        });
+      });
+      document.querySelectorAll('[data-clear-selection]').forEach(function (button) {
+        button.addEventListener('click', function () {
+          var select = document.querySelector(button.dataset.clearSelection);
+          if (!select) return;
+          Array.prototype.forEach.call(select.options, function (option) { option.selected = false; });
         });
       });
       document.querySelectorAll('[data-day-type]').forEach(function (type) {

@@ -625,6 +625,24 @@ class AttendanceSchedulePersistenceTests(unittest.TestCase):
             {self.manager.id, secondary_manager.id},
         )
 
+    def test_super_admin_uses_the_direct_schedule_editor(self):
+        undecorated_view = inspect.unwrap(hr_work_schedule)
+        with self.app.test_request_context(
+            f"/portal/hr/attendance/work-schedule?employee_id={self.employee.id}",
+        ):
+            g._attendance_schedule_cache = {}
+            with patch("portal.routes.current_user", self.super_admin), patch(
+                "portal.routes.render_template",
+                return_value="rendered",
+            ) as render:
+                result = undecorated_view()
+
+        self.assertEqual(result, "rendered")
+        context = render.call_args.kwargs
+        self.assertEqual(context["editor_mode"], "SUPER_ADMIN")
+        self.assertTrue(context["is_super_admin"])
+        self.assertTrue(context["can_edit_days"])
+
 
 class AttendanceScheduleTemplateTests(unittest.TestCase):
     def test_template_and_navigation_expose_the_full_workflow(self):
@@ -648,6 +666,9 @@ class AttendanceScheduleTemplateTests(unittest.TestCase):
             "past_day_locked",
             "selected_managers",
             "cancel_change",
+            "SUPER_ADMIN",
+            "super_publish",
+            "super_admin_publish_batch",
         ):
             with self.subTest(token=token):
                 self.assertIn(token, template)
