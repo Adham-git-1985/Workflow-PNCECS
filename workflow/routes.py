@@ -6115,7 +6115,7 @@ def view_request(request_id):
     audit = (
         AuditLog.query
         .filter_by(request_id=req.id)
-        .order_by(AuditLog.created_at.desc())
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .limit(200)
         .all()
     )
@@ -6177,7 +6177,7 @@ def view_request(request_id):
         "WORKFLOW_ATTACHMENT_DELETED": "تم حذف مرفق من المسار",
     }
     user_audit = []
-    for log in reversed(audit):
+    for log in audit:
         action = (log.action or "").upper()
         if action in technical_actions:
             continue
