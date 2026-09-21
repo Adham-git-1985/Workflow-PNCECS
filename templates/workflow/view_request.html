@@ -989,16 +989,17 @@
 
     {% endif %}
 
-    {% if secretary_endorsements %}
+    {% if quick_endorsements or can_manage_quick_endorsements %}
     <div class="card shadow-sm mt-3 border-primary-subtle">
       <div class="card-header bg-primary-subtle d-flex justify-content-between align-items-center">
         <strong><i class="bi bi-pencil-square"></i> تأشيرات سريعة</strong>
         <span class="small text-muted">تُسجّل مباشرةً في التعليقات</span>
       </div>
       <div class="card-body">
+        {% if quick_endorsements %}
         <form method="post" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
           <div class="row g-2">
-          {% for endorsement in secretary_endorsements %}
+          {% for endorsement in quick_endorsements %}
           <div class="col-md-6">
             <label class="btn btn-outline-primary w-100 text-start d-flex align-items-center gap-2">
               <input class="form-check-input" type="checkbox" name="endorsement_ids" value="{{ endorsement.id }}">
@@ -1014,7 +1015,10 @@
             <span class="small text-muted">يمكن اختيار أكثر من تأشيرة؛ ستُسجل في تعليق واحد، كل تأشيرة في سطر.</span>
           </div>
         </form>
-        {% if can_manage_secretary_endorsements %}
+        {% else %}
+        <div class="text-muted">لا توجد تأشيرات جاهزة حتى الآن.</div>
+        {% endif %}
+        {% if can_manage_quick_endorsements %}
         <div class="border-top mt-3 pt-3">
           <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}" class="row g-2 align-items-end">
             <input type="hidden" name="request_id" value="{{ req.id }}">
@@ -1028,7 +1032,7 @@
             </div>
           </form>
           <div class="d-flex flex-wrap gap-2 mt-3">
-            {% for endorsement in secretary_endorsements %}
+            {% for endorsement in quick_endorsements %}
             <form method="post" action="{{ url_for('workflow.manage_secretary_endorsements') }}">
               <input type="hidden" name="request_id" value="{{ req.id }}">
               <input type="hidden" name="action" value="REMOVE">
@@ -1047,12 +1051,12 @@
 
     <div class="card shadow-sm mt-3">
       <div class="card-header bg-white">
-        <strong>💬 تعليق</strong>
+        <strong>💬 أضف تعليقك</strong>
       </div>
       <div class="card-body">
         <form method="post" enctype="multipart/form-data" action="{{ url_for('workflow.add_request_note', request_id=req.id) }}">
           <div class="mb-3">
-            <label class="form-label">النص</label>
+            <label class="form-label">تعليقك</label>
             <div class="mention-field position-relative" data-mention-root>
               <textarea class="form-control"
                         name="note"
@@ -1086,7 +1090,7 @@
           </div>
 
           <button class="btn btn-primary w-100" name="kind" value="COMMENT">
-            <i class="bi bi-send"></i> إرسال تعليق
+            <i class="bi bi-send"></i> أضف تعليقك
           </button>
         </form>
         <div class="small text-muted mt-2">سيصل تنبيه تلقائي للطرف الآخر.</div>

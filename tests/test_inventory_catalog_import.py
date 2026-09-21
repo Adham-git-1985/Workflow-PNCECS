@@ -149,6 +149,21 @@ class InventoryCatalogImportTests(unittest.TestCase):
         self.assertIn("2 صنفًا", response.get_data(as_text=True))
         self.assertIn("19", response.get_data(as_text=True))
 
+    def test_stocktake_voucher_filter_searches_the_displayed_room_contents(self):
+        self.assertEqual(self._post_import().status_code, 200)
+        voucher = InvStocktakeVoucher.query.one()
+
+        response = self.client.get(
+            f"/portal/inventory/vouchers/stocktake/{voucher.id}?q=TEST-001"
+        )
+
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+        self.assertIn("البحث في موجودات الغرفة", page)
+        self.assertIn("ورق اختبار", page)
+        self.assertNotIn("قلم اختبار", page)
+        self.assertIn('value="TEST-001"', page)
+
     def test_reimport_does_not_add_the_same_opening_quantity_twice(self):
         self.assertEqual(self._post_import().status_code, 200)
         self.assertEqual(self._post_import().status_code, 200)

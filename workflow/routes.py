@@ -297,6 +297,7 @@ MENTION_ACCESS_ACTION = "WORKFLOW_MENTION_ACCESS"
 MENTION_ACCESS_REVOKED_ACTION = "WORKFLOW_MENTION_ACCESS_REVOKED"
 MENTION_TASK_COMPLETED_ACTION = "WORKFLOW_MENTION_TASK_COMPLETED"
 SECRETARY_ENDORSEMENTS_PERMISSION = "WORKFLOW_SECRETARY_ENDORSEMENTS"
+EMPLOYEE_ENDORSEMENTS_PERMISSION = "WORKFLOW_EMPLOYEE_ENDORSEMENTS"
 _DEFAULT_SECRETARY_ENDORSEMENTS = (
     "لاتخاذ اللازم",
     "للمتابعة",
@@ -356,7 +357,7 @@ def _mention_task_user_ids(
 
 
 def _can_use_secretary_endorsements(user: User | None) -> bool:
-    """The Secretary General and explicitly authorized users share this tool."""
+    """The Secretary General and legacy authorized users may use this tool."""
     if not user:
         return False
     try:
@@ -369,12 +370,50 @@ def _can_use_secretary_endorsements(user: User | None) -> bool:
         return False
 
 
-def _get_secretary_endorsements() -> list[WorkflowQuickEndorsement]:
-    """Return shared active endorsements, seeding the initial set once."""
+def _can_use_employee_endorsements(user: User | None) -> bool:
+    """Employees with the explicit permission may add a prepared endorsement."""
+    if not user:
+        return False
     try:
-        if WorkflowQuickEndorsement.query.count() == 0:
+        return bool(user.has_perm(EMPLOYEE_ENDORSEMENTS_PERMISSION))
+    except Exception:
+        return False
+
+
+def _can_use_quick_endorsements(user: User | None) -> bool:
+    """Keep the existing secretary feature while allowing the employee grant."""
+    return _can_use_secretary_endorsements(user) or _can_use_employee_endorsements(user)
+
+
+def _can_manage_quick_endorsements(user: User | None) -> bool:
+    """Only Admin and Super Admin may create, restore, or remove templates."""
+    if not user:
+        return False
+    try:
+        # User.has_role("ADMIN") intentionally includes SUPER_ADMIN.
+        return bool(user.has_role("ADMIN"))
+    except Exception:
+        return False
+
+
+def _get_secretary_endorsements(
+    *,
+    seed_defaults: bool = False,
+    seeded_by: User | None = None,
+) -> list[WorkflowQuickEndorsement]:
+    """Return shared active endorsements and seed defaults only when authorized."""
+    try:
+        if (
+            seed_defaults
+            and _can_manage_quick_endorsements(seeded_by)
+            and WorkflowQuickEndorsement.query.count() == 0
+        ):
             db.session.add_all(
-                WorkflowQuickEndorsement(text=text, sort_order=index)
+                WorkflowQuickEndorsement(
+                    text=text,
+                    sort_order=index,
+                    created_by_id=seeded_by.id,
+                )
                 for index, text in enumerate(_DEFAULT_SECRETARY_ENDORSEMENTS, start=1)
             )
             db.session.commit()
@@ -6612,6 +6651,8 @@ def view_request(request_id):
     except Exception:
         pass
 
+    can_manage_quick_endorsements = _can_manage_quick_endorsements(current_user)
+    can_use_quick_endorsements = _can_use_quick_endorsements(current_user)
 
     return render_template(
         "workflow/view_request.html",
@@ -6675,12 +6716,15 @@ def view_request(request_id):
         execution_context=execution,
         execution_can_approve=execution_can_approve,
         execution_can_reject=execution_can_reject,
-        secretary_endorsements=(
-            _get_secretary_endorsements()
-            if _can_use_secretary_endorsements(current_user)
+        quick_endorsements=(
+            _get_secretary_endorsements(
+                seed_defaults=can_manage_quick_endorsements,
+                seeded_by=current_user,
+            )
+            if can_use_quick_endorsements
             else ()
         ),
-        can_manage_secretary_endorsements=_can_use_secretary_endorsements(current_user),
+        can_manage_quick_endorsements=can_manage_quick_endorsements,
     )
 
 
@@ -8443,8 +8487,8 @@ def delete_workflow_comment(request_id, audit_log_id):
 @workflow_bp.route("/endorsements/manage", methods=["POST"])
 @login_required
 def manage_secretary_endorsements():
-    """Add or remove the shared endorsement choices for authorized users."""
-    if not _can_use_secretary_endorsements(current_user):
+    """Add or remove shared endorsement choices as an administrator."""
+    if not _can_manage_quick_endorsements(current_user):
         abort(403)
 
     action = (request.form.get("action") or "").strip().upper()
@@ -8574,7 +8618,7 @@ def add_request_note(request_id):
         endorsement_ids = [legacy_endorsement_id] if legacy_endorsement_id else []
     endorsement_notes = _secretary_endorsement_notes(endorsement_ids)
     if endorsement_ids:
-        if not _can_use_secretary_endorsements(current_user):
+        if not _can_use_quick_endorsements(current_user):
             abort(403)
         if endorsement_notes is None:
             abort(400)

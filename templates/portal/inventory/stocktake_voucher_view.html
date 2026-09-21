@@ -25,7 +25,18 @@
 
 <div class="card shadow-sm mb-3">
   <div class="card-body">
-    <div class="fw-bold mb-2">تفاصيل أصناف السند</div>
+    <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+      <div class="fw-bold">تفاصيل أصناف السند</div>
+      <form method="get" class="d-flex flex-wrap gap-2">
+        <label class="visually-hidden" for="stocktakeItemSearch">البحث في موجودات الغرفة</label>
+        <input id="stocktakeItemSearch" name="q" class="form-control form-control-sm" value="{{ selected.q|default('') }}" placeholder="البحث في موجودات الغرفة">
+        <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-search"></i> بحث</button>
+        {% if selected.q %}
+          <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('portal.inventory_stocktake_voucher_view', v_id=v.id) }}">مسح</a>
+        {% endif %}
+      </form>
+    </div>
+    <div class="text-muted small mb-2">ابحث باسم أو رمز الصنف، السيريال، أو التفاصيل.</div>
     <div class="table-responsive">
       <table class="table table-bordered align-middle">
         <thead class="table-light">
@@ -49,7 +60,7 @@
             <td>{{ ln.details or '' }}</td>
           </tr>
           {% else %}
-          <tr><td colspan="6" class="text-center text-muted">لا يوجد أصناف</td></tr>
+          <tr><td colspan="6" class="text-center text-muted">لا توجد موجودات مطابقة للبحث.</td></tr>
           {% endfor %}
         </tbody>
       </table>

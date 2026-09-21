@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from flask import Flask
+from werkzeug.exceptions import Forbidden
 
 from extensions import db
 from models import (
@@ -16,7 +17,10 @@ from models import (
 from portal.perm_defs import ALL_KEYS as PORTAL_ALL_KEYS, PERMS as PORTAL_PERMS
 from workflow import workflow_bp
 from workflow.routes import (
+    EMPLOYEE_ENDORSEMENTS_PERMISSION,
     SECRETARY_ENDORSEMENTS_PERMISSION,
+    _can_manage_quick_endorsements,
+    _can_use_employee_endorsements,
     _get_secretary_endorsements,
     _secretary_endorsement_note,
     add_request_note,
@@ -56,11 +60,24 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
         db.create_all()
 
         self.requester = self._user("requester@example.test", "مقدم الطلب")
-        self.secretary = self._user("secretary@example.test", "الأمين العام")
+        self.employee = self._user("employee@example.test", "موظف مخوّل")
+        self.admin = User(
+            email="admin@example.test",
+            name="مدير النظام",
+            password_hash="not-used-in-test",
+            role="ADMIN",
+        )
+        self.super_admin = User(
+            email="super-admin@example.test",
+            name="مدير النظام الأعلى",
+            password_hash="not-used-in-test",
+            role="SUPER_ADMIN",
+        )
+        db.session.add_all((self.admin, self.super_admin))
         db.session.flush()
         db.session.add(UserPermission(
-            user_id=self.secretary.id,
-            key=SECRETARY_ENDORSEMENTS_PERMISSION,
+            user_id=self.employee.id,
+            key=EMPLOYEE_ENDORSEMENTS_PERMISSION,
             is_allowed=True,
         ))
         self.request_row = WorkflowRequest(
@@ -82,10 +99,14 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
             step_order=1,
             mode="SEQUENTIAL",
             approver_kind="USER",
-            approver_user_id=self.secretary.id,
+            approver_user_id=self.employee.id,
             status="PENDING",
         ))
         db.session.commit()
+        self.endorsements = _get_secretary_endorsements(
+            seed_defaults=True,
+            seeded_by=self.admin,
+        )
 
     @staticmethod
     def _user(email, name):
@@ -94,24 +115,40 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
         return user
 
     def test_take_action_endorsement_uses_the_requested_wording(self):
-        endorsement = _get_secretary_endorsements()[0]
+        endorsement = self.endorsements[0]
         self.assertEqual(endorsement.text, "لاتخاذ اللازم")
         self.assertEqual(_secretary_endorsement_note(endorsement.id), "لاتخاذ اللازم")
 
+    def test_only_an_admin_can_seed_default_endorsements(self):
+        WorkflowQuickEndorsement.query.delete()
+        db.session.commit()
+
+        self.assertEqual(
+            _get_secretary_endorsements(seed_defaults=True, seeded_by=self.employee),
+            [],
+        )
+        seeded = _get_secretary_endorsements(seed_defaults=True, seeded_by=self.admin)
+        self.assertEqual(len(seeded), 4)
+        self.assertTrue(all(row.created_by_id == self.admin.id for row in seeded))
+
     def test_endorsement_permission_is_available_in_the_permission_editor(self):
         self.assertIn(SECRETARY_ENDORSEMENTS_PERMISSION, PORTAL_ALL_KEYS)
+        self.assertIn(EMPLOYEE_ENDORSEMENTS_PERMISSION, PORTAL_ALL_KEYS)
         definitions = [perm for group in PORTAL_PERMS.values() for perm in group]
-        definition = next(perm for perm in definitions if perm.key == SECRETARY_ENDORSEMENTS_PERMISSION)
-        self.assertEqual(definition.label, "تأشيرات الأمين العام السريعة")
+        secretary_definition = next(perm for perm in definitions if perm.key == SECRETARY_ENDORSEMENTS_PERMISSION)
+        self.assertEqual(secretary_definition.label, "تأشيرات الأمين العام السريعة")
+        employee_definition = next(perm for perm in definitions if perm.key == EMPLOYEE_ENDORSEMENTS_PERMISSION)
+        self.assertEqual(employee_definition.label, "تأشيرات الموظفين")
+        self.assertTrue(employee_definition.user_only)
 
-    def test_authorized_user_can_add_a_quick_endorsement_without_changing_the_route(self):
-        endorsement = _get_secretary_endorsements()[0]
+    def test_authorized_employee_can_add_a_quick_endorsement_as_a_comment(self):
+        endorsement = self.endorsements[0]
         add_note = _unwrapped(add_request_note)
         with self.app.test_request_context(
             f"/workflow/request/{self.request_row.id}/note",
             method="POST",
             data={"endorsement_id": str(endorsement.id)},
-        ), patch("workflow.routes.current_user", self.secretary), patch(
+        ), patch("workflow.routes.current_user", self.employee), patch(
             "workflow.routes.emit_event"
         ):
             response = add_note(self.request_row.id)
@@ -119,7 +156,7 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
         saved_note = AuditLog.query.filter_by(
             request_id=self.request_row.id,
             action="WORKFLOW_COMMENT",
-            user_id=self.secretary.id,
+            user_id=self.employee.id,
         ).one()
         step = WorkflowInstanceStep.query.filter_by(instance_id=self.instance.id, step_order=1).one()
         self.assertEqual(response.status_code, 302)
@@ -129,7 +166,7 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
         self.assertEqual(step.status, "PENDING")
 
     def test_authorized_user_can_add_multiple_quick_endorsements_in_one_multiline_comment(self):
-        first_endorsement, second_endorsement = _get_secretary_endorsements()[:2]
+        first_endorsement, second_endorsement = self.endorsements[:2]
         add_note = _unwrapped(add_request_note)
         with self.app.test_request_context(
             f"/workflow/request/{self.request_row.id}/note",
@@ -137,7 +174,7 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
             data={
                 "endorsement_ids": [str(first_endorsement.id), str(second_endorsement.id)],
             },
-        ), patch("workflow.routes.current_user", self.secretary), patch(
+        ), patch("workflow.routes.current_user", self.employee), patch(
             "workflow.routes.emit_event"
         ):
             response = add_note(self.request_row.id)
@@ -145,7 +182,7 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
         saved_note = AuditLog.query.filter_by(
             request_id=self.request_row.id,
             action="WORKFLOW_COMMENT",
-            user_id=self.secretary.id,
+            user_id=self.employee.id,
         ).one()
         self.assertEqual(response.status_code, 302)
         self.assertEqual(
@@ -153,8 +190,25 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
             f"{first_endorsement.text}\n{second_endorsement.text}",
         )
 
-    def test_authorized_user_can_add_and_remove_a_shared_endorsement(self):
+    def test_only_admin_and_super_admin_can_manage_shared_endorsements(self):
         manage = _unwrapped(manage_secretary_endorsements)
+        self.assertTrue(_can_use_employee_endorsements(self.employee))
+        self.assertFalse(_can_manage_quick_endorsements(self.employee))
+        self.assertTrue(_can_manage_quick_endorsements(self.admin))
+        self.assertTrue(_can_manage_quick_endorsements(self.super_admin))
+
+        with self.app.test_request_context(
+            "/workflow/endorsements/manage",
+            method="POST",
+            data={
+                "action": "ADD",
+                "endorsement_text": "تأشيرة لا يحق للموظف إنشاؤها",
+                "request_id": str(self.request_row.id),
+            },
+        ), patch("workflow.routes.current_user", self.employee):
+            with self.assertRaises(Forbidden):
+                manage()
+
         with self.app.test_request_context(
             "/workflow/endorsements/manage",
             method="POST",
@@ -163,12 +217,13 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
                 "endorsement_text": "للتحويل إلى الجهة المختصة",
                 "request_id": str(self.request_row.id),
             },
-        ), patch("workflow.routes.current_user", self.secretary):
+        ), patch("workflow.routes.current_user", self.admin):
             response = manage()
 
         added = WorkflowQuickEndorsement.query.filter_by(text="للتحويل إلى الجهة المختصة").one()
         self.assertEqual(response.status_code, 302)
         self.assertTrue(added.is_active)
+        self.assertEqual(added.created_by_id, self.admin.id)
 
         with self.app.test_request_context(
             "/workflow/endorsements/manage",
@@ -178,7 +233,7 @@ class WorkflowSecretaryEndorsementTests(unittest.TestCase):
                 "endorsement_id": str(added.id),
                 "request_id": str(self.request_row.id),
             },
-        ), patch("workflow.routes.current_user", self.secretary):
+        ), patch("workflow.routes.current_user", self.super_admin):
             response = manage()
 
         self.assertEqual(response.status_code, 302)

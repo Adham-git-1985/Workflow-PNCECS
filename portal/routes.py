@@ -13900,6 +13900,11 @@ def _attendance_schedule_request_cache(name: str) -> dict:
     return cache.setdefault(name, {})
 
 
+def _attendance_schedule_today() -> date:
+    """Return today's calendar date in the application's configured timezone."""
+    return datetime.now(app_timezone()).date()
+
+
 def _attendance_schedule_is_final_approver(user=None) -> bool:
     selected_user = user or current_user
     try:
@@ -13926,6 +13931,21 @@ def _attendance_schedule_is_hr_manager(user=None) -> bool:
         )
     except Exception:
         return False
+
+
+def _attendance_schedule_can_edit_past_days(user=None) -> bool:
+    """Only system administrators may alter attendance dates before today."""
+    selected_user = user or current_user
+    try:
+        return bool(
+            selected_user.has_role("ADMIN")
+            or selected_user.has_role("SUPER_ADMIN")
+            or selected_user.has_role("SUPERADMIN")
+            or _user_is_super_admin_account(selected_user)
+        )
+    except Exception:
+        role = canonical_role_key(getattr(selected_user, "role", None))
+        return bool(role == "ADMIN" or role.startswith("SUPER"))
 
 
 def _attendance_schedule_is_general_director(user=None) -> bool:
@@ -14871,7 +14891,7 @@ def _attendance_schedule_view_days(
         4: "الجمعة",
         5: "السبت",
     }
-    today = date.today()
+    today = _attendance_schedule_today()
     result = []
     cycle_days = attendance_schedule_cycle_days(period_start)
     selected_days = work_days if work_days is not None else cycle_days
@@ -14958,6 +14978,7 @@ def hr_work_schedule():
     organization_week_no = 1
     is_final_approver = _attendance_schedule_is_final_approver()
     is_hr_manager = _attendance_schedule_is_hr_manager()
+    can_edit_past_days = _attendance_schedule_can_edit_past_days()
     is_general_director = _attendance_schedule_is_general_director()
     can_view_all = _attendance_schedule_can_view_all()
     print_view = (request.args.get("print") or "").strip().lower() in {"1", "true", "yes"}
@@ -15128,6 +15149,7 @@ def hr_work_schedule():
         employee_can_request=employee_can_request,
         active_plan_for_view=active_plan_for_view,
         is_hr_manager=is_hr_manager,
+        can_edit_past_days=can_edit_past_days,
         is_general_director=is_general_director,
         is_final_approver=is_final_approver,
         can_view_all=can_view_all,
@@ -15153,8 +15175,30 @@ def hr_work_schedule():
             and len(row.days) == ATTENDANCE_SCHEDULE_PERIOD_DAYS
         ),
         reminder_due=False,
-        today=date.today(),
+        today=_attendance_schedule_today(),
     )
+
+
+def _attendance_schedule_posted_past_day_dates(period_start: date) -> list[date]:
+    """Return past schedule dates whose day fields were submitted in this request."""
+    today = _attendance_schedule_today()
+    submitted_dates = []
+    for work_day in attendance_schedule_cycle_days(period_start):
+        if work_day >= today:
+            continue
+        field_key = work_day.strftime("%Y_%m_%d")
+        if any(
+            f"{field_name}_{field_key}" in request.form
+            for field_name in (
+                "day_type",
+                "schedule_id",
+                "start_time",
+                "end_time",
+                "note",
+            )
+        ):
+            submitted_dates.append(work_day)
+    return submitted_dates
 
 
 def _attendance_schedule_update_weekly_workflow():
@@ -15175,6 +15219,7 @@ def _attendance_schedule_update_weekly_workflow():
         for user in _attendance_schedule_direct_reports(int(current_user.id))
     }
     is_hr_manager = _attendance_schedule_is_hr_manager()
+    can_edit_past_days = _attendance_schedule_can_edit_past_days()
     is_final_approver = _attendance_schedule_is_final_approver()
     is_general_director = _attendance_schedule_is_general_director()
 
@@ -15221,6 +15266,15 @@ def _attendance_schedule_update_weekly_workflow():
     now = datetime.utcnow()
 
     try:
+        if editor_mode == "HR" and not can_edit_past_days:
+            blocked_dates = _attendance_schedule_posted_past_day_dates(period_start)
+            if blocked_dates:
+                dates_text = "، ".join(work_day.strftime("%d/%m/%Y") for work_day in blocked_dates)
+                raise ValueError(
+                    "لا يمكن للشؤون الإدارية تعديل جدول الدوام لتاريخ سابق: "
+                    f"{dates_text}. يقتصر ذلك على الأدمن والسوبر أدمن."
+                )
+
         if editor_mode == "EMPLOYEE":
             note = (request.form.get("employee_note") or "").strip()
             if not note:
@@ -42795,7 +42849,20 @@ def inventory_stocktake_voucher_view(v_id: int):
     if not (current_user.has_perm(STORE_READ) or current_user.has_perm(STORE_MANAGE) or (v.created_by_id == current_user.id)):
         abort(403)
 
-    lines = InvStocktakeVoucherLine.query.filter(InvStocktakeVoucherLine.voucher_id == v.id).order_by(InvStocktakeVoucherLine.id.asc()).all()
+    item_search = (request.args.get("q") or "").strip()
+    lines_query = InvStocktakeVoucherLine.query.filter(InvStocktakeVoucherLine.voucher_id == v.id)
+    if item_search:
+        like = f"%{item_search}%"
+        lines_query = lines_query.join(InvItem, InvItem.id == InvStocktakeVoucherLine.item_id).filter(
+            or_(
+                InvItem.name.ilike(like),
+                InvItem.code.ilike(like),
+                InvItem.variant.ilike(like),
+                InvStocktakeVoucherLine.serial.ilike(like),
+                InvStocktakeVoucherLine.details.ilike(like),
+            )
+        )
+    lines = lines_query.order_by(InvStocktakeVoucherLine.id.asc()).all()
     attachments = InvStocktakeVoucherAttachment.query.filter(InvStocktakeVoucherAttachment.voucher_id == v.id).order_by(InvStocktakeVoucherAttachment.id.asc()).all()
 
     return render_template(
@@ -42803,6 +42870,7 @@ def inventory_stocktake_voucher_view(v_id: int):
         v=v,
         lines=lines,
         attachments=attachments,
+        selected={"q": item_search},
     )
 
 
