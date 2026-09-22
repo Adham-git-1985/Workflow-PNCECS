@@ -243,11 +243,26 @@ def ui_label(value):
     key = re.sub(r"[\s\-]+", "_", normalized.upper())
     label = UI_LABELS_AR.get(key)
     if label:
+        # The role name must not disclose the super-administrator identity to
+        # ordinary users.  Keep this request-aware while preserving stable
+        # labels for background jobs and administrator screens.
+        if key in {"SUPER_ADMIN", "SUPERADMIN"}:
+            try:
+                from utils.delegation_privacy import redact_super_admin_references
+
+                return redact_super_admin_references(label)
+            except Exception:
+                pass
         return label
     for phrase, phrase_label in sorted(UI_TEXT_REPLACEMENTS_AR.items(), key=lambda item: len(item[0]), reverse=True):
         if re.fullmatch(re.escape(phrase), text, flags=re.IGNORECASE):
             return phrase_label
-    return text
+    try:
+        from utils.delegation_privacy import redact_super_admin_references
+
+        return redact_super_admin_references(text)
+    except Exception:
+        return text
 
 
 def workflow_status_label(value):
@@ -305,4 +320,9 @@ def ui_text(value):
             lambda match: f"المستخدم المشار إليه={names.get(int(match.group(1)), 'مستخدم غير موجود')}",
             text,
         )
-    return text
+    try:
+        from utils.delegation_privacy import redact_super_admin_references
+
+        return redact_super_admin_references(text)
+    except Exception:
+        return text

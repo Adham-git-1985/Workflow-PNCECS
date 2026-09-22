@@ -155,10 +155,11 @@
           <li class="list-group-item">
             <div class="small text-muted">{{ l.created_at|local_datetime if l.created_at else '' }}</div>
             <div class="fw-semibold small">{{ l.action|ui_label }}</div>
-            {% if l.user %}
-              <div class="small">بواسطة: {{ l.user.name or l.user.email }}</div>
+            {% set _display_actor = audit_display_actor(l) %}
+            {% if _display_actor %}
+              <div class="small">بواسطة: {{ _display_actor.name or _display_actor.full_name or _display_actor.email }}</div>
             {% endif %}
-            {% if l.note %}<div class="small text-muted">{{ l.note|ui_text }}</div>{% endif %}
+            {% if l.note %}<div class="small text-muted">{{ audit_display_note(l)|ui_text }}</div>{% endif %}
           </li>
         {% else %}
           <li class="list-group-item text-muted">لا يوجد نشاط.</li>

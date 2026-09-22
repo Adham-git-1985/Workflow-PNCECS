@@ -314,12 +314,13 @@
                   <div>
                     <strong>{{ log.action|ui_label }}</strong>
                     <div class="small text-muted mt-1">
-                      {% if log.user %}
-                        بواسطة: <strong>{{ log.user.full_name }}</strong>
+                      {% set _display_actor = audit_display_actor(log) %}
+                      {% if _display_actor %}
+                        بواسطة: <strong>{{ _display_actor.full_name or _display_actor.name or _display_actor.email }}</strong>
                       {% else %}
                         بواسطة: <strong>النظام</strong>
                       {% endif %}
-                      {% if log.acting_for_user or log.on_behalf_of_user %}
+                      {% if can_view_delegation_details(log) %}
                         {% set _principal = log.acting_for_user or log.on_behalf_of_user %}
                         {% if log.formal_delegation %}
                           <span class="badge bg-info text-dark ms-2">بموجب تفويض صادر عن {{ _principal.full_name }}</span>
@@ -343,7 +344,7 @@
                   </div>
                 </div>
                 {% if log.note %}
-                  <div class="small text-muted mt-1" style="white-space:pre-wrap">{{ log.note|ui_text }}</div>
+                  <div class="small text-muted mt-1" style="white-space:pre-wrap">{{ audit_display_note(log)|ui_text }}</div>
                 {% endif %}
               </li>
             {% endfor %}

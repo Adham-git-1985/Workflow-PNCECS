@@ -1,0 +1,66 @@
+{% set _legacy_choices = g.available_legacy_delegations|default([], true) %}
+{% set _acting_choices = g.identity_acting_permissions|default([], true) %}
+{% set _formal_choices = g.identity_formal_delegations|default([], true) %}
+{% if current_user.is_authenticated and g.delegation_identity_choice_pending|default(false, true) %}
+<div class="modal fade" id="delegationIdentityChooser" tabindex="-1" aria-labelledby="delegationIdentityChooserTitle" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
+    <div class="modal-content border-primary shadow">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title" id="delegationIdentityChooserTitle"><i class="bi bi-person-badge"></i> اختر صفة العمل</h5>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">تم تسجيل دخولك بحساب <strong>{{ current_user.full_name or current_user.email }}</strong>. اختر الصفة التي تريد العمل بها الآن.</p>
+        <p class="small text-muted mb-3">يبقى حساب الدخول باسمك، بينما تظهر العمليات المنفذة ضمن الصفة المختارة باسم صاحب الصلاحية للجهات غير المخوّلة.</p>
+
+        <div class="list-group">
+          <form method="post" action="{{ url_for('delegation.select_self_identity') }}" class="list-group-item list-group-item-action p-0">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn text-start w-100 p-3">
+              <div class="fw-bold"><i class="bi bi-person"></i> العمل بصفتي الشخصية</div>
+              <div class="small text-muted">{{ current_user.full_name or current_user.email }}</div>
+            </button>
+          </form>
+
+          {% for row in _legacy_choices %}
+          <form method="post" action="{{ url_for('delegation.select_legacy', delegation_id=row.id) }}" class="list-group-item list-group-item-action p-0 mt-2">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn text-start w-100 p-3">
+              <div class="fw-bold"><i class="bi bi-person-check"></i> العمل بالنيابة عن {{ row.from_user.full_name or row.from_user.email }}</div>
+              <div class="small text-muted">تفويض ساري حتى {{ row.expires_at.strftime('%Y-%m-%d %H:%M') if row.expires_at else '—' }}</div>
+            </button>
+          </form>
+          {% endfor %}
+
+          {% for row in _acting_choices %}
+          <form method="post" action="{{ url_for('delegation.select_acting', permission_id=row.id) }}" class="list-group-item list-group-item-action p-0 mt-2">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn text-start w-100 p-3">
+              <div class="fw-bold"><i class="bi bi-person-check"></i> العمل بالنيابة عن {{ row.principal_user.full_name or row.principal_user.email }}</div>
+              <div class="small text-muted">صلاحية تشغيلية سارية حتى {{ row.end_at.strftime('%Y-%m-%d %H:%M') if row.end_at else '—' }}</div>
+            </button>
+          </form>
+          {% endfor %}
+
+          {% for row in _formal_choices %}
+          <form method="post" action="{{ url_for('delegation.select_formal', delegation_id=row.id) }}" class="list-group-item list-group-item-action p-0 mt-2">
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <button type="submit" class="btn text-start w-100 p-3">
+              <div class="fw-bold"><i class="bi bi-file-earmark-check"></i> العمل بموجب تفويض عن {{ row.delegator_user.full_name or row.delegator_user.email }}</div>
+              <div class="small text-muted">{{ row.delegation_type }}{% if row.decision_number or row.legal_reference %} · المرجع: {{ row.decision_number or row.legal_reference }}{% endif %}</div>
+            </button>
+          </form>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    var element = document.getElementById('delegationIdentityChooser');
+    if (element && window.bootstrap) {
+      new bootstrap.Modal(element, {backdrop: 'static', keyboard: false}).show();
+    }
+  });
+</script>
+{% endif %}

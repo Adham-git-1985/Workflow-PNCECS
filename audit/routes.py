@@ -4,12 +4,19 @@ from collections import Counter, defaultdict
 from flask import render_template, request, send_file
 from flask_login import login_required, current_user
 from datetime import date, datetime, timedelta
-from sqlalchemy import or_, func, and_, case
+from sqlalchemy import or_, func, and_, case, false
 from sqlalchemy.orm import aliased, joinedload
 
 from io import BytesIO
 from utils.excel import make_xlsx_bytes, make_xlsx_bytes_multi
 from utils.audit_story import build_audit_story_entries
+from utils.delegation_privacy import (
+    audit_display_actor,
+    audit_display_note,
+    audit_principal,
+    can_view_delegation_details,
+    is_privileged_administrator,
+)
 from utils.ui_labels import ui_label, ui_text
 
 from . import audit_bp
@@ -41,10 +48,9 @@ def _apply_message_visibility_filter(query):
 # ---------------------------------------------------------------------------
 # The audit table contains both domain events (for example WORKFLOW_STARTED)
 # and the application-wide request safety-net events (PAGE_VIEW and
-# USER_ACTION).  These helpers deliberately treat them as activity events,
-# while using the canonical actual_user_id when it is available.  That keeps
-# delegation from inflating the principal's usage or changing who actually
-# used the system.
+# USER_ACTION).  The actor expression below is viewer-aware: ordinary users
+# see the principal of delegated work, while the principal, delegate, and
+# administrators retain access to the technical executor identity.
 _DASHBOARD_PERIODS = {
     "7": {"label": "آخر 7 أيام", "days": 7},
     "30": {"label": "آخر 30 يومًا", "days": 30},
@@ -120,8 +126,50 @@ _DASHBOARD_FOLLOW_UP_ACTIONS = frozenset(
 
 
 def _dashboard_actor_expression():
-    """Return the canonical actor expression with legacy fallback."""
-    return func.coalesce(AuditLog.actual_user_id, AuditLog.user_id)
+    """Return the actor ID that the current viewer is allowed to see."""
+    actual = func.coalesce(AuditLog.actual_user_id, AuditLog.user_id)
+    principal = func.coalesce(AuditLog.acting_for_user_id, AuditLog.on_behalf_of_id)
+
+    if is_privileged_administrator(current_user):
+        return actual
+
+    try:
+        viewer_id = int(current_user.id)
+    except (AttributeError, TypeError, ValueError):
+        viewer_id = None
+
+    if not viewer_id:
+        return func.coalesce(principal, actual)
+
+    # A principal and their delegate are entitled to the technical actor for
+    # their own operation; everyone else sees the principal as its actor.
+    return case(
+        (
+            and_(
+                principal.isnot(None),
+                actual != principal,
+                or_(actual == viewer_id, principal == viewer_id),
+            ),
+            actual,
+        ),
+        else_=func.coalesce(principal, actual),
+    )
+
+
+def _visible_delegated_condition():
+    """SQL condition for delegation metadata the current viewer may learn."""
+    actual = func.coalesce(AuditLog.actual_user_id, AuditLog.user_id)
+    principal = func.coalesce(AuditLog.acting_for_user_id, AuditLog.on_behalf_of_id)
+    delegated = and_(principal.isnot(None), actual != principal)
+    if is_privileged_administrator(current_user):
+        return delegated
+    try:
+        viewer_id = int(current_user.id)
+    except (AttributeError, TypeError, ValueError):
+        viewer_id = None
+    if not viewer_id:
+        return false()
+    return and_(delegated, or_(actual == viewer_id, principal == viewer_id))
 
 
 def _dashboard_action_expression():
@@ -435,10 +483,7 @@ def _build_audit_dashboard_report():
     logout_condition = action_expr == "USER_LOGOUT"
     failure_condition = action_expr.like("%FAILED%")
     operation_condition = ~action_expr.in_(_DASHBOARD_NON_OPERATION_ACTIONS)
-    delegated_condition = or_(
-        AuditLog.acting_for_user_id.isnot(None),
-        AuditLog.on_behalf_of_id.isnot(None),
-    )
+    delegated_condition = _visible_delegated_condition()
 
     summary_row = base.with_entities(
         func.count(AuditLog.id).label("total_events"),
@@ -1264,7 +1309,7 @@ def system_timeline():
         base = base.filter(AuditLog.action == action)
 
     if user_id:
-        base = base.filter(AuditLog.user_id == user_id)
+        base = base.filter(_dashboard_actor_expression() == user_id)
 
     # Default time window
     if not date_from and not date_to and not days:
@@ -1671,7 +1716,7 @@ def system_timeline_export_excel():
     if action:
         q = q.filter(AuditLog.action == action)
     if user_id:
-        q = q.filter(AuditLog.user_id == user_id)
+        q = q.filter(_dashboard_actor_expression() == user_id)
 
     if not date_from and not date_to and not days:
         days = 7
@@ -1858,6 +1903,8 @@ def system_timeline_export_excel():
     for l in logs:
         rid = _effective_req_id(l)
         meta = request_meta.get(rid or -1, {})
+        visible_actor = audit_display_actor(l)
+        visible_principal = audit_principal(l) if can_view_delegation_details(l) else None
 
         # Resolve step number if possible
         st = None
@@ -1873,8 +1920,14 @@ def system_timeline_export_excel():
             l.id,
             l.created_at.strftime('%Y-%m-%d %H:%M:%S') if l.created_at else '',
             ui_label(l.action),
-            (l.user.email if l.user else 'System'),
-            (l.on_behalf_of_user.email if l.on_behalf_of_user else ''),
+            (
+                (visible_actor.email or visible_actor.full_name)
+                if visible_actor else 'System'
+            ),
+            (
+                (visible_principal.email or visible_principal.full_name)
+                if visible_principal else ''
+            ),
             rid or '',
             meta.get('request_type', ''),
             meta.get('template_name', ''),
@@ -1883,7 +1936,7 @@ def system_timeline_export_excel():
             (meta.get('completed_at').strftime('%Y-%m-%d %H:%M:%S') if meta.get('completed_at') else ''),
             ui_label(l.target_type) if l.target_type else '',
             l.target_id or '',
-            ui_text(l.note) if l.note else '',
+            ui_text(audit_display_note(l)) if l.note else '',
         ])
 
     content = make_xlsx_bytes("Timeline", headers, rows)

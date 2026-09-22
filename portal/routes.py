@@ -47,10 +47,18 @@ from werkzeug.utils import secure_filename
 
 from . import portal_bp
 from extensions import db
-from sqlalchemy import or_, and_, text, func
+from sqlalchemy import or_, and_, text, func, case, false
 from sqlalchemy.sql import exists
 from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
+from utils.permissions import get_effective_user, is_delegated_identity_selected
+from utils.delegation_privacy import (
+    audit_display_actor,
+    audit_display_note,
+    audit_principal,
+    can_view_delegation_details,
+    is_privileged_administrator,
+)
 from utils.role_codes import canonical_role_key, role_storage_variants
 from utils.timezone import app_timezone
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
@@ -540,6 +548,33 @@ def _perm(p: str):
 
 
 
+def _portal_visible_audit_actor_id():
+    """SQL actor projection that preserves delegation privacy in portal reports."""
+    actual = func.coalesce(AuditLog.actual_user_id, AuditLog.user_id)
+    principal = func.coalesce(AuditLog.acting_for_user_id, AuditLog.on_behalf_of_id)
+    if is_privileged_administrator(current_user):
+        return actual
+
+    try:
+        viewer_id = int(current_user.id)
+    except (AttributeError, TypeError, ValueError):
+        viewer_id = None
+    if not viewer_id:
+        return func.coalesce(principal, actual)
+
+    return case(
+        (
+            and_(
+                principal.isnot(None),
+                actual != principal,
+                or_(actual == viewer_id, principal == viewer_id),
+            ),
+            actual,
+        ),
+        else_=func.coalesce(principal, actual),
+    )
+
+
 def _perm_any(*perms: str):
     """Require ANY of the given permission keys (OR)."""
     def deco(f):
@@ -548,30 +583,35 @@ def _perm_any(*perms: str):
             if not current_user.is_authenticated:
                 abort(401)
 
-            # IMPORTANT: Delegation must NOT reduce the privileges of a SUPER/ADMIN account.
-            # Always evaluate the real logged-in user first.
             base_user = current_user
+            try:
+                delegated_identity = bool(is_delegated_identity_selected())
+            except Exception:
+                delegated_identity = False
+
+            # A super-admin bypass belongs to personal mode.  In delegated
+            # mode this request must behave as the principal that was chosen.
             try:
                 role_raw = (getattr(base_user, 'role', '') or '').strip().upper().replace('-', '_').replace(' ', '_')
                 role_raw = unicodedata.normalize('NFKC', role_raw)
                 role_raw = ''.join(ch for ch in role_raw if (ch.isalnum() or ch == '_'))
-                if role_raw.startswith('SUPER'):
+                if not delegated_identity and role_raw.startswith('SUPER'):
                     return f(*args, **kwargs)
                 if role_raw == 'ADMIN':
                     # keep going: ADMIN bypass is handled by User.has_perm for portal keys
                     pass
-                if hasattr(base_user, 'has_role') and (base_user.has_role('SUPERADMIN') or base_user.has_role('SUPER_ADMIN')):
+                if (
+                    not delegated_identity
+                    and hasattr(base_user, 'has_role')
+                    and (base_user.has_role('SUPERADMIN') or base_user.has_role('SUPER_ADMIN'))
+                ):
                     return f(*args, **kwargs)
             except Exception:
                 pass
 
-            # Delegation-aware effective user: if the current user is a delegatee,
-            # permission checks should apply to the delegator.
             user = base_user
             try:
-                from utils.permissions import get_effective_user  # local import (avoid cycles)
-                if callable(get_effective_user):
-                    user = get_effective_user() or base_user
+                user = get_effective_user() or base_user
             except Exception:
                 user = base_user
 
@@ -586,14 +626,13 @@ def _perm_any(*perms: str):
             except Exception:
                 pass
 
-            # Check BOTH the real logged-in user and (if enabled) the effective (delegator) user.
-            # This prevents delegation from unexpectedly *reducing* access when the base user already has the permission.
-            candidates = [base_user]
-            try:
-                if user is not None and getattr(user, 'id', None) is not None and getattr(base_user, 'id', None) != getattr(user, 'id', None):
-                    candidates.append(user)
-            except Exception:
-                candidates = [base_user]
+            candidates = [user] if delegated_identity else [base_user]
+            if not delegated_identity:
+                try:
+                    if user is not None and getattr(user, 'id', None) is not None and getattr(base_user, 'id', None) != getattr(user, 'id', None):
+                        candidates.append(user)
+                except Exception:
+                    candidates = [base_user]
 
             def _has_any(pkey: str) -> bool:
                 for cand in candidates:
@@ -10674,11 +10713,11 @@ def hr_report_attendance_edits():
             rows.append({
                 'ts': l.created_at,
                 'edit_type': 'delete',
-                'edited_by': getattr(l, 'user', None),
+                'edited_by': audit_display_actor(l),
                 'target_user': None,
                 'affects_time': True,
                 'details': l.action or 'DELETE',
-                'note': l.note or '',
+                'note': audit_display_note(l),
             })
 
     rows.sort(key=lambda r: (r.get('ts') or datetime.min), reverse=True)
@@ -41321,7 +41360,9 @@ def portal_admin_compliance():
 
     if q_user:
         like = f"%{q_user}%"
-        qry = qry.join(User, AuditLog.user_id == User.id).filter(or_(User.email.ilike(like), User.name.ilike(like)))
+        qry = qry.join(User, _portal_visible_audit_actor_id() == User.id).filter(
+            or_(User.email.ilike(like), User.name.ilike(like))
+        )
 
     if q_from:
         qry = qry.filter(AuditLog.created_at >= f"{q_from} 00:00:00")
@@ -41395,7 +41436,9 @@ def portal_admin_timeline():
 
     if q_user:
         like = f"%{q_user}%"
-        qry = qry.join(User, AuditLog.user_id == User.id).filter(or_(User.email.ilike(like), User.name.ilike(like)))
+        qry = qry.join(User, _portal_visible_audit_actor_id() == User.id).filter(
+            or_(User.email.ilike(like), User.name.ilike(like))
+        )
 
     if q:
         like = f"%{q}%"
@@ -41461,7 +41504,9 @@ def portal_admin_compliance_export_csv():
         qry = qry.filter(AuditLog.action.ilike(f"%{q_action}%"))
     if q_user:
         like = f"%{q_user}%"
-        qry = qry.join(User, AuditLog.user_id == User.id).filter(or_(User.email.ilike(like), User.name.ilike(like)))
+        qry = qry.join(User, _portal_visible_audit_actor_id() == User.id).filter(
+            or_(User.email.ilike(like), User.name.ilike(like))
+        )
     if q_from:
         qry = qry.filter(AuditLog.created_at >= f"{q_from} 00:00:00")
     if q_to:
@@ -41473,17 +41518,27 @@ def portal_admin_compliance_export_csv():
     w = csv.writer(buf)
     w.writerow(["id","created_at","user_id","user","action","note","target_type","target_id","on_behalf_of","delegation_id"])
     for r in rows:
+        visible_actor = audit_display_actor(r)
+        visible_principal = audit_principal(r) if can_view_delegation_details(r) else None
         w.writerow([
             r.id,
             r.created_at.isoformat() if r.created_at else '',
-            r.user_id,
-            (r.user.full_name if getattr(r, 'user', None) else ''),
+            getattr(visible_actor, 'id', '') if visible_actor else '',
+            (
+                getattr(visible_actor, 'full_name', None)
+                or getattr(visible_actor, 'email', None)
+                or ''
+            ),
             r.action,
-            r.note or '',
+            audit_display_note(r),
             r.target_type or '',
             r.target_id or '',
-            r.on_behalf_of_id or '',
-            r.delegation_id or '',
+            (
+                getattr(visible_principal, 'full_name', None)
+                or getattr(visible_principal, 'email', None)
+                or ''
+            ),
+            r.delegation_id if can_view_delegation_details(r) else '',
         ])
 
     data = buf.getvalue().encode('utf-8-sig')

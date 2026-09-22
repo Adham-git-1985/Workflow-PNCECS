@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
-from flask import flash, jsonify, redirect, render_template, request, url_for
+from flask import flash, g, jsonify, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 
 from . import delegation_bp
@@ -34,6 +34,13 @@ from utils.acting_authorization import (
     record_execution_audit,
     select_acting_permission,
     select_formal_delegation,
+)
+from utils.permissions import (
+    clear_legacy_delegation_selection,
+    get_available_delegations,
+    get_effective_user,
+    mark_identity_choice_selected,
+    select_legacy_delegation,
 )
 
 
@@ -354,6 +361,7 @@ def permissions_dashboard():
         action_labels=ACTION_LABELS_AR,
         action_fields=ACTING_FORM_FIELDS,
         sensitive_action_fields=SENSITIVE_ACTION_FIELDS,
+        legacy_delegations_for_me=get_available_delegations(),
     )
 
 
@@ -631,7 +639,9 @@ def revoke_formal_delegation(delegation_id: int):
 @login_required
 def select_acting(permission_id: int):
     try:
+        clear_legacy_delegation_selection()
         select_acting_permission(permission_id)
+        mark_identity_choice_selected()
         flash("تم تفعيل وضع العمل بالنيابة.", "success")
     except AuthorizationError as exc:
         flash(str(exc), "danger")
@@ -643,7 +653,9 @@ def select_acting(permission_id: int):
 @login_required
 def select_formal(delegation_id: int):
     try:
+        clear_legacy_delegation_selection()
         select_formal_delegation(delegation_id)
+        mark_identity_choice_selected()
         flash("تم تفعيل وضع التنفيذ بموجب التفويض.", "success")
     except AuthorizationError as exc:
         flash(str(exc), "danger")
@@ -655,18 +667,48 @@ def select_formal(delegation_id: int):
 @login_required
 def clear_context():
     clear_execution_context()
+    clear_legacy_delegation_selection()
+    mark_identity_choice_selected()
     flash("تمت العودة إلى العمل بصفتك الشخصية.", "success")
     return redirect(_next_url("delegation.permissions_dashboard"))
+
+
+@delegation_bp.route("/context/self", methods=["POST"])
+@login_required
+def select_self_identity():
+    """Confirm personal mode after the identity chooser is displayed."""
+    clear_execution_context()
+    clear_legacy_delegation_selection()
+    mark_identity_choice_selected()
+    flash("تم اختيار العمل بصفتي الشخصية.", "success")
+    return redirect(_next_url("workflow.inbox"))
+
+
+@delegation_bp.route("/context/legacy/<int:delegation_id>", methods=["POST"])
+@login_required
+def select_legacy(delegation_id: int):
+    """Activate one of the backwards-compatible delegations explicitly."""
+    try:
+        select_legacy_delegation(delegation_id)
+        flash("تم تفعيل العمل بالنيابة ضمن التفويض المحدد.", "success")
+    except PermissionError as exc:
+        flash(str(exc), "danger")
+    return redirect(_next_url("workflow.inbox"))
 
 
 @delegation_bp.route("/context", methods=["GET"])
 @login_required
 def context_api():
+    # Load the legacy selection too; this endpoint is also used by lightweight
+    # clients that do not run the application's global before-request hook.
+    working_user = get_effective_user()
     context = get_execution_context()
     return jsonify({
         "actual_user_id": context.get("actual_user_id"),
+        "working_user_id": getattr(working_user, "id", None),
         "acting_for_user_id": context.get("acting_for_user_id"),
         "acting_permission_id": context.get("acting_permission_id"),
         "formal_delegation_id": context.get("formal_delegation_id"),
+        "legacy_delegation_id": getattr(getattr(g, "delegation", None), "id", None),
         "execution_context": context.get("execution_context", "SELF"),
     })

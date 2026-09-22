@@ -42,11 +42,12 @@
 
                     <div class="timeline-action">{{ log.action|ui_label }}</div>
 
+                    {% set _display_actor = audit_display_actor(log) %}
                     <div class="mt-1">
                         <strong>من:</strong>
-                        {{ log.user.full_name if log.user else "النظام" }}
-                        {% if log.user and log.user.email and log.user.email != log.user.full_name %}
-                            <span class="text-muted">({{ log.user.email }})</span>
+                        {{ _display_actor.full_name if _display_actor else "النظام" }}
+                        {% if _display_actor and _display_actor.email and _display_actor.email != _display_actor.full_name %}
+                            <span class="text-muted">({{ _display_actor.email }})</span>
                         {% endif %}
                     </div>
 
@@ -56,7 +57,7 @@
                     </div>
 
                     {% if log.note %}
-                    <div class="mt-1 text-muted"><em>ملاحظة:</em> {{ log.note|ui_text }}</div>
+                    <div class="mt-1 text-muted"><em>ملاحظة:</em> {{ audit_display_note(log)|ui_text }}</div>
                     {% endif %}
                 </div>
                 {% endfor %}

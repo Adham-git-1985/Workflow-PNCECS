@@ -23,7 +23,8 @@
                 {% for log in logs %}
                     <tr>
                         <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-                        <td><strong>{{ log.user.name if log.user else "النظام" }}</strong></td>
+                        {% set _display_actor = audit_display_actor(log) %}
+                        <td><strong>{{ _display_actor.name or _display_actor.full_name or _display_actor.email if _display_actor else "النظام" }}</strong></td>
                         <td class="text-center">
                             {% if log.action == "ARCHIVE_DELETE" %}
                                 <span class="badge bg-danger">حذف</span>
@@ -35,7 +36,7 @@
                                 <span class="badge bg-secondary">{{ log.action|ui_label }}</span>
                             {% endif %}
                         </td>
-                        <td>{{ log.description or "—" }}</td>
+                        <td>{{ audit_display_note(log) or log.description or "—" }}</td>
                     </tr>
                 {% endfor %}
                 </tbody>

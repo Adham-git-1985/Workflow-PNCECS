@@ -90,7 +90,7 @@
       {% if del_log and del_log.note %}
         <details class="mt-2">
           <summary class="text-muted small">عرض سجل الحذف</summary>
-          <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ del_log.note|ui_text }}</pre>
+          <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ audit_display_note(del_log)|ui_text }}</pre>
         </details>
       {% endif %}
     {% endif %}
@@ -116,12 +116,13 @@
             <tr>
               <td class="text-muted small">{{ l.created_at }}</td>
               <td><span class="badge text-bg-light">{{ l.action|ui_label }}</span></td>
-              <td>{{ l.user.full_name if l.user else "-" }}</td>
+              {% set _display_actor = audit_display_actor(l) %}
+              <td>{{ _display_actor.full_name if _display_actor else "-" }}</td>
               <td class="small text-muted">
                 {% if l.note %}
                   <details>
                     <summary>عرض</summary>
-                    <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ l.note|ui_text }}</pre>
+                    <pre class="mt-2 mb-0" style="white-space:pre-wrap; line-height:1.7">{{ audit_display_note(l)|ui_text }}</pre>
                   </details>
                 {% else %}—{% endif %}
               </td>

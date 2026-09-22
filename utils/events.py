@@ -5,6 +5,57 @@ from models import Notification, User
 from utils.notification_links import notification_target_path, safe_local_notification_url
 
 
+def _public_delegated_actor(actor_id, message):
+    """Return the public actor identity for an in-request delegated action.
+
+    Notifications do not have the full audit identity columns, so exposing the
+    login account here would disclose the delegate to recipients.  The durable
+    AuditLog still keeps that technical account separately.
+    """
+    try:
+        from flask import g, has_request_context
+        from flask_login import current_user
+        from utils.permissions import (
+            get_effective_user,
+            is_delegated_identity_selected,
+        )
+
+        if not has_request_context() or not is_delegated_identity_selected():
+            return actor_id, message
+        actual = getattr(g, "actual_user", None) or current_user
+        actual_id = int(getattr(g, "actual_user_id", None) or getattr(actual, "id", 0) or 0)
+        if not actual_id or int(actor_id or 0) != actual_id:
+            return actor_id, message
+
+        principal = get_effective_user()
+        principal_id = int(getattr(principal, "id", 0) or 0)
+        if not principal_id or principal_id == actual_id:
+            return actor_id, message
+
+        public_message = str(message or "")
+        actual_values = (
+            getattr(actual, "full_name", None),
+            getattr(actual, "name", None),
+            getattr(actual, "username", None),
+            getattr(actual, "email", None),
+        )
+        principal_label = (
+            getattr(principal, "full_name", None)
+            or getattr(principal, "name", None)
+            or getattr(principal, "username", None)
+            or getattr(principal, "email", None)
+            or ""
+        )
+        if principal_label:
+            for value in actual_values:
+                value = str(value or "").strip()
+                if value:
+                    public_message = public_message.replace(value, principal_label)
+        return principal_id, public_message
+    except Exception:
+        return actor_id, message
+
+
 def emit_event(
     actor_id,
     action,
@@ -22,6 +73,9 @@ def emit_event(
     # لو حد استعمل notif_type بالغلط، اعتبرها level
     if notif_type is not None:
         level = notif_type
+
+    technical_actor_id = actor_id
+    actor_id, message = _public_delegated_actor(actor_id, message)
 
     now = datetime.utcnow()
     event_key = uuid.uuid4().hex
@@ -70,10 +124,11 @@ def emit_event(
         )
 
     # Sender mirror notification (shows "unread" until recipients read)
-    if track_for_actor and actor_id and int(actor_id) not in user_ids:
+    mirror_user_id = technical_actor_id or actor_id
+    if track_for_actor and mirror_user_id and int(mirror_user_id) not in user_ids:
         notifications.append(
             Notification(
-                user_id=int(actor_id),
+                user_id=int(mirror_user_id),
                 message=f"متابعة: {message}",
                 type=level,
                 is_read=False,

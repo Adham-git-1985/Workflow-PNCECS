@@ -6,9 +6,13 @@ import unicodedata
 
 # Delegation-aware effective user (if Delegation feature exists)
 try:
-    from utils.permissions import get_effective_user  # type: ignore
+    from utils.permissions import (  # type: ignore
+        get_effective_user,
+        is_delegated_identity_selected,
+    )
 except Exception:  # pragma: no cover
     get_effective_user = None
+    is_delegated_identity_selected = None
 
 
 def _is_portal_key(k: str) -> bool:
@@ -25,8 +29,8 @@ def perm_required(*keys):
     - SUPERADMIN always allowed.
     - Workflow ADMIN allowed by default for non-portal keys.
     - Portal/HR/Correspondence/Store keys require explicit grant.
-    - An active delegation extends the logged-in user's permissions; it never
-      removes permissions already granted to that account.
+    - Once a delegated identity is selected, only the principal's permissions
+      apply.  The technical login identity remains available only for audit.
     """
     def deco(f):
         @wraps(f)
@@ -34,14 +38,23 @@ def perm_required(*keys):
             if not current_user.is_authenticated:
                 abort(401)
 
-            # IMPORTANT: Delegation must NOT reduce the privileges of a SUPER/ADMIN account.
-            # We always evaluate the real logged-in user first.
             base_user = current_user
+            delegated_identity = False
+            try:
+                delegated_identity = bool(
+                    callable(is_delegated_identity_selected)
+                    and is_delegated_identity_selected()
+                )
+            except Exception:
+                delegated_identity = False
+
+            # In personal mode a super-admin keeps the usual bypass.  In a
+            # selected delegated mode the principal is the permission subject.
             try:
                 role_raw = (getattr(base_user, "role", "") or "").strip().upper().replace("-", "_").replace(" ", "_")
                 role_raw = unicodedata.normalize("NFKC", role_raw)
                 role_raw = "".join(ch for ch in role_raw if (ch.isalnum() or ch == "_"))
-                if role_raw.startswith("SUPER"):
+                if not delegated_identity and role_raw.startswith("SUPER"):
                     return f(*args, **kwargs)
                 if role_raw == "ADMIN":
                     # ADMIN is allowed for non-portal keys below (same behavior as before)
@@ -49,13 +62,13 @@ def perm_required(*keys):
             except Exception:
                 pass
 
-            if hasattr(base_user, "has_role") and (base_user.has_role("SUPERADMIN") or base_user.has_role("SUPER_ADMIN")):
+            if (
+                not delegated_identity
+                and hasattr(base_user, "has_role")
+                and (base_user.has_role("SUPERADMIN") or base_user.has_role("SUPER_ADMIN"))
+            ):
                 return f(*args, **kwargs)
 
-            # A delegatee may act with both their own permissions and the
-            # delegator's permissions.  Keep both identities in the check so
-            # enabling a delegation cannot unexpectedly lock the delegatee
-            # out of pages they could already access.
             effective_user = base_user
             try:
                 if callable(get_effective_user):
@@ -63,15 +76,16 @@ def perm_required(*keys):
             except Exception:
                 effective_user = base_user
 
-            candidates = [base_user]
-            try:
-                if (
-                    effective_user is not None
-                    and getattr(effective_user, "id", None) != getattr(base_user, "id", None)
-                ):
-                    candidates.append(effective_user)
-            except Exception:
-                candidates = [base_user]
+            candidates = [effective_user] if delegated_identity else [base_user]
+            if not delegated_identity:
+                try:
+                    if (
+                        effective_user is not None
+                        and getattr(effective_user, "id", None) != getattr(base_user, "id", None)
+                    ):
+                        candidates.append(effective_user)
+                except Exception:
+                    candidates = [base_user]
 
             # A selected scoped acting/formal context can open the workflow
             # dashboard for the principal's work even when the real actor does

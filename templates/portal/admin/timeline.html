@@ -82,10 +82,11 @@
                 </div>
                 <div class="small text-muted">
                   <i class="bi bi-person"></i>
-                  {{ r.user.full_name if r.user else (r.user_id or '') }}
+                  {% set _display_actor = audit_display_actor(r) %}
+                  {{ _display_actor.full_name if _display_actor else (r.user_id or '') }}
                   {% if r.note %}
                     <span class="mx-2">•</span>
-                    <span>{{ r.note|ui_text }}</span>
+                    <span>{{ audit_display_note(r)|ui_text }}</span>
                   {% endif %}
                 </div>
               </div>

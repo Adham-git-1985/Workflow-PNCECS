@@ -56,10 +56,10 @@
 <body class="bg-light">
 
 {% set _flags = portal_flags if portal_flags is defined else {} %}
-{# Delegation-aware UI: User.has_perm/has_role already combines the logged-in
-   user's access with the delegator's access, so always start from current_user.
-   Replacing it with g.effective_user would hide the delegatee's own services. #}
-{% set au = current_user %}
+{# A selected delegation is a single working identity, while current_user
+   remains the technical account for audit and private notifications. #}
+{% set display_user = working_user|default(current_user, true) %}
+{% set au = display_user %}
 {% set can_admin = _flags.get('can_portal_admin', (
   au.has_perm('PORTAL_ADMIN_READ')
   or au.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE')
@@ -211,15 +211,15 @@
     <div class="dropdown">
       <button class="btn btn-outline-light btn-sm dropdown-toggle portal-user-dd" type="button" data-bs-toggle="dropdown" aria-expanded="false">
         <i class="bi bi-person-circle"></i>
-        <span class="d-none d-md-inline">{{ current_user.full_name }}</span>
+        <span class="d-none d-md-inline">{{ display_user.full_name }}</span>
         <span class="d-inline d-md-none">حسابي</span>
       </button>
       <ul class="dropdown-menu dropdown-menu-end text-end" style="min-width:260px;">
         <li><a class="dropdown-item" href="{{ url_for('portal.asset_documents') }}"><i class="bi bi-clipboard-check"></i> عهدي وتقارير الاعتماد</a></li>
         <li><a class="dropdown-item" href="{{ url_for('portal.fixed_asset_mobile') }}"><i class="bi bi-qr-code-scan"></i> الجرد من الهاتف</a></li>
         <li class="px-3 py-2">
-          <div class="fw-bold">{{ current_user.full_name }}</div>
-          <div class="small text-muted ltr">{{ current_user.email }}</div>
+          <div class="fw-bold">{{ display_user.full_name }}</div>
+          <div class="small text-muted ltr">{{ display_user.email }}</div>
         </li>
         <li><hr class="dropdown-divider"></li>
         <li>
@@ -257,6 +257,16 @@
       <form method="post" action="{{ url_for('delegation.clear_context') }}" class="m-0">
         <button class="btn btn-sm btn-outline-dark" type="submit">العودة لصفتي الشخصية</button>
       </form>
+    </div>
+  </div>
+</div>
+{% elif current_user.is_authenticated and g.delegation and g.effective_user and g.effective_user.id != current_user.id %}
+<div class="container-fluid no-print">
+  <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 py-2 my-2" role="status">
+    <div><i class="bi bi-person-check"></i> <strong>أنت تعمل حاليًا بالنيابة عن:</strong> {{ g.effective_user.full_name }}</div>
+    <div class="d-flex gap-2 align-items-center">
+      <a class="btn btn-sm btn-outline-dark" href="{{ url_for('delegation.permissions_dashboard') }}">إدارة السياق</a>
+      <form method="post" action="{{ url_for('delegation.clear_context') }}" class="m-0"><button class="btn btn-sm btn-outline-dark" type="submit">العودة لصفتي الشخصية</button></form>
     </div>
   </div>
 </div>
@@ -709,6 +719,7 @@
 </div>
 
 {% include 'partials/chat_assistant.html' %}
+{% include 'partials/delegation_identity_chooser.html' %}
 
 <footer class="main-footer">
   <div class="container text-center">

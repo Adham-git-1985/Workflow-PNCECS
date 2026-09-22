@@ -42,6 +42,24 @@
   <div class="small text-muted mt-2">تبقى هوية تسجيل الدخول والمنفذ الفعلي هي {{ current_user.full_name }} في جميع الحالات.</div>
 </div>
 
+{% if legacy_delegations_for_me %}
+<div class="card shadow-sm mb-4 border-warning-subtle">
+  <div class="card-header bg-warning-subtle"><strong><i class="bi bi-person-switch"></i> التفويضات المتاحة للعمل بها</strong></div>
+  <div class="list-group list-group-flush">
+    {% for row in legacy_delegations_for_me %}
+    <div class="list-group-item d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <div><strong>{{ row.from_user.full_name or row.from_user.email }}</strong><div class="small text-muted">حتى {{ row.expires_at.strftime('%Y-%m-%d %H:%M') if row.expires_at else '—' }}</div></div>
+      {% if g.delegation and g.delegation.id == row.id %}
+        <span class="badge text-bg-success">مفعّل</span>
+      {% else %}
+        <form method="post" action="{{ url_for('delegation.select_legacy', delegation_id=row.id) }}"><button class="btn btn-sm btn-outline-warning">العمل بهذه الصفة</button></form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 <div class="row g-3 mb-4">
   <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-primary-subtle"><div class="card-body"><div class="small text-muted">صلاحيات بالنيابة نشطة</div><div class="fs-3 fw-bold text-primary">{{ active_acting_for_me|length }}</div></div></div></div>
   <div class="col-6 col-xl-3"><div class="card shadow-sm h-100 border-info-subtle"><div class="card-body"><div class="small text-muted">تفويضات رسمية سارية</div><div class="fs-3 fw-bold text-info">{{ active_formal_for_me|length }}</div></div></div></div>

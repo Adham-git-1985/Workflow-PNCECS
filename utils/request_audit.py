@@ -281,6 +281,12 @@ def register_request_audit(app) -> None:
                                 or request.remote_addr or None),
                 "user_agent": (request.headers.get("User-Agent", "") or "")[:500] or None,
             })
+            if on_behalf_of_id and int(on_behalf_of_id) != int(user_id):
+                canonical.update({
+                    "acting_for_user_id": int(on_behalf_of_id),
+                    "delegation_id": delegation_id,
+                    "execution_context": "ACTING",
+                })
             values.update({key: value for key, value in canonical.items() if value is not None})
             # Use an independent transaction so auditing never commits or rolls
             # back pending domain changes from the request's ORM session.

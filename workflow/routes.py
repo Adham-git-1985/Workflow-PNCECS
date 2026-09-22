@@ -54,6 +54,13 @@ from utils.file_uploads import (
     random_storage_name,
 )
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
+from utils.delegation_privacy import (
+    audit_display_actor,
+    audit_display_actor_id,
+    audit_display_note,
+    audit_principal,
+    can_view_delegation_details,
+)
 from utils.timezone import local_day_start_utc
 from utils.committee_display import build_committee_summaries
 from services.workflow_confidentiality import (
@@ -803,6 +810,7 @@ def mention_search():
     q = (request.args.get("q") or "").strip()
     limit = request.args.get("limit", 8, type=int) or 8
     limit = max(1, min(limit, 12))
+    working_user = _workflow_actor()
 
     role_query = q
     q_low = q.casefold()
@@ -828,7 +836,7 @@ def mention_search():
                 User.job_title.ilike(like),
             ))
         users = user_query.order_by(User.name.asc(), User.email.asc()).limit(limit * 10).all()
-        allowed_users, _blocked_users = _filter_mention_users_by_hierarchy(current_user, users)
+        allowed_users, _blocked_users = _filter_mention_users_by_hierarchy(working_user, users)
         for u in allowed_users[:limit]:
             email = (u.email or "").strip()
             label = (u.full_name or email or f"User #{u.id}").strip()
@@ -856,7 +864,7 @@ def mention_search():
             if not code:
                 continue
             allowed_users, _blocked_users = _filter_mention_users_by_hierarchy(
-                current_user,
+                working_user,
                 _resolve_role_mention_users(code),
             )
             if not allowed_users:
@@ -915,7 +923,13 @@ def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str |
         return
 
     link = _build_absolute_url(url_for("workflow.view_request", request_id=req.id))
-    actor_label = current_user.full_name or current_user.email or f"#{current_user.id}"
+    working_user = _workflow_actor()
+    actor_id = int(getattr(working_user, "id", 0) or 0)
+    actor_label = (
+        getattr(working_user, "full_name", None)
+        or getattr(working_user, "email", None)
+        or f"#{actor_id}"
+    )
     note_text = (note or "").strip()
     if len(note_text) > 1200:
         note_text = note_text[:1200].rstrip() + "..."
@@ -933,7 +947,7 @@ def _send_mention_internal_message(req: WorkflowRequest, user: User, note: str |
     body_lines.extend(["", "رابط فتح المسار:", link])
 
     msg = Message(
-        sender_id=current_user.id,
+        sender_id=actor_id,
         subject=f"تمت إضافتك إلى مسار الطلب #{req.id}",
         body="\n".join(body_lines),
         target_kind="USER",
@@ -972,8 +986,10 @@ def _grant_mention_access(
     if not mentioned_users:
         return [], unresolved
 
+    working_user = _workflow_actor()
+    actor_id = int(getattr(working_user, "id", 0) or 0)
     mentioned_users, blocked_users = _filter_mention_users_by_hierarchy(
-        current_user,
+        working_user,
         mentioned_users,
     )
     for user in blocked_users:
@@ -1017,13 +1033,13 @@ def _grant_mention_access(
     now = datetime.utcnow()
     for user in mentioned_users:
         uid = int(user.id)
-        if uid == int(current_user.id):
+        if uid == actor_id:
             continue
 
         if uid not in existing_ids:
             db.session.add(AuditLog(
                 request_id=req.id,
-                user_id=current_user.id,
+                user_id=actor_id,
                 action=MENTION_ACCESS_ACTION,
                 old_status=req.status,
                 new_status=req.status,
@@ -1071,9 +1087,9 @@ def _grant_mention_access(
             _send_mention_internal_message(req, user, note, step_order=step_order)
 
             emit_event(
-                actor_id=current_user.id,
+                actor_id=actor_id,
                 action=MENTION_ACCESS_ACTION,
-                message=f"تمت إضافتك إلى متابعة المسار #{req.id} بواسطة {current_user.full_name or current_user.email}.",
+                message=f"تمت إضافتك إلى متابعة المسار #{req.id} بواسطة {working_user.full_name or working_user.email}.",
                 target_type="WorkflowRequest",
                 target_id=req.id,
                 notify_user_id=uid,
@@ -2304,7 +2320,7 @@ def request_pdf(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
     execution = get_execution_context()
     if execution.get("execution_context") == "SELF":
-        if not _user_can_view_request(current_user, req):
+        if not _actor_context_can_view_request(req, _workflow_actor_users()):
             abort(403)
     else:
         try:
@@ -2318,7 +2334,7 @@ def request_pdf(request_id):
             abort(403)
         if not _actor_context_can_view_request(
             req,
-            [current_user, execution.get("acting_for_user")],
+            _workflow_actor_users(),
         ):
             abort(403)
 
@@ -2474,10 +2490,11 @@ def upload_attachment(request_id):
     """Upload one or more attachments to an existing request (manual upload)."""
     req = WorkflowRequest.query.get_or_404(request_id)
     execution = get_execution_context()
+    working_user = _workflow_actor()
     explicit_decision = None
 
     if execution.get("execution_context") == "SELF":
-        if not _user_can_view_request(current_user, req):
+        if not _actor_context_can_view_request(req, _workflow_actor_users()):
             abort(403)
     else:
         try:
@@ -2490,7 +2507,7 @@ def upload_attachment(request_id):
             abort(403)
         if not _actor_context_can_view_request(
             req,
-            [current_user, execution.get("acting_for_user")],
+            _workflow_actor_users(),
         ):
             abort(403)
 
@@ -2513,7 +2530,7 @@ def upload_attachment(request_id):
     try:
         for fs in files:
             for archived, saved_path in _save_upload_with_embedded_email_attachments(
-                fs, owner_id=current_user.id, visibility="workflow", description=description
+                fs, owner_id=working_user.id, visibility="workflow", description=description
             ):
                 if hasattr(archived, "workflow_request_id"):
                     setattr(archived, "workflow_request_id", req.id)
@@ -2530,17 +2547,13 @@ def upload_attachment(request_id):
                     step_order=step_order,
                     source="MANUAL_UPLOAD",
                     original_name=archived.original_name,
-                    uploaded_by_id=current_user.id,
+                    uploaded_by_id=working_user.id,
                 )
 
         _complete_mention_task_after_contribution(
             req,
             inst,
-            user_id=(
-                execution.get("acting_for_user_id")
-                if execution.get("execution_context") != "SELF"
-                else current_user.id
-            ),
+            user_id=working_user.id,
             step_order=step_order,
             contribution="مرفق",
         )
@@ -2548,7 +2561,7 @@ def upload_attachment(request_id):
         # optional admin notification
         try:
             emit_event(
-                actor_id=current_user.id,
+                actor_id=working_user.id,
                 action="WORKFLOW_ATTACHMENT_UPLOADED",
                 message=f"تم رفع {len(files)} مرفق/مرفقات على الطلب #{req.id}",
                 target_type="WorkflowRequest",
@@ -2610,7 +2623,7 @@ def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRe
         abort(403)
     execution = get_execution_context()
     if execution.get("execution_context") == "SELF":
-        if not _user_can_view_request(current_user, req):
+        if not _actor_context_can_view_request(req, _workflow_actor_users()):
             abort(403)
     else:
         try:
@@ -2624,7 +2637,7 @@ def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRe
             abort(403)
         if not _actor_context_can_view_request(
             req,
-            [current_user, execution.get("acting_for_user")],
+            _workflow_actor_users(),
         ):
             abort(403)
     return file, req
@@ -2643,10 +2656,10 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
     """
     req = WorkflowRequest.query.get_or_404(request_id)
     execution = get_execution_context()
-    delete_user = current_user
+    delete_user = _workflow_actor()
     explicit_decision = None
     if execution.get("execution_context") == "SELF":
-        if not _user_can_view_request(current_user, req):
+        if not _actor_context_can_view_request(req, _workflow_actor_users()):
             abort(403)
     else:
         try:
@@ -2657,8 +2670,8 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
             )
         except AuthorizationError:
             abort(403)
-        delete_user = execution.get("acting_for_user") or current_user
-        if not _actor_context_can_view_request(req, [current_user, delete_user]):
+        delete_user = _workflow_actor()
+        if not _actor_context_can_view_request(req, _workflow_actor_users()):
             abort(403)
 
     attachment = (
@@ -2689,11 +2702,11 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
         if archive_removed:
             file.is_deleted = True
             file.deleted_at = datetime.utcnow()
-            file.deleted_by = current_user.id
+            file.deleted_by = delete_user.id
 
         db.session.add(AuditLog(
             request_id=req.id,
-            user_id=current_user.id,
+            user_id=delete_user.id,
             action="WORKFLOW_ATTACHMENT_DELETED",
             old_status=req.status,
             new_status=req.status,
@@ -3603,6 +3616,31 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
     return False
 
 
+def _workflow_actor_users() -> list[User]:
+    """Return the single identity selected for the current work session.
+
+    A delegate used to see the union of their own inbox and every delegator's
+    inbox.  That made the selected identity ambiguous and allowed an action
+    from the delegate's personal work to be recorded as the principal.  Once
+    a delegation/acting context is selected, workflow navigation is scoped to
+    that principal only.  ``current_user`` remains the real signed-in account
+    for authorization auditing and for the confidentiality outer gate below.
+    """
+    try:
+        selected = get_effective_user()
+        if selected and getattr(selected, "id", None):
+            return [selected]
+    except Exception:
+        pass
+    return [current_user] if getattr(current_user, "id", None) else []
+
+
+def _workflow_actor() -> User:
+    """Convenience counterpart of :func:`_workflow_actor_users`."""
+    actors = _workflow_actor_users()
+    return actors[0] if actors else current_user
+
+
 def _actor_context_can_view_request(req: WorkflowRequest, users) -> bool:
     """Delegation must not silently transfer access to a secret request."""
     if is_confidential_workflow(req):
@@ -3850,6 +3888,7 @@ def _requested_dynamic_manager_user_ids() -> list[str] | None:
 @workflow_bp.route("/new/dynamic-path/preview", methods=["POST"])
 @login_required
 def preview_dynamic_request_path():
+    working_user = _workflow_actor()
     selected_values = [
         value.strip()
         for value in (
@@ -3860,7 +3899,7 @@ def preview_dynamic_request_path():
         if value.strip()
     ]
     result = build_dynamic_target_path(
-        current_user,
+        working_user,
         selected_values,
         include_secretary_general=_dynamic_secretary_general_requested(),
         sla_days=_requested_dynamic_sla_days(default=get_sla_days()),
@@ -3881,6 +3920,7 @@ def preview_dynamic_request_path():
 @workflow_bp.route("/new/dynamic-path/presets/save", methods=["POST"])
 @login_required
 def save_dynamic_path_preset():
+    working_user = _workflow_actor()
     name = (request.form.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "errors": ["اكتب اسمًا للمسار قبل الحفظ."]}), 400
@@ -3894,7 +3934,7 @@ def save_dynamic_path_preset():
     ]
     include_secretary_general = _dynamic_secretary_general_requested()
     result = build_dynamic_target_path(
-        current_user,
+        working_user,
         selected_values,
         include_secretary_general=include_secretary_general,
         selected_manager_user_ids=_requested_dynamic_manager_user_ids(),
@@ -3920,14 +3960,14 @@ def save_dynamic_path_preset():
     preset = (
         UserDynamicWorkflowPreset.query
         .filter(
-            UserDynamicWorkflowPreset.user_id == current_user.id,
+            UserDynamicWorkflowPreset.user_id == working_user.id,
             func.lower(UserDynamicWorkflowPreset.name) == name.lower(),
         )
         .first()
     )
     created = preset is None
     if not preset:
-        preset = UserDynamicWorkflowPreset(user_id=current_user.id, name=name)
+        preset = UserDynamicWorkflowPreset(user_id=working_user.id, name=name)
         db.session.add(preset)
     else:
         preset.name = name
@@ -3950,10 +3990,11 @@ def save_dynamic_path_preset():
 @workflow_bp.route("/new/dynamic-path/presets/delete", methods=["POST"])
 @login_required
 def delete_dynamic_path_preset():
+    working_user = _workflow_actor()
     preset_id = request.form.get("preset_id", type=int)
     preset = (
         UserDynamicWorkflowPreset.query
-        .filter_by(id=preset_id, user_id=current_user.id)
+        .filter_by(id=preset_id, user_id=working_user.id)
         .first()
         if preset_id else None
     )
@@ -3967,6 +4008,10 @@ def delete_dynamic_path_preset():
 @workflow_bp.route("/new", methods=["GET", "POST"])
 @login_required
 def new_request():
+    # A selected delegation is a real work persona: requests, paths and
+    # attached files must belong to the principal in public workflow data.
+    # AuditLog still records the signed-in account as the technical executor.
+    working_user = _workflow_actor()
     intake_max_bytes = max(
         1,
         int(current_app.config.get("CORR_INTAKE_MAX_BYTES", 25 * 1024 * 1024)),
@@ -3993,21 +4038,21 @@ def new_request():
     if selected_rt_id and str(selected_rt_id).isdigit():
         selected_request_type = db.session.get(RequestType, int(selected_rt_id))
         selected_request_type_name = selected_request_type.label if selected_request_type else ""
-    dynamic_direct_routing_allowed = can_use_direct_dynamic_delivery(current_user)
+    dynamic_direct_routing_allowed = can_use_direct_dynamic_delivery(working_user)
     dynamic_choices = dynamic_user_choices(
-        current_user,
+        working_user,
         include_unassigned=dynamic_direct_routing_allowed,
     )
-    dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, current_user)
+    dynamic_org_nodes = dynamic_org_browser_nodes(dynamic_choices, working_user)
     dynamic_committees = dynamic_committee_choices()
-    dynamic_manager_options = requester_dynamic_manager_options(current_user)
+    dynamic_manager_options = requester_dynamic_manager_options(working_user)
     dynamic_presets = (
         UserDynamicWorkflowPreset.query
-        .filter_by(user_id=current_user.id)
+        .filter_by(user_id=working_user.id)
         .order_by(UserDynamicWorkflowPreset.updated_at.desc(), UserDynamicWorkflowPreset.id.desc())
         .all()
     )
-    requester_org_node_id = resolve_user_org_node_id(current_user)
+    requester_org_node_id = resolve_user_org_node_id(working_user)
     dynamic_route_available = bool(
         requester_org_node_id
         or (dynamic_direct_routing_allowed and dynamic_choices)
@@ -4055,7 +4100,7 @@ def new_request():
                 if value.strip()
             ]
             dynamic_path = build_dynamic_target_path(
-                current_user,
+                working_user,
                 selected_values,
                 include_secretary_general=_dynamic_secretary_general_requested(),
                 sla_days=dynamic_sla_days,
@@ -4083,7 +4128,7 @@ def new_request():
             return redirect(request.url)
 
         req = WorkflowRequest(
-            requester_id=current_user.id,
+            requester_id=working_user.id,
             status="DRAFT",
             title=title,
             description=description,
@@ -4097,7 +4142,7 @@ def new_request():
         start_workflow_for_request(
             req,
             template,
-            created_by_user_id=current_user.id,
+            created_by_user_id=working_user.id,
             auto_commit=False,
             runtime_steps=dynamic_path["steps"] if dynamic_path else None,
             workflow_label=workflow_label,
@@ -4111,7 +4156,7 @@ def new_request():
         try:
             for fs in uploaded_files:
                 for archived, saved_path in _save_upload_with_embedded_email_attachments(
-                    fs, owner_id=current_user.id, visibility="workflow", description=None
+                    fs, owner_id=working_user.id, visibility="workflow", description=None
                 ):
                     if hasattr(archived, "workflow_request_id"):
                         setattr(archived, "workflow_request_id", req.id)
@@ -4127,7 +4172,7 @@ def new_request():
                         step_order=0,
                         source="CREATE",
                         original_name=archived.original_name,
-                        uploaded_by_id=current_user.id,
+                        uploaded_by_id=working_user.id,
                     )
         except Exception as e:
             db.session.rollback()
@@ -4143,12 +4188,12 @@ def new_request():
         # ✅ Notification for requester: request created and workflow started
         try:
             emit_event(
-                actor_id=current_user.id,
+                actor_id=working_user.id,
                 action='REQUEST_CREATED',
                 message=f"تم إنشاء طلب جديد #{req.id} وبدء المسار: {workflow_label}",
                 target_type='WorkflowRequest',
                 target_id=req.id,
-                notify_user_id=current_user.id,
+                notify_user_id=working_user.id,
                 level='WORKFLOW',
                 auto_commit=False,
             )
@@ -4309,7 +4354,12 @@ def _workflow_user_summary(req, step):
     log = (AuditLog.query.filter_by(request_id=req.id)
            .filter(~AuditLog.action.in_(("PAGE_VIEW", "VIEW_PAGE", "REQUEST_VIEWED", "USER_ACTION")))
            .order_by(AuditLog.created_at.desc()).first())
-    actor = log.user.full_name if log and log.user else "النظام"
+    display_actor = audit_display_actor(log) if log else None
+    actor = (
+        display_actor.full_name
+        if display_actor and getattr(display_actor, "full_name", None)
+        else "النظام"
+    )
     action = (log.action or "").upper() if log else ""
     if action == "WORKFLOW_COMMENT":
         last_action = f"تمت إضافة تعليق من {actor}"
@@ -4362,6 +4412,9 @@ def _workflow_user_summaries(rows) -> dict[int, dict]:
             db.session.query(
                 AuditLog.request_id.label("request_id"),
                 AuditLog.user_id.label("user_id"),
+                AuditLog.actual_user_id.label("actual_user_id"),
+                AuditLog.acting_for_user_id.label("acting_for_user_id"),
+                AuditLog.on_behalf_of_id.label("on_behalf_of_id"),
                 AuditLog.action.label("action"),
                 func.row_number().over(
                     partition_by=AuditLog.request_id,
@@ -4378,6 +4431,9 @@ def _workflow_user_summaries(rows) -> dict[int, dict]:
             db.session.query(
                 ranked_logs.c.request_id,
                 ranked_logs.c.user_id,
+                ranked_logs.c.actual_user_id,
+                ranked_logs.c.acting_for_user_id,
+                ranked_logs.c.on_behalf_of_id,
                 ranked_logs.c.action,
             )
             .filter(ranked_logs.c.row_number == 1)
@@ -4388,6 +4444,12 @@ def _workflow_user_summaries(rows) -> dict[int, dict]:
     user_ids = {
         int(row.user_id) for row in latest_logs if row.user_id
     }
+    user_ids.update(
+        int(value)
+        for row in latest_logs
+        for value in (getattr(row, "actual_user_id", None), getattr(row, "acting_for_user_id", None), getattr(row, "on_behalf_of_id", None))
+        if value
+    )
     user_ids.update(
         int(step.approver_user_id)
         for _req, _inst, step in workflow_rows
@@ -4436,7 +4498,7 @@ def _workflow_user_summaries(rows) -> dict[int, dict]:
     summaries = {}
     for req, _inst, step in workflow_rows:
         log = latest_log_by_request.get(int(req.id))
-        actor_user = users_map.get(int(log.user_id or 0)) if log else None
+        actor_user = users_map.get(int(audit_display_actor_id(log) or 0)) if log else None
         actor = actor_user.full_name if actor_user else "النظام"
         action = (log.action or "").upper() if log else ""
         if action == "WORKFLOW_COMMENT":
@@ -4498,7 +4560,7 @@ _AUDIT_MENTION_NAME_RE = re.compile(r"المستخدم\s+المشار\s+إليه
 
 def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, ArchivedFile]) -> str:
     """Return the useful, non-technical detail for the request activity feed."""
-    raw_note = str(getattr(log, "note", None) or "").strip()
+    raw_note = audit_display_note(log).strip()
 
     if action in {"WORKFLOW_ATTACHMENT_UPLOADED", "WORKFLOW_ATTACHMENT_DELETED"}:
         file_item = files_map.get(int(getattr(log, "target_id", 0) or 0))
@@ -4532,25 +4594,12 @@ def inbox():
     search = (request.args.get("q") or "").strip()
     hierarchy_bypass_instance_ids: set[int] = set()
 
-    effective_user = get_effective_user()
-    delegations = get_active_delegations()
     execution = get_execution_context()
 
-    # Candidate "actors": myself + any active delegators I'm delegated from
-    actor_users = [current_user]
+    # Work in one deliberately selected persona, never the union of the
+    # delegate's and delegator's inboxes.
+    actor_users = _workflow_actor_users()
     explicit_context_actor = execution.get("acting_for_user")
-    if (
-        execution.get("execution_context") != "SELF"
-        and explicit_context_actor
-        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
-    ):
-        actor_users.append(explicit_context_actor)
-    for d in (delegations or []):
-        try:
-            if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
-                actor_users.append(d.from_user)
-        except Exception:
-            pass
     actor_ids = {int(user.id) for user in actor_users if getattr(user, "id", None)}
 
     # SUPER_ADMIN sees all pending current steps
@@ -4579,10 +4628,12 @@ def inbox():
                 pass
         q = q.filter(or_(*conds))
 
-    # If not SUPER_ADMIN, restrict by any actor context (self OR delegated-from users)
-    is_super = current_user.has_role("SUPER_ADMIN") or (
-        execution.get("execution_context") == "SELF"
-        and any(getattr(u, "has_role", lambda r: False)("SUPER_ADMIN") for u in actor_users)
+    # The selected persona determines the inbox scope.  A super-admin account
+    # working under another user's delegation must not retain its own global
+    # inbox visibility in that delegated session.
+    is_super = any(
+        getattr(user, "has_role", lambda _role: False)("SUPER_ADMIN")
+        for user in actor_users
     )
     if not is_super:
         all_clauses = []
@@ -4861,7 +4912,7 @@ def inbox():
 
     # PARALLEL_SYNC: if the step is still pending but the current user already responded/bypassed,
     # hide it from their inbox (it will remain for other pending assignees).
-    if not (current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN")):
+    if not _is_admin(_workflow_actor()):
         actor_ids = [int(u.id) for u in (actor_users or []) if getattr(u, "id", None)]
         if actor_ids:
             filtered = []
@@ -4971,19 +5022,9 @@ def work_dashboard():
         selected_queue = "my_action"
     search = (request.args.get("q") or "").strip()
 
-    actor_users = [current_user]
     execution = get_execution_context()
+    actor_users = _workflow_actor_users()
     explicit_context_actor = execution.get("acting_for_user")
-    if (
-        execution.get("execution_context") != "SELF"
-        and explicit_context_actor
-        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
-    ):
-        actor_users.append(explicit_context_actor)
-    for delegation in get_active_delegations() or []:
-        delegated_user = getattr(delegation, "from_user", None)
-        if delegated_user and delegated_user.id not in {user.id for user in actor_users}:
-            actor_users.append(delegated_user)
     actor_ids = {int(user.id) for user in actor_users if getattr(user, "id", None)}
 
     qry = WorkflowRequest.query.order_by(WorkflowRequest.id.desc())
@@ -5082,7 +5123,7 @@ def work_dashboard():
             "requester": None,
             "needs_action": needs_action,
             "mentioned_task_for_actor": mentioned_task_for_actor,
-            "created": int(req.requester_id or 0) == int(current_user.id),
+            "created": int(req.requester_id or 0) == int(_workflow_actor().id),
             "following": bool(actor_ids.intersection(follower_ids)),
             "in_progress": (req.status or "").upper() == "IN_PROGRESS",
             "completed": (req.status or "").upper() in {"APPROVED", "CLOSED"},
@@ -5339,24 +5380,10 @@ def following():
         except Exception:
             return None
 
-    effective_user = get_effective_user()
-    delegations = get_active_delegations()
     execution = get_execution_context()
-
-    actor_users = [current_user]
+    effective_user = _workflow_actor()
+    actor_users = [effective_user]
     explicit_context_actor = execution.get("acting_for_user")
-    if (
-        execution.get("execution_context") != "SELF"
-        and explicit_context_actor
-        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
-    ):
-        actor_users.append(explicit_context_actor)
-    for d in (delegations or []):
-        try:
-            if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
-                actor_users.append(d.from_user)
-        except Exception:
-            pass
 
     actor_ids = [int(getattr(u, "id", 0)) for u in (actor_users or []) if getattr(u, "id", None)]
 
@@ -5518,7 +5545,7 @@ def following():
     )
 
     # Visibility filter
-    if not (current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN")):
+    if not _is_admin(_workflow_actor()):
         decided_clause = (
             WorkflowInstanceStep.decided_by_id.in_(actor_ids)
             if actor_ids
@@ -5927,24 +5954,10 @@ def following():
 @login_required
 def view_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
-    effective_user = get_effective_user()
-    delegations = get_active_delegations()
     execution = get_execution_context()
     explicit_context_actor = execution.get("acting_for_user")
 
-    actor_users = [current_user]
-    if (
-        execution.get("execution_context") != "SELF"
-        and explicit_context_actor
-        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
-    ):
-        actor_users.append(explicit_context_actor)
-    for d in (delegations or []):
-        try:
-            if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
-                actor_users.append(d.from_user)
-        except Exception:
-            pass
+    actor_users = _workflow_actor_users()
 
     if execution.get("execution_context") != "SELF":
         try:
@@ -6089,7 +6102,7 @@ def view_request(request_id):
     # final decision.  Personal mode remains limited to the request creator;
     # an explicit scoped acting permission may grant the same operation.
     can_close = (
-        (int(getattr(current_user, "id", 0) or 0) == int(req.requester_id or 0)
+        (int(getattr(_workflow_actor(), "id", 0) or 0) == int(req.requester_id or 0)
          if execution.get("execution_context") == "SELF"
          else can_execute_action(
              "CLOSE",
@@ -6176,7 +6189,7 @@ def view_request(request_id):
             getattr(attachment, "archived_file", None)
             and not getattr(attachment.archived_file, "is_deleted", False)
             and _can_delete_workflow_attachment(
-                current_user,
+                _workflow_actor(),
                 req,
                 attachment.archived_file,
             )
@@ -6209,17 +6222,23 @@ def view_request(request_id):
     ]
     simple_audit = _workflow_user_summary(req, current_step)
     can_delete_workflow_comments = is_super_admin(current_user)
-    simple_comments = [
-        {
+    simple_comments = []
+    for log in audit:
+        if (log.action or "").upper() not in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}:
+            continue
+        safe_note = _clean_workflow_note(audit_display_note(log))
+        if not safe_note:
+            continue
+        safe_actor = audit_display_actor(log)
+        simple_comments.append({
             "kind": "تعليق" if log.action == "WORKFLOW_COMMENT" else "رد",
-            "author": log.user.full_name if log.user else "النظام",
+            "author": (
+                (safe_actor.full_name or safe_actor.email)
+                if safe_actor else "النظام"
+            ),
             "created_at": log.created_at,
-            "note": _clean_workflow_note(log.note),
-        }
-        for log in audit
-        if (log.action or "").upper() in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"}
-        and _clean_workflow_note(log.note)
-    ]
+            "note": safe_note,
+        })
     technical_actions = {
         "PAGE_VIEW",
         "VIEW_PAGE",
@@ -6252,12 +6271,17 @@ def view_request(request_id):
         action = (log.action or "").upper()
         if action in technical_actions:
             continue
-        audit_actor = log.actual_user or log.user
-        audit_principal = log.acting_for_user or log.on_behalf_of_user
-        if log.formal_delegation and audit_actor and audit_principal:
-            audit_author = f"{audit_actor.full_name} بموجب تفويض عن {audit_principal.full_name}"
-        elif audit_actor and audit_principal:
-            audit_author = f"{audit_actor.full_name} بالنيابة عن {audit_principal.full_name}"
+        audit_actor = audit_display_actor(log)
+        principal = audit_principal(log)
+        if (
+            can_view_delegation_details(log)
+            and log.formal_delegation
+            and audit_actor
+            and principal
+        ):
+            audit_author = f"{audit_actor.full_name} بموجب تفويض عن {principal.full_name}"
+        elif can_view_delegation_details(log) and audit_actor and principal:
+            audit_author = f"{audit_actor.full_name} بالنيابة عن {principal.full_name}"
         else:
             audit_author = audit_actor.full_name if audit_actor else "النظام"
         user_audit.append({
@@ -6662,25 +6686,18 @@ def view_request(request_id):
                 .first()
             )
 
+            selected_actor = _workflow_actor()
             last_actor_id = int(getattr(inst, "last_step_actor_id", 0) or 0)
-            if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
+            if _is_admin(selected_actor):
                 can_bypass_parallel = True
-            elif last_actor_id and last_actor_id == int(current_user.id):
+            elif last_actor_id and last_actor_id == int(selected_actor.id):
                 can_bypass_parallel = True
-            else:
-                try:
-                    for d in (delegations or []):
-                        u = getattr(d, "from_user", None)
-                        if u and int(u.id) == last_actor_id:
-                            can_bypass_parallel = True
-                            break
-                except Exception:
-                    pass
 
-            # The actual committee chair may bypass other members in a
-            # Committee_ALL step.  This authority is not delegated.
+            # Apply the selected persona consistently to the parallel-step
+            # controls.  The real account remains available only in the
+            # protected technical audit trail.
             if not can_bypass_parallel and can_committee_chair_bypass_parallel_step(
-                current_user.id,
+                selected_actor.id,
                 current_step,
             ):
                 can_bypass_parallel = True
@@ -6817,7 +6834,7 @@ def close_request(request_id):
     explicit_decision = None
 
     if execution.get("execution_context") == "SELF":
-        if int(req.requester_id or 0) != int(current_user.id or 0):
+        if int(req.requester_id or 0) != int(_workflow_actor().id or 0):
             abort(403)
     else:
         try:
@@ -6830,7 +6847,7 @@ def close_request(request_id):
             abort(403)
         if not _actor_context_can_view_request(
             req,
-            [current_user, execution.get("acting_for_user")],
+            _workflow_actor_users(),
         ):
             abort(403)
 
@@ -6881,9 +6898,10 @@ def reopen_request_to_step(request_id):
     """Reopen a workflow request and resume it from a selected prior step."""
     req = WorkflowRequest.query.get_or_404(request_id)
     execution = get_execution_context()
+    working_user = _workflow_actor()
     explicit_decision = None
     if execution.get("execution_context") == "SELF":
-        if not (_is_admin(current_user) or current_user.has_perm("WORKFLOW_REOPEN_TO_STEP")):
+        if not (_is_admin(working_user) or working_user.has_perm("WORKFLOW_REOPEN_TO_STEP")):
             abort(403)
     else:
         try:
@@ -6895,14 +6913,7 @@ def reopen_request_to_step(request_id):
         except AuthorizationError:
             abort(403)
 
-    actor_users = [current_user]
-    explicit_context_actor = execution.get("acting_for_user")
-    if explicit_context_actor and explicit_context_actor not in actor_users:
-        actor_users.append(explicit_context_actor)
-    for delegation in (get_active_delegations() or []):
-        delegator = getattr(delegation, "from_user", None)
-        if delegator and delegator.id not in [user.id for user in actor_users]:
-            actor_users.append(delegator)
+    actor_users = _workflow_actor_users()
 
     # A selected scoped context must explicitly grant viewing.  Formal
     # delegations remain subject to the principal's normal visibility and
@@ -6935,11 +6946,7 @@ def reopen_request_to_step(request_id):
             auto_commit=False,
             sla_mode=sla_mode,
             sla_days=sla_days,
-            effective_user_id=(
-                execution.get("acting_for_user_id")
-                if execution.get("execution_context") != "SELF"
-                else None
-            ),
+            effective_user_id=working_user.id,
         )
         if is_sla_suspended(target_step.sla_days):
             sla_message = "تم تعليق SLA للخطوات المعاد فتحها."
@@ -6949,7 +6956,7 @@ def reopen_request_to_step(request_id):
             sla_message = "تم الإبقاء على SLA الحالي للخطوات المعاد فتحها."
         sync_correspondence_from_workflow(
             req,
-            actor_user_id=current_user.id,
+            actor_user_id=working_user.id,
             note=(
                 f"إعادة فتح مسار الطلب #{req.id} والعودة إلى الخطوة "
                 f"{target_step.step_order}: {reason}. {sla_message}"
@@ -6997,29 +7004,8 @@ def request_attachments(request_id):
 
     
 
-    # Delegation-aware viewer:
-    # allow current_user + primary effective_user + the explicitly selected
-    # principal + ANY active legacy delegator (if multiple delegations exist)
-    effective_user = get_effective_user()
-    context_users = [current_user, effective_user]
-    explicit_context_user = execution.get("acting_for_user")
-    if explicit_context_user and explicit_context_user not in context_users:
-        context_users.append(explicit_context_user)
-    can_view = _actor_context_can_view_request(req, context_users)
-    if (
-        not can_view
-        and execution.get("execution_context") != "SELF"
-        and not is_confidential_workflow(req)
-    ):
-        can_view = _user_can_view_request(execution.get("acting_for_user"), req)
-    if not can_view and not is_confidential_workflow(req):
-        try:
-            for d in (get_active_delegations() or []):
-                if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
-                    can_view = True
-                    break
-        except Exception:
-            pass
+    # The attachment view follows the one selected work persona too.
+    can_view = _actor_context_can_view_request(req, _workflow_actor_users())
 
     if not can_view:
         abort(403)
@@ -7200,7 +7186,7 @@ def request_attachments(request_id):
                 getattr(attachment, "archived_file", None)
                 and not getattr(attachment.archived_file, "is_deleted", False)
                 and _can_delete_workflow_attachment(
-                    current_user,
+                    _workflow_actor(),
                     req,
                     attachment.archived_file,
                 )
@@ -7220,29 +7206,7 @@ def request_escalations(request_id):
 
     
 
-    # Delegation-aware viewer:
-    # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
-    effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or (
-        not is_confidential_workflow(req)
-        and _user_can_view_request(effective_user, req)
-    )
-    explicit_context_user = execution.get("acting_for_user")
-    if (
-        not can_view
-        and explicit_context_user
-        and not is_confidential_workflow(req)
-        and _user_can_view_request(explicit_context_user, req)
-    ):
-        can_view = True
-    if not can_view and not is_confidential_workflow(req):
-        try:
-            for d in (get_active_delegations() or []):
-                if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
-                    can_view = True
-                    break
-        except Exception:
-            pass
+    can_view = _actor_context_can_view_request(req, _workflow_actor_users())
 
     if not can_view:
         abort(403)
@@ -7301,14 +7265,15 @@ def request_escalations(request_id):
 def delete_request(request_id):
     """Hard-delete a request while preserving its audit trail."""
     req = WorkflowRequest.query.get_or_404(request_id)
+    working_user = _workflow_actor()
 
-    if not can_delete_workflow_request(current_user, req):
+    if not can_delete_workflow_request(working_user, req):
         flash("انتهت مهلة الحذف أو لا تملك صلاحية حذف هذا الطلب.", "danger")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
     rid = req.id
     requester_id = req.requester_id
-    deletion_mode = "SUPER_ADMIN" if is_super_admin(current_user) else "TEMPORARY_REVOKE"
+    deletion_mode = "SUPER_ADMIN" if is_super_admin(working_user) else "TEMPORARY_REVOKE"
 
     # Collect recipients who have received/handled the request so far (steps + commenters)
     recipients_user_ids = set()
@@ -7375,7 +7340,7 @@ def delete_request(request_id):
 
     # Do not notify the deleter themselves
     try:
-        recipients_user_ids.discard(int(current_user.id))
+        recipients_user_ids.discard(int(working_user.id))
     except Exception:
         pass
 
@@ -7456,7 +7421,7 @@ def delete_request(request_id):
                 "steps": steps_snapshot,
                 "approvals": approvals_snapshot,
                 "deleted_at": datetime.utcnow().isoformat(),
-                "deleted_by": current_user.email,
+                "deleted_by": working_user.email,
             }
         except Exception:
             snapshot = None
@@ -7486,11 +7451,11 @@ def delete_request(request_id):
         # Create deletion audit log (without request_id FK)
         db.session.add(AuditLog(
             action="REQUEST_DELETED",
-            user_id=current_user.id,
+            user_id=working_user.id,
             target_type="WorkflowRequest",
             target_id=rid,
             note=(
-                f"Request #{rid} deleted by {current_user.email} ({deletion_mode})\n"
+                f"Request #{rid} deleted by {working_user.email} ({deletion_mode})\n"
                 + (f"SNAPSHOT_JSON:{json.dumps(snapshot, ensure_ascii=False)}" if snapshot else "")
             )
         ))
@@ -7501,7 +7466,7 @@ def delete_request(request_id):
         for uid in sorted(recipients_user_ids):
             try:
                 emit_event(
-                    actor_id=current_user.id,
+                    actor_id=working_user.id,
                     action="REQUEST_DELETED",
                     message=message,
                     target_type="WorkflowRequest",
@@ -7516,7 +7481,7 @@ def delete_request(request_id):
         for role in sorted({r for r in roles_to_notify if (r or '').strip()}):
             try:
                 emit_event(
-                    actor_id=current_user.id,
+                    actor_id=working_user.id,
                     action="REQUEST_DELETED",
                     message=message,
                     target_type="WorkflowRequest",
@@ -7555,33 +7520,12 @@ def escalate_request(request_id):
     """
     req = WorkflowRequest.query.get_or_404(request_id)
     execution = get_execution_context()
+    working_user = _workflow_actor()
     explicit_decision = None
 
     
 
-    # Delegation-aware viewer:
-    # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
-    effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or (
-        not is_confidential_workflow(req)
-        and _user_can_view_request(effective_user, req)
-    )
-    explicit_context_user = execution.get("acting_for_user")
-    if (
-        not can_view
-        and explicit_context_user
-        and not is_confidential_workflow(req)
-        and _user_can_view_request(explicit_context_user, req)
-    ):
-        can_view = True
-    if not can_view and not is_confidential_workflow(req):
-        try:
-            for d in (get_active_delegations() or []):
-                if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
-                    can_view = True
-                    break
-        except Exception:
-            pass
+    can_view = _actor_context_can_view_request(req, _workflow_actor_users())
 
     if not can_view:
         flash("غير مصرح لك بالوصول لهذا الطلب", "danger")
@@ -7628,14 +7572,14 @@ def escalate_request(request_id):
     first_recipient_ids = sorted({
         int(rid)
         for rid in (step_recips + dir_head_ids + hierarchy_dir_head_ids)
-        if rid and int(rid) != int(current_user.id)
+        if rid and int(rid) != int(working_user.id)
     })
 
     # Level 2: the Assistant Secretary General on the relevant hierarchy path.
     second_recipient_ids = sorted({
         int(rid)
         for rid in _hierarchy_manager_user_ids(req, current_step, {"SEC_GEN_ASSIST"})
-        if rid and int(rid) != int(current_user.id)
+        if rid and int(rid) != int(working_user.id)
     })
     requested_alert_level = request.form.get("alert_level", type=int) or 1
     recipient_options = {
@@ -7666,7 +7610,7 @@ def escalate_request(request_id):
                 try:
                     fid = int(getattr(d, "from_user_id", 0) or 0)
                     tid = int(getattr(d, "to_user_id", 0) or 0)
-                    if tid and tid != int(current_user.id):
+                    if tid and tid != int(working_user.id):
                         recipient_ids.append(tid)
                         delegation_pairs.append((fid, tid))
                 except Exception:
@@ -7674,7 +7618,7 @@ def escalate_request(request_id):
     except Exception:
         pass
 
-    recipient_ids = sorted({int(rid) for rid in recipient_ids if rid and int(rid) != int(current_user.id)})
+    recipient_ids = sorted({int(rid) for rid in recipient_ids if rid and int(rid) != int(working_user.id)})
 
     recipient_users = []
     if recipient_ids:
@@ -7738,7 +7682,7 @@ def escalate_request(request_id):
         # Record the alert in the legacy escalation table for compatibility.
         esc = RequestEscalation(
             request_id=req.id,
-            from_user_id=current_user.id,
+            from_user_id=working_user.id,
             to_user_id=primary_to,
             category=category,
             description=desc,
@@ -7784,25 +7728,10 @@ def escalate_request(request_id):
             f"الجهة المسؤولة: {target_label}",
             f"موعد SLA لهذه الخطوة: {due_str}" + (f" (متبقي {remaining_days} يوم)" if remaining_days is not None else ""),
             "",
-            f"سبب/شرح التنبيه (من {current_user.email}):",
+            f"سبب/شرح التنبيه (من {working_user.email}):",
             desc,
             "",
         ]
-
-        # إذا كان أحد المستلمين لديه تفويض فعّال، أرسلنا نسخة أيضاً للمفوّض إليه
-        if delegation_pairs:
-            body_lines.append("تم إرسال نسخة للمفوّض إليه بسبب تفويض فعّال.")
-            seen_pairs = set()
-            for fid, tid in delegation_pairs:
-                if (fid, tid) in seen_pairs:
-                    continue
-                seen_pairs.add((fid, tid))
-                fu = users_map.get(fid)
-                tu = users_map.get(tid)
-                ftxt = (getattr(fu, "email", None) or getattr(fu, "full_name", None) or str(fid))
-                ttxt = (getattr(tu, "email", None) or getattr(tu, "full_name", None) or str(tid))
-                body_lines.append(f"- {ftxt} → {ttxt}")
-            body_lines.append("")
 
         body_lines += [
             "تم إرسال هذا التنبيه إلى:",
@@ -7819,7 +7748,7 @@ def escalate_request(request_id):
         target_id = int(dir_id) if target_kind == "DIRECTORATE" else primary_to
 
         msg = Message(
-            sender_id=current_user.id,
+            sender_id=working_user.id,
             subject=subject,
             body=body,
             target_kind=target_kind,
@@ -7849,7 +7778,7 @@ def escalate_request(request_id):
         db.session.add(
             AuditLog(
                 request_id=req.id,
-                user_id=current_user.id,
+                user_id=working_user.id,
                 action="REQUEST_ESCALATION",
                 note=f"Alert level={requested_alert_level} step={current_step.step_order} ({category}) targets={targets_str}: {desc[:200]}",
                 target_type="WorkflowRequest",
@@ -7862,7 +7791,7 @@ def escalate_request(request_id):
         for rid in recipient_ids:
             try:
                 emit_event(
-                    actor_id=current_user.id,
+                    actor_id=working_user.id,
                     action="REQUEST_ESCALATION",
                     message=f"🚨 {alert_level_label} يحتاج انتباه: #{req.id} (الخطوة {current_step.step_order})",
                     target_type="WorkflowRequest",
@@ -7919,6 +7848,8 @@ def escalate_request(request_id):
 @login_required
 def redirect_assistant_secretary_step(request_id, step_order):
     req = WorkflowRequest.query.get_or_404(request_id)
+    working_user = _workflow_actor()
+    execution = get_execution_context()
     inst = WorkflowInstance.query.filter_by(request_id=req.id).first()
     if not inst or int(inst.current_step_order or 0) != int(step_order):
         abort(403)
@@ -7930,10 +7861,21 @@ def redirect_assistant_secretary_step(request_id, step_order):
     ).first()
     if not step or (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
         abort(403)
-    if not _user_can_act_on_step(current_user, step) or not _is_assistant_secretary_general(current_user, step):
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "FORWARD",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
+
+    if not _user_can_act_on_step(working_user, step) or not _is_assistant_secretary_general(working_user, step):
         abort(403)
 
-    targets = _assistant_secretary_redirect_targets(current_user, step)
+    targets = _assistant_secretary_redirect_targets(working_user, step)
     target_ids = {int(target["node_id"]) for target in targets}
     try:
         target_node_id = int(request.form.get("target_node_id") or 0)
@@ -7971,7 +7913,7 @@ def redirect_assistant_secretary_step(request_id, step_order):
 
     db.session.add(AuditLog(
         request_id=req.id,
-        user_id=current_user.id,
+        user_id=working_user.id,
         action=ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION,
         old_status="PENDING",
         new_status="PENDING",
@@ -7985,11 +7927,11 @@ def redirect_assistant_secretary_step(request_id, step_order):
     ))
     db.session.add(AuditLog(
         request_id=req.id,
-        user_id=current_user.id,
+        user_id=working_user.id,
         action=ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
         note="احتُفظ بمساعد الأمين العام ضمن متابعي الطلب بعد إعادة التوجيه.",
         target_type="USER",
-        target_id=current_user.id,
+        target_id=working_user.id,
     ))
 
     target_user_ids = resolve_step_approver_user_ids(step)
@@ -7998,10 +7940,10 @@ def redirect_assistant_secretary_step(request_id, step_order):
         flash("لا يوجد مدير عام مكلّف على الجهة المختارة.", "danger")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
-    actor_label = current_user.full_name or current_user.email or "مساعد الأمين العام"
+    actor_label = working_user.full_name or working_user.email or "مساعد الأمين العام"
     for target_user_id in target_user_ids:
         emit_event(
-            actor_id=current_user.id,
+            actor_id=working_user.id,
             action=ASSISTANT_SECRETARY_STEP_REDIRECT_ACTION,
             message=(
                 f"أعاد {actor_label} توجيه الطلب #{req.id} إليك لاتخاذ الإجراء "
@@ -8016,7 +7958,7 @@ def redirect_assistant_secretary_step(request_id, step_order):
 
     sync_correspondence_from_workflow(
         req,
-        actor_user_id=current_user.id,
+        actor_user_id=working_user.id,
         note=(
             f"إعادة توجيه الخطوة {step_order} من مساعد الأمين العام إلى {target_label}"
             + (f" — {note}" if note else "")
@@ -8034,25 +7976,10 @@ def redirect_assistant_secretary_step(request_id, step_order):
 @login_required
 def decide_request_step(request_id, step_order):
     req = WorkflowRequest.query.get_or_404(request_id)
-    effective_user = get_effective_user()
-    delegations = get_active_delegations()
     execution = get_execution_context()
     explicit_decision = None
 
-    actor_users = [current_user]
-    explicit_context_actor = execution.get("acting_for_user")
-    if (
-        execution.get("execution_context") != "SELF"
-        and explicit_context_actor
-        and int(getattr(explicit_context_actor, "id", 0) or 0) != int(current_user.id)
-    ):
-        actor_users.append(explicit_context_actor)
-    for d in (delegations or []):
-        try:
-            if d and getattr(d, "from_user", None) and d.from_user.id not in [u.id for u in actor_users]:
-                actor_users.append(d.from_user)
-        except Exception:
-            pass
+    actor_users = _workflow_actor_users()
 
     if execution.get("execution_context") != "SELF":
         try:
@@ -8081,21 +8008,12 @@ def decide_request_step(request_id, step_order):
     if not step:
         flash("الخطوة غير موجودة.", "danger")
         return redirect(url_for("workflow.view_request", request_id=req.id))
-    # Determine which identity the current user is acting as
-    acting_user = None
-    used_delegation = None
-
-    if _user_can_act_on_step(current_user, step):
-        acting_user = current_user
-    else:
-        for d in (delegations or []):
-            u = getattr(d, "from_user", None)
-            if u and _user_can_act_on_step(u, step):
-                acting_user = u
-                used_delegation = d
-                break
-
-    if not acting_user:
+    # The selected work persona is the only identity that may act on this
+    # step.  Do not fall back to the signed-in delegate's own assignments:
+    # that would mix two inboxes and record the action under the wrong person.
+    acting_user = _workflow_actor()
+    used_delegation = get_active_delegation()
+    if not _user_can_act_on_step(acting_user, step):
         abort(403)
 
     decision = (request.form.get("decision") or "").strip().upper()
@@ -8148,7 +8066,7 @@ def decide_request_step(request_id, step_order):
                    selected_dynamic_branch_step_orders=selected_dynamic_branch_step_orders)
         sync_correspondence_from_workflow(
             req,
-            actor_user_id=current_user.id,
+            actor_user_id=acting_user.id,
             note=(
                 f"قرار الخطوة {step_order} في مسار #{req.id}: "
                 f"{'موافقة' if decision == 'APPROVED' else 'توقيف المسار'}"
@@ -8160,7 +8078,7 @@ def decide_request_step(request_id, step_order):
         uploaded_files = _uploaded_files_from_request("files", "scanned_files")
         for fs in uploaded_files:
             for archived, saved_path in _save_upload_with_embedded_email_attachments(
-                fs, owner_id=current_user.id, visibility="workflow", description=None
+                fs, owner_id=acting_user.id, visibility="workflow", description=None
             ):
                 if hasattr(archived, "workflow_request_id"):
                     setattr(archived, "workflow_request_id", req.id)
@@ -8176,7 +8094,7 @@ def decide_request_step(request_id, step_order):
                     step_order=step_order,
                     source="STEP_DECISION",
                     original_name=archived.original_name,
-                    uploaded_by_id=current_user.id,
+                    uploaded_by_id=acting_user.id,
                 )
                 attached_count += 1
 
@@ -8197,7 +8115,7 @@ def decide_request_step(request_id, step_order):
             note=note,
             attached_count=attached_count,
             decision=decision,
-            actor_id=current_user.id,
+            actor_id=acting_user.id,
         )
 
         if explicit_decision:
@@ -8243,12 +8161,8 @@ def decide_request_step(request_id, step_order):
 @login_required
 def authorize_parallel_assignees(request_id: int, step_order: int):
     req = WorkflowRequest.query.get_or_404(request_id)
-    delegations = get_active_delegations()
-    actor_users = [current_user]
-    for delegation in (delegations or []):
-        user = getattr(delegation, "from_user", None)
-        if user and user.id not in [actor.id for actor in actor_users]:
-            actor_users.append(user)
+    execution = get_execution_context()
+    actor_users = _workflow_actor_users()
 
     if not _actor_context_can_view_request(req, actor_users):
         abort(403)
@@ -8265,21 +8179,22 @@ def authorize_parallel_assignees(request_id: int, step_order: int):
         flash("الخطوة المتزامنة ليست نشطة حاليًا.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
-    acting_user = None
-    used_delegation = None
-    if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
-        acting_user = current_user
-    elif int(getattr(inst, "last_step_actor_id", 0) or 0) == int(current_user.id):
-        acting_user = current_user
-    else:
-        for delegation in (delegations or []):
-            user = getattr(delegation, "from_user", None)
-            if user and int(getattr(inst, "last_step_actor_id", 0) or 0) == int(user.id):
-                acting_user = user
-                used_delegation = delegation
-                break
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "FOLLOW_UP",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+            )
+        except AuthorizationError:
+            abort(403)
 
-    if not acting_user:
+    acting_user = _workflow_actor()
+    used_delegation = get_active_delegation()
+    if not (
+        _is_admin(acting_user)
+        or int(getattr(inst, "last_step_actor_id", 0) or 0) == int(acting_user.id)
+    ):
         abort(403)
 
     selected_ids = request.form.getlist("parallel_assignee_ids")
@@ -8301,7 +8216,7 @@ def authorize_parallel_assignees(request_id: int, step_order: int):
         )
         sync_correspondence_from_workflow(
             req,
-            actor_user_id=current_user.id,
+            actor_user_id=acting_user.id,
             note=(
                 f"توجيه الخطوة المتزامنة {step_order} في مسار #{req.id} "
                 f"إلى {len(selected)} مشارك/مشاركين"
@@ -8324,20 +8239,8 @@ def authorize_parallel_assignees(request_id: int, step_order: int):
 def bypass_parallel_assignee(request_id: int, step_order: int):
     req = WorkflowRequest.query.get_or_404(request_id)
 
-    # Delegation-aware viewer
-    effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or (
-        not is_confidential_workflow(req)
-        and _user_can_view_request(effective_user, req)
-    )
-    if not can_view and not is_confidential_workflow(req):
-        try:
-            for d in (get_active_delegations() or []):
-                if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
-                    can_view = True
-                    break
-        except Exception:
-            pass
+    # Delegation-aware viewer: only the selected persona is considered.
+    can_view = _actor_context_can_view_request(req, _workflow_actor_users())
     if not can_view:
         abort(403)
 
@@ -8353,29 +8256,20 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
         flash("هذه ليست خطوة متزامنة.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
-    # Who is allowed to bypass?
-    acting_user = None
-    used_delegation = None
+    # The bypass authority belongs to the selected persona, not to the
+    # delegate's personal account.  This keeps an active delegation from
+    # silently lending either identity's unrelated authority to the other.
+    acting_user = _workflow_actor()
+    used_delegation = get_active_delegation()
+    may_bypass = False
+    if _is_admin(acting_user):
+        may_bypass = True
+    elif int(getattr(inst, "last_step_actor_id", 0) or 0) == int(acting_user.id):
+        may_bypass = True
+    elif can_committee_chair_bypass_parallel_step(acting_user.id, step):
+        may_bypass = True
 
-    if current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN"):
-        acting_user = current_user
-    elif int(getattr(inst, "last_step_actor_id", 0) or 0) == int(current_user.id):
-        acting_user = current_user
-    elif can_committee_chair_bypass_parallel_step(current_user.id, step):
-        # A delegate cannot use the chair's bypass authority.
-        acting_user = current_user
-    else:
-        try:
-            for d in (get_active_delegations() or []):
-                u = getattr(d, "from_user", None)
-                if u and int(getattr(inst, "last_step_actor_id", 0) or 0) == int(u.id):
-                    acting_user = u
-                    used_delegation = d
-                    break
-        except Exception:
-            pass
-
-    if not acting_user:
+    if not may_bypass:
         abort(403)
 
     bypass_all = (request.form.get("bypass_all") or "").strip() == "1"
@@ -8407,7 +8301,7 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
             )
             sync_correspondence_from_workflow(
                 req,
-                actor_user_id=current_user.id,
+                actor_user_id=acting_user.id,
                 note=f"تجاوز المتبقين في الخطوة {step_order} من مسار #{req.id}: {reason}",
             )
             db.session.commit()
@@ -8434,7 +8328,7 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
         )
         sync_correspondence_from_workflow(
             req,
-            actor_user_id=current_user.id,
+            actor_user_id=acting_user.id,
             note=f"تجاوز مستخدم في الخطوة {step_order} من مسار #{req.id}: {reason}",
         )
         db.session.commit()
@@ -8454,10 +8348,10 @@ def bypass_parallel_assignee(request_id: int, step_order: int):
 @login_required
 def remove_request_mention(request_id: int, mentioned_user_id: int):
     req = WorkflowRequest.query.get_or_404(request_id)
+    working_user = _workflow_actor()
 
-    # A mention can be removed only by the person who added it, or by a
-    # super-admin. Delegation does not transfer this ownership.
-    if not _user_can_view_request(current_user, req):
+    # The selected persona owns its visible workflow contributions.
+    if not _actor_context_can_view_request(req, [working_user]):
         abort(403)
 
     active_grant = _active_mention_access_logs(req.id).get(int(mentioned_user_id))
@@ -8465,8 +8359,9 @@ def remove_request_mention(request_id: int, mentioned_user_id: int):
         flash("هذا المستخدم غير مضاف حاليًا بالمنشن.", "warning")
         return redirect(url_for("workflow.view_request", request_id=req.id))
 
-    is_super_admin_user = bool(current_user.has_role("SUPER_ADMIN"))
-    if not is_super_admin_user and int(getattr(active_grant, "user_id", 0) or 0) != int(current_user.id):
+    is_super_admin_user = bool(working_user.has_role("SUPER_ADMIN"))
+    grant_owner = audit_principal(active_grant) or getattr(active_grant, "actual_user", None) or getattr(active_grant, "user", None)
+    if not is_super_admin_user and int(getattr(grant_owner, "id", 0) or 0) != int(working_user.id):
         abort(403)
 
     mentioned_user = User.query.get(int(mentioned_user_id))
@@ -8492,13 +8387,13 @@ def remove_request_mention(request_id: int, mentioned_user_id: int):
             if task.status == "PENDING":
                 task.status = "BYPASSED"
                 task.response = "NONE"
-                task.bypassed_by_id = int(current_user.id)
+                task.bypassed_by_id = int(working_user.id)
                 task.bypass_reason = "Removed from workflow mention"
                 task.bypassed_at = now
 
         db.session.add(AuditLog(
             request_id=req.id,
-            user_id=current_user.id,
+            user_id=working_user.id,
             action=MENTION_ACCESS_REVOKED_ACTION,
             old_status=req.status,
             new_status=req.status,
@@ -8527,7 +8422,8 @@ def remove_request_mention(request_id: int, mentioned_user_id: int):
 @login_required
 def delete_workflow_comment(request_id, audit_log_id):
     """Allow only super admins to remove a workflow comment or legacy reply."""
-    if not is_super_admin(current_user):
+    working_user = _workflow_actor()
+    if not is_super_admin(working_user):
         abort(403)
 
     req = WorkflowRequest.query.get_or_404(request_id)
@@ -8540,7 +8436,7 @@ def delete_workflow_comment(request_id, audit_log_id):
         db.session.add(
             AuditLog(
                 request_id=req.id,
-                user_id=current_user.id,
+                user_id=working_user.id,
                 action="WORKFLOW_COMMENT_DELETED",
                 old_status=req.status,
                 new_status=req.status,
@@ -8567,7 +8463,8 @@ def delete_workflow_comment(request_id, audit_log_id):
 @login_required
 def manage_secretary_endorsements():
     """Add or remove prepared endorsements for one selected audience."""
-    if not _can_manage_quick_endorsements(current_user):
+    working_user = _workflow_actor()
+    if not _can_manage_quick_endorsements(working_user):
         abort(403)
 
     action = (request.form.get("action") or "").strip().upper()
@@ -8612,14 +8509,14 @@ def manage_secretary_endorsements():
                         .filter(WorkflowQuickEndorsement.audience == audience)
                         .scalar() or 0
                     ) + 1,
-                    created_by_id=current_user.id,
+                    created_by_id=working_user.id,
                 )
                 db.session.add(row)
                 db.session.flush()
                 audit_action = "WORKFLOW_ENDORSEMENT_CREATED"
 
             db.session.add(AuditLog(
-                user_id=current_user.id,
+                user_id=working_user.id,
                 action=audit_action,
                 note=text,
                 target_type=f"WORKFLOW_{audience}_ENDORSEMENT",
@@ -8642,7 +8539,7 @@ def manage_secretary_endorsements():
                 abort(404)
             row.is_active = False
             db.session.add(AuditLog(
-                user_id=current_user.id,
+                user_id=working_user.id,
                 action="WORKFLOW_ENDORSEMENT_REMOVED",
                 note=row.text,
                 target_type=f"WORKFLOW_{audience}_ENDORSEMENT",
@@ -8665,25 +8562,12 @@ def manage_secretary_endorsements():
 def add_request_note(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
     execution = get_execution_context()
+    working_user = _workflow_actor()
     explicit_decisions = []
 
     
 
-    # Delegation-aware viewer:
-    # allow current_user + primary effective_user + ANY active delegator (if multiple delegations exist)
-    effective_user = get_effective_user()
-    can_view = _user_can_view_request(current_user, req) or (
-        not is_confidential_workflow(req)
-        and _user_can_view_request(effective_user, req)
-    )
-    if not can_view and not is_confidential_workflow(req):
-        try:
-            for d in (get_active_delegations() or []):
-                if d and getattr(d, "from_user", None) and _user_can_view_request(d.from_user, req):
-                    can_view = True
-                    break
-        except Exception:
-            pass
+    can_view = _actor_context_can_view_request(req, _workflow_actor_users())
 
     if not can_view:
         abort(403)
@@ -8726,9 +8610,9 @@ def add_request_note(request_id):
         # a Secretary-General endorsement by supplying its database ID.
         if not endorsement_audience:
             allowed_audiences = []
-            if _can_use_secretary_endorsements(current_user):
+            if _can_use_secretary_endorsements(working_user):
                 allowed_audiences.append(ENDORSEMENT_AUDIENCE_SECRETARY)
-            if _can_use_employee_endorsements(current_user):
+            if _can_use_employee_endorsements(working_user):
                 allowed_audiences.append(ENDORSEMENT_AUDIENCE_EMPLOYEE)
             if len(allowed_audiences) != 1:
                 abort(403 if not allowed_audiences else 400)
@@ -8736,12 +8620,12 @@ def add_request_note(request_id):
 
         if (
             endorsement_audience == ENDORSEMENT_AUDIENCE_SECRETARY
-            and not _can_use_secretary_endorsements(current_user)
+            and not _can_use_secretary_endorsements(working_user)
         ):
             abort(403)
         if (
             endorsement_audience == ENDORSEMENT_AUDIENCE_EMPLOYEE
-            and not _can_use_employee_endorsements(current_user)
+            and not _can_use_employee_endorsements(working_user)
         ):
             abort(403)
 
@@ -8797,7 +8681,7 @@ def add_request_note(request_id):
         if note:
             db.session.add(AuditLog(
                 request_id=req.id,
-                user_id=current_user.id,
+                user_id=working_user.id,
                 action=f"WORKFLOW_{kind}",
                 old_status=req.status,
                 new_status=req.status,
@@ -8810,7 +8694,7 @@ def add_request_note(request_id):
         attached_count = 0
         for fs in uploaded_files:
             for archived, saved_path in _save_upload_with_embedded_email_attachments(
-                fs, owner_id=current_user.id, visibility="workflow", description=None
+                fs, owner_id=working_user.id, visibility="workflow", description=None
             ):
                 if hasattr(archived, "workflow_request_id"):
                     setattr(archived, "workflow_request_id", req.id)
@@ -8826,7 +8710,7 @@ def add_request_note(request_id):
                     step_order=step_order,
                     source=f"NOTE_{kind}",
                     original_name=archived.original_name,
-                    uploaded_by_id=current_user.id,
+                    uploaded_by_id=working_user.id,
                 )
                 attached_count += 1
 
@@ -8834,11 +8718,7 @@ def add_request_note(request_id):
         _complete_mention_task_after_contribution(
             req,
             inst,
-            user_id=(
-                execution.get("acting_for_user_id")
-                if execution.get("execution_context") != "SELF"
-                else current_user.id
-            ),
+            user_id=working_user.id,
             step_order=step_order,
             contribution=contribution,
         )
@@ -8851,7 +8731,7 @@ def add_request_note(request_id):
             step_order=step_order,
         )
 
-        actor_label = current_user.email
+        actor_label = working_user.full_name or working_user.email
 
         # 4) Notifications
         # Build message (note + attachments)
@@ -8864,7 +8744,7 @@ def add_request_note(request_id):
 
         notified_user_ids = set()
 
-        if current_user.id == req.requester_id:
+        if working_user.id == req.requester_id:
             # Requester -> notify current pending approvers (if any)
             target_ids = []
             if inst:
@@ -8888,7 +8768,7 @@ def add_request_note(request_id):
             for uid in set(target_ids):
                 notified_user_ids.add(int(uid))
                 emit_event(
-                    actor_id=current_user.id,
+                    actor_id=working_user.id,
                     action="WORKFLOW_REQUESTER_NOTE",
                     message=f"تحديث من مقدم الطلب على الطلب #{req.id}: {msg_tail}",
                     target_type="WorkflowRequest",
@@ -8904,7 +8784,7 @@ def add_request_note(request_id):
             label = "تعليق"
             notified_user_ids.add(int(req.requester_id))
             emit_event(
-                actor_id=current_user.id,
+                actor_id=working_user.id,
                 action="WORKFLOW_NOTE",
                 message=f"{label} على طلبك #{req.id} من {actor_label}: {msg_tail}",
                 target_type="WorkflowRequest",
@@ -8918,15 +8798,15 @@ def add_request_note(request_id):
         # ✅ Followers: notify previous approvers so they stay informed
         try:
             followers = _get_request_followers_user_ids(req.id)
-            followers.discard(int(current_user.id))
+            followers.discard(int(working_user.id))
             # avoid duplicates for users already notified above
             for uid in notified_user_ids:
                 followers.discard(int(uid))
             if followers:
-                label2 = "تحديث" if current_user.id == req.requester_id else ("تعليق" if kind == "COMMENT" else "رد")
+                label2 = "تحديث" if working_user.id == req.requester_id else ("تعليق" if kind == "COMMENT" else "رد")
                 for uid in sorted(followers):
                     emit_event(
-                        actor_id=current_user.id,
+                        actor_id=working_user.id,
                         action="WORKFLOW_FOLLOWER_UPDATE",
                         message=f"{label2} على الطلب #{req.id} من {actor_label}: {msg_tail}",
                         target_type="WorkflowRequest",

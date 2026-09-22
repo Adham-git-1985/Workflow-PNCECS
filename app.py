@@ -63,10 +63,16 @@ from assistant import assistant_bp
 
 
 from filters.request_filters import apply_request_filters
-from utils.permissions import get_effective_user
+from utils.permissions import get_effective_user, prepare_identity_choice, reset_identity_choice
 from utils.acting_authorization import load_execution_context
 from utils.request_audit import register_request_audit
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
+from utils.delegation_privacy import (
+    audit_display_actor,
+    audit_display_note,
+    can_view_delegation_details,
+    redact_super_admin_references,
+)
 from utils.timezone import format_local_datetime
 from utils.runtime_schema import should_run_runtime_schema_sync
 from filters.request_filters import get_sla_state
@@ -171,6 +177,27 @@ app.jinja_env.filters["ui_label"] = ui_label
 app.jinja_env.filters["ui_text"] = ui_text
 app.jinja_env.filters["workflow_status_label"] = workflow_status_label
 app.jinja_env.filters["local_datetime"] = format_local_datetime
+app.jinja_env.globals["audit_display_actor"] = audit_display_actor
+app.jinja_env.globals["audit_display_note"] = audit_display_note
+app.jinja_env.globals["can_view_delegation_details"] = can_view_delegation_details
+
+
+@app.context_processor
+def inject_working_identity():
+    """Expose the selected public/working identity to base templates.
+
+    ``current_user`` intentionally remains the technical login account so
+    audit hooks can retain it.  Templates use this value only for the visible
+    working persona; private notifications and account settings keep using the
+    real account.
+    """
+    working_user = current_user
+    try:
+        if getattr(current_user, "is_authenticated", False):
+            working_user = get_effective_user() or current_user
+    except Exception:
+        pass
+    return {"working_user": working_user}
 
 # Cache func
 def get_unread_count(user_id, source="workflow"):
@@ -1889,11 +1916,32 @@ def log_session():
         if getattr(current_user, 'is_authenticated', False):
             get_effective_user()  # loads g.delegation / g.effective_user
             load_execution_context()  # loads explicit acting/formal context
+            prepare_identity_choice()  # asks the delegate to choose self/principal once per login
     except Exception:
         pass
 
 
 register_request_audit(app)
+
+
+@app.after_request
+def redact_restricted_role_title(response):
+    """Keep the super-admin title visible only to administrators themselves."""
+    try:
+        content_type = (response.mimetype or "").lower()
+        if content_type not in {"text/html", "application/json"}:
+            return response
+        if response.direct_passthrough:
+            return response
+        original = response.get_data(as_text=True)
+        redacted = redact_super_admin_references(original)
+        if redacted != original:
+            response.set_data(redacted)
+    except Exception:
+        # A presentation rule must never turn a successful operation into an
+        # error response.
+        pass
+    return response
 
 @login_manager.unauthorized_handler
 def unauthorized():
@@ -1968,6 +2016,10 @@ def login():
                 pass
 
         login_user(user)
+        # Do not carry a previous browser session's delegated identity into a
+        # fresh login.  A delegate is always asked whether to work personally
+        # or under one of the currently valid grants.
+        reset_identity_choice()
         logger.info(
             f"Login success | user_id={user.id} | authenticated={current_user.is_authenticated}"
         )
@@ -1979,6 +2031,7 @@ def login():
 @app.route("/logout")
 @login_required
 def logout():
+    reset_identity_choice()
     logout_user()
     return redirect(url_for("login"))
 

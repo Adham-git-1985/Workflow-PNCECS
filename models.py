@@ -90,6 +90,35 @@ class CommitteeAssignee(db.Model):
 # ======================
 # Users
 # ======================
+def _selected_principal_for_current_account(user):
+    """Return the selected principal when *user* is the real login account.
+
+    Flask-Login deliberately remains bound to the technical executor so that
+    auditing can retain it.  Permission and role checks, however, must be
+    evaluated as the one identity the executor chose for this request.
+    """
+    try:
+        from flask import has_request_context
+        from flask_login import current_user
+        from utils.permissions import (
+            get_effective_user,
+            is_delegated_identity_selected,
+        )
+
+        if not has_request_context() or not is_delegated_identity_selected():
+            return None
+        if not getattr(current_user, "is_authenticated", False):
+            return None
+        if int(getattr(user, "id", 0) or 0) != int(current_user.id):
+            return None
+        principal = get_effective_user()
+        if principal is not None and int(principal.id) != int(current_user.id):
+            return principal
+    except Exception:
+        return None
+    return None
+
+
 class User(db.Model, UserMixin):
     __tablename__ = "users"
 
@@ -151,16 +180,11 @@ class User(db.Model, UserMixin):
 
         key = (key or "").strip().upper()
 
-        # IMPORTANT: Delegation must NOT reduce the privileges of the real logged-in account.
-        # We evaluate the current user's own permissions first, then (optionally) OR with the
-        # effective (delegator) user's permissions.
-        eff = None
-        try:
-            from flask import has_request_context, g  # type: ignore
-            if has_request_context():
-                eff = getattr(g, "effective_user", None)
-        except Exception:
-            eff = None
+        # The technical login account stays available in flask.g for audit,
+        # but a selected delegated context is a single working identity.
+        principal = _selected_principal_for_current_account(self)
+        if principal is not None:
+            return bool(principal.has_perm(key))
 
         # SUPER/ADMIN can do everything (robust against naming variations), even if delegation is active.
         try:
@@ -294,17 +318,7 @@ class User(db.Model, UserMixin):
                 return all(f"{base}_{act}" in perms_list for act in actions)
             return False
 
-        # Evaluate self permissions first
-        if _eval(perms):
-            return True
-
-        # If delegation is active, OR with effective user's permissions.
-        try:
-            if eff is not None and getattr(eff, "id", None) is not None and eff.id != self.id:
-                return bool(eff.has_perm(key))
-        except Exception:
-            pass
-        return False
+        return _eval(perms)
 
     def has_role(self, role_name):
         """Return True if the user has the given role.
@@ -319,15 +333,9 @@ class User(db.Model, UserMixin):
         - SUPERADMIN inherits ADMIN privileges.
         """
 
-        # IMPORTANT: Delegation must NOT reduce the privileges of the real logged-in account.
-        # We evaluate self role first, then (optionally) OR with the effective (delegator) role.
-        eff = None
-        try:
-            from flask import has_request_context, g  # type: ignore
-            if has_request_context():
-                eff = getattr(g, "effective_user", None)
-        except Exception:
-            eff = None
+        principal = _selected_principal_for_current_account(self)
+        if principal is not None:
+            return bool(principal.has_role(role_name))
 
         def _norm(x: str) -> str:
             """Normalize role/code text very defensively.
@@ -412,12 +420,6 @@ class User(db.Model, UserMixin):
         if mine == want or roles_equivalent(mine, want):
             return True
 
-        # If delegation is active, OR with effective user's role.
-        try:
-            if eff is not None and getattr(eff, "id", None) is not None and eff.id != self.id:
-                return bool(eff.has_role(role_name))
-        except Exception:
-            pass
         return False
 
     def has_role_perm(self, permission: str) -> bool:
@@ -427,6 +429,10 @@ class User(db.Model, UserMixin):
         - Otherwise: checks RolePermission where role matches current user's role (case-insensitive)
           and permission matches (case-insensitive stored as upper).
         """
+        principal = _selected_principal_for_current_account(self)
+        if principal is not None:
+            return bool(principal.has_role_perm(permission))
+
         perm = (permission or "").strip().upper()
         # SUPERADMIN can do everything
         if self.has_role("SUPERADMIN") or self.has_role("SUPER_ADMIN"):
@@ -1080,7 +1086,23 @@ def _populate_execution_audit_fields(mapper, connection, target):
         elif getattr(target, "user_id", None) is None:
             target.user_id = getattr(target, "actual_user_id", None)
 
-        acting_for_id = getattr(g, "acting_for_user_id", None)
+        # A selected legacy delegation is intentionally separate from the
+        # scoped execution context.  It still needs the same canonical audit
+        # identity, otherwise generic ORM inserts would expose the delegatee
+        # as the public actor.
+        legacy_delegation = getattr(g, "delegation", None)
+        legacy_principal = getattr(g, "effective_user", None)
+        legacy_principal_id = getattr(legacy_principal, "id", None) if legacy_delegation else None
+        if legacy_principal_id and context_actual_id and int(legacy_principal_id) != int(context_actual_id):
+            if getattr(target, "on_behalf_of_id", None) is None:
+                target.on_behalf_of_id = int(legacy_principal_id)
+            if getattr(target, "delegation_id", None) is None and getattr(legacy_delegation, "id", None):
+                target.delegation_id = int(legacy_delegation.id)
+
+        context_principal_id = getattr(g, "acting_for_user_id", None)
+        if context_principal_id and context_actual_id and int(context_principal_id) == int(context_actual_id):
+            context_principal_id = None
+        acting_for_id = legacy_principal_id or context_principal_id
         acting_for_id = acting_for_id or getattr(target, "acting_for_user_id", None)
         acting_for_id = acting_for_id or getattr(target, "on_behalf_of_id", None)
         if acting_for_id and context_actual_id and int(acting_for_id) != int(context_actual_id):
@@ -1095,6 +1117,8 @@ def _populate_execution_audit_fields(mapper, connection, target):
             target.formal_delegation_id = int(formal_delegation_id)
 
         execution_context = getattr(g, "execution_context", None)
+        if legacy_principal_id and context_actual_id and int(legacy_principal_id) != int(context_actual_id):
+            execution_context = "ACTING"
         if (
             execution_context in (None, "SELF")
             and acting_for_id

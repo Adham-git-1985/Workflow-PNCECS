@@ -106,17 +106,18 @@
                     <tr>
                         <td>{{ log.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
                         <td>
-                            {% if log.user %}
-                                {{ highlight(log.user.full_name, search_terms) }}
-                                {% if log.user.email and log.user.email != log.user.full_name %}
-                                    <div class="small text-muted">{{ highlight(log.user.email, search_terms) }}</div>
+                            {% set _display_actor = audit_display_actor(log) %}
+                            {% if _display_actor %}
+                                {{ highlight(_display_actor.full_name, search_terms) }}
+                                {% if _display_actor.email and _display_actor.email != _display_actor.full_name %}
+                                    <div class="small text-muted">{{ highlight(_display_actor.email, search_terms) }}</div>
                                 {% endif %}
                             {% else %}
                                 -
                             {% endif %}
                         </td>
                         <td>{{ highlight(log.action|ui_label, search_terms) }}</td>
-                        <td>{{ highlight((log.note|ui_text) or "-", search_terms) }}</td>
+                        <td>{{ highlight((audit_display_note(log)|ui_text) or "-", search_terms) }}</td>
                         <td class="text-center">
                             {{ log.request.id if log.request else "-" }}
                         </td>

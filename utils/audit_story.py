@@ -6,6 +6,12 @@ import json
 import re
 from typing import Any, Iterable
 
+from utils.delegation_privacy import (
+    audit_display_actor,
+    audit_display_note,
+    audit_principal,
+    can_view_delegation_details,
+)
 from utils.ui_labels import ui_label, ui_text
 
 
@@ -244,10 +250,16 @@ def humanize_audit_note(note: Any) -> str:
 
 
 def _actor_name(log: Any) -> str:
-    user = _get(log, "user")
+    user = audit_display_actor(log)
     actor = _get(user, "full_name") or _get(user, "email") or "النظام تلقائيًا"
 
-    behalf_user = _get(log, "on_behalf_of_user")
+    # The delegation relationship itself is private.  The real actor and the
+    # principal (as well as administrators) may see it; other viewers see the
+    # principal as the sole actor.
+    if not can_view_delegation_details(log):
+        return str(actor)
+
+    behalf_user = audit_principal(log)
     behalf_name = _get(behalf_user, "full_name") or _get(behalf_user, "email")
     if behalf_name:
         return f"{actor}، نيابةً عن {behalf_name}"
@@ -400,7 +412,7 @@ def build_audit_story_entries(
             "time_label": created_at.strftime("%H:%M"),
             "connector": connector,
             "sentence": _action_sentence(_get(log, "action"), actor),
-            "detail": humanize_audit_note(_get(log, "note")),
+            "detail": humanize_audit_note(audit_display_note(log)),
             "status_sentence": _status_sentence(log),
             "request_id": request_id,
             "request_summary": _request_summary(request_id, request_meta),

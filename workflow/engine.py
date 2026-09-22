@@ -1493,7 +1493,7 @@ def reopen_workflow_to_step(
             message=f"أُعيد فتح الطلب #{req.id} ويحتاج إجراءً في الخطوة {target_order}.",
             ntype="WORKFLOW",
             role=target_step.approver_role,
-            actor_id=int(actor_user_id),
+            actor_id=int(effective_user_id or actor_user_id),
             track_for_actor=True,
             req=req,
             task_assignment=True,
@@ -1506,7 +1506,7 @@ def reopen_workflow_to_step(
             [req.requester_id],
             message=f"أُعيد فتح طلبك #{req.id} للمتابعة من الخطوة {target_order}.",
             ntype="WORKFLOW",
-            actor_id=int(actor_user_id),
+            actor_id=int(effective_user_id or actor_user_id),
             req=req,
         )
 
@@ -1555,7 +1555,11 @@ def _bypass_parallel_task_legacy(
     eff = User.query.get(effective_user_id)
     actor_label = actor.full_name if actor else f"User#{actor_user_id}"
     eff_label = eff.full_name if eff else f"User#{effective_user_id}"
-    actor_display = actor_label if not on_behalf_of_id else f"{actor_label} (مفوّض عن {eff_label})"
+    # Workflow history, messages and notifications are public to request
+    # participants.  When authority is delegated, they must identify the
+    # principal, never the technical delegate.  The latter remains available
+    # in the restricted AuditLog execution fields.
+    actor_display = eff_label if on_behalf_of_id else actor_label
 
     is_admin = bool(eff and (eff.has_role("SUPER_ADMIN") or eff.has_role("ADMIN")))
     if not is_admin and int(inst.last_step_actor_id or 0) != int(effective_user_id):
@@ -1707,7 +1711,7 @@ def bypass_parallel_task(
     actor_label = (actor_user.full_name if actor_user else f"User#{actor_user_id}")
     # eff_user loaded above
     eff_label = (eff_user.full_name if eff_user else f"User#{effective_user_id}")
-    actor_display = actor_label if not on_behalf_of_id else f"{actor_label} (مفوّض عن {eff_label})"
+    actor_display = eff_label if on_behalf_of_id else actor_label
     db.session.add(
         AuditLog(
             user_id=actor_user_id,
@@ -1745,12 +1749,12 @@ def bypass_parallel_task(
                     on_behalf_of_id=on_behalf_of_id,
                 )
             )
-            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
         else:
             inst.current_step_order = next_order
             _activate_step_sla(next_step, started_at=now, reset=True)
             msg = f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}"
-            _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+            _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
 
             if _is_parallel_sync(next_step):
                 _ensure_parallel_tasks(req, inst, next_step)
@@ -1843,7 +1847,7 @@ def bypass_all_parallel_tasks(
 
     actor_label = (actor_user.full_name if actor_user else f"User#{actor_user_id}")
     eff_label = (eff_user.full_name if eff_user else f"User#{effective_user_id}")
-    actor_display = actor_label if not on_behalf_of_id else f"{actor_label} (مفوّض عن {eff_label})"
+    actor_display = eff_label if on_behalf_of_id else actor_label
 
     db.session.add(
         AuditLog(
@@ -1881,11 +1885,11 @@ def bypass_all_parallel_tasks(
                     on_behalf_of_id=on_behalf_of_id,
                 )
             )
-            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+            _notify_users([req.requester_id], message=f"تم إنجاز الطلب #{req.id} ✅", ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
         else:
             inst.current_step_order = next_order
             _activate_step_sla(next_step, started_at=now, reset=True)
-            _notify_users([req.requester_id], message=f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}", ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+            _notify_users([req.requester_id], message=f"اكتملت الخطوة المتزامنة للطلب #{req.id} وتم تحويله للخطوة {next_order} بواسطة {actor_display}", ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
 
             if _is_parallel_sync(next_step):
                 _ensure_parallel_tasks(req, inst, next_step)
@@ -1963,8 +1967,8 @@ def decide_step(
 
     actor_label = (actor.email if actor else f"User#{actor_user_id}")
     eff_label = (effective_user.email if effective_user else f"User#{effective_user_id}")
-    # For notifications/messages
-    actor_display = actor_label if not on_behalf_of_id else f"{actor_label} (مفوّض عن {eff_label})"
+    # For notifications/messages, publish the selected principal identity.
+    actor_display = eff_label if on_behalf_of_id else actor_label
 
     hierarchy_bypassed_steps: list[WorkflowInstanceStep] = []
     if int(step_order) != int(inst.current_step_order or 0):
@@ -2071,7 +2075,7 @@ def decide_step(
                         message=f"طلب جديد يحتاج إجراء: #{req.id} (الخطوة {next_order})",
                         ntype="WORKFLOW",
                         role=next_step.approver_role,
-                        actor_id=actor_user_id,
+                        actor_id=effective_user_id,
                         track_for_actor=True,
                         req=req,
                         task_assignment=True,
@@ -2211,7 +2215,7 @@ def decide_step(
                     "تم تجاوز انتظار خطوتك، وستبقى مطلعاً على جميع التحديثات اللاحقة."
                 ),
                 ntype="WORKFLOW",
-                actor_id=actor_user_id,
+                actor_id=effective_user_id,
                 track_for_actor=True,
                 req=req,
             )
@@ -2267,7 +2271,7 @@ def decide_step(
         msg = f"تم توقيف مسار طلبك #{req.id} (الخطوة {step_order}) بواسطة {actor_display}"
         if note:
             msg += f" | السبب/الملاحظة: {note}"
-        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
 
         # ✅ Notify followers (previous approvers) so they can keep tracking the workflow
         follower_ids = set(_resolve_followers_user_ids(inst.id))
@@ -2375,7 +2379,7 @@ def decide_step(
         msg = f"تمت متابعة طلبك #{req.id} حتى اكتمال المسار بواسطة {actor_display}"
         if note:
             msg += f" | ملاحظة: {note}"
-        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+        _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
 
         # ✅ Notify followers (previous approvers)
         follower_ids = set(_resolve_followers_user_ids(inst.id))
@@ -2400,7 +2404,7 @@ def decide_step(
     msg = f"تمت متابعة طلبك #{req.id} (الخطوة {step_order}) بواسطة {actor_display} وتم تحويله للخطوة {next_order}"
     if note:
         msg += f" | ملاحظة: {note}"
-    _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=actor_user_id, track_for_actor=True, req=req)
+    _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
 
     if _is_parallel_sync(next_step):
         authorize_parallel_step(
