@@ -41,6 +41,7 @@ from portal.routes import (
     _casual_leave_policy_error,
     _can_review_manual_attendance,
     _convert_auto_annual_leave_after_sick_approval,
+    _leave_balance_display_values,
     _leave_used_days,
     _manual_attendance_event_rows_for_report,
     _process_unrecorded_office_attendance,
@@ -49,6 +50,7 @@ from portal.routes import (
     hr_attendance_daily,
     hr_attendance_manual_edit,
     hr_attendance_manual_review,
+    hr_leave_cancel_by_hr,
     hr_leaves_admin_edit,
     hr_leave_request_edit,
 )
@@ -442,6 +444,96 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(auto_leave.replacement_reason, "LATE_CLOCK_ATTENDANCE")
         self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
 
+    def test_hr_cancelling_automatic_leave_releases_its_full_balance_charge(self):
+        administrator = self._user(
+            "automatic-cancel-admin@example.test",
+            "Automatic cancel administrator",
+            "ADMIN",
+            employee_file=False,
+        )
+        employee = self._user(
+            "automatic-cancel-employee@example.test",
+            "Automatic cancel employee",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual leave",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        db.session.add(annual)
+        db.session.flush()
+        automatic = HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            entered_by="SYSTEM",
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+            status="APPROVED",
+        )
+        db.session.add(automatic)
+        db.session.commit()
+
+        self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 1.0)
+
+        with self.app.test_request_context(
+            f"/portal/hr/approvals/leaves/{automatic.id}/cancel",
+            method="POST",
+            data={"cancel_note": "Attendance was verified."},
+        ):
+            login_user(administrator)
+            response = hr_leave_cancel_by_hr(automatic.id)
+            self.assertEqual(response.status_code, 302)
+            logout_user()
+
+        db.session.expire_all()
+        cancelled = db.session.get(HRLeaveRequest, automatic.id)
+        self.assertEqual(cancelled.status, "CANCELLED")
+        self.assertEqual(
+            cancelled.replacement_reason,
+            "ADMINISTRATIVE_AFFAIRS_MANUAL_ROLLBACK",
+        )
+        self.assertIsNotNone(cancelled.replaced_at)
+        self.assertEqual(cancelled.cancel_note, "Attendance was verified.")
+        self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
+
+    def test_legacy_cancelled_automatic_leave_no_longer_consumes_balance(self):
+        employee = self._user(
+            "legacy-automatic-cancel@example.test",
+            "Legacy automatic cancel employee",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual leave",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        db.session.add(annual)
+        db.session.flush()
+        db.session.add(HRLeaveRequest(
+            user_id=employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            entered_by="SYSTEM",
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+            status="CANCELLED",
+            cancelled_from_status="APPROVED",
+            # This mimics the former generic cancellation path, which used
+            # the cancellation day and therefore retained a past charge.
+            cancel_effective_date="2026-09-22",
+        ))
+        db.session.commit()
+
+        self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
+
     def test_bulk_rollback_releases_only_selected_automatic_leave_charges(self):
         first_employee = self._user("rollback-first@example.test", "First employee")
         second_employee = self._user("rollback-second@example.test", "Second employee")
@@ -479,6 +571,11 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         db.session.add_all((first_auto, second_auto))
         db.session.commit()
 
+        self.assertEqual(
+            _leave_balance_display_values(first_employee.id, annual, 2026)["remaining"],
+            29.0,
+        )
+
         released = _rollback_attendance_auto_annual_leaves(
             start_day=date(2026, 9, 14),
             end_day=date(2026, 9, 14),
@@ -496,6 +593,10 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(second_auto.status, "APPROVED")
         self.assertEqual(_leave_used_days(first_employee.id, annual.id, 2026), 0.0)
         self.assertEqual(_leave_used_days(second_employee.id, annual.id, 2026), 1.0)
+        self.assertEqual(
+            _leave_balance_display_values(first_employee.id, annual, 2026)["remaining"],
+            30.0,
+        )
 
     def test_auto_annual_is_reversed_when_office_schedule_changes_to_remote_or_off(self):
         remote_employee = self._user(

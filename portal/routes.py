@@ -11465,6 +11465,8 @@ def hr_report_diwan():
                      .filter(HRLeaveRequest.status.in_(['APPROVED', 'CANCELLED']))
                      .order_by(HRLeaveRequest.start_date.asc(), HRLeaveRequest.id.asc()))
                 for r in q.all():
+                    if _attendance_auto_leave_is_released(r):
+                        continue
                     # Count CANCELLED only if it was cancelled from APPROVED
                     if (r.status or '').upper() == 'CANCELLED':
                         if (r.cancelled_from_status or '').upper() != 'APPROVED':
@@ -17293,6 +17295,8 @@ def _my_attendance_month_rows(
         .all()
     )
     for leave in leaves:
+        if _attendance_auto_leave_is_released(leave):
+            continue
         leave_status = (leave.status or "").upper()
         leave_end = leave.end_date
         if leave_status == "CANCELLED":
@@ -19944,7 +19948,8 @@ def hr_approval_leave(req_id: int):
 def hr_leave_cancel_by_hr(req_id: int):
     """HR manager cancels a leave request (even after start date).
 
-    Cancellation stops any future deduction; past days remain counted.
+    Cancellation stops any future deduction; past days remain counted.  A
+    machine-created attendance charge is the exception and is fully released.
     """
     try:
         if not current_user.has_perm(HR_READ):
@@ -19962,6 +19967,35 @@ def hr_leave_cancel_by_hr(req_id: int):
 
     today_str = date.today().strftime("%Y-%m-%d")
     prev = st or None
+
+    if (
+        st == "APPROVED"
+        and (r.source or "").upper() == ATTENDANCE_AUTO_LEAVE_SOURCE
+    ):
+        # A machine-created absence is an attendance charge, not an ordinary
+        # leave that has already been taken.  Its cancellation must release
+        # the entire day even after that date has passed.
+        cancel_request_flow(KIND_LEAVE, r.id)
+        _release_attendance_auto_annual_leave_row(
+            r,
+            reason="ADMINISTRATIVE_AFFAIRS_MANUAL_ROLLBACK",
+            actor_id=int(current_user.id),
+            cancel_note=(request.form.get("cancel_note") or "").strip()
+            or "إلغاء الخصم الآلي من رصيد الإجازة",
+        )
+        db.session.flush()
+        _attendance_recompute_summaries_for_keys(
+            _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
+        )
+        db.session.commit()
+
+        flash(
+            "تم إلغاء الخصم الآلي واسترداده كاملاً إلى الرصيد.",
+            "success",
+        )
+        if (request.form.get("return_to") or "").strip() == "LEAVES_ADMIN_LOG":
+            return redirect(url_for("portal.hr_leaves_admin_log"))
+        return redirect(url_for("portal.hr_approval_leave", req_id=req_id))
 
     r.status = "CANCELLED"
     cancel_request_flow(KIND_LEAVE, r.id)
@@ -28966,6 +29000,8 @@ def _leave_balance_usage_by_year(
         )
 
         for leave_request in requests:
+            if _attendance_auto_leave_is_released(leave_request):
+                continue
             request_leave_type = getattr(leave_request, "leave_type", None)
             if not _leave_type_deducts_from_balance(request_leave_type):
                 continue
@@ -29412,6 +29448,22 @@ def _casual_leave_policy_error(
 ATTENDANCE_AUTO_LEAVE_SOURCE = "ATTENDANCE_AUTO"
 
 
+def _attendance_auto_leave_is_released(leave_request: HRLeaveRequest) -> bool:
+    """Whether an automatic attendance charge has been released.
+
+    Older records could be cancelled from the regular leave screen before
+    automatic charges had a replacement marker.  A cancelled automatic charge
+    must never consume the annual balance, regardless of that older marker.
+    """
+    if (getattr(leave_request, "source", None) or "").upper() != ATTENDANCE_AUTO_LEAVE_SOURCE:
+        return False
+    return bool(
+        (getattr(leave_request, "status", None) or "").upper() == "CANCELLED"
+        or getattr(leave_request, "replaced_at", None)
+        or (getattr(leave_request, "replacement_reason", None) or "").strip()
+    )
+
+
 def _attendance_leave_recipient_ids(employee_id: int) -> list[int]:
     recipient_ids = {int(employee_id)}
     recipient_ids.update(int(value) for value in hr_notification_user_ids())
@@ -29445,6 +29497,46 @@ def _add_attendance_leave_notifications(
     return created
 
 
+def _release_attendance_auto_annual_leave_row(
+    annual_row: HRLeaveRequest,
+    *,
+    replacement_leave_request_id: int | None = None,
+    reason: str,
+    actor_id: int | None = None,
+    cancel_note: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Cancel one attendance-created annual charge and release its balance."""
+    now = now or datetime.utcnow()
+    annual_day = _parse_yyyy_mm_dd(
+        annual_row.source_attendance_day or annual_row.start_date
+    )
+    annual_row.cancelled_from_status = "APPROVED"
+    annual_row.status = "CANCELLED"
+    annual_row.cancelled_at = now
+    annual_row.cancelled_by_id = actor_id
+    annual_row.cancel_effective_date = (
+        (annual_day - timedelta(days=1)).isoformat()
+        if annual_day
+        else annual_row.start_date
+    )
+    annual_row.cancel_note = cancel_note or reason
+    annual_row.replaced_by_leave_request_id = replacement_leave_request_id
+    annual_row.replaced_at = now
+    annual_row.replacement_reason = reason[:80]
+    annual_row.updated_at = now
+    _portal_audit(
+        "HR_ATTENDANCE_AUTO_LEAVE_REPLACED",
+        (
+            f"auto_leave_id={annual_row.id}; day={annual_row.source_attendance_day}; "
+            f"replacement_leave_id={replacement_leave_request_id or ''}; reason={reason}"
+        ),
+        target_type="LEAVE_REQUEST",
+        target_id=annual_row.id,
+        user_id=actor_id,
+    )
+
+
 def _replace_attendance_auto_annual_leaves(
     user_id: int,
     start_day: str,
@@ -29466,30 +29558,12 @@ def _replace_attendance_auto_annual_leaves(
         .order_by(HRLeaveRequest.source_attendance_day.asc(), HRLeaveRequest.id.asc())
         .all()
     )
-    now = datetime.utcnow()
     for annual_row in rows:
-        annual_day = _parse_yyyy_mm_dd(annual_row.source_attendance_day or annual_row.start_date)
-        annual_row.cancelled_from_status = "APPROVED"
-        annual_row.status = "CANCELLED"
-        annual_row.cancelled_at = now
-        annual_row.cancelled_by_id = actor_id
-        annual_row.cancel_effective_date = (
-            (annual_day - timedelta(days=1)).isoformat() if annual_day else annual_row.start_date
-        )
-        annual_row.cancel_note = reason
-        annual_row.replaced_by_leave_request_id = replacement_leave_request_id
-        annual_row.replaced_at = now
-        annual_row.replacement_reason = reason[:80]
-        annual_row.updated_at = now
-        _portal_audit(
-            "HR_ATTENDANCE_AUTO_LEAVE_REPLACED",
-            (
-                f"auto_leave_id={annual_row.id}; day={annual_row.source_attendance_day}; "
-                f"replacement_leave_id={replacement_leave_request_id or ''}; reason={reason}"
-            ),
-            target_type="LEAVE_REQUEST",
-            target_id=annual_row.id,
-            user_id=actor_id,
+        _release_attendance_auto_annual_leave_row(
+            annual_row,
+            replacement_leave_request_id=replacement_leave_request_id,
+            reason=reason,
+            actor_id=actor_id,
         )
     return rows
 
@@ -31084,6 +31158,8 @@ def hr_monthly_leave_report():
                  .order_by(HRLeaveRequest.id.asc()))
 
             for r in q.all():
+                if _attendance_auto_leave_is_released(r):
+                    continue
                 if r.status == 'CANCELLED' and (r.cancelled_from_status or '').upper() != 'APPROVED':
                     continue
 
