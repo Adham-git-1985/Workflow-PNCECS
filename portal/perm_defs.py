@@ -95,6 +95,13 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_REQUESTS_APPROVE", "اعتماد الطلبات", "اعتماد/رفض طلبات الموظفين (مدير مباشر/HR).", module="HR_REQUESTS"),
         PermDef("HR_REQUESTS_VIEW_ALL", "عرض جميع الطلبات", "عرض كل طلبات الموظفين (HR Admin).", module="HR_REQUESTS"),
         PermDef(
+            "HR_NOTIFICATIONS_EXEMPT",
+            "استثناء من إشعارات الموارد البشرية",
+            "يُمنح لمستخدم محدد فقط لاستبعاده من التلقي العام لإشعارات الموارد البشرية، مع بقاء إشعارات طلبه أو مهمته أو صلاحياته الأخرى المباشرة.",
+            module="HR_NOTIFICATIONS",
+            user_only=True,
+        ),
+        PermDef(
             "HR_LEAVE_APPROVED_DELETE",
             "حذف الإجازة المعتمدة نهائياً",
             "حذف طلب الإجازة بعد اعتماده نهائياً، بما يشمل المرفقات وسجل مسار الاعتماد المرتبط به.",
@@ -132,6 +139,12 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_ATTENDANCE_EDIT", "تعديل الدوام", "تقديم تعديل يدوي للحضور أو الانصراف. لا يصبح نافذاً قبل اعتماده.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_EDIT_APPROVE", "اعتماد تعديل الدوام", "اعتماد أو رفض تعديلات الدوام اليدوية المقدمة؛ التعديل المعتمد فقط يؤثر في الملخص اليومي.", module="HR_ATTENDANCE"),
         PermDef("HR_ATTENDANCE_EXPORT", "تصدير الدوام", "تصدير الدوام PDF/Excel.", module="HR_ATTENDANCE"),
+        PermDef(
+            "HR_ATTENDANCE_REPORTS_MANAGE",
+            "إدارة رسائل تقارير الدوام",
+            "تحديد مستلمي وجدولة رسائل تقارير الدوام اليومية عبر البريد الإلكتروني.",
+            module="HR_ATTENDANCE_EMAIL",
+        ),
         PermDef("HR_REPORTS_VIEW", "عرض تقارير الموارد البشرية", "عرض تقارير الموارد البشرية (الإجازات/الدوام).", module="HR_REPORTS"),
         PermDef("HR_REPORTS_EXPORT", "تصدير تقارير الموارد البشرية", "تصدير تقارير الموارد البشرية PDF/Excel.", module="HR_REPORTS"),
         PermDef("HR_LEAVE_BALANCES_MANAGE", "إدارة أرصدة الإجازات", "تعبئة وتعديل الرصيد الافتتاحي السنوي للموظفين وإضافة تصحيحات موثقة بعد الاعتماد.", module="HR_LEAVE_BALANCES"),

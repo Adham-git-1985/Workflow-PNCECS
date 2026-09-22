@@ -34,6 +34,7 @@ from models import (
     OrgUnitManager,
     SystemSetting,
     User,
+    UserPermission,
 )
 from utils.notification_links import notification_target_path
 
@@ -52,6 +53,12 @@ SCOPE_GENERAL_DIRECTOR = "GENERAL_DIRECTOR"
 SCOPE_ADMINISTRATIVE_AFFAIRS = "ADMINISTRATIVE_AFFAIRS"
 SCOPE_HR = "HR"
 SCOPE_SECRETARY_GENERAL = "SECRETARY_GENERAL"
+
+# This is deliberately a direct, per-user exception.  It is not resolved
+# through ``User.has_perm`` because administrators inherit broad permissions;
+# only an explicit UserPermission row may opt a person out of the general HR
+# notification audience.
+HR_NOTIFICATIONS_EXEMPT_PERMISSION = "HR_NOTIFICATIONS_EXEMPT"
 
 # ``VIEW_ONLY`` is used for the Secretary-General copy of compensatory leave
 # requests.  It is never an actionable approval step, but it must be retired
@@ -833,7 +840,33 @@ def hr_observer_user_ids() -> list[int]:
     return hr_notification_user_ids()
 
 
-def hr_notification_user_ids() -> list[int]:
+def hr_notification_exempt_user_ids() -> set[int]:
+    """Return users explicitly excluded from the general HR audience.
+
+    The exception applies only to broad HR routing.  Notifications sent to a
+    user because they are the requester, a direct manager, or an explicitly
+    assigned approver do not use this audience and remain intact.
+    """
+    try:
+        return {
+            int(user_id)
+            for (user_id,) in (
+                UserPermission.query
+                .with_entities(UserPermission.user_id)
+                .filter(func.upper(UserPermission.key) == HR_NOTIFICATIONS_EXEMPT_PERMISSION)
+                .filter(UserPermission.is_allowed.is_(True))
+                .all()
+            )
+            if user_id
+        }
+    except Exception:
+        # Notification delivery must remain available on older or partially
+        # migrated installations; a missing permission row simply means no
+        # user is exempt.
+        return set()
+
+
+def hr_notification_user_ids(*, include_exempt: bool = False) -> list[int]:
     """Return HR/Administrative Affairs staff for request notifications.
 
     Approval permissions are intentionally not enough here: those permissions
@@ -871,7 +904,19 @@ def hr_notification_user_ids() -> list[int]:
             if employee_file.user_id:
                 recipient_ids.add(int(employee_file.user_id))
     recipient_ids.update(administrative_affairs_manager_user_ids())
+    if not include_exempt:
+        recipient_ids.difference_update(hr_notification_exempt_user_ids())
     return sorted(recipient_ids)
+
+
+def hr_approval_user_ids() -> list[int]:
+    """Return HR users who may receive an explicitly assigned approval task.
+
+    The notification exception suppresses broad HR copies, but must not remove
+    a user from an approval step or an escalation explicitly routed to HR.
+    Those are direct work assignments and remain visible to the assignee.
+    """
+    return hr_notification_user_ids(include_exempt=True)
 
 
 def _stage_due_at(kind: str, stage_code: str, assigned_at: datetime) -> datetime | None:
@@ -1096,7 +1141,7 @@ def start_request_flow(
             approver_user_id = first_approver_id
             approver_user_ids = _serialize_approver_ids(effective_approver_ids)
         elif stage_code == STAGE_HR:
-            hr_approver_ids = hr_notification_user_ids()
+            hr_approver_ids = hr_approval_user_ids()
             approver_user_id = hr_approver_ids[0] if hr_approver_ids else None
             approver_user_ids = _serialize_approver_ids(hr_approver_ids)
         elif stage_code == STAGE_GENERAL_DIRECTOR:
@@ -1373,7 +1418,7 @@ def can_user_act(user: User, step: HRRequestApprovalStep | None, *, now: datetim
 
     scope = (step.approver_scope or SCOPE_USER).upper()
     if scope == SCOPE_HR:
-        return int(user.id) in set(hr_notification_user_ids())
+        return int(user.id) in set(hr_approval_user_ids())
     if scope == SCOPE_SECRETARY_GENERAL:
         return int(user.id) in set(secretary_general_user_ids())
     return False
@@ -1384,7 +1429,7 @@ def _scope_approver_ids(step: HRRequestApprovalStep) -> list[int]:
     if candidate_ids:
         return candidate_ids
     if step.approver_scope == SCOPE_HR:
-        return hr_observer_user_ids()
+        return hr_approval_user_ids()
     if step.approver_scope == SCOPE_SECRETARY_GENERAL:
         return secretary_general_user_ids()
     return []
@@ -1671,7 +1716,7 @@ def _configured_escalation_target_ids(
             target_ids = [int(user.id)]
     elif target == ESCALATION_TARGET_HR:
         reason = "HR"
-        target_ids = hr_notification_user_ids()
+        target_ids = hr_approval_user_ids()
     elif target == ESCALATION_TARGET_SECRETARY_GENERAL:
         reason = "SECRETARY_GENERAL"
         target_ids = secretary_general_user_ids()

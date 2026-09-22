@@ -35,6 +35,7 @@ from models import (
     UserPermission,
 )
 from portal import portal_bp
+from portal.perm_defs import PERMS as PORTAL_PERMS
 from portal.routes import _leave_used_days
 from services.hr_request_workflow import (
     ESCALATION_TARGET_HR,
@@ -44,6 +45,7 @@ from services.hr_request_workflow import (
     ESCALATION_UNIT_MINUTES,
     KIND_LEAVE,
     KIND_PERMISSION,
+    HR_NOTIFICATIONS_EXEMPT_PERMISSION,
     STAGE_ADMINISTRATIVE_AFFAIRS,
     STAGE_GENERAL_DIRECTOR,
     STAGE_SECRETARY_GENERAL,
@@ -55,6 +57,8 @@ from services.hr_request_workflow import (
     _notify,
     process_pending_approvals,
     request_ids_user_can_act_on,
+    hr_notification_user_ids,
+    hr_approval_user_ids,
     start_request_flow,
 )
 from services.notification_email import _can_receive_hr_request_notification_email
@@ -305,6 +309,48 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             ).all()
         }
         self.assertFalse(cc_ids)
+
+    def test_explicit_hr_notification_exemption_keeps_direct_tasks_only(self):
+        """An HR member can opt out of broad HR routing without losing a direct task."""
+        self.assertIn(self.hr.id, hr_notification_user_ids())
+
+        definition = next(
+            item
+            for group in PORTAL_PERMS.values()
+            for item in group
+            if item.key == HR_NOTIFICATIONS_EXEMPT_PERMISSION
+        )
+        self.assertTrue(definition.user_only)
+
+        db.session.add(UserPermission(
+            user_id=self.hr.id,
+            key=HR_NOTIFICATIONS_EXEMPT_PERMISSION,
+            is_allowed=True,
+        ))
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        employee_file.direct_manager_user_id = self.hr.id
+        db.session.commit()
+
+        self.assertNotIn(self.hr.id, hr_notification_user_ids())
+        self.assertIn(self.hr.id, hr_approval_user_ids())
+
+        row = self._leave(self.normal_type)
+        steps = start_request_flow(KIND_LEAVE, row)
+        db.session.flush()
+
+        self.assertEqual(steps[0].approver_user_id, self.hr.id)
+        notified_ids = {
+            notification.user_id
+            for notification in Notification.query.filter_by(
+                type="HR_APPROVAL",
+                link_url=f"/portal/hr/approvals/leaves/{row.id}",
+            ).all()
+        }
+        self.assertIn(self.hr.id, notified_ids)
+
+        special_row = self._leave(self.external_type)
+        special_steps = start_request_flow(KIND_LEAVE, special_row)
+        self.assertEqual(special_steps[1].approver_user_id, self.hr.id)
 
     def test_compensatory_leave_requires_hierarchy_and_administrative_affairs_with_secretary_view_only(self):
         self.hr.role = "HR_MANAGER"
