@@ -1084,6 +1084,7 @@ def upload_file():
                 db.session.add(req)
                 db.session.flush()
 
+                attachment_batch_id = uuid.uuid4().hex
                 for archived in archived_files:
                     db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
                     # audit attachment so we can display step-aware grouping later
@@ -1091,7 +1092,10 @@ def upload_file():
                         request_id=req.id,
                         user_id=current_user.id,
                         action="WORKFLOW_ATTACHMENT_UPLOADED",
-                        note=f"Attachment: {archived.original_name} | file_id={archived.id} | step=0 | source=ARCHIVE_UPLOAD",
+                        note=(
+                            f"Attachment: {archived.original_name} | file_id={archived.id} "
+                            f"| step=0 | source=ARCHIVE_UPLOAD | batch={attachment_batch_id}"
+                        ),
                         target_type="ARCHIVE_FILE",
                         target_id=archived.id,
                         created_at=datetime.utcnow(),

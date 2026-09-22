@@ -1894,6 +1894,7 @@ def _start_corr_workflow(
     db.session.add(req)
     db.session.flush()
 
+    attachment_batch_id = uuid.uuid4().hex
     for archived in archived_files:
         source = "CORRESPONDENCE_CARD" if card_archived and archived.id == card_archived.id else "CORRESPONDENCE"
         db.session.add(RequestAttachment(request_id=req.id, archived_file_id=archived.id))
@@ -1901,7 +1902,10 @@ def _start_corr_workflow(
             request_id=req.id,
             user_id=current_user.id,
             action="WORKFLOW_ATTACHMENT_UPLOADED",
-            note=f"Attachment: {archived.original_name} | file_id={archived.id} | source={source}",
+            note=(
+                f"Attachment: {archived.original_name} | file_id={archived.id} "
+                f"| source={source} | batch={attachment_batch_id}"
+            ),
             target_type="ARCHIVE_FILE",
             target_id=archived.id,
             created_at=datetime.utcnow(),
