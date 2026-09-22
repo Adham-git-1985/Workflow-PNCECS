@@ -588,6 +588,21 @@ def _ensure_runtime_schema():
                 except Exception:
                     db.session.rollback()
 
+            # ``create_all`` creates the rollover-decision table when it is
+            # absent, but it cannot add fields to a table created by an
+            # earlier application version.  Keep the runtime SQLite upgrade
+            # path aligned with the extension migration so a normal restart
+            # cannot leave the leave-balance screen querying a missing field.
+            if (
+                _col_exists("hr_leave_rollover_decision", "id")
+                and not _col_exists("hr_leave_rollover_decision", "extension_days")
+            ):
+                _add_column_retry(
+                    "hr_leave_rollover_decision",
+                    "extension_days",
+                    "INTEGER NOT NULL DEFAULT 0",
+                )
+
             def _ensure_team_section_optional() -> bool:
                 """Rebuild the SQLite teams table once so section_id may be NULL."""
                 connection = None
