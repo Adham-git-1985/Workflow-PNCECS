@@ -10,7 +10,7 @@ portal_bp.add_app_template_filter(format_local_datetime, "local_datetime")
 
 @portal_bp.before_request
 def activate_due_leave_rollover_decisions():
-    """Make pre-recorded annual leave decisions effective on their due year."""
+    """Make pre-recorded annual leave decisions effective on their due date."""
     try:
         # Imported lazily so defining the blueprint never creates a circular
         # import with ``portal.routes``.

@@ -3811,8 +3811,12 @@ class HRLeaveRolloverDecision(db.Model):
     leave_type_id = db.Column(db.Integer, db.ForeignKey('hr_leave_type.id'), nullable=False, index=True)
     source_year = db.Column(db.Integer, nullable=False, index=True)
     target_year = db.Column(db.Integer, nullable=False, index=True)
-    decision = db.Column(db.String(20), nullable=False)  # DELETE / TRANSFER
+    decision = db.Column(db.String(20), nullable=False)  # DELETE / TRANSFER / EXTEND
     transfer_days = db.Column(db.Float, nullable=False, default=0.0)
+    # EXTEND keeps the old balance usable from 1 January of target_year for
+    # this many calendar days.  It is removed automatically when the period
+    # ends; transfer_days remains reserved for the current-year carryover.
+    extension_days = db.Column(db.Integer, nullable=False, default=0)
     note = db.Column(db.Text, nullable=True)
 
     # Set only when the decision becomes effective on 1 January of target_year.

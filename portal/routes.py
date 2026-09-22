@@ -10364,6 +10364,7 @@ def hr_report_attendance_daily():
         year = int(year_raw) if year_raw else datetime.utcnow().year
     except Exception:
         year = datetime.utcnow().year
+
     try:
         month = int(month_raw) if month_raw else datetime.utcnow().month
     except Exception:
@@ -28842,14 +28843,20 @@ def _leave_balance_usage_by_year(
                 continue
             run_year = int(run_year)
             remaining_to_allocate = float(days or 0.0)
-            funding_years = [run_year]
-            if (
-                _is_annual_balance_type(balance_type)
-                and _annual_bucket_allocation(user_id, balance_type.id, run_year)
-            ):
-                # Annual deductions in a prepared year use the older live
-                # bucket first, exactly like approved annual leave requests.
-                funding_years.insert(0, run_year - 1)
+            try:
+                run_day = date(
+                    run_year,
+                    int(run_month),
+                    calendar.monthrange(run_year, int(run_month))[1],
+                )
+            except (TypeError, ValueError):
+                run_day = date(run_year, 12, 31)
+            funding_years = _annual_balance_funding_years(
+                user_id,
+                balance_type,
+                run_year,
+                activity_day=run_day,
+            )
 
             for index, allocation_year in enumerate(funding_years):
                 year_entitlement = float(
@@ -28918,21 +28925,20 @@ def _leave_balance_usage_by_year(
             if requested_days <= 0:
                 continue
 
-            # A prepared annual balance has two live buckets: the excess is
-            # held in the preceding year and must be consumed first.  This
-            # keeps a split such as 2026=30 and 2025=18 equal to one usable
-            # 48-day balance while the employee takes annual leave in 2026.
-            # Other leave types retain the normal start-year-first policy.
-            funding_years = [start.year]
-            if (
-                _is_annual_balance_type(balance_type)
-                and _annual_bucket_allocation(user_id, balance_type.id, start.year)
-            ):
-                funding_years.insert(0, start.year - 1)
-
-            # For a cross-year request, consume any later balance years only
-            # after the start year's active annual buckets are exhausted.
-            funding_years.extend(range(start.year + 1, effective_end.year + 1))
+            # A prepared annual balance has two live buckets and an approved
+            # extension can temporarily keep the older bucket live as well.
+            # Both are consumed before the current year's entitlement, so a
+            # split such as 2026=30 / 2025=18 remains one declining balance.
+            funding_years = []
+            for calendar_year in range(start.year, effective_end.year + 1):
+                activity_day = start if calendar_year == start.year else date(calendar_year, 1, 1)
+                funding_years.extend(_annual_balance_funding_years(
+                    user_id,
+                    balance_type,
+                    calendar_year,
+                    activity_day=activity_day,
+                ))
+            funding_years = list(dict.fromkeys(funding_years))
 
             remaining_to_allocate = requested_days
             for index, allocation_year in enumerate(funding_years):
@@ -29056,8 +29062,18 @@ def _leave_balance_request_funding_error(
         balance_type,
         date(end_day.year, 12, 31),
     )
+    funding_years = []
+    for calendar_year in range(start_day.year, end_day.year + 1):
+        activity_day = start_day if calendar_year == start_day.year else date(calendar_year, 1, 1)
+        funding_years.extend(_annual_balance_funding_years(
+            user_id,
+            balance_type,
+            calendar_year,
+            activity_day=activity_day,
+        ))
+
     remaining_to_fund = requested_days
-    for leave_year in range(start_day.year, end_day.year + 1):
+    for leave_year in dict.fromkeys(funding_years):
         total_days = float(_leave_entitlement_days(user_id, balance_type, leave_year) or 0.0)
         used_days = float(usage.get(leave_year, 0.0))
         available_days = max(0.0, total_days - used_days)
@@ -29574,6 +29590,32 @@ def _leave_balance_display_values(
         # continues to show the combined amount.
         adjustments_total = total - base_total
 
+    # A temporary extension of the two-years-old annual bucket is usable in
+    # the target year too.  Add it to every employee-facing summary while the
+    # extension is live, otherwise the screen would hide days the employee can
+    # actually still take.
+    if _is_annual_balance_type(balance_type):
+        for source_year in _annual_extended_source_years(
+            user_id,
+            balance_type.id,
+            year,
+            date.today(),
+        ):
+            extension_total = float(
+                _leave_entitlement_days(user_id, balance_type, source_year) or 0.0
+            )
+            extension_used = float(
+                _leave_used_days_through(
+                    user_id,
+                    balance_type.id,
+                    source_year,
+                    date.today(),
+                ) or 0.0
+            )
+            total += extension_total
+            used += extension_used
+            adjustments_total = total - base_total
+
     return {
         "base_total": base_total,
         "adjustments_total": adjustments_total,
@@ -29666,14 +29708,114 @@ def _leave_rollover_marker(source_year: int, target_year: int) -> str:
 
 LEAVE_ROLLOVER_DECISION_DELETE = "DELETE"
 LEAVE_ROLLOVER_DECISION_TRANSFER = "TRANSFER"
+LEAVE_ROLLOVER_DECISION_EXTEND = "EXTEND"
 
 
 def _leave_rollover_effective_day(target_year: int) -> date:
     return date(int(target_year), 1, 1)
 
 
+def _leave_rollover_extension_delete_day(target_year: int, extension_days: int | float) -> date:
+    """Return the first day on which an extended old balance is deleted.
+
+    An extension of 30 days keeps the balance available from 1 January through
+    30 January, then removes what remains on 31 January.  Storing the duration
+    (rather than a mutable calendar date) keeps the policy easy to audit.
+    """
+    try:
+        days = max(0, int(extension_days or 0))
+    except (TypeError, ValueError):
+        days = 0
+    return _leave_rollover_effective_day(target_year) + timedelta(days=days)
+
+
+def _leave_rollover_decision_due_day(decision: HRLeaveRolloverDecision) -> date:
+    if decision.decision == LEAVE_ROLLOVER_DECISION_EXTEND:
+        return _leave_rollover_extension_delete_day(
+            decision.target_year,
+            decision.extension_days,
+        )
+    return _leave_rollover_effective_day(decision.target_year)
+
+
+def _leave_rollover_decision_is_due(
+    decision: HRLeaveRolloverDecision,
+    on_day: date,
+) -> bool:
+    return on_day >= _leave_rollover_decision_due_day(decision)
+
+
 def _leave_rollover_is_due(target_year: int, effective_day: date | None = None) -> bool:
     return (effective_day or date.today()) >= _leave_rollover_effective_day(target_year)
+
+
+def _annual_extended_source_years(
+    user_id: int,
+    leave_type_id: int,
+    calendar_year: int,
+    activity_day: date,
+) -> list[int]:
+    """Return still-usable older annual buckets during a saved extension.
+
+    Only the bucket two years behind the target can be extended.  This gives
+    2025 priority over 2027 while its approved extension is still live, but
+    never turns it into a balance that can be carried forward again.
+    """
+    try:
+        calendar_year = int(calendar_year)
+        if activity_day.year != calendar_year:
+            return []
+        extension_start = _leave_rollover_effective_day(calendar_year)
+        if activity_day < extension_start:
+            return []
+        records = (
+            HRLeaveRolloverDecision.query
+            .filter_by(
+                user_id=int(user_id),
+                leave_type_id=int(leave_type_id),
+                source_year=calendar_year - 2,
+                target_year=calendar_year,
+                decision=LEAVE_ROLLOVER_DECISION_EXTEND,
+            )
+            .all()
+        )
+        return [
+            int(record.source_year)
+            for record in records
+            if activity_day < _leave_rollover_decision_due_day(record)
+        ]
+    except Exception:
+        # Keep normal annual-leave accounting available while a legacy
+        # database is waiting for the extension migration.
+        return []
+
+
+def _annual_balance_funding_years(
+    user_id: int,
+    balance_type: HRLeaveType,
+    calendar_year: int,
+    *,
+    activity_day: date,
+) -> list[int]:
+    """List annual buckets in the order that funds a leave day/request."""
+    calendar_year = int(calendar_year)
+    if not _is_annual_balance_type(balance_type):
+        return [calendar_year]
+
+    funding_years = _annual_extended_source_years(
+        user_id,
+        balance_type.id,
+        calendar_year,
+        activity_day,
+    )
+    if _annual_bucket_allocation(user_id, balance_type.id, calendar_year):
+        funding_years.append(calendar_year - 1)
+    funding_years.append(calendar_year)
+
+    # A prepared balance and an extension can theoretically mention the same
+    # year in a historic record.  Preserve first-use order without charging a
+    # bucket twice.
+    return list(dict.fromkeys(int(value) for value in funding_years))
 
 
 def _legacy_leave_rollover_adjustment(
@@ -29792,12 +29934,12 @@ def _activate_due_leave_rollover_decisions(
     effective_day: date | None = None,
     decision_ids: list[int] | None = None,
 ) -> list[HRLeaveRolloverDecision]:
-    """Apply pre-recorded annual rollover decisions once their year begins.
+    """Apply a planned rollover action when its own due day arrives.
 
-    This function is deliberately idempotent: an applied decision is never
-    applied again.  It is called by the portal and the hourly HR job, so a
-    decision becomes active even when no one happens to open the balance page
-    on 1 January itself.
+    Standard deletion and current-year transfer are due on 1 January.  An
+    ``EXTEND`` decision deliberately remains pending until the selected
+    extension period ends, at which point the hourly HR job deletes only the
+    balance still left in the old bucket.
     """
     on_day = effective_day or date.today()
     query = (
@@ -29820,6 +29962,15 @@ def _activate_due_leave_rollover_decisions(
         leave_type = decision.leave_type or db.session.get(HRLeaveType, decision.leave_type_id)
         if not leave_type or not _is_annual_balance_type(leave_type):
             continue
+        due_day = _leave_rollover_decision_due_day(decision)
+        if not _leave_rollover_decision_is_due(decision, on_day):
+            continue
+
+        # A normal rollover closes the source at 31 December.  An extension
+        # remains available through the day before its deletion date.
+        source_cutoff = date(decision.target_year - 1, 12, 31)
+        if decision.decision == LEAVE_ROLLOVER_DECISION_EXTEND:
+            source_cutoff = due_day - timedelta(days=1)
 
         source_total = float(
             _leave_entitlement_days(decision.user_id, leave_type, decision.source_year) or 0.0
@@ -29829,7 +29980,7 @@ def _activate_due_leave_rollover_decisions(
                 decision.user_id,
                 leave_type.id,
                 decision.source_year,
-                date(decision.target_year - 1, 12, 31),
+                source_cutoff,
             ) or 0.0
         )
         source_remaining = max(0.0, source_total - source_used)
@@ -29838,12 +29989,17 @@ def _activate_due_leave_rollover_decisions(
             if decision.decision == LEAVE_ROLLOVER_DECISION_TRANSFER
             else 0.0
         )
-        transfer_days = min(requested_transfer, source_remaining)
+        # The closing value is entered and approved by HR before the target
+        # year begins.  It is authoritative (within the annual cap checked at
+        # save time), even if the calculated source snapshot differs.
+        transfer_days = requested_transfer
+        deleted_days = max(0.0, source_remaining - transfer_days)
         marker = _leave_rollover_marker(decision.source_year, decision.target_year)
         detail = (
             f"{marker} DECISION={decision.decision} DECISION_ID={decision.id} "
             f"SOURCE_REMAINING={source_remaining:.4f} REQUESTED_TRANSFER_DAYS={requested_transfer:.4f} "
-            f"TRANSFER_DAYS={transfer_days:.4f} DELETE_DAYS={source_remaining - transfer_days:.4f}; "
+            f"TRANSFER_DAYS={transfer_days:.4f} DELETE_DAYS={deleted_days:.4f} "
+            f"EXTENSION_DAYS={int(decision.extension_days or 0)} DUE_DAY={due_day.isoformat()}; "
             f"تفعيل تلقائي لقرار الرصيد السنوي بتاريخ {on_day.isoformat()}."
         )
         actor_id = int(decision.updated_by_id or decision.created_by_id)
@@ -29866,9 +30022,8 @@ def _activate_due_leave_rollover_decisions(
                 created_by_id=actor_id,
             ))
 
-        # Keep the editable value aligned with the amount that was actually
-        # available on the effective date; the original requested amount is
-        # retained in the immutable adjustment reason above.
+        # Preserve the approved closing value and retain the measured source
+        # snapshot independently for the audit trail.
         decision.transfer_days = transfer_days
         decision.applied_source_days = source_remaining
         decision.applied_transfer_days = transfer_days
@@ -29880,7 +30035,8 @@ def _activate_due_leave_rollover_decisions(
             (
                 f"تفعيل قرار ترحيل الرصيد للموظف #{decision.user_id}: "
                 f"من {decision.source_year} إلى {decision.target_year}; "
-                f"المرحّل={transfer_days:.4f}; المحذوف={source_remaining - transfer_days:.4f}"
+                f"المرحّل={transfer_days:.4f}; المحذوف={deleted_days:.4f}; "
+                f"موعد التنفيذ={due_day.isoformat()}"
             ),
             target_type="HR_LEAVE_ROLLOVER_DECISION",
             target_id=decision.id,
@@ -29896,9 +30052,8 @@ def _reconcile_active_leave_rollover_decision(
     actor_id: int,
 ) -> tuple[float, str | None]:
     """Apply the delta of an edited decision that is already effective."""
-    source_cap = max(0.0, float(decision.applied_source_days or 0.0))
     desired_transfer = (
-        max(0.0, min(float(decision.transfer_days or 0.0), source_cap))
+        max(0.0, min(float(decision.transfer_days or 0.0), _annual_current_year_limit()))
         if decision.decision == LEAVE_ROLLOVER_DECISION_TRANSFER
         else 0.0
     )
@@ -29967,18 +30122,45 @@ def _save_leave_rollover_decision(
     note: str | None,
     actor_id: int,
     effective_day: date | None = None,
+    extension_days: int = 0,
 ) -> tuple[HRLeaveRolloverDecision | None, bool, float, str | None]:
     """Save a planned decision, or reconcile it if it is already effective."""
     decision_code = (decision_code or "").strip().upper()
     if decision_code not in {
         LEAVE_ROLLOVER_DECISION_DELETE,
         LEAVE_ROLLOVER_DECISION_TRANSFER,
+        LEAVE_ROLLOVER_DECISION_EXTEND,
     }:
-        return None, False, 0.0, "اختر حذف الرصيد أو ترحيل عدد محدد من الأيام."
-    if transfer_days < 0:
-        return None, False, 0.0, "أدخل عدد أيام صالحًا للترحيل."
-    if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER and transfer_days <= 0.0001:
-        return None, False, 0.0, "أدخل عدد أيام أكبر من صفر للترحيل أو اختر حذف الرصيد."
+        return None, False, 0.0, "اختر حذف الرصيد أو تمديده، أو احفظ رصيد الإقفال للترحيل."
+    try:
+        transfer_days = round(float(transfer_days or 0.0), 4)
+    except (TypeError, ValueError):
+        return None, False, 0.0, "أدخل عدد أيام صالحًا لرصيد الإقفال."
+    try:
+        extension_days = int(extension_days or 0)
+    except (TypeError, ValueError):
+        extension_days = -1
+
+    source_year = int(source_year)
+    target_year = int(target_year)
+    if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER:
+        if source_year != target_year - 1:
+            return None, False, 0.0, "يمكن ترحيل رصيد السنة السابقة مباشرة فقط."
+        if transfer_days < 0 or transfer_days > _annual_current_year_limit() + 0.0001:
+            return None, False, 0.0, (
+                f"الرصيد المعتمد للترحيل يجب أن يكون بين 0 و{_annual_current_year_limit():g} يومًا."
+            )
+    elif decision_code == LEAVE_ROLLOVER_DECISION_EXTEND:
+        if source_year != target_year - 2:
+            return None, False, 0.0, "التمديد متاح فقط لرصيد السنة الأقدم."
+        if extension_days <= 0:
+            return None, False, 0.0, "أدخل عدد أيام التمديد أكبر من صفر."
+        transfer_days = 0.0
+    else:
+        if source_year != target_year - 2:
+            return None, False, 0.0, "الحذف الاختياري يخص رصيد السنة الأقدم فقط."
+        transfer_days = 0.0
+        extension_days = 0
 
     record = _leave_rollover_decision_record(
         user_id, leave_type.id, source_year, target_year
@@ -29994,11 +30176,12 @@ def _save_leave_rollover_decision(
 
     already_active = bool(record and record.applied_at)
     if already_active:
-        transfer_cap = max(0.0, float(record.applied_source_days or 0.0))
-        if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER and transfer_days > transfer_cap + 0.0001:
+        if (
+            record.decision != LEAVE_ROLLOVER_DECISION_TRANSFER
+            or decision_code != LEAVE_ROLLOVER_DECISION_TRANSFER
+        ):
             return None, False, 0.0, (
-                f"يمكن تعديل القرار إلى حد أقصى {transfer_cap:g} يومًا، "
-                "وهو الرصيد الذي كان متاحًا عند سريان القرار."
+                "انتهى تنفيذ هذا القرار. استخدم تصحيح الرصيد الموثق إذا لزم تغيير أثره."
             )
 
     now = datetime.utcnow()
@@ -30010,6 +30193,7 @@ def _save_leave_rollover_decision(
             target_year=int(target_year),
             decision=decision_code,
             transfer_days=float(transfer_days if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER else 0.0),
+            extension_days=int(extension_days if decision_code == LEAVE_ROLLOVER_DECISION_EXTEND else 0),
             note=note or None,
             created_at=now,
             created_by_id=int(actor_id),
@@ -30022,6 +30206,9 @@ def _save_leave_rollover_decision(
         record.transfer_days = float(
             transfer_days if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER else 0.0
         )
+        record.extension_days = int(
+            extension_days if decision_code == LEAVE_ROLLOVER_DECISION_EXTEND else 0
+        )
         record.note = note or None
         record.updated_at = now
         record.updated_by_id = int(actor_id)
@@ -30029,10 +30216,11 @@ def _save_leave_rollover_decision(
 
     became_active = False
     correction = 0.0
-    if _leave_rollover_is_due(target_year, effective_day):
+    activation_day = effective_day or date.today()
+    if _leave_rollover_decision_is_due(record, activation_day):
         if not record.applied_at:
             activated = _activate_due_leave_rollover_decisions(
-                effective_day=effective_day,
+                effective_day=activation_day,
                 decision_ids=[record.id],
             )
             became_active = any(item.id == record.id for item in activated)
@@ -30050,6 +30238,7 @@ def _save_leave_rollover_decision(
         (
             f"حفظ قرار ترحيل للموظف #{user_id}: من {source_year} إلى {target_year}; "
             f"القرار={record.decision}; الأيام={record.transfer_days:.4f}; "
+            f"مدة_التمديد={int(record.extension_days or 0)}; "
             f"حالة السريان={'ACTIVE' if record.applied_at else 'PLANNED'}"
         ),
         target_type="HR_LEAVE_ROLLOVER_DECISION",
@@ -30066,12 +30255,11 @@ def _leave_rollover_rows(
     *,
     as_of: date | None = None,
 ) -> list[dict]:
-    """Return the two annual buckets that are resolved in ``target_year``.
+    """Return the current carryover and optional older-year decision rows.
 
-    For example, the 2027 screen presents the 2026 bucket for transfer (up to
-    the 30-day annual cap) and the 2025 bucket for deletion.  The older bucket
-    cannot be transferred.  This is deliberately two separate ledger
-    decisions so activation can add only the permitted 2026 amount to 2027.
+    For a 2027 preparation screen, 2026 has one editable closing balance that
+    becomes the 2027 opening carryover.  The 2025 row is deliberately a
+    separate optional action: delete now, or extend for a defined period.
     """
     rows = []
     closing_day = date(target_year - 1, 12, 31)
@@ -30080,9 +30268,9 @@ def _leave_rollover_rows(
     expired_year = target_year - 2
     annual_limit = _annual_current_year_limit()
     for balance_type in _annual_balance_types(leave_types):
-        for source_year, required_decision, row_kind in (
-            (current_year, LEAVE_ROLLOVER_DECISION_TRANSFER, "TRANSFER_CURRENT"),
-            (expired_year, LEAVE_ROLLOVER_DECISION_DELETE, "DELETE_EXPIRED"),
+        for source_year, row_kind in (
+            (current_year, "TRANSFER_CURRENT"),
+            (expired_year, "OPTIONAL_EXPIRED"),
         ):
             total = float(
                 _leave_entitlement_days(user_id, balance_type, source_year) or 0.0
@@ -30103,6 +30291,7 @@ def _leave_rollover_rows(
             is_planned = bool(record and not record.applied_at)
             decision_code = None
             transfer_days = 0.0
+            extension_days = 0
             applied_transfer_days = None
             applied_source_days = None
             note = None
@@ -30111,6 +30300,7 @@ def _leave_rollover_rows(
             if record:
                 decision_code = record.decision
                 transfer_days = max(0.0, float(record.transfer_days or 0.0))
+                extension_days = max(0, int(record.extension_days or 0))
                 note = record.note
                 updated_at = record.updated_at
                 if record.applied_at:
@@ -30131,15 +30321,28 @@ def _leave_rollover_rows(
                 total = used + source_snapshot
                 remaining = source_snapshot
 
-            transfer_cap = (
-                max(0.0, float(applied_source_days or 0.0))
-                if is_active
-                else min(remaining, annual_limit)
-            )
+            # HR may approve a different closing balance from the calculated
+            # amount.  The annual cap remains the hard maximum, while the
+            # value itself becomes the authoritative opening balance.
+            transfer_cap = annual_limit
             suggested_transfer_days = (
                 min(transfer_cap, max(0.0, float(transfer_days or 0.0)))
                 if decision_code == LEAVE_ROLLOVER_DECISION_TRANSFER
-                else transfer_cap
+                else min(remaining, transfer_cap)
+            )
+            decision_due_on = (
+                _leave_rollover_decision_due_day(record)
+                if record else _leave_rollover_effective_day(target_year)
+            )
+            extension_delete_on = (
+                _leave_rollover_extension_delete_day(target_year, extension_days)
+                if decision_code == LEAVE_ROLLOVER_DECISION_EXTEND else None
+            )
+            is_extension_running = bool(
+                record
+                and decision_code == LEAVE_ROLLOVER_DECISION_EXTEND
+                and not record.applied_at
+                and _leave_rollover_effective_day(target_year) <= display_day < decision_due_on
             )
 
             rows.append({
@@ -30151,9 +30354,10 @@ def _leave_rollover_rows(
                 "used": used,
                 "remaining": remaining,
                 "decision": decision_code,
-                "required_decision": required_decision,
                 "transfer_days": transfer_days,
                 "suggested_transfer_days": suggested_transfer_days,
+                "approved_closing_days": suggested_transfer_days,
+                "calculated_closing_days": min(remaining, annual_limit),
                 "applied_transfer_days": applied_transfer_days,
                 "deleted_days": (
                     max(0.0, remaining - float(applied_transfer_days or 0.0))
@@ -30161,15 +30365,17 @@ def _leave_rollover_rows(
                 ),
                 "is_planned": is_planned,
                 "is_active": is_active,
-                "is_due": _leave_rollover_is_due(target_year, display_day),
+                "is_due": display_day >= decision_due_on,
                 "effective_on": _leave_rollover_effective_day(target_year),
+                "decision_due_on": decision_due_on,
+                "extension_days": extension_days,
+                "extension_delete_on": extension_delete_on,
+                "is_extension_running": is_extension_running,
                 "transfer_max": transfer_cap,
                 "note": note,
                 "updated_at": updated_at,
-                # These policy-controlled rows cannot be switched from one
-                # action to the other by a posted form value.
-                "can_edit": True,
-                "can_decide": True,
+                "can_edit_closing": row_kind == "TRANSFER_CURRENT",
+                "can_decide": row_kind == "OPTIONAL_EXPIRED" and not is_active,
             })
     return rows
 
@@ -30190,6 +30396,16 @@ def hr_leave_balances():
     except Exception:
         year = datetime.utcnow().year
 
+    # The page's main year remains the live balance year.  Closing and
+    # preparing it normally creates the following year's opening balance, so
+    # September 2026 naturally shows the 2026 and 2025 source buckets for a
+    # 2027 rollover rather than the stale 2025/2024 pair.
+    rollover_year_raw = (request.values.get('rollover_year') or '').strip()
+    try:
+        rollover_target_year = int(rollover_year_raw) if rollover_year_raw else year + 1
+    except Exception:
+        rollover_target_year = year + 1
+
     user_id_raw = (request.values.get('user_id') or '').strip()
     selected_user = None
     try:
@@ -30209,7 +30425,7 @@ def hr_leave_balances():
     )
     compensatory_balance_type = _leave_balance_source_type(compensatory_leave_type)
 
-    # A pre-recorded decision becomes effective on 1 January even if nobody
+    # A pre-recorded decision becomes effective on its due date even if nobody
     # opened this particular employee's screen at that exact moment.
     try:
         if _activate_due_leave_rollover_decisions():
@@ -30286,39 +30502,55 @@ def hr_leave_balances():
             correction_total = 0.0
             rollover_rows = _leave_rollover_rows(
                 selected_user.id,
-                year,
+                rollover_target_year,
                 leave_types,
-                as_of=date(year - 1, 12, 31),
+                as_of=date(rollover_target_year - 1, 12, 31),
             )
             for rollover in rollover_rows:
                 balance_type = rollover['leave_type']
                 source_year = rollover['source_year']
-                required_decision = rollover['required_decision']
+                row_kind = rollover['row_kind']
                 choice = (request.form.get(
                     f'rollover_{source_year}_{balance_type.id}'
                 ) or '').upper()
                 if choice == 'KEEP':  # compatibility with the earlier UI
-                    choice = LEAVE_ROLLOVER_DECISION_DELETE
-                if not choice:
-                    choice = required_decision
-                if choice != required_decision:
+                    choice = ''
+                if row_kind == 'TRANSFER_CURRENT':
+                    # The current-year row is always the editable carryover
+                    # amount.  Its numeric closing balance may legitimately
+                    # be zero.
+                    choice = LEAVE_ROLLOVER_DECISION_TRANSFER
+                elif not choice:
+                    # The older balance is intentionally optional: no choice
+                    # means neither deletion nor extension is scheduled.
+                    continue
+
+                valid_choices = (
+                    {LEAVE_ROLLOVER_DECISION_TRANSFER}
+                    if row_kind == 'TRANSFER_CURRENT'
+                    else {
+                        LEAVE_ROLLOVER_DECISION_DELETE,
+                        LEAVE_ROLLOVER_DECISION_EXTEND,
+                    }
+                )
+                if choice not in valid_choices:
                     db.session.rollback()
-                    if required_decision == LEAVE_ROLLOVER_DECISION_TRANSFER:
+                    if row_kind == 'TRANSFER_CURRENT':
                         flash(
-                            f'لا يمكن في {year} إلا ترحيل رصيد {source_year} '
+                            f'لا يمكن في {rollover_target_year} إلا اعتماد رصيد إقفال {source_year} '
                             f'بحد أقصى {_annual_current_year_limit():g} يومًا.',
                             'danger',
                         )
                     else:
                         flash(
-                            f'رصيد {source_year} منتهي المدة حصرًا '
-                            f'ويُحذف في {year}؛ لا يُرحّل.',
+                            f'اختر حذف رصيد {source_year} أو تمديده لفترة محددة فقط.',
                             'danger',
                         )
                     return redirect(url_for(
                         'portal.hr_leave_balances',
                         user_id=selected_user.id,
                         year=year,
+                        rollover_year=rollover_target_year,
                     ) + '#leave-rollover')
 
                 transfer_days = 0.0
@@ -30344,11 +30576,17 @@ def hr_leave_balances():
                             'portal.hr_leave_balances',
                             user_id=selected_user.id,
                             year=year,
+                            rollover_year=rollover_target_year,
                         ) + '#leave-rollover')
-                    if transfer_days <= 0.0001:
-                        # There is no current-year bucket left to transfer.
-                        # Avoid recording an invalid zero-day transfer.
-                        continue
+                extension_days = 0
+                if choice == LEAVE_ROLLOVER_DECISION_EXTEND:
+                    extension_raw = (request.form.get(
+                        f'rollover_extension_days_{source_year}_{balance_type.id}'
+                    ) or '').strip()
+                    try:
+                        extension_days = int(extension_raw)
+                    except (TypeError, ValueError):
+                        extension_days = -1
                 note = (request.form.get(
                     f'rollover_reason_{source_year}_{balance_type.id}'
                 ) or '').strip()
@@ -30356,11 +30594,12 @@ def hr_leave_balances():
                     selected_user.id,
                     balance_type,
                     source_year,
-                    year,
+                    rollover_target_year,
                     decision_code=choice,
                     transfer_days=transfer_days,
                     note=note,
                     actor_id=current_user.id,
+                    extension_days=extension_days,
                 )
                 if error:
                     db.session.rollback()
@@ -30369,6 +30608,7 @@ def hr_leave_balances():
                         'portal.hr_leave_balances',
                         user_id=selected_user.id,
                         year=year,
+                        rollover_year=rollover_target_year,
                     ) + '#leave-rollover')
                 if not record:
                     continue
@@ -30383,12 +30623,12 @@ def hr_leave_balances():
                 db.session.commit()
                 if planned_count and not active_count:
                     flash(
-                        f'تم حفظ {saved_count} قرار/قرارات مسبقة. لن يتغير الرصيد قبل 1/1/{year}.',
+                        f'تم حفظ {saved_count} قرار/قرارات مسبقة. لن يتغير الرصيد قبل 1/1/{rollover_target_year}.',
                         'success',
                     )
                 elif correction_total:
                     flash(
-                        f'تم حفظ القرار وتسجيل تصحيح موثق بمقدار {correction_total:+g} يوم في رصيد {year}.',
+                        f'تم حفظ القرار وتسجيل تصحيح موثق بمقدار {correction_total:+g} يوم في رصيد {rollover_target_year}.',
                         'success',
                     )
                 else:
@@ -30399,7 +30639,12 @@ def hr_leave_balances():
             else:
                 db.session.rollback()
                 flash('لم يتم حفظ قرار؛ اختر إجراءً واحدًا على الأقل.', 'info')
-            return redirect(url_for('portal.hr_leave_balances', user_id=selected_user.id, year=year) + '#leave-rollover')
+            return redirect(url_for(
+                'portal.hr_leave_balances',
+                user_id=selected_user.id,
+                year=year,
+                rollover_year=rollover_target_year,
+            ) + '#leave-rollover')
 
         if (request.form.get('action') or '').upper() == 'ADD_COMPENSATORY_CREDIT':
             days_raw = (request.form.get('days_delta') or '').strip().replace(',', '.')
@@ -30562,6 +30807,7 @@ def hr_leave_balances():
         users=users,
         selected_user=selected_user,
         year=year,
+        rollover_target_year=rollover_target_year,
         leave_types=leave_types,
         compensatory_leave_type=compensatory_leave_type,
         compensatory_balance_type=compensatory_balance_type,
@@ -30571,7 +30817,10 @@ def hr_leave_balances():
         rows=rows,
         adjustments=adjustments,
         can_manage=can_manage,
-        rollover_rows=_leave_rollover_rows(selected_user.id, year, leave_types) if selected_user else [],
+        rollover_rows=(
+            _leave_rollover_rows(selected_user.id, rollover_target_year, leave_types)
+            if selected_user else []
+        ),
     )
 
 
