@@ -10044,14 +10044,12 @@ def _process_unrecorded_office_attendance(
     day_to: date | None = None,
     target_user_id: int | None = None,
 ) -> dict[str, int]:
-    """Charge one annual day for approved office duty with no attendance evidence.
+    """Reconcile reviewed office-duty days with no attendance evidence.
 
     When ``target_user_id`` is supplied, reconciliation is limited to that
-    employee. The background job leaves it unset and processes everyone.
+    employee. Without it, the Administrative Affairs action processes the
+    selected date range for all employees.
     """
-    enabled = (_setting_get("HR_ATTENDANCE_AUTO_ANNUAL_ENABLED") or "1").strip().lower()
-    if enabled not in {"1", "true", "yes", "on"}:
-        return {"created": 0, "reversed": 0, "reviewed": 0, "disabled": 1, "missing_annual_type": 0}
 
     local_now = reference_dt or datetime.now(app_timezone())
     if local_now.tzinfo is None:
@@ -10270,7 +10268,7 @@ def _process_unrecorded_office_attendance(
 
 @portal_bp.route('/hr/reports/administrative-affairs/daily', methods=['GET'])
 @login_required
-@_perm(HR_REPORTS_VIEW)
+@_perm_any(HR_REPORTS_VIEW, HR_ATT_CREATE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE)
 def hr_report_administrative_affairs_daily():
     today = date.today()
     start_day = _parse_yyyy_mm_dd((request.args.get("from_date") or "").strip()) or today
@@ -10338,8 +10336,10 @@ def hr_report_administrative_affairs_daily():
 
 @portal_bp.route('/hr/reports/administrative-affairs/daily/reconcile', methods=['POST'])
 @login_required
-@_perm_any(HR_ATT_CREATE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL)
+@_perm_any(HR_ATT_CREATE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE)
 def hr_report_administrative_affairs_reconcile():
+    if not _hr_can_manage_attendance():
+        abort(403)
     start_day = _parse_yyyy_mm_dd((request.form.get("from_date") or "").strip()) or date.today()
     end_day = _parse_yyyy_mm_dd((request.form.get("to_date") or "").strip()) or start_day
     target_user_raw = (request.form.get("user_id") or "").strip()
@@ -10365,6 +10365,50 @@ def hr_report_administrative_affairs_reconcile():
             f"{result['created']} إجازة سنوية تلقائية، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
             "success",
         )
+    return redirect(url_for(
+        "portal.hr_report_administrative_affairs_daily",
+        from_date=start_day.isoformat(),
+        to_date=end_day.isoformat(),
+        user_id=target_user_id or "",
+    ))
+
+
+@portal_bp.route('/hr/reports/administrative-affairs/daily/reconcile/rollback-auto-leaves', methods=['POST'])
+@login_required
+@_perm_any(HR_ATT_CREATE, HR_MASTERDATA_MANAGE, HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE)
+def hr_report_administrative_affairs_rollback_auto_leaves():
+    """Release only the machine-created annual charges selected by HR."""
+    if not _hr_can_manage_attendance():
+        abort(403)
+
+    start_day = _parse_yyyy_mm_dd((request.form.get("from_date") or "").strip()) or date.today()
+    end_day = _parse_yyyy_mm_dd((request.form.get("to_date") or "").strip()) or start_day
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+    if (end_day - start_day).days > 366:
+        flash("لا يمكن استرجاع خصومات تلقائية لأكثر من سنة في العملية الواحدة.", "danger")
+        return redirect(url_for(
+            "portal.hr_report_administrative_affairs_daily",
+            from_date=start_day.isoformat(),
+            to_date=end_day.isoformat(),
+        ))
+
+    target_user_raw = (request.form.get("user_id") or "").strip()
+    target_user_id = int(target_user_raw) if target_user_raw.isdigit() else None
+    released = _rollback_attendance_auto_annual_leaves(
+        start_day=start_day,
+        end_day=end_day,
+        target_user_id=target_user_id,
+        actor_id=int(current_user.id),
+    )
+    db.session.commit()
+
+    scope_label = f"للموظف #{target_user_id}" if target_user_id is not None else "لجميع الموظفين"
+    flash(
+        f"تم إلغاء {released} خصم إجازة سنوية أُنشئ تلقائياً {scope_label}. "
+        "أُبقيت السجلات ملغاة في الأثر التدقيقي، وعاد احتساب الرصيد تلقائياً.",
+        "success",
+    )
     return redirect(url_for(
         "portal.hr_report_administrative_affairs_daily",
         from_date=start_day.isoformat(),
@@ -29448,6 +29492,69 @@ def _replace_attendance_auto_annual_leaves(
             user_id=actor_id,
         )
     return rows
+
+
+def _rollback_attendance_auto_annual_leaves(
+    *,
+    start_day: date,
+    end_day: date,
+    target_user_id: int | None = None,
+    actor_id: int | None = None,
+) -> int:
+    """Cancel machine-created annual charges in a reviewed scope.
+
+    This is deliberately a cancellation, not a deletion: each affected leave
+    request remains visible in the audit trail and is excluded from the
+    dynamic leave-balance calculation through ``replaced_at``.
+    """
+    if end_day < start_day:
+        start_day, end_day = end_day, start_day
+
+    query = (
+        HRLeaveRequest.query
+        .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
+        .filter(HRLeaveRequest.status == "APPROVED")
+        .filter(HRLeaveRequest.replaced_at.is_(None))
+        .filter(HRLeaveRequest.source_attendance_day >= start_day.isoformat())
+        .filter(HRLeaveRequest.source_attendance_day <= end_day.isoformat())
+    )
+    if target_user_id is not None:
+        query = query.filter(HRLeaveRequest.user_id == int(target_user_id))
+
+    candidates = query.order_by(
+        HRLeaveRequest.user_id.asc(),
+        HRLeaveRequest.source_attendance_day.asc(),
+        HRLeaveRequest.id.asc(),
+    ).all()
+    affected_keys = {
+        (int(row.user_id), row.source_attendance_day)
+        for row in candidates
+        if row.user_id and row.source_attendance_day
+    }
+
+    released = 0
+    for row in candidates:
+        released += len(_replace_attendance_auto_annual_leaves(
+            int(row.user_id),
+            row.source_attendance_day,
+            row.source_attendance_day,
+            reason="ADMINISTRATIVE_AFFAIRS_BULK_ROLLBACK",
+            actor_id=actor_id,
+        ))
+
+    if affected_keys:
+        _attendance_recompute_summaries_for_keys(affected_keys)
+    if released:
+        _portal_audit(
+            "HR_ATTENDANCE_AUTO_LEAVE_BULK_ROLLBACK",
+            (
+                f"released={released}; days={start_day.isoformat()}..{end_day.isoformat()}; "
+                f"user_id={target_user_id or ''}"
+            ),
+            target_type="LEAVE_REQUEST",
+            user_id=actor_id,
+        )
+    return released
 
 
 def _convert_auto_annual_leave_after_sick_approval(

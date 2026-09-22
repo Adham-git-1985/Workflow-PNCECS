@@ -118,9 +118,8 @@ class AttendanceRuntimeSchemaTests(unittest.TestCase):
 
 
 class HRAlertsJobAtomicityTests(unittest.TestCase):
-    def test_attendance_reconciliation_failure_rolls_back_and_propagates(self):
+    def test_alerts_job_never_runs_attendance_leave_reconciliation(self):
         session = Mock()
-        reconciliation_error = RuntimeError("attendance reconciliation failed")
 
         with (
             patch.object(
@@ -142,15 +141,14 @@ class HRAlertsJobAtomicityTests(unittest.TestCase):
             patch.object(hr_alerts_job.db, "session", session),
             patch(
                 "portal.routes._process_unrecorded_office_attendance",
-                side_effect=reconciliation_error,
-            ),
+            ) as reconcile,
         ):
-            with self.assertRaises(RuntimeError) as raised:
-                hr_alerts_job._check_pending_leave_requests()
+            result = hr_alerts_job._check_pending_leave_requests()
 
-        self.assertIs(raised.exception, reconciliation_error)
-        session.rollback.assert_called_once_with()
-        session.commit.assert_not_called()
+        self.assertEqual(result, 1)
+        reconcile.assert_not_called()
+        session.rollback.assert_not_called()
+        session.commit.assert_called_once_with()
 
 
 if __name__ == "__main__":

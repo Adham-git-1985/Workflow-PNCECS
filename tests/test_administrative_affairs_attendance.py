@@ -44,6 +44,7 @@ from portal.routes import (
     _leave_used_days,
     _manual_attendance_event_rows_for_report,
     _process_unrecorded_office_attendance,
+    _rollback_attendance_auto_annual_leaves,
     hr_approval_leave,
     hr_attendance_daily,
     hr_attendance_manual_edit,
@@ -440,6 +441,61 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(auto_leave.status, "CANCELLED")
         self.assertEqual(auto_leave.replacement_reason, "LATE_CLOCK_ATTENDANCE")
         self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
+
+    def test_bulk_rollback_releases_only_selected_automatic_leave_charges(self):
+        first_employee = self._user("rollback-first@example.test", "First employee")
+        second_employee = self._user("rollback-second@example.test", "Second employee")
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        db.session.add(annual)
+        db.session.flush()
+        first_auto = HRLeaveRequest(
+            user_id=first_employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-14",
+            end_date="2026-09-14",
+            days=1,
+            entered_by="SYSTEM",
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+            status="APPROVED",
+        )
+        second_auto = HRLeaveRequest(
+            user_id=second_employee.id,
+            leave_type_id=annual.id,
+            start_date="2026-09-15",
+            end_date="2026-09-15",
+            days=1,
+            entered_by="SYSTEM",
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-15",
+            status="APPROVED",
+        )
+        db.session.add_all((first_auto, second_auto))
+        db.session.commit()
+
+        released = _rollback_attendance_auto_annual_leaves(
+            start_day=date(2026, 9, 14),
+            end_day=date(2026, 9, 14),
+        )
+        db.session.commit()
+        db.session.refresh(first_auto)
+        db.session.refresh(second_auto)
+
+        self.assertEqual(released, 1)
+        self.assertEqual(first_auto.status, "CANCELLED")
+        self.assertEqual(
+            first_auto.replacement_reason,
+            "ADMINISTRATIVE_AFFAIRS_BULK_ROLLBACK",
+        )
+        self.assertEqual(second_auto.status, "APPROVED")
+        self.assertEqual(_leave_used_days(first_employee.id, annual.id, 2026), 0.0)
+        self.assertEqual(_leave_used_days(second_employee.id, annual.id, 2026), 1.0)
 
     def test_auto_annual_is_reversed_when_office_schedule_changes_to_remote_or_off(self):
         remote_employee = self._user(

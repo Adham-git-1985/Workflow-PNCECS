@@ -61,6 +61,9 @@
             <li>
               <a class="dropdown-item" href="{{ url_for('portal.hr_attendance_home') }}">شاشات الدوام</a>
             </li>
+            {% if current_user.has_perm('HR_ATTENDANCE_CREATE') or current_user.has_perm('HR_REPORTS_VIEW') %}
+            <li><a class="dropdown-item" href="{{ url_for('portal.hr_report_administrative_affairs_daily') }}"><i class="bi bi-arrow-repeat"></i> مطابقة الغياب</a></li>
+            {% endif %}
             {% if current_user.has_perm('HR_ATTENDANCE_EDIT') %}
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_attendance_manual_edit') }}"><i class="bi bi-pencil-square"></i> تعديل الدوام</a></li>
             <li><a class="dropdown-item" href="{{ url_for('portal.hr_maternity_departure_log') }}">مغادرات الأمومة — ساعة يومية</a></li>

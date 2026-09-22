@@ -100,21 +100,27 @@
   {% if can_reconcile %}
   <div class="alert alert-warning d-flex justify-content-between align-items-center flex-wrap gap-2 mt-3 mb-0">
     <div class="small">
-      <strong>مطابقة الغياب:</strong> تنشئ إجازة سنوية معتمدة تلقائياً لكل يوم مكتبي معتمد انتهى موعده بلا بصمة أو إجازة، وترسل الإشعارات المعتمدة.
+      <strong>مطابقة الغياب اليدوية:</strong> لا يُنفّذ أي خصم في الخلفية. بعد مراجعة النتائج، يمكن للشؤون الإدارية تنفيذ المطابقة فقط للنطاق المعروض أو للموظف المحدد.
     </div>
     <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_reconcile') }}">
       <input type="hidden" name="from_date" value="{{ from_date }}">
       <input type="hidden" name="to_date" value="{{ to_date }}">
-      <button class="btn btn-sm btn-warning" type="submit"><i class="bi bi-arrow-repeat"></i> تنفيذ المطابقة للجميع</button>
+      <button class="btn btn-sm btn-warning" type="submit" onclick="return confirm('تأكيد تنفيذ المطابقة اليدوية للنطاق المعروض؟');"><i class="bi bi-arrow-repeat"></i> تنفيذ المطابقة للجميع</button>
     </form>
     {% if selected_user_id %}
     <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_reconcile') }}">
       <input type="hidden" name="from_date" value="{{ from_date }}">
       <input type="hidden" name="to_date" value="{{ to_date }}">
       <input type="hidden" name="user_id" value="{{ selected_user_id }}">
-      <button class="btn btn-sm btn-outline-warning" type="submit"><i class="bi bi-person-check"></i> مطابقة الموظف المحدد</button>
+      <button class="btn btn-sm btn-outline-warning" type="submit" onclick="return confirm('تأكيد تنفيذ المطابقة اليدوية للموظف المحدد؟');"><i class="bi bi-person-check"></i> مطابقة الموظف المحدد</button>
     </form>
     {% endif %}
+    <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_rollback_auto_leaves') }}">
+      <input type="hidden" name="from_date" value="{{ from_date }}">
+      <input type="hidden" name="to_date" value="{{ to_date }}">
+      {% if selected_user_id %}<input type="hidden" name="user_id" value="{{ selected_user_id }}">{% endif %}
+      <button class="btn btn-sm btn-outline-danger" type="submit" onclick="return confirm('سيُلغى فقط الخصم الذي أنشأه النظام تلقائياً ضمن النطاق المحدد، دون حذف سجلات الإجازات. هل تريد المتابعة؟');"><i class="bi bi-arrow-counterclockwise"></i> استعادة خصم تلقائي</button>
+    </form>
   </div>
   {% endif %}
 
