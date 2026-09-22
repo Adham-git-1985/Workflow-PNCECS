@@ -9535,27 +9535,63 @@ def _approved_schedule_day_map(
     start_day: date,
     end_day: date,
 ) -> dict[tuple[int, str], HRAttendanceScheduleDay]:
+    """Return the published recurring schedule row effective for every day.
+
+    Schedule plans keep just one seven-day weekday pattern.  Looking up only
+    rows whose stored ``work_date`` falls in the report range works for the
+    first week, but silently drops the same approved pattern on later dates.
+    Resolve the effective plan per employee/date instead, so historical
+    corrections made by a super administrator are reflected consistently in
+    the daily attendance and automatic-leave views.
+    """
     if not user_ids:
         return {}
-    rows = (
-        HRAttendanceScheduleDay.query
-        .join(HRAttendanceSchedulePlan, HRAttendanceSchedulePlan.id == HRAttendanceScheduleDay.plan_id)
+    if end_day < start_day:
+        return {}
+
+    end_text = end_day.isoformat()
+    plans = (
+        HRAttendanceSchedulePlan.query
         .filter(HRAttendanceSchedulePlan.user_id.in_(user_ids))
         .filter(
             HRAttendanceSchedulePlan.status.in_(ATTENDANCE_SCHEDULE_PUBLISHED_STATUSES)
         )
-        .filter(HRAttendanceScheduleDay.work_date >= start_day.isoformat())
-        .filter(HRAttendanceScheduleDay.work_date <= end_day.isoformat())
+        .filter(HRAttendanceSchedulePlan.period_start <= end_text)
         .order_by(
+            HRAttendanceSchedulePlan.user_id.asc(),
+            HRAttendanceSchedulePlan.period_start.desc(),
             HRAttendanceSchedulePlan.version_no.desc(),
             HRAttendanceSchedulePlan.id.desc(),
-            HRAttendanceScheduleDay.id.desc(),
         )
         .all()
     )
+    plans_by_user: dict[int, list[HRAttendanceSchedulePlan]] = {}
+    for plan in plans:
+        plans_by_user.setdefault(int(plan.user_id), []).append(plan)
+
     result = {}
-    for row in rows:
-        result.setdefault((int(row.plan.user_id), row.work_date), row)
+    report_days = _calendar_days_between(start_day, end_day)
+    for user_id in {int(value) for value in user_ids}:
+        user_plans = plans_by_user.get(user_id, [])
+        plan_index = 0
+        # Work backwards so a plan remains selected until the next earlier
+        # effective-from date is reached.  The query ordering makes the first
+        # eligible plan the newest version for that effective date.
+        for work_day in reversed(report_days):
+            day_text = work_day.isoformat()
+            while (
+                plan_index < len(user_plans)
+                and (user_plans[plan_index].period_start or "") > day_text
+            ):
+                plan_index += 1
+            if plan_index >= len(user_plans):
+                break
+            row = _attendance_schedule_plan_day_for_date(
+                user_plans[plan_index],
+                work_day,
+            )
+            if row:
+                result[(user_id, day_text)] = row
     return result
 
 

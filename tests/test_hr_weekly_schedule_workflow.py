@@ -15,6 +15,7 @@ from models import (
     WorkSchedule,
 )
 from portal.routes import (
+    _approved_schedule_day_map,
     _attendance_schedule_week_rows,
     _effective_schedule_for_user,
     hr_work_schedule_final_approve_all,
@@ -390,6 +391,33 @@ class WeeklyScheduleWorkflowTests(unittest.TestCase):
             _effective_schedule_for_user(self.employee.id, changed_day.isoformat()).start_time,
             "09:00",
         )
+
+    def test_super_admin_historical_schedule_change_is_used_by_attendance_map(self):
+        today = date(2031, 6, 9)
+        period_start = attendance_schedule_cycle_start(today - timedelta(days=21))
+        changed_day = period_start + timedelta(days=1)
+        changed_day_key = changed_day.strftime("%Y_%m_%d")
+        observed_day = changed_day + timedelta(days=14)
+
+        with patch("portal.routes._attendance_schedule_today", return_value=today):
+            response = self._post(self.super_admin, {
+                "target_user_id": str(self.employee.id),
+                "period_start": period_start.isoformat(),
+                "action": "super_publish",
+                **self._week_form(period_start),
+                f"start_time_{changed_day_key}": "10:00",
+                f"end_time_{changed_day_key}": "17:00",
+            })
+
+        self.assertEqual(response.status_code, 302)
+        schedule_map = _approved_schedule_day_map(
+            [self.employee.id],
+            observed_day,
+            observed_day,
+        )
+        schedule_day = schedule_map[(self.employee.id, observed_day.isoformat())]
+        self.assertEqual(schedule_day.start_time, "10:00")
+        self.assertEqual(schedule_day.end_time, "17:00")
 
     def test_super_admin_can_final_approve_a_change_without_general_director_approval(self):
         general_director = User(

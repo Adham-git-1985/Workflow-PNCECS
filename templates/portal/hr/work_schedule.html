@@ -74,10 +74,12 @@
         <p class="ws-subtitle mb-0">{% if is_super_admin %}أنت تعمل بصلاحية السوبر أدمن: يمكنك إدخال نمط الدوام واعتماده ونشره مباشرةً، فرديًا أو للموظفين المختارين.{% else %}تعبئة الجدول تتم من الشؤون البشرية. يحدد الموظف التعديل المقترح داخل طلب منفصل، ولا يصبح التغيير نافذًا قبل اكتمال الاعتماد. ويبقى آخر جدول معتمد ساريًا حتى يعتمد تغيير أحدث.{% endif %}</p>
       </div>
       <form class="ws-date-box" method="get" action="{{ url_for('portal.hr_work_schedule') }}" aria-label="اختيار أسبوع الدوام">
-        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat(), view=active_view) }}" title="الفترة السابقة"><i class="bi bi-chevron-right"></i></a>
+        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=previous_start.isoformat(), view=active_view, employee_id=(target_user.id if target_user.id != current_user.id else None)) }}" title="الفترة السابقة"><i class="bi bi-chevron-right"></i></a>
         <label class="visually-hidden" for="weekDate">اختر تاريخ بدء النفاذ أو العرض</label>
         <input id="weekDate" type="date" name="start" value="{{ period_start.isoformat() }}" onchange="this.form.submit()">
-        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=next_start.isoformat(), view=active_view) }}" title="الفترة التالية"><i class="bi bi-chevron-left"></i></a>
+        <input type="hidden" name="view" value="{{ active_view }}">
+        {% if target_user.id != current_user.id %}<input type="hidden" name="employee_id" value="{{ target_user.id }}">{% endif %}
+        <a class="ws-nav-btn" href="{{ url_for('portal.hr_work_schedule', start=next_start.isoformat(), view=active_view, employee_id=(target_user.id if target_user.id != current_user.id else None)) }}" title="الفترة التالية"><i class="bi bi-chevron-left"></i></a>
       </form>
     </div>
     <div class="small mt-3 opacity-75">تاريخ بدء النفاذ المختار: {{ period_start.strftime('%d/%m/%Y') }}. يعرض النمط سبعة أيام ويتكرر حتى اعتماد تغيير لاحق.</div>
