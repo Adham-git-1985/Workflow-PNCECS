@@ -795,6 +795,47 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             db.session.flush()
             self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 62)
 
+    def test_remote_schedule_calculates_late_arrival_from_its_start_time(self):
+        employee = User(
+            email="remote-late@example.test",
+            name="Remote Late",
+            password_hash="x",
+            role="USER",
+        )
+        db.session.add(employee)
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 22, 8, 26),
+                event_type="IN",
+            ),
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 22, 15, 0),
+                event_type="OUT",
+            ),
+        ))
+        db.session.commit()
+
+        schedule = SimpleNamespace(
+            id=None,
+            kind="REMOTE",
+            start_time="08:00",
+            end_time="15:00",
+            required_minutes=420,
+            break_minutes=0,
+            grace_minutes=15,
+            start_grace_minutes=None,
+            end_grace_minutes=None,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            result = _summary_compute_one(employee.id, "2026-09-22")
+
+        self.assertEqual(result["late_minutes"], 11)
+        self.assertEqual(result["early_leave_minutes"], 0)
+
     def test_morning_clock_departure_does_not_reduce_an_unrelated_early_exit(self):
         employee = User(email="morning-departure@example.test", name="Morning Departure", password_hash="x", role="USER")
         db.session.add(employee)

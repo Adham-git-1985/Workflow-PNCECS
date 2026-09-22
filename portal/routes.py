@@ -32545,7 +32545,7 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
 
     # Compute late/early/overtime based on schedule times. Approved leave and
     # religious/national/weekly holidays stay visible but never create a charge.
-    if not exemption_reason and schedule and schedule.kind in ('FIXED', 'RAMADAN', 'SHIFT'):
+    if not exemption_reason and schedule and schedule.kind in ('FIXED', 'RAMADAN', 'SHIFT', 'REMOTE'):
         weekday = _weekday_of(day_str)
         st = schedule.start_time
         en = schedule.end_time
@@ -32590,7 +32590,9 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             overtime_minutes = max(0, actual_out - en_min - thr)
 
     if not exemption_reason and schedule and schedule.kind in ('FLEX', 'REMOTE'):
-        # Late/Early undefined; overtime is minutes above required_minutes (if set)
+        # FLEX has no fixed start/end.  REMOTE still uses required_minutes
+        # for overtime, while its scheduled start/end above determine late
+        # arrival and early leave whenever attendance is recorded.
         req = schedule.required_minutes or 0
         if req and work_minutes > req:
             overtime_minutes = work_minutes - req
