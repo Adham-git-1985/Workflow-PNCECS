@@ -4187,6 +4187,36 @@ class AttendanceEvent(db.Model):
         return f"<AttendanceEvent id={self.id} user={self.user_id} dt={self.event_dt} type={self.event_type}>"
 
 
+class HRAttendanceEmailReportDelivery(db.Model):
+    """One scheduled HR attendance email run.
+
+    The background worker polls once per minute, so a durable row keyed by the
+    local run date is used to make the send idempotent across process restarts.
+    A failed run remains retryable without creating duplicate successful rows.
+    """
+
+    __tablename__ = "hr_attendance_email_report_delivery"
+
+    id = db.Column(db.Integer, primary_key=True)
+    run_date = db.Column(db.String(10), nullable=False, unique=True, index=True)
+    report_day = db.Column(db.String(10), nullable=False, index=True)
+    status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
+    attempt_count = db.Column(db.Integer, nullable=False, default=0)
+    recipient_count = db.Column(db.Integer, nullable=False, default=0)
+    sent_at = db.Column(db.DateTime, nullable=True)
+    last_error = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        db.Index(
+            "ix_hr_attendance_email_delivery_status_date",
+            "status",
+            "run_date",
+        ),
+    )
+
+
 
 
 # =========================================================

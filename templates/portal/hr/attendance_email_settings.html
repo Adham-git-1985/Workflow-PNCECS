@@ -1,0 +1,140 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}تقارير الدوام للموارد البشرية{% endblock %}
+
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4" dir="rtl">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-envelope-paper text-success"></i> تقارير الدوام للموارد البشرية</h4>
+      <p class="text-muted mb-0">إرسال تقرير الحضور العام، والتأخير الصباحي، والغياب دون إجازة عبر رسالة بريد واحدة منظمة.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> العودة للتقارير</a>
+  </div>
+
+  <form method="post" class="row g-4">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="col-12">
+      <div class="border rounded-3 p-3 bg-light-subtle">
+        <div class="form-check form-switch">
+          <input class="form-check-input" type="checkbox" role="switch" id="enabled" name="enabled" value="1" {% if config.enabled %}checked{% endif %}>
+          <label class="form-check-label fw-bold" for="enabled">تفعيل الإرسال الآلي</label>
+        </div>
+        <div class="small text-muted mt-2">يستخدم النظام إعدادات SMTP العامة الموجودة في إعدادات البريد. لن يتم الإرسال قبل تحديد مستلم صالح.</div>
+      </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold" for="send_time">ساعة الإرسال</label>
+      <input class="form-control" type="time" id="send_time" name="send_time" value="{{ config.send_time }}" required>
+      <div class="form-text">حسب المنطقة الزمنية للتطبيق: Asia/Jerusalem.</div>
+    </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold" for="report_day_mode">بيانات أي يوم؟</label>
+      <select class="form-select" id="report_day_mode" name="report_day_mode">
+        <option value="TODAY" {% if config.report_day_mode == 'TODAY' %}selected{% endif %}>يوم الإرسال حتى وقت الإرسال</option>
+        <option value="PREVIOUS_WORKING_DAY" {% if config.report_day_mode == 'PREVIOUS_WORKING_DAY' %}selected{% endif %}>آخر يوم عمل سابق</option>
+      </select>
+    </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold" for="start_date">تاريخ بداية التكرار</label>
+      <input class="form-control" type="date" id="start_date" name="start_date" value="{{ config.start_date.isoformat() if config.start_date else today }}">
+      <div class="form-text">يُستخدم مع خيار «كل عدد من الأيام».</div>
+    </div>
+
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold" for="frequency">نمط التكرار</label>
+      <select class="form-select" id="frequency" name="frequency">
+        <option value="DAILY" {% if config.frequency == 'DAILY' %}selected{% endif %}>يومياً</option>
+        <option value="EVERY_N_DAYS" {% if config.frequency == 'EVERY_N_DAYS' %}selected{% endif %}>كل عدد محدد من الأيام</option>
+        <option value="WEEKLY" {% if config.frequency == 'WEEKLY' %}selected{% endif %}>أيام أسبوع محددة</option>
+      </select>
+    </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold" for="interval_days">عدد الأيام</label>
+      <input class="form-control" type="number" min="1" max="365" id="interval_days" name="interval_days" value="{{ config.interval_days }}">
+      <div class="form-text">مثال: 2 يعني كل يومين.</div>
+    </div>
+    <div class="col-12 col-md-4">
+      <label class="form-label fw-bold d-block">أيام الأسبوع عند اختيار النمط الأسبوعي</label>
+      <div class="d-flex flex-wrap gap-2">
+        {% for value, label in weekdays %}
+        <label class="border rounded px-2 py-1 bg-white small">
+          <input type="checkbox" name="weekdays" value="{{ value }}" {% if value in config.weekdays_list %}checked{% endif %}> {{ label }}
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="border rounded-3 p-3">
+        <h6 class="mb-3"><i class="bi bi-calendar-x"></i> الاستثناءات</h6>
+        <div class="row g-3">
+          <div class="col-12 col-md-4">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="skip_weekly_holidays" id="skip_weekly_holidays" value="1" {% if config.skip_weekly_holidays %}checked{% endif %}>
+              <label class="form-check-label" for="skip_weekly_holidays">تخطي العطل الأسبوعية المعرفة في النظام</label>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" name="skip_official_holidays" id="skip_official_holidays" value="1" {% if config.skip_official_holidays %}checked{% endif %}>
+              <label class="form-check-label" for="skip_official_holidays">تخطي العطل الرسمية المسجلة</label>
+            </div>
+          </div>
+          <div class="col-12 col-md-4">
+            <label class="form-label" for="excluded_dates">تواريخ مستثناة يدوياً</label>
+            <textarea class="form-control" id="excluded_dates" name="excluded_dates" rows="2" placeholder="2026-09-25&#10;2026-10-01">{{ config.excluded_dates_list|join('\n') }}</textarea>
+            <div class="form-text">تاريخ واحد في كل سطر بصيغة YYYY-MM-DD.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="border rounded-3 p-3 h-100">
+        <h6 class="mb-2"><i class="bi bi-people"></i> المستلمون من مستخدمي النظام</h6>
+        <input type="search" class="form-control form-control-sm mb-2" id="recipientSearch" placeholder="بحث بالاسم أو البريد..."><div class="small text-muted mb-2">يمكن اختيار أكثر من مستخدم.</div>
+        <div id="recipientList" class="border rounded p-2" style="max-height:280px;overflow:auto">
+          {% for user in users %}
+          <label class="recipient-item d-flex gap-2 align-items-start py-1" data-search="{{ (user.name or '')|lower }} {{ (user.email or '')|lower }}">
+            <input class="form-check-input mt-1" type="checkbox" name="recipient_user_ids" value="{{ user.id }}" {% if user.id in config.recipient_user_ids_list %}checked{% endif %}>
+            <span><span class="fw-semibold">{{ user.name or user.email }}</span><br><small class="text-muted">{{ user.email }}</small></span>
+          </label>
+          {% else %}
+          <div class="text-muted small">لا يوجد مستخدمون لديهم بريد إلكتروني.</div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="border rounded-3 p-3 h-100">
+        <h6 class="mb-2"><i class="bi bi-at"></i> عناوين بريد إضافية</h6>
+        <textarea class="form-control" name="recipient_emails" rows="8" placeholder="hr@example.com&#10;manager@example.com">{{ config.recipient_emails_list|join('\n') }}</textarea>
+        <div class="form-text">يمكن إدخال عنوان في كل سطر أو فصل العناوين بفاصلة.</div>
+      </div>
+    </div>
+
+    <div class="col-12 d-flex flex-wrap gap-2 justify-content-end">
+      <button class="btn btn-success" type="submit" name="action" value="save"><i class="bi bi-check2-circle"></i> حفظ الإعدادات</button>
+      <button class="btn btn-outline-primary" type="submit" name="action" value="test"><i class="bi bi-send"></i> إرسال رسالة اختبار</button>
+    </div>
+  </form>
+</div>
+
+<script>
+document.getElementById('recipientSearch')?.addEventListener('input', function () {
+  const query = (this.value || '').trim().toLowerCase();
+  document.querySelectorAll('#recipientList .recipient-item').forEach(function (item) {
+    item.classList.toggle('d-none', query && !(item.dataset.search || '').includes(query));
+  });
+});
+document.getElementById('frequency')?.addEventListener('change', function () {
+  const every = this.value === 'EVERY_N_DAYS';
+  document.getElementById('interval_days').disabled = !every;
+  document.getElementById('start_date').disabled = !every;
+});
+document.getElementById('frequency')?.dispatchEvent(new Event('change'));
+</script>
+{% endblock %}

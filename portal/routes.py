@@ -124,6 +124,12 @@ from services.attendance_schedule import (
     attendance_schedule_needs_reminder,
     notify_attendance_schedule_stakeholders,
 )
+from services.attendance_report_email import (
+    SETTING_KEYS as ATTENDANCE_EMAIL_SETTING_KEYS,
+    get_report_email_config,
+    save_report_email_config,
+    test_send_attendance_report_email,
+)
 from services.employee_achievements import (
     ACHIEVEMENT_BONUS_CAP,
     ACHIEVEMENT_LEVELS,
@@ -418,6 +424,7 @@ HR_ATT_CREATE = "HR_ATTENDANCE_CREATE"
 HR_ATT_EDIT = "HR_ATTENDANCE_EDIT"
 HR_ATT_EDIT_APPROVE = "HR_ATTENDANCE_EDIT_APPROVE"
 HR_ATT_EXPORT = "HR_ATTENDANCE_EXPORT"
+HR_ATT_EMAIL_MANAGE = "HR_ATTENDANCE_REPORTS_MANAGE"
 
 
 # Backward-compat variable names (some decorators use the full names)
@@ -7389,6 +7396,7 @@ def hr_home():
         HR_PERF_READ, HR_PERF_SUBMIT, HR_PERF_MANAGE, HR_PERF_EXPORT,
         HR_DISCIPLINE_READ, HR_DISCIPLINE_MANAGE,
         HR_ATT_READ, HR_ATT_CREATE, HR_ATT_EXPORT,
+        HR_ATT_EMAIL_MANAGE,
         HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
         HR_ORG_READ, HR_ORG_MANAGE,
         HR_REPORTS_VIEW,
@@ -7420,6 +7428,7 @@ def hr_home():
         HR_ORG_READ, HR_ORG_MANAGE,
         HR_LEAVE_BALANCES_MANAGE,
         HR_MASTERDATA_MANAGE,
+        HR_ATT_EMAIL_MANAGE,
     ]
 
     try:
@@ -7505,6 +7514,14 @@ def hr_home():
     add_item(HR_ORG_MANAGE, "تعيين تبعية الموظفين (هيكلية موحدة)", "ربط الموظفين بعناصر الهيكلية الموحدة لاستخدامها في المسارات والموافقات.", "bi-person-badge", "portal.hr_org_node_assignments", "لوحة التحكم")
     add_item(HR_ORG_MANAGE, "مسؤولو الهيكلية الموحدة", "تعيين المسؤول ونائبه المستخدمين في بناء المسارات الإدارية الديناميكية.", "bi-person-gear", "portal.hr_org_node_managers", "لوحة التحكم")
     add_item(HR_MASTERDATA_MANAGE, "إعدادات الدوام", "إعدادات الدوام/الإجازات/المغادرات والجداول.", "bi-gear", "portal.hr_masterdata_index", "لوحة التحكم")
+    add_item(
+        HR_ATT_EMAIL_MANAGE,
+        "رسائل تقارير الدوام",
+        "تحديد مستلمي وجدولة تقارير الدوام اليومية عبر البريد الإلكتروني.",
+        "bi-envelope-paper",
+        "portal.hr_attendance_email_report_settings",
+        "لوحة التحكم",
+    )
     add_item(HR_LEAVE_BALANCES_MANAGE, "تعبئة أرصدة الإجازات", "تعبئة وتعديل الرصيد الافتتاحي السنوي وتسجيل التصحيحات.", "bi-wallet2", "portal.hr_leave_balances", "الإجازات والمهام")
     add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
     add_item(HR_ACHIEVEMENTS_REVIEW, "اعتماد الإنجازات", "مراجعة إنجازات الموظفين وتحديد مستوى الإنجاز ونقاطه.", "bi-award", "portal.hr_achievements_review_queue", "البرامج الفرعية")
@@ -7595,6 +7612,78 @@ def hr_attendance_home():
 @_perm_any(HR_REPORTS_VIEW, PORTAL_REPORTS_READ)
 def hr_reports_home():
     return render_template("portal/hr/reports_home.html")
+
+
+@portal_bp.route("/hr/reports/attendance/email-settings", methods=["GET", "POST"])
+@login_required
+@_perm(HR_ATT_EMAIL_MANAGE)
+def hr_attendance_email_report_settings():
+    """Configure and test the scheduled HR attendance report email."""
+    if request.method == "POST":
+        action = (request.form.get("action") or "save").strip().lower()
+        if action == "test":
+            try:
+                result = test_send_attendance_report_email()
+                flash(
+                    f"تم إرسال رسالة اختبار إلى {result['recipients']} مستلم/مستلمين عن تاريخ {result['report_day'] }.",
+                    "success",
+                )
+            except Exception as exc:
+                db.session.rollback()
+                flash(f"تعذر إرسال رسالة الاختبار: {exc}", "danger")
+            return redirect(url_for("portal.hr_attendance_email_report_settings"))
+
+        payload = {
+            "enabled": request.form.get("enabled"),
+            "send_time": request.form.get("send_time"),
+            "frequency": request.form.get("frequency"),
+            "interval_days": request.form.get("interval_days"),
+            "weekdays": request.form.getlist("weekdays"),
+            "skip_weekly_holidays": request.form.get("skip_weekly_holidays"),
+            "skip_official_holidays": request.form.get("skip_official_holidays"),
+            "excluded_dates": request.form.get("excluded_dates"),
+            "recipient_user_ids": request.form.getlist("recipient_user_ids"),
+            "recipient_emails": request.form.get("recipient_emails"),
+            "start_date": request.form.get("start_date"),
+            "report_day_mode": request.form.get("report_day_mode"),
+        }
+        try:
+            save_report_email_config(payload)
+            _portal_audit(
+                "HR_ATTENDANCE_EMAIL_REPORTS_SETTINGS_UPDATE",
+                f"updated_by={current_user.id}; frequency={payload.get('frequency')}; time={payload.get('send_time')}",
+                target_type="SYSTEM_SETTING",
+            )
+            db.session.commit()
+            flash("تم حفظ إعدادات تقارير الدوام عبر البريد الإلكتروني.", "success")
+        except Exception as exc:
+            db.session.rollback()
+            flash(f"تعذر حفظ الإعدادات: {exc}", "danger")
+        return redirect(url_for("portal.hr_attendance_email_report_settings"))
+
+    config = get_report_email_config()
+    users = (
+        User.query
+        .filter(User.email.isnot(None))
+        .order_by(func.coalesce(User.name, User.email).asc(), User.id.asc())
+        .all()
+    )
+    weekdays = [
+        (0, "الإثنين"),
+        (1, "الثلاثاء"),
+        (2, "الأربعاء"),
+        (3, "الخميس"),
+        (4, "الجمعة"),
+        (5, "السبت"),
+        (6, "الأحد"),
+    ]
+    return render_template(
+        "portal/hr/attendance_email_settings.html",
+        config=config,
+        users=users,
+        weekdays=weekdays,
+        today=date.today().isoformat(),
+    )
 
 
 # -------------------------

@@ -247,6 +247,9 @@
         </h2>
         <div id="hrRepAtt" class="accordion-collapse collapse" aria-labelledby="hrRepHeadAtt" data-bs-parent="#hrReportsAccordion">
           <div class="accordion-body">
+            {% if current_user.has_perm('HR_ATTENDANCE_REPORTS_MANAGE') %}
+            <a class="list-group-item list-group-item-action border border-success" data-report-label="تقارير الدوام للموارد البشرية رسائل البريد" href="{{ url_for('portal.hr_attendance_email_report_settings') }}"><i class="bi bi-envelope-paper text-success"></i> تقارير الدوام للموارد البشرية</a>
+            {% endif %}
             <a class="list-group-item list-group-item-action fw-semibold" data-report-label="تقرير الشؤون الإدارية الموحد" href="{{ url_for('portal.hr_report_administrative_affairs_daily') }}"><i class="bi bi-clipboard2-data"></i> تقرير الشؤون الإدارية الموحّد</a>
             <hr class="my-3">
             <a class="list-group-item list-group-item-action" data-report-label="تقرير الغياب" href="{{ url_for('portal.hr_report_absence') }}"><i class="bi bi-person-x"></i> تقرير الغياب</a>
