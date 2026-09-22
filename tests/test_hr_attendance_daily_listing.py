@@ -836,6 +836,68 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(result["late_minutes"], 11)
         self.assertEqual(result["early_leave_minutes"], 0)
 
+    def test_timeclock_punch_on_remote_day_uses_office_template_rules(self):
+        employee = User(
+            email="remote-clocked@example.test",
+            name="Remote but clocked",
+            password_hash="x",
+            role="USER",
+        )
+        office_schedule = WorkSchedule(
+            name="Ordinary office schedule",
+            kind="FIXED",
+            start_time="08:15",
+            end_time="14:45",
+            # This field is harmless for FIXED schedules, but was incorrectly
+            # used as the remote-work threshold before the physical-punch rule.
+            required_minutes=15,
+            break_minutes=0,
+            grace_minutes=0,
+            start_grace_minutes=0,
+            end_grace_minutes=0,
+            overtime_threshold_minutes=0,
+        )
+        db.session.add_all((employee, office_schedule))
+        db.session.flush()
+        plan = HRAttendanceSchedulePlan(
+            user_id=employee.id,
+            manager_user_id=employee.id,
+            period_start="2026-09-22",
+            period_end="2026-09-28",
+            version_no=1,
+            status="FINAL_APPROVED",
+        )
+        db.session.add(plan)
+        db.session.flush()
+        db.session.add_all((
+            HRAttendanceScheduleDay(
+                plan_id=plan.id,
+                work_date="2026-09-22",
+                day_type="REMOTE",
+                schedule_id=office_schedule.id,
+                start_time="08:15",
+                end_time="14:45",
+            ),
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 22, 9, 20),
+                event_type="IN",
+            ),
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 22, 12, 0),
+                event_type="OUT",
+            ),
+        ))
+        db.session.commit()
+
+        result = _summary_compute_one(employee.id, "2026-09-22")
+
+        self.assertEqual(result["work_minutes"], 160)
+        self.assertEqual(result["late_minutes"], 65)
+        self.assertEqual(result["early_leave_minutes"], 165)
+        self.assertEqual(result["overtime_minutes"], 0)
+
     def test_morning_clock_departure_does_not_reduce_an_unrelated_early_exit(self):
         employee = User(email="morning-departure@example.test", name="Morning Departure", password_hash="x", role="USER")
         db.session.add(employee)
