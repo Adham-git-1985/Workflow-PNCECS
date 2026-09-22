@@ -25,9 +25,9 @@
             <td>{{ row.id }}</td>
             <td class="fw-bold">{{ "%02d"|format(row.month) }}/{{ row.year }}</td>
             <td>{% if (row.status or '')|upper == 'FINAL' %}<span class="badge text-bg-success">معتمد</span>{% elif (row.status or '')|upper == 'REVERSED' %}<span class="badge text-bg-secondary">معكوس</span>{% else %}<span class="badge text-bg-warning">مسودة</span>{% endif %}</td>
-            <td>{{ row.items|length }}</td>
-            <td>{{ "%.2f"|format(row.items|sum(attribute='leave_deduction_days')) }} يوم</td>
-            <td>{{ "%.2f"|format(row.items|sum(attribute='salary_deduction_days')) }} يوم</td>
+            <td>{{ row.visible_items|length }}</td>
+            <td>{{ "%.2f"|format(row.visible_items|sum(attribute='leave_deduction_days')) }} يوم</td>
+            <td>{{ "%.2f"|format(row.visible_items|sum(attribute='salary_deduction_days')) }} يوم</td>
             <td><div>{{ row.created_by.full_name if row.created_by else '—' }}</div><small class="text-muted">{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '' }}</small></td>
             <td>{{ row.approved_by.full_name if row.approved_by else '—' }}</td>
             <td class="text-end"><a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_deductions_view', run_id=row.id) }}"><i class="bi bi-eye"></i> {{ 'عرض' if (row.status or '')|upper == 'FINAL' else 'مراجعة' }}</a></td>

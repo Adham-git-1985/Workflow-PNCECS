@@ -4291,6 +4291,29 @@ class HRAttendanceSpecialCase(db.Model):
     )
 
 
+class HRAttendanceExemption(db.Model):
+    """Permanent exclusion from attendance and leave reporting/accounting.
+
+    The source attendance, leave, and departure records remain intact for
+    audit purposes.  This row only tells Portal HR not to use the employee in
+    attendance-facing reports or future attendance-based calculations.
+    """
+
+    __tablename__ = "hr_attendance_exemption"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    created_by = db.relationship("User", foreign_keys=[created_by_id], lazy="joined")
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", name="uq_hr_attendance_exemption_user"),
+    )
+
+
 class HRAttendanceClosing(db.Model):
     """Mass closing periods for attendance (الإغلاق الجماعي)."""
 

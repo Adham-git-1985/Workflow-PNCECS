@@ -59,7 +59,7 @@
         </tr>
       </thead>
       <tbody>
-        {% for item in run.items %}
+        {% for item in items %}
           {% set details = details_by_item.get(item.id, {}) %}
           <tr>
             <td style="min-width:170px"><div class="fw-bold">{{ item.user.full_name or item.user.name or '—' }}</div><div class="text-muted small">{{ item.user.email or '' }}</div></td>

@@ -1,0 +1,72 @@
+{% extends "portal/hr/base.html" %}
+{% block title %}استثناءات تقارير الدوام{% endblock %}
+
+{% block hr_content %}
+<div class="bg-white rounded-3 shadow-sm p-4">
+  <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+    <div>
+      <h4 class="mb-1"><i class="bi bi-person-slash"></i> استثناءات تقارير الدوام والإجازات</h4>
+      <p class="text-muted mb-0">المستخدم المستثنى لا يظهر في تقارير الحضور والغياب والمغادرات والإجازات، ولا يدخل في احتساب الدوام أو الخصم الجديد.</p>
+    </div>
+    <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_attendance_home') }}">
+      <i class="bi bi-arrow-right"></i> العودة لشاشات الدوام
+    </a>
+  </div>
+
+  <div class="alert alert-info small">
+    لا تُحذف سجلات الساعة أو طلبات الإجازة الأصلية. وعند إضافة الاستثناء، يلغي النظام فقط الإجازات السنوية التي أنشأها تلقائياً بسبب غياب ضمن فترة المراجعة، مع بقاء سجل التدقيق.
+  </div>
+
+  <form method="post" class="row g-3 align-items-end border rounded-3 p-3 mb-4">
+    {% include "_csrf.html" %}
+    <input type="hidden" name="action" value="add">
+    <div class="col-12 col-md-9">
+      <label class="form-label" for="attendanceExemptUser">المستخدم</label>
+      <select class="form-select" id="attendanceExemptUser" name="user_id" required>
+        <option value="">— اختر اسم المستخدم —</option>
+        {% for user in eligible_users %}
+          <option value="{{ user.id }}">{{ user.full_name or user.name or user.email }}{% if user.username %} — {{ user.username }}{% endif %}{% if user.email %} ({{ user.email }}){% endif %}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-3 d-grid">
+      <button class="btn btn-danger" type="submit"><i class="bi bi-person-slash"></i> إضافة للاستثناء</button>
+    </div>
+  </form>
+
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead>
+        <tr>
+          <th>المستخدم</th>
+          <th>اسم الدخول</th>
+          <th>أضيف بواسطة</th>
+          <th>تاريخ الإضافة</th>
+          <th class="text-end">إجراء</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in exemptions %}
+          {% set user = row.user %}
+          <tr>
+            <td>{{ (user.full_name or user.name or user.email) if user else '—' }}</td>
+            <td>{{ (user.username or user.email) if user else '—' }}</td>
+            <td>{{ (row.created_by.full_name or row.created_by.name or row.created_by.email) if row.created_by else '—' }}</td>
+            <td>{{ row.created_at.strftime('%Y-%m-%d %H:%M') if row.created_at else '—' }}</td>
+            <td class="text-end">
+              <form method="post" class="d-inline" onsubmit="return confirm('هل تريد إلغاء استثناء هذا المستخدم؟');">
+                {% include "_csrf.html" %}
+                <input type="hidden" name="action" value="remove">
+                <input type="hidden" name="user_id" value="{{ row.user_id }}">
+                <button class="btn btn-sm btn-outline-secondary" type="submit"><i class="bi bi-person-check"></i> إلغاء الاستثناء</button>
+              </form>
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">لا يوجد مستخدمون مستثنون حالياً.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
