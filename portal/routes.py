@@ -32580,6 +32580,38 @@ def _uncovered_attendance_minutes(start_minute, end_minute, intervals):
     return uncovered + max(0, end_minute - cursor)
 
 
+def _attendance_schedule_for_timeclock_punch(schedule):
+    """Apply office calculation rules when a remote day has a clock punch.
+
+    A published remote day can retain the ordinary office schedule template and
+    only override its ``day_type``.  The effective schedule proxy marks that
+    template as ``REMOTE`` for no-punch days, which otherwise makes the
+    template's ``required_minutes`` look like a remote-work overtime target.
+    An IN/OUT punch from the timeclock is proof of office attendance, so restore
+    the template's original office kind while keeping any day-specific times.
+    """
+    if not schedule or (getattr(schedule, "kind", "") or "").strip().upper() != "REMOTE":
+        return schedule
+
+    template = _attendance_schedule_snapshot(getattr(schedule, "id", None))
+    template_kind = (getattr(template, "kind", "") or "").strip().upper()
+    office_kind = template_kind if template_kind in {"FIXED", "FLEX", "SHIFT", "RAMADAN"} else "FIXED"
+
+    return SimpleNamespace(
+        id=getattr(schedule, "id", None),
+        name=getattr(schedule, "name", None),
+        kind=office_kind,
+        start_time=getattr(schedule, "start_time", None),
+        end_time=getattr(schedule, "end_time", None),
+        required_minutes=getattr(schedule, "required_minutes", None),
+        break_minutes=getattr(schedule, "break_minutes", 0),
+        grace_minutes=getattr(schedule, "grace_minutes", 0),
+        start_grace_minutes=getattr(schedule, "start_grace_minutes", None),
+        end_grace_minutes=getattr(schedule, "end_grace_minutes", None),
+        overtime_threshold_minutes=getattr(schedule, "overtime_threshold_minutes", None),
+    )
+
+
 def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     # Collect day events
     dt_from = datetime.fromisoformat(day_str + 'T00:00:00')
@@ -32628,6 +32660,11 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             last_out = datetime.fromisoformat(f'{day_str}T{manual_override.end_time}:00')
 
     schedule = _effective_schedule_for_user(user_id, day_str)
+    # Normal IN/OUT rows are imported only from the physical timeclock.  A
+    # clocked employee on a remote schedule is therefore calculated according
+    # to the office template rather than remote required-minutes rules.
+    if ins or outs:
+        schedule = _attendance_schedule_for_timeclock_punch(schedule)
     schedule_id = schedule.id if schedule else None
 
     break_minutes = int(getattr(schedule, 'break_minutes', 0) or 0) if schedule else 0
