@@ -256,7 +256,6 @@ from models import (
     HRPerformanceCycle,
     HRPerformanceAssignment,
     HRAttendanceSpecialCase,
-    HRAttendanceExemption,
     HRAttendanceClosing,
     HRAttendanceDeductionConfig,
     HRAttendanceDeductionRun,
@@ -7584,100 +7583,6 @@ def hr_attendance_home():
     return render_template(
         "portal/hr/attendance_home.html",
         can_view_reports=current_user.has_perm(HR_REPORTS_VIEW),
-        can_manage_attendance_exemptions=_can_manage_attendance_exemptions(),
-    )
-
-
-@portal_bp.route("/hr/attendance/exemptions", methods=["GET", "POST"])
-@login_required
-def hr_attendance_exemptions():
-    """Manage permanent attendance-report exclusions for privileged accounts."""
-    if not _can_manage_attendance_exemptions():
-        abort(403)
-
-    if request.method == "POST":
-        action = (request.form.get("action") or "").strip().lower()
-        raw_user_id = (request.form.get("user_id") or "").strip()
-        user_id = int(raw_user_id) if raw_user_id.isdigit() else None
-        target_user = db.session.get(User, user_id) if user_id else None
-
-        if not target_user:
-            flash("اختر مستخدماً صحيحاً.", "danger")
-            return redirect(url_for("portal.hr_attendance_exemptions"))
-
-        existing = HRAttendanceExemption.query.filter_by(user_id=target_user.id).first()
-        if action == "add":
-            if existing:
-                flash("المستخدم مختار بالفعل ضمن الاستثناءات.", "info")
-                return redirect(url_for("portal.hr_attendance_exemptions"))
-
-            exemption = HRAttendanceExemption(
-                user_id=target_user.id,
-                created_by_id=current_user.id,
-                created_at=datetime.utcnow(),
-            )
-            db.session.add(exemption)
-            db.session.flush()
-            _clear_attendance_exempt_user_ids_cache()
-
-            # Release only system-generated absence leave records in the
-            # configured review window.  The original rows are retained as
-            # released/replaced audit evidence; no approved manual leave is
-            # deleted or altered here.
-            reconciliation = _process_unrecorded_office_attendance(
-                target_user_id=target_user.id,
-            )
-            reversed_count = int((reconciliation or {}).get("reversed") or 0)
-            _portal_audit(
-                "HR_ATTENDANCE_EXEMPTION_ADD",
-                f"user_id={target_user.id}; auto_leaves_reversed={reversed_count}",
-                target_type="USER",
-                target_id=target_user.id,
-            )
-            db.session.commit()
-            _clear_attendance_exempt_user_ids_cache()
-            flash(
-                "تم استثناء المستخدم من تقارير واحتسابات الدوام والإجازات.",
-                "success",
-            )
-            return redirect(url_for("portal.hr_attendance_exemptions"))
-
-        if action == "remove":
-            if not existing:
-                flash("المستخدم غير موجود ضمن الاستثناءات.", "info")
-                return redirect(url_for("portal.hr_attendance_exemptions"))
-            db.session.delete(existing)
-            _portal_audit(
-                "HR_ATTENDANCE_EXEMPTION_REMOVE",
-                f"user_id={target_user.id}",
-                target_type="USER",
-                target_id=target_user.id,
-            )
-            db.session.commit()
-            _clear_attendance_exempt_user_ids_cache()
-            flash("تم إلغاء استثناء المستخدم من تقارير واحتسابات الدوام.", "success")
-            return redirect(url_for("portal.hr_attendance_exemptions"))
-
-        abort(400)
-
-    exemptions = (
-        HRAttendanceExemption.query
-        .join(User, User.id == HRAttendanceExemption.user_id)
-        .order_by(func.coalesce(User.name, User.email).asc(), HRAttendanceExemption.id.asc())
-        .all()
-    )
-    excluded_user_ids = {int(row.user_id) for row in exemptions}
-    eligible_users_query = User.query
-    if excluded_user_ids:
-        eligible_users_query = eligible_users_query.filter(~User.id.in_(excluded_user_ids))
-    eligible_users = eligible_users_query.order_by(
-        func.coalesce(User.name, User.email).asc(),
-        User.id.asc(),
-    ).all()
-    return render_template(
-        "portal/hr/attendance_exemptions.html",
-        exemptions=exemptions,
-        eligible_users=eligible_users,
     )
 
 
@@ -8112,82 +8017,7 @@ def _hr_lookup_options(category: str):
     )
 
 
-def _attendance_exempt_user_ids() -> set[int]:
-    """Return employees permanently excluded from attendance-facing outputs.
-
-    The result is cached only for the current request because this helper is
-    called by both daily summaries and report builders.  Keeping the source
-    rows intact is intentional: the exemption hides them from operational HR
-    reporting without destroying audit evidence.
-    """
-    cache_key = "_hr_attendance_exempt_user_ids"
-    if has_request_context():
-        cached = getattr(g, cache_key, None)
-        if cached is not None:
-            return set(cached)
-
-    try:
-        user_ids = {
-            int(user_id)
-            for (user_id,) in HRAttendanceExemption.query.with_entities(
-                HRAttendanceExemption.user_id
-            ).all()
-            if user_id
-        }
-    except OperationalError:
-        # A deployment that has not yet run the migration must keep the
-        # existing attendance screens usable until its normal startup schema
-        # sync creates the new table.
-        db.session.rollback()
-        user_ids = set()
-
-    if has_request_context():
-        setattr(g, cache_key, frozenset(user_ids))
-    return user_ids
-
-
-def _clear_attendance_exempt_user_ids_cache() -> None:
-    if has_request_context():
-        g.pop("_hr_attendance_exempt_user_ids", None)
-
-
-def _is_attendance_exempt_user(user_id: int | None) -> bool:
-    try:
-        return bool(user_id and int(user_id) in _attendance_exempt_user_ids())
-    except (TypeError, ValueError):
-        return False
-
-
-def _without_attendance_exempt_users(user_ids) -> list[int]:
-    exempt_user_ids = _attendance_exempt_user_ids()
-    result = []
-    for user_id in user_ids or []:
-        try:
-            normalized_id = int(user_id)
-        except (TypeError, ValueError):
-            continue
-        if normalized_id not in exempt_user_ids:
-            result.append(normalized_id)
-    return result
-
-
-def _can_manage_attendance_exemptions(user=None) -> bool:
-    """Only the two system-administrator roles can change this policy."""
-    actor = user
-    if actor is None and has_request_context():
-        actor = current_user
-    if not actor:
-        return False
-    try:
-        return any(
-            actor.has_role(role)
-            for role in ("ADMIN", "SUPER_ADMIN", "SUPERADMIN")
-        )
-    except Exception:
-        return False
-
-
-def _filtered_user_ids(employee_id=None, work_location_id=None, appointment_type_id=None, organization_id=None, directorate_id=None, department_id=None, division_id=None, *, exclude_attendance_exempt=False):
+def _filtered_user_ids(employee_id=None, work_location_id=None, appointment_type_id=None, organization_id=None, directorate_id=None, department_id=None, division_id=None):
     q = EmployeeFile.query
     if employee_id:
         q = q.filter(EmployeeFile.user_id == employee_id)
@@ -8204,12 +8034,7 @@ def _filtered_user_ids(employee_id=None, work_location_id=None, appointment_type
         q = q.filter(EmployeeFile.department_id == department_id)
     if division_id:
         q = q.filter(EmployeeFile.division_id == division_id)
-    user_ids = [r.user_id for r in q.with_entities(EmployeeFile.user_id).all()]
-    return (
-        _without_attendance_exempt_users(user_ids)
-        if exclude_attendance_exempt
-        else user_ids
-    )
+    return [r.user_id for r in q.with_entities(EmployeeFile.user_id).all()]
 
 
 def _cmp_ok(value: float, op: str, threshold: float):
@@ -8396,8 +8221,6 @@ def hr_report_last_login():
 
     rows = q.limit(500).all()
 
-    # Login activity is an access-security report, not an attendance report.
-    # Keep it independent of attendance-report exclusions.
     users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
@@ -8461,16 +8284,11 @@ def hr_report_attendance_permissions():
     except Exception:
         hours_val = None
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     appointment_types = _hr_lookup_options('APPOINTMENT_TYPE')
 
-    user_ids = _filtered_user_ids(
-        employee_id=employee_id,
-        work_location_id=work_location_id,
-        appointment_type_id=appointment_type_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=employee_id, work_location_id=work_location_id, appointment_type_id=appointment_type_id)
     if not user_ids:
         rows_view = []
     else:
@@ -8607,14 +8425,10 @@ def hr_report_delay():
     except Exception:
         hours_val = None
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
-    user_ids = _filtered_user_ids(
-        employee_id=employee_id,
-        work_location_id=work_location_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=employee_id, work_location_id=work_location_id)
     if not user_ids:
         rows_view = []
     else:
@@ -8710,16 +8524,12 @@ def hr_report_employee_attendance():
     from_date = _parse_yyyy_mm_dd(request.args.get('from') or request.args.get('from_date'))
     to_date = _parse_yyyy_mm_dd(request.args.get('to') or request.args.get('to_date'))
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
     rows_view = []
     if employee_id:
-        user_ids = _filtered_user_ids(
-            employee_id=employee_id,
-            work_location_id=work_location_id,
-            exclude_attendance_exempt=True,
-        )
+        user_ids = _filtered_user_ids(employee_id=employee_id, work_location_id=work_location_id)
         if user_ids:
             q = AttendanceDailySummary.query.filter(AttendanceDailySummary.user_id == employee_id)
             if from_date:
@@ -8816,7 +8626,6 @@ def hr_report_employees_attendance():
         directorate_id=directorate_id,
         department_id=department_id,
         division_id=division_id,
-        exclude_attendance_exempt=True,
     )
 
     rows = []
@@ -8944,7 +8753,7 @@ def hr_report_attendance_summary():
         except Exception:
             pass
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     loc_map = {x.id: x.name for x in (work_locations or [])}
 
@@ -8960,7 +8769,6 @@ def hr_report_attendance_summary():
         directorate_id=directorate_id,
         department_id=department_id,
         division_id=division_id,
-        exclude_attendance_exempt=True,
     )
 
     rows = []
@@ -9084,16 +8892,12 @@ def hr_report_absence():
     from_date = _parse_yyyy_mm_dd(request.args.get('from') or request.args.get('from_date'))
     to_date = _parse_yyyy_mm_dd(request.args.get('to') or request.args.get('to_date'))
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
     loc_map = {x.id: x.name for x in (work_locations or [])}
 
-    user_ids = _filtered_user_ids(
-        employee_id=employee_id,
-        work_location_id=work_location_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=employee_id, work_location_id=work_location_id)
     rows_view = []
 
     if user_ids:
@@ -9162,15 +8966,11 @@ def hr_report_fingerprints():
 
     move_read = (request.args.get('move_read') or '').strip().lower()  # read|unread|''
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
     # Candidate users from employee file filters
-    user_ids = _filtered_user_ids(
-        employee_id=employee_id,
-        work_location_id=work_location_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=employee_id, work_location_id=work_location_id)
 
     events = []
     if user_ids:
@@ -9299,7 +9099,7 @@ def hr_report_permissions_fingerprint():
 
     issue = (request.args.get('issue') or '').strip().lower()  # ok|perm_no_fp|mismatch|fp_no_perm|''
 
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     perm_types = HRPermissionType.query.filter(HRPermissionType.is_active.is_(True)).order_by(HRPermissionType.name_ar.asc()).all()
 
@@ -9328,11 +9128,7 @@ def hr_report_permissions_fingerprint():
             can_export=current_user.has_perm(HR_REPORTS_EXPORT),
         )
 
-    user_ids = _filtered_user_ids(
-        employee_id=employee_id,
-        work_location_id=work_location_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=employee_id, work_location_id=work_location_id)
 
     if not user_ids:
         # nothing
@@ -9701,11 +9497,6 @@ def _manual_attendance_event_rows_for_report(
             HRAttendanceSpecialCase.day_to >= start_day.isoformat(),
         ))
     )
-    exempt_user_ids = _attendance_exempt_user_ids()
-    if exempt_user_ids:
-        candidate_query = candidate_query.filter(
-            ~HRAttendanceSpecialCase.user_id.in_(exempt_user_ids)
-        )
     if user_id:
         candidate_query = candidate_query.filter(HRAttendanceSpecialCase.user_id == int(user_id))
     if work_location_id:
@@ -10014,15 +9805,11 @@ def _administrative_affairs_daily_rows(
     user_ids: list[int] | None = None,
 ) -> list[dict]:
     """Combine every employee's clock, leave, and approved schedule per day."""
-    exempt_user_ids = _attendance_exempt_user_ids()
     employee_query = User.query.join(EmployeeFile, EmployeeFile.user_id == User.id)
     if user_ids is not None:
-        user_ids = _without_attendance_exempt_users(user_ids)
         if not user_ids:
             return []
         employee_query = employee_query.filter(User.id.in_(user_ids))
-    elif exempt_user_ids:
-        employee_query = employee_query.filter(~User.id.in_(exempt_user_ids))
     employees = employee_query.order_by(func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc()).all()
     employee_ids = [int(employee.id) for employee in employees]
     if not employee_ids:
@@ -10541,7 +10328,6 @@ def hr_report_administrative_affairs_daily():
         employee_id=employee_id,
         work_location_id=location_id,
         appointment_type_id=appointment_id,
-        exclude_attendance_exempt=True,
     )
     rows = _administrative_affairs_daily_rows(start_day, end_day, user_ids=selected_user_ids)
     category = (request.args.get("category") or "").strip().upper()
@@ -10575,10 +10361,7 @@ def hr_report_administrative_affairs_daily():
         counts=counts,
         from_date=start_day.isoformat(),
         to_date=end_day.isoformat(),
-        users=[
-            user for user in _attendance_schedule_employee_users()
-            if not _is_attendance_exempt_user(user.id)
-        ],
+        users=_attendance_schedule_employee_users(),
         work_locations=_hr_lookup_options("WORK_LOCATION"),
         appointment_types=_hr_lookup_options("APPOINTMENT_TYPE"),
         selected_user_id=employee_id,
@@ -10731,7 +10514,6 @@ def hr_report_attendance_daily():
         directorate_id=directorate_id,
         department_id=department_id,
         division_id=division_id,
-        exclude_attendance_exempt=True,
     )
 
     # build summary per employee
@@ -10863,9 +10645,6 @@ def hr_report_attendance_edits():
     # Manual edits: HRAttendanceSpecialCase
     if edit_type in ('', 'manual'):
         q = HRAttendanceSpecialCase.query
-        exempt_user_ids = _attendance_exempt_user_ids()
-        if exempt_user_ids:
-            q = q.filter(~HRAttendanceSpecialCase.user_id.in_(exempt_user_ids))
         if editor_id:
             q = q.filter(HRAttendanceSpecialCase.created_by_id == editor_id)
         if target_user_id:
@@ -10988,10 +10767,7 @@ def hr_report_negative_movements():
     work_locations = _hr_lookup_options('WORK_LOCATION')
     loc_map = {x.id: x.name for x in (work_locations or [])}
 
-    user_ids = _filtered_user_ids(
-        work_location_id=work_location_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(work_location_id=work_location_id)
 
     rows = []
     if user_ids:
@@ -11499,7 +11275,7 @@ def hr_report_diwan():
         month = datetime.utcnow().month
 
     view = (request.args.get('view') or '').strip().lower()
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     appointment_types = _hr_lookup_options('APPOINTMENT_TYPE')
 
@@ -11541,13 +11317,9 @@ def hr_report_diwan():
     # If a specific employee is selected, generate the report for that employee only
     # (even if they have no attendance/leave rows).
     if selected_user_id:
-        user_ids = _without_attendance_exempt_users([selected_user_id])
+        user_ids = [selected_user_id]
     else:
-        user_ids = _filtered_user_ids(
-            work_location_id=work_location_id,
-            appointment_type_id=appointment_type_id,
-            exclude_attendance_exempt=True,
-        )
+        user_ids = _filtered_user_ids(work_location_id=work_location_id, appointment_type_id=appointment_type_id)
     rows_view = []
     recs = []
     departure_totals = {}
@@ -12611,14 +12383,9 @@ def _as_yyyy_mm_dd(d: date | None) -> str:
         return ''
 
 
-def _list_hr_users(*, exclude_attendance_exempt: bool = False):
+def _list_hr_users():
     try:
-        query = User.query
-        if exclude_attendance_exempt:
-            exempt_user_ids = _attendance_exempt_user_ids()
-            if exempt_user_ids:
-                query = query.filter(~User.id.in_(exempt_user_ids))
-        return query.order_by(func.coalesce(User.name, User.email).asc()).all()
+        return User.query.order_by(func.coalesce(User.name, User.email).asc()).all()
     except Exception:
         return []
 
@@ -13708,9 +13475,6 @@ def hr_deductions_run():
     # NOTE: User.is_active is a Flask-Login property (not a DB column) in this project,
     # so it cannot be used in SQLAlchemy filters.
     users_q = User.query.join(EmployeeFile, EmployeeFile.user_id == User.id)
-    exempt_user_ids = _attendance_exempt_user_ids()
-    if exempt_user_ids:
-        users_q = users_q.filter(~User.id.in_(exempt_user_ids))
     if gov_id.isdigit():
         users_q = users_q.filter(EmployeeFile.work_governorate_lookup_id == int(gov_id))
     if loc_id.isdigit():
@@ -13737,7 +13501,7 @@ def hr_deductions_run():
             ]
         else:
             selected_ids = list(set(selected_ids) & visible_user_ids)
-        selected_ids = sorted(set(_without_attendance_exempt_users(selected_ids)))
+        selected_ids = sorted(set(selected_ids))
         if not selected_ids:
             flash('اختر موظفاً واحداً على الأقل لتنفيذ الخصم.', 'danger')
             return redirect(url_for('portal.hr_deductions_run', year=year, month=month, work_governorate_lookup_id=gov_id, work_location_lookup_id=loc_id, q=qtxt))
@@ -13769,7 +13533,6 @@ def hr_deductions_run():
                     'HYBRID_REMOTE', 'OFFICIAL_MISSION', 'OFFICIAL_DEPARTURE',
                     'APPROVED_LEAVE', 'EXEMPT_PERMISSION_TYPE', 'SPECIAL_EXCEPTION',
                     'WEEKLY_OFF', 'OFFICIAL_HOLIDAY', 'SCHEDULED_OFF',
-                    'ATTENDANCE_EXEMPT',
                 ],
             }, ensure_ascii=False),
             created_by_id=getattr(current_user, 'id', None),
@@ -13895,11 +13658,6 @@ def hr_deductions_run():
 @_perm_any(HR_ATT_READ, HR_REPORTS_VIEW, HR_READ, HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE)
 def hr_deductions_view(run_id: int):
     run = HRAttendanceDeductionRun.query.get_or_404(run_id)
-    exempt_user_ids = _attendance_exempt_user_ids()
-    visible_items = [
-        item for item in run.items
-        if item.user_id not in exempt_user_ids
-    ]
 
     export = (request.args.get('export') or '').strip().lower()
     if export in ('1', 'csv'):
@@ -13913,7 +13671,7 @@ def hr_deductions_view(run_id: int):
             'Chargeable minutes', 'Leave deduction days', 'Salary deduction days', 'Note',
             'Details JSON',
         ])
-        for it in visible_items:
+        for it in run.items:
             u = it.user
             w.writerow([
                 (getattr(u, 'name', '') or '').strip(),
@@ -13948,7 +13706,7 @@ def hr_deductions_view(run_id: int):
     except Exception:
         pass
     details_by_item = {}
-    for item in visible_items:
+    for item in run.items:
         try:
             details_by_item[item.id] = json.loads(item.details_json or '{}')
         except (TypeError, ValueError, json.JSONDecodeError):
@@ -13956,7 +13714,6 @@ def hr_deductions_view(run_id: int):
     return render_template(
         'portal/hr/deductions_view.html',
         run=run,
-        items=visible_items,
         can_approve=can_approve,
         can_adjust=bool(can_approve and (run.status or '').upper() == 'DRAFT'),
         can_reverse=bool(can_approve and (run.status or '').upper() == 'FINAL'),
@@ -13995,9 +13752,6 @@ def hr_deduction_item_adjust(run_id: int, item_id: int):
     item = HRAttendanceDeductionItem.query.filter_by(id=item_id, run_id=run.id).first_or_404()
     if (run.status or '').upper() != 'DRAFT':
         flash('لا يمكن تعديل خصم بعد اعتماده.', 'warning')
-        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
-    if _is_attendance_exempt_user(item.user_id):
-        flash('هذا المستخدم مستثنى من احتسابات الدوام، ولا يمكن تعديل خصم له.', 'warning')
         return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
 
     note = (request.form.get('adjustment_note') or '').strip()
@@ -14072,30 +13826,6 @@ def hr_deduction_approve(run_id: int):
     if (run.status or '').upper() != 'DRAFT':
         flash('عملية الخصم معتمدة مسبقاً.', 'info')
         return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
-
-    exempt_items = [
-        item for item in run.items
-        if _is_attendance_exempt_user(item.user_id)
-    ]
-    if exempt_items:
-        exempt_user_ids = sorted({int(item.user_id) for item in exempt_items})
-        for item in exempt_items:
-            db.session.delete(item)
-        db.session.flush()
-        _refresh_deduction_run_totals(run)
-        _portal_audit(
-            'HR_DEDUCTION_EXEMPT_ITEMS_REMOVED',
-            f'إزالة بنود مستخدمين مستثنين من مسودة الخصم: {exempt_user_ids}',
-            target_type='HR_ATT_DEDUCTION_RUN',
-            target_id=run.id,
-        )
-        db.session.commit()
-        if not HRAttendanceDeductionItem.query.filter_by(run_id=run.id).first():
-            flash('لا توجد بنود قابلة للاعتماد بعد استثناء مستخدمي الدوام.', 'warning')
-        else:
-            flash('أزيلت بنود المستخدمين المستثنين من المسودة. راجعها ثم اعتمدها مرة أخرى.', 'warning')
-        return redirect(url_for('portal.hr_deductions_view', run_id=run.id))
-
     user_ids = [item.user_id for item in run.items]
     month_start = f"{run.year:04d}-{run.month:02d}-01"
     month_end = _end_of_month_str(run.year, run.month)
@@ -17839,7 +17569,6 @@ def _my_attendance_month_rows(
 
 
 _DEDUCTION_EXCLUSION_LABELS = {
-    "ATTENDANCE_EXEMPT": "مستثنى من نظام الدوام والإجازات",
     "WEEKLY_OFF": "عطلة أسبوعية",
     "OFFICIAL_HOLIDAY": "عطلة رسمية",
     "SCHEDULED_OFF": "يوم غير مجدول للدوام",
@@ -17882,8 +17611,6 @@ def _deduction_day_reason(row) -> str | None:
     classification = (getattr(row, "attendance_classification", None) or "").upper()
     status = (getattr(row, "status", None) or "").upper()
 
-    if status == "ATTENDANCE_EXEMPT":
-        return "ATTENDANCE_EXEMPT"
     if classification == "REMOTE" or status == "REMOTE_DAY":
         return "HYBRID_REMOTE"
     if classification in {"WEEKLY_OFF", "OFFICIAL_HOLIDAY", "SCHEDULED_OFF"}:
@@ -18052,28 +17779,6 @@ def _monthly_attendance_deduction_breakdown(
     minutes_per_day: int,
     allowance_minutes: int,
 ) -> dict:
-    if _is_attendance_exempt_user(user_id):
-        return {
-            "late_minutes": 0,
-            "early_leave_minutes": 0,
-            "absent_days": 0,
-            "permission_minutes": 0,
-            "permission_allowance_minutes": max(0, int(allowance_minutes or 0)),
-            "permission_allowance_used_minutes": 0,
-            "excluded_minutes": 0,
-            "chargeable_minutes": 0,
-            "remainder_minutes": 0,
-            "details": {
-                "version": 1,
-                "period": f"{year:04d}-{month:02d}",
-                "minutes_per_day": minutes_per_day,
-                "formula": "الموظف مستثنى من احتساب الدوام والإجازات",
-                "days": [],
-                "departures": [],
-                "summary": {"attendance_exempt": True},
-            },
-        }
-
     month_start = date(year, month, 1)
     month_end = _parse_yyyy_mm_dd(_end_of_month_str(year, month))
     rows_by_day = _deduction_rows_in_range(user_id, month_start, month_end)
@@ -19994,9 +19699,6 @@ def _hr_absence_board_query(kind: str, selected_day: str, visible_user_ids: set[
             HRPermissionRequest.day == selected_day,
         )
         model = HRPermissionRequest
-    exempt_user_ids = _attendance_exempt_user_ids()
-    if exempt_user_ids:
-        query = query.filter(~model.user_id.in_(exempt_user_ids))
     if visible_user_ids is not None:
         query = query.filter(model.user_id.in_(visible_user_ids)) if visible_user_ids else query.filter(model.id == -1)
     if search:
@@ -24511,10 +24213,7 @@ def hr_attendance_events():
     batch_id = (request.args.get("batch_id") or "").strip()
     user_id = (request.args.get("user_id") or "").strip()
 
-    exempt_user_ids = _attendance_exempt_user_ids()
     qry = AttendanceEvent.query
-    if exempt_user_ids:
-        qry = qry.filter(~AttendanceEvent.user_id.in_(exempt_user_ids))
 
     if q:
         qry = apply_search_all_columns(qry, AttendanceEvent, q)
@@ -24592,8 +24291,6 @@ def hr_attendance_events():
                 .filter(AttendanceEvent.event_dt >= selected_from)
                 .filter(AttendanceEvent.event_dt <= selected_to)
             )
-            if exempt_user_ids:
-                stats_q = stats_q.filter(~AttendanceEvent.user_id.in_(exempt_user_ids))
             if user_id.isdigit():
                 stats_q = stats_q.filter(AttendanceEvent.user_id == int(user_id))
             if work_location_lookup_id.isdigit():
@@ -24646,7 +24343,7 @@ def hr_attendance_events():
     report_start = date_from or (min(raw_event_days) if raw_event_days else '') or date_to
     report_end = date_to or (max(raw_event_days) if raw_event_days else '') or date_from
     report_user_ids = {int(event.user_id) for event in events if event.user_id}
-    if user_id.isdigit() and int(user_id) not in exempt_user_ids:
+    if user_id.isdigit():
         report_user_ids.add(int(user_id))
 
     if report_start and report_end and report_start <= report_end:
@@ -24660,10 +24357,6 @@ def hr_attendance_events():
                 .filter(HRPermissionRequest.day >= report_start)
                 .filter(HRPermissionRequest.day <= report_end)
             )
-            if exempt_user_ids:
-                system_users_query = system_users_query.filter(
-                    ~HRPermissionRequest.user_id.in_(exempt_user_ids)
-                )
             if work_location_lookup_id.isdigit():
                 system_users_query = (
                     system_users_query
@@ -24746,10 +24439,7 @@ def hr_attendance_events():
     # Users map for dropdown + table display (prevents UndefinedError in templates)
     try:
         # Prefer all users for filter dropdown (simple + predictable)
-        users_query = User.query
-        if exempt_user_ids:
-            users_query = users_query.filter(~User.id.in_(exempt_user_ids))
-        ulist = users_query.order_by(User.name.asc().nullslast(), User.email.asc()).limit(2000).all()
+        ulist = User.query.order_by(User.name.asc().nullslast(), User.email.asc()).limit(2000).all()
         users = {u.id: u for u in ulist}
     except Exception:
         users = {}
@@ -31420,22 +31110,11 @@ def hr_monthly_leave_report():
     month = _to_int(request.values.get('month'), today.month)
     month = 1 if not month or month < 1 else (12 if month > 12 else month)
 
-    exempt_user_ids = _attendance_exempt_user_ids()
     user_id = _to_int(request.values.get('user_id'), None)
-    selected_user = (
-        User.query.get(user_id)
-        if user_id and user_id not in exempt_user_ids
-        else None
-    )
+    selected_user = User.query.get(user_id) if user_id else None
 
     from sqlalchemy import func
-    users_query = User.query
-    if exempt_user_ids:
-        users_query = users_query.filter(~User.id.in_(exempt_user_ids))
-    users = users_query.order_by(
-        func.coalesce(User.name, User.email).asc(),
-        User.email.asc(),
-    ).all()
+    users = User.query.order_by(func.coalesce(User.name, User.email).asc(), User.email.asc()).all()
     leave_types = HRLeaveType.query.filter(HRLeaveType.is_active == True).order_by(HRLeaveType.code.asc()).all()  # noqa: E712
 
     # Resolve as_of for the selected month
@@ -31606,9 +31285,6 @@ def hr_monthly_leave_report_set_allowance():
     if user_id <= 0 or month < 1 or month > 12:
         flash('بيانات غير صحيحة.', 'danger')
         return redirect(url_for('portal.hr_monthly_leave_report'))
-    if _is_attendance_exempt_user(user_id):
-        flash('المستخدم مستثنى من احتسابات الدوام ولا يحتاج إلى سماح مغادرات شهري.', 'warning')
-        return redirect(url_for('portal.hr_monthly_leave_report', year=year, month=month))
 
     row = HRMonthlyPermissionAllowance.query.filter_by(user_id=user_id, year=year, month=month).first()
     if not row:
@@ -31744,7 +31420,6 @@ def hr_alerts():
     late_thr = _setting_get_int('HR_ALERT_LATE_MINUTES_MONTH', 120)
     leave_thr = _setting_get_int('HR_ALERT_LEAVE_REMAIN_DAYS', 2)
     escalation_policies = get_escalation_policies()
-    exempt_user_ids = _attendance_exempt_user_ids()
     can_manage_escalation = bool(
         current_user.has_perm(HR_MASTERDATA_MANAGE)
         or current_user.has_perm(HR_REQUESTS_VIEW_ALL)
@@ -31811,7 +31486,7 @@ def hr_alerts():
         return None
 
     def _matches_user(u):
-        if not u or getattr(u, 'id', None) in exempt_user_ids:
+        if not u:
             return False
 
         if directorate_id and _effective_directorate_id(u) != directorate_id:
@@ -31858,7 +31533,7 @@ def hr_alerts():
         for uid, late_min in q.all():
             if int(late_min or 0) >= late_thr:
                 u = User.query.get(uid)
-                if _matches_user(u):
+                if (not any_filter) or _matches_user(u):
                     late_rows.append({'user': u, 'late_minutes': int(late_min or 0)})
 
         late_rows.sort(key=lambda x: x['late_minutes'], reverse=True)
@@ -31877,7 +31552,7 @@ def hr_alerts():
 
         # Scope users first when filtering is enabled
         users_q = User.query.order_by(User.id.asc()).all()
-        users = [u for u in users_q if _matches_user(u)]
+        users = [u for u in users_q if _matches_user(u)] if any_filter else users_q
 
         for u in users:
             for lt in active_types:
@@ -31893,7 +31568,7 @@ def hr_alerts():
 
     # Filter pending list as well (UI scope only)
     try:
-        if pending_info and isinstance(pending_info, dict):
+        if any_filter and pending_info and isinstance(pending_info, dict):
             pend = pending_info.get('pending') or []
             filtered = []
             for r in pend:
@@ -31952,9 +31627,6 @@ def hr_leaves_report():
     to_day = (request.args.get('to') or '').strip()
 
     q = HRLeaveRequest.query
-    exempt_user_ids = _attendance_exempt_user_ids()
-    if exempt_user_ids:
-        q = q.filter(~HRLeaveRequest.user_id.in_(exempt_user_ids))
     if from_day:
         q = q.filter(HRLeaveRequest.start_date >= from_day)
     if to_day:
@@ -32740,9 +32412,6 @@ def _attendance_exemption_reason(
     if not day_obj:
         return None
 
-    if _is_attendance_exempt_user(user_id):
-        return "ATTENDANCE_EXEMPT"
-
     approved_schedule_day = _approved_attendance_schedule_day(user_id, day_str)
     if approved_schedule_day and approved_schedule_day.day_type == "OFF":
         return "PLANNED_OFF"
@@ -32911,38 +32580,6 @@ def _uncovered_attendance_minutes(start_minute, end_minute, intervals):
     return uncovered + max(0, end_minute - cursor)
 
 
-def _attendance_schedule_for_timeclock_punch(schedule):
-    """Apply office calculation rules when a remote day has a clock punch.
-
-    A published remote day can retain the ordinary office schedule template and
-    only override its ``day_type``.  The effective schedule proxy marks that
-    template as ``REMOTE`` for no-punch days, which otherwise makes the
-    template's ``required_minutes`` look like a remote-work overtime target.
-    An IN/OUT punch from the timeclock is proof of office attendance, so restore
-    the template's original office kind while keeping any day-specific times.
-    """
-    if not schedule or (getattr(schedule, "kind", "") or "").strip().upper() != "REMOTE":
-        return schedule
-
-    template = _attendance_schedule_snapshot(getattr(schedule, "id", None))
-    template_kind = (getattr(template, "kind", "") or "").strip().upper()
-    office_kind = template_kind if template_kind in {"FIXED", "FLEX", "SHIFT", "RAMADAN"} else "FIXED"
-
-    return SimpleNamespace(
-        id=getattr(schedule, "id", None),
-        name=getattr(schedule, "name", None),
-        kind=office_kind,
-        start_time=getattr(schedule, "start_time", None),
-        end_time=getattr(schedule, "end_time", None),
-        required_minutes=getattr(schedule, "required_minutes", None),
-        break_minutes=getattr(schedule, "break_minutes", 0),
-        grace_minutes=getattr(schedule, "grace_minutes", 0),
-        start_grace_minutes=getattr(schedule, "start_grace_minutes", None),
-        end_grace_minutes=getattr(schedule, "end_grace_minutes", None),
-        overtime_threshold_minutes=getattr(schedule, "overtime_threshold_minutes", None),
-    )
-
-
 def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     # Collect day events
     dt_from = datetime.fromisoformat(day_str + 'T00:00:00')
@@ -32991,11 +32628,6 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             last_out = datetime.fromisoformat(f'{day_str}T{manual_override.end_time}:00')
 
     schedule = _effective_schedule_for_user(user_id, day_str)
-    # Normal IN/OUT rows are imported only from the physical timeclock.  A
-    # clocked employee on a remote schedule is therefore calculated according
-    # to the office template rather than remote required-minutes rules.
-    if ins or outs:
-        schedule = _attendance_schedule_for_timeclock_punch(schedule)
     schedule_id = schedule.id if schedule else None
 
     break_minutes = int(getattr(schedule, 'break_minutes', 0) or 0) if schedule else 0
@@ -33420,12 +33052,7 @@ def _attendance_absence_candidates(day_str: str) -> tuple[list[EmployeeFile], st
             .all()
         )
     }
-    excluded_user_ids = (
-        punched_user_ids
-        | leave_user_ids
-        | alternative_attendance_user_ids
-        | _attendance_exempt_user_ids()
-    )
+    excluded_user_ids = punched_user_ids | leave_user_ids | alternative_attendance_user_ids
 
     query = (
         EmployeeFile.query
@@ -33514,12 +33141,8 @@ def hr_attendance_daily():
 
     # The filter needs only these three fields. Avoid materializing every
     # relationship on every user when the organization has a large directory.
-    users_query = db.session.query(User.id, User.name, User.email)
-    exempt_user_ids = _attendance_exempt_user_ids()
-    if exempt_user_ids:
-        users_query = users_query.filter(~User.id.in_(exempt_user_ids))
     users = (
-        users_query
+        db.session.query(User.id, User.name, User.email)
         .order_by(User.name.asc().nullslast(), User.email.asc())
         .limit(2000)
         .all()
@@ -43206,7 +42829,7 @@ def hr_occasion_type_toggle(row_id: int):
 @_perm_any(HR_REPORTS_VIEW, HR_LEAVE_BALANCES_MANAGE)
 def hr_report_leave_employee_balances():
     """تقرير أرصدة الموظفين: فلترة متقدمة (الموظف/الموقع/نوع التعيين/السنة/الرصيد)."""
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     appointment_types = _hr_lookup_options('APPOINTMENT_TYPE')
     loc_map = {x.id: x.name for x in (work_locations or [])}
@@ -43235,12 +42858,7 @@ def hr_report_leave_employee_balances():
         days_thr = None
 
     # Candidate users
-    user_ids = _filtered_user_ids(
-        employee_id=user_id,
-        work_location_id=work_location_id,
-        appointment_type_id=appointment_type_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=user_id, work_location_id=work_location_id, appointment_type_id=appointment_type_id)
     if not user_ids and any([user_id, work_location_id, appointment_type_id]):
         user_ids = []
     elif not user_ids:
@@ -43356,7 +42974,7 @@ def hr_report_leave_employee_balances():
 @_perm(HR_REPORTS_VIEW)
 def hr_report_salary_deductions():
     """تقرير الخصم من الراتب: يعتمد على نتائج تنفيذ الخصم (hr_att_deduction_run/items)."""
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_locations = _hr_lookup_options('WORK_LOCATION')
     loc_map = {x.id: x.name for x in (work_locations or [])}
 
@@ -43368,11 +42986,7 @@ def hr_report_salary_deductions():
     user_id = int(user_id_raw) if user_id_raw.isdigit() else None
     work_location_id = int(work_location_id_raw) if work_location_id_raw.isdigit() else None
 
-    user_ids = _filtered_user_ids(
-        employee_id=user_id,
-        work_location_id=work_location_id,
-        exclude_attendance_exempt=True,
-    )
+    user_ids = _filtered_user_ids(employee_id=user_id, work_location_id=work_location_id)
     if not user_ids and any([user_id, work_location_id]):
         user_ids = []
 
@@ -43443,7 +43057,7 @@ def hr_report_salary_deductions():
 @_perm(HR_REPORTS_VIEW)
 def hr_report_overtime_leaves():
     """تقرير إجازات الإضافي: الموظف/محافظة العمل/موقع العمل + فلتر (فترات عمل مدخلة)."""
-    users = _list_hr_users(exclude_attendance_exempt=True)
+    users = _list_hr_users()
     work_govs = _hr_lookup_options('WORK_GOVERNORATE')
     work_locations = _hr_lookup_options('WORK_LOCATION')
 
@@ -43466,9 +43080,7 @@ def hr_report_overtime_leaves():
         qef = qef.filter(EmployeeFile.work_governorate_lookup_id == int(gov_id))
     if loc_id:
         qef = qef.filter(EmployeeFile.work_location_lookup_id == int(loc_id))
-    user_ids = _without_attendance_exempt_users(
-        [r.user_id for r in qef.with_entities(EmployeeFile.user_id).all()]
-    )
+    user_ids = [r.user_id for r in qef.with_entities(EmployeeFile.user_id).all()]
 
     # Optional: filter by having overtime "work periods" (AttendanceDailySummary.overtime_minutes)
     overtime_sum = {}
