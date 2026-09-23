@@ -5,6 +5,8 @@ import fitz
 from docx import Document
 
 from services.official_request_forms import (
+    build_attendance_delay_justification_docx,
+    build_attendance_delay_notice_docx,
     build_leave_request_docx,
     build_leave_request_pdf,
     build_supply_request_docx,
@@ -125,6 +127,46 @@ def test_permission_generates_reference_form_in_pdf_and_word():
                 day='Saturday', from_time='14:00', to_time='15:00', department='HR')
     _assert_valid_pdf(build_permission_request_pdf(data), '25001')
     _assert_valid_docx(build_permission_request_docx(data))
+
+
+def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead():
+    data = {
+        "request_no": 189,
+        "request_date": "2026/09/23",
+        "initiator_name": "الشؤون البشرية",
+        "employee_name": "موظف تجريبي",
+        "employee_no": "EMP-3492",
+        "job_title": "موظف",
+        "department": "دائرة الموارد البشرية",
+        "delay_day": "2026/09/23",
+        "first_in_time": "09:15",
+        "late_minutes": 75,
+        "early_leave_minutes": 0,
+    }
+    blank = dict(data, case_kind="DELAY", has_document="NO")
+    completed = dict(blank, reason="ظرف طارئ", has_document="YES", document_name="إفادة رسمية")
+
+    for content, expected in (
+        (build_attendance_delay_notice_docx(data), "نموذج تأخير عن العمل"),
+        (build_attendance_delay_justification_docx(blank), "نموذج تبرير غياب / تأخير"),
+        (build_attendance_delay_justification_docx(completed), "ظرف طارئ"),
+    ):
+        document = Document(BytesIO(content))
+        assert expected in "\n".join(p.text for p in document.paragraphs)
+        assert document.sections[0].header.tables
+        header_text = "\n".join(p.text for p in document.sections[0].header.paragraphs)
+        assert "189" in header_text and "2026/09/23" in header_text
+        body_runs = [run for paragraph in document.paragraphs for run in paragraph.runs]
+        assert body_runs
+        assert all(run.font.name == "Sakkal Majalla" for run in body_runs)
+        assert all(run.font.size and run.font.size.pt == 16 for run in body_runs)
+        assert all(
+            paragraph._p.pPr is not None
+            and paragraph._p.pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidi") is not None
+            for paragraph in document.paragraphs
+        )
+        with zipfile.ZipFile(BytesIO(content)) as archive:
+            assert "word/media/image1.jpeg" in archive.namelist()
 
 
 def test_official_filename_keeps_arabic_and_removes_windows_reserved_characters():

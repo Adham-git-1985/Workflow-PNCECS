@@ -452,7 +452,7 @@ def notify_delay_final_decision(req: WorkflowRequest, status: str, actor_id: int
     )
 
 
-def archive_generated_pdf(
+def archive_generated_file(
     req: WorkflowRequest,
     payload: bytes,
     filename: str,
@@ -462,7 +462,7 @@ def archive_generated_pdf(
     source: str,
     description: str | None = None,
 ) -> tuple[ArchivedFile, str]:
-    """Persist a generated PDF and attach it to the workflow request."""
+    """Persist a generated official file and attach it to the workflow request."""
     original_name = clean_original_filename(filename)
     if not original_name:
         raise ValueError("اسم الملف الرسمي غير صالح")
@@ -476,7 +476,7 @@ def archive_generated_pdf(
         stored_name=stored_name,
         description=description,
         file_path=str(saved_path),
-        mime_type=mimetypes.guess_type(original_name)[0] or "application/pdf",
+        mime_type=mimetypes.guess_type(original_name)[0] or "application/octet-stream",
         file_size=len(payload),
         owner_id=int(owner_id),
         visibility="workflow",
@@ -501,6 +501,50 @@ def archive_generated_pdf(
         )
     )
     return archived, str(saved_path)
+
+
+def archive_generated_pdf(
+    req: WorkflowRequest,
+    payload: bytes,
+    filename: str,
+    *,
+    owner_id: int,
+    step_order: int | None,
+    source: str,
+    description: str | None = None,
+) -> tuple[ArchivedFile, str]:
+    """Backward-compatible wrapper for generated PDF attachments."""
+    return archive_generated_file(
+        req,
+        payload,
+        filename,
+        owner_id=owner_id,
+        step_order=step_order,
+        source=source,
+        description=description,
+    )
+
+
+def archive_generated_docx(
+    req: WorkflowRequest,
+    payload: bytes,
+    filename: str,
+    *,
+    owner_id: int,
+    step_order: int | None,
+    source: str,
+    description: str | None = None,
+) -> tuple[ArchivedFile, str]:
+    """Persist an editable Word form and attach it to the workflow request."""
+    return archive_generated_file(
+        req,
+        payload,
+        filename,
+        owner_id=owner_id,
+        step_order=step_order,
+        source=source,
+        description=description,
+    )
 
 
 def process_pending_delay_response_alerts(*, now: datetime | None = None) -> int:
