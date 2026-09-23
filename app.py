@@ -1955,16 +1955,24 @@ try:
             pass
 
         _jobs_started = True
-        try:
-            start_automatic_backup_job(app)
-            start_timeclock_auto_sync(app)
-            start_hr_alerts_job(app)
-            start_correspondence_deadline_job(app)
-            start_transport_license_alerts_job(app)
-            start_workflow_task_email_job(app)
-        except Exception:
-            # Keep serving even if job fails
-            app.logger.exception("Failed to start a background job")
+        # Start email delivery first and isolate every worker.  A failure in
+        # an unrelated maintenance/alerts worker must not prevent the
+        # attendance report scheduler from starting in a long-lived WSGI
+        # process.
+        background_jobs = (
+            ("workflow task email", start_workflow_task_email_job),
+            ("automatic backup", start_automatic_backup_job),
+            ("timeclock sync", start_timeclock_auto_sync),
+            ("HR alerts", start_hr_alerts_job),
+            ("correspondence deadlines", start_correspondence_deadline_job),
+            ("transport licence alerts", start_transport_license_alerts_job),
+        )
+        for job_name, starter in background_jobs:
+            try:
+                starter(app)
+            except Exception:
+                # Keep serving even if one background job fails.
+                app.logger.exception("Failed to start %s background job", job_name)
 except Exception as _e:
     # Don't fail the whole app if background job wiring fails
     app.logger.exception("Failed to wire background jobs: %s", _e)

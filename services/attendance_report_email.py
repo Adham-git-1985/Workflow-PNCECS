@@ -20,6 +20,7 @@ import ssl
 from io import BytesIO
 from typing import Any
 
+from flask import has_app_context
 from sqlalchemy import func
 
 from extensions import db
@@ -58,6 +59,13 @@ SETTING_KEYS = {
     "recipient_emails": SETTING_PREFIX + "RECIPIENT_EMAILS",
     "start_date": SETTING_PREFIX + "START_DATE",
     "report_day_mode": SETTING_PREFIX + "REPORT_DAY_MODE",
+}
+
+SCHEDULER_STATE_KEYS = {
+    "last_check_at": SETTING_PREFIX + "LAST_CHECK_AT",
+    "last_status": SETTING_PREFIX + "LAST_STATUS",
+    "last_error": SETTING_PREFIX + "LAST_ERROR",
+    "last_due_times": SETTING_PREFIX + "LAST_DUE_TIMES",
 }
 
 DEFAULT_CONFIG = {
@@ -137,6 +145,10 @@ def get_report_email_config() -> dict[str, Any]:
     values["recipient_user_ids_list"] = _parse_int_list(values["recipient_user_ids"], 1, None)
     values["recipient_emails_list"] = _parse_email_list(values["recipient_emails"])
     values["start_date"] = _parse_date(values["start_date"])
+    values["scheduler_last_check_at"] = _setting(SCHEDULER_STATE_KEYS["last_check_at"], "") or ""
+    values["scheduler_last_status"] = _setting(SCHEDULER_STATE_KEYS["last_status"], "") or ""
+    values["scheduler_last_error"] = _setting(SCHEDULER_STATE_KEYS["last_error"], "") or ""
+    values["scheduler_last_due_times"] = _setting(SCHEDULER_STATE_KEYS["last_due_times"], "") or ""
     return values
 
 
@@ -935,6 +947,42 @@ def _configured_send_times(config: dict[str, Any]) -> list[dt_time]:
     return [_parse_hhmm(config.get("send_time")) or dt_time(9, 30)]
 
 
+def _record_scheduler_state(
+    local_now: datetime,
+    status: str,
+    *,
+    due_times: list[dt_time] | None = None,
+    error: str | None = None,
+) -> None:
+    """Persist the latest scheduler heartbeat for diagnostics in the UI.
+
+    The worker normally runs inside an application context.  The guard keeps
+    the pure service usable from command-line tools and unit tests, while the
+    best-effort write ensures a reporting failure never stops the scheduler.
+    """
+    if not has_app_context():
+        return
+    try:
+        local_value = local_now.astimezone(app_timezone()) if local_now.tzinfo else local_now.replace(tzinfo=app_timezone())
+        values = {
+            "last_check_at": local_value.isoformat(timespec="seconds"),
+            "last_status": str(status or "UNKNOWN").strip().upper()[:40],
+            "last_error": (
+                str(error).strip()[:2000]
+                if error is not None
+                else ("" if str(status or "").upper() in {"SENT", "ALREADY_SENT"} else (_setting(SCHEDULER_STATE_KEYS["last_error"], "") or ""))
+            ),
+            "last_due_times": ", ".join(
+                value.strftime("%H:%M") for value in (due_times or [])
+            ),
+        }
+        for name, key in SCHEDULER_STATE_KEYS.items():
+            _set_setting(key, values[name])
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 def _run_attendance_report_email_slot(
     local_now: datetime,
     config: dict[str, Any],
@@ -1043,6 +1091,7 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
     if local_now.tzinfo is None:
         local_now = local_now.replace(tzinfo=app_timezone())
     if not force and not config["enabled"]:
+        _record_scheduler_state(local_now, "DISABLED")
         return {"status": "disabled"}
 
     configured_times = _configured_send_times(config)
@@ -1051,17 +1100,31 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
     else:
         current_time = local_now.time().replace(second=0, microsecond=0)
         if current_time < configured_times[0]:
+            _record_scheduler_state(local_now, "NOT_DUE", due_times=configured_times)
             return {"status": "not_due"}
         if not _schedule_is_due(local_now.date(), config) or _send_day_is_excluded(local_now.date(), config):
+            _record_scheduler_state(local_now, "EXCLUDED", due_times=configured_times)
             return {"status": "excluded"}
         due_times = [scheduled_time for scheduled_time in configured_times if scheduled_time <= current_time]
 
-    results = [
-        _run_attendance_report_email_slot(local_now, config, scheduled_time, force=force)
-        for scheduled_time in due_times
-    ]
+    _record_scheduler_state(local_now, "DUE", due_times=due_times)
+    try:
+        results = [
+            _run_attendance_report_email_slot(local_now, config, scheduled_time, force=force)
+            for scheduled_time in due_times
+        ]
+    except Exception as exc:
+        _record_scheduler_state(local_now, "ERROR", due_times=due_times, error=str(exc))
+        raise
     if len(results) == 1:
-        return results[0]
+        result = results[0]
+        _record_scheduler_state(
+            local_now,
+            str(result.get("status") or "UNKNOWN"),
+            due_times=due_times,
+            error=result.get("error"),
+        )
+        return result
 
     sent_results = [result for result in results if result.get("status") == "sent"]
     failed_results = [result for result in results if result.get("status") == "failed"]
@@ -1073,13 +1136,20 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
         status = "already_sent"
     else:
         status = "in_progress"
-    return {
+    result = {
         "status": status,
         "run_date": local_now.date().isoformat(),
         "scheduled_times": [scheduled_time.strftime("%H:%M") for scheduled_time in due_times],
         "runs": results,
         "sent_slots": [result.get("scheduled_time") for result in sent_results],
     }
+    errors = "; ".join(
+        str(result.get("error") or "").strip()
+        for result in failed_results
+        if result.get("error")
+    )
+    _record_scheduler_state(local_now, status, due_times=due_times, error=errors)
+    return result
 
 
 def test_send_attendance_report_email() -> dict[str, Any]:

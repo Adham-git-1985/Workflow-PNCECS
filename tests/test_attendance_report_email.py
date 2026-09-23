@@ -56,6 +56,29 @@ class AttendanceReportEmailTests(unittest.TestCase):
         self.assertEqual(result["status"], "sent")
         self.assertEqual(result["sent_slots"], ["09:30", "15:30"])
 
+    def test_cycle_records_not_due_state_for_diagnostics(self):
+        config = {
+            "enabled": True,
+            "send_times_list": ["09:30", "15:30"],
+            "send_time": "09:30",
+            "frequency": "DAILY",
+            "skip_weekly_holidays": False,
+            "skip_official_holidays": False,
+            "excluded_dates_list": [],
+            "report_day_mode": "TODAY",
+        }
+        with (
+            patch.object(attendance_email, "get_report_email_config", return_value=config),
+            patch.object(attendance_email, "_record_scheduler_state") as record_state,
+        ):
+            result = attendance_email.run_attendance_report_email_cycle(
+                datetime(2026, 9, 23, 8, 0)
+            )
+
+        self.assertEqual(result["status"], "not_due")
+        record_state.assert_called_once()
+        self.assertEqual(record_state.call_args.args[1], "NOT_DUE")
+
     def test_email_content_contains_departures_section_and_slot(self):
         data = {
             "report_day": datetime(2026, 9, 23).date(),

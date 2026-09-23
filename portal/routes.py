@@ -210,6 +210,7 @@ from models import (
     HRLeaveGradeEntitlement,
     AttendanceDailySummary,
     HRAttendanceDelayRequest,
+    HRAttendanceEmailReportDelivery,
     SystemSetting,
     ArchivedFile,
     RequestAttachment,
@@ -7837,6 +7838,22 @@ def hr_attendance_email_report_settings():
         return redirect(url_for("portal.hr_attendance_email_report_settings"))
 
     config = get_report_email_config()
+    try:
+        delivery_history = (
+            HRAttendanceEmailReportDelivery.query
+            .order_by(
+                HRAttendanceEmailReportDelivery.run_date.desc(),
+                HRAttendanceEmailReportDelivery.scheduled_time.desc(),
+                HRAttendanceEmailReportDelivery.id.desc(),
+            )
+            .limit(100)
+            .all()
+        )
+    except Exception:
+        # Keep the settings page usable while a legacy installation is being
+        # upgraded to the per-day/per-time delivery table.
+        db.session.rollback()
+        delivery_history = []
     users = (
         User.query
         .filter(User.email.isnot(None))
@@ -7855,6 +7872,7 @@ def hr_attendance_email_report_settings():
     return render_template(
         "portal/hr/attendance_email_settings.html",
         config=config,
+        delivery_history=delivery_history,
         users=users,
         weekdays=weekdays,
         today=date.today().isoformat(),
