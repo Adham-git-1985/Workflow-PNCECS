@@ -3,6 +3,7 @@ from io import BytesIO
 
 import fitz
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from lxml import etree
 
 from services.official_request_forms import (
@@ -223,9 +224,19 @@ def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead(
         assert "189" in header_text and "2026/09/23" in header_text
         body_runs = [run for paragraph in document.paragraphs for run in paragraph.runs]
         assert body_runs
-        assert all(run.font.name == "Arial" for run in body_runs)
+        assert all(run.font.name == "Sakkal Majalla" for run in body_runs)
         assert max(run.font.size.pt for run in body_runs if run.font.size) >= 24
         assert any(run.bold and run.font.size and run.font.size.pt >= 20 for run in body_runs)
+        headings = [
+            paragraph
+            for paragraph in document.paragraphs
+            if any(
+                run.bold and run.font.size and run.font.size.pt >= 20
+                for run in paragraph.runs
+            )
+        ]
+        assert headings
+        assert all(paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER for paragraph in headings)
         assert all(
             paragraph._p.pPr is not None
             and paragraph._p.pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidi") is not None

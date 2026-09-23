@@ -39,7 +39,7 @@ PERMISSION_TEMPLATE = FORM_TEMPLATE_DIR / "permission_request_template.png"
 FONT_NAME = "Sakkal Majalla"
 REGULAR_FONT = "OfficialFormsSakkal"
 ATTENDANCE_DELAY_LETTERHEAD = PROJECT_ROOT / "الترويسة.docx"
-ATTENDANCE_DELAY_DOCX_FONT = "Arial"
+ATTENDANCE_DELAY_DOCX_FONT = "Sakkal Majalla"
 ATTENDANCE_DELAY_DOCX_SIZE = 18
 ATTENDANCE_DELAY_DOCX_HEADING_SIZE = 20
 ATTENDANCE_DELAY_DOCX_TITLE_SIZE = 24
@@ -601,6 +601,7 @@ def _docx_add_table(
                 value,
                 bold=is_header,
                 fill="EAF2F8" if is_header else ("FFFFFF" if len(table.rows) % 2 else "F7F7F7"),
+                alignment=WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.RIGHT,
                 size=header_size if is_header else body_size,
             )
     return table
@@ -620,7 +621,7 @@ def _docx_add_heading(doc, text):
     paragraph.paragraph_format.space_before = Pt(8)
     paragraph.paragraph_format.space_after = Pt(4)
     paragraph.paragraph_format.keep_with_next = True
-    _docx_set_paragraph_rtl(paragraph)
+    _docx_set_paragraph_rtl(paragraph, WD_ALIGN_PARAGRAPH.CENTER)
     _docx_add_run(paragraph, text, bold=True, size=ATTENDANCE_DELAY_DOCX_HEADING_SIZE)
     return paragraph
 
