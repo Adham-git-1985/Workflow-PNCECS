@@ -809,12 +809,9 @@ def _docx_add_signature_blocks(doc, people):
             _docx_set_paragraph_rtl(paragraph)
             _docx_add_run(paragraph, role, bold=True, size=16)
             name_paragraph = cell.add_paragraph()
-            name_paragraph.paragraph_format.space_after = Pt(5)
+            name_paragraph.paragraph_format.space_after = Pt(0)
             _docx_set_paragraph_rtl(name_paragraph)
-            _docx_add_run(name_paragraph, name, size=18)
-            signature_paragraph = cell.add_paragraph()
-            _docx_set_paragraph_rtl(signature_paragraph)
-            _docx_add_run(signature_paragraph, "التوقيع: ________________________", size=17)
+            _docx_add_run(name_paragraph, f"التوقيع: {name}", size=18)
     return table
 
 
@@ -1186,9 +1183,6 @@ def build_attendance_delay_notice_docx(data):
         ],
     )
 
-    _docx_add_heading(doc, "حالة المسار")
-    _docx_add_stage_table(doc, data)
-
     _docx_add_heading(doc, "بيانات الدوام المحتسبة")
     _docx_add_table(
         doc,
@@ -1250,9 +1244,6 @@ def build_attendance_delay_justification_docx(data):
         ],
     )
 
-    _docx_add_heading(doc, "حالة المسار")
-    _docx_add_stage_table(doc, data)
-
     _docx_add_heading(doc, "نوع الحالة")
     kind = _attendance_text(data.get("case_kind"), "DELAY").upper()
     kind_text = (
@@ -1290,6 +1281,7 @@ def build_attendance_delay_justification_docx(data):
             ("اسم / مرجع المستند", _docx_value(data.get("document_name") or data.get("document_reference"))),
             ("ملاحظة الموظف", _docx_value(data.get("note"))),
             ("تعليق الشؤون الإدارية", _docx_value(data.get("administrative_affairs_comment"))),
+            ("تأشيرة الأمين العام", _docx_value(data.get("secretary_general_comment"))),
         ],
     )
 

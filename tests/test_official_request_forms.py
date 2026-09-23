@@ -173,6 +173,7 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
         has_document="YES",
         document_name="إفادة رسمية",
         administrative_affairs_comment="تمت المتابعة من الشؤون الإدارية",
+        secretary_general_comment="تأشيرة الأمين العام التجريبية",
         current_step_order=2,
         current_stage_label="اعتماد المدير المباشر",
         approval_steps=[
@@ -258,6 +259,8 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
         assert "تاريخ الإنشاء" not in document_text
         assert "من خلال المسار الإلكتروني" not in document_text
         assert "الجهة المنشئة" not in document_text
+        assert "حالة المسار" not in document_text
+        assert "حالة المعاملة" not in document_text
         signature_text = "\n".join(
             paragraph.text
             for row in document.tables[-1].rows
@@ -265,7 +268,8 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
             for paragraph in cell.paragraphs
         )
         assert "الموظف" in signature_text
-        assert "موظف تجريبي" in signature_text
+        assert "التوقيع: موظف تجريبي" in signature_text
+        assert "________________" not in signature_text
         assert signature_text.count("التوقيع:") == 1
         assert "مدير مباشر تجريبي" not in signature_text
         assert "التوقيع:" in document_text
@@ -288,6 +292,10 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
     assert "مدير مباشر تجريبي" in completed_text
     assert "تعليق الشؤون الإدارية" in completed_text
     assert "تمت المتابعة من الشؤون الإدارية" in completed_text
+    assert "تأشيرة الأمين العام" in completed_text
+    assert "تأشيرة الأمين العام التجريبية" in completed_text
+    assert "[X] نعم" in completed_text
+    assert "إفادة رسمية" in completed_text
 
 
 def test_official_filename_keeps_arabic_and_removes_windows_reserved_characters():

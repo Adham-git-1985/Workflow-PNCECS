@@ -98,7 +98,6 @@ from services.employee_data_import import (
 from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
 from services.official_request_forms import (
     DOCX_MIME as OFFICIAL_FORM_DOCX_MIME,
-    build_attendance_delay_justification_docx,
     build_attendance_delay_notice_docx,
     build_leave_request_docx,
     build_leave_request_pdf,
@@ -9106,24 +9105,7 @@ def hr_attendance_delay_start(summary_id):
             description="الإشعار الرسمي لنموذج تأخير عن العمل",
         )
         generated_paths.append(notice_path)
-        blank_data = dict(form_data)
-        blank_data.update({
-            "case_kind": "DELAY",
-            "reason": "",
-            "has_document": "NO",
-        })
-        blank, blank_path = archive_generated_docx(
-            request_row,
-            build_attendance_delay_justification_docx(blank_data),
-            official_form_filename(employee.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL, "docx"),
-            owner_id=current_user.id,
-            step_order=1,
-            source="ATTENDANCE_DELAY_BLANK_JUSTIFICATION",
-            description="نموذج تبرير غياب / تأخير جاهز للتعبئة",
-        )
-        generated_paths.append(blank_path)
         case.notice_archived_file_id = notice.id
-        case.blank_justification_archived_file_id = blank.id
         db.session.add(case)
         db.session.commit()
         flash(f"تم إرسال نموذج التأخير للموظف {employee.full_name} وبدء المسار.", "success")

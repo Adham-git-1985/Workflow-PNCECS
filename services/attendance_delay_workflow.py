@@ -681,16 +681,15 @@ def _delay_document_user_name(user_id: int | None) -> str:
     return (getattr(user, "full_name", None) or getattr(user, "name", None) or getattr(user, "email", None) or "").strip()
 
 
-def _delay_document_administrative_comment(approval_steps: list[dict]) -> str:
-    """Return the latest administrative-affairs action note for the Word form."""
+def _delay_document_stage_comment(
+    approval_steps: list[dict],
+    marker_groups: tuple[tuple[str, ...], ...],
+) -> str:
+    """Return the latest action note matching one of the ordered marker groups."""
     completed = [
         row for row in approval_steps
         if (row.get("note") or "").strip()
     ]
-    marker_groups = (
-        ("الشؤون الإدارية",),
-        ("الموارد البشرية", "الشؤون البشرية"),
-    )
     for markers in marker_groups:
         for row in reversed(completed):
             label = _compact_attendance_label(row.get("label"))
@@ -777,8 +776,62 @@ def attendance_delay_workflow_form_data(req: WorkflowRequest) -> dict | None:
             "employee_step": int(getattr(step, "step_order", 0) or 0) == 1,
         })
     data["approval_steps"] = approval_steps
-    data["administrative_affairs_comment"] = _delay_document_administrative_comment(
-        approval_steps
+    employee_action_note = next(
+        (
+            (row.get("note") or "").strip()
+            for row in approval_steps
+            if row.get("employee_step") and (row.get("note") or "").strip()
+        ),
+        "",
+    )
+    if not (data.get("reason") or "").strip() and employee_action_note:
+        legacy_note = "تمت تعبئة نموذج تبرير غياب / تأخير"
+        if legacy_note not in employee_action_note:
+            data["reason"] = employee_action_note
+    if not (data.get("note") or "").strip():
+        data["note"] = (data.get("reason") or employee_action_note or "").strip()
+
+    evidence_logs = (
+        AuditLog.query
+        .filter_by(
+            request_id=req.id,
+            action="WORKFLOW_ATTACHMENT_UPLOADED",
+            target_type="ARCHIVE_FILE",
+        )
+        .filter(AuditLog.note.contains("source=ATTENDANCE_DELAY_EMPLOYEE_RESPONSE"))
+        .order_by(AuditLog.id.asc())
+        .all()
+    )
+    evidence_files = [
+        db.session.get(ArchivedFile, row.target_id)
+        for row in evidence_logs
+        if row.target_id
+    ]
+    evidence_files = [row for row in evidence_files if row is not None]
+    if evidence_files:
+        data["has_document"] = "YES"
+        if not (data.get("document_name") or "").strip():
+            data["document_name"] = "، ".join(
+                dict.fromkeys(
+                    (getattr(row, "original_name", None) or "مرفق مؤيد").strip()
+                    for row in evidence_files
+                )
+            )
+    else:
+        data["has_document"] = "NO"
+        data["document_name"] = ""
+        data["document_reference"] = ""
+
+    data["administrative_affairs_comment"] = _delay_document_stage_comment(
+        approval_steps,
+        (
+            ("الشؤون الإدارية",),
+            ("الموارد البشرية", "الشؤون البشرية"),
+        ),
+    )
+    data["secretary_general_comment"] = _delay_document_stage_comment(
+        approval_steps,
+        (("الأمين العام",),),
     )
 
     try:
@@ -821,23 +874,81 @@ def archive_delay_workflow_snapshot(
         data = attendance_delay_workflow_form_data(req)
         if not data:
             return None
-        current_step_order = int(data.get("current_step_order") or 1)
         employee_name = _delay_document_user_name(case.employee_id) or "موظف"
         stage_label = data.get("current_stage_label") or "تحديث المسار"
-        archived, path = archive_generated_docx(
-            req,
-            build_attendance_delay_justification_docx(data),
-            official_form_filename(
-                employee_name,
-                f"{ATTENDANCE_DELAY_RESPONSE_LABEL} - {stage_label}",
-                "docx",
-            ),
-            owner_id=int(owner_id or case.initiated_by_id),
-            step_order=current_step_order,
-            source="ATTENDANCE_DELAY_WORKFLOW_SNAPSHOT",
-            description=f"نسخة محدثة من نموذج التبرير في مرحلة {stage_label}",
+        current_step_order = int(data.get("current_step_order") or 1)
+        filename = official_form_filename(
+            employee_name,
+            ATTENDANCE_DELAY_RESPONSE_LABEL,
+            "docx",
         )
+        payload = build_attendance_delay_justification_docx(data)
+        archived = (
+            case.completed_justification_archived_file
+            or case.blank_justification_archived_file
+        )
+        path = ""
+        if archived and (getattr(archived, "file_path", None) or "").strip():
+            try:
+                saved_path = Path(archived.file_path)
+                saved_path.parent.mkdir(parents=True, exist_ok=True)
+                saved_path.write_bytes(payload)
+                archived.original_name = filename
+                archived.description = f"النسخة الحالية من نموذج التبرير في مرحلة {stage_label}"
+                archived.mime_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+                archived.file_size = len(payload)
+                db.session.add(archived)
+                path = str(saved_path)
+            except OSError:
+                logger.exception(
+                    "Failed to update attendance-delay Word snapshot file_id=%s",
+                    getattr(archived, "id", None),
+                )
+                archived = None
+        if archived is None:
+            archived, path = archive_generated_docx(
+                req,
+                payload,
+                filename,
+                owner_id=int(owner_id or case.initiated_by_id),
+                step_order=current_step_order,
+                source="ATTENDANCE_DELAY_WORKFLOW_SNAPSHOT",
+                description=f"النسخة الحالية من نموذج التبرير في مرحلة {stage_label}",
+            )
+
+        # Older deployments attached a blank form and then appended a new file
+        # after every action. Keep those archive records for audit, but detach
+        # stale Word copies so the workflow shows one current justification.
+        stale_attachment_ids: set[int] = set()
+        if (
+            case.blank_justification_archived_file_id
+            and int(case.blank_justification_archived_file_id) != int(archived.id)
+        ):
+            stale_attachment_ids.add(int(case.blank_justification_archived_file_id))
+        old_snapshot_logs = (
+            AuditLog.query
+            .filter_by(
+                request_id=req.id,
+                action="WORKFLOW_ATTACHMENT_UPLOADED",
+                target_type="ARCHIVE_FILE",
+            )
+            .filter(AuditLog.note.contains("source=ATTENDANCE_DELAY_WORKFLOW_SNAPSHOT"))
+            .all()
+        )
+        stale_attachment_ids.update(
+            int(row.target_id)
+            for row in old_snapshot_logs
+            if row.target_id and int(row.target_id) != int(archived.id)
+        )
+        if stale_attachment_ids:
+            (
+                RequestAttachment.query
+                .filter_by(request_id=req.id)
+                .filter(RequestAttachment.archived_file_id.in_(stale_attachment_ids))
+                .delete(synchronize_session=False)
+            )
         case.completed_justification_archived_file_id = archived.id
+        case.blank_justification_archived_file_id = None
         db.session.add(case)
         return archived, path
     except Exception:
