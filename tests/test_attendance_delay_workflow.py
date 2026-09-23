@@ -1,0 +1,184 @@
+import os
+import unittest
+from datetime import datetime, timedelta
+
+from flask import Flask
+from flask_login import LoginManager, login_user
+
+from extensions import db
+from models import (
+    ArchivedFile,
+    AttendanceDailySummary,
+    EmployeeFile,
+    HRAttendanceDelayRequest,
+    Notification,
+    RequestEscalation,
+    User,
+    WorkflowInstanceStep,
+    WorkflowStepTask,
+)
+from portal import portal_bp
+from workflow import workflow_bp
+from workflow.engine import decide_step
+from services.attendance_delay_workflow import process_pending_delay_response_alerts
+
+
+class AttendanceDelayWorkflowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = Flask(__name__)
+        cls.app.config.update(
+            SECRET_KEY="attendance-delay-workflow-test",
+            SQLALCHEMY_DATABASE_URI="sqlite:///:memory:",
+            SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            WTF_CSRF_ENABLED=False,
+        )
+        db.init_app(cls.app)
+        cls.login_manager = LoginManager(cls.app)
+
+        @cls.login_manager.user_loader
+        def _load_user(user_id):
+            return db.session.get(User, int(user_id))
+
+        @cls.app.route("/_test/login/<int:user_id>")
+        def _test_login(user_id):
+            login_user(db.session.get(User, user_id))
+            return "ok"
+
+        cls.app.register_blueprint(workflow_bp)
+        cls.app.register_blueprint(portal_bp)
+        cls.context = cls.app.app_context()
+        cls.context.push()
+        db.create_all()
+
+    @classmethod
+    def tearDownClass(cls):
+        db.session.remove()
+        db.drop_all()
+        cls.context.pop()
+
+    def setUp(self):
+        db.session.remove()
+        db.drop_all()
+        db.create_all()
+        self.client = self.app.test_client()
+        self.admin = User(email="delay-admin@example.test", name="Delay Admin", password_hash="x", role="SUPER_ADMIN")
+        self.hr = User(email="delay-hr@example.test", name="Delay HR", password_hash="x", role="HR")
+        self.secretary = User(
+            email="delay-secretary@example.test",
+            name="Delay Secretary",
+            password_hash="x",
+            role="GENERAL_SECRETARY",
+        )
+        self.manager = User(email="delay-manager@example.test", name="Delay Manager", password_hash="x", role="MANAGER")
+        self.employee = User(email="delay-employee@example.test", name="Delay Employee", password_hash="x", role="EMPLOYEE")
+        db.session.add_all((self.admin, self.hr, self.secretary, self.manager, self.employee))
+        db.session.flush()
+        db.session.add(
+            EmployeeFile(
+                user_id=self.employee.id,
+                direct_manager_user_id=self.manager.id,
+                employee_no="D-100",
+            )
+        )
+        self.summary = AttendanceDailySummary(
+            user_id=self.employee.id,
+            day="2026-09-23",
+            first_in=datetime(2026, 9, 23, 8, 37),
+            late_minutes=37,
+            early_leave_minutes=0,
+            status="OK",
+        )
+        db.session.add(self.summary)
+        db.session.commit()
+
+    def tearDown(self):
+        for archived in list(ArchivedFile.query.all()):
+            path = getattr(archived, "file_path", None)
+            if path and os.path.exists(path):
+                os.remove(path)
+        db.session.rollback()
+
+    def _login(self, user):
+        self.client.get(f"/_test/login/{user.id}")
+
+    def _start(self):
+        self._login(self.admin)
+        response = self.client.post(
+            f"/portal/hr/reports/attendance/delay/{self.summary.id}/start",
+        )
+        self.assertEqual(response.status_code, 302)
+        case = HRAttendanceDelayRequest.query.one()
+        return case, case.workflow_request
+
+    def test_employee_response_manager_hr_and_secretary_final_path(self):
+        case, request_row = self._start()
+        steps = WorkflowInstanceStep.query.filter_by(
+            instance_id=request_row.workflow_instance.id,
+        ).order_by(WorkflowInstanceStep.step_order.asc()).all()
+        self.assertEqual([step.approver_user_id for step in steps[:2]], [self.employee.id, self.manager.id])
+        self.assertEqual(steps[2].mode, "PARALLEL_SYNC")
+
+        self._login(self.employee)
+        response = self.client.post(
+            f"/portal/hr/reports/attendance/delay/{case.id}/respond",
+            data={"case_kind": "DELAY", "reason": "ظرف طارئ", "has_document": "NO"},
+        )
+        self.assertEqual(response.status_code, 302)
+        db.session.refresh(case)
+        self.assertIsNotNone(case.employee_responded_at)
+        self.assertEqual(request_row.workflow_instance.current_step_order, 2)
+
+        decide_step(
+            request_row.id,
+            2,
+            self.manager.id,
+            "APPROVED",
+            note="موافق",
+            effective_user_id=self.manager.id,
+        )
+        db.session.commit()
+        self.assertEqual(request_row.workflow_instance.current_step_order, 3)
+        self.assertEqual(WorkflowStepTask.query.filter_by(step_order=3).count(), 2)
+
+        decide_step(
+            request_row.id,
+            3,
+            self.hr.id,
+            "APPROVED",
+            note="موافقة الشؤون البشرية",
+            effective_user_id=self.hr.id,
+        )
+        db.session.commit()
+        self.assertEqual(request_row.status, "IN_PROGRESS")
+        self.assertFalse(request_row.workflow_instance.is_completed)
+
+        decide_step(
+            request_row.id,
+            3,
+            self.secretary.id,
+            "APPROVED",
+            note="اعتماد نهائي",
+            effective_user_id=self.secretary.id,
+        )
+        db.session.commit()
+        self.assertEqual(request_row.status, "APPROVED")
+        self.assertTrue(request_row.workflow_instance.is_completed)
+        self.assertEqual(case.final_status, "APPROVED")
+
+    def test_two_hour_alert_is_one_time_and_creates_escalation(self):
+        case, request_row = self._start()
+        case.response_due_at = datetime.utcnow() - timedelta(minutes=1)
+        db.session.commit()
+
+        self.assertEqual(process_pending_delay_response_alerts(), 1)
+        db.session.commit()
+        db.session.refresh(case)
+        self.assertIsNotNone(case.overdue_notified_at)
+        self.assertEqual(process_pending_delay_response_alerts(), 0)
+        self.assertTrue(Notification.query.filter_by(type="ATTENDANCE_DELAY_OVERDUE").count() >= 2)
+        self.assertEqual(RequestEscalation.query.filter_by(request_id=request_row.id).count(), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

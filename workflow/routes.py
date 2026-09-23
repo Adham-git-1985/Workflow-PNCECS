@@ -95,6 +95,7 @@ from filters.request_filters import get_sla_days
 
 from models import (
     WorkflowRequest,
+    HRAttendanceDelayRequest,
     ArchivedFile,
     AuditLog,
     Notification,
@@ -178,6 +179,11 @@ from workflow.engine import (
     can_committee_chair_bypass_parallel_step,
     HIERARCHY_BYPASS_FOLLOWER_ACTION,
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
+)
+from services.attendance_delay_workflow import (
+    ATTENDANCE_DELAY_RESPONSE_LABEL,
+    get_delay_case_for_request,
+    is_attendance_delay_workflow,
 )
 
 logger = logging.getLogger(__name__)
@@ -6061,6 +6067,15 @@ def following():
 @login_required
 def view_request(request_id):
     req = WorkflowRequest.query.get_or_404(request_id)
+    attendance_delay_case = get_delay_case_for_request(req.id)
+    attendance_delay_employee = bool(
+        attendance_delay_case
+        and int(getattr(attendance_delay_case, "employee_id", 0) or 0) == int(current_user.id)
+    )
+    attendance_delay_employee_form = bool(
+        attendance_delay_employee
+        and (req.status or "").strip().upper() == "IN_PROGRESS"
+    )
     execution = get_execution_context()
     explicit_context_actor = execution.get("acting_for_user")
 
@@ -6184,7 +6199,7 @@ def view_request(request_id):
                 ),
                 None,
             )
-            if next_parallel_step:
+            if next_parallel_step and not attendance_delay_case:
                 candidate_ids = resolve_parallel_candidate_user_ids(
                     req,
                     inst,
@@ -6928,6 +6943,10 @@ def view_request(request_id):
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,
         execution_context=execution,
+        attendance_delay_case=attendance_delay_case,
+        attendance_delay_employee=attendance_delay_employee,
+        attendance_delay_employee_form=attendance_delay_employee_form,
+        attendance_delay_response_label=ATTENDANCE_DELAY_RESPONSE_LABEL,
         execution_can_approve=execution_can_approve,
         execution_can_reject=execution_can_reject,
         secretary_endorsements=(

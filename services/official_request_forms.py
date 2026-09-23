@@ -23,6 +23,9 @@ from docx.shared import Pt
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 
 DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -347,3 +350,243 @@ def build_permission_request_pdf(data):
 
 def build_permission_request_docx(data):
     return _build_docx(PERMISSION_TEMPLATE, [_permission_fields(data)])
+
+
+# ======================
+# Attendance delay forms
+# ======================
+ATTENDANCE_DELAY_WORKFLOW_LABEL = "نموذج تأخير عن العمل"
+ATTENDANCE_DELAY_RESPONSE_LABEL = "نموذج تبرير غياب / تأخير"
+
+
+def _attendance_text(value, default=""):
+    return _plain(value, default)
+
+
+def _attendance_draw_rtl(c, value, right, top, width, *, size=12, leading=None, color=colors.black):
+    """Draw bounded RTL text using the same shaping as the official forms."""
+    text = _attendance_text(value)
+    if not text:
+        return top
+    _register_fonts()
+    leading = leading or size * 1.35
+    words = text.split()
+    lines = []
+    current = ""
+    for word in words:
+        candidate = (current + " " + word).strip()
+        if current and pdfmetrics.stringWidth(_shape(candidate), REGULAR_FONT, size) > width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    c.setFillColor(color)
+    c.setFont(REGULAR_FONT, size)
+    y = top
+    for line in lines:
+        c.drawRightString(right, y, _shape(line))
+        y -= leading
+    return y
+
+
+def _attendance_field(c, label, value, x, y, width, *, label_width=105, size=11, height=27):
+    c.setStrokeColor(colors.HexColor("#6b7280"))
+    c.setFillColor(colors.white)
+    c.roundRect(x, y - height, width, height, 4, stroke=1, fill=1)
+    c.setFillColor(colors.HexColor("#374151"))
+    c.setFont(REGULAR_FONT, size)
+    c.drawRightString(x + width - 8, y - 18, _shape(_attendance_text(label)))
+    value_x = x + 8
+    value_width = max(40, width - label_width - 12)
+    _attendance_draw_rtl(
+        c,
+        value,
+        x + value_width,
+        y - 18,
+        value_width - 8,
+        size=size,
+        color=colors.HexColor("#111827"),
+    )
+
+
+def _attendance_header(c, title, data, width, height):
+    _register_fonts()
+    logo = PROJECT_ROOT / "static" / "images" / "pncecs_logo.png"
+    if logo.is_file():
+        c.drawImage(
+            ImageReader(str(logo)),
+            width - 88,
+            height - 88,
+            width=58,
+            height=58,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+    c.setFillColor(colors.HexColor("#123b63"))
+    c.setFont(REGULAR_FONT, 15)
+    c.drawCentredString(width / 2, height - 40, _shape("نظام مسار - إدارة الموارد البشرية"))
+    c.setFont(REGULAR_FONT, 10)
+    c.setFillColor(colors.HexColor("#4b5563"))
+    c.drawCentredString(width / 2, height - 58, _shape("نموذج رسمي مولد من النظام"))
+    c.setStrokeColor(colors.HexColor("#123b63"))
+    c.setLineWidth(1.2)
+    c.line(38, height - 98, width - 38, height - 98)
+    c.setFillColor(colors.HexColor("#123b63"))
+    c.setFont(REGULAR_FONT, 18)
+    c.drawCentredString(width / 2, height - 132, _shape(title))
+    c.setFont(REGULAR_FONT, 9)
+    c.setFillColor(colors.HexColor("#6b7280"))
+    request_no = _attendance_text(data.get("request_no"), "-")
+    request_date = _format_date(data.get("request_date"))
+    c.drawString(42, height - 151, _shape(f"رقم الطلب: {request_no}"))
+    c.drawRightString(width - 42, height - 151, _shape(f"تاريخ الإنشاء: {request_date}"))
+
+
+def _attendance_form_canvas(data, title, draw_body):
+    _register_fonts()
+    stream = BytesIO()
+    width, height = A4
+    c = canvas.Canvas(stream, pagesize=A4)
+    c.setTitle(title)
+    c.setAuthor("Workflow-PNCECS")
+    _attendance_header(c, title, data, width, height)
+    draw_body(c, data, width, height)
+    c.setStrokeColor(colors.HexColor("#d1d5db"))
+    c.line(38, 38, width - 38, 38)
+    c.setFillColor(colors.HexColor("#6b7280"))
+    c.setFont(REGULAR_FONT, 8)
+    c.drawCentredString(width / 2, 24, _shape("هذه الوثيقة جزء من مسار إلكتروني موثق ولا تغني عن الاعتماد داخل النظام."))
+    c.save()
+    return stream.getvalue()
+
+
+def build_attendance_delay_notice_pdf(data):
+    """Create the official, system-filled late-attendance notice."""
+    data = dict(data or {})
+
+    def body(c, values, width, height):
+        y = height - 185
+        _attendance_field(c, "اسم الموظف", values.get("employee_name"), 42, y, width - 84, label_width=105)
+        y -= 39
+        _attendance_field(c, "الرقم الوظيفي", values.get("employee_no"), 42, y, (width - 95) / 2, label_width=90)
+        _attendance_field(c, "المسمى الوظيفي", values.get("job_title"), 53 + (width - 95) / 2, y, (width - 95) / 2, label_width=100)
+        y -= 39
+        _attendance_field(c, "الإدارة", values.get("department"), 42, y, (width - 95) / 2, label_width=75)
+        _attendance_field(c, "يوم التأخير", values.get("delay_day"), 53 + (width - 95) / 2, y, (width - 95) / 2, label_width=85)
+        y -= 54
+
+        c.setFillColor(colors.HexColor("#eff6ff"))
+        c.setStrokeColor(colors.HexColor("#93c5fd"))
+        c.roundRect(42, y - 72, width - 84, 72, 6, stroke=1, fill=1)
+        c.setFillColor(colors.HexColor("#1e3a8a"))
+        c.setFont(REGULAR_FONT, 13)
+        c.drawRightString(width - 58, y - 24, _shape("بيانات الدوام المحتسبة"))
+        c.setFillColor(colors.HexColor("#111827"))
+        c.setFont(REGULAR_FONT, 11)
+        facts = (
+            f"وقت الدخول: {_attendance_text(values.get('first_in_time'), '-')}",
+            f"التأخير الصباحي: {_attendance_text(values.get('late_minutes'), '0')} دقيقة",
+            f"الخروج المبكر: {_attendance_text(values.get('early_leave_minutes'), '0')} دقيقة",
+        )
+        fact_text = "  |  ".join(facts)
+        c.drawCentredString(width / 2, y - 51, _shape(fact_text))
+        y -= 105
+
+        c.setFillColor(colors.HexColor("#111827"))
+        c.setFont(REGULAR_FONT, 13)
+        c.drawRightString(width - 42, y, _shape("الإشعار"))
+        c.setStrokeColor(colors.HexColor("#9ca3af"))
+        c.roundRect(42, y - 150, width - 84, 132, 6, stroke=1, fill=0)
+        notice = (
+            "تبين من سجل الدوام الإلكتروني وجود تأخير للموظف الموضح أعلاه في اليوم المحدد. "
+            "يرجى الدخول إلى المسار وتعبئة نموذج تبرير غياب / تأخير، وبيان سبب التأخير وإرفاق ما يؤيده إن وجد. "
+            "في حال عدم الرد خلال ساعتين من وقت استلام الطلب، قد يتم اتخاذ الإجراءات الإدارية النظامية."
+        )
+        _attendance_draw_rtl(c, notice, width - 58, y - 45, width - 116, size=12, leading=21)
+        y -= 190
+        c.setFont(REGULAR_FONT, 11)
+        c.drawRightString(width - 58, y, _shape("منشئ الطلب: " + _attendance_text(values.get("initiator_name"), "الشؤون البشرية")))
+        c.drawRightString(width - 58, y - 26, _shape("الموظف مطالب بالرد من خلال المسار الإلكتروني."))
+        c.setStrokeColor(colors.HexColor("#6b7280"))
+        c.line(60, 125, 245, 125)
+        c.line(width - 245, 125, width - 60, 125)
+        c.setFont(REGULAR_FONT, 10)
+        c.drawCentredString(152, 108, _shape("توقيع الموظف عند الحاجة"))
+        c.drawCentredString(width - 152, 108, _shape("ختم / توقيع الجهة"))
+
+    return _attendance_form_canvas(data, ATTENDANCE_DELAY_WORKFLOW_LABEL, body)
+
+
+def build_attendance_delay_justification_pdf(data):
+    """Create the blank or completed justification form."""
+    data = dict(data or {})
+    is_completed = bool(_attendance_text(data.get("reason")))
+    title = ATTENDANCE_DELAY_RESPONSE_LABEL
+
+    def body(c, values, width, height):
+        y = height - 185
+        _attendance_field(c, "اسم الموظف", values.get("employee_name"), 42, y, width - 84, label_width=105)
+        y -= 39
+        _attendance_field(c, "الرقم الوظيفي", values.get("employee_no"), 42, y, (width - 95) / 2, label_width=90)
+        _attendance_field(c, "المسمى الوظيفي", values.get("job_title"), 53 + (width - 95) / 2, y, (width - 95) / 2, label_width=100)
+        y -= 39
+        _attendance_field(c, "الإدارة", values.get("department"), 42, y, (width - 95) / 2, label_width=75)
+        _attendance_field(c, "تاريخ الحالة", values.get("delay_day"), 53 + (width - 95) / 2, y, (width - 95) / 2, label_width=85)
+        y -= 58
+
+        c.setFont(REGULAR_FONT, 12)
+        c.setFillColor(colors.HexColor("#111827"))
+        c.drawRightString(width - 42, y, _shape("نوع الحالة"))
+        kind = _attendance_text(values.get("case_kind"), "DELAY").upper()
+        for index, (key, label) in enumerate((("ABSENCE", "غياب"), ("DELAY", "تأخير"))):
+            x = width - 155 - index * 120
+            c.setStrokeColor(colors.HexColor("#374151"))
+            c.rect(x, y - 17, 13, 13, stroke=1, fill=0)
+            if kind == key:
+                c.setFillColor(colors.HexColor("#123b63"))
+                c.rect(x + 3, y - 14, 7, 7, stroke=0, fill=1)
+            c.setFillColor(colors.HexColor("#111827"))
+            c.drawRightString(x - 8, y - 13, _shape(label))
+        y -= 48
+
+        c.setFont(REGULAR_FONT, 12)
+        c.drawRightString(width - 42, y, _shape("سبب الغياب / التأخير"))
+        c.setStrokeColor(colors.HexColor("#9ca3af"))
+        c.roundRect(42, y - 112, width - 84, 95, 6, stroke=1, fill=0)
+        reason = values.get("reason") or ""
+        if reason:
+            _attendance_draw_rtl(c, reason, width - 58, y - 42, width - 116, size=12, leading=20)
+        else:
+            c.setFillColor(colors.HexColor("#9ca3af"))
+            c.setFont(REGULAR_FONT, 10)
+            c.drawRightString(width - 58, y - 42, _shape("يعبأ من الموظف عبر النظام"))
+        y -= 150
+
+        has_doc = _attendance_text(values.get("has_document"), "NO").upper()
+        c.setFillColor(colors.HexColor("#111827"))
+        c.setFont(REGULAR_FONT, 11)
+        c.drawRightString(width - 42, y, _shape("هل يوجد مستند مؤيد؟"))
+        c.drawRightString(width - 190, y, _shape("نعم" + (" [X]" if has_doc == "YES" else " [ ]")))
+        c.drawRightString(width - 275, y, _shape("لا" + (" [X]" if has_doc != "YES" else " [ ]")))
+        y -= 37
+        _attendance_field(c, "اسم / مرجع المستند", values.get("document_name") or values.get("document_reference"), 42, y, width - 84, label_width=145, size=10)
+        y -= 62
+
+        c.setFillColor(colors.HexColor("#f9fafb"))
+        c.setStrokeColor(colors.HexColor("#d1d5db"))
+        c.roundRect(42, y - 102, width - 84, 102, 6, stroke=1, fill=1)
+        c.setFillColor(colors.HexColor("#374151"))
+        c.setFont(REGULAR_FONT, 11)
+        c.drawRightString(width - 58, y - 22, _shape("قرارات الاعتماد"))
+        c.setFont(REGULAR_FONT, 10)
+        c.drawRightString(width - 58, y - 48, _shape("المدير المباشر: " + _attendance_text(values.get("manager_decision"), "بانتظار الاعتماد")))
+        c.drawRightString(width - 58, y - 70, _shape("الأمين العام: " + _attendance_text(values.get("secretary_decision"), "بانتظار الاعتماد")))
+        c.drawRightString(width - 58, y - 92, _shape("الشؤون البشرية: " + _attendance_text(values.get("hr_decision"), "بانتظار الاعتماد")))
+        if is_completed:
+            c.setFillColor(colors.HexColor("#166534"))
+            c.setFont(REGULAR_FONT, 9)
+            c.drawString(48, y - 22, _shape("تمت تعبئة النموذج إلكترونياً"))
+
+    return _attendance_form_canvas(data, title, body)

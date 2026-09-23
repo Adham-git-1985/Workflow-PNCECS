@@ -94,6 +94,7 @@
           <th>تأخير صباحي (دقيقة)</th>
           <th>خروج مبكر (دقيقة)</th>
           <th>المدة (ساعات)</th>
+          <th>إجراء الشؤون البشرية</th>
         </tr>
       </thead>
       <tbody>
@@ -105,6 +106,23 @@
             <td>{{ r.late_minutes }}</td>
             <td>{{ r.early_minutes }}</td>
             <td>{{ ('%.2f' % r.hours) if r.hours is not none else '—' }}</td>
+            <td class="text-nowrap">
+              {% if r.delay_case %}
+                <a class="btn btn-sm btn-outline-primary" href="{{ url_for('workflow.view_request', request_id=r.delay_case.workflow_request_id) }}">
+                  فتح نموذج التأخير
+                </a>
+                <div class="small text-muted mt-1">{{ r.delay_case.workflow_request.status|workflow_status_label }}</div>
+              {% elif r.late_minutes > 0 and can_start_delay_workflow %}
+                <form method="post" action="{{ url_for('portal.hr_attendance_delay_start', summary_id=r.summary_id) }}">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <button class="btn btn-sm btn-warning" type="submit" onclick="return confirm('هل تريد إرسال نموذج تأخير عن العمل إلى الموظف؟');">
+                    <i class="bi bi-file-earmark-text"></i> نموذج تأخير عن العمل
+                  </button>
+                </form>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
           </tr>
         {% endfor %}
       </tbody>

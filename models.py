@@ -4120,6 +4120,95 @@ class AttendanceDailySummary(db.Model):
     )
 
 
+class HRAttendanceDelayRequest(db.Model):
+    """Workflow-backed explanation request for one employee's late day.
+
+    The attendance summary remains the source of the measured delay. This row
+    stores the immutable snapshot used by the official forms and links it to
+    the generic workflow request so the path can be audited independently from
+    later attendance recalculations.
+    """
+
+    __tablename__ = "hr_attendance_delay_request"
+
+    id = db.Column(db.Integer, primary_key=True)
+    workflow_request_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_request.id"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    attendance_summary_id = db.Column(
+        db.Integer,
+        db.ForeignKey("attendance_daily_summary.id"),
+        nullable=True,
+        index=True,
+    )
+    employee_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    initiated_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+
+    # YYYY-MM-DD snapshot from AttendanceDailySummary.day.
+    delay_day = db.Column(db.String(10), nullable=False, index=True)
+    late_minutes = db.Column(db.Integer, nullable=False, default=0)
+    early_leave_minutes = db.Column(db.Integer, nullable=False, default=0)
+    first_in_time = db.Column(db.String(5), nullable=True)
+
+    response_due_at = db.Column(db.DateTime, nullable=True, index=True)
+    overdue_notified_at = db.Column(db.DateTime, nullable=True)
+    employee_responded_at = db.Column(db.DateTime, nullable=True)
+    response_payload_json = db.Column(db.Text, nullable=True)
+
+    # Final decision is intentionally denormalized for reports and alerts;
+    # the workflow steps remain the authoritative approval history.
+    final_status = db.Column(db.String(20), nullable=True, index=True)
+    final_decision_at = db.Column(db.DateTime, nullable=True)
+    final_decision_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+
+    notice_archived_file_id = db.Column(db.Integer, db.ForeignKey("archived_file.id"), nullable=True)
+    blank_justification_archived_file_id = db.Column(db.Integer, db.ForeignKey("archived_file.id"), nullable=True)
+    completed_justification_archived_file_id = db.Column(db.Integer, db.ForeignKey("archived_file.id"), nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    workflow_request = db.relationship("WorkflowRequest", foreign_keys=[workflow_request_id], lazy="joined")
+    attendance_summary = db.relationship("AttendanceDailySummary", foreign_keys=[attendance_summary_id], lazy="joined")
+    employee = db.relationship("User", foreign_keys=[employee_id], lazy="joined")
+    initiated_by = db.relationship("User", foreign_keys=[initiated_by_id], lazy="joined")
+    final_decision_by = db.relationship("User", foreign_keys=[final_decision_by_id], lazy="joined")
+    notice_archived_file = db.relationship("ArchivedFile", foreign_keys=[notice_archived_file_id], lazy="joined")
+    blank_justification_archived_file = db.relationship(
+        "ArchivedFile",
+        foreign_keys=[blank_justification_archived_file_id],
+        lazy="joined",
+    )
+    completed_justification_archived_file = db.relationship(
+        "ArchivedFile",
+        foreign_keys=[completed_justification_archived_file_id],
+        lazy="joined",
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "employee_id",
+            "delay_day",
+            name="uq_hr_attendance_delay_employee_day",
+        ),
+        db.Index(
+            "ix_hr_attendance_delay_pending_response",
+            "employee_responded_at",
+            "response_due_at",
+        ),
+    )
+
+    def response_payload(self) -> dict:
+        try:
+            value = json.loads(self.response_payload_json or "{}") or {}
+        except Exception:
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+
 class AttendanceImportBatch(db.Model):
     """Raw timeclock import batch (manual upload or auto sync)."""
 

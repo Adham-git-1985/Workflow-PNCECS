@@ -29,6 +29,14 @@ from models import (
     SystemSetting,
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
+from services.attendance_delay_workflow import (
+    attendance_delay_parallel_candidate_user_ids,
+    attendance_delay_secretary_user_ids,
+    is_attendance_delay_workflow,
+    mark_delay_case_final,
+    notify_delay_final_decision,
+    notify_delay_participants,
+)
 
 
 DYNAMIC_RETURN_REASON = "عودة المسار وفق التسلسل الإداري"
@@ -859,6 +867,10 @@ def resolve_parallel_candidate_user_ids(
         getattr(inst, "template_id", None),
         step.step_order,
     )
+    # Attendance-delay requests have a fixed final review audience: HR and the
+    # Secretary-General.  The latter is not necessarily represented by the
+    # generic ROLE=HR runtime step, so add it to the candidate pool here.
+    assignees += attendance_delay_parallel_candidate_user_ids(req, step)
     return sorted(filter_confidential_workflow_user_ids(
         req,
         {int(uid) for uid in assignees if uid},
@@ -2025,6 +2037,81 @@ def decide_step(
             target_id=task.id,
         ))
 
+        # Attendance-delay final review is asymmetric: an HR response is
+        # recorded, while the Secretary-General's decision (or any rejection)
+        # closes the request immediately.
+        delay_workflow = is_attendance_delay_workflow(req)
+        secretary_ids = attendance_delay_secretary_user_ids() if delay_workflow else set()
+        if delay_workflow and (
+            decision == "REJECTED" or effective_user_id in secretary_ids
+        ):
+            for pending_task in (
+                WorkflowStepTask.query
+                .filter_by(
+                    instance_id=inst.id,
+                    step_order=step.step_order,
+                    status="PENDING",
+                )
+                .filter(WorkflowStepTask.id != task.id)
+                .all()
+            ):
+                pending_task.status = "BYPASSED"
+                pending_task.bypassed_by_id = effective_user_id
+                pending_task.bypass_reason = "اكتمل القرار النهائي لمسار نموذج تأخير عن العمل."
+                pending_task.bypassed_at = now
+                db.session.add(pending_task)
+
+            final_status = "REJECTED" if decision == "REJECTED" else "APPROVED"
+            step.status = final_status
+            step.decided_by_id = effective_user_id
+            step.decided_at = now
+            step.note = note
+            req.status = final_status
+            inst.is_completed = True
+            inst.current_step_order = int(step.step_order) + 1
+            mark_delay_case_final(
+                req,
+                status=final_status,
+                decision_by_id=effective_user_id,
+                decided_at=now,
+            )
+            db.session.add_all([step, req, inst])
+            db.session.add(
+                AuditLog(
+                    request_id=req.id,
+                    user_id=actor_user_id,
+                    on_behalf_of_id=on_behalf_of_id,
+                    delegation_id=delegation_id,
+                    action="ATTENDANCE_DELAY_FINAL_DECISION",
+                    old_status="IN_PROGRESS",
+                    new_status=final_status,
+                    note=(
+                        "أصبح قرار الأمين العام نهائياً."
+                        if effective_user_id in secretary_ids and decision == "APPROVED"
+                        else "تم رفض مسار نموذج تأخير عن العمل."
+                    ),
+                    target_type="WORKFLOW",
+                    target_id=inst.id,
+                    created_at=now,
+                )
+            )
+            _notify_users(
+                [req.requester_id],
+                message=(
+                    f"تم اعتماد مسار نموذج تأخير عن العمل #{req.id} نهائياً."
+                    if final_status == "APPROVED"
+                    else f"تم رفض مسار نموذج تأخير عن العمل #{req.id}."
+                ),
+                ntype="WORKFLOW",
+                actor_id=effective_user_id,
+                track_for_actor=True,
+                req=req,
+            )
+            notify_delay_final_decision(req, final_status, effective_user_id)
+            if auto_commit:
+                db.session.commit()
+            return
+
         # If everyone responded/bypassed => close step and advance.
         if _parallel_total(inst.id, step.step_order) == 0 or _parallel_is_complete(inst.id, step.step_order):
             step.status = "APPROVED"  # completion marker
@@ -2050,6 +2137,14 @@ def decide_step(
                 req.status = "APPROVED"
                 inst.is_completed = True
                 inst.current_step_order = next_order
+                if delay_workflow:
+                    mark_delay_case_final(
+                        req,
+                        status="APPROVED",
+                        decision_by_id=effective_user_id,
+                        decided_at=now,
+                    )
+                    notify_delay_final_decision(req, "APPROVED", effective_user_id)
                 db.session.add(AuditLog(
                     request_id=req.id,
                     user_id=actor_user_id,
@@ -2144,9 +2239,16 @@ def decide_step(
             except (TypeError, ValueError):
                 raise ValueError("قائمة المخولين في الخطوة المتزامنة غير صالحة")
             if not selected_ids:
-                raise ValueError("اختر شخصًا واحدًا على الأقل لتوجيه الخطوة المتزامنة التالية")
+                if is_attendance_delay_workflow(req):
+                    selected_ids = set(candidate_ids)
+                else:
+                    raise ValueError("اختر شخصًا واحدًا على الأقل لتوجيه الخطوة المتزامنة التالية")
             if not selected_ids.issubset(candidate_ids):
                 raise ValueError("يمكن توجيه الخطوة المتزامنة فقط إلى المرشحين المحددين في القالب")
+            if is_attendance_delay_workflow(req):
+                # The official procedure fixes the HR and Secretary-General
+                # recipients; the manager does not choose this audience.
+                authorized_parallel_user_ids = sorted(candidate_ids)
 
     if hierarchy_bypassed_steps:
         bypassed_at = datetime.utcnow()
@@ -2265,6 +2367,13 @@ def decide_step(
     if decision == "REJECTED":
         req.status = "REJECTED"
         inst.is_completed = True
+        if is_attendance_delay_workflow(req):
+            mark_delay_case_final(
+                req,
+                status="REJECTED",
+                decision_by_id=effective_user_id,
+                decided_at=step.decided_at,
+            )
         db.session.add_all([req, inst])
 
         # Notify requester with the decision + note
@@ -2272,6 +2381,8 @@ def decide_step(
         if note:
             msg += f" | السبب/الملاحظة: {note}"
         _notify_users([req.requester_id], message=msg, ntype="WORKFLOW", actor_id=effective_user_id, track_for_actor=True, req=req)
+        if is_attendance_delay_workflow(req):
+            notify_delay_final_decision(req, "REJECTED", effective_user_id)
 
         # ✅ Notify followers (previous approvers) so they can keep tracking the workflow
         follower_ids = set(_resolve_followers_user_ids(inst.id))

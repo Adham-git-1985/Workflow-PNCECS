@@ -98,6 +98,8 @@ from services.employee_data_import import (
 from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
 from services.official_request_forms import (
     DOCX_MIME as OFFICIAL_FORM_DOCX_MIME,
+    build_attendance_delay_justification_pdf,
+    build_attendance_delay_notice_pdf,
     build_leave_request_docx,
     build_leave_request_pdf,
     build_permission_request_docx,
@@ -207,10 +209,14 @@ from models import (
     HRMonthlyPermissionAllowance,
     HRLeaveGradeEntitlement,
     AttendanceDailySummary,
+    HRAttendanceDelayRequest,
     SystemSetting,
     ArchivedFile,
     RequestAttachment,
     WorkflowRequest,
+    WorkflowInstance,
+    WorkflowInstanceStep,
+    WorkflowStepTask,
     WorkflowTemplate,
     WorkflowTemplateStep,
     Committee,
@@ -313,6 +319,7 @@ from models import (
     InvWarehousePermission,
 )
 from workflow.engine import (
+    decide_step,
     resolve_template_parallel_candidate_user_ids,
     resolve_template_participant_user_ids,
     start_workflow_for_request,
@@ -376,6 +383,7 @@ from services.hr_request_workflow import (
     get_escalation_policies,
     get_escalation_policy,
     hr_notification_user_ids,
+    hr_approval_user_ids,
     is_compensatory_leave,
     is_special_leave,
     is_sick_leave,
@@ -393,6 +401,14 @@ from services.hr_request_workflow import (
     secretary_general_user_ids,
     stage_label as hr_stage_label,
     start_request_flow,
+)
+from services.attendance_delay_workflow import (
+    ATTENDANCE_DELAY_RESPONSE_LABEL,
+    ATTENDANCE_DELAY_WORKFLOW_LABEL,
+    archive_generated_pdf,
+    employee_form_data,
+    get_delay_case_for_request,
+    json_payload,
 )
 
 HR_ESCALATION_UNIT_OPTIONS = (
@@ -554,6 +570,58 @@ CORR_OUT_CREATE = "CORR_OUT_CREATE"
 
 def _perm(p: str):
     return perm_required(p)
+
+
+def _attendance_delay_access_allowed():
+    """Return whether the current actor may view/start delay workflows.
+
+    The existing HR report permission remains the primary control.  The
+    attendance-delay procedure is also an Administrative Affairs action, so
+    explicitly assigned Administrative Affairs managers and the supported HR
+    roles must be able to open the report even when their installation has not
+    granted the generic HR_REPORTS_VIEW key.
+    """
+    if not current_user.is_authenticated:
+        return False
+    try:
+        if current_user.has_perm(HR_REPORTS_VIEW):
+            return True
+    except Exception:
+        pass
+    try:
+        role = (getattr(current_user, "role", "") or "").strip().upper()
+        role = unicodedata.normalize("NFKC", role)
+        role = "".join(ch for ch in role if ch.isalnum() or ch == "_")
+        role = role.replace("_", "")
+        if role in {
+            "HR",
+            "HRMANAGER",
+            "HRADMIN",
+            "ADMINISTRATIVEAFFAIRS",
+            "ADMINISTRATIVEAFFAIRSMANAGER",
+            "ADMINAFFAIRS",
+        }:
+            return True
+    except Exception:
+        pass
+    try:
+        return int(current_user.id) in {
+            int(user_id) for user_id in administrative_affairs_manager_user_ids()
+        }
+    except Exception:
+        return False
+
+
+def _attendance_delay_perm(f):
+    """Permission decorator for the HR/Admin Affairs delay procedure."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not current_user.is_authenticated:
+            abort(401)
+        if not _attendance_delay_access_allowed():
+            abort(403)
+        return f(*args, **kwargs)
+    return wrapper
 
 
 
@@ -8702,7 +8770,7 @@ def hr_report_attendance_permissions():
 
 @portal_bp.route('/hr/reports/attendance/delay', methods=['GET'])
 @login_required
-@_perm(HR_REPORTS_VIEW)
+@_attendance_delay_perm
 def hr_report_delay():
     print_view = (request.args.get('print') or '').strip().lower() in {'1', 'true', 'yes'}
     employee_id = (request.args.get('user_id') or '').strip()
@@ -8741,6 +8809,17 @@ def hr_report_delay():
             q = q.filter(AttendanceDailySummary.day <= to_date.strftime('%Y-%m-%d'))
         q = q.order_by(AttendanceDailySummary.day.desc()).limit(2000)
 
+        delay_case_rows = (
+            HRAttendanceDelayRequest.query
+            .filter(HRAttendanceDelayRequest.employee_id.in_(user_ids))
+            .filter(HRAttendanceDelayRequest.delay_day >= from_date.strftime('%Y-%m-%d'))
+            .filter(HRAttendanceDelayRequest.delay_day <= to_date.strftime('%Y-%m-%d'))
+            .all()
+        )
+        delay_case_map = {
+            (int(row.employee_id), row.delay_day): row
+            for row in delay_case_rows
+        }
         rows_view = []
         for a in q.all():
             late = int(a.late_minutes or 0)
@@ -8767,12 +8846,14 @@ def hr_report_delay():
             except Exception:
                 u = None
             rows_view.append({
+                'summary_id': a.id,
                 'date': a.day,
                 'user': u,
                 'check_in_time': a.first_in.strftime('%H:%M') if a.first_in else '',
                 'late_minutes': late,
                 'early_minutes': early,
                 'hours': hours,
+                'delay_case': delay_case_map.get((int(a.user_id), a.day)),
             })
 
         # Sort daily records by morning lateness, highest first.  The date
@@ -8812,7 +8893,279 @@ def hr_report_delay():
         dur_op=dur_op,
         hours_value=hours_raw,
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
+        can_start_delay_workflow=_attendance_delay_access_allowed(),
     )
+
+
+@portal_bp.route('/hr/reports/attendance/delay/<int:summary_id>/start', methods=['POST'])
+@login_required
+@_attendance_delay_perm
+def hr_attendance_delay_start(summary_id):
+    """Start the official attendance-delay workflow for one daily summary."""
+    summary = AttendanceDailySummary.query.get_or_404(summary_id)
+    if int(summary.late_minutes or 0) <= 0:
+        flash("لا يمكن إنشاء نموذج تأخير لسجل لا يحتوي على تأخير صباحي.", "warning")
+        return redirect(url_for('portal.hr_report_delay'))
+
+    existing = HRAttendanceDelayRequest.query.filter_by(
+        employee_id=summary.user_id,
+        delay_day=summary.day,
+    ).first()
+    if existing:
+        flash("تم إنشاء نموذج التأخير لهذا الموظف وهذا اليوم مسبقاً.", "info")
+        return redirect(url_for('workflow.view_request', request_id=existing.workflow_request_id))
+
+    employee = User.query.get(summary.user_id)
+    manager = resolve_direct_manager(summary.user_id)
+    if not employee:
+        flash("تعذر العثور على الموظف المرتبط بسجل الدوام.", "danger")
+        return redirect(url_for('portal.hr_report_delay'))
+    if not manager:
+        flash("لا يوجد مدير مباشر مضبوط لهذا الموظف، لذلك لم يبدأ المسار.", "warning")
+        return redirect(url_for('portal.hr_report_delay'))
+    if not hr_approval_user_ids():
+        flash("لا يوجد معتمد مضبوط للشؤون البشرية في الهيكل التنظيمي.", "warning")
+        return redirect(url_for('portal.hr_report_delay'))
+    if not secretary_general_user_ids():
+        flash("لا يوجد أمين عام مضبوط لمسار الاعتماد النهائي.", "warning")
+        return redirect(url_for('portal.hr_report_delay'))
+
+    now = datetime.utcnow()
+    request_title = f"تأخير دوام اليوم - {summary.day}"
+    request_description = (
+        f"نموذج تأخير عن العمل للموظف {employee.full_name} بتاريخ {summary.day}. "
+        f"التأخير الصباحي المحتسب: {int(summary.late_minutes or 0)} دقيقة. "
+        "يلزم الموظف بتعبئة نموذج تبرير غياب / تأخير خلال ساعتين من استلام الطلب."
+    )
+    request_row = WorkflowRequest(
+        title=request_title,
+        description=request_description,
+        status="DRAFT",
+        priority="HIGH",
+        requester_id=current_user.id,
+        current_role="ATTENDANCE_DELAY",
+    )
+    db.session.add(request_row)
+    db.session.flush()
+
+    case = HRAttendanceDelayRequest(
+        workflow_request_id=request_row.id,
+        attendance_summary_id=summary.id,
+        employee_id=employee.id,
+        initiated_by_id=current_user.id,
+        delay_day=summary.day,
+        late_minutes=int(summary.late_minutes or 0),
+        early_leave_minutes=int(summary.early_leave_minutes or 0),
+        first_in_time=summary.first_in.strftime('%H:%M') if summary.first_in else None,
+        response_due_at=now + timedelta(hours=2),
+        created_at=now,
+    )
+    db.session.add(case)
+    db.session.flush()
+
+    runtime_steps = [
+        {
+            "step_order": 1,
+            "mode": "SEQUENTIAL",
+            "approver_kind": "USER",
+            "approver_user_id": employee.id,
+            "label": "تعبئة نموذج تبرير غياب / تأخير",
+            "reason": "يرجى تعبئة النموذج الرسمي وبيان سبب التأخير وإرفاق ما يؤيده إن وجد.",
+            "sla_days": 1,
+        },
+        {
+            "step_order": 2,
+            "mode": "SEQUENTIAL",
+            "approver_kind": "USER",
+            "approver_user_id": manager.id,
+            "label": "اعتماد المدير المباشر",
+            "reason": "مراجعة تبرير الموظف واتخاذ قرار الاعتماد أو الرفض.",
+            "sla_days": 1,
+        },
+        {
+            "step_order": 3,
+            "mode": "PARALLEL_SYNC",
+            "approver_kind": "ROLE",
+            "approver_role": "HR",
+            "label": "اعتماد الشؤون البشرية والأمين العام",
+            "reason": "اعتماد الشؤون البشرية، مع صلاحية الأمين العام لإنهاء المسار بقرار نهائي.",
+            "sla_days": 1,
+        },
+    ]
+
+    generated_paths = []
+    try:
+        start_workflow_for_request(
+            request_row,
+            None,
+            current_user.id,
+            auto_commit=False,
+            runtime_steps=runtime_steps,
+            workflow_label=ATTENDANCE_DELAY_WORKFLOW_LABEL,
+        )
+        form_data = employee_form_data(case, employee)
+        form_data.update({
+            "request_no": request_row.id,
+            "request_date": now.date(),
+            "initiator_name": current_user.full_name,
+        })
+        notice, notice_path = archive_generated_pdf(
+            request_row,
+            build_attendance_delay_notice_pdf(form_data),
+            official_form_filename(employee.full_name, ATTENDANCE_DELAY_WORKFLOW_LABEL, "pdf"),
+            owner_id=current_user.id,
+            step_order=1,
+            source="ATTENDANCE_DELAY_NOTICE",
+            description="الإشعار الرسمي لنموذج تأخير عن العمل",
+        )
+        generated_paths.append(notice_path)
+        blank_data = dict(form_data)
+        blank_data.update({
+            "case_kind": "DELAY",
+            "reason": "",
+            "has_document": "NO",
+        })
+        blank, blank_path = archive_generated_pdf(
+            request_row,
+            build_attendance_delay_justification_pdf(blank_data),
+            official_form_filename(employee.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL, "pdf"),
+            owner_id=current_user.id,
+            step_order=1,
+            source="ATTENDANCE_DELAY_BLANK_JUSTIFICATION",
+            description="نموذج تبرير غياب / تأخير جاهز للتعبئة",
+        )
+        generated_paths.append(blank_path)
+        case.notice_archived_file_id = notice.id
+        case.blank_justification_archived_file_id = blank.id
+        db.session.add(case)
+        db.session.commit()
+        flash(f"تم إرسال نموذج التأخير للموظف {employee.full_name} وبدء المسار.", "success")
+        return redirect(url_for('workflow.view_request', request_id=request_row.id))
+    except Exception:
+        db.session.rollback()
+        for saved_path in generated_paths:
+            try:
+                if os.path.exists(saved_path):
+                    os.remove(saved_path)
+            except OSError:
+                pass
+        current_app.logger.exception("Failed to start attendance delay workflow")
+        flash("تعذر إنشاء نموذج التأخير الرسمي، ولم يبدأ المسار.", "danger")
+        return redirect(url_for('portal.hr_report_delay'))
+
+
+@portal_bp.route('/hr/reports/attendance/delay/<int:case_id>/respond', methods=['POST'])
+@login_required
+def hr_attendance_delay_respond(case_id):
+    """Receive the employee's official justification and advance to the manager."""
+    case = HRAttendanceDelayRequest.query.get_or_404(case_id)
+    if int(case.employee_id or 0) != int(current_user.id):
+        abort(403)
+    req_row = case.workflow_request
+    inst = WorkflowInstance.query.filter_by(request_id=req_row.id).first_or_404()
+    current_step = WorkflowInstanceStep.query.filter_by(
+        instance_id=inst.id,
+        step_order=1,
+        status="PENDING",
+    ).first()
+    if not current_step or int(inst.current_step_order or 0) != 1:
+        flash("لا توجد خطوة تعبئة نشطة لهذا النموذج.", "warning")
+        return redirect(url_for('workflow.view_request', request_id=req_row.id))
+
+    reason = (request.form.get("reason") or "").strip()
+    if not reason:
+        flash("سبب الغياب / التأخير مطلوب.", "warning")
+        return redirect(url_for('workflow.view_request', request_id=req_row.id))
+    case_kind = (request.form.get("case_kind") or "DELAY").strip().upper()
+    if case_kind not in {"ABSENCE", "DELAY"}:
+        case_kind = "DELAY"
+    has_document = (request.form.get("has_document") or "NO").strip().upper()
+    has_document = "YES" if has_document == "YES" else "NO"
+    payload = {
+        "case_kind": case_kind,
+        "reason": reason,
+        "has_document": has_document,
+        "document_name": (request.form.get("document_name") or "").strip(),
+        "document_reference": (request.form.get("document_reference") or "").strip(),
+        "note": (request.form.get("note") or "").strip(),
+        "responded_at": datetime.utcnow().isoformat(timespec="seconds"),
+    }
+    now = datetime.utcnow()
+    data = employee_form_data(case, current_user)
+    data.update(payload)
+    data.update({
+        "request_no": req_row.id,
+        "request_date": case.created_at.date() if case.created_at else now.date(),
+        "initiator_name": case.initiated_by.full_name if case.initiated_by else "الشؤون البشرية",
+    })
+    generated_paths = []
+    try:
+        completed, completed_path = archive_generated_pdf(
+            req_row,
+            build_attendance_delay_justification_pdf(data),
+            official_form_filename(current_user.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL + " - مكتمل", "pdf"),
+            owner_id=current_user.id,
+            step_order=1,
+            source="ATTENDANCE_DELAY_EMPLOYEE_RESPONSE",
+            description="نموذج تبرير غياب / تأخير بعد تعبئة الموظف",
+        )
+        generated_paths.append(completed_path)
+        case.employee_responded_at = now
+        case.response_payload_json = json_payload(payload)
+        case.completed_justification_archived_file_id = completed.id
+        db.session.add(case)
+
+        # Supporting evidence, if supplied, uses the generic workflow archive
+        # and remains grouped with the employee response step.
+        from workflow.routes import (
+            _audit_attachment,
+            _save_upload_with_embedded_email_attachments,
+            _uploaded_files_from_request,
+        )
+        attachment_batch_id = uuid.uuid4().hex
+        for file_storage in _uploaded_files_from_request("files", "scanned_files"):
+            for archived, saved_path in _save_upload_with_embedded_email_attachments(
+                file_storage,
+                owner_id=current_user.id,
+                visibility="workflow",
+                description="مرفق مؤيد لتبرير التأخير",
+            ):
+                db.session.add(archived)
+                db.session.flush()
+                generated_paths.append(saved_path)
+                db.session.add(RequestAttachment(request_id=req_row.id, archived_file_id=archived.id))
+                _audit_attachment(
+                    req_id=req_row.id,
+                    file_id=archived.id,
+                    step_order=1,
+                    source="ATTENDANCE_DELAY_EMPLOYEE_RESPONSE",
+                    original_name=archived.original_name,
+                    uploaded_by_id=current_user.id,
+                    batch_id=attachment_batch_id,
+                )
+
+        decide_step(
+            req_row.id,
+            1,
+            current_user.id,
+            "APPROVED",
+            note="تمت تعبئة نموذج تبرير غياب / تأخير وإرساله إلى المدير المباشر.",
+            auto_commit=False,
+            effective_user_id=current_user.id,
+        )
+        db.session.commit()
+        flash("تم إرسال التبرير إلى المدير المباشر بنجاح.", "success")
+    except Exception:
+        db.session.rollback()
+        for saved_path in generated_paths:
+            try:
+                if os.path.exists(saved_path):
+                    os.remove(saved_path)
+            except OSError:
+                pass
+        current_app.logger.exception("Failed to submit attendance delay justification")
+        flash("تعذر إرسال نموذج التبرير.", "danger")
+    return redirect(url_for('workflow.view_request', request_id=req_row.id))
 
 
 @portal_bp.route('/hr/reports/attendance/employee', methods=['GET'])

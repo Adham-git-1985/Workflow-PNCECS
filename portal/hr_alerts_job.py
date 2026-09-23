@@ -2,18 +2,22 @@ import os
 import threading
 import time
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from extensions import db
 from portal.routes import (  # reuse leave helpers and SystemSetting table
     _activate_due_leave_rollover_decisions,
     _setting_get,
 )
 from services.attendance_schedule import send_attendance_schedule_reminders
+from services.attendance_delay_workflow import process_pending_delay_response_alerts
 from services.hr_request_workflow import process_pending_approvals
 
 _HR_ALERTS_STARTED = False
 
 def _check_pending_leave_requests():
     rollover_activations = 0
+    delay_overdue_alerts = 0
     try:
         rollover_activations = len(_activate_due_leave_rollover_decisions())
     except Exception:
@@ -21,6 +25,16 @@ def _check_pending_leave_requests():
         # prevent the rest of the HR reminders from running.
         db.session.rollback()
     result = process_pending_approvals(send_notifications=True)
+    try:
+        delay_overdue_alerts = process_pending_delay_response_alerts()
+    except Exception as error:
+        # A missing/partially migrated delay table must not stop the existing
+        # HR approval reminders from running.
+        # Only a real SQLAlchemy failure leaves the transaction unusable.  The
+        # narrower handling also keeps lightweight test/dry-run sessions from
+        # being treated as failed database transactions.
+        if isinstance(error, SQLAlchemyError):
+            db.session.rollback()
     followup_reminders = 0
     schedule_reminders = 0
     automatic_attendance_leaves = 0
@@ -63,6 +77,7 @@ def _check_pending_leave_requests():
         + int(followup_reminders)
         + int(schedule_reminders)
         + int(automatic_attendance_leaves)
+        + int(delay_overdue_alerts)
     )
 
 
@@ -78,6 +93,11 @@ def _worker(app):
                     (_setting_get("HR_ALERTS_JOB_INTERVAL_SEC") or "3600").strip()
                     or 3600
                 )
+                delay_interval = int(
+                    (_setting_get("ATTENDANCE_DELAY_ALERT_INTERVAL_SEC") or "60").strip()
+                    or 60
+                )
+                interval = min(interval, max(60, delay_interval))
         except Exception:
             app.logger.exception("HR alerts job iteration failed")
             try:
