@@ -37,7 +37,6 @@ def _check_pending_leave_requests():
             db.session.rollback()
     followup_reminders = 0
     schedule_reminders = 0
-    automatic_attendance_leaves = 0
     try:
         from portal.followups import send_followup_reminders
 
@@ -51,24 +50,10 @@ def _check_pending_leave_requests():
         schedule_reminders = send_attendance_schedule_reminders()
     except Exception:
         pass
-    try:
-        # Reconcile completed office-duty days after the configured cutoff.
-        # The reconciliation creates an approved annual-leave request, so the
-        # normal balance calculation deducts the day and the attendance views
-        # render it as approved leave.  The helper is idempotent and releases
-        # the charge if a late punch or an approved correction appears later.
-        from portal.routes import _process_unrecorded_office_attendance
-
-        attendance_result = _process_unrecorded_office_attendance()
-        automatic_attendance_leaves = int(attendance_result.get("created", 0))
-    except Exception:
-        # Keep the pending-approval and attendance changes atomic.  A failed
-        # attendance reconciliation must not commit partial HR updates.
-        try:
-            db.session.rollback()
-        except Exception:
-            pass
-        raise
+    # Missing-punch reconciliation must remain an explicit Administrative
+    # Affairs action. The alerts worker is intentionally read-only with
+    # respect to attendance balances; otherwise it turns every scheduled
+    # office day without a punch into an approved annual-leave charge.
     db.session.commit()
     return (
         int(result.get("reminded", 0))
@@ -76,7 +61,6 @@ def _check_pending_leave_requests():
         + int(rollover_activations)
         + int(followup_reminders)
         + int(schedule_reminders)
-        + int(automatic_attendance_leaves)
         + int(delay_overdue_alerts)
     )
 
