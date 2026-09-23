@@ -39,8 +39,10 @@ PERMISSION_TEMPLATE = FORM_TEMPLATE_DIR / "permission_request_template.png"
 FONT_NAME = "Sakkal Majalla"
 REGULAR_FONT = "OfficialFormsSakkal"
 ATTENDANCE_DELAY_LETTERHEAD = PROJECT_ROOT / "الترويسة.docx"
-ATTENDANCE_DELAY_DOCX_FONT = "Sakkal Majalla"
-ATTENDANCE_DELAY_DOCX_SIZE = 16
+ATTENDANCE_DELAY_DOCX_FONT = "Arial"
+ATTENDANCE_DELAY_DOCX_SIZE = 18
+ATTENDANCE_DELAY_DOCX_HEADING_SIZE = 20
+ATTENDANCE_DELAY_DOCX_TITLE_SIZE = 24
 _RESHAPER = arabic_reshaper.ArabicReshaper(configuration={"support_ligatures": False})
 
 
@@ -391,6 +393,13 @@ def _docx_set_run_font(run, *, size=ATTENDANCE_DELAY_DOCX_SIZE, bold=None, color
     for slot in ("ascii", "hAnsi", "eastAsia", "cs"):
         rfonts.set(qn(f"w:{slot}"), ATTENDANCE_DELAY_DOCX_FONT)
 
+    # Word may otherwise keep a smaller complex-script size for Arabic text.
+    size_cs = rpr.find(qn("w:szCs"))
+    if size_cs is None:
+        size_cs = OxmlElement("w:szCs")
+        rpr.append(size_cs)
+    size_cs.set(qn("w:val"), str(int(round(float(size) * 2))))
+
     rtl = rpr.find(qn("w:rtl"))
     if rtl is None:
         rpr.append(OxmlElement("w:rtl"))
@@ -452,13 +461,28 @@ def _docx_set_table_rtl(table):
     _docx_set_table_borders(table)
 
 
-def _docx_set_cell_text(cell, value, *, bold=False, fill=None, color="000000", alignment=WD_ALIGN_PARAGRAPH.RIGHT):
+def _docx_set_cell_text(
+    cell,
+    value,
+    *,
+    bold=False,
+    fill=None,
+    color="000000",
+    alignment=WD_ALIGN_PARAGRAPH.RIGHT,
+    size=ATTENDANCE_DELAY_DOCX_SIZE,
+):
     cell.text = ""
     paragraph = cell.paragraphs[0]
     paragraph.paragraph_format.space_after = Pt(0)
     paragraph.paragraph_format.line_spacing = 1.0
     _docx_set_paragraph_rtl(paragraph, alignment)
-    _docx_add_run(paragraph, value if value not in (None, "") else "-", bold=bold, color=color)
+    _docx_add_run(
+        paragraph,
+        value if value not in (None, "") else "-",
+        bold=bold,
+        color=color,
+        size=size,
+    )
     cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
     _docx_set_cell_margins(cell)
     if fill:
@@ -470,7 +494,15 @@ def _docx_set_cell_text(cell, value, *, bold=False, fill=None, color="000000", a
         shd.set(qn("w:fill"), fill)
 
 
-def _docx_add_table(doc, headers, rows, *, widths=None):
+def _docx_add_table(
+    doc,
+    headers,
+    rows,
+    *,
+    widths=None,
+    header_size=ATTENDANCE_DELAY_DOCX_SIZE,
+    body_size=ATTENDANCE_DELAY_DOCX_SIZE,
+):
     table = doc.add_table(rows=0, cols=len(headers))
     _docx_set_table_rtl(table)
     widths = widths or [Inches(1.85)] * len(headers)
@@ -484,6 +516,7 @@ def _docx_add_table(doc, headers, rows, *, widths=None):
                 value,
                 bold=is_header,
                 fill="EAF2F8" if is_header else ("FFFFFF" if len(table.rows) % 2 else "F7F7F7"),
+                size=header_size if is_header else body_size,
             )
     return table
 
@@ -503,17 +536,150 @@ def _docx_add_heading(doc, text):
     paragraph.paragraph_format.space_after = Pt(4)
     paragraph.paragraph_format.keep_with_next = True
     _docx_set_paragraph_rtl(paragraph)
-    _docx_add_run(paragraph, text, bold=True)
+    _docx_add_run(paragraph, text, bold=True, size=ATTENDANCE_DELAY_DOCX_HEADING_SIZE)
     return paragraph
 
 
-def _docx_add_body_paragraph(doc, text, *, color="000000", space_after=Pt(7)):
+def _docx_add_body_paragraph(
+    doc,
+    text,
+    *,
+    color="000000",
+    space_after=Pt(8),
+    size=ATTENDANCE_DELAY_DOCX_SIZE,
+):
     paragraph = doc.add_paragraph()
     paragraph.paragraph_format.space_after = space_after
-    paragraph.paragraph_format.line_spacing = 1.15
+    paragraph.paragraph_format.line_spacing = 1.25
     _docx_set_paragraph_rtl(paragraph)
-    _docx_add_run(paragraph, text, color=color)
+    _docx_add_run(paragraph, text, color=color, size=size)
     return paragraph
+
+
+def _attendance_delay_current_stage(data):
+    explicit_label = _attendance_text(data.get("current_stage_label"))
+    if explicit_label:
+        return explicit_label
+    state = _attendance_text(data.get("workflow_status")).upper()
+    if state == "APPROVED":
+        return "تم الاعتماد النهائي"
+    if state == "REJECTED":
+        return "تم رفض المعاملة"
+    try:
+        step_order = int(data.get("current_step_order") or 1)
+    except (TypeError, ValueError):
+        step_order = 1
+    return {
+        1: "بانتظار تعبئة الموظف للتبرير",
+        2: "بانتظار اعتماد المدير المباشر",
+        3: "بانتظار اعتماد الموارد البشرية",
+        4: "بانتظار اعتماد الأمين العام",
+        5: "بانتظار الاعتماد النهائي للشؤون البشرية",
+    }.get(step_order, "قيد الإجراء")
+
+
+def _attendance_delay_status_text(value, *, employee_step=False):
+    status = _attendance_text(value, "PENDING").upper()
+    if employee_step and status == "APPROVED":
+        return "تمت تعبئة التبرير"
+    return {
+        "APPROVED": "تمت الموافقة",
+        "REJECTED": "تم الرفض",
+        "RESPONDED": "تم الرد",
+        "SKIPPED": "تم تجاوز المرحلة",
+        "BYPASSED": "تم تجاوز المرحلة",
+        "IN_PROGRESS": "قيد الإجراء",
+        "DRAFT": "قيد الإعداد",
+        "PENDING": "بانتظار الإجراء",
+        "NONE": "بانتظار الإجراء",
+    }.get(status, _attendance_text(value, "بانتظار الإجراء"))
+
+
+def _attendance_delay_approval_rows(data):
+    rows = []
+    for raw_row in data.get("approval_steps") or ():
+        if not isinstance(raw_row, dict):
+            continue
+        label = _attendance_text(raw_row.get("label"))
+        name = _attendance_text(raw_row.get("name"))
+        if not label:
+            continue
+        status = _attendance_delay_status_text(
+            raw_row.get("status"),
+            employee_step=bool(raw_row.get("employee_step")),
+        )
+        note = _attendance_text(raw_row.get("note"))
+        rows.append((label, name or "-", status, note or "-"))
+    if rows:
+        return rows
+
+    pending = "بانتظار الإجراء"
+    return [
+        ("تعبئة الموظف", _docx_value(data.get("employee_name")), "تمت التعبئة" if _attendance_text(data.get("reason")) else pending, "-"),
+        ("اعتماد المدير المباشر", _docx_value(data.get("manager_name")), _docx_value(data.get("manager_decision"), pending), "-"),
+        ("اعتماد الموارد البشرية", _docx_value(data.get("hr_department_manager_name")), _docx_value(data.get("hr_department_decision"), pending), "-"),
+        ("اعتماد الأمين العام", _docx_value(data.get("secretary_name")), _docx_value(data.get("secretary_decision"), pending), "-"),
+        ("الاعتماد النهائي للشؤون البشرية", _docx_value(data.get("hr_manager_name")), _docx_value(data.get("hr_decision"), pending), "-"),
+    ]
+
+
+def _docx_add_stage_table(doc, data):
+    return _docx_add_table(
+        doc,
+        ("المرحلة الحالية", "حالة المعاملة"),
+        [
+            (
+                _attendance_delay_current_stage(data),
+                _attendance_delay_status_text(data.get("workflow_status")),
+            ),
+        ],
+        widths=[Inches(4.7), Inches(1.7)],
+        header_size=17,
+        body_size=18,
+    )
+
+
+def _docx_add_signature_blocks(doc, people):
+    normalized = []
+    seen = set()
+    for raw_person in people or ():
+        if not isinstance(raw_person, dict):
+            continue
+        role = _attendance_text(raw_person.get("role"), "صاحب العلاقة")
+        name = _attendance_text(raw_person.get("name"))
+        key = (role, name)
+        if name and key not in seen:
+            seen.add(key)
+            normalized.append((role, name))
+    if not normalized:
+        return None
+
+    _docx_add_heading(doc, "الاسم والتوقيع")
+    table = doc.add_table(rows=0, cols=2)
+    _docx_set_table_rtl(table)
+    for start in range(0, len(normalized), 2):
+        cells = table.add_row().cells
+        for index, cell in enumerate(cells):
+            if start + index >= len(normalized):
+                cell.text = ""
+                _docx_set_cell_margins(cell, top=150, bottom=150, start=160, end=160)
+                continue
+            role, name = normalized[start + index]
+            cell.text = ""
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            _docx_set_cell_margins(cell, top=150, bottom=150, start=160, end=160)
+            paragraph = cell.paragraphs[0]
+            paragraph.paragraph_format.space_after = Pt(3)
+            _docx_set_paragraph_rtl(paragraph)
+            _docx_add_run(paragraph, role, bold=True, size=16)
+            name_paragraph = cell.add_paragraph()
+            name_paragraph.paragraph_format.space_after = Pt(5)
+            _docx_set_paragraph_rtl(name_paragraph)
+            _docx_add_run(name_paragraph, name, size=18)
+            signature_paragraph = cell.add_paragraph()
+            _docx_set_paragraph_rtl(signature_paragraph)
+            _docx_add_run(signature_paragraph, "التوقيع: ________________________", size=17)
+    return table
 
 
 def _docx_value(value, default="-"):
@@ -522,11 +688,11 @@ def _docx_value(value, default="-"):
     return _attendance_text(value, default)
 
 
-def _docx_replace_paragraph_text(paragraph, text):
+def _docx_replace_paragraph_text(paragraph, text, *, size=13):
     for run in list(paragraph.runs):
         paragraph._p.remove(run._element)
     _docx_set_paragraph_rtl(paragraph)
-    _docx_add_run(paragraph, text)
+    _docx_add_run(paragraph, text, size=size)
 
 
 def _attendance_delay_docx_base(title, data):
@@ -550,23 +716,30 @@ def _attendance_delay_docx_base(title, data):
         # Keep the supplied official letterhead, but make its editable text
         # use the same font requested for the generated form.
         for paragraph in section.header.paragraphs:
+            _docx_set_paragraph_rtl(paragraph)
             for run in paragraph.runs:
-                _docx_set_run_font(run)
+                _docx_set_run_font(run, size=13)
         for table in section.header.tables:
+            _docx_set_table_rtl(table)
             for row in table.rows:
                 for cell in row.cells:
                     for paragraph in cell.paragraphs:
+                        _docx_set_paragraph_rtl(paragraph)
                         for run in paragraph.runs:
-                            _docx_set_run_font(run)
+                            _docx_set_run_font(run, size=13)
 
         request_no = _docx_value(data.get("request_no"), "-")
         request_date = _docx_value(data.get("request_date"), "-")
         year = request_date[:4] if request_date and request_date[:4].isdigit() else str(datetime.now().year)
         for paragraph in section.header.paragraphs:
             if "الرقم" in paragraph.text:
-                _docx_replace_paragraph_text(paragraph, f"الرقم : ل.و.ف/ {request_no} / {year} /ص-")
+                _docx_replace_paragraph_text(
+                    paragraph,
+                    f"الرقم : ل.و.ف/ {request_no} / {year} /ص-",
+                    size=13,
+                )
             elif "التاريخ" in paragraph.text:
-                _docx_replace_paragraph_text(paragraph, f"التاريخ : {request_date}")
+                _docx_replace_paragraph_text(paragraph, f"التاريخ : {request_date}", size=13)
 
     normal = doc.styles["Normal"]
     normal.font.name = ATTENDANCE_DELAY_DOCX_FONT
@@ -575,15 +748,24 @@ def _attendance_delay_docx_base(title, data):
     normal._element.rPr.rFonts.set(qn("w:hAnsi"), ATTENDANCE_DELAY_DOCX_FONT)
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), ATTENDANCE_DELAY_DOCX_FONT)
     normal._element.rPr.rFonts.set(qn("w:cs"), ATTENDANCE_DELAY_DOCX_FONT)
-    for style_name in ("Title", "Heading 1", "Heading 2"):
+    for style_name, size, bold in (
+        ("Title", ATTENDANCE_DELAY_DOCX_TITLE_SIZE, True),
+        ("Heading 1", ATTENDANCE_DELAY_DOCX_HEADING_SIZE, True),
+        ("Heading 2", ATTENDANCE_DELAY_DOCX_HEADING_SIZE, True),
+    ):
         try:
             style = doc.styles[style_name]
         except KeyError:
             style = doc.styles.add_style(style_name, WD_STYLE_TYPE.PARAGRAPH)
         try:
             style.font.name = ATTENDANCE_DELAY_DOCX_FONT
-            style.font.size = Pt(ATTENDANCE_DELAY_DOCX_SIZE)
+            style.font.size = Pt(size)
+            style.font.bold = bold
             style.font.color.rgb = RGBColor(0, 0, 0)
+            style._element.rPr.rFonts.set(qn("w:ascii"), ATTENDANCE_DELAY_DOCX_FONT)
+            style._element.rPr.rFonts.set(qn("w:hAnsi"), ATTENDANCE_DELAY_DOCX_FONT)
+            style._element.rPr.rFonts.set(qn("w:eastAsia"), ATTENDANCE_DELAY_DOCX_FONT)
+            style._element.rPr.rFonts.set(qn("w:cs"), ATTENDANCE_DELAY_DOCX_FONT)
         except (AttributeError, ValueError):
             pass
 
@@ -841,7 +1023,12 @@ def build_attendance_delay_notice_docx(data):
     title.paragraph_format.space_after = Pt(5)
     title.paragraph_format.keep_with_next = True
     _docx_set_paragraph_rtl(title, WD_ALIGN_PARAGRAPH.CENTER)
-    _docx_add_run(title, ATTENDANCE_DELAY_WORKFLOW_LABEL, bold=True)
+    _docx_add_run(
+        title,
+        ATTENDANCE_DELAY_WORKFLOW_LABEL,
+        bold=True,
+        size=ATTENDANCE_DELAY_DOCX_TITLE_SIZE,
+    )
 
     _docx_add_body_paragraph(
         doc,
@@ -858,6 +1045,9 @@ def build_attendance_delay_notice_docx(data):
             ("يوم التأخير", _docx_value(data.get("delay_day"))),
         ],
     )
+
+    _docx_add_heading(doc, "حالة المسار")
+    _docx_add_stage_table(doc, data)
 
     _docx_add_heading(doc, "بيانات الدوام المحتسبة")
     _docx_add_table(
@@ -892,12 +1082,13 @@ def build_attendance_delay_notice_docx(data):
         ],
     )
 
-    _docx_add_heading(doc, "التوقيع عند الحاجة")
-    _docx_add_table(
+    _docx_add_signature_blocks(
         doc,
-        ("الموظف", "الجهة المنشئة"),
-        [("____________________________", "____________________________")],
-        widths=[Inches(3.2), Inches(3.2)],
+        data.get("signature_people")
+        or [
+            {"role": "الموظف", "name": _docx_value(data.get("employee_name"))},
+            {"role": "الجهة المنشئة", "name": _docx_value(data.get("initiator_name"), "الشؤون البشرية")},
+        ],
     )
     return _docx_save(doc)
 
@@ -911,7 +1102,12 @@ def build_attendance_delay_justification_docx(data):
     title.paragraph_format.space_after = Pt(5)
     title.paragraph_format.keep_with_next = True
     _docx_set_paragraph_rtl(title, WD_ALIGN_PARAGRAPH.CENTER)
-    _docx_add_run(title, ATTENDANCE_DELAY_RESPONSE_LABEL, bold=True)
+    _docx_add_run(
+        title,
+        ATTENDANCE_DELAY_RESPONSE_LABEL,
+        bold=True,
+        size=ATTENDANCE_DELAY_DOCX_TITLE_SIZE,
+    )
 
     _docx_add_body_paragraph(
         doc,
@@ -929,6 +1125,9 @@ def build_attendance_delay_justification_docx(data):
         ],
     )
 
+    _docx_add_heading(doc, "حالة المسار")
+    _docx_add_stage_table(doc, data)
+
     _docx_add_heading(doc, "نوع الحالة")
     kind = _attendance_text(data.get("case_kind"), "DELAY").upper()
     kind_text = (
@@ -941,7 +1140,10 @@ def build_attendance_delay_justification_docx(data):
     reason = _attendance_text(data.get("reason"))
     _docx_add_body_paragraph(
         doc,
-        reason or "يعبأ من الموظف عبر النظام.",
+        (
+            reason
+            or "يعبأ من الموظف عبر النظام، وتُحدَّث تفاصيل النموذج تلقائياً عند انتقال المعاملة بين المراحل."
+        ),
         color="666666" if not reason else "000000",
         space_after=Pt(5),
     )
@@ -965,20 +1167,26 @@ def build_attendance_delay_justification_docx(data):
         ],
     )
 
-    _docx_add_heading(doc, "قرارات الاعتماد")
-    pending = "بانتظار الاعتماد"
+    _docx_add_heading(doc, "سجل مراحل المعاملة")
     _docx_add_table(
         doc,
-        ("المرحلة", "القرار"),
-        [
-            ("المدير المباشر", _docx_value(data.get("manager_decision"), pending)),
-            ("مدير دائرة الموارد البشرية", _docx_value(data.get("hr_department_decision"), pending)),
-            ("مدير عام الإدارة العامة للموارد الإدارية والمالية", _docx_value(data.get("hr_general_director_decision"), pending)),
-            ("الأمين العام", _docx_value(data.get("secretary_decision"), pending)),
-            ("مدير الشؤون البشرية", _docx_value(data.get("hr_decision"), pending)),
-        ],
-        widths=[Inches(4.2), Inches(2.2)],
+        ("المرحلة", "الاسم", "الحالة", "الملاحظة"),
+        _attendance_delay_approval_rows(data),
+        widths=[Inches(2.1), Inches(1.65), Inches(1.25), Inches(1.4)],
+        header_size=15,
+        body_size=16,
+    )
+    _docx_add_signature_blocks(
+        doc,
+        data.get("signature_people")
+        or [{"role": "الموظف", "name": _docx_value(data.get("employee_name"))}],
     )
     if reason:
-        _docx_add_body_paragraph(doc, "تمت تعبئة النموذج إلكترونياً ضمن مسار موثق.", color="166534", space_after=Pt(0))
+        _docx_add_body_paragraph(
+            doc,
+            f"تمت تعبئة النموذج إلكترونياً. المرحلة الحالية: {_attendance_delay_current_stage(data)}.",
+            color="166534",
+            space_after=Pt(0),
+            size=17,
+        )
     return _docx_save(doc)

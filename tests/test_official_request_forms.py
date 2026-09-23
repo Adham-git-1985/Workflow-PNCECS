@@ -143,8 +143,38 @@ def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead(
         "late_minutes": 75,
         "early_leave_minutes": 0,
     }
-    blank = dict(data, case_kind="DELAY", has_document="NO")
-    completed = dict(blank, reason="ظرف طارئ", has_document="YES", document_name="إفادة رسمية")
+    blank = dict(
+        data,
+        case_kind="DELAY",
+        has_document="NO",
+        workflow_status="IN_PROGRESS",
+        current_step_order=1,
+    )
+    completed = dict(
+        blank,
+        reason="ظرف طارئ",
+        has_document="YES",
+        document_name="إفادة رسمية",
+        current_step_order=2,
+        current_stage_label="اعتماد المدير المباشر",
+        approval_steps=[
+            {
+                "label": "تعبئة تبرير الموظف",
+                "name": "موظف تجريبي",
+                "status": "APPROVED",
+                "employee_step": True,
+            },
+            {
+                "label": "اعتماد المدير المباشر",
+                "name": "مدير مباشر تجريبي",
+                "status": "PENDING",
+            },
+        ],
+        signature_people=[
+            {"role": "الموظف", "name": "موظف تجريبي"},
+            {"role": "اعتماد المدير المباشر", "name": "مدير مباشر تجريبي"},
+        ],
+    )
 
     for content, expected in (
         (build_attendance_delay_notice_docx(data), "نموذج تأخير عن العمل"),
@@ -152,21 +182,45 @@ def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead(
         (build_attendance_delay_justification_docx(completed), "ظرف طارئ"),
     ):
         document = Document(BytesIO(content))
-        assert expected in "\n".join(p.text for p in document.paragraphs)
+        document_text = "\n".join(
+            [p.text for p in document.paragraphs]
+            + [p.text for table in document.tables for row in table.rows for cell in row.cells for p in cell.paragraphs]
+        )
+        assert expected in document_text
         assert document.sections[0].header.tables
         header_text = "\n".join(p.text for p in document.sections[0].header.paragraphs)
         assert "189" in header_text and "2026/09/23" in header_text
         body_runs = [run for paragraph in document.paragraphs for run in paragraph.runs]
         assert body_runs
-        assert all(run.font.name == "Sakkal Majalla" for run in body_runs)
-        assert all(run.font.size and run.font.size.pt == 16 for run in body_runs)
+        assert all(run.font.name == "Arial" for run in body_runs)
+        assert max(run.font.size.pt for run in body_runs if run.font.size) >= 24
+        assert any(run.bold and run.font.size and run.font.size.pt >= 20 for run in body_runs)
         assert all(
             paragraph._p.pPr is not None
             and paragraph._p.pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidi") is not None
             for paragraph in document.paragraphs
         )
+        assert all(
+            table._tbl.tblPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidiVisual") is not None
+            for table in document.tables
+        )
+        assert "التوقيع:" in document_text
         with zipfile.ZipFile(BytesIO(content)) as archive:
             assert "word/media/image1.jpeg" in archive.namelist()
+
+    completed_document = Document(BytesIO(build_attendance_delay_justification_docx(completed)))
+    completed_text = "\n".join(
+        [p.text for p in completed_document.paragraphs]
+        + [
+            p.text
+            for table in completed_document.tables
+            for row in table.rows
+            for cell in row.cells
+            for p in cell.paragraphs
+        ]
+    )
+    assert "اعتماد المدير المباشر" in completed_text
+    assert "مدير مباشر تجريبي" in completed_text
 
 
 def test_official_filename_keeps_arabic_and_removes_windows_reserved_characters():

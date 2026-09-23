@@ -30,6 +30,7 @@ from models import (
 )
 from services.workflow_confidentiality import filter_confidential_workflow_user_ids
 from services.attendance_delay_workflow import (
+    archive_delay_workflow_snapshot,
     attendance_delay_parallel_candidate_user_ids,
     attendance_delay_secretary_user_ids,
     is_attendance_delay_workflow,
@@ -47,6 +48,14 @@ RETAINED_FOLLOWER_ACTIONS = (
     ASSISTANT_SECRETARY_REDIRECT_FOLLOWER_ACTION,
 )
 SLA_SUSPENDED = -1
+
+
+def _archive_attendance_delay_snapshot(req, *, owner_id: int | None):
+    """Keep the official delay-justification attachment aligned with the active stage."""
+    if is_attendance_delay_workflow(req):
+        archive_delay_workflow_snapshot(req, owner_id=owner_id)
+
+
 # A mention task is intentionally allowed to add someone outside the original
 # parallel-step candidate list. Keep the legacy Arabic marker so tasks created
 # before this marker was standardized are not incorrectly bypassed on reload.
@@ -2109,6 +2118,7 @@ def decide_step(
                 req=req,
             )
             notify_delay_final_decision(req, final_status, effective_user_id)
+            _archive_attendance_delay_snapshot(req, owner_id=effective_user_id)
             if auto_commit:
                 db.session.commit()
             return
@@ -2179,6 +2189,7 @@ def decide_step(
                         instance_id=inst.id,
                     )
 
+        _archive_attendance_delay_snapshot(req, owner_id=effective_user_id)
         if auto_commit:
             db.session.commit()
         return
@@ -2395,6 +2406,7 @@ def decide_step(
                 fmsg += f" | السبب/الملاحظة: {note}"
             _notify_users(sorted(follower_ids), message=fmsg, ntype="WORKFLOW", req=req)
 
+        _archive_attendance_delay_snapshot(req, owner_id=effective_user_id)
         if auto_commit:
             db.session.commit()
         return
@@ -2514,6 +2526,7 @@ def decide_step(
                 req=req,
             )
 
+        _archive_attendance_delay_snapshot(req, owner_id=effective_user_id)
         if auto_commit:
             db.session.commit()
         return
@@ -2566,5 +2579,6 @@ def decide_step(
             req=req,
         )
 
+    _archive_attendance_delay_snapshot(req, owner_id=effective_user_id)
     if auto_commit:
         db.session.commit()

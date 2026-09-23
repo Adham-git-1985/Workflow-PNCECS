@@ -9197,29 +9197,14 @@ def hr_attendance_delay_respond(case_id):
         "responded_at": datetime.utcnow().isoformat(timespec="seconds"),
     }
     now = datetime.utcnow()
-    data = employee_form_data(case, current_user)
-    data.update(payload)
-    data.update({
-        "request_no": req_row.id,
-        "request_date": case.created_at.date() if case.created_at else now.date(),
-        "initiator_name": case.initiated_by.full_name if case.initiated_by else "الشؤون البشرية",
-    })
     generated_paths = []
     try:
-        completed, completed_path = archive_generated_docx(
-            req_row,
-            build_attendance_delay_justification_docx(data),
-            official_form_filename(current_user.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL + " - مكتمل", "docx"),
-            owner_id=current_user.id,
-            step_order=1,
-            source="ATTENDANCE_DELAY_EMPLOYEE_RESPONSE",
-            description="نموذج تبرير غياب / تأخير بعد تعبئة الموظف",
-        )
-        generated_paths.append(completed_path)
+        # Save the employee response first.  decide_step then archives a Word
+        # snapshot that reflects the *next* active stage and its signer(s).
         case.employee_responded_at = now
         case.response_payload_json = json_payload(payload)
-        case.completed_justification_archived_file_id = completed.id
         db.session.add(case)
+        db.session.flush()
 
         # Supporting evidence, if supplied, uses the generic workflow archive
         # and remains grouped with the employee response step.

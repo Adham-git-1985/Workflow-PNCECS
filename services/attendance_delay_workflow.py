@@ -8,6 +8,7 @@ contains the small background-job operation that raises the two-hour alert.
 from __future__ import annotations
 
 import json
+import logging
 import mimetypes
 import os
 import uuid
@@ -31,6 +32,7 @@ from models import (
     User,
     WorkflowInstance,
     WorkflowInstanceStep,
+    WorkflowStepTask,
     WorkflowRequest,
 )
 from services.hr_request_workflow import (
@@ -45,6 +47,7 @@ from utils.notification_links import notification_target_path
 ATTENDANCE_DELAY_WORKFLOW_LABEL = "نموذج تأخير عن العمل"
 ATTENDANCE_DELAY_RESPONSE_LABEL = "نموذج تبرير غياب / تأخير"
 ATTENDANCE_DELAY_OVERDUE_TYPE = "ATTENDANCE_DELAY_OVERDUE"
+logger = logging.getLogger(__name__)
 
 
 def _compact_attendance_label(value: str | None) -> str:
@@ -650,6 +653,200 @@ def employee_form_data(case: HRAttendanceDelayRequest, employee: User | None = N
         "late_minutes": int(case.late_minutes or 0),
         "early_leave_minutes": int(case.early_leave_minutes or 0),
     }
+
+
+def _delay_document_stage_label(step: WorkflowInstanceStep | None) -> str:
+    if step and (getattr(step, "routing_label", None) or "").strip():
+        return step.routing_label.strip()
+    try:
+        order = int(getattr(step, "step_order", 0) or 0)
+    except (TypeError, ValueError):
+        order = 0
+    return {
+        1: "تعبئة تبرير الموظف",
+        2: "اعتماد المدير المباشر",
+        3: "اعتماد الموارد البشرية",
+        4: "اعتماد الأمين العام",
+        5: "الاعتماد النهائي للشؤون البشرية",
+    }.get(order, "مرحلة من مسار التأخير")
+
+
+def _delay_document_user_name(user_id: int | None) -> str:
+    try:
+        user = db.session.get(User, int(user_id)) if user_id else None
+    except (TypeError, ValueError):
+        user = None
+    if not user:
+        return ""
+    return (getattr(user, "full_name", None) or getattr(user, "name", None) or getattr(user, "email", None) or "").strip()
+
+
+def _delay_document_status(value: str | None, *, employee_step: bool = False) -> str:
+    status = (value or "PENDING").strip().upper()
+    if employee_step and status == "APPROVED":
+        return "تمت تعبئة التبرير"
+    return {
+        "APPROVED": "تمت الموافقة",
+        "REJECTED": "تم الرفض",
+        "RESPONDED": "تم الرد",
+        "SKIPPED": "تم تجاوز المرحلة",
+        "BYPASSED": "تم تجاوز المرحلة",
+        "PENDING": "بانتظار الإجراء",
+        "NONE": "بانتظار الإجراء",
+    }.get(status, status or "بانتظار الإجراء")
+
+
+def attendance_delay_workflow_form_data(req: WorkflowRequest) -> dict | None:
+    """Build the Word-form payload from the current, frozen workflow state."""
+    case = get_delay_case_for_request(getattr(req, "id", None))
+    if not case:
+        return None
+
+    employee = case.employee
+    data = employee_form_data(case, employee)
+    data.update(case.response_payload())
+    data.update({
+        "request_no": req.id,
+        "request_date": case.created_at.date() if case.created_at else datetime.utcnow().date(),
+        "initiator_name": getattr(getattr(case, "initiated_by", None), "full_name", None) or "الشؤون البشرية",
+        "workflow_status": (getattr(req, "status", None) or "IN_PROGRESS").strip().upper(),
+    })
+
+    instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    if not instance:
+        return data
+
+    steps = (
+        WorkflowInstanceStep.query
+        .filter_by(instance_id=instance.id)
+        .order_by(WorkflowInstanceStep.step_order.asc())
+        .all()
+    )
+    tasks_by_step: dict[int, list[WorkflowStepTask]] = {}
+    for task in (
+        WorkflowStepTask.query
+        .filter_by(instance_id=instance.id)
+        .order_by(WorkflowStepTask.step_order.asc(), WorkflowStepTask.id.asc())
+        .all()
+    ):
+        tasks_by_step.setdefault(int(task.step_order), []).append(task)
+
+    approval_steps = []
+    for step in steps:
+        label = _delay_document_stage_label(step)
+        if (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+            tasks = tasks_by_step.get(int(step.step_order), [])
+            if tasks:
+                for task in tasks:
+                    task_status = task.response if task.status == "RESPONDED" else task.status
+                    approval_steps.append({
+                        "label": label,
+                        "name": _delay_document_user_name(task.assignee_user_id),
+                        "status": _delay_document_status(task_status),
+                        "note": (task.note or "").strip(),
+                    })
+                continue
+
+        actor_id = getattr(step, "decided_by_id", None) or getattr(step, "approver_user_id", None)
+        approval_steps.append({
+            "label": label,
+            "name": _delay_document_user_name(actor_id),
+            "status": _delay_document_status(
+                getattr(step, "status", None),
+                employee_step=int(getattr(step, "step_order", 0) or 0) == 1,
+            ),
+            "note": (getattr(step, "note", None) or "").strip(),
+            "employee_step": int(getattr(step, "step_order", 0) or 0) == 1,
+        })
+    data["approval_steps"] = approval_steps
+
+    try:
+        current_order = int(getattr(instance, "current_step_order", 1) or 1)
+    except (TypeError, ValueError):
+        current_order = 1
+    current_step = next((step for step in steps if int(step.step_order) == current_order), None)
+    data["current_step_order"] = current_order
+
+    final_status = data["workflow_status"]
+    if final_status == "APPROVED":
+        data["current_stage_label"] = "تم الاعتماد النهائي للمعاملة"
+    elif final_status == "REJECTED":
+        data["current_stage_label"] = "تم رفض المعاملة"
+    else:
+        data["current_stage_label"] = _delay_document_stage_label(current_step)
+
+    signature_people = []
+    employee_name = _delay_document_user_name(getattr(case, "employee_id", None))
+    if employee_name:
+        signature_people.append({"role": "الموظف", "name": employee_name})
+
+    if final_status in {"APPROVED", "REJECTED"}:
+        final_actor_id = getattr(case, "final_decision_by_id", None)
+        final_name = _delay_document_user_name(final_actor_id)
+        if final_name:
+            signature_people.append({
+                "role": "صاحب القرار النهائي",
+                "name": final_name,
+            })
+    elif current_step:
+        current_label = _delay_document_stage_label(current_step)
+        if (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+            for task in tasks_by_step.get(int(current_step.step_order), []):
+                if (task.status or "").strip().upper() == "PENDING":
+                    name = _delay_document_user_name(task.assignee_user_id)
+                    if name:
+                        signature_people.append({"role": current_label, "name": name})
+        else:
+            name = _delay_document_user_name(getattr(current_step, "approver_user_id", None))
+            if name:
+                signature_people.append({"role": current_label, "name": name})
+    data["signature_people"] = signature_people
+    return data
+
+
+def archive_delay_workflow_snapshot(
+    req: WorkflowRequest,
+    *,
+    owner_id: int | None = None,
+) -> tuple[ArchivedFile, str] | None:
+    """Archive one editable, stage-aware Word snapshot after a delay workflow action."""
+    case = get_delay_case_for_request(getattr(req, "id", None))
+    if not case or not case.employee_responded_at:
+        return None
+    try:
+        from services.official_request_forms import (
+            build_attendance_delay_justification_docx,
+            official_form_filename,
+        )
+
+        data = attendance_delay_workflow_form_data(req)
+        if not data:
+            return None
+        current_step_order = int(data.get("current_step_order") or 1)
+        employee_name = _delay_document_user_name(case.employee_id) or "موظف"
+        stage_label = data.get("current_stage_label") or "تحديث المسار"
+        archived, path = archive_generated_docx(
+            req,
+            build_attendance_delay_justification_docx(data),
+            official_form_filename(
+                employee_name,
+                f"{ATTENDANCE_DELAY_RESPONSE_LABEL} - {stage_label}",
+                "docx",
+            ),
+            owner_id=int(owner_id or case.initiated_by_id),
+            step_order=current_step_order,
+            source="ATTENDANCE_DELAY_WORKFLOW_SNAPSHOT",
+            description=f"نسخة محدثة من نموذج التبرير في مرحلة {stage_label}",
+        )
+        case.completed_justification_archived_file_id = archived.id
+        db.session.add(case)
+        return archived, path
+    except Exception:
+        logger.exception(
+            "Failed to archive attendance-delay Word snapshot for request_id=%s",
+            getattr(req, "id", None),
+        )
+        return None
 
 
 def json_payload(value: dict) -> str:

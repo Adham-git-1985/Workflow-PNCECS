@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta
 
+from docx import Document
 from flask import Flask
 from flask_login import LoginManager, login_user
 
@@ -152,6 +153,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
 
     def test_employee_response_manager_hr_secretary_and_hr_affairs_final_path(self):
         case, request_row = self._start()
+        self.assertEqual(ArchivedFile.query.count(), 2)
         steps = WorkflowInstanceStep.query.filter_by(
             instance_id=request_row.workflow_instance.id,
         ).order_by(WorkflowInstanceStep.step_order.asc()).all()
@@ -172,6 +174,21 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         db.session.refresh(case)
         self.assertIsNotNone(case.employee_responded_at)
         self.assertEqual(request_row.workflow_instance.current_step_order, 2)
+        self.assertEqual(ArchivedFile.query.count(), 3)
+        self.assertIsNotNone(case.completed_justification_archived_file)
+        employee_snapshot = Document(case.completed_justification_archived_file.file_path)
+        employee_snapshot_text = "\n".join(
+            [paragraph.text for paragraph in employee_snapshot.paragraphs]
+            + [
+                paragraph.text
+                for table in employee_snapshot.tables
+                for row in table.rows
+                for cell in row.cells
+                for paragraph in cell.paragraphs
+            ]
+        )
+        self.assertIn("اعتماد المدير المباشر", employee_snapshot_text)
+        self.assertIn("Delay Manager", employee_snapshot_text)
 
         decide_step(
             request_row.id,
@@ -183,6 +200,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(request_row.workflow_instance.current_step_order, 3)
+        self.assertEqual(ArchivedFile.query.count(), 4)
         self.assertEqual(
             {
                 task.assignee_user_id
@@ -201,6 +219,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(request_row.workflow_instance.current_step_order, 3)
+        self.assertEqual(ArchivedFile.query.count(), 5)
 
         decide_step(
             request_row.id,
@@ -212,6 +231,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(request_row.workflow_instance.current_step_order, 4)
+        self.assertEqual(ArchivedFile.query.count(), 6)
 
         decide_step(
             request_row.id,
@@ -223,6 +243,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(request_row.workflow_instance.current_step_order, 5)
+        self.assertEqual(ArchivedFile.query.count(), 7)
 
         decide_step(
             request_row.id,
@@ -236,6 +257,21 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.assertEqual(request_row.status, "APPROVED")
         self.assertTrue(request_row.workflow_instance.is_completed)
         self.assertEqual(case.final_status, "APPROVED")
+        self.assertEqual(ArchivedFile.query.count(), 8)
+        db.session.refresh(case)
+        final_snapshot = Document(case.completed_justification_archived_file.file_path)
+        final_snapshot_text = "\n".join(
+            [paragraph.text for paragraph in final_snapshot.paragraphs]
+            + [
+                paragraph.text
+                for table in final_snapshot.tables
+                for row in table.rows
+                for cell in row.cells
+                for paragraph in cell.paragraphs
+            ]
+        )
+        self.assertIn("تم الاعتماد النهائي للمعاملة", final_snapshot_text)
+        self.assertIn("HR Affairs Manager", final_snapshot_text)
 
     def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
         self.assertIn(
