@@ -307,7 +307,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(summary.first_in.hour, 8)
         self.assertEqual(summary.last_out.hour, 15)
 
-    def test_pending_personal_departure_after_noon_is_effective_checkout(self):
+    def test_pending_personal_departure_is_not_a_checkout(self):
         employee = User(email="pending-departure@example.test", name="Pending Departure", password_hash="x", role="USER")
         permission_type = HRPermissionType(
             code="PERSONAL_PENDING_CHECKOUT",
@@ -339,11 +339,10 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
         self.assertEqual(summary["first_in"].hour, 7)
         self.assertEqual(summary["first_in"].minute, 32)
-        self.assertEqual(summary["last_out"].hour, 13)
-        self.assertEqual(summary["last_out"].minute, 35)
-        self.assertEqual(summary["status"], "OK")
+        self.assertIsNone(summary["last_out"])
+        self.assertEqual(summary["status"], "INCOMPLETE")
 
-    def test_last_clock_departure_is_checkout_for_both_kinds_and_times(self):
+    def test_last_clock_departure_is_not_a_checkout_for_both_kinds_and_times(self):
         scenarios = (
             ("C", datetime(2026, 9, 14, 10, 30)),
             ("E", datetime(2026, 9, 14, 13, 30)),
@@ -373,15 +372,15 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
             with self.subTest(event_type=event_type, departure_at=departure_at):
                 summary = _summary_compute_one(employee.id, "2026-09-14")
-                self.assertEqual(summary["last_out"], departure_at)
-                self.assertEqual(summary["status"], "OK")
+                self.assertIsNone(summary["last_out"])
+                self.assertEqual(summary["status"], "INCOMPLETE")
 
-    def test_last_system_departure_is_checkout_regardless_of_approval_or_noon(self):
+    def test_last_system_departure_is_not_a_checkout_regardless_of_approval_or_noon(self):
         scenarios = (
-            ("SUBMITTED", False, "10:30", datetime(2026, 9, 14, 10, 30)),
-            ("APPROVED", True, "13:30", datetime(2026, 9, 14, 13, 30)),
+            ("SUBMITTED", False, "10:30"),
+            ("APPROVED", True, "13:30"),
         )
-        for index, (status, counts_as_work, from_time, expected) in enumerate(scenarios, start=1):
+        for index, (status, counts_as_work, from_time) in enumerate(scenarios, start=1):
             employee = User(
                 email=f"system-departure-{index}@example.test",
                 name=f"System Departure {index}",
@@ -414,8 +413,8 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
             with self.subTest(status=status, counts_as_work=counts_as_work, from_time=from_time):
                 summary = _summary_compute_one(employee.id, "2026-09-14")
-                self.assertEqual(summary["last_out"], expected)
-                self.assertEqual(summary["status"], "OK")
+                self.assertIsNone(summary["last_out"])
+                self.assertEqual(summary["status"], "INCOMPLETE")
 
     def test_clock_movement_after_system_departure_prevents_checkout_inference(self):
         employee = User(email="returned-after-departure@example.test", name="Returned", password_hash="x", role="USER")
@@ -503,7 +502,8 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
 
         request_row = HRPermissionRequest.query.one()
         summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-14").one()
-        self.assertEqual(summary.last_out, datetime(2026, 9, 14, 13, 30))
+        self.assertIsNone(summary.last_out)
+        self.assertEqual(summary.status, "INCOMPLETE")
 
         with self.app.test_request_context(
             f"/portal/hr/me/permissions/{request_row.id}/cancel",
@@ -642,12 +642,11 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             'portal.routes._attendance_exemption_reason', return_value=None,
         ):
             result = _summary_compute_one(employee.id, '2026-09-13')
-            self.assertEqual(result['last_out'], datetime(2026, 9, 13, 13, 35))
-            self.assertEqual(result['status'], 'OK')
-            self.assertEqual(result['work_minutes'], 335)
-            # The final C movement is exposed as the effective last movement,
-            # but it is not a confirmed final checkout and must not create an
-            # early-leave penalty by itself.
+            self.assertIsNone(result['last_out'])
+            self.assertEqual(result['status'], 'INCOMPLETE')
+            self.assertEqual(result['work_minutes'], 0)
+            # The final C movement is a departure, not a confirmed final
+            # checkout, and must not create an early-leave penalty by itself.
             self.assertEqual(result['early_leave_minutes'], 0)
             records = _reconciled_departure_records([employee.id], '2026-09-13', '2026-09-13')
             self.assertEqual(sum(r['counted_minutes'] for r in records), 46)
@@ -661,7 +660,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             db.session.commit()
             self.assertEqual(_summary_compute_one(employee.id, '2026-09-13')['last_out'], datetime(2026, 9, 13, 15, 0))
 
-    def test_system_departure_checkout_does_not_create_early_leave(self):
+    def test_system_departure_does_not_create_checkout_or_early_leave(self):
         employee = User(email="departure-checkout@example.test", name="Employee", password_hash="x", role="USER")
         permission_type = HRPermissionType(
             code="PERSONAL_CHECKOUT",
@@ -700,8 +699,9 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
             result = _summary_compute_one(employee.id, "2026-09-23")
 
-        self.assertEqual(result["last_out"], datetime(2026, 9, 23, 9, 55))
-        self.assertEqual(result["work_minutes"], 147)
+        self.assertIsNone(result["last_out"])
+        self.assertEqual(result["status"], "INCOMPLETE")
+        self.assertEqual(result["work_minutes"], 0)
         self.assertEqual(result["early_leave_minutes"], 0)
         self.assertEqual(result["overtime_minutes"], 0)
 

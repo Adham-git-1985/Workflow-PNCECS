@@ -25062,29 +25062,9 @@ def hr_attendance_events():
                 record for record in departure_records
                 if expected_kind and record.get('kind') == expected_kind
             ]
-        movement_context_events = stats_events
-        if not selected_day and report_user_ids:
-            try:
-                movement_context_query = AttendanceEvent.query.filter(
-                    AttendanceEvent.user_id.in_(
-                        _without_attendance_exempt_users(report_user_ids)
-                    ),
-                )
-                if report_start:
-                    movement_context_query = movement_context_query.filter(
-                        AttendanceEvent.event_dt >= datetime.fromisoformat(report_start + 'T00:00:00'),
-                    )
-                if report_end:
-                    movement_context_query = movement_context_query.filter(
-                        AttendanceEvent.event_dt <= datetime.fromisoformat(report_end + 'T23:59:59'),
-                    )
-                movement_context_events = movement_context_query.all()
-            except (TypeError, ValueError):
-                movement_context_events = events
         events = _attach_departure_sources_to_attendance_events(
             events,
             departure_records,
-            movement_context_events=movement_context_events,
         )
 
     # Synthetic system-only rows need the same daily employee sequence used by
@@ -29298,47 +29278,6 @@ def _departure_source_start_times(record: dict) -> tuple[datetime, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
-def _latest_effective_departure_checkout(events, departure_records) -> datetime | None:
-    # A normal checkout from the timeclock is the day's authoritative exit.
-    # Do not let a later request in Masar replace it: a permission describes an
-    # absence from work, whereas B/O is the actual fingerprinted checkout.
-    # ``_attendance_event_code`` also keeps legacy C/D records stored as O out
-    # of this list, so a mid-day departure cannot accidentally take priority.
-    clock_checkouts = [
-        event.event_dt
-        for event in events or []
-        if getattr(event, 'event_dt', None)
-        and _attendance_event_code(event) in {'B', 'O', 'OUT', 'CHECKOUT'}
-    ]
-    if clock_checkouts:
-        return max(clock_checkouts)
-
-    event_times = [
-        event.event_dt
-        for event in events or []
-        if getattr(event, 'event_dt', None)
-    ]
-    candidates = [
-        event.event_dt
-        for event in events or []
-        if getattr(event, 'event_dt', None)
-        and _attendance_event_code(event) in {'C', 'E'}
-    ]
-    for record in departure_records or []:
-        approval_status = (record.get('approval_status') or '').upper()
-        if approval_status and approval_status not in {'APPROVED', 'SUBMITTED', 'PENDING'}:
-            continue
-        candidates.extend(_departure_source_start_times(record))
-
-    latest_event = max(event_times, default=None)
-    eligible = [
-        candidate
-        for candidate in candidates
-        if latest_event is None or candidate >= latest_event
-    ]
-    return max(eligible, default=None)
-
-
 def _departure_display_lines(records: list[dict] | tuple[dict, ...]) -> list[dict[str, str]]:
     """Build source-labelled clock and Masar times for one report cell."""
     lines: list[dict[str, str]] = []
@@ -29379,29 +29318,21 @@ def _departure_display_lines(records: list[dict] | tuple[dict, ...]) -> list[dic
 def _attach_departure_sources_to_attendance_events(
     events,
     departure_records: list[dict],
-    *,
-    movement_context_events=None,
 ) -> list:
     """Attach all departure source times to one raw-event row per movement.
 
     A system-only departure has no AttendanceEvent.  It receives a synthetic
-    display row so it is visible in the attendance-events report.  When the
-    departure is the employee's final movement, its display movement is خروج
-    regardless of its source or approval state.
+    display row so it is visible in the attendance-events report.  A departure
+    remains a departure in this report; it is never converted to a final
+    checkout merely because no later clock movement exists.
     """
     display_events = list(events or [])
-    context_events = list(
-        movement_context_events
-        if movement_context_events is not None
-        else display_events
-    )
     events_by_key: dict[tuple[int, str], list] = {}
     for event in display_events:
         event_dt = getattr(event, 'event_dt', None)
         if event_dt and getattr(event, 'user_id', None):
             events_by_key.setdefault((int(event.user_id), event_dt.date().isoformat()), []).append(event)
 
-    departure_records_by_key: dict[tuple[int, str], list[dict]] = {}
     for record in departure_records or []:
         user_id = record.get('user_id')
         day = record.get('day')
@@ -29410,7 +29341,6 @@ def _attach_departure_sources_to_attendance_events(
             continue
         user_id = int(user_id)
         day = str(day)
-        departure_records_by_key.setdefault((user_id, day), []).append(record)
         candidates = sorted(
             events_by_key.get((user_id, day), []),
             key=lambda item: getattr(item, 'event_dt', None) or datetime.min,
@@ -29467,32 +29397,6 @@ def _attach_departure_sources_to_attendance_events(
             item.get('approval_status') in {'SUBMITTED', 'PENDING'}
             for item in display_records
         )
-
-    context_events_by_key: dict[tuple[int, str], list] = {}
-    for event in context_events:
-        event_dt = getattr(event, 'event_dt', None)
-        if event_dt and getattr(event, 'user_id', None):
-            key = (int(event.user_id), event_dt.date().isoformat())
-            context_events_by_key.setdefault(key, []).append(event)
-
-    for key, records in departure_records_by_key.items():
-        checkout_at = _latest_effective_departure_checkout(
-            context_events_by_key.get(key, []),
-            records,
-        )
-        if checkout_at is None:
-            continue
-        for event in events_by_key.get(key, []):
-            display_records = getattr(event, '_departure_display_records', [])
-            if not any(
-                checkout_at in _departure_source_start_times(record)
-                for record in display_records
-            ):
-                continue
-            event.is_effective_departure_checkout = True
-            event.effective_checkout_at = checkout_at
-            event.display_event_code = 'O'
-            event.display_event_label = 'خروج'
 
     return display_events
 
@@ -33490,28 +33394,15 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
     first_in = ins[0] if ins else (all_times[0] if all_times else None)
     last_out = outs[-1] if outs else None
     # A personal/official departure is a temporary movement, not proof of the
-    # employee's final checkout.  We may still expose its start as ``last_out``
-    # when no later clock movement exists, but it must not become an early-leave
-    # baseline by itself.  Otherwise an approved 10-minute departure at 09:55
-    # is incorrectly reported as several hours of early leave.
+    # employee's final checkout.  ``last_out`` must come from an actual B/O
+    # timeclock event (or the explicit manual override below), never from a
+    # Masar departure request or a C/E movement.
     has_authoritative_checkout = bool(outs)
 
-    # Never infer a checkout from another known check-in.  Some devices emit
-    # duplicate/near-duplicate arrival rows (A/I); treating the later arrival
-    # as an OUT produces a false early-leave deduction.  Retain the fallback
-    # only for legacy rows whose movement code is unknown to both lists.
-    if not last_out and not ins and len(all_times) > 1:
-        last_out = all_times[-1]
-
-    effective_departures = departure_records
-    if effective_departures is None:
-        effective_departures = _reconciled_departure_records(
+    if departure_records is None:
+        departure_records = _reconciled_departure_records(
             [user_id], day_str, day_str, include_pending=True,
         )
-        departure_records = effective_departures
-    departure_checkout = _latest_effective_departure_checkout(evs, effective_departures)
-    if departure_checkout and (not last_out or departure_checkout > last_out):
-        last_out = departure_checkout
 
     manual_override = _manual_attendance_override(user_id, day_str)
     if manual_override:
