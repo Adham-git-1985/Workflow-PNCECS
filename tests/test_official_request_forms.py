@@ -82,46 +82,18 @@ def _assert_valid_docx(content: bytes):
     assert children.index('wrapNone') < children.index('docPr')
 
 
-def _assert_rtl_word_direction(content: bytes):
+def _assert_ltr_word_direction(content: bytes):
     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     with zipfile.ZipFile(BytesIO(content)) as archive:
         document_root = etree.fromstring(archive.read("word/document.xml"))
         styles_root = etree.fromstring(archive.read("word/styles.xml"))
-    assert document_root.xpath(
-        ".//w:sectPr/w:bidi[@w:val='1']", namespaces=namespace
-    )
-    assert document_root.xpath(
-        ".//w:sectPr/w:rtlGutter[@w:val='1']", namespaces=namespace
-    )
-    assert not document_root.xpath(
-        ".//w:p[not(w:pPr/w:bidi[@w:val='1'])]", namespaces=namespace
-    )
-    assert not document_root.xpath(
-        ".//w:r[w:t][not(w:rPr/w:rtl[@w:val='1'])]", namespaces=namespace
-    )
-    assert not document_root.xpath(
-        ".//w:tbl[not(w:tblPr/w:bidiVisual[@w:val='1'])]", namespaces=namespace
-    )
-    assert styles_root.xpath(
-        ".//w:docDefaults/w:pPrDefault/w:pPr/w:bidi[@w:val='1']",
-        namespaces=namespace,
-    )
-    assert styles_root.xpath(
-        ".//w:docDefaults/w:rPrDefault/w:rPr/w:rtl[@w:val='1']",
-        namespaces=namespace,
-    )
-    for paragraph_properties in document_root.xpath(".//w:p/w:pPr", namespaces=namespace):
-        names = [element.tag.rsplit("}", 1)[-1] for element in paragraph_properties]
-        if "jc" in names:
-            assert names.index("bidi") < names.index("jc")
-    for run_properties in document_root.xpath(".//w:r/w:rPr", namespaces=namespace):
-        names = [element.tag.rsplit("}", 1)[-1] for element in run_properties]
-        if "cs" in names:
-            assert names.index("rtl") < names.index("cs")
-    for table_properties in document_root.xpath(".//w:tbl/w:tblPr", namespaces=namespace):
-        names = [element.tag.rsplit("}", 1)[-1] for element in table_properties]
-        if "tblW" in names:
-            assert names.index("bidiVisual") < names.index("tblW")
+    assert not document_root.xpath(".//w:sectPr/w:bidi", namespaces=namespace)
+    assert not document_root.xpath(".//w:sectPr/w:rtlGutter", namespaces=namespace)
+    assert not document_root.xpath(".//w:p/w:pPr/w:bidi", namespaces=namespace)
+    assert not document_root.xpath(".//w:r[w:t]/w:rPr/w:rtl", namespaces=namespace)
+    assert not document_root.xpath(".//w:tbl/w:tblPr/w:bidiVisual", namespaces=namespace)
+    assert not styles_root.xpath(".//w:docDefaults//w:bidi", namespaces=namespace)
+    assert not styles_root.xpath(".//w:docDefaults//w:rtl", namespaces=namespace)
 
 
 def test_supply_request_generates_printable_pdf_and_word_form():
@@ -173,7 +145,7 @@ def test_permission_generates_reference_form_in_pdf_and_word():
     _assert_valid_docx(build_permission_request_docx(data))
 
 
-def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead():
+def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead():
     data = {
         "request_no": 189,
         "request_date": "2026/09/23",
@@ -250,18 +222,18 @@ def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead(
         assert headings
         assert all(paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER for paragraph in headings)
         assert all(
-            paragraph._p.pPr is not None
-            and paragraph._p.pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidi") is not None
+            paragraph._p.pPr is None
+            or paragraph._p.pPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidi") is None
             for paragraph in document.paragraphs
         )
         assert all(
-            table._tbl.tblPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidiVisual") is not None
+            table._tbl.tblPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidiVisual") is None
             for table in document.tables
         )
         assert "التوقيع:" in document_text
         with zipfile.ZipFile(BytesIO(content)) as archive:
             assert "word/media/image1.jpeg" in archive.namelist()
-        _assert_rtl_word_direction(content)
+        _assert_ltr_word_direction(content)
 
     completed_document = Document(BytesIO(build_attendance_delay_justification_docx(completed)))
     completed_text = "\n".join(

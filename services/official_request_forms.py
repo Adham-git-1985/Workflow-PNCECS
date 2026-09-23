@@ -105,8 +105,14 @@ def _docx_set_boolean_property(parent, name):
     return element
 
 
+def _docx_remove_boolean_property(parent, name):
+    element = parent.find(qn(name))
+    if element is not None:
+        parent.remove(element)
+
+
 def _docx_set_rtl_defaults(doc):
-    """Make RTL the document-wide direction for generated attendance forms."""
+    """Clear RTL defaults so Word uses its normal left-to-right direction."""
     styles = doc.styles.element
     defaults = styles.find(qn("w:docDefaults"))
     if defaults is None:
@@ -121,7 +127,7 @@ def _docx_set_rtl_defaults(doc):
     if paragraph_properties is None:
         paragraph_properties = OxmlElement("w:pPr")
         paragraph_defaults.append(paragraph_properties)
-    _docx_set_boolean_property(paragraph_properties, "w:bidi")
+    _docx_remove_boolean_property(paragraph_properties, "w:bidi")
 
     run_defaults = defaults.find(qn("w:rPrDefault"))
     if run_defaults is None:
@@ -131,11 +137,11 @@ def _docx_set_rtl_defaults(doc):
     if run_properties is None:
         run_properties = OxmlElement("w:rPr")
         run_defaults.append(run_properties)
-    _docx_set_boolean_property(run_properties, "w:rtl")
+    _docx_remove_boolean_property(run_properties, "w:rtl")
 
     for section in doc.sections:
-        _docx_set_boolean_property(section._sectPr, "w:bidi")
-        _docx_set_boolean_property(section._sectPr, "w:rtlGutter")
+        _docx_remove_boolean_property(section._sectPr, "w:bidi")
+        _docx_remove_boolean_property(section._sectPr, "w:rtlGutter")
 
 
 def _docx_set_style_rtl(style):
@@ -143,11 +149,11 @@ def _docx_set_style_rtl(style):
     if style_properties is None:
         style_properties = OxmlElement("w:pPr")
         style._element.append(style_properties)
-    _docx_set_boolean_property(style_properties, "w:bidi")
+    _docx_remove_boolean_property(style_properties, "w:bidi")
 
 
 def _docx_finalize_rtl(doc):
-    """Apply RTL to every paragraph, run, and table after the form is built."""
+    """Clear RTL overrides so every story uses left-to-right reading order."""
     stories = [doc._element]
     for section in doc.sections:
         stories.extend(
@@ -171,19 +177,19 @@ def _docx_finalize_rtl(doc):
             if paragraph_properties is None:
                 paragraph_properties = OxmlElement("w:pPr")
                 paragraph.insert(0, paragraph_properties)
-            _docx_set_boolean_property(paragraph_properties, "w:bidi")
+            _docx_remove_boolean_property(paragraph_properties, "w:bidi")
             for run in paragraph.iter(qn("w:r")):
                 run_properties = run.find(qn("w:rPr"))
                 if run_properties is None:
                     run_properties = OxmlElement("w:rPr")
                     run.insert(0, run_properties)
-                _docx_set_boolean_property(run_properties, "w:rtl")
+                _docx_remove_boolean_property(run_properties, "w:rtl")
         for table in story.iter(qn("w:tbl")):
             table_properties = table.find(qn("w:tblPr"))
             if table_properties is None:
                 table_properties = OxmlElement("w:tblPr")
                 table.insert(0, table_properties)
-            _docx_set_boolean_property(table_properties, "w:bidiVisual")
+            _docx_remove_boolean_property(table_properties, "w:bidiVisual")
 
 
 def _plain(value, default=""):
@@ -540,13 +546,13 @@ def _docx_set_run_font(run, *, size=ATTENDANCE_DELAY_DOCX_SIZE, bold=None, color
         rpr.append(size_cs)
     size_cs.set(qn("w:val"), str(int(round(float(size) * 2))))
 
-    _docx_set_boolean_property(rpr, "w:rtl")
+    _docx_remove_boolean_property(rpr, "w:rtl")
 
 
-def _docx_set_paragraph_rtl(paragraph, alignment=WD_ALIGN_PARAGRAPH.RIGHT):
+def _docx_set_paragraph_rtl(paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT):
     paragraph.alignment = alignment
     ppr = paragraph._p.get_or_add_pPr()
-    _docx_set_boolean_property(ppr, "w:bidi")
+    _docx_remove_boolean_property(ppr, "w:bidi")
 
 
 def _docx_add_run(paragraph, text, *, bold=False, size=ATTENDANCE_DELAY_DOCX_SIZE, color="000000"):
@@ -588,10 +594,10 @@ def _docx_set_table_borders(table, color="D9D9D9"):
 
 
 def _docx_set_table_rtl(table):
-    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
+    table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
     tbl_pr = table._tbl.tblPr
-    _docx_set_boolean_property(tbl_pr, "w:bidiVisual")
+    _docx_remove_boolean_property(tbl_pr, "w:bidiVisual")
     _docx_set_table_borders(table)
 
 
@@ -602,7 +608,7 @@ def _docx_set_cell_text(
     bold=False,
     fill=None,
     color="000000",
-    alignment=WD_ALIGN_PARAGRAPH.RIGHT,
+    alignment=WD_ALIGN_PARAGRAPH.LEFT,
     size=ATTENDANCE_DELAY_DOCX_SIZE,
 ):
     cell.text = ""
@@ -650,7 +656,7 @@ def _docx_add_table(
                 value,
                 bold=is_header,
                 fill="EAF2F8" if is_header else ("FFFFFF" if len(table.rows) % 2 else "F7F7F7"),
-                alignment=WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.RIGHT,
+                alignment=WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.LEFT,
                 size=header_size if is_header else body_size,
             )
     return table
