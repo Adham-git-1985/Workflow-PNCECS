@@ -105,6 +105,14 @@
     <form method="post" action="{{ url_for('portal.hr_report_administrative_affairs_reconcile') }}">
       <input type="hidden" name="from_date" value="{{ from_date }}">
       <input type="hidden" name="to_date" value="{{ to_date }}">
+      <label class="small text-dark mb-0">نوع الإجازة الناتجة
+        <select class="form-select form-select-sm mt-1" name="leave_type_id" required>
+          <option value="">— اختر سنوية أو مرضية —</option>
+          {% for leave_type in reconciliation_leave_types %}
+            <option value="{{ leave_type.id }}" {% if selected_reconciliation_leave_type_id == leave_type.id %}selected{% endif %}>{{ leave_type.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <button class="btn btn-sm btn-warning" type="submit" onclick="return confirm('تأكيد تنفيذ المطابقة اليدوية للنطاق المعروض؟');"><i class="bi bi-arrow-repeat"></i> تنفيذ المطابقة للجميع</button>
     </form>
     {% if selected_user_id %}
@@ -112,6 +120,14 @@
       <input type="hidden" name="from_date" value="{{ from_date }}">
       <input type="hidden" name="to_date" value="{{ to_date }}">
       <input type="hidden" name="user_id" value="{{ selected_user_id }}">
+      <label class="small text-dark mb-0">نوع الإجازة الناتجة
+        <select class="form-select form-select-sm mt-1" name="leave_type_id" required>
+          <option value="">— اختر سنوية أو مرضية —</option>
+          {% for leave_type in reconciliation_leave_types %}
+            <option value="{{ leave_type.id }}" {% if selected_reconciliation_leave_type_id == leave_type.id %}selected{% endif %}>{{ leave_type.name_ar }}</option>
+          {% endfor %}
+        </select>
+      </label>
       <button class="btn btn-sm btn-outline-warning" type="submit" onclick="return confirm('تأكيد تنفيذ المطابقة اليدوية للموظف المحدد؟');"><i class="bi bi-person-check"></i> مطابقة الموظف المحدد</button>
     </form>
     {% endif %}

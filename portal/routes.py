@@ -10407,6 +10407,8 @@ def _process_unrecorded_office_attendance(
     day_from: date | None = None,
     day_to: date | None = None,
     target_user_id: int | None = None,
+    leave_type_id: int | None = None,
+    actor_id: int | None = None,
 ) -> dict[str, int]:
     """Reconcile reviewed office-duty days with no attendance evidence.
 
@@ -10414,6 +10416,19 @@ def _process_unrecorded_office_attendance(
     employee. Without it, the Administrative Affairs action processes the
     selected date range for all employees.
     """
+
+    selected_leave_type = None
+    if leave_type_id is not None:
+        selected_leave_type, leave_type_error = _resolve_attendance_reconciliation_leave_type(leave_type_id)
+        if leave_type_error:
+            return {
+                "created": 0,
+                "reversed": 0,
+                "reviewed": 0,
+                "disabled": 0,
+                "missing_annual_type": 0,
+                "invalid_leave_type": 1,
+            }
 
     local_now = reference_dt or datetime.now(app_timezone())
     if local_now.tzinfo is None:
@@ -10447,17 +10462,21 @@ def _process_unrecorded_office_attendance(
         if _attendance_schedule_day_kind(row) == "WORK"
         and _attendance_auto_leave_cutoff_reached(date.fromisoformat(key[1]), local_now, row)
     }
-    existing_auto_rows = (
+    existing_match_rows = (
         HRLeaveRequest.query
         .filter(HRLeaveRequest.user_id.in_(employee_user_ids))
-        .filter(HRLeaveRequest.source == ATTENDANCE_AUTO_LEAVE_SOURCE)
+        .filter(HRLeaveRequest.source.in_(ATTENDANCE_MATCH_LEAVE_SOURCES))
         .filter(HRLeaveRequest.source_attendance_day >= start_day.isoformat())
         .filter(HRLeaveRequest.source_attendance_day <= end_day.isoformat())
         .all()
     )
+    existing_auto_rows = [
+        row for row in existing_match_rows
+        if row.source == ATTENDANCE_AUTO_LEAVE_SOURCE
+    ]
     user_ids = sorted(
         {key[0] for key in office_keys}
-        | {int(row.user_id) for row in existing_auto_rows}
+        | {int(row.user_id) for row in existing_match_rows}
     )
     if not user_ids:
         return {
@@ -10497,7 +10516,18 @@ def _process_unrecorded_office_attendance(
     replacement_leave_map = _period_rows_by_user_day(
         [
             row for row in active_leave_rows
-            if row.status == "APPROVED" and row.source != ATTENDANCE_AUTO_LEAVE_SOURCE
+            if row.status == "APPROVED"
+            and row.source not in ATTENDANCE_MATCH_LEAVE_SOURCES
+        ],
+        start_day,
+        end_day,
+    )
+    active_reconciliation_rows = _period_rows_by_user_day(
+        [
+            row for row in active_leave_rows
+            if row.status == "APPROVED"
+            and row.source in ATTENDANCE_MATCH_LEAVE_SOURCES
+            and not row.replaced_at
         ],
         start_day,
         end_day,
@@ -10534,7 +10564,7 @@ def _process_unrecorded_office_attendance(
                 exemption = _attendance_exemption_reason(
                     key[0],
                     key[1],
-                    ignore_attendance_auto_leave=True,
+                    ignore_attendance_match_leave=True,
                 )
                 if not exemption or exemption == "APPROVED_LEAVE":
                     continue
@@ -10563,16 +10593,72 @@ def _process_unrecorded_office_attendance(
         )
         _upsert_summary(_summary_compute_one(key[0], key[1]))
 
-    annual_type = _annual_leave_type()
-    if not annual_type:
+    # Reconciliation rows recorded as sick leave follow the same attendance
+    # safety rules as automatic annual rows. If a late punch, approved manual
+    # attendance correction, ordinary approved leave, or schedule change is
+    # found later, release only the matching row and keep its audit trail.
+    for key, reconciliation_row in list(active_reconciliation_rows.items()):
+        if reconciliation_row.source == ATTENDANCE_AUTO_LEAVE_SOURCE:
+            continue
+        replacement_reason = None
+        if key in punched_keys:
+            replacement_reason = "LATE_CLOCK_ATTENDANCE"
+        elif key in manual_keys:
+            replacement_reason = "MANUAL_ATTENDANCE_APPROVED"
+        elif replacement_leave_map.get(key):
+            replacement_reason = "APPROVED_LEAVE_RECORDED"
+        else:
+            current_schedule_day = schedule_map.get(key)
+            current_schedule_kind = _attendance_schedule_day_kind(current_schedule_day)
+            if not current_schedule_day:
+                replacement_reason = "SCHEDULE_NO_LONGER_OFFICE"
+            elif current_schedule_kind != "WORK":
+                replacement_reason = f"SCHEDULE_RECLASSIFIED_{current_schedule_kind or 'NON_WORK'}"
+            else:
+                exemption = _attendance_exemption_reason(
+                    key[0],
+                    key[1],
+                    ignore_attendance_match_leave=True,
+                )
+                if exemption and exemption != "APPROVED_LEAVE":
+                    replacement_reason = f"ATTENDANCE_EXEMPTION_{exemption}"[:80]
+        if not replacement_reason:
+            continue
+        _release_attendance_reconciliation_leave_row(
+            reconciliation_row,
+            reason=replacement_reason,
+            actor_id=actor_id,
+        )
+        active_reconciliation_rows.pop(key, None)
+        reversed_count += 1
+
+    if selected_leave_type is None:
+        selected_leave_type, leave_type_error = _resolve_attendance_reconciliation_leave_type(None)
+        if leave_type_error:
+            return {
+                "created": 0,
+                "reversed": reversed_count,
+                "reviewed": 0,
+                "disabled": 0,
+                "missing_annual_type": 1,
+                "invalid_leave_type": 0,
+            }
+    if not selected_leave_type:
         return {
             "created": 0,
             "reversed": reversed_count,
             "reviewed": 0,
             "disabled": 0,
             "missing_annual_type": 1,
+            "invalid_leave_type": 0,
         }
 
+    selected_source = (
+        ATTENDANCE_AUTO_LEAVE_SOURCE
+        if _is_annual_balance_type(selected_leave_type)
+        else ATTENDANCE_RECONCILIATION_LEAVE_SOURCE
+    )
+    selected_is_annual = selected_source == ATTENDANCE_AUTO_LEAVE_SOURCE
     created = 0
     reviewed = 0
     for user_id, day_text in sorted(office_keys, key=lambda key: (key[1], key[0])):
@@ -10581,20 +10667,74 @@ def _process_unrecorded_office_attendance(
         user = users.get(user_id)
         if not user or _is_general_secretary(user):
             continue
-        if key in punched_keys or key in manual_keys or key in existing_auto_keys or key in active_leave_keys:
+        if key in punched_keys or key in manual_keys:
             continue
-        if _attendance_exemption_reason(user_id, day_text):
+        if _attendance_exemption_reason(
+            user_id,
+            day_text,
+            ignore_attendance_match_leave=True,
+        ):
+            continue
+
+        match_replaced = False
+        previous_match = active_reconciliation_rows.get(key)
+        if previous_match:
+            if int(previous_match.leave_type_id) == int(selected_leave_type.id):
+                continue
+            if previous_match.source == ATTENDANCE_AUTO_LEAVE_SOURCE:
+                _release_attendance_auto_annual_leave_row(
+                    previous_match,
+                    reason="RECONCILIATION_TYPE_CHANGED",
+                    actor_id=actor_id,
+                )
+            else:
+                _release_attendance_reconciliation_leave_row(
+                    previous_match,
+                    reason="RECONCILIATION_TYPE_CHANGED",
+                    actor_id=actor_id,
+                )
+            active_leave_keys.discard(key)
+            match_replaced = True
+
+        previous_auto = next(
+            (
+                row for row in existing_auto_rows
+                if int(row.user_id) == int(user_id)
+                and row.source_attendance_day == day_text
+                and row.status == "APPROVED"
+                and not row.replaced_at
+            ),
+            None,
+        )
+        if previous_auto:
+            if selected_is_annual and int(previous_auto.leave_type_id) == int(selected_leave_type.id):
+                continue
+            if not selected_is_annual:
+                _release_attendance_auto_annual_leave_row(
+                    previous_auto,
+                    reason="RECONCILIATION_TYPE_CHANGED",
+                    actor_id=actor_id,
+                )
+                active_leave_keys.discard(key)
+                match_replaced = True
+
+        if key in existing_auto_keys and selected_is_annual and not match_replaced:
+            # Preserve idempotency for an already-created or released annual
+            # match. Switching explicitly to sick is handled above.
+            continue
+        if key in active_leave_keys:
             continue
 
         now_utc = datetime.utcnow()
         leave_row = HRLeaveRequest(
             user_id=user_id,
-            leave_type_id=annual_type.id,
+            leave_type_id=selected_leave_type.id,
             start_date=day_text,
             end_date=day_text,
-            days=max(1, _calculate_leave_days(annual_type, day_text, day_text, user_id=user_id)),
-            entered_by="SYSTEM",
-            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            days=max(1, _calculate_leave_days(selected_leave_type, day_text, day_text, user_id=user_id)),
+            entered_by="SYSTEM" if selected_is_annual else "ADMIN",
+            created_by_id=actor_id,
+            source=selected_source,
             source_attendance_day=day_text,
             note="احتساب آلي لإجازة سنوية: يوم دوام مكتبي معتمد دون تسجيل بصمة حضور.",
             status="APPROVED",
@@ -10602,20 +10742,36 @@ def _process_unrecorded_office_attendance(
             decided_at=now_utc,
             updated_at=now_utc,
         )
+        if not selected_is_annual:
+            leave_row.note = "مطابقة غياب إدارية: تم تسجيل إجازة مرضية بالنوع المختار للمطابقة."
         db.session.add(leave_row)
         db.session.flush()
-        _add_attendance_leave_notifications(
-            user_id,
-            (
+        notification_text = (
+            f"تمت مطابقة غياب الموظف {user.full_name} بتاريخ {day_text} وتسجيل "
+            f"{selected_leave_type.name_ar} ضمن الإجازات المعتمدة."
+            if not selected_is_annual
+            else (
                 f"احتسب النظام إجازة سنوية تلقائياً للموظف {user.full_name} بتاريخ {day_text} "
                 "لوجود دوام مكتبي معتمد دون تسجيل بصمة. يمكن استبدالها بمرضية بعد تقديم المستند واعتماد الطلب نهائياً."
+            )
+        )
+        _add_attendance_leave_notifications(
+            user_id,
+            notification_text,
+            event_key=(
+                f"att-auto-leave-{day_text}-{user_id}"
+                if selected_is_annual
+                else f"att-reconciliation-leave-{day_text}-{user_id}"
             ),
-            event_key=f"att-auto-leave-{day_text}-{user_id}",
             link_url=f"/portal/hr/approvals/leaves/{leave_row.id}",
         )
         _portal_audit(
-            "HR_ATTENDANCE_AUTO_ANNUAL_LEAVE",
-            f"user_id={user_id}; day={day_text}; leave_id={leave_row.id}",
+            (
+                "HR_ATTENDANCE_AUTO_ANNUAL_LEAVE"
+                if selected_is_annual
+                else "HR_ATTENDANCE_RECONCILIATION_LEAVE"
+            ),
+            f"user_id={user_id}; day={day_text}; leave_id={leave_row.id}; leave_type_id={selected_leave_type.id}",
             target_type="LEAVE_REQUEST",
             target_id=leave_row.id,
         )
@@ -10627,6 +10783,8 @@ def _process_unrecorded_office_attendance(
         "reviewed": reviewed,
         "disabled": 0,
         "missing_annual_type": 0,
+        "invalid_leave_type": 0,
+        "leave_type_id": int(selected_leave_type.id),
     }
 
 
@@ -10649,6 +10807,20 @@ def hr_report_administrative_affairs_daily():
     employee_id = int(employee_raw) if employee_raw.isdigit() else None
     location_id = int(location_raw) if location_raw.isdigit() else None
     appointment_id = int(appointment_raw) if appointment_raw.isdigit() else None
+    reconciliation_leave_types = _attendance_reconciliation_leave_types()
+    selected_reconciliation_leave_type_id = None
+    selected_reconciliation_raw = (request.args.get("leave_type_id") or "").strip()
+    if selected_reconciliation_raw.isdigit():
+        selected_reconciliation_leave_type_id = int(selected_reconciliation_raw)
+    if not any(
+        int(item.id) == selected_reconciliation_leave_type_id
+        for item in reconciliation_leave_types
+    ):
+        selected_reconciliation_leave_type_id = (
+            int(reconciliation_leave_types[0].id)
+            if reconciliation_leave_types
+            else None
+        )
     selected_user_ids = _filtered_user_ids(
         employee_id=employee_id,
         work_location_id=location_id,
@@ -10697,6 +10869,8 @@ def hr_report_administrative_affairs_daily():
         selected_work_location_id=location_id,
         selected_appointment_type_id=appointment_id,
         selected_category=category,
+        reconciliation_leave_types=reconciliation_leave_types,
+        selected_reconciliation_leave_type_id=selected_reconciliation_leave_type_id,
         can_export=current_user.has_perm(HR_REPORTS_EXPORT),
         can_reconcile=_hr_can_manage_attendance(),
     )
@@ -10712,13 +10886,30 @@ def hr_report_administrative_affairs_reconcile():
     end_day = _parse_yyyy_mm_dd((request.form.get("to_date") or "").strip()) or start_day
     target_user_raw = (request.form.get("user_id") or "").strip()
     target_user_id = int(target_user_raw) if target_user_raw.isdigit() else None
+    selected_leave_type_raw = (request.form.get("leave_type_id") or "").strip()
+    selected_leave_type_id = int(selected_leave_type_raw) if selected_leave_type_raw.isdigit() else None
+    selected_leave_type, selected_leave_type_error = _resolve_attendance_reconciliation_leave_type(
+        selected_leave_type_id
+    )
+    if selected_leave_type_error or not selected_leave_type:
+        flash("اختر نوع الإجازة الناتجة عن المطابقة: سنوية أو مرضية.", "danger")
+        return redirect(url_for(
+            "portal.hr_report_administrative_affairs_daily",
+            from_date=start_day.isoformat(),
+            to_date=end_day.isoformat(),
+            user_id=target_user_id or "",
+        ))
     result = _process_unrecorded_office_attendance(
         day_from=start_day,
         day_to=end_day,
         target_user_id=target_user_id,
+        leave_type_id=selected_leave_type.id,
+        actor_id=int(current_user.id),
     )
     db.session.commit()
-    if result["missing_annual_type"]:
+    if result.get("invalid_leave_type"):
+        flash("نوع الإجازة المحدد للمطابقة غير صالح. اختر إجازة سنوية أو مرضية.", "danger")
+    elif result["missing_annual_type"]:
         flash("تعذر الاحتساب: لم يتم تعريف نوع إجازة سنوية فعال.", "danger")
     elif result["disabled"]:
         flash("الاحتساب التلقائي للإجازة السنوية معطّل من الإعدادات.", "warning")
@@ -10730,7 +10921,7 @@ def hr_report_administrative_affairs_reconcile():
         )
         flash(
             f"اكتملت المطابقة {scope_label}: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
-            f"{result['created']} إجازة سنوية تلقائية، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
+            f"{result['created']} {selected_leave_type.name_ar}، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
             "success",
         )
     return redirect(url_for(
@@ -10738,6 +10929,7 @@ def hr_report_administrative_affairs_reconcile():
         from_date=start_day.isoformat(),
         to_date=end_day.isoformat(),
         user_id=target_user_id or "",
+        leave_type_id=selected_leave_type.id,
     ))
 
 
@@ -20154,6 +20346,7 @@ def _hr_absence_board_query(kind: str, selected_day: str, visible_user_ids: set[
     if kind == KIND_LEAVE:
         query = HRLeaveRequest.query.filter(
             HRLeaveRequest.status == "APPROVED",
+            HRLeaveRequest.replaced_at.is_(None),
             HRLeaveRequest.start_date <= selected_day,
             HRLeaveRequest.end_date >= selected_day,
         )
@@ -20477,19 +20670,29 @@ def hr_leave_cancel_by_hr(req_id: int):
 
     if (
         st == "APPROVED"
-        and (r.source or "").upper() == ATTENDANCE_AUTO_LEAVE_SOURCE
+        and (r.source or "").upper() in ATTENDANCE_MATCH_LEAVE_SOURCES
     ):
-        # A machine-created absence is an attendance charge, not an ordinary
-        # leave that has already been taken.  Its cancellation must release
-        # the entire day even after that date has passed.
+        # A reconciliation row is an attendance charge, not an ordinary leave
+        # that has already been taken. Its cancellation must release the
+        # entire day even after that date has passed.
         cancel_request_flow(KIND_LEAVE, r.id)
-        _release_attendance_auto_annual_leave_row(
-            r,
-            reason="ADMINISTRATIVE_AFFAIRS_MANUAL_ROLLBACK",
-            actor_id=int(current_user.id),
-            cancel_note=(request.form.get("cancel_note") or "").strip()
-            or "إلغاء الخصم الآلي من رصيد الإجازة",
-        )
+        cancel_reason = "ADMINISTRATIVE_AFFAIRS_MANUAL_ROLLBACK"
+        cancel_note = (request.form.get("cancel_note") or "").strip()
+        if (r.source or "").upper() == ATTENDANCE_AUTO_LEAVE_SOURCE:
+            _release_attendance_auto_annual_leave_row(
+                r,
+                reason=cancel_reason,
+                actor_id=int(current_user.id),
+                cancel_note=cancel_note or "إلغاء الخصم الآلي من رصيد الإجازة",
+            )
+        else:
+            _release_attendance_reconciliation_leave_row(
+                r,
+                reason=cancel_reason,
+                actor_id=int(current_user.id),
+            )
+            if cancel_note:
+                r.cancel_note = cancel_note
         db.session.flush()
         _attendance_recompute_summaries_for_keys(
             _attendance_existing_keys_for_period(r.user_id, r.start_date, r.end_date)
@@ -30006,6 +30209,54 @@ def _casual_leave_policy_error(
 
 
 ATTENDANCE_AUTO_LEAVE_SOURCE = "ATTENDANCE_AUTO"
+# A manually reviewed reconciliation may deliberately be recorded as sick
+# leave. Keep it separate from the automatic annual source so the annual
+# balance-release helpers cannot mistake the selected sick row for an annual
+# charge.
+ATTENDANCE_RECONCILIATION_LEAVE_SOURCE = "ATTENDANCE_RECONCILIATION"
+ATTENDANCE_MATCH_LEAVE_SOURCES = frozenset({
+    ATTENDANCE_AUTO_LEAVE_SOURCE,
+    ATTENDANCE_RECONCILIATION_LEAVE_SOURCE,
+})
+
+
+def _is_sick_leave_type(leave_type: HRLeaveType | None) -> bool:
+    return bool(
+        leave_type
+        and is_sick_leave(SimpleNamespace(leave_type=leave_type))
+    )
+
+
+def _attendance_reconciliation_leave_types() -> list[HRLeaveType]:
+    """Return active annual and sick types available to absence matching."""
+    rows = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all()
+    annual_types = [row for row in rows if _is_annual_balance_type(row)]
+    preferred_annual = _annual_leave_type()
+    ordered: list[HRLeaveType] = []
+    for row in [preferred_annual, *annual_types, *[item for item in rows if _is_sick_leave_type(item)]]:
+        if row and row.id not in {item.id for item in ordered}:
+            ordered.append(row)
+    return ordered
+
+
+def _resolve_attendance_reconciliation_leave_type(
+    leave_type_id: int | None,
+) -> tuple[HRLeaveType | None, str | None]:
+    """Resolve a selected annual/sick type, defaulting direct calls to annual."""
+    options = _attendance_reconciliation_leave_types()
+    if leave_type_id is None:
+        annual = _annual_leave_type()
+        if annual:
+            return annual, None
+        return None, "NO_RECONCILIATION_LEAVE_TYPE"
+    try:
+        selected_id = int(leave_type_id)
+    except (TypeError, ValueError):
+        return None, "INVALID_RECONCILIATION_LEAVE_TYPE"
+    selected = next((row for row in options if int(row.id) == selected_id), None)
+    if not selected:
+        return None, "INVALID_RECONCILIATION_LEAVE_TYPE"
+    return selected, None
 
 
 def _attendance_auto_leave_is_released(leave_request: HRLeaveRequest) -> bool:
@@ -30093,6 +30344,44 @@ def _release_attendance_auto_annual_leave_row(
         ),
         target_type="LEAVE_REQUEST",
         target_id=annual_row.id,
+        user_id=actor_id,
+    )
+
+
+def _release_attendance_reconciliation_leave_row(
+    leave_row: HRLeaveRequest,
+    *,
+    reason: str,
+    actor_id: int | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Release a non-annual leave created by the reconciliation action."""
+    now = now or datetime.utcnow()
+    match_day = _parse_yyyy_mm_dd(
+        leave_row.source_attendance_day or leave_row.start_date
+    )
+    previous_status = (leave_row.status or "APPROVED").upper()
+    leave_row.cancelled_from_status = previous_status
+    leave_row.status = "CANCELLED"
+    leave_row.cancelled_at = now
+    leave_row.cancelled_by_id = actor_id
+    leave_row.cancel_effective_date = (
+        (match_day - timedelta(days=1)).isoformat()
+        if match_day
+        else leave_row.start_date
+    )
+    leave_row.cancel_note = reason
+    leave_row.replaced_at = now
+    leave_row.replacement_reason = reason[:80]
+    leave_row.updated_at = now
+    _portal_audit(
+        "HR_ATTENDANCE_RECONCILIATION_LEAVE_REPLACED",
+        (
+            f"leave_id={leave_row.id}; day={leave_row.source_attendance_day}; "
+            f"reason={reason}"
+        ),
+        target_type="LEAVE_REQUEST",
+        target_id=leave_row.id,
         user_id=actor_id,
     )
 
@@ -32962,6 +33251,7 @@ def _attendance_exemption_reason(
     day_str: str,
     *,
     ignore_attendance_auto_leave: bool = False,
+    ignore_attendance_match_leave: bool = False,
 ) -> str | None:
     """Return why a day must not create attendance deductions."""
     day_obj = _parse_yyyy_mm_dd(day_str)
@@ -33016,7 +33306,14 @@ def _attendance_exemption_reason(
             .filter(HRLeaveRequest.start_date <= day_str)
             .filter(HRLeaveRequest.end_date >= day_str)
         )
-        if ignore_attendance_auto_leave:
+        if ignore_attendance_match_leave:
+            approved_leave_query = approved_leave_query.filter(
+                or_(
+                    HRLeaveRequest.source.is_(None),
+                    ~HRLeaveRequest.source.in_(ATTENDANCE_MATCH_LEAVE_SOURCES),
+                )
+            )
+        elif ignore_attendance_auto_leave:
             approved_leave_query = approved_leave_query.filter(or_(
                 HRLeaveRequest.source.is_(None),
                 HRLeaveRequest.source != ATTENDANCE_AUTO_LEAVE_SOURCE,

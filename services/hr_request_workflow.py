@@ -1975,9 +1975,11 @@ def board_visible_user_ids(user: User) -> set[int] | None:
     """Return None for global visibility, otherwise the manager's org scope."""
     if _is_hr_approver(user) or _is_secretariat(user):
         return None
+    has_board_view_permission = False
     try:
         if user.has_perm("HR_REQUESTS_VIEW_ALL"):
             return None
+        has_board_view_permission = bool(user.has_perm("HR_ABSENCE_BOARD_VIEW"))
     except Exception:
         pass
 
@@ -2017,4 +2019,10 @@ def board_visible_user_ids(user: User) -> set[int] | None:
             row = _request(observer.request_kind, observer.request_id)
             if row:
                 visible.add(int(row.user_id))
+    # HR_ABSENCE_BOARD_VIEW is a direct read permission. If it was granted to
+    # a user who has no manager/org assignment, returning an empty set makes
+    # the page accessible but permanently blank. Keep manager scopes narrow;
+    # only the unscoped permission holder falls back to global board access.
+    if not visible and has_board_view_permission:
+        return None
     return visible

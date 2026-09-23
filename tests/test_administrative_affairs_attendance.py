@@ -36,6 +36,7 @@ from models import (
 from portal import portal_bp
 from portal.routes import (
     ATTENDANCE_AUTO_LEAVE_SOURCE,
+    ATTENDANCE_RECONCILIATION_LEAVE_SOURCE,
     _administrative_affairs_daily_rows,
     _attach_manual_attendance_flags,
     _casual_leave_policy_error,
@@ -44,6 +45,7 @@ from portal.routes import (
     _leave_balance_display_values,
     _leave_used_days,
     _manual_attendance_event_rows_for_report,
+    _hr_absence_board_rows,
     _process_unrecorded_office_attendance,
     _rollback_attendance_auto_annual_leaves,
     hr_approval_leave,
@@ -443,6 +445,77 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(auto_leave.status, "CANCELLED")
         self.assertEqual(auto_leave.replacement_reason, "LATE_CLOCK_ATTENDANCE")
         self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
+
+    def test_reconciliation_can_create_selected_sick_leave_visible_on_absence_board(self):
+        employee = self._user("matched-sick@example.test", "موظف مطابقة مرضية")
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="إجازة سنوية",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        sick = HRLeaveType(
+            code="SICK",
+            name_ar="إجازة مرضية",
+            requires_documents=True,
+            deduct_from_balance=False,
+        )
+        schedule = WorkSchedule(
+            name="دوام المطابقة المرضية",
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((annual, sick, schedule))
+        db.session.flush()
+        self._final_schedule_day(employee, "2026-09-14", "WORK", schedule=schedule)
+        db.session.commit()
+
+        result = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 17, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+            target_user_id=employee.id,
+            leave_type_id=sick.id,
+        )
+        db.session.commit()
+
+        matched = HRLeaveRequest.query.filter_by(
+            user_id=employee.id,
+            source=ATTENDANCE_RECONCILIATION_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+        ).one()
+        board_rows = _hr_absence_board_rows(
+            KIND_LEAVE,
+            "2026-09-14",
+            None,
+        )
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(matched.leave_type_id, sick.id)
+        self.assertEqual(matched.status, "APPROVED")
+        self.assertIn(matched.id, {row.id for row in board_rows})
+
+        switched = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 18, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+            target_user_id=employee.id,
+            leave_type_id=annual.id,
+        )
+        db.session.commit()
+        db.session.refresh(matched)
+        annual_match = HRLeaveRequest.query.filter_by(
+            user_id=employee.id,
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+            status="APPROVED",
+        ).one()
+
+        self.assertEqual(switched["created"], 1)
+        self.assertEqual(matched.status, "CANCELLED")
+        self.assertEqual(annual_match.leave_type_id, annual.id)
 
     def test_hr_cancelling_automatic_leave_releases_its_full_balance_charge(self):
         administrator = self._user(

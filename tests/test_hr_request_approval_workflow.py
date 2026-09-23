@@ -1546,6 +1546,16 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertIsNotNone(visible_ids)
         self.assertIn(self.employee.id, visible_ids)
 
+    def test_unscoped_absence_board_permission_has_global_read_scope(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="HR_ABSENCE_BOARD_VIEW",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        self.assertIsNone(board_visible_user_ids(self.employee))
+
     def test_absence_board_and_excel_export_show_only_approved_rows(self):
         row = self._leave(self.normal_type)
         start_request_flow(KIND_LEAVE, row)
