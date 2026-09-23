@@ -137,6 +137,44 @@ class CircularAttachmentStorageTests(unittest.TestCase):
         self.assertEqual(attachments[0].get_filename(), "مرفق التعميم.pdf")
         self.assertEqual(attachments[0].get_payload(decode=True), b"pdf-content")
 
+    def test_circular_retries_only_failed_addresses_once(self):
+        row = self._circular()
+        email_config = {
+            "enabled": True,
+            "ready": True,
+            "host": "smtp.example.test",
+            "port": 25,
+            "security": "none",
+            "username": "",
+            "password": "",
+            "from_email": "portal@example.test",
+            "from_name": "البوابة",
+            "reply_to": "",
+            "batch_size": 50,
+        }
+        recipients = ["received@example.test", "unavailable@example.test"]
+        calls = []
+
+        def send_message(message, *args, **kwargs):
+            recipient = kwargs["to_addrs"][0]
+            calls.append(recipient)
+            if recipient == "unavailable@example.test":
+                return {recipient: (550, b"mailbox unavailable")}
+
+        with self.app.test_request_context("/"), patch(
+            "portal.routes._email_circular_settings",
+            return_value=email_config,
+        ), patch(
+            "portal.routes._circular_user_emails",
+            return_value=recipients,
+        ), patch("smtplib.SMTP") as smtp_class:
+            smtp_class.return_value.send_message.side_effect = send_message
+            category, _ = _send_circular_to_email(row)
+
+        self.assertEqual(category, "warning")
+        self.assertEqual(calls.count("received@example.test"), 1)
+        self.assertEqual(calls.count("unavailable@example.test"), 2)
+
     def test_circular_uses_the_current_account_email(self):
         user = User(
             email="current-account@example.test",

@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 from flask import Flask
@@ -118,6 +119,51 @@ class NotificationEmailTests(unittest.TestCase):
         delivery = NotificationEmailDelivery.query.one()
         self.assertEqual(delivery.status, "SENT")
         self.assertIsNotNone(delivery.sent_at)
+
+    def test_notification_email_is_retried_once_and_then_stops(self):
+        notification = Notification(
+            user_id=self.user.id,
+            message="Attendance schedule approved",
+            source="portal",
+            email_delivery_mode=ATTENDANCE_SCHEDULE_EMAIL_MODE,
+            is_read=False,
+        )
+        db.session.add(notification)
+        db.session.flush()
+        self.assertTrue(enqueue_notification_email(notification))
+        db.session.commit()
+        first_attempt = datetime(2026, 8, 28, 8, 0)
+
+        with patch(
+            "services.notification_email._send_email",
+            side_effect=RuntimeError("mailbox unavailable"),
+        ) as send_email:
+            self.assertEqual(
+                send_pending_notification_emails(now=first_attempt),
+                0,
+            )
+            delivery = NotificationEmailDelivery.query.one()
+            self.assertEqual(delivery.status, "PENDING")
+            self.assertEqual(delivery.attempt_count, 1)
+
+            self.assertEqual(
+                send_pending_notification_emails(
+                    now=first_attempt + timedelta(minutes=3),
+                ),
+                0,
+            )
+            delivery = NotificationEmailDelivery.query.one()
+            self.assertEqual(delivery.status, "FAILED")
+            self.assertEqual(delivery.attempt_count, 2)
+
+            self.assertEqual(
+                send_pending_notification_emails(
+                    now=first_attempt + timedelta(minutes=10),
+                ),
+                0,
+            )
+
+        self.assertEqual(send_email.call_count, 2)
 
 
 if __name__ == "__main__":

@@ -22,9 +22,11 @@ from services.hr_request_workflow import (
     can_receive_request_notification,
 )
 from services.workflow_task_email import (
+    EMAIL_SEND_LEASE_MINUTES,
     FAILED,
     MAX_ATTEMPTS,
     PENDING,
+    SENDING,
     SENT,
     _mail_config,
     _portal_url,
@@ -42,6 +44,7 @@ ATTENDANCE_SCHEDULE_EMAIL_MODE = "ATTENDANCE_SCHEDULE"
 DELEGATION_SENSITIVE_EMAIL_MODE = "DELEGATION_SENSITIVE"
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
+STALE_DELIVERY_RETRY_REASON = "Previous email worker stopped before completion; retrying once."
 
 
 def _normalize_trouble_ticket_role(value: str | None) -> str:
@@ -178,8 +181,68 @@ def enqueue_notification_email(notification: Notification) -> bool:
     return True
 
 
+def _recover_stale_notification_deliveries(now: datetime) -> None:
+    """Return notification rows abandoned by a stopped worker to the queue."""
+    stale = (
+        NotificationEmailDelivery.query
+        .filter(
+            NotificationEmailDelivery.status == SENDING,
+            or_(
+                NotificationEmailDelivery.next_attempt_at.is_(None),
+                NotificationEmailDelivery.next_attempt_at <= now,
+            ),
+        )
+        .all()
+    )
+    for delivery in stale:
+        if int(delivery.attempt_count or 0) >= MAX_ATTEMPTS:
+            delivery.status = FAILED
+            delivery.next_attempt_at = None
+            delivery.last_error = delivery.last_error or "Maximum email delivery attempts reached."
+        else:
+            delivery.status = PENDING
+            delivery.next_attempt_at = None
+            delivery.last_error = STALE_DELIVERY_RETRY_REASON
+    if stale:
+        db.session.commit()
+
+
+def _claim_notification_delivery(
+    delivery_id: int,
+    now: datetime,
+) -> NotificationEmailDelivery | None:
+    """Atomically reserve one notification SMTP attempt."""
+    lease_until = now + timedelta(minutes=EMAIL_SEND_LEASE_MINUTES)
+    claimed = (
+        NotificationEmailDelivery.query
+        .filter(
+            NotificationEmailDelivery.id == delivery_id,
+            NotificationEmailDelivery.status == PENDING,
+            NotificationEmailDelivery.attempt_count < MAX_ATTEMPTS,
+            or_(
+                NotificationEmailDelivery.next_attempt_at.is_(None),
+                NotificationEmailDelivery.next_attempt_at <= now,
+            ),
+        )
+        .update(
+            {
+                NotificationEmailDelivery.status: SENDING,
+                NotificationEmailDelivery.attempt_count: NotificationEmailDelivery.attempt_count + 1,
+                NotificationEmailDelivery.next_attempt_at: lease_until,
+            },
+            synchronize_session=False,
+        )
+    )
+    db.session.commit()
+    if not claimed:
+        return None
+    return db.session.get(NotificationEmailDelivery, delivery_id)
+
+
 def send_pending_notification_emails(limit: int = 100, now: datetime | None = None) -> int:
-    """Send opted-in attendance mail and cancel legacy notification mail."""
+    """Send opted-in attendance mail with at most one retry per row."""
+    now = now or datetime.utcnow()
+    _recover_stale_notification_deliveries(now)
     pending_deliveries = NotificationEmailDelivery.query.filter_by(status=PENDING).all()
     eligible_deliveries = []
     legacy_deliveries = []
@@ -213,7 +276,6 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
     if not config["ready"]:
         return 0
 
-    now = now or datetime.utcnow()
     for delivery in eligible_deliveries:
         if int(delivery.attempt_count or 0) >= MAX_ATTEMPTS:
             delivery.status = FAILED
@@ -232,7 +294,10 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
     due_deliveries = due_deliveries[:max(1, min(int(limit), 200))]
 
     sent = 0
-    for delivery in due_deliveries:
+    for queued_delivery in due_deliveries:
+        delivery = db.session.get(NotificationEmailDelivery, queued_delivery.id)
+        if not delivery or delivery.status != PENDING:
+            continue
         notification = db.session.get(Notification, delivery.notification_id)
         user = db.session.get(User, delivery.user_id)
         if not notification or not user:
@@ -250,16 +315,20 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
             db.session.commit()
             continue
 
+        delivery = _claim_notification_delivery(delivery.id, now)
+        if not delivery:
+            continue
+
         try:
             subject, text_body, html_body = _email_content(user, notification)
             _send_email(config, recipient, subject, text_body, html_body)
         except Exception as exc:
-            delivery.attempt_count += 1
             delivery.last_error = str(exc)[:500]
             if delivery.attempt_count >= MAX_ATTEMPTS:
                 delivery.status = FAILED
                 delivery.next_attempt_at = None
             else:
+                delivery.status = PENDING
                 delivery.next_attempt_at = now + timedelta(
                     minutes=min(60, 2 ** delivery.attempt_count)
                 )

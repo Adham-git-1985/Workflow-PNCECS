@@ -1,5 +1,5 @@
 import unittest
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 from flask import Flask
@@ -146,10 +146,11 @@ class WorkflowTaskEmailTests(unittest.TestCase):
         self.assertEqual(reminder.user_id, self.assignee.id)
 
         with patch("services.workflow_task_email.smtplib.SMTP") as smtp_class:
-            self.assertEqual(send_pending_task_emails(), 2)
+            self.assertEqual(send_pending_task_emails(), 1)
 
         messages = [call.args[0] for call in smtp_class.return_value.send_message.call_args_list]
-        self.assertTrue(any("تذكير يومي" in message["Subject"] for message in messages))
+        self.assertEqual(len(messages), 1)
+        self.assertTrue(any("مهمة جديدة" in message["Subject"] for message in messages))
 
 
     def test_task_recipient_is_never_sent_more_than_twice_across_reminders(self):
@@ -170,14 +171,14 @@ class WorkflowTaskEmailTests(unittest.TestCase):
                 1,
             )
 
-            self.assertEqual(enqueue_daily_task_reminders(second_day), 1)
+            self.assertEqual(enqueue_daily_task_reminders(second_day), 0)
             db.session.commit()
             self.assertEqual(
                 send_pending_task_emails(now=datetime(2026, 8, 29, 8, 30)),
-                1,
+                0,
             )
 
-            # The assignment plus one reminder consumed the shared budget.
+            # A successful assignment does not receive a daily retry/reminder.
             self.assertEqual(enqueue_daily_task_reminders(third_day), 0)
             db.session.commit()
             self.assertEqual(
@@ -185,7 +186,60 @@ class WorkflowTaskEmailTests(unittest.TestCase):
                 0,
             )
 
-        self.assertEqual(smtp_class.return_value.send_message.call_count, 2)
+        self.assertEqual(smtp_class.return_value.send_message.call_count, 1)
+
+    def test_failed_task_email_is_retried_once_and_then_stops(self):
+        enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+        first_attempt = datetime(2026, 8, 28, 8, 0)
+
+        with patch(
+            "services.workflow_task_email._send_email",
+            side_effect=RuntimeError("mailbox unavailable"),
+        ) as send_email:
+            self.assertEqual(send_pending_task_emails(now=first_attempt), 0)
+            delivery = WorkflowTaskEmailDelivery.query.one()
+            self.assertEqual(delivery.status, PENDING)
+            self.assertEqual(delivery.attempt_count, 1)
+
+            self.assertEqual(
+                send_pending_task_emails(now=first_attempt + timedelta(minutes=3)),
+                0,
+            )
+            delivery = WorkflowTaskEmailDelivery.query.one()
+            self.assertEqual(delivery.status, "FAILED")
+            self.assertEqual(delivery.attempt_count, 2)
+
+            self.assertEqual(
+                send_pending_task_emails(now=first_attempt + timedelta(minutes=10)),
+                0,
+            )
+
+        self.assertEqual(send_email.call_count, 2)
+
+    def test_delivery_is_claimed_before_smtp_to_prevent_duplicate_workers(self):
+        enqueue_task_assignment_emails(
+            self.request,
+            [self.assignee.id],
+            step_order=1,
+            instance_id=self.instance.id,
+        )
+        db.session.commit()
+        nested_results = []
+
+        def send_once(*args, **kwargs):
+            nested_results.append(send_pending_task_emails())
+
+        with patch("services.workflow_task_email._send_email", side_effect=send_once) as send_email:
+            self.assertEqual(send_pending_task_emails(), 1)
+
+        self.assertEqual(nested_results, [0])
+        send_email.assert_called_once()
 
     def test_pending_task_email_uses_the_current_user_email_address(self):
         db.session.add(EmployeeFile(

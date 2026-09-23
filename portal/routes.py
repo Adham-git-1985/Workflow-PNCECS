@@ -98,8 +98,8 @@ from services.employee_data_import import (
 from services.employee_data_word_form import build_employee_word_form, parse_employee_word_form
 from services.official_request_forms import (
     DOCX_MIME as OFFICIAL_FORM_DOCX_MIME,
-    build_attendance_delay_justification_pdf,
-    build_attendance_delay_notice_pdf,
+    build_attendance_delay_justification_docx,
+    build_attendance_delay_notice_docx,
     build_leave_request_docx,
     build_leave_request_pdf,
     build_permission_request_docx,
@@ -405,7 +405,7 @@ from services.hr_request_workflow import (
 from services.attendance_delay_workflow import (
     ATTENDANCE_DELAY_RESPONSE_LABEL,
     ATTENDANCE_DELAY_WORKFLOW_LABEL,
-    archive_generated_pdf,
+    archive_generated_docx,
     attendance_delay_hr_affairs_manager_user_ids,
     attendance_delay_hr_department_manager_user_ids,
     attendance_delay_hr_general_director_user_ids,
@@ -4885,6 +4885,7 @@ EMAIL_CIRCULAR_LAST_STATUS = "EMAIL_CIRCULAR_LAST_STATUS"
 EMAIL_CIRCULAR_LAST_SENT_AT = "EMAIL_CIRCULAR_LAST_SENT_AT"
 EMAIL_CIRCULAR_PUBLIC_URL = "EMAIL_CIRCULAR_PUBLIC_URL"
 EMAIL_CIRCULAR_PASSWORD_ENV = "PORTAL_EMAIL_PASSWORD"
+EMAIL_CIRCULAR_MAX_ATTEMPTS = 2
 
 CIRCULAR_ATTACHMENT_MAX_FILES = 10
 CIRCULAR_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024
@@ -5324,7 +5325,6 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
     from_email = str(cfg.get("from_email") or "").strip()
     from_name = str(cfg.get("from_name") or "").strip()
     reply_to = str(cfg.get("reply_to") or "").strip()
-    batch_size = int(cfg.get("batch_size") or 50)
     email_attachments: list[tuple[bytes, str, str, str]] = []
     skipped_attachments = 0
     total_attachment_bytes = 0
@@ -5348,12 +5348,12 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
         email_attachments.append((payload, maintype, subtype, attachment.original_name))
         total_attachment_bytes += file_size
 
-    def build_message(batch: list[str]) -> EmailMessage:
+    def build_message(recipient: str) -> EmailMessage:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = formataddr((from_name, from_email)) if from_name else from_email
         msg["To"] = from_email
-        msg["Bcc"] = ", ".join(batch)
+        msg["Bcc"] = recipient
         if reply_to:
             msg["Reply-To"] = reply_to
         msg.set_content(body)
@@ -5367,7 +5367,7 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
         return msg
 
     sent = 0
-    failures: list[str] = []
+    failure_by_recipient: dict[str, str] = {}
     try:
         if cfg.get("security") == "ssl":
             smtp = smtplib.SMTP_SSL(str(cfg["host"]), int(cfg["port"]), timeout=20, context=ssl.create_default_context())
@@ -5382,13 +5382,32 @@ def _send_circular_to_email(row: PortalCircular) -> tuple[str, str]:
             password = str(cfg.get("password") or "").strip()
             if username:
                 smtp.login(username, password)
-            for idx in range(0, len(recipients), batch_size):
-                batch = recipients[idx:idx + batch_size]
-                try:
-                    smtp.send_message(build_message(batch), from_addr=from_email, to_addrs=batch)
-                    sent += len(batch)
-                except Exception as exc:
-                    failures.append(str(exc))
+            pending = list(recipients)
+            for _attempt in range(EMAIL_CIRCULAR_MAX_ATTEMPTS):
+                failed_this_attempt: list[str] = []
+                for recipient in pending:
+                    try:
+                        # Send each address separately so a failed recipient
+                        # is retried once without resending successful ones.
+                        refused = smtp.send_message(
+                            build_message(recipient),
+                            from_addr=from_email,
+                            to_addrs=[recipient],
+                        )
+                        if isinstance(refused, dict) and refused:
+                            raise smtplib.SMTPRecipientsRefused(refused)
+                        sent += 1
+                        failure_by_recipient.pop(recipient, None)
+                    except Exception as exc:
+                        failure_by_recipient[recipient] = str(exc)
+                        failed_this_attempt.append(recipient)
+                pending = failed_this_attempt
+                if not pending:
+                    break
+            failures = [
+                f"{recipient}: {failure_by_recipient.get(recipient, 'email delivery failed')}"
+                for recipient in pending
+            ]
         finally:
             try:
                 smtp.quit()
@@ -9077,10 +9096,10 @@ def hr_attendance_delay_start(summary_id):
             "request_date": now.date(),
             "initiator_name": current_user.full_name,
         })
-        notice, notice_path = archive_generated_pdf(
+        notice, notice_path = archive_generated_docx(
             request_row,
-            build_attendance_delay_notice_pdf(form_data),
-            official_form_filename(employee.full_name, ATTENDANCE_DELAY_WORKFLOW_LABEL, "pdf"),
+            build_attendance_delay_notice_docx(form_data),
+            official_form_filename(employee.full_name, ATTENDANCE_DELAY_WORKFLOW_LABEL, "docx"),
             owner_id=current_user.id,
             step_order=1,
             source="ATTENDANCE_DELAY_NOTICE",
@@ -9093,10 +9112,10 @@ def hr_attendance_delay_start(summary_id):
             "reason": "",
             "has_document": "NO",
         })
-        blank, blank_path = archive_generated_pdf(
+        blank, blank_path = archive_generated_docx(
             request_row,
-            build_attendance_delay_justification_pdf(blank_data),
-            official_form_filename(employee.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL, "pdf"),
+            build_attendance_delay_justification_docx(blank_data),
+            official_form_filename(employee.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL, "docx"),
             owner_id=current_user.id,
             step_order=1,
             source="ATTENDANCE_DELAY_BLANK_JUSTIFICATION",
@@ -9187,10 +9206,10 @@ def hr_attendance_delay_respond(case_id):
     })
     generated_paths = []
     try:
-        completed, completed_path = archive_generated_pdf(
+        completed, completed_path = archive_generated_docx(
             req_row,
-            build_attendance_delay_justification_pdf(data),
-            official_form_filename(current_user.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL + " - مكتمل", "pdf"),
+            build_attendance_delay_justification_docx(data),
+            official_form_filename(current_user.full_name, ATTENDANCE_DELAY_RESPONSE_LABEL + " - مكتمل", "docx"),
             owner_id=current_user.id,
             step_order=1,
             source="ATTENDANCE_DELAY_EMPLOYEE_RESPONSE",
