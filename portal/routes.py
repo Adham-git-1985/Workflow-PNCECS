@@ -409,6 +409,7 @@ from services.attendance_delay_workflow import (
     employee_form_data,
     get_delay_case_for_request,
     json_payload,
+    purge_orphan_delay_cases,
 )
 
 HR_ESCALATION_UNIT_OPTIONS = (
@@ -8836,6 +8837,7 @@ def hr_report_delay():
         delay_case_map = {
             (int(row.employee_id), row.delay_day): row
             for row in delay_case_rows
+            if getattr(row, "workflow_request", None) is not None
         }
         rows_view = []
         for a in q.all():
@@ -8924,6 +8926,14 @@ def hr_attendance_delay_start(summary_id):
         flash("لا يمكن إنشاء نموذج تأخير لسجل لا يحتوي على تأخير صباحي.", "warning")
         return redirect(url_for('portal.hr_report_delay'))
 
+    orphan_count = purge_orphan_delay_cases()
+    if orphan_count:
+        current_app.logger.warning(
+            "Removed %s orphan attendance-delay row(s) before starting summary_id=%s",
+            orphan_count,
+            summary.id,
+        )
+
     existing = HRAttendanceDelayRequest.query.filter_by(
         employee_id=summary.user_id,
         delay_day=summary.day,
@@ -8952,32 +8962,6 @@ def hr_attendance_delay_start(summary_id):
         f"التأخير الصباحي المحتسب: {int(summary.late_minutes or 0)} دقيقة. "
         "يلزم الموظف بتعبئة نموذج تبرير غياب / تأخير خلال ساعتين من استلام الطلب."
     )
-    request_row = WorkflowRequest(
-        title=request_title,
-        description=request_description,
-        status="DRAFT",
-        priority="HIGH",
-        requester_id=current_user.id,
-        current_role="ATTENDANCE_DELAY",
-    )
-    db.session.add(request_row)
-    db.session.flush()
-
-    case = HRAttendanceDelayRequest(
-        workflow_request_id=request_row.id,
-        attendance_summary_id=summary.id,
-        employee_id=employee.id,
-        initiated_by_id=current_user.id,
-        delay_day=summary.day,
-        late_minutes=int(summary.late_minutes or 0),
-        early_leave_minutes=int(summary.early_leave_minutes or 0),
-        first_in_time=summary.first_in.strftime('%H:%M') if summary.first_in else None,
-        response_due_at=now + timedelta(hours=2),
-        created_at=now,
-    )
-    db.session.add(case)
-    db.session.flush()
-
     runtime_steps = [
         {
             "step_order": 1,
@@ -9011,6 +8995,32 @@ def hr_attendance_delay_start(summary_id):
 
     generated_paths = []
     try:
+        request_row = WorkflowRequest(
+            title=request_title,
+            description=request_description,
+            status="DRAFT",
+            priority="HIGH",
+            requester_id=current_user.id,
+            current_role="ATTENDANCE_DELAY",
+        )
+        db.session.add(request_row)
+        db.session.flush()
+
+        case = HRAttendanceDelayRequest(
+            workflow_request_id=request_row.id,
+            attendance_summary_id=summary.id,
+            employee_id=employee.id,
+            initiated_by_id=current_user.id,
+            delay_day=summary.day,
+            late_minutes=int(summary.late_minutes or 0),
+            early_leave_minutes=int(summary.early_leave_minutes or 0),
+            first_in_time=summary.first_in.strftime('%H:%M') if summary.first_in else None,
+            response_due_at=now + timedelta(hours=2),
+            created_at=now,
+        )
+        db.session.add(case)
+        db.session.flush()
+
         start_workflow_for_request(
             request_row,
             None,
@@ -9057,6 +9067,25 @@ def hr_attendance_delay_start(summary_id):
         db.session.commit()
         flash(f"تم إرسال نموذج التأخير للموظف {employee.full_name} وبدء المسار.", "success")
         return redirect(url_for('workflow.view_request', request_id=request_row.id))
+    except IntegrityError:
+        db.session.rollback()
+        existing = HRAttendanceDelayRequest.query.filter_by(
+            employee_id=summary.user_id,
+            delay_day=summary.day,
+        ).first()
+        existing_request = (
+            db.session.get(WorkflowRequest, existing.workflow_request_id)
+            if existing else None
+        )
+        if existing and existing_request:
+            flash("تم إنشاء نموذج التأخير لهذا الموظف وهذا اليوم مسبقاً.", "info")
+            return redirect(url_for('workflow.view_request', request_id=existing.workflow_request_id))
+        current_app.logger.exception(
+            "Duplicate attendance delay workflow start for summary_id=%s",
+            summary.id,
+        )
+        flash("حدث تعارض أثناء إنشاء نموذج التأخير. يرجى إعادة المحاولة.", "warning")
+        return redirect(url_for('portal.hr_report_delay'))
     except Exception:
         db.session.rollback()
         for saved_path in generated_paths:

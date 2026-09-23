@@ -61,6 +61,41 @@ def get_delay_case_for_request(request_id: int | None) -> HRAttendanceDelayReque
     ).first()
 
 
+def purge_orphan_delay_cases() -> int:
+    """Remove delay rows whose generic workflow request no longer exists.
+
+    A failed/aborted first attempt can leave an attendance-delay row behind
+    while its ``WorkflowRequest`` is rolled back or removed. SQLite may then
+    reuse that request id, and the next attempt fails on the unique
+    ``workflow_request_id`` constraint before the workflow can start. Such a
+    row cannot be opened or progressed, so it is safe to remove it as part of
+    the next start attempt. The caller's transaction controls the commit.
+    """
+    orphan_ids = [
+        row_id
+        for (row_id,) in (
+            db.session.query(HRAttendanceDelayRequest.id)
+            .outerjoin(
+                WorkflowRequest,
+                WorkflowRequest.id == HRAttendanceDelayRequest.workflow_request_id,
+            )
+            .filter(WorkflowRequest.id.is_(None))
+            .all()
+        )
+        if row_id
+    ]
+    if not orphan_ids:
+        return 0
+
+    deleted = (
+        db.session.query(HRAttendanceDelayRequest)
+        .filter(HRAttendanceDelayRequest.id.in_(orphan_ids))
+        .delete(synchronize_session="fetch")
+    )
+    db.session.flush()
+    return int(deleted or 0)
+
+
 def is_attendance_delay_workflow(req: WorkflowRequest | None) -> bool:
     return bool(req and get_delay_case_for_request(getattr(req, "id", None)))
 

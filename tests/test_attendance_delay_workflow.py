@@ -174,6 +174,24 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.assertTrue(Notification.query.filter_by(type="ATTENDANCE_DELAY_OVERDUE").count() >= 2)
         self.assertEqual(RequestEscalation.query.filter_by(request_id=request_row.id).count(), 1)
 
+    def test_start_removes_orphan_delay_row_before_reusing_workflow_id(self):
+        orphan = HRAttendanceDelayRequest(
+            workflow_request_id=999999,
+            attendance_summary_id=self.summary.id,
+            employee_id=self.employee.id,
+            initiated_by_id=self.admin.id,
+            delay_day="2026-09-22",
+            created_at=datetime.utcnow(),
+        )
+        db.session.add(orphan)
+        db.session.commit()
+
+        case, request_row = self._start()
+
+        self.assertEqual(HRAttendanceDelayRequest.query.count(), 1)
+        self.assertEqual(case.workflow_request_id, request_row.id)
+        self.assertNotEqual(case.workflow_request_id, 999999)
+
     def test_secretary_general_resolver_accepts_title_and_org_node_labels(self):
         title_secretary = User(
             email="delay-title-secretary@example.test",
