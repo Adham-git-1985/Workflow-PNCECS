@@ -37,6 +37,7 @@ from models import (
     UserPermission,
 )
 from utils.notification_links import notification_target_path
+from utils.role_codes import canonical_role_key
 
 
 KIND_LEAVE = "LEAVE"
@@ -94,6 +95,29 @@ ESCALATION_FIXED_TARGETS = frozenset({
 
 def _normalize(value: str | None) -> str:
     return "".join(ch for ch in (value or "").strip().upper() if ch.isalnum())
+
+
+def _is_secretary_general_label(value: str | None) -> bool:
+    """Return whether a role/title/org label identifies the Secretary General.
+
+    Deployments have historically stored this value in several places and
+    formats (role code, Arabic/English title, or an organizational node).  Do
+    not match assistant/deputy titles merely because they contain the same
+    words; the label must start with the Secretary-General title itself.
+    """
+    normalized = _normalize(value)
+    if not normalized:
+        return False
+    if canonical_role_key(value) == "GENERALSECRETARY":
+        return True
+    return normalized.startswith((
+        "GENERALSECRETARY",
+        "SECRETARYGENERAL",
+        "الأمينالعام",
+        "الامينالعام",
+        "أمينعام",
+        "امينعام",
+    ))
 
 
 def _setting_int(key: str, default: int, minimum: int = 1) -> int:
@@ -692,36 +716,48 @@ def resolve_general_director(user_id: int, exclude_ids: Iterable[int] = ()) -> U
 def secretary_general_user_ids() -> list[int]:
     ids: set[int] = set()
     # This resolver is used by read-heavy pages as well as notifications. Only
-    # fetch the two columns needed here; loading full User objects also
-    # triggers their permission and employee-file relationships.
-    for user_id, role_value in User.query.with_entities(User.id, User.role).all():
-        role = _normalize(role_value)
-        if role in {"GENERALSECRETARY", "SECRETARYGENERAL"}:
+    # fetch scalar columns; loading full User objects also triggers their
+    # permission and employee-file relationships.
+    for user_id, role_value, job_title in User.query.with_entities(
+        User.id,
+        User.role,
+        User.job_title,
+    ).all():
+        if _is_secretary_general_label(role_value) or _is_secretary_general_label(job_title):
             ids.add(int(user_id))
     try:
         rows = (
             OrgNodeManager.query
             .join(OrgNode, OrgNode.id == OrgNodeManager.node_id)
             .join(OrgNodeType, OrgNodeType.id == OrgNode.type_id)
-            .filter(func.upper(OrgNodeType.code) == "SECRETARY_GENERAL")
-            .with_entities(OrgNodeManager.manager_user_id)
+            .with_entities(
+                OrgNodeManager.manager_user_id,
+                OrgNodeType.code,
+                OrgNodeType.name_ar,
+                OrgNodeType.name_en,
+                OrgNode.code,
+                OrgNode.name_ar,
+                OrgNode.name_en,
+            )
             .all()
         )
-        ids.update(int(manager_id) for (manager_id,) in rows if manager_id)
+        for manager_id, *labels in rows:
+            if manager_id and any(_is_secretary_general_label(label) for label in labels):
+                ids.add(int(manager_id))
     except Exception:
-        # Relationship joins differ between SQLAlchemy versions; the role is
-        # the stable fallback used by existing deployments.
+        # Older deployments may not have the dynamic organization tables; the
+        # role/title resolver above remains a safe fallback there.
         pass
     return sorted(ids)
 
 
 def _is_secretary_general(user: User) -> bool:
-    return bool(user and (int(user.id) in secretary_general_user_ids() or _normalize(user.role) in {"GENERALSECRETARY", "SECRETARYGENERAL"}))
+    return bool(user and (int(user.id) in secretary_general_user_ids() or _is_secretary_general_label(user.role)))
 
 
 def _is_secretariat(user: User) -> bool:
     role = _normalize(getattr(user, "role", None))
-    return role in {"GENERALSECRETARY", "SECRETARYGENERAL", "ASSISTANTSECRETARYGENERAL", "SECGENASSIST"}
+    return _is_secretary_general_label(role) or role in {"ASSISTANTSECRETARYGENERAL", "SECGENASSIST"}
 
 
 def _is_hr_approver(user: User) -> bool:

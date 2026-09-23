@@ -12,6 +12,9 @@ from models import (
     EmployeeFile,
     HRAttendanceDelayRequest,
     Notification,
+    OrgNode,
+    OrgNodeManager,
+    OrgNodeType,
     RequestEscalation,
     User,
     WorkflowInstanceStep,
@@ -21,6 +24,7 @@ from portal import portal_bp
 from workflow import workflow_bp
 from workflow.engine import decide_step
 from services.attendance_delay_workflow import process_pending_delay_response_alerts
+from services.hr_request_workflow import secretary_general_user_ids
 
 
 class AttendanceDelayWorkflowTests(unittest.TestCase):
@@ -178,6 +182,40 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.assertEqual(process_pending_delay_response_alerts(), 0)
         self.assertTrue(Notification.query.filter_by(type="ATTENDANCE_DELAY_OVERDUE").count() >= 2)
         self.assertEqual(RequestEscalation.query.filter_by(request_id=request_row.id).count(), 1)
+
+    def test_secretary_general_resolver_accepts_title_and_org_node_labels(self):
+        title_secretary = User(
+            email="delay-title-secretary@example.test",
+            name="Title Secretary",
+            password_hash="x",
+            role="ADMIN",
+            job_title="امين عام المجلس",
+        )
+        node_secretary = User(
+            email="delay-node-secretary@example.test",
+            name="Node Secretary",
+            password_hash="x",
+            role="ADMIN",
+        )
+        node_type = OrgNodeType(
+            code="ORGANIZATION",
+            name_ar="منظمة",
+            name_en="Organization",
+        )
+        secretary_node = OrgNode(
+            type=node_type,
+            name_ar="الأمين العام",
+            name_en="Secretary General",
+        )
+        db.session.add_all((title_secretary, node_secretary, node_type, secretary_node))
+        db.session.flush()
+        db.session.add(OrgNodeManager(node_id=secretary_node.id, manager_user_id=node_secretary.id))
+        db.session.commit()
+
+        resolved_ids = secretary_general_user_ids()
+        self.assertIn(self.secretary.id, resolved_ids)
+        self.assertIn(title_secretary.id, resolved_ids)
+        self.assertIn(node_secretary.id, resolved_ids)
 
 
 if __name__ == "__main__":
