@@ -625,7 +625,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(row.private_departure_display_minutes, 100)
         self.assertEqual(row.private_departure_details[0]["minutes"], 100)
 
-    def test_final_personal_departure_is_checkout_until_a_return_arrives(self):
+    def test_final_personal_departure_is_exposed_without_early_leave_until_return_arrives(self):
         employee = User(email="open-departure@example.test", name="Employee", password_hash="x", role="USER")
         db.session.add(employee)
         db.session.flush()
@@ -645,7 +645,10 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             self.assertEqual(result['last_out'], datetime(2026, 9, 13, 13, 35))
             self.assertEqual(result['status'], 'OK')
             self.assertEqual(result['work_minutes'], 335)
-            self.assertEqual(result['early_leave_minutes'], 85)
+            # The final C movement is exposed as the effective last movement,
+            # but it is not a confirmed final checkout and must not create an
+            # early-leave penalty by itself.
+            self.assertEqual(result['early_leave_minutes'], 0)
             records = _reconciled_departure_records([employee.id], '2026-09-13', '2026-09-13')
             self.assertEqual(sum(r['counted_minutes'] for r in records), 46)
             # A late-arriving return restores the missing-checkout state.
@@ -657,6 +660,50 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             db.session.add(AttendanceEvent(user_id=employee.id, event_dt=datetime(2026, 9, 13, 15, 0), event_type='O'))
             db.session.commit()
             self.assertEqual(_summary_compute_one(employee.id, '2026-09-13')['last_out'], datetime(2026, 9, 13, 15, 0))
+
+    def test_system_departure_checkout_does_not_create_early_leave(self):
+        employee = User(email="departure-checkout@example.test", name="Employee", password_hash="x", role="USER")
+        permission_type = HRPermissionType(
+            code="PERSONAL_CHECKOUT",
+            name_ar="مغادرة شخصية",
+            counts_as_work=False,
+            deduct_from_allowance=True,
+        )
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 23, 7, 28),
+                event_type="A",
+            ),
+            HRPermissionRequest(
+                user_id=employee.id,
+                permission_type_id=permission_type.id,
+                day="2026-09-23",
+                from_time="09:55",
+                to_time="10:05",
+                status="APPROVED",
+            ),
+        ))
+        db.session.commit()
+
+        schedule = SimpleNamespace(
+            id=None,
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+            break_minutes=0,
+            grace_minutes=15,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            result = _summary_compute_one(employee.id, "2026-09-23")
+
+        self.assertEqual(result["last_out"], datetime(2026, 9, 23, 9, 55))
+        self.assertEqual(result["work_minutes"], 147)
+        self.assertEqual(result["early_leave_minutes"], 0)
+        self.assertEqual(result["overtime_minutes"], 0)
 
     def test_maternity_departure_workflow(self):
         employee = User(email="employee@example.test", name="Employee", password_hash="x", role="USER")

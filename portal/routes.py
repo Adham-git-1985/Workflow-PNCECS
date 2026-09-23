@@ -33489,6 +33489,12 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
 
     first_in = ins[0] if ins else (all_times[0] if all_times else None)
     last_out = outs[-1] if outs else None
+    # A personal/official departure is a temporary movement, not proof of the
+    # employee's final checkout.  We may still expose its start as ``last_out``
+    # when no later clock movement exists, but it must not become an early-leave
+    # baseline by itself.  Otherwise an approved 10-minute departure at 09:55
+    # is incorrectly reported as several hours of early leave.
+    has_authoritative_checkout = bool(outs)
 
     # Never infer a checkout from another known check-in.  Some devices emit
     # duplicate/near-duplicate arrival rows (A/I); treating the later arrival
@@ -33513,6 +33519,7 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             first_in = datetime.fromisoformat(f'{day_str}T{manual_override.start_time}:00')
         if manual_override.end_time:
             last_out = datetime.fromisoformat(f'{day_str}T{manual_override.end_time}:00')
+            has_authoritative_checkout = True
 
     schedule = _effective_schedule_for_user(user_id, day_str)
     # Normal IN/OUT rows are imported only from the physical timeclock.  A
@@ -33588,7 +33595,7 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
             # zero late while 08:20 is 20 minutes late.
             late_minutes = uncovered_late if uncovered_late > start_grace_minutes else 0
 
-        if last_out and en_min is not None:
+        if last_out and en_min is not None and has_authoritative_checkout:
             actual_out = last_out.hour * 60 + last_out.minute
             evening_intervals = list(intervals)
             maternity_minutes = _maternity_departure_allowance_minutes(user_id, day_str)
