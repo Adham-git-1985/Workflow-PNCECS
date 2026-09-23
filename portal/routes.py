@@ -10409,12 +10409,16 @@ def _process_unrecorded_office_attendance(
     target_user_id: int | None = None,
     leave_type_id: int | None = None,
     actor_id: int | None = None,
+    force_review: bool = False,
 ) -> dict[str, int]:
     """Reconcile reviewed office-duty days with no attendance evidence.
 
     When ``target_user_id`` is supplied, reconciliation is limited to that
     employee. Without it, the Administrative Affairs action processes the
-    selected date range for all employees.
+    selected date range for all employees. ``force_review`` is reserved for
+    an explicit Administrative Affairs confirmation; it allows a completed
+    current-day row to be reviewed before the background cutoff, but never
+    includes a future day.
     """
 
     selected_leave_type = None
@@ -10457,11 +10461,18 @@ def _process_unrecorded_office_attendance(
         start_day,
         end_day,
     )
-    office_keys = {
-        key for key, row in schedule_map.items()
-        if _attendance_schedule_day_kind(row) == "WORK"
-        and _attendance_auto_leave_cutoff_reached(date.fromisoformat(key[1]), local_now, row)
-    }
+    office_keys = set()
+    for key, row in schedule_map.items():
+        if _attendance_schedule_day_kind(row) != "WORK":
+            continue
+        work_day = date.fromisoformat(key[1])
+        # A manual reconciliation is an explicit HR confirmation and may
+        # review the current day before the automatic cutoff.  Future days
+        # remain excluded even when the selected range is ahead of today.
+        if force_review and work_day <= local_now.date():
+            office_keys.add(key)
+        elif _attendance_auto_leave_cutoff_reached(work_day, local_now, row):
+            office_keys.add(key)
     existing_match_rows = (
         HRLeaveRequest.query
         .filter(HRLeaveRequest.user_id.in_(employee_user_ids))
@@ -10905,6 +10916,7 @@ def hr_report_administrative_affairs_reconcile():
         target_user_id=target_user_id,
         leave_type_id=selected_leave_type.id,
         actor_id=int(current_user.id),
+        force_review=True,
     )
     db.session.commit()
     if result.get("invalid_leave_type"):
