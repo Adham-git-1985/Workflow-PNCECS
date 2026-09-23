@@ -170,7 +170,7 @@ class AttendanceRuntimeSchemaTests(unittest.TestCase):
 
 
 class HRAlertsJobAtomicityTests(unittest.TestCase):
-    def test_alerts_job_never_runs_attendance_leave_reconciliation(self):
+    def test_alerts_job_reconciles_attendance_leaves_atomically(self):
         session = Mock()
 
         with (
@@ -193,12 +193,13 @@ class HRAlertsJobAtomicityTests(unittest.TestCase):
             patch.object(hr_alerts_job.db, "session", session),
             patch(
                 "portal.routes._process_unrecorded_office_attendance",
+                return_value={"created": 2},
             ) as reconcile,
         ):
             result = hr_alerts_job._check_pending_leave_requests()
 
-        self.assertEqual(result, 1)
-        reconcile.assert_not_called()
+        self.assertEqual(result, 3)
+        reconcile.assert_called_once_with()
         session.rollback.assert_not_called()
         session.commit.assert_called_once_with()
 

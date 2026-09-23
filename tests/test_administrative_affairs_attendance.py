@@ -446,6 +446,63 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(auto_leave.replacement_reason, "LATE_CLOCK_ATTENDANCE")
         self.assertEqual(_leave_used_days(employee.id, annual.id, 2026), 0.0)
 
+    def test_manual_reconciliation_can_confirm_current_day_before_cutoff(self):
+        employee = self._user(
+            "current-day-missing@example.test",
+            "Current day missing punch",
+        )
+        annual = HRLeaveType(
+            code="ANNUAL",
+            name_ar="Annual leave",
+            default_balance_days=30,
+            deduct_from_balance=True,
+            day_count_basis="CALENDAR_DAYS",
+        )
+        schedule = WorkSchedule(
+            name="Office schedule",
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((annual, schedule))
+        db.session.flush()
+        self._final_schedule_day(
+            employee,
+            "2026-09-23",
+            "WORK",
+            schedule=schedule,
+        )
+        db.session.commit()
+
+        result = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 23, 14, 0),
+            day_from=date(2026, 9, 23),
+            day_to=date(2026, 9, 23),
+            target_user_id=employee.id,
+            force_review=True,
+        )
+        db.session.commit()
+
+        leave = HRLeaveRequest.query.filter_by(
+            user_id=employee.id,
+            source=ATTENDANCE_AUTO_LEAVE_SOURCE,
+            source_attendance_day="2026-09-23",
+        ).one()
+        report_row = _administrative_affairs_daily_rows(
+            date(2026, 9, 23),
+            date(2026, 9, 23),
+            user_ids=[employee.id],
+        )[0]
+
+        self.assertEqual(result["created"], 1)
+        self.assertEqual(leave.status, "APPROVED")
+        self.assertEqual(
+            _leave_balance_display_values(employee.id, annual, 2026)["remaining"],
+            29.0,
+        )
+        self.assertEqual(report_row["category"], "LEAVE")
+        self.assertEqual(report_row["leave_request_id"], leave.id)
+
     def test_reconciliation_can_create_selected_sick_leave_visible_on_absence_board(self):
         employee = self._user("matched-sick@example.test", "موظف مطابقة مرضية")
         annual = HRLeaveType(
