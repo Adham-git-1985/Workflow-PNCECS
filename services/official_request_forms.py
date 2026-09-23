@@ -1211,24 +1211,9 @@ def build_attendance_delay_notice_docx(data):
         space_after=Pt(8),
     )
 
-    _docx_add_heading(doc, "بيانات المسار")
-    _docx_add_field_table(
-        doc,
-        [
-            ("منشئ الطلب", _docx_value(data.get("initiator_name"), "الشؤون البشرية")),
-            ("رقم الطلب", _docx_value(data.get("request_no"))),
-            ("تاريخ الإنشاء", _docx_value(data.get("request_date"))),
-            ("طريقة الرد", "من خلال المسار الإلكتروني"),
-        ],
-    )
-
     _docx_add_signature_blocks(
         doc,
-        data.get("signature_people")
-        or [
-            {"role": "الموظف", "name": _docx_value(data.get("employee_name"))},
-            {"role": "الجهة المنشئة", "name": _docx_value(data.get("initiator_name"), "الشؤون البشرية")},
-        ],
+        [{"role": "الموظف", "name": _docx_value(data.get("employee_name"))}],
     )
     return _docx_save(doc)
 
@@ -1304,6 +1289,7 @@ def build_attendance_delay_justification_docx(data):
             ("هل يوجد مستند مؤيد؟", evidence),
             ("اسم / مرجع المستند", _docx_value(data.get("document_name") or data.get("document_reference"))),
             ("ملاحظة الموظف", _docx_value(data.get("note"))),
+            ("تعليق الشؤون الإدارية", _docx_value(data.get("administrative_affairs_comment"))),
         ],
     )
 
@@ -1318,8 +1304,7 @@ def build_attendance_delay_justification_docx(data):
     )
     _docx_add_signature_blocks(
         doc,
-        data.get("signature_people")
-        or [{"role": "الموظف", "name": _docx_value(data.get("employee_name"))}],
+        [{"role": "الموظف", "name": _docx_value(data.get("employee_name"))}],
     )
     if reason:
         _docx_add_body_paragraph(

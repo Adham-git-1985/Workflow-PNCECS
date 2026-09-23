@@ -9240,7 +9240,9 @@ def hr_attendance_delay_respond(case_id):
             1,
             current_user.id,
             "APPROVED",
-            note="تمت تعبئة نموذج تبرير غياب / تأخير وإرساله إلى المدير المباشر.",
+            # The employee's justification is also the workflow action note so
+            # every later Word snapshot is populated from the same source.
+            note=reason,
             auto_commit=False,
             effective_user_id=current_user.id,
         )

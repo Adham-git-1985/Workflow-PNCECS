@@ -174,6 +174,8 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         db.session.refresh(case)
         self.assertIsNotNone(case.employee_responded_at)
         self.assertEqual(request_row.workflow_instance.current_step_order, 2)
+        db.session.refresh(steps[0])
+        self.assertEqual(steps[0].note, "ظرف طارئ")
         self.assertEqual(ArchivedFile.query.count(), 3)
         self.assertIsNotNone(case.completed_justification_archived_file)
         employee_snapshot = Document(case.completed_justification_archived_file.file_path)
@@ -272,6 +274,15 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         self.assertIn("تم الاعتماد النهائي للمعاملة", final_snapshot_text)
         self.assertIn("HR Affairs Manager", final_snapshot_text)
+        self.assertIn("تعليق الشؤون الإدارية", final_snapshot_text)
+        signature_text = "\n".join(
+            paragraph.text
+            for row in final_snapshot.tables[-1].rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+        )
+        self.assertIn("Delay Employee", signature_text)
+        self.assertNotIn("HR Affairs Manager", signature_text)
 
     def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
         self.assertIn(

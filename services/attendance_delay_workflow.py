@@ -681,6 +681,24 @@ def _delay_document_user_name(user_id: int | None) -> str:
     return (getattr(user, "full_name", None) or getattr(user, "name", None) or getattr(user, "email", None) or "").strip()
 
 
+def _delay_document_administrative_comment(approval_steps: list[dict]) -> str:
+    """Return the latest administrative-affairs action note for the Word form."""
+    completed = [
+        row for row in approval_steps
+        if (row.get("note") or "").strip()
+    ]
+    marker_groups = (
+        ("الشؤون الإدارية",),
+        ("الموارد البشرية", "الشؤون البشرية"),
+    )
+    for markers in marker_groups:
+        for row in reversed(completed):
+            label = _compact_attendance_label(row.get("label"))
+            if any(_compact_attendance_label(marker) in label for marker in markers):
+                return (row.get("note") or "").strip()
+    return ""
+
+
 def _delay_document_status(value: str | None, *, employee_step: bool = False) -> str:
     status = (value or "PENDING").strip().upper()
     if employee_step and status == "APPROVED":
@@ -759,6 +777,9 @@ def attendance_delay_workflow_form_data(req: WorkflowRequest) -> dict | None:
             "employee_step": int(getattr(step, "step_order", 0) or 0) == 1,
         })
     data["approval_steps"] = approval_steps
+    data["administrative_affairs_comment"] = _delay_document_administrative_comment(
+        approval_steps
+    )
 
     try:
         current_order = int(getattr(instance, "current_step_order", 1) or 1)
@@ -775,32 +796,10 @@ def attendance_delay_workflow_form_data(req: WorkflowRequest) -> dict | None:
     else:
         data["current_stage_label"] = _delay_document_stage_label(current_step)
 
-    signature_people = []
     employee_name = _delay_document_user_name(getattr(case, "employee_id", None))
-    if employee_name:
-        signature_people.append({"role": "الموظف", "name": employee_name})
-
-    if final_status in {"APPROVED", "REJECTED"}:
-        final_actor_id = getattr(case, "final_decision_by_id", None)
-        final_name = _delay_document_user_name(final_actor_id)
-        if final_name:
-            signature_people.append({
-                "role": "صاحب القرار النهائي",
-                "name": final_name,
-            })
-    elif current_step:
-        current_label = _delay_document_stage_label(current_step)
-        if (getattr(current_step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
-            for task in tasks_by_step.get(int(current_step.step_order), []):
-                if (task.status or "").strip().upper() == "PENDING":
-                    name = _delay_document_user_name(task.assignee_user_id)
-                    if name:
-                        signature_people.append({"role": current_label, "name": name})
-        else:
-            name = _delay_document_user_name(getattr(current_step, "approver_user_id", None))
-            if name:
-                signature_people.append({"role": current_label, "name": name})
-    data["signature_people"] = signature_people
+    data["signature_people"] = (
+        [{"role": "الموظف", "name": employee_name}] if employee_name else []
+    )
     return data
 
 

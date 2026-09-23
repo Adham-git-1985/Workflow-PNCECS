@@ -172,6 +172,7 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
         reason="ظرف طارئ",
         has_document="YES",
         document_name="إفادة رسمية",
+        administrative_affairs_comment="تمت المتابعة من الشؤون الإدارية",
         current_step_order=2,
         current_stage_label="اعتماد المدير المباشر",
         approval_steps=[
@@ -252,6 +253,21 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
         )
         field_table = document.tables[0]
         assert [cell.text for cell in field_table.rows[0].cells] == ["القيمة", "البيان"]
+        assert "منشئ الطلب" not in document_text
+        assert "رقم الطلب" not in document_text
+        assert "تاريخ الإنشاء" not in document_text
+        assert "من خلال المسار الإلكتروني" not in document_text
+        assert "الجهة المنشئة" not in document_text
+        signature_text = "\n".join(
+            paragraph.text
+            for row in document.tables[-1].rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+        )
+        assert "الموظف" in signature_text
+        assert "موظف تجريبي" in signature_text
+        assert signature_text.count("التوقيع:") == 1
+        assert "مدير مباشر تجريبي" not in signature_text
         assert "التوقيع:" in document_text
         with zipfile.ZipFile(BytesIO(content)) as archive:
             assert "word/media/image1.jpeg" in archive.namelist()
@@ -270,6 +286,8 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
     )
     assert "اعتماد المدير المباشر" in completed_text
     assert "مدير مباشر تجريبي" in completed_text
+    assert "تعليق الشؤون الإدارية" in completed_text
+    assert "تمت المتابعة من الشؤون الإدارية" in completed_text
 
 
 def test_official_filename_keeps_arabic_and_removes_windows_reserved_characters():
