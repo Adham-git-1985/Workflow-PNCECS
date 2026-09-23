@@ -185,6 +185,11 @@ from services.attendance_delay_workflow import (
     get_delay_case_for_request,
     is_attendance_delay_workflow,
 )
+from services.workflow_delay_summary import (
+    get_overdue_workflow_rows,
+    is_workflow_delay_summary_viewer,
+    is_workflow_request_overdue,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -5457,6 +5462,53 @@ def circulars_view(circular_id: int):
 
 
 
+@workflow_bp.route("/delayed")
+@login_required
+def delayed_workflows():
+    """Read-only report linked from the daily overdue-path notification."""
+    if not is_workflow_delay_summary_viewer(current_user):
+        abort(403)
+
+    now = datetime.utcnow()
+    rows = [
+        row
+        for row in get_overdue_workflow_rows(now=now)
+        if can_user_pass_confidential_workflow_gate(current_user, row["request"])
+    ]
+
+    page = max(1, request.args.get("page", type=int, default=1))
+    try:
+        per_page = max(
+            10,
+            min(int(current_app.config.get("WORKFLOW_FOLLOWING_PAGE_SIZE", 50)), 100),
+        )
+    except (TypeError, ValueError):
+        per_page = 50
+
+    total = len(rows)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    start = (page - 1) * per_page
+    page_rows = rows[start:start + per_page]
+
+    return render_template(
+        "workflow/delayed.html",
+        rows=page_rows,
+        total=total,
+        page=page,
+        pages=pages,
+        now=now,
+        previous_page_url=(
+            url_for("workflow.delayed_workflows", page=page - 1)
+            if page > 1 else None
+        ),
+        next_page_url=(
+            url_for("workflow.delayed_workflows", page=page + 1)
+            if page < pages else None
+        ),
+    )
+
+
 @workflow_bp.route("/following")
 @login_required
 def following():
@@ -6093,9 +6145,20 @@ def view_request(request_id):
             flash("لا تملك صلاحية الاطلاع ضمن سياق التنفيذ المحدد.", "danger")
             return redirect(url_for("workflow.inbox"))
 
+    can_view_as_delay_summary_viewer = False
     if not _actor_context_can_view_request(req, actor_users):
-        flash("غير مصرح لك بمراجعة هذا الطلب", "danger")
-        return redirect(url_for("workflow.inbox"))
+        # The daily overdue-path report is an explicit read-only audience for
+        # the Secretary General, Super Admins and global notification
+        # observers.  Keep the confidentiality gate mandatory; the report
+        # must never become a way around confidential correspondence ACLs.
+        can_view_as_delay_summary_viewer = (
+            is_workflow_delay_summary_viewer(current_user)
+            and is_workflow_request_overdue(req.id)
+            and can_user_pass_confidential_workflow_gate(current_user, req)
+        )
+        if not can_view_as_delay_summary_viewer:
+            flash("غير مصرح لك بمراجعة هذا الطلب", "danger")
+            return redirect(url_for("workflow.inbox"))
 
     # ✅ Mark related WORKFLOW notifications as read when the approver opens the request
     try:

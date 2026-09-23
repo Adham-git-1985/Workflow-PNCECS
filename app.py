@@ -1938,6 +1938,7 @@ try:
     from portal.transport_license_alerts_job import start_transport_license_alerts_job
     from jobs.backup_job import start_automatic_backup_job
     from jobs.workflow_task_email_job import start_workflow_task_email_job
+    from jobs.workflow_delay_summary_job import start_workflow_delay_summary_job
 
     _jobs_started = False
 
@@ -1961,6 +1962,7 @@ try:
         # process.
         background_jobs = (
             ("workflow task email", start_workflow_task_email_job),
+            ("workflow delay summary", start_workflow_delay_summary_job),
             ("automatic backup", start_automatic_backup_job),
             ("timeclock sync", start_timeclock_auto_sync),
             ("HR alerts", start_hr_alerts_job),
