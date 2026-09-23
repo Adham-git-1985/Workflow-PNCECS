@@ -21,22 +21,59 @@ def _interval_seconds() -> int:
     return max(60, min(value, 3600))
 
 
-def _worker(app) -> None:
-    while True:
+def _run_job_step(app, name: str, callback):
+    """Run one email-related step without starving the other mail services.
+
+    The workflow and notification outboxes use models that may be ahead of a
+    long-lived SQLite database during a rolling deployment.  A failure in one
+    of those queries must not prevent the independent HR attendance report
+    from being evaluated during the same poll.
+    """
+    try:
+        with app.app_context():
+            result = callback()
+            if name == "attendance report" and isinstance(result, dict):
+                status = result.get("status")
+                if status in {"sent", "failed"}:
+                    if status == "failed":
+                        app.logger.error(
+                            "Attendance report email failed: %s",
+                            result.get("error") or "unknown error",
+                        )
+                    else:
+                        app.logger.info(
+                            "Attendance report email sent: run_date=%s recipients=%s",
+                            result.get("run_date"),
+                            result.get("recipients", 0),
+                        )
+            return result
+    except Exception:
+        app.logger.exception("%s email job step failed", name)
         try:
             with app.app_context():
-                run_workflow_task_email_cycle()
-                send_pending_notification_emails()
-                run_attendance_report_email_cycle()
-        except Exception:
-            app.logger.exception("Workflow task email job iteration failed")
-            try:
-                with app.app_context():
-                    from extensions import db
+                from extensions import db
 
-                    db.session.rollback()
-            except Exception:
-                pass
+                db.session.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        # A failed SQLAlchemy query can leave a scoped session in a failed
+        # transaction.  Remove it before the next independent step.
+        try:
+            with app.app_context():
+                from extensions import db
+
+                db.session.remove()
+        except Exception:
+            pass
+
+
+def _worker(app) -> None:
+    while True:
+        _run_job_step(app, "workflow task", run_workflow_task_email_cycle)
+        _run_job_step(app, "notification", send_pending_notification_emails)
+        _run_job_step(app, "attendance report", run_attendance_report_email_cycle)
         time.sleep(_interval_seconds())
 
 
