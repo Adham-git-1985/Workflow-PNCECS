@@ -153,43 +153,18 @@ def _docx_set_style_rtl(style):
 
 
 def _docx_finalize_rtl(doc):
-    """Clear RTL overrides so every story uses left-to-right reading order."""
-    stories = [doc._element]
-    for section in doc.sections:
-        stories.extend(
-            (
-                section.header._element,
-                section.first_page_header._element,
-                section.even_page_header._element,
-                section.footer._element,
-                section.first_page_footer._element,
-                section.even_page_footer._element,
-            )
-        )
-
+    """Clear RTL overrides from every editable XML part in the Word package."""
     seen = set()
-    for story in stories:
-        if id(story) in seen:
+    for part in doc.part.package.parts:
+        root = getattr(part, "_element", None)
+        if root is None or id(root) in seen:
             continue
-        seen.add(id(story))
-        for paragraph in story.iter(qn("w:p")):
-            paragraph_properties = paragraph.find(qn("w:pPr"))
-            if paragraph_properties is None:
-                paragraph_properties = OxmlElement("w:pPr")
-                paragraph.insert(0, paragraph_properties)
-            _docx_remove_boolean_property(paragraph_properties, "w:bidi")
-            for run in paragraph.iter(qn("w:r")):
-                run_properties = run.find(qn("w:rPr"))
-                if run_properties is None:
-                    run_properties = OxmlElement("w:rPr")
-                    run.insert(0, run_properties)
-                _docx_remove_boolean_property(run_properties, "w:rtl")
-        for table in story.iter(qn("w:tbl")):
-            table_properties = table.find(qn("w:tblPr"))
-            if table_properties is None:
-                table_properties = OxmlElement("w:tblPr")
-                table.insert(0, table_properties)
-            _docx_remove_boolean_property(table_properties, "w:bidiVisual")
+        seen.add(id(root))
+        for property_name in ("w:bidi", "w:rtl", "w:bidiVisual", "w:rtlGutter"):
+            for element in list(root.iter(qn(property_name))):
+                parent = element.getparent()
+                if parent is not None:
+                    parent.remove(element)
 
 
 def _plain(value, default=""):
@@ -549,7 +524,12 @@ def _docx_set_run_font(run, *, size=ATTENDANCE_DELAY_DOCX_SIZE, bold=None, color
     _docx_remove_boolean_property(rpr, "w:rtl")
 
 
-def _docx_set_paragraph_rtl(paragraph, alignment=WD_ALIGN_PARAGRAPH.LEFT):
+def _docx_set_paragraph_rtl(paragraph, alignment=WD_ALIGN_PARAGRAPH.RIGHT):
+    """Format Arabic content while keeping Word's effective direction LTR.
+
+    The target Word installation renders explicit RTL properties in reverse, so
+    direction flags stay disabled while Arabic paragraphs remain right-aligned.
+    """
     paragraph.alignment = alignment
     ppr = paragraph._p.get_or_add_pPr()
     _docx_remove_boolean_property(ppr, "w:bidi")
@@ -594,7 +574,9 @@ def _docx_set_table_borders(table, color="D9D9D9"):
 
 
 def _docx_set_table_rtl(table):
-    table.alignment = WD_TABLE_ALIGNMENT.LEFT
+    # Keep the table direction LTR (see _docx_set_paragraph_rtl), but anchor the
+    # whole form table to the right edge for a natural Arabic layout.
+    table.alignment = WD_TABLE_ALIGNMENT.RIGHT
     table.autofit = False
     tbl_pr = table._tbl.tblPr
     _docx_remove_boolean_property(tbl_pr, "w:bidiVisual")
@@ -608,7 +590,7 @@ def _docx_set_cell_text(
     bold=False,
     fill=None,
     color="000000",
-    alignment=WD_ALIGN_PARAGRAPH.LEFT,
+    alignment=WD_ALIGN_PARAGRAPH.RIGHT,
     size=ATTENDANCE_DELAY_DOCX_SIZE,
 ):
     cell.text = ""
@@ -646,17 +628,24 @@ def _docx_add_table(
     table = doc.add_table(rows=0, cols=len(headers))
     _docx_set_table_rtl(table)
     widths = widths or [Inches(1.85)] * len(headers)
+    # With bidiVisual intentionally disabled, reverse the logical columns so
+    # the first Arabic field is still displayed at the right-hand side.
+    visual_widths = list(reversed(widths))
+    for index, width in enumerate(visual_widths):
+        if index < len(table.columns):
+            table.columns[index].width = width
     for values, is_header in [(headers, True), *[(row, False) for row in rows]]:
+        visual_values = list(reversed(values))
         cells = table.add_row().cells
-        for index, value in enumerate(values):
-            if index < len(widths):
-                cells[index].width = widths[index]
+        for index, value in enumerate(visual_values):
+            if index < len(visual_widths):
+                cells[index].width = visual_widths[index]
             _docx_set_cell_text(
                 cells[index],
                 value,
                 bold=is_header,
                 fill="EAF2F8" if is_header else ("FFFFFF" if len(table.rows) % 2 else "F7F7F7"),
-                alignment=WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.LEFT,
+                alignment=WD_ALIGN_PARAGRAPH.CENTER if is_header else WD_ALIGN_PARAGRAPH.RIGHT,
                 size=header_size if is_header else body_size,
             )
     return table
@@ -798,14 +787,20 @@ def _docx_add_signature_blocks(doc, people):
     _docx_add_heading(doc, "الاسم والتوقيع")
     table = doc.add_table(rows=0, cols=2)
     _docx_set_table_rtl(table)
+    for column in table.columns:
+        column.width = Inches(3.2)
     for start in range(0, len(normalized), 2):
         cells = table.add_row().cells
-        for index, cell in enumerate(cells):
-            if start + index >= len(normalized):
+        # The first signer belongs in the right-hand cell while the table keeps
+        # LTR direction for compatibility with the target Word installation.
+        for offset, cell_index in enumerate((1, 0)):
+            cell = cells[cell_index]
+            if start + offset >= len(normalized):
                 cell.text = ""
                 _docx_set_cell_margins(cell, top=150, bottom=150, start=160, end=160)
+                _docx_set_paragraph_rtl(cell.paragraphs[0])
                 continue
-            role, name = normalized[start + index]
+            role, name = normalized[start + offset]
             cell.text = ""
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             _docx_set_cell_margins(cell, top=150, bottom=150, start=160, end=160)

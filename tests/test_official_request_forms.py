@@ -3,6 +3,7 @@ from io import BytesIO
 
 import fitz
 from docx import Document
+from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from lxml import etree
 
@@ -85,15 +86,15 @@ def _assert_valid_docx(content: bytes):
 def _assert_ltr_word_direction(content: bytes):
     namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     with zipfile.ZipFile(BytesIO(content)) as archive:
-        document_root = etree.fromstring(archive.read("word/document.xml"))
-        styles_root = etree.fromstring(archive.read("word/styles.xml"))
-    assert not document_root.xpath(".//w:sectPr/w:bidi", namespaces=namespace)
-    assert not document_root.xpath(".//w:sectPr/w:rtlGutter", namespaces=namespace)
-    assert not document_root.xpath(".//w:p/w:pPr/w:bidi", namespaces=namespace)
-    assert not document_root.xpath(".//w:r[w:t]/w:rPr/w:rtl", namespaces=namespace)
-    assert not document_root.xpath(".//w:tbl/w:tblPr/w:bidiVisual", namespaces=namespace)
-    assert not styles_root.xpath(".//w:docDefaults//w:bidi", namespaces=namespace)
-    assert not styles_root.xpath(".//w:docDefaults//w:rtl", namespaces=namespace)
+        xml_parts = [
+            etree.fromstring(archive.read(name))
+            for name in archive.namelist()
+            if name.startswith("word/") and name.endswith(".xml")
+        ]
+    assert not any(
+        root.xpath(".//w:bidi | .//w:rtl | .//w:bidiVisual | .//w:rtlGutter", namespaces=namespace)
+        for root in xml_parts
+    )
 
 
 def test_supply_request_generates_printable_pdf_and_word_form():
@@ -230,6 +231,27 @@ def test_attendance_delay_forms_are_editable_ltr_word_documents_with_letterhead(
             table._tbl.tblPr.find("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}bidiVisual") is None
             for table in document.tables
         )
+        assert all(table.alignment == WD_TABLE_ALIGNMENT.RIGHT for table in document.tables)
+        assert all(
+            paragraph.alignment == WD_ALIGN_PARAGRAPH.RIGHT
+            for table in document.tables
+            for row_index, row in enumerate(table.rows)
+            if row_index > 0
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            if paragraph.text.strip()
+        )
+        assert all(
+            paragraph.alignment == WD_ALIGN_PARAGRAPH.RIGHT
+            for paragraph in document.paragraphs
+            if paragraph.text.strip()
+            and not any(
+                run.bold and run.font.size and run.font.size.pt >= 20
+                for run in paragraph.runs
+            )
+        )
+        field_table = document.tables[0]
+        assert [cell.text for cell in field_table.rows[0].cells] == ["القيمة", "البيان"]
         assert "التوقيع:" in document_text
         with zipfile.ZipFile(BytesIO(content)) as archive:
             assert "word/media/image1.jpeg" in archive.namelist()
