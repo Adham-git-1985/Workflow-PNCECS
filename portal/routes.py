@@ -32824,7 +32824,7 @@ def hr_alerts():
 @portal_bp.route('/hr/leaves/report', methods=['GET'])
 
 @login_required
-@_perm(HR_REPORTS_VIEW)
+@_perm_any(HR_REPORTS_VIEW, HR_LEAVE_BALANCES_MANAGE)
 def hr_leaves_report():
     """Leave requests report (with pending check trigger)."""
     pending_info = _check_pending_leave_requests(send_notifications=True)
@@ -32832,6 +32832,28 @@ def hr_leaves_report():
     # Filters
     from_day = (request.args.get('from') or '').strip()
     to_day = (request.args.get('to') or '').strip()
+    year_raw = (request.args.get('year') or '').strip()
+    status = (request.args.get('status') or '').strip().upper()
+    user_id_raw = (request.args.get('user_id') or '').strip()
+    leave_type_id_raw = (request.args.get('leave_type_id') or '').strip()
+
+    try:
+        year = int(year_raw) if year_raw else date.today().year
+    except (TypeError, ValueError):
+        year = date.today().year
+    year = min(2100, max(2000, year))
+
+    user_id = int(user_id_raw) if user_id_raw.isdigit() else None
+    leave_type_id = int(leave_type_id_raw) if leave_type_id_raw.isdigit() else None
+    valid_statuses = {'SUBMITTED', 'APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT'}
+    if status not in valid_statuses:
+        status = ''
+
+    # The balance report links here with a year. Use the request start year,
+    # matching the balance allocator's funding-year rule.
+    if year_raw and not from_day and not to_day:
+        from_day = f'{year:04d}-01-01'
+        to_day = f'{year:04d}-12-31'
 
     q = HRLeaveRequest.query
     exempt_user_ids = _attendance_exempt_user_ids()
@@ -32841,6 +32863,15 @@ def hr_leaves_report():
         q = q.filter(HRLeaveRequest.start_date >= from_day)
     if to_day:
         q = q.filter(HRLeaveRequest.start_date <= to_day)
+    if user_id:
+        q = q.filter(HRLeaveRequest.user_id == user_id)
+    if leave_type_id:
+        q = q.join(HRLeaveType, HRLeaveRequest.leave_type_id == HRLeaveType.id).filter(or_(
+            HRLeaveType.id == leave_type_id,
+            HRLeaveType.balance_source_leave_type_id == leave_type_id,
+        ))
+    if status:
+        q = q.filter(HRLeaveRequest.status == status)
 
     q = q.order_by(HRLeaveRequest.id.desc())
     rows = q.limit(500).all()
@@ -32871,7 +32902,19 @@ def hr_leaves_report():
         data = out.getvalue().encode('utf-8-sig')
         return send_file(BytesIO(data), mimetype='text/csv', as_attachment=True, download_name='hr_leaves_report.csv')
 
-    return render_template('portal/hr/leaves_report.html', rows=rows, pending_info=pending_info, from_day=from_day, to_day=to_day)
+    return render_template(
+        'portal/hr/leaves_report.html',
+        rows=rows,
+        pending_info=pending_info,
+        from_day=from_day,
+        to_day=to_day,
+        year=year,
+        status=status,
+        selected_user_id=user_id,
+        selected_leave_type_id=leave_type_id,
+        selected_user=db.session.get(User, user_id) if user_id else None,
+        selected_leave_type=db.session.get(HRLeaveType, leave_type_id) if leave_type_id else None,
+    )
 
 # Portal Admin: Integrations (Timeclock file on server)
 # -------------------------

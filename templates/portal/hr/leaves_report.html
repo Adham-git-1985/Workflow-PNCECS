@@ -7,6 +7,12 @@
     <div>
       <h4 class="mb-1"><i class="bi bi-file-earmark-text"></i> تقرير الإجازات</h4>
       <div class="text-muted">عرض طلبات الإجازات حسب السنة والحالة. (عند فتح التقرير يتم فحص الطلبات المتأخرة وإرسال تنبيهات مرة واحدة يوميًا لكل طلب.)</div>
+      {% if selected_user or selected_leave_type %}
+        <div class="small text-primary mt-2">
+          {% if selected_user %}الموظف: <strong>{{ selected_user.full_name or selected_user.name or selected_user.email }}</strong>{% endif %}
+          {% if selected_leave_type %} — رصيد النوع: <strong>{{ selected_leave_type.name_ar or selected_leave_type.name_en or selected_leave_type.code }}</strong>{% endif %}
+        </div>
+      {% endif %}
     </div>
     <div class="d-flex gap-2">
       <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_leave_balances', year=year) }}"><i class="bi bi-arrow-right"></i> رجوع لأرصدة الإجازات</a>
@@ -28,9 +34,13 @@
         <option value="SUBMITTED" {% if status=='SUBMITTED' %}selected{% endif %}>قيد الإجراء</option>
         <option value="APPROVED" {% if status=='APPROVED' %}selected{% endif %}>موافق عليه</option>
         <option value="REJECTED" {% if status=='REJECTED' %}selected{% endif %}>مرفوض</option>
+        <option value="CANCELLED" {% if status=='CANCELLED' %}selected{% endif %}>ملغى</option>
+        <option value="DRAFT" {% if status=='DRAFT' %}selected{% endif %}>مسودة</option>
       </select>
     </div>
     <div class="col-md-5">
+      {% if selected_user_id %}<input type="hidden" name="user_id" value="{{ selected_user_id }}">{% endif %}
+      {% if selected_leave_type_id %}<input type="hidden" name="leave_type_id" value="{{ selected_leave_type_id }}">{% endif %}
       <button class="btn btn-primary w-100" type="submit"><i class="bi bi-search"></i> عرض</button>
     </div>
   </form>

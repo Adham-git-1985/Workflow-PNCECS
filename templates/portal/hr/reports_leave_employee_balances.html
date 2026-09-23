@@ -135,7 +135,15 @@
             <td>{{ r.appointment_type_name or '—' }}</td>
             <td>{{ lt.name_ar if lt and lt.name_ar else (lt.name_en if lt else '—') }}</td>
             <td>{{ r.total }}</td>
-            <td>{{ r.used }}</td>
+            <td>
+              {% if r.used > 0 and u and lt %}
+                <a class="link-primary fw-semibold" href="{{ url_for('portal.hr_leaves_report', year=r.year, status='APPROVED', user_id=u.id, leave_type_id=lt.id) }}" title="عرض الإجازات المعتمدة المستهلكة من هذا الرصيد">
+                  {{ r.used }}
+                </a>
+              {% else %}
+                {{ r.used }}
+              {% endif %}
+            </td>
             <td>
               {% if r.remaining < 0 %}
                 <span class="badge text-bg-danger">{{ r.remaining }}</span>
