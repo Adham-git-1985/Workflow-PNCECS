@@ -28962,7 +28962,14 @@ def _system_departure_records(user_ids, start_day: str, end_day: str, *, include
 
 
 def _departure_records_match(clock_record: dict, system_record: dict) -> bool:
-    """Whether a clock interval and approved system request are one movement."""
+    """Whether a clock interval and system request are one movement.
+
+    The two sources represent one departure only when both endpoints are no
+    more than the configured half-hour tolerance apart.  Using interval
+    overlap here was too permissive: a request could overlap a clock movement
+    while its start or return time was more than 30 minutes away, hiding two
+    real movements in the report.
+    """
     if clock_record.get('kind') != system_record.get('kind'):
         return False
     clock_start, clock_end = clock_record.get('from_dt'), clock_record.get('to_dt')
@@ -28971,10 +28978,28 @@ def _departure_records_match(clock_record: dict, system_record: dict) -> bool:
         return False
 
     tolerance = timedelta(minutes=_DEPARTURE_MATCH_TOLERANCE_MINUTES)
-    overlap = clock_start <= system_end + tolerance and system_start <= clock_end + tolerance
-    same_start = abs(clock_start - system_start) <= tolerance
-    same_end = abs(clock_end - system_end) <= tolerance
-    return overlap or (same_start and same_end)
+    return (
+        abs(clock_start - system_start) <= tolerance
+        and abs(clock_end - system_end) <= tolerance
+    )
+
+
+def _departure_display_minutes(record: dict) -> int:
+    """Return completed minutes that may be shown in the daily report.
+
+    Display duration is deliberately separate from ``counted_minutes``.  A
+    personal departure can be visible for its actual duration even when its
+    permission type is exempt from the monthly allowance.  Pending system
+    requests remain marked as pending and do not appear as completed minutes;
+    a completed clock movement is always displayable.
+    """
+    minutes = max(0, int(record.get('minutes') or 0))
+    if not minutes or not record.get('complete'):
+        return 0
+    if record.get('source') in {'CLOCK', 'CLOCK_SYSTEM'}:
+        return minutes
+    approval_status = str(record.get('approval_status') or 'APPROVED').upper()
+    return minutes if approval_status == 'APPROVED' else 0
 
 
 def _reconciled_departure_records(user_ids, start_day: str, end_day: str, *, include_pending: bool = False) -> list[dict]:
@@ -29034,6 +29059,7 @@ def _reconciled_departure_records(user_ids, start_day: str, end_day: str, *, inc
     for record in merged:
         record['label'] = _departure_record_label(record['kind'])
         record['source_label'] = _departure_source_label(record.get('source'))
+        record['display_minutes'] = _departure_display_minutes(record)
         record['counted_minutes'] = (
             int(record.get('minutes') or 0)
             if record.get('kind') == 'PRIVATE'
@@ -29269,19 +29295,23 @@ def _attach_departure_sources_to_attendance_events(
 
 
 def _departure_totals_by_key(records) -> dict:
-    """Return private/official totals and movement details indexed by employee day."""
+    """Return display and chargeable departure totals indexed by employee day."""
     totals = {}
     for record in records or []:
         key = (record.get('user_id'), record.get('day'))
         bucket = totals.setdefault(key, {
             'private_minutes': 0,
             'official_minutes': 0,
+            'private_display_minutes': 0,
+            'official_display_minutes': 0,
             'details': [],
         })
         if record.get('kind') == 'OFFICIAL':
             bucket['official_minutes'] += int(record.get('minutes') or 0) if record.get('countable') else 0
+            bucket['official_display_minutes'] += int(record.get('display_minutes') or 0)
         else:
             bucket['private_minutes'] += int(record.get('counted_minutes') or 0)
+            bucket['private_display_minutes'] += int(record.get('display_minutes') or 0)
         bucket['details'].append(record)
     return totals
 
@@ -29307,6 +29337,10 @@ def _attach_reconciled_departures(attendance_rows, *, include_pending: bool = Fa
         values = totals.get((row.user_id, row.day), {})
         row.private_departure_minutes = int(values.get('private_minutes') or 0)
         row.official_departure_minutes = int(values.get('official_minutes') or 0)
+        # Keep the historical fields above as the chargeable/reporting values;
+        # these two fields are for the daily screen's visible duration only.
+        row.private_departure_display_minutes = int(values.get('private_display_minutes') or 0)
+        row.official_departure_display_minutes = int(values.get('official_display_minutes') or 0)
         row.departure_details = values.get('details') or []
         row.private_departure_details = [
             record for record in row.departure_details
@@ -33251,7 +33285,11 @@ def _summary_compute_one(user_id: int, day_str: str, departure_records=None):
 
         if first_in and st_min is not None:
             actual_in = first_in.hour * 60 + first_in.minute
-            late_minutes = max(0, _uncovered_attendance_minutes(st_min, actual_in, intervals) - start_grace_minutes)
+            uncovered_late = _uncovered_attendance_minutes(st_min, actual_in, intervals)
+            # The grace period is a threshold, not a deduction from the late
+            # duration.  With an 08:00 start and 15 minutes' grace, 08:10 is
+            # zero late while 08:20 is 20 minutes late.
+            late_minutes = uncovered_late if uncovered_late > start_grace_minutes else 0
 
         if last_out and en_min is not None:
             actual_out = last_out.hour * 60 + last_out.minute
@@ -33486,6 +33524,8 @@ def _attendance_daily_dashboard_rows(
             "overtime_minutes",
             "private_departure_minutes",
             "official_departure_minutes",
+            "private_departure_display_minutes",
+            "official_departure_display_minutes",
         ):
             row[field] = int(getattr(summary, field, 0) or 0)
         for field in (
@@ -33841,8 +33881,10 @@ def hr_attendance_daily_export_xlsx():
             r.get('daily_employee_number') or '', r['day'], r.get('name') or '', r.get('email') or '',
             r.get('source') or '', r.get('schedule') or '', fi, lo, hours,
             r.get('break_minutes') or 0, r.get('late_minutes') or 0,
-            r.get('early_leave_minutes') or 0, r.get('private_departure_minutes') or 0,
-            r.get('official_departure_minutes') or 0, r.get('overtime_minutes') or 0,
+            r.get('early_leave_minutes') or 0,
+            r.get('private_departure_display_minutes') or 0,
+            r.get('official_departure_display_minutes') or 0,
+            r.get('overtime_minutes') or 0,
             r.get('category_label') or '', r.get('detail') or '',
         ])
 

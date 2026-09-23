@@ -23,8 +23,8 @@
       <td class="center">{{ '%.2f'|format((row.work_minutes or 0) / 60) }}</td>
       <td class="center">{{ row.late_minutes or '—' }}</td>
       <td class="center">{{ row.early_leave_minutes or '—' }}</td>
-      <td class="center">{% if row.private_departure_minutes %}{{ row.private_departure_minutes }} د{% elif row.pending_private_departure_details|default([]) %}قيد الاعتماد{% else %}—{% endif %}</td>
-      <td class="center">{% if row.official_departure_minutes %}{{ row.official_departure_minutes }} د{% elif row.pending_official_departure_details|default([]) %}قيد الاعتماد{% else %}—{% endif %}</td>
+      <td class="center">{% if row.private_departure_display_minutes|default(0, true) %}{{ row.private_departure_display_minutes }} د{% elif row.pending_private_departure_details|default([]) %}قيد الاعتماد{% else %}—{% endif %}</td>
+      <td class="center">{% if row.official_departure_display_minutes|default(0, true) %}{{ row.official_departure_display_minutes }} د{% elif row.pending_official_departure_details|default([]) %}قيد الاعتماد{% else %}—{% endif %}</td>
       <td class="center">{{ (row.overtime_minutes|string ~ ' د') if row.overtime_minutes else '—' }}</td>
       <td class="center"><span class="badge {{ row.status_print_class }}">{{ row.category_label }}</span>{% if row.attendance_status == 'INCOMPLETE' %}<span class="badge warning">غير مكتمل</span>{% endif %}</td>
       <td>{{ row.schedule or '—' }}</td>

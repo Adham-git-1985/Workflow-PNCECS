@@ -6,7 +6,7 @@
     <a class="d-inline-block text-decoration-none"
        href="{{ url_for('portal.hr_attendance_events', user_id=row.user_id, date_from=row.day, date_to=row.day, event_type=event_code) }}"
        target="_blank" rel="noopener"
-       title="فتح المغادرة في سجل الدخول والخروج والمغادرات">
+       title="عرض بداية المغادرة والعودة ومصدرها">
       <span class="badge {{ badge_class }}">
         {% if minutes %}{{ minutes }} د{% elif pending_movements %}قيد الاعتماد{% else %}فتح المغادرة{% endif %}
       </span>
@@ -190,10 +190,10 @@
           <td>{% if r.late_minutes %}<span class="badge bg-warning text-dark">{{ r.late_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>{% if r.early_leave_minutes %}<span class="badge bg-warning text-dark">{{ r.early_leave_minutes }} د</span>{% else %}—{% endif %}</td>
           <td>
-            {{ departure_link(r, 'PRIVATE', r.private_departure_minutes, r.private_departure_details|default([]), r.pending_private_departure_details|default([]), 'bg-warning text-dark') }}
+            {{ departure_link(r, 'PRIVATE', r.private_departure_display_minutes|default(0, true), r.private_departure_details|default([]), r.pending_private_departure_details|default([]), 'bg-warning text-dark') }}
           </td>
           <td>
-            {{ departure_link(r, 'OFFICIAL', r.official_departure_minutes, r.official_departure_details|default([]), r.pending_official_departure_details|default([]), 'bg-info text-dark') }}
+            {{ departure_link(r, 'OFFICIAL', r.official_departure_display_minutes|default(0, true), r.official_departure_details|default([]), r.pending_official_departure_details|default([]), 'bg-info text-dark') }}
           </td>
           <td>{% if r.overtime_minutes %}<span class="badge bg-info text-dark">{{ r.overtime_minutes }} د</span>{% else %}—{% endif %}</td>
           <td class="attendance-status">

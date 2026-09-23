@@ -596,6 +596,35 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         self.assertEqual(len(row.pending_private_departure_details), 1)
         self.assertEqual(row.pending_private_departure_details[0]["approval_status"], "SUBMITTED")
 
+    def test_approved_personal_departure_shows_duration_even_when_exempt_from_allowance(self):
+        employee = User(email="display-departure@example.test", name="Employee", password_hash="x", role="USER")
+        permission_type = HRPermissionType(
+            code="PERSONAL_EXEMPT",
+            name_ar="مغادرة شخصية معفاة",
+            counts_as_work=False,
+            deduct_from_allowance=False,
+        )
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add(HRPermissionRequest(
+            user_id=employee.id,
+            permission_type_id=permission_type.id,
+            day="2026-09-13",
+            from_time="11:00",
+            to_time="12:40",
+            status="APPROVED",
+        ))
+        db.session.commit()
+
+        row = SimpleNamespace(user_id=employee.id, day="2026-09-13", early_leave_minutes=0)
+        _attach_reconciled_departures([row], include_pending=True)
+
+        # Financial/allowance minutes remain unchanged, while the daily view
+        # exposes the actual 100-minute movement and its details.
+        self.assertEqual(row.private_departure_minutes, 0)
+        self.assertEqual(row.private_departure_display_minutes, 100)
+        self.assertEqual(row.private_departure_details[0]["minutes"], 100)
+
     def test_final_personal_departure_is_checkout_until_a_return_arrives(self):
         employee = User(email="open-departure@example.test", name="Employee", password_hash="x", role="USER")
         db.session.add(employee)
@@ -777,7 +806,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
             result = _summary_compute_one(employee.id, "2026-09-10")
             self.assertEqual(result['early_leave_minutes'], 0)
-            self.assertEqual(result['late_minutes'], 5)
+            self.assertEqual(result['late_minutes'], 20)
             # The display helper must not alter an already-computed result.
             row = SimpleNamespace(**result)
             _attach_reconciled_departures([row])
@@ -794,6 +823,42 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
             permission.status = "PENDING"
             db.session.flush()
             self.assertEqual(_summary_compute_one(employee.id, "2026-09-10")['early_leave_minutes'], 62)
+
+    def test_morning_grace_is_a_threshold_without_subtracting_from_late_duration(self):
+        employee = User(email="morning-grace@example.test", name="Morning Grace", password_hash="x", role="USER")
+        db.session.add(employee)
+        db.session.flush()
+        arrival = AttendanceEvent(
+            user_id=employee.id,
+            event_dt=datetime(2026, 9, 11, 8, 10),
+            event_type="IN",
+        )
+        db.session.add_all((
+            arrival,
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 11, 15, 0),
+                event_type="OUT",
+            ),
+        ))
+        db.session.commit()
+
+        schedule = SimpleNamespace(
+            id=None,
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+            break_minutes=0,
+            grace_minutes=15,
+            start_grace_minutes=None,
+            end_grace_minutes=None,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-11")["late_minutes"], 0)
+            arrival.event_dt = datetime(2026, 9, 11, 8, 20)
+            db.session.flush()
+            self.assertEqual(_summary_compute_one(employee.id, "2026-09-11")["late_minutes"], 20)
 
     def test_remote_schedule_calculates_late_arrival_from_its_start_time(self):
         employee = User(
@@ -833,7 +898,7 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
             result = _summary_compute_one(employee.id, "2026-09-22")
 
-        self.assertEqual(result["late_minutes"], 11)
+        self.assertEqual(result["late_minutes"], 26)
         self.assertEqual(result["early_leave_minutes"], 0)
 
     def test_timeclock_punch_on_remote_day_uses_office_template_rules(self):

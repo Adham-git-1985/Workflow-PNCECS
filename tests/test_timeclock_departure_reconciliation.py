@@ -86,6 +86,56 @@ class TimeclockDepartureReconciliationTests(unittest.TestCase):
         self.assertTrue(_departure_records_match(clock_record, matching_system_record))
         self.assertFalse(_departure_records_match(clock_record, different_kind))
 
+    def test_departures_more_than_half_an_hour_apart_remain_separate(self):
+        clock_record = {
+            'kind': 'PRIVATE',
+            'from_dt': datetime(2026, 9, 1, 10, 0),
+            'to_dt': datetime(2026, 9, 1, 11, 0),
+        }
+        system_record = {
+            'kind': 'PRIVATE',
+            'from_dt': datetime(2026, 9, 1, 10, 31),
+            'to_dt': datetime(2026, 9, 1, 11, 31),
+        }
+
+        self.assertFalse(_departure_records_match(clock_record, system_record))
+
+    def test_reconciliation_keeps_two_movements_when_difference_exceeds_tolerance(self):
+        clock = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'from_dt': datetime(2026, 9, 1, 10, 0),
+            'to_dt': datetime(2026, 9, 1, 11, 0),
+            'minutes': 60,
+            'complete': True,
+            'countable': True,
+            'source': 'CLOCK',
+        }
+        system = {
+            'user_id': 7,
+            'day': '2026-09-01',
+            'kind': 'PRIVATE',
+            'from_dt': datetime(2026, 9, 1, 10, 31),
+            'to_dt': datetime(2026, 9, 1, 11, 31),
+            'minutes': 60,
+            'complete': True,
+            'countable': True,
+            'source': 'SYSTEM',
+            'approval_status': 'APPROVED',
+            'permission_id': 3,
+            'permission_type_id': 2,
+        }
+
+        with patch('portal.routes._clock_departure_records', return_value=[clock]), patch(
+            'portal.routes._system_departure_records', return_value=[system]
+        ):
+            records = _reconciled_departure_records([7], '2026-09-01', '2026-09-01')
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual({record['source'] for record in records}, {'CLOCK', 'SYSTEM'})
+        self.assertEqual(sum(record['display_minutes'] for record in records), 120)
+
     def test_reconciliation_uses_clock_as_authoritative_source_when_both_match(self):
         clock = {
             'user_id': 7,
