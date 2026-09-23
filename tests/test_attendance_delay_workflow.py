@@ -121,7 +121,7 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
             instance_id=request_row.workflow_instance.id,
         ).order_by(WorkflowInstanceStep.step_order.asc()).all()
         self.assertEqual([step.approver_user_id for step in steps[:2]], [self.employee.id, self.manager.id])
-        self.assertEqual(steps[2].mode, "PARALLEL_SYNC")
+        self.assertEqual(steps[2].mode, "SEQUENTIAL")
 
         self._login(self.employee)
         response = self.client.post(
@@ -143,19 +143,10 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(request_row.workflow_instance.current_step_order, 3)
-        self.assertEqual(WorkflowStepTask.query.filter_by(step_order=3).count(), 2)
-
-        decide_step(
-            request_row.id,
-            3,
-            self.hr.id,
-            "APPROVED",
-            note="موافقة الشؤون البشرية",
-            effective_user_id=self.hr.id,
-        )
-        db.session.commit()
-        self.assertEqual(request_row.status, "IN_PROGRESS")
-        self.assertFalse(request_row.workflow_instance.is_completed)
+        self.assertEqual(steps[2].approver_role, "SECRETARY_GENERAL")
+        self.assertEqual(steps[2].mode, "SEQUENTIAL")
+        self.assertEqual(steps[2].approver_user_id, self.secretary.id)
+        self.assertEqual(WorkflowStepTask.query.filter_by(step_order=3).count(), 0)
 
         decide_step(
             request_row.id,

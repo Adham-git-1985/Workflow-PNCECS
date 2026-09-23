@@ -30,7 +30,6 @@ from models import (
 )
 from services.hr_request_workflow import (
     administrative_affairs_manager_user_ids,
-    hr_approval_user_ids,
     hr_notification_user_ids,
     secretary_general_user_ids,
 )
@@ -70,16 +69,10 @@ def attendance_delay_parallel_candidate_user_ids(
     req: WorkflowRequest | None,
     step: WorkflowInstanceStep | None = None,
 ) -> list[int]:
-    """Return HR + Secretary-General candidates for the final review step."""
+    """Return only the Secretary-General candidates for final review."""
     if not is_attendance_delay_workflow(req):
         return []
-    # The runtime step itself resolves the HR role.  Adding the explicit HR
-    # resolver keeps the path stable even when a deployment uses a custom role
-    # label, while the Secretary-General is intentionally an extra candidate.
-    return sorted(
-        _as_ids(hr_approval_user_ids())
-        | _as_ids(secretary_general_user_ids())
-    )
+    return sorted(_as_ids(secretary_general_user_ids()))
 
 
 def attendance_delay_secretary_user_ids() -> set[int]:

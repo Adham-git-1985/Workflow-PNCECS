@@ -384,7 +384,6 @@ from services.hr_request_workflow import (
     get_escalation_policies,
     get_escalation_policy,
     hr_notification_user_ids,
-    hr_approval_user_ids,
     is_compensatory_leave,
     is_special_leave,
     is_sick_leave,
@@ -8941,10 +8940,8 @@ def hr_attendance_delay_start(summary_id):
     if not manager:
         flash("لا يوجد مدير مباشر مضبوط لهذا الموظف، لذلك لم يبدأ المسار.", "warning")
         return redirect(url_for('portal.hr_report_delay'))
-    if not hr_approval_user_ids():
-        flash("لا يوجد معتمد مضبوط للشؤون البشرية في الهيكل التنظيمي.", "warning")
-        return redirect(url_for('portal.hr_report_delay'))
-    if not secretary_general_user_ids():
+    secretary_ids = secretary_general_user_ids()
+    if not secretary_ids:
         flash("لا يوجد أمين عام مضبوط لمسار الاعتماد النهائي.", "warning")
         return redirect(url_for('portal.hr_report_delay'))
 
@@ -9002,11 +8999,12 @@ def hr_attendance_delay_start(summary_id):
         },
         {
             "step_order": 3,
-            "mode": "PARALLEL_SYNC",
-            "approver_kind": "ROLE",
-            "approver_role": "HR",
-            "label": "اعتماد الشؤون البشرية والأمين العام",
-            "reason": "اعتماد الشؤون البشرية، مع صلاحية الأمين العام لإنهاء المسار بقرار نهائي.",
+            "mode": "SEQUENTIAL",
+            "approver_kind": "USER",
+            "approver_user_id": secretary_ids[0],
+            "approver_role": "SECRETARY_GENERAL",
+            "label": "اعتماد الأمين العام",
+            "reason": "اعتماد الأمين العام هو القرار النهائي لمسار نموذج التأخير عن العمل.",
             "sla_days": 1,
         },
     ]
