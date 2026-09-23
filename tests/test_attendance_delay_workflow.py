@@ -17,6 +17,7 @@ from models import (
     OrgNode,
     OrgNodeManager,
     OrgNodeType,
+    RequestAttachment,
     RequestEscalation,
     User,
     WorkflowInstanceStep,
@@ -154,8 +155,12 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
 
     def test_employee_response_manager_hr_secretary_and_hr_affairs_final_path(self):
         case, request_row = self._start()
-        self.assertEqual(ArchivedFile.query.count(), 1)
-        self.assertIsNone(case.blank_justification_archived_file_id)
+        self.assertEqual(ArchivedFile.query.count(), 2)
+        self.assertIsNotNone(case.blank_justification_archived_file_id)
+        self.assertEqual(
+            RequestAttachment.query.filter_by(request_id=request_row.id).count(),
+            2,
+        )
         steps = WorkflowInstanceStep.query.filter_by(
             instance_id=request_row.workflow_instance.id,
         ).order_by(WorkflowInstanceStep.step_order.asc()).all()
