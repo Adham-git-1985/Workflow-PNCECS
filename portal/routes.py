@@ -7737,6 +7737,7 @@ def hr_attendance_email_report_settings():
 
         payload = {
             "enabled": request.form.get("enabled"),
+            "send_times": request.form.getlist("send_times"),
             "send_time": request.form.get("send_time"),
             "frequency": request.form.get("frequency"),
             "interval_days": request.form.get("interval_days"),
@@ -7753,7 +7754,11 @@ def hr_attendance_email_report_settings():
             save_report_email_config(payload)
             _portal_audit(
                 "HR_ATTENDANCE_EMAIL_REPORTS_SETTINGS_UPDATE",
-                f"updated_by={current_user.id}; frequency={payload.get('frequency')}; time={payload.get('send_time')}",
+                "updated_by={} ; frequency={}; times={}".format(
+                    current_user.id,
+                    payload.get("frequency"),
+                    ",".join(payload.get("send_times") or [payload.get("send_time") or ""]),
+                ),
                 target_type="SYSTEM_SETTING",
             )
             db.session.commit()

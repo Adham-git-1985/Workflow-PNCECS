@@ -45,6 +45,8 @@ REPORT_FROM_NAME = REPORT_NAME
 SETTING_PREFIX = "HR_ATTENDANCE_EMAIL_REPORTS_"
 SETTING_KEYS = {
     "enabled": SETTING_PREFIX + "ENABLED",
+    "send_times": SETTING_PREFIX + "TIMES",
+    # Keep the original key as a compatibility bridge for existing installs.
     "send_time": SETTING_PREFIX + "TIME",
     "frequency": SETTING_PREFIX + "FREQUENCY",
     "interval_days": SETTING_PREFIX + "INTERVAL_DAYS",
@@ -60,6 +62,8 @@ SETTING_KEYS = {
 
 DEFAULT_CONFIG = {
     "enabled": "0",
+    # Empty means "use the legacy TIME setting" on older installations.
+    "send_times": "",
     "send_time": "09:30",
     "frequency": "DAILY",
     "interval_days": "2",
@@ -120,8 +124,14 @@ def get_report_email_config() -> dict[str, Any]:
         interval = 2
     values["interval_days"] = interval
 
-    send_time = _parse_hhmm(values["send_time"])
-    values["send_time"] = send_time.strftime("%H:%M") if send_time else "09:30"
+    send_times = _parse_hhmm_list(values.get("send_times"))
+    if not send_times:
+        legacy_send_time = _parse_hhmm(values.get("send_time"))
+        send_times = [legacy_send_time] if legacy_send_time else [dt_time(9, 30)]
+    values["send_times_list"] = [value.strftime("%H:%M") for value in send_times]
+    values["send_times"] = "\n".join(values["send_times_list"])
+    # Existing callers and old templates can continue to read the first slot.
+    values["send_time"] = values["send_times_list"][0]
     values["weekdays_list"] = _parse_int_list(values["weekdays"], 0, 6)
     values["excluded_dates_list"] = _parse_date_list(values["excluded_dates"])
     values["recipient_user_ids_list"] = _parse_int_list(values["recipient_user_ids"], 1, None)
@@ -132,7 +142,11 @@ def get_report_email_config() -> dict[str, Any]:
 
 def save_report_email_config(payload: dict[str, Any]) -> dict[str, Any]:
     """Validate and persist the settings submitted by the HR form."""
-    send_time = _parse_hhmm(payload.get("send_time")) or dt_time(9, 30)
+    send_times = _parse_hhmm_list(payload.get("send_times"))
+    if not send_times:
+        send_times = _parse_hhmm_list(payload.get("send_time"))
+    if not send_times:
+        send_times = [dt_time(9, 30)]
     frequency = str(payload.get("frequency") or "DAILY").strip().upper()
     if frequency not in {"DAILY", "EVERY_N_DAYS", "WEEKLY"}:
         frequency = "DAILY"
@@ -164,7 +178,10 @@ def save_report_email_config(payload: dict[str, Any]) -> dict[str, Any]:
     emails = _parse_email_list(payload.get("recipient_emails"))
     values = {
         "enabled": "1" if _as_bool(payload.get("enabled")) else "0",
-        "send_time": send_time.strftime("%H:%M"),
+        "send_times": "\n".join(value.strftime("%H:%M") for value in send_times),
+        # Keep the legacy setting synchronized for older workers during a
+        # rolling deployment.
+        "send_time": send_times[0].strftime("%H:%M"),
         "frequency": frequency,
         "interval_days": str(interval_days),
         "weekdays": ",".join(str(value) for value in weekdays),
@@ -196,6 +213,29 @@ def _parse_hhmm(value: Any) -> dt_time | None:
         return datetime.strptime(raw, "%H:%M").time()
     except ValueError:
         return None
+
+
+def _parse_hhmm_list(value: Any) -> list[dt_time]:
+    """Parse and normalize one or more HH:MM values."""
+    if isinstance(value, (list, tuple, set)):
+        raw_values = list(value)
+    else:
+        raw = str(value or "").strip()
+        if raw.startswith("["):
+            try:
+                decoded = json.loads(raw)
+                raw_values = decoded if isinstance(decoded, list) else []
+            except Exception:
+                raw_values = []
+        else:
+            raw_values = re.split(r"[,;\n\r\s]+", raw) if raw else []
+
+    parsed = {
+        parsed_value
+        for item in raw_values
+        if (parsed_value := _parse_hhmm(item)) is not None
+    }
+    return sorted(parsed)
 
 
 def _parse_date(value: Any) -> date | None:
@@ -568,6 +608,7 @@ def _load_attendance_rows(report_day: date) -> tuple[list[dict], list[dict], lis
 
         employee_file = getattr(user, "employee_file", None)
         row = {
+            "user_id": user_id,
             "date": day_text,
             "employee_no": getattr(employee_file, "employee_no", "") or "",
             "name": _employee_label(user),
@@ -592,13 +633,112 @@ def _load_attendance_rows(report_day: date) -> tuple[list[dict], list[dict], lis
     return overall, late_rows, absence_rows
 
 
+def _load_departure_rows(report_day: date, overall_rows: list[dict]) -> list[dict]:
+    """Build the departures list using the same reconciliation as the events page."""
+    try:
+        from portal.routes import (
+            _departure_display_lines,
+            _departure_source_label,
+            _departure_time_range_label,
+            _reconciled_departure_records,
+        )
+
+        # The events page includes system-only departure requests, so include
+        # all users here rather than relying only on employees with a daily
+        # attendance summary.  The exemption list is applied before querying
+        # the reconciliation helper, matching the HR exceptions page rules.
+        exempt_ids = _attendance_exempt_user_ids()
+        all_user_ids = {
+            int(user_id)
+            for (user_id,) in db.session.query(User.id).all()
+            if user_id and int(user_id) not in exempt_ids
+        }
+        all_user_ids.update(
+            int(row["user_id"])
+            for row in (overall_rows or [])
+            if row.get("user_id") and int(row["user_id"]) not in exempt_ids
+        )
+        if not all_user_ids:
+            return []
+
+        day_text = report_day.isoformat()
+        records = _reconciled_departure_records(
+            sorted(all_user_ids),
+            day_text,
+            day_text,
+            include_pending=True,
+        )
+        if not records:
+            return []
+
+        users = {
+            int(user.id): user
+            for user in User.query.filter(User.id.in_(sorted(all_user_ids))).all()
+        }
+        rows = []
+        for record in records:
+            user = users.get(int(record.get("user_id") or 0))
+            employee_file = getattr(user, "employee_file", None) if user else None
+            display_lines = _departure_display_lines([record])
+            time_range = " | ".join(
+                f"{line['source_label']}: {line['time_range']}"
+                for line in display_lines
+            )
+            if not time_range:
+                time_range = _departure_time_range_label(
+                    record.get("from_dt"),
+                    record.get("to_dt"),
+                )
+
+            approval_status = str(record.get("approval_status") or "APPROVED").upper()
+            if approval_status in {"SUBMITTED", "PENDING"}:
+                status = "قيد الاعتماد"
+            elif not record.get("complete"):
+                status = "غير مكتملة"
+            elif record.get("source") in {"SYSTEM", "CLOCK_SYSTEM"}:
+                status = "معتمدة"
+            else:
+                status = "مسجلة"
+
+            rows.append({
+                "date": record.get("day") or day_text,
+                "employee_no": getattr(employee_file, "employee_no", "") or "",
+                "name": _employee_label(user) if user else f"المستخدم #{record.get('user_id')}",
+                "departure_type": record.get("label") or (
+                    "مغادرة رسمية" if record.get("kind") == "OFFICIAL" else "مغادرة شخصية"
+                ),
+                "permission_name": record.get("permission_name") or "",
+                "source": _departure_source_label(record.get("source")),
+                "time_range": time_range,
+                "minutes": int(record.get("display_minutes") or 0),
+                "status": status,
+            })
+
+        return sorted(
+            rows,
+            key=lambda row: (
+                row.get("name") or "",
+                row.get("date") or "",
+                row.get("time_range") or "",
+            ),
+        )
+    except Exception:
+        # A report email must remain useful on installations that are midway
+        # through an HR schema upgrade.  Attendance rows can still be sent if
+        # the optional departures reconciliation is unavailable.
+        db.session.rollback()
+        return []
+
+
 def build_attendance_report_data(report_day: date) -> dict[str, Any]:
     overall, late_rows, absence_rows = _load_attendance_rows(report_day)
+    departures = _load_departure_rows(report_day, overall)
     return {
         "report_day": report_day,
         "overall": overall,
         "late": late_rows,
         "absence": absence_rows,
+        "departures": departures,
     }
 
 
@@ -655,6 +795,17 @@ def _attachments(data: dict[str, Any]) -> list[tuple[str, str, bytes]]:
     overall_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "الحالة", "أول دخول", "آخر خروج", "دقائق التأخير", "ساعات العمل", "ملاحظة"]
     delay_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "وقت الدخول", "مدة التأخير (دقيقة)", "مدة التأخير (ساعات)"]
     absence_headers = ["التاريخ", "الرقم الوظيفي", "الموظف", "الحالة", "أول دخول", "آخر خروج"]
+    departure_headers = [
+        "التاريخ",
+        "الرقم الوظيفي",
+        "الموظف",
+        "نوع المغادرة",
+        "نوع الطلب",
+        "المصدر",
+        "مصدر وأوقات المغادرة",
+        "المدة (دقيقة)",
+        "الحالة",
+    ]
     overall_rows = [
         [row["date"], row["employee_no"], row["name"], row["status"], row["first_in"], row["last_out"], row["late_minutes"], round(row["work_minutes"] / 60, 2), row["note"]]
         for row in data["overall"]
@@ -667,10 +818,25 @@ def _attachments(data: dict[str, Any]) -> list[tuple[str, str, bytes]]:
         [row["date"], row["employee_no"], row["name"], row["status"], row["first_in"], row["last_out"]]
         for row in data["absence"]
     ]
+    departure_rows = [
+        [
+            row["date"],
+            row["employee_no"],
+            row["name"],
+            row["departure_type"],
+            row["permission_name"],
+            row["source"],
+            row["time_range"],
+            row["minutes"],
+            row["status"],
+        ]
+        for row in data.get("departures", [])
+    ]
     return [
         (f"attendance_daily_{report_day}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", _xlsx_bytes("تقرير الدوام اليومي", overall_headers, overall_rows, "2F5597", report_day)),
         (f"attendance_morning_delay_{report_day}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", _xlsx_bytes("تقرير التأخير الصباحي", delay_headers, delay_rows, "BF7E00", report_day)),
         (f"attendance_absence_without_leave_{report_day}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", _xlsx_bytes("تقرير الغياب دون إجازة", absence_headers, absence_rows, "B42318", report_day)),
+        (f"attendance_departures_{report_day}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", _xlsx_bytes("قائمة المغادرات", departure_headers, departure_rows, "2F7D6D", report_day)),
     ]
 
 
@@ -691,10 +857,14 @@ def _html_table(rows: list[dict], columns: list[tuple[str, str]]) -> str:
 def build_email_content(data: dict[str, Any]) -> tuple[str, str, str]:
     report_day = data["report_day"].isoformat()
     subject = f"{REPORT_NAME} — {report_day}"
+    scheduled_time = str(data.get("scheduled_time") or "").strip()
+    if scheduled_time:
+        subject += f" — {scheduled_time}"
     sections = [
         ("تقرير الدوام اليومي العام", "#2F5597", data["overall"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("status", "الحالة"), ("first_in", "أول دخول"), ("last_out", "آخر خروج"), ("late_minutes", "التأخير (دقيقة)")]),
         ("تقرير التأخير الصباحي", "#BF7E00", data["late"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("first_in", "وقت الدخول"), ("late_minutes", "مدة التأخير (دقيقة)")]),
         ("تقرير الغياب دون إجازة عبر مسار", "#B42318", data["absence"], [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("status", "الحالة")]),
+        ("قائمة المغادرات", "#2F7D6D", data.get("departures", []), [("employee_no", "الرقم الوظيفي"), ("name", "الموظف"), ("departure_type", "نوع المغادرة"), ("permission_name", "نوع الطلب"), ("source", "المصدر"), ("time_range", "مصدر وأوقات المغادرة"), ("minutes", "المدة (دقيقة)"), ("status", "الحالة")]),
     ]
     html_sections = []
     text_sections = []
@@ -708,7 +878,9 @@ def build_email_content(data: dict[str, Any]) -> tuple[str, str, str]:
     html_body = (
         '<html><body dir="rtl" style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.7">'
         f'<div style="max-width:1100px;margin:auto"><h2 style="margin-bottom:4px;color:#5a4a86">{escape(REPORT_NAME)}</h2>'
-        f'<p style="margin-top:0;color:#6b7280">تاريخ التقرير: {escape(report_day)}</p>'
+        f'<p style="margin-top:0;color:#6b7280">تاريخ التقرير: {escape(report_day)}'
+        + (f" — وقت الإرسال: {escape(scheduled_time)}" if scheduled_time else "")
+        + "</p>"
         + "".join(html_sections)
         + '<p style="font-size:12px;color:#6b7280">هذه رسالة آلية من نظام مسار.</p></div></body></html>'
     )
@@ -756,35 +928,40 @@ def _recipients(config: dict[str, Any]) -> list[str]:
     return sorted({email.strip() for email in result if email}, key=str.casefold)
 
 
-def run_attendance_report_email_cycle(now: datetime | None = None, *, force: bool = False) -> dict[str, Any]:
-    """Send one due attendance report email, returning a small run summary."""
-    config = get_report_email_config()
-    local_now = now or datetime.now(app_timezone())
-    if local_now.tzinfo is None:
-        local_now = local_now.replace(tzinfo=app_timezone())
-    if not force and not config["enabled"]:
-        return {"status": "disabled"}
-    if not force:
-        configured_time = _parse_hhmm(config["send_time"]) or dt_time(9, 30)
-        if local_now.time().replace(second=0, microsecond=0) < configured_time:
-            return {"status": "not_due"}
-        if not _schedule_is_due(local_now.date(), config) or _send_day_is_excluded(local_now.date(), config):
-            return {"status": "excluded"}
+def _configured_send_times(config: dict[str, Any]) -> list[dt_time]:
+    values = _parse_hhmm_list(config.get("send_times_list") or config.get("send_times"))
+    if values:
+        return values
+    return [_parse_hhmm(config.get("send_time")) or dt_time(9, 30)]
 
+
+def _run_attendance_report_email_slot(
+    local_now: datetime,
+    config: dict[str, Any],
+    scheduled_time: dt_time,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Send one idempotent day/time slot of the attendance report."""
     run_date = local_now.date().isoformat()
+    scheduled_time_text = scheduled_time.strftime("%H:%M")
     report_day = _report_day(local_now, config)
-    delivery = HRAttendanceEmailReportDelivery.query.filter_by(run_date=run_date).first()
+    delivery = HRAttendanceEmailReportDelivery.query.filter_by(
+        run_date=run_date,
+        scheduled_time=scheduled_time_text,
+    ).first()
     if delivery and delivery.status == "SENT":
-        return {"status": "already_sent", "run_date": run_date}
+        return {"status": "already_sent", "run_date": run_date, "scheduled_time": scheduled_time_text}
     if delivery and delivery.status == "SENDING":
         age = datetime.utcnow() - (delivery.updated_at or delivery.created_at or datetime.utcnow())
         if age < timedelta(minutes=10):
-            return {"status": "in_progress", "run_date": run_date}
+            return {"status": "in_progress", "run_date": run_date, "scheduled_time": scheduled_time_text}
     if delivery and int(delivery.attempt_count or 0) >= MAX_RETRY_ATTEMPTS and not force:
-        return {"status": "retry_limit", "run_date": run_date}
+        return {"status": "retry_limit", "run_date": run_date, "scheduled_time": scheduled_time_text}
     if delivery is None:
         delivery = HRAttendanceEmailReportDelivery(
             run_date=run_date,
+            scheduled_time=scheduled_time_text,
             report_day=report_day.isoformat(),
             status="SENDING",
             attempt_count=0,
@@ -792,15 +969,19 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
         db.session.add(delivery)
     else:
         delivery.report_day = report_day.isoformat()
+        delivery.scheduled_time = scheduled_time_text
         delivery.status = "SENDING"
         delivery.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception:
         db.session.rollback()
-        existing = HRAttendanceEmailReportDelivery.query.filter_by(run_date=run_date).first()
+        existing = HRAttendanceEmailReportDelivery.query.filter_by(
+            run_date=run_date,
+            scheduled_time=scheduled_time_text,
+        ).first()
         if existing and existing.status in {"SENT", "SENDING"}:
-            return {"status": "in_progress", "run_date": run_date}
+            return {"status": "in_progress", "run_date": run_date, "scheduled_time": scheduled_time_text}
         raise
 
     try:
@@ -813,6 +994,7 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
         if not mail_config.get("ready"):
             raise RuntimeError("إعدادات SMTP غير مكتملة أو البريد غير مفعّل.")
         data = build_attendance_report_data(report_day)
+        data["scheduled_time"] = scheduled_time_text
         subject, text_body, html_body = build_email_content(data)
         _send_email(mail_config, recipients, subject, text_body, html_body, _attachments(data))
         delivery.status = "SENT"
@@ -821,17 +1003,83 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
         delivery.last_error = None
         delivery.updated_at = datetime.utcnow()
         db.session.commit()
-        return {"status": "sent", "run_date": run_date, "report_day": report_day.isoformat(), "recipients": len(recipients), "counts": {"overall": len(data["overall"]), "late": len(data["late"]), "absence": len(data["absence"])} }
+        return {
+            "status": "sent",
+            "run_date": run_date,
+            "scheduled_time": scheduled_time_text,
+            "report_day": report_day.isoformat(),
+            "recipients": len(recipients),
+            "counts": {
+                "overall": len(data["overall"]),
+                "late": len(data["late"]),
+                "absence": len(data["absence"]),
+                "departures": len(data.get("departures", [])),
+            },
+        }
     except Exception as exc:
         db.session.rollback()
-        delivery = HRAttendanceEmailReportDelivery.query.filter_by(run_date=run_date).first()
+        delivery = HRAttendanceEmailReportDelivery.query.filter_by(
+            run_date=run_date,
+            scheduled_time=scheduled_time_text,
+        ).first()
         if delivery:
             delivery.status = "FAILED"
             delivery.attempt_count = int(delivery.attempt_count or 0) + 1
             delivery.last_error = str(exc)[:2000]
             delivery.updated_at = datetime.utcnow()
             db.session.commit()
-        return {"status": "failed", "run_date": run_date, "error": str(exc)[:500]}
+        return {
+            "status": "failed",
+            "run_date": run_date,
+            "scheduled_time": scheduled_time_text,
+            "error": str(exc)[:500],
+        }
+
+
+def run_attendance_report_email_cycle(now: datetime | None = None, *, force: bool = False) -> dict[str, Any]:
+    """Send every due attendance-report time slot for the current day."""
+    config = get_report_email_config()
+    local_now = now or datetime.now(app_timezone())
+    if local_now.tzinfo is None:
+        local_now = local_now.replace(tzinfo=app_timezone())
+    if not force and not config["enabled"]:
+        return {"status": "disabled"}
+
+    configured_times = _configured_send_times(config)
+    if force:
+        due_times = configured_times[:1]
+    else:
+        current_time = local_now.time().replace(second=0, microsecond=0)
+        if current_time < configured_times[0]:
+            return {"status": "not_due"}
+        if not _schedule_is_due(local_now.date(), config) or _send_day_is_excluded(local_now.date(), config):
+            return {"status": "excluded"}
+        due_times = [scheduled_time for scheduled_time in configured_times if scheduled_time <= current_time]
+
+    results = [
+        _run_attendance_report_email_slot(local_now, config, scheduled_time, force=force)
+        for scheduled_time in due_times
+    ]
+    if len(results) == 1:
+        return results[0]
+
+    sent_results = [result for result in results if result.get("status") == "sent"]
+    failed_results = [result for result in results if result.get("status") == "failed"]
+    if sent_results:
+        status = "sent"
+    elif failed_results:
+        status = "failed"
+    elif results and all(result.get("status") == "already_sent" for result in results):
+        status = "already_sent"
+    else:
+        status = "in_progress"
+    return {
+        "status": status,
+        "run_date": local_now.date().isoformat(),
+        "scheduled_times": [scheduled_time.strftime("%H:%M") for scheduled_time in due_times],
+        "runs": results,
+        "sent_slots": [result.get("scheduled_time") for result in sent_results],
+    }
 
 
 def test_send_attendance_report_email() -> dict[str, Any]:

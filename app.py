@@ -357,6 +357,151 @@ def _ensure_runtime_schema():
                         return False
                 return False
 
+            def _ensure_attendance_email_delivery_slots() -> bool:
+                """Upgrade the legacy one-delivery-per-day table in place.
+
+                The first attendance-email release enforced UNIQUE(run_date).
+                Existing SQLite installations need a small table rebuild so
+                they can safely store one idempotency row per day and send
+                time.  Fresh databases are already created from the current
+                model and only need the normal index checks below.
+                """
+                table = "hr_attendance_email_report_delivery"
+                temporary_table = "hr_attendance_email_report_delivery__slot_upgrade"
+                if not _col_exists(table, "id"):
+                    return True
+
+                if not _col_exists(table, "scheduled_time"):
+                    if not _add_column_retry(
+                        table,
+                        "scheduled_time",
+                        "TEXT NOT NULL DEFAULT '09:30'",
+                    ):
+                        return False
+
+                try:
+                    index_rows = db.session.execute(
+                        text(f"PRAGMA index_list({table})")
+                    ).all()
+                    unique_signatures = []
+                    for index_row in index_rows:
+                        if not bool(index_row[2]):
+                            continue
+                        index_name = index_row[1]
+                        index_columns = tuple(
+                            row[2]
+                            for row in db.session.execute(
+                                text(f"PRAGMA index_info({index_name})")
+                            ).all()
+                        )
+                        unique_signatures.append(index_columns)
+
+                    has_slot_unique = ("run_date", "scheduled_time") in unique_signatures
+                    has_legacy_unique = ("run_date",) in unique_signatures
+                    if has_slot_unique and not has_legacy_unique:
+                        db.session.execute(text(
+                            "CREATE INDEX IF NOT EXISTS "
+                            "ix_hr_attendance_email_report_delivery_scheduled_time "
+                            f"ON {table} (scheduled_time)"
+                        ))
+                        db.session.commit()
+                        return True
+
+                    # A legacy UNIQUE(run_date) cannot be dropped from SQLite
+                    # directly.  Recreate the table and preserve every row.
+                    db.session.rollback()
+                    connection = db.engine.raw_connection()
+                    cursor = connection.cursor()
+                    foreign_keys_enabled = int(
+                        cursor.execute("PRAGMA foreign_keys").fetchone()[0] or 0
+                    )
+                    cursor.execute("PRAGMA foreign_keys=OFF")
+                    cursor.execute("BEGIN IMMEDIATE")
+                    cursor.execute(f"DROP TABLE IF EXISTS {temporary_table}")
+                    cursor.execute(f"""
+                        CREATE TABLE {temporary_table} (
+                            id INTEGER NOT NULL PRIMARY KEY,
+                            run_date VARCHAR(10) NOT NULL,
+                            scheduled_time VARCHAR(5) NOT NULL DEFAULT '09:30',
+                            report_day VARCHAR(10) NOT NULL,
+                            status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
+                            attempt_count INTEGER NOT NULL DEFAULT 0,
+                            recipient_count INTEGER NOT NULL DEFAULT 0,
+                            sent_at DATETIME,
+                            last_error TEXT,
+                            created_at DATETIME NOT NULL,
+                            updated_at DATETIME NOT NULL,
+                            CONSTRAINT uq_hr_attendance_email_report_delivery_run_slot
+                                UNIQUE (run_date, scheduled_time)
+                        )
+                    """)
+                    cursor.execute(f"""
+                        INSERT INTO {temporary_table}
+                            (id, run_date, scheduled_time, report_day, status,
+                             attempt_count, recipient_count, sent_at, last_error,
+                             created_at, updated_at)
+                        SELECT id,
+                               run_date,
+                               COALESCE(NULLIF(TRIM(scheduled_time), ''), '09:30'),
+                               report_day,
+                               status,
+                               COALESCE(attempt_count, 0),
+                               COALESCE(recipient_count, 0),
+                               sent_at,
+                               last_error,
+                               created_at,
+                               updated_at
+                          FROM {table}
+                    """)
+                    cursor.execute(f"DROP TABLE {table}")
+                    cursor.execute(f"ALTER TABLE {temporary_table} RENAME TO {table}")
+                    for index_sql in (
+                        "CREATE INDEX IF NOT EXISTS ix_hr_attendance_email_report_delivery_run_date "
+                        f"ON {table} (run_date)",
+                        "CREATE INDEX IF NOT EXISTS ix_hr_attendance_email_report_delivery_scheduled_time "
+                        f"ON {table} (scheduled_time)",
+                        "CREATE INDEX IF NOT EXISTS ix_hr_attendance_email_report_delivery_report_day "
+                        f"ON {table} (report_day)",
+                        "CREATE INDEX IF NOT EXISTS ix_hr_attendance_email_report_delivery_status "
+                        f"ON {table} (status)",
+                        "CREATE INDEX IF NOT EXISTS ix_hr_attendance_email_delivery_status_date "
+                        f"ON {table} (status, run_date, scheduled_time)",
+                        "CREATE INDEX IF NOT EXISTS ix_hr_attendance_email_report_delivery_created_at "
+                        f"ON {table} (created_at)",
+                    ):
+                        cursor.execute(index_sql)
+                    connection.commit()
+                    if foreign_keys_enabled:
+                        cursor.execute("PRAGMA foreign_keys=ON")
+                    return True
+                except Exception:
+                    try:
+                        if "connection" in locals():
+                            connection.rollback()
+                    except Exception:
+                        pass
+                    app.logger.exception(
+                        "Unable to upgrade attendance email delivery slots"
+                    )
+                    return False
+                finally:
+                    try:
+                        if "cursor" in locals() and cursor is not None:
+                            cursor.close()
+                    except Exception:
+                        pass
+                    try:
+                        if "connection" in locals() and connection is not None:
+                            connection.close()
+                    except Exception:
+                        pass
+                    try:
+                        db.session.remove()
+                    except Exception:
+                        pass
+
+            _ensure_attendance_email_delivery_slots()
+
             def _ensure_workflow_quick_endorsement_audiences() -> bool:
                 """Split the legacy shared endorsement table without losing rows.
 

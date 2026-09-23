@@ -6,7 +6,7 @@
   <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
     <div>
       <h4 class="mb-1"><i class="bi bi-envelope-paper text-success"></i> تقارير الدوام للموارد البشرية</h4>
-      <p class="text-muted mb-0">إرسال تقرير الحضور العام، والتأخير الصباحي، والغياب دون إجازة عبر رسالة بريد واحدة منظمة.</p>
+      <p class="text-muted mb-0">إرسال تقارير الحضور والتأخير والغياب وقائمة المغادرات في الأوقات المحددة يومياً. يتم استبعاد الموظفين المسجلين في استثناءات تقارير الدوام تلقائياً.</p>
     </div>
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_reports_home') }}"><i class="bi bi-arrow-right"></i> العودة للتقارير</a>
   </div>
@@ -25,9 +25,17 @@
     </div>
 
     <div class="col-12 col-md-4">
-      <label class="form-label fw-bold" for="send_time">ساعة الإرسال</label>
-      <input class="form-control" type="time" id="send_time" name="send_time" value="{{ config.send_time }}" required>
-      <div class="form-text">حسب المنطقة الزمنية للتطبيق: Asia/Jerusalem.</div>
+      <label class="form-label fw-bold" for="sendTimesList">ساعات الإرسال اليومية</label>
+      <div id="sendTimesList" class="d-flex flex-column gap-2">
+        {% for send_time in config.send_times_list %}
+        <div class="send-time-row input-group">
+          <input class="form-control send-time-input" type="time" name="send_times" value="{{ send_time }}" required>
+          <button class="btn btn-outline-danger remove-send-time" type="button" title="حذف الوقت"><i class="bi bi-trash"></i></button>
+        </div>
+        {% endfor %}
+      </div>
+      <button class="btn btn-sm btn-outline-secondary mt-2" type="button" id="addSendTime"><i class="bi bi-plus-circle"></i> إضافة ساعة</button>
+      <div class="form-text">يمكن تحديد أكثر من وقت في اليوم، مثل 09:30 و15:30. حسب المنطقة الزمنية للتطبيق: Asia/Jerusalem.</div>
     </div>
     <div class="col-12 col-md-4">
       <label class="form-label fw-bold" for="report_day_mode">بيانات أي يوم؟</label>
@@ -130,6 +138,33 @@ document.getElementById('recipientSearch')?.addEventListener('input', function (
     item.classList.toggle('d-none', query && !(item.dataset.search || '').includes(query));
   });
 });
+const sendTimesList = document.getElementById('sendTimesList');
+const addSendTime = document.getElementById('addSendTime');
+function syncSendTimeRows() {
+  const rows = sendTimesList ? sendTimesList.querySelectorAll('.send-time-row') : [];
+  rows.forEach(function (row) {
+    const remove = row.querySelector('.remove-send-time');
+    if (remove) remove.disabled = rows.length <= 1;
+  });
+}
+addSendTime?.addEventListener('click', function () {
+  if (!sendTimesList) return;
+  const row = document.createElement('div');
+  row.className = 'send-time-row input-group';
+  row.innerHTML = '<input class="form-control send-time-input" type="time" name="send_times" value="09:30" required>' +
+    '<button class="btn btn-outline-danger remove-send-time" type="button" title="حذف الوقت"><i class="bi bi-trash"></i></button>';
+  sendTimesList.appendChild(row);
+  syncSendTimeRows();
+  row.querySelector('input')?.focus();
+});
+sendTimesList?.addEventListener('click', function (event) {
+  const button = event.target.closest('.remove-send-time');
+  if (!button) return;
+  const rows = sendTimesList.querySelectorAll('.send-time-row');
+  if (rows.length > 1) button.closest('.send-time-row')?.remove();
+  syncSendTimeRows();
+});
+syncSendTimeRows();
 document.getElementById('frequency')?.addEventListener('change', function () {
   const every = this.value === 'EVERY_N_DAYS';
   document.getElementById('interval_days').disabled = !every;

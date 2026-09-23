@@ -4191,14 +4191,16 @@ class HRAttendanceEmailReportDelivery(db.Model):
     """One scheduled HR attendance email run.
 
     The background worker polls once per minute, so a durable row keyed by the
-    local run date is used to make the send idempotent across process restarts.
+    local run date and configured send time is used to make each daily slot
+    idempotent across process restarts.
     A failed run remains retryable without creating duplicate successful rows.
     """
 
     __tablename__ = "hr_attendance_email_report_delivery"
 
     id = db.Column(db.Integer, primary_key=True)
-    run_date = db.Column(db.String(10), nullable=False, unique=True, index=True)
+    run_date = db.Column(db.String(10), nullable=False, index=True)
+    scheduled_time = db.Column(db.String(5), nullable=False, default="09:30", index=True)
     report_day = db.Column(db.String(10), nullable=False, index=True)
     status = db.Column(db.String(20), nullable=False, default="PENDING", index=True)
     attempt_count = db.Column(db.Integer, nullable=False, default=0)
@@ -4209,10 +4211,16 @@ class HRAttendanceEmailReportDelivery(db.Model):
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
+        db.UniqueConstraint(
+            "run_date",
+            "scheduled_time",
+            name="uq_hr_attendance_email_report_delivery_run_slot",
+        ),
         db.Index(
             "ix_hr_attendance_email_delivery_status_date",
             "status",
             "run_date",
+            "scheduled_time",
         ),
     )
 
