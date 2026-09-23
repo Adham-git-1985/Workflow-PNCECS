@@ -182,6 +182,7 @@ from workflow.engine import (
 )
 from services.attendance_delay_workflow import (
     ATTENDANCE_DELAY_RESPONSE_LABEL,
+    archive_delay_workflow_snapshot,
     get_delay_case_for_request,
     is_attendance_delay_workflow,
 )
@@ -2667,6 +2668,32 @@ def _workflow_attachment_context(file_id: int) -> tuple[ArchivedFile, WorkflowRe
     return file, req
 
 
+def _refresh_attendance_delay_justification(
+    file: ArchivedFile,
+    req: WorkflowRequest,
+) -> ArchivedFile:
+    """Regenerate the current justification before it is opened or downloaded."""
+    case = get_delay_case_for_request(getattr(req, "id", None))
+    if not case or not case.employee_responded_at:
+        return file
+    justification_ids = {
+        int(file_id)
+        for file_id in (
+            case.blank_justification_archived_file_id,
+            case.completed_justification_archived_file_id,
+        )
+        if file_id
+    }
+    if int(file.id) not in justification_ids:
+        return file
+    refreshed = archive_delay_workflow_snapshot(req, owner_id=current_user.id)
+    if not refreshed:
+        return file
+    refreshed_file, _ = refreshed
+    db.session.commit()
+    return refreshed_file
+
+
 @workflow_bp.route(
     "/request/<int:request_id>/attachments/<int:attachment_id>/delete",
     methods=["POST"],
@@ -2774,7 +2801,8 @@ def delete_workflow_attachment(request_id: int, attachment_id: int):
 @workflow_bp.route("/attachment/<int:file_id>/download")
 @login_required
 def download_workflow_attachment(file_id):
-    file, _ = _workflow_attachment_context(file_id)
+    file, req = _workflow_attachment_context(file_id)
+    file = _refresh_attendance_delay_justification(file, req)
 
     return send_file(
         file.file_path,
@@ -2859,6 +2887,7 @@ def preview_workflow_attachment(file_id):
     This prevents the UX confusion where "Preview" triggers a download for unsupported types.
     """
     file, req = _workflow_attachment_context(file_id)
+    file = _refresh_attendance_delay_justification(file, req)
 
     mime = _guess_mime_for_file(file)
 

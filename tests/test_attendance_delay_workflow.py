@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 
 from docx import Document
 from flask import Flask
@@ -157,6 +158,9 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         case, request_row = self._start()
         self.assertEqual(ArchivedFile.query.count(), 2)
         self.assertIsNotNone(case.blank_justification_archived_file_id)
+        blank_justification_bytes = Path(
+            case.blank_justification_archived_file.file_path
+        ).read_bytes()
         self.assertEqual(
             RequestAttachment.query.filter_by(request_id=request_row.id).count(),
             2,
@@ -307,6 +311,28 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.assertIn("Delay Employee", signature_text)
         self.assertNotIn("HR Affairs Manager", signature_text)
         self.assertIn("التوقيع: Delay Employee", signature_text)
+
+        # Repair a stale initial copy when a completed justification is downloaded.
+        Path(case.completed_justification_archived_file.file_path).write_bytes(
+            blank_justification_bytes
+        )
+        download = self.client.get(
+            f"/workflow/attachment/{case.completed_justification_archived_file_id}/download"
+        )
+        self.assertEqual(download.status_code, 200)
+        repaired_document = Document(BytesIO(download.data))
+        repaired_text = "\n".join(
+            [paragraph.text for paragraph in repaired_document.paragraphs]
+            + [
+                paragraph.text
+                for table in repaired_document.tables
+                for row in table.rows
+                for cell in row.cells
+                for paragraph in cell.paragraphs
+            ]
+        )
+        self.assertIn("ظرف طارئ", repaired_text)
+        self.assertIn("الاعتماد النهائي", repaired_text)
 
     def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
         self.assertIn(
