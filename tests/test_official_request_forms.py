@@ -3,6 +3,7 @@ from io import BytesIO
 
 import fitz
 from docx import Document
+from lxml import etree
 
 from services.official_request_forms import (
     build_attendance_delay_justification_docx,
@@ -78,6 +79,36 @@ def _assert_valid_docx(content: bytes):
     children = [node.tag.rsplit('}', 1)[-1] for node in anchors[0]]
     assert children[:4] == ['simplePos', 'positionH', 'positionV', 'extent']
     assert children.index('wrapNone') < children.index('docPr')
+
+
+def _assert_rtl_word_direction(content: bytes):
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    with zipfile.ZipFile(BytesIO(content)) as archive:
+        document_root = etree.fromstring(archive.read("word/document.xml"))
+        styles_root = etree.fromstring(archive.read("word/styles.xml"))
+    assert document_root.xpath(
+        ".//w:sectPr/w:bidi[@w:val='1']", namespaces=namespace
+    )
+    assert document_root.xpath(
+        ".//w:sectPr/w:rtlGutter[@w:val='1']", namespaces=namespace
+    )
+    assert not document_root.xpath(
+        ".//w:p[not(w:pPr/w:bidi[@w:val='1'])]", namespaces=namespace
+    )
+    assert not document_root.xpath(
+        ".//w:r[w:t][not(w:rPr/w:rtl[@w:val='1'])]", namespaces=namespace
+    )
+    assert not document_root.xpath(
+        ".//w:tbl[not(w:tblPr/w:bidiVisual[@w:val='1'])]", namespaces=namespace
+    )
+    assert styles_root.xpath(
+        ".//w:docDefaults/w:pPrDefault/w:pPr/w:bidi[@w:val='1']",
+        namespaces=namespace,
+    )
+    assert styles_root.xpath(
+        ".//w:docDefaults/w:rPrDefault/w:rPr/w:rtl[@w:val='1']",
+        namespaces=namespace,
+    )
 
 
 def test_supply_request_generates_printable_pdf_and_word_form():
@@ -207,6 +238,7 @@ def test_attendance_delay_forms_are_editable_rtl_word_documents_with_letterhead(
         assert "التوقيع:" in document_text
         with zipfile.ZipFile(BytesIO(content)) as archive:
             assert "word/media/image1.jpeg" in archive.namelist()
+        _assert_rtl_word_direction(content)
 
     completed_document = Document(BytesIO(build_attendance_delay_justification_docx(completed)))
     completed_text = "\n".join(

@@ -46,6 +46,97 @@ ATTENDANCE_DELAY_DOCX_TITLE_SIZE = 24
 _RESHAPER = arabic_reshaper.ArabicReshaper(configuration={"support_ligatures": False})
 
 
+def _docx_set_boolean_property(parent, name):
+    """Set a Word boolean property explicitly instead of relying on defaults."""
+    element = parent.find(qn(name))
+    if element is None:
+        element = OxmlElement(name)
+        parent.append(element)
+    element.set(qn("w:val"), "1")
+    return element
+
+
+def _docx_set_rtl_defaults(doc):
+    """Make RTL the document-wide direction for generated attendance forms."""
+    styles = doc.styles.element
+    defaults = styles.find(qn("w:docDefaults"))
+    if defaults is None:
+        defaults = OxmlElement("w:docDefaults")
+        styles.insert(0, defaults)
+
+    paragraph_defaults = defaults.find(qn("w:pPrDefault"))
+    if paragraph_defaults is None:
+        paragraph_defaults = OxmlElement("w:pPrDefault")
+        defaults.append(paragraph_defaults)
+    paragraph_properties = paragraph_defaults.find(qn("w:pPr"))
+    if paragraph_properties is None:
+        paragraph_properties = OxmlElement("w:pPr")
+        paragraph_defaults.append(paragraph_properties)
+    _docx_set_boolean_property(paragraph_properties, "w:bidi")
+
+    run_defaults = defaults.find(qn("w:rPrDefault"))
+    if run_defaults is None:
+        run_defaults = OxmlElement("w:rPrDefault")
+        defaults.append(run_defaults)
+    run_properties = run_defaults.find(qn("w:rPr"))
+    if run_properties is None:
+        run_properties = OxmlElement("w:rPr")
+        run_defaults.append(run_properties)
+    _docx_set_boolean_property(run_properties, "w:rtl")
+
+    for section in doc.sections:
+        _docx_set_boolean_property(section._sectPr, "w:bidi")
+        _docx_set_boolean_property(section._sectPr, "w:rtlGutter")
+
+
+def _docx_set_style_rtl(style):
+    style_properties = style._element.find(qn("w:pPr"))
+    if style_properties is None:
+        style_properties = OxmlElement("w:pPr")
+        style._element.append(style_properties)
+    _docx_set_boolean_property(style_properties, "w:bidi")
+
+
+def _docx_finalize_rtl(doc):
+    """Apply RTL to every paragraph, run, and table after the form is built."""
+    stories = [doc._element]
+    for section in doc.sections:
+        stories.extend(
+            (
+                section.header._element,
+                section.first_page_header._element,
+                section.even_page_header._element,
+                section.footer._element,
+                section.first_page_footer._element,
+                section.even_page_footer._element,
+            )
+        )
+
+    seen = set()
+    for story in stories:
+        if id(story) in seen:
+            continue
+        seen.add(id(story))
+        for paragraph in story.iter(qn("w:p")):
+            paragraph_properties = paragraph.find(qn("w:pPr"))
+            if paragraph_properties is None:
+                paragraph_properties = OxmlElement("w:pPr")
+                paragraph.insert(0, paragraph_properties)
+            _docx_set_boolean_property(paragraph_properties, "w:bidi")
+            for run in paragraph.iter(qn("w:r")):
+                run_properties = run.find(qn("w:rPr"))
+                if run_properties is None:
+                    run_properties = OxmlElement("w:rPr")
+                    run.insert(0, run_properties)
+                _docx_set_boolean_property(run_properties, "w:rtl")
+        for table in story.iter(qn("w:tbl")):
+            table_properties = table.find(qn("w:tblPr"))
+            if table_properties is None:
+                table_properties = OxmlElement("w:tblPr")
+                table.insert(0, table_properties)
+            _docx_set_boolean_property(table_properties, "w:bidiVisual")
+
+
 def _plain(value, default=""):
     return str(value if value is not None else "").strip() or default
 
@@ -400,17 +491,13 @@ def _docx_set_run_font(run, *, size=ATTENDANCE_DELAY_DOCX_SIZE, bold=None, color
         rpr.append(size_cs)
     size_cs.set(qn("w:val"), str(int(round(float(size) * 2))))
 
-    rtl = rpr.find(qn("w:rtl"))
-    if rtl is None:
-        rpr.append(OxmlElement("w:rtl"))
+    _docx_set_boolean_property(rpr, "w:rtl")
 
 
 def _docx_set_paragraph_rtl(paragraph, alignment=WD_ALIGN_PARAGRAPH.RIGHT):
     paragraph.alignment = alignment
     ppr = paragraph._p.get_or_add_pPr()
-    bidi = ppr.find(qn("w:bidi"))
-    if bidi is None:
-        ppr.append(OxmlElement("w:bidi"))
+    _docx_set_boolean_property(ppr, "w:bidi")
 
 
 def _docx_add_run(paragraph, text, *, bold=False, size=ATTENDANCE_DELAY_DOCX_SIZE, color="000000"):
@@ -455,9 +542,7 @@ def _docx_set_table_rtl(table):
     table.alignment = WD_TABLE_ALIGNMENT.RIGHT
     table.autofit = False
     tbl_pr = table._tbl.tblPr
-    bidi = tbl_pr.find(qn("w:bidiVisual"))
-    if bidi is None:
-        tbl_pr.append(OxmlElement("w:bidiVisual"))
+    _docx_set_boolean_property(tbl_pr, "w:bidiVisual")
     _docx_set_table_borders(table)
 
 
@@ -698,6 +783,7 @@ def _docx_replace_paragraph_text(paragraph, text, *, size=13):
 def _attendance_delay_docx_base(title, data):
     template = _attendance_delay_letterhead_path()
     doc = Document(str(template)) if template else Document()
+    _docx_set_rtl_defaults(doc)
     body = doc._element.body
     for child in list(body):
         if child.tag != qn("w:sectPr"):
@@ -748,6 +834,7 @@ def _attendance_delay_docx_base(title, data):
     normal._element.rPr.rFonts.set(qn("w:hAnsi"), ATTENDANCE_DELAY_DOCX_FONT)
     normal._element.rPr.rFonts.set(qn("w:eastAsia"), ATTENDANCE_DELAY_DOCX_FONT)
     normal._element.rPr.rFonts.set(qn("w:cs"), ATTENDANCE_DELAY_DOCX_FONT)
+    _docx_set_style_rtl(normal)
     for style_name, size, bold in (
         ("Title", ATTENDANCE_DELAY_DOCX_TITLE_SIZE, True),
         ("Heading 1", ATTENDANCE_DELAY_DOCX_HEADING_SIZE, True),
@@ -766,6 +853,7 @@ def _attendance_delay_docx_base(title, data):
             style._element.rPr.rFonts.set(qn("w:hAnsi"), ATTENDANCE_DELAY_DOCX_FONT)
             style._element.rPr.rFonts.set(qn("w:eastAsia"), ATTENDANCE_DELAY_DOCX_FONT)
             style._element.rPr.rFonts.set(qn("w:cs"), ATTENDANCE_DELAY_DOCX_FONT)
+            _docx_set_style_rtl(style)
         except (AttributeError, ValueError):
             pass
 
@@ -776,6 +864,7 @@ def _attendance_delay_docx_base(title, data):
 
 
 def _docx_save(doc):
+    _docx_finalize_rtl(doc)
     stream = BytesIO()
     doc.save(stream)
     return stream.getvalue()
