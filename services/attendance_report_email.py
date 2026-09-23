@@ -339,6 +339,26 @@ def _time_text(value: datetime | None) -> str:
     return value.strftime("%H:%M") if value else ""
 
 
+def _attendance_exempt_user_ids() -> set[int]:
+    """Return users excluded from attendance reports when that module exists.
+
+    The exemption feature is deployed independently on some installations.
+    Resolve its model lazily so older deployments keep sending reports, while
+    installations with the HR exemption table automatically honour it.
+    """
+    try:
+        import models as app_models
+
+        exemption_model = getattr(app_models, "HRAttendanceExemption", None)
+        if exemption_model is None:
+            return set()
+        rows = db.session.query(exemption_model.user_id).all()
+        return {int(user_id) for (user_id,) in rows if user_id}
+    except Exception:
+        db.session.rollback()
+        return set()
+
+
 def _schedule_info(user_id: int, day_value: date):
     """Resolve effective schedule without making report delivery depend on UI state."""
     try:
@@ -398,6 +418,9 @@ def _load_attendance_rows(report_day: date) -> tuple[list[dict], list[dict], lis
         .order_by(func.coalesce(EmployeeFile.full_name_quad, User.name, User.email).asc(), User.id.asc())
         .all()
     )
+    exempt_ids = _attendance_exempt_user_ids()
+    if exempt_ids:
+        users = [user for user in users if int(user.id) not in exempt_ids]
     user_ids = [int(user.id) for user in users]
     if not user_ids:
         return [], [], []
