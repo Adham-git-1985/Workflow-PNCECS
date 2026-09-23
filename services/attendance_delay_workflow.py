@@ -280,6 +280,13 @@ def attendance_delay_hr_affairs_manager_user_ids() -> list[int]:
         "HUMAN_RESOURCES_MANAGER",
         "HR_MANAGER",
     )))
+    # In the approved organization chart this responsibility is currently
+    # represented by the manager of the Human Resources Department, without a
+    # separate "HR Affairs Manager" user/role. Keep the final stage usable in
+    # that configuration; a separately configured HR-affairs manager above
+    # always takes precedence.
+    if not ids:
+        ids.update(attendance_delay_hr_department_manager_user_ids())
     return sorted(ids)
 
 
