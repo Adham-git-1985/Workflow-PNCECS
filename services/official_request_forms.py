@@ -45,14 +45,63 @@ ATTENDANCE_DELAY_DOCX_HEADING_SIZE = 20
 ATTENDANCE_DELAY_DOCX_TITLE_SIZE = 24
 _RESHAPER = arabic_reshaper.ArabicReshaper(configuration={"support_ligatures": False})
 
+_DOCX_PPR_ORDER = (
+    "pStyle", "keepNext", "keepLines", "pageBreakBefore", "framePr", "widowControl",
+    "numPr", "suppressLineNumbers", "pBdr", "shd", "tabs", "suppressAutoHyphens",
+    "kinsoku", "wordWrap", "overflowPunct", "topLinePunct", "autoSpaceDE", "autoSpaceDN",
+    "bidi", "adjustRightInd", "snapToGrid", "spacing", "ind", "contextualSpacing",
+    "mirrorIndents", "suppressOverlap", "jc", "textDirection", "textAlignment",
+    "textboxTightWrap", "outlineLvl", "divId", "cnfStyle", "rPr", "sectPr", "pPrChange",
+)
+_DOCX_RPR_ORDER = (
+    "rStyle", "rFonts", "b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike",
+    "outline", "shadow", "emboss", "imprint", "noProof", "snapToGrid", "vanish", "webHidden",
+    "color", "spacing", "w", "kern", "position", "sz", "szCs", "highlight", "u", "effect",
+    "bdr", "shd", "fitText", "vertAlign", "rtl", "cs", "em", "lang", "eastAsianLayout",
+    "specVanish", "oMath",
+)
+_DOCX_TBLPR_ORDER = (
+    "tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize",
+    "tblW", "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar",
+    "tblLook", "tblCaption", "tblDescription", "tblPrChange",
+)
+_DOCX_SECTPR_ORDER = (
+    "footnotePr", "endnotePr", "type", "pgSz", "pgMar", "paperSrc", "pgBorders", "lnNumType",
+    "pgNumType", "cols", "formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi",
+    "rtlGutter", "docGrid", "printerSettings", "sectPrChange",
+)
+
+
+def _docx_local_name(tag):
+    if tag.startswith("w:"):
+        return tag.split(":", 1)[1]
+    return tag.rsplit("}", 1)[-1]
+
 
 def _docx_set_boolean_property(parent, name):
     """Set a Word boolean property explicitly instead of relying on defaults."""
     element = parent.find(qn(name))
     if element is None:
         element = OxmlElement(name)
-        parent.append(element)
+    else:
+        parent.remove(element)
     element.set(qn("w:val"), "1")
+    order = {
+        "pPr": _DOCX_PPR_ORDER,
+        "rPr": _DOCX_RPR_ORDER,
+        "tblPr": _DOCX_TBLPR_ORDER,
+        "sectPr": _DOCX_SECTPR_ORDER,
+    }.get(_docx_local_name(parent.tag))
+    if order and _docx_local_name(name) in order:
+        target_index = order.index(_docx_local_name(name))
+        for index, sibling in enumerate(parent):
+            if _docx_local_name(sibling.tag) in order and order.index(_docx_local_name(sibling.tag)) > target_index:
+                parent.insert(index, element)
+                break
+        else:
+            parent.append(element)
+    else:
+        parent.append(element)
     return element
 
 

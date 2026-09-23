@@ -110,6 +110,18 @@ def _assert_rtl_word_direction(content: bytes):
         ".//w:docDefaults/w:rPrDefault/w:rPr/w:rtl[@w:val='1']",
         namespaces=namespace,
     )
+    for paragraph_properties in document_root.xpath(".//w:p/w:pPr", namespaces=namespace):
+        names = [element.tag.rsplit("}", 1)[-1] for element in paragraph_properties]
+        if "jc" in names:
+            assert names.index("bidi") < names.index("jc")
+    for run_properties in document_root.xpath(".//w:r/w:rPr", namespaces=namespace):
+        names = [element.tag.rsplit("}", 1)[-1] for element in run_properties]
+        if "cs" in names:
+            assert names.index("rtl") < names.index("cs")
+    for table_properties in document_root.xpath(".//w:tbl/w:tblPr", namespaces=namespace):
+        names = [element.tag.rsplit("}", 1)[-1] for element in table_properties]
+        if "tblW" in names:
+            assert names.index("bidiVisual") < names.index("tblW")
 
 
 def test_supply_request_generates_printable_pdf_and_word_form():
