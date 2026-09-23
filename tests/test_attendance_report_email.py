@@ -25,7 +25,7 @@ class AttendanceReportEmailTests(unittest.TestCase):
         self.assertEqual(config["send_times_list"], ["15:30"])
         self.assertEqual(config["send_time"], "15:30")
 
-    def test_due_cycle_runs_each_elapsed_slot_once(self):
+    def test_due_cycle_runs_only_the_current_slot_once(self):
         config = {
             "enabled": True,
             "send_times_list": ["09:30", "15:30"],
@@ -52,9 +52,33 @@ class AttendanceReportEmailTests(unittest.TestCase):
                 datetime(2026, 9, 23, 15, 30)
             )
 
-        self.assertEqual(sent, ["09:30", "15:30"])
+        self.assertEqual(sent, ["15:30"])
         self.assertEqual(result["status"], "sent")
-        self.assertEqual(result["sent_slots"], ["09:30", "15:30"])
+        self.assertEqual(result["scheduled_time"], "15:30")
+
+    def test_cycle_does_not_catch_up_a_missed_slot(self):
+        config = {
+            "enabled": True,
+            "send_times_list": ["09:30", "15:30"],
+            "send_time": "09:30",
+            "frequency": "DAILY",
+            "skip_weekly_holidays": False,
+            "skip_official_holidays": False,
+            "excluded_dates_list": [],
+            "report_day_mode": "TODAY",
+        }
+        with (
+            patch.object(attendance_email, "get_report_email_config", return_value=config),
+            patch.object(attendance_email, "_schedule_is_due", return_value=True),
+            patch.object(attendance_email, "_send_day_is_excluded", return_value=False),
+            patch.object(attendance_email, "_run_attendance_report_email_slot") as send_slot,
+        ):
+            result = attendance_email.run_attendance_report_email_cycle(
+                datetime(2026, 9, 23, 15, 31)
+            )
+
+        self.assertEqual(result["status"], "not_due")
+        send_slot.assert_not_called()
 
     def test_cycle_records_not_due_state_for_diagnostics(self):
         config = {

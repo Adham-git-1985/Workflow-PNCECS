@@ -35,7 +35,7 @@
         {% endfor %}
       </div>
       <button class="btn btn-sm btn-outline-secondary mt-2" type="button" id="addSendTime"><i class="bi bi-plus-circle"></i> إضافة ساعة</button>
-      <div class="form-text">يمكن تحديد أكثر من وقت في اليوم، مثل 09:30 و15:30. حسب المنطقة الزمنية للتطبيق: Asia/Jerusalem.</div>
+      <div class="form-text">يمكن تحديد أكثر من وقت في اليوم، مثل 09:30 و15:30. تتم محاولة الإرسال مرة واحدة فقط في الدقيقة المحددة؛ لا تتم إعادة محاولة الموعد الفائت أو الفاشل. حسب المنطقة الزمنية للتطبيق: Asia/Jerusalem.</div>
     </div>
     <div class="col-12 col-md-4">
       <label class="form-label fw-bold" for="report_day_mode">بيانات أي يوم؟</label>
@@ -134,12 +134,12 @@
     <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
       <div>
         <h5 class="mb-1"><i class="bi bi-clock-history"></i> سجل إرسال تقارير الدوام</h5>
-        <div class="small text-muted">يوضح هذا السجل هل تم تنفيذ كل وقت مجدول، ويعرض سبب الفشل إن وجد.</div>
+        <div class="small text-muted">يوضح هذا السجل هل تم تنفيذ كل وقت مجدول، ويعرض سبب الفشل إن وجد. حالة «تمت المحاولة مسبقاً» تعني أن الموعد لن يُعاد إرساله.</div>
       </div>
       <div class="small text-muted text-end">
         <div>آخر فحص للجدولة: <b>{{ config.scheduler_last_check_at or 'لم يتم الفحص بعد' }}</b></div>
         {% if config.scheduler_last_status %}
-          {% set scheduler_labels = {'SENT':'تم الإرسال', 'ALREADY_SENT':'مرسل سابقاً', 'FAILED':'فشل', 'RETRY_LIMIT':'تجاوز حد المحاولات', 'IN_PROGRESS':'قيد التنفيذ', 'DUE':'موعد مستحق', 'NOT_DUE':'لم يحن الموعد', 'EXCLUDED':'مستثنى', 'DISABLED':'الإرسال معطل', 'ERROR':'خطأ'} %}
+          {% set scheduler_labels = {'SENT':'تم الإرسال', 'ALREADY_SENT':'مرسل سابقاً', 'ALREADY_ATTEMPTED':'تمت المحاولة مسبقاً', 'FAILED':'فشل', 'RETRY_LIMIT':'تجاوز حد المحاولات', 'IN_PROGRESS':'قيد التنفيذ', 'DUE':'موعد مستحق', 'NOT_DUE':'لم يحن الموعد', 'EXCLUDED':'مستثنى', 'DISABLED':'الإرسال معطل', 'ERROR':'خطأ'} %}
           <div>حالة آخر فحص: <b>{{ scheduler_labels.get(config.scheduler_last_status, config.scheduler_last_status) }}</b></div>
         {% endif %}
         {% if config.scheduler_last_error %}
@@ -163,7 +163,7 @@
         </thead>
         <tbody>
           {% for delivery in delivery_history %}
-          {% set delivery_labels = {'SENT':'تم الإرسال', 'SENDING':'قيد الإرسال', 'FAILED':'فاشل', 'PENDING':'معلق'} %}
+          {% set delivery_labels = {'SENT':'تم الإرسال', 'SENDING':'قيد الإرسال', 'FAILED':'فاشل', 'ALREADY_ATTEMPTED':'تمت المحاولة مسبقاً', 'PENDING':'معلق'} %}
           {% set delivery_class = 'text-bg-success' if delivery.status == 'SENT' else ('text-bg-danger' if delivery.status == 'FAILED' else 'text-bg-warning') %}
           <tr>
             <td class="small">{{ delivery.updated_at|local_datetime if delivery.updated_at else (delivery.created_at|local_datetime if delivery.created_at else '—') }}</td>

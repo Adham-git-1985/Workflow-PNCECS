@@ -88,7 +88,6 @@ DEFAULT_CONFIG = {
 APPROVED_LEAVE_STATUSES = {"APPROVED", "CONFIRMED", "APPROVED_BY_MANAGER"}
 PENDING_LEAVE_STATUSES = {"DRAFT", "PENDING", "SUBMITTED", "IN_REVIEW"}
 ATTENDANCE_AUTO_LEAVE_SOURCE = "ATTENDANCE_AUTO"
-MAX_RETRY_ATTEMPTS = 5
 
 
 def _setting(key: str, default: str | None = None) -> str | None:
@@ -990,7 +989,7 @@ def _run_attendance_report_email_slot(
     *,
     force: bool = False,
 ) -> dict[str, Any]:
-    """Send one idempotent day/time slot of the attendance report."""
+    """Attempt one day/time slot once and keep the result as an idempotency marker."""
     run_date = local_now.date().isoformat()
     scheduled_time_text = scheduled_time.strftime("%H:%M")
     report_day = _report_day(local_now, config)
@@ -1000,26 +999,25 @@ def _run_attendance_report_email_slot(
     ).first()
     if delivery and delivery.status == "SENT":
         return {"status": "already_sent", "run_date": run_date, "scheduled_time": scheduled_time_text}
-    if delivery and delivery.status == "SENDING":
-        age = datetime.utcnow() - (delivery.updated_at or delivery.created_at or datetime.utcnow())
-        if age < timedelta(minutes=10):
-            return {"status": "in_progress", "run_date": run_date, "scheduled_time": scheduled_time_text}
-    if delivery and int(delivery.attempt_count or 0) >= MAX_RETRY_ATTEMPTS and not force:
-        return {"status": "retry_limit", "run_date": run_date, "scheduled_time": scheduled_time_text}
+    if delivery:
+        return {
+            "status": "already_attempted",
+            "run_date": run_date,
+            "scheduled_time": scheduled_time_text,
+            "attempt_status": delivery.status,
+            "error": delivery.last_error or "",
+        }
     if delivery is None:
         delivery = HRAttendanceEmailReportDelivery(
             run_date=run_date,
             scheduled_time=scheduled_time_text,
             report_day=report_day.isoformat(),
             status="SENDING",
-            attempt_count=0,
+            # Reserve the slot before contacting SMTP.  A crash or a later
+            # scheduler tick must not turn the same slot into a second attempt.
+            attempt_count=1,
         )
         db.session.add(delivery)
-    else:
-        delivery.report_day = report_day.isoformat()
-        delivery.scheduled_time = scheduled_time_text
-        delivery.status = "SENDING"
-        delivery.updated_at = datetime.utcnow()
     try:
         db.session.commit()
     except Exception:
@@ -1028,8 +1026,14 @@ def _run_attendance_report_email_slot(
             run_date=run_date,
             scheduled_time=scheduled_time_text,
         ).first()
-        if existing and existing.status in {"SENT", "SENDING"}:
-            return {"status": "in_progress", "run_date": run_date, "scheduled_time": scheduled_time_text}
+        if existing:
+            return {
+                "status": "already_sent" if existing.status == "SENT" else "already_attempted",
+                "run_date": run_date,
+                "scheduled_time": scheduled_time_text,
+                "attempt_status": existing.status,
+                "error": existing.last_error or "",
+            }
         raise
 
     try:
@@ -1072,7 +1076,7 @@ def _run_attendance_report_email_slot(
         ).first()
         if delivery:
             delivery.status = "FAILED"
-            delivery.attempt_count = int(delivery.attempt_count or 0) + 1
+            delivery.attempt_count = max(1, int(delivery.attempt_count or 0))
             delivery.last_error = str(exc)[:2000]
             delivery.updated_at = datetime.utcnow()
             db.session.commit()
@@ -1085,7 +1089,7 @@ def _run_attendance_report_email_slot(
 
 
 def run_attendance_report_email_cycle(now: datetime | None = None, *, force: bool = False) -> dict[str, Any]:
-    """Send every due attendance-report time slot for the current day."""
+    """Attempt only the slot whose scheduled minute is now; never catch up or retry."""
     config = get_report_email_config()
     local_now = now or datetime.now(app_timezone())
     if local_now.tzinfo is None:
@@ -1099,13 +1103,13 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
         due_times = configured_times[:1]
     else:
         current_time = local_now.time().replace(second=0, microsecond=0)
-        if current_time < configured_times[0]:
-            _record_scheduler_state(local_now, "NOT_DUE", due_times=configured_times)
-            return {"status": "not_due"}
         if not _schedule_is_due(local_now.date(), config) or _send_day_is_excluded(local_now.date(), config):
             _record_scheduler_state(local_now, "EXCLUDED", due_times=configured_times)
             return {"status": "excluded"}
-        due_times = [scheduled_time for scheduled_time in configured_times if scheduled_time <= current_time]
+        due_times = [scheduled_time for scheduled_time in configured_times if scheduled_time == current_time]
+        if not due_times:
+            _record_scheduler_state(local_now, "NOT_DUE", due_times=configured_times)
+            return {"status": "not_due"}
 
     _record_scheduler_state(local_now, "DUE", due_times=due_times)
     try:
@@ -1134,6 +1138,8 @@ def run_attendance_report_email_cycle(now: datetime | None = None, *, force: boo
         status = "failed"
     elif results and all(result.get("status") == "already_sent" for result in results):
         status = "already_sent"
+    elif results and all(result.get("status") in {"already_sent", "already_attempted"} for result in results):
+        status = "already_attempted"
     else:
         status = "in_progress"
     result = {

@@ -4282,7 +4282,7 @@ class HRAttendanceEmailReportDelivery(db.Model):
     The background worker polls once per minute, so a durable row keyed by the
     local run date and configured send time is used to make each daily slot
     idempotent across process restarts.
-    A failed run remains retryable without creating duplicate successful rows.
+    Once a slot is attempted, including a failed attempt, it is not retried.
     """
 
     __tablename__ = "hr_attendance_email_report_delivery"
