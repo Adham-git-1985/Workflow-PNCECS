@@ -406,6 +406,9 @@ from services.attendance_delay_workflow import (
     ATTENDANCE_DELAY_RESPONSE_LABEL,
     ATTENDANCE_DELAY_WORKFLOW_LABEL,
     archive_generated_pdf,
+    attendance_delay_hr_affairs_manager_user_ids,
+    attendance_delay_hr_department_manager_user_ids,
+    attendance_delay_hr_general_director_user_ids,
     employee_form_data,
     get_delay_case_for_request,
     json_payload,
@@ -8950,9 +8953,24 @@ def hr_attendance_delay_start(summary_id):
     if not manager:
         flash("لا يوجد مدير مباشر مضبوط لهذا الموظف، لذلك لم يبدأ المسار.", "warning")
         return redirect(url_for('portal.hr_report_delay'))
+    hr_department_manager_ids = attendance_delay_hr_department_manager_user_ids()
+    hr_general_director_ids = attendance_delay_hr_general_director_user_ids()
+    hr_affairs_manager_ids = attendance_delay_hr_affairs_manager_user_ids()
     secretary_ids = secretary_general_user_ids()
+    missing_route_roles = []
+    if not hr_department_manager_ids:
+        missing_route_roles.append("مدير دائرة الموارد البشرية")
+    if not hr_general_director_ids:
+        missing_route_roles.append("مدير عام الإدارة العامة للموارد الإدارية والمالية")
     if not secretary_ids:
-        flash("لا يوجد أمين عام مضبوط لمسار الاعتماد النهائي.", "warning")
+        missing_route_roles.append("الأمين العام")
+    if not hr_affairs_manager_ids:
+        missing_route_roles.append("مدير الشؤون البشرية")
+    if missing_route_roles:
+        flash(
+            "لا يمكن بدء مسار التأخير قبل ضبط: " + "، ".join(missing_route_roles) + ".",
+            "warning",
+        )
         return redirect(url_for('portal.hr_report_delay'))
 
     now = datetime.utcnow()
@@ -8983,12 +9001,36 @@ def hr_attendance_delay_start(summary_id):
         },
         {
             "step_order": 3,
+            "mode": "PARALLEL_SYNC",
+            "approver_kind": "USER",
+            "approver_user_id": hr_department_manager_ids[0],
+            "approver_role": "ATTENDANCE_DELAY_HR_PARALLEL",
+            "label": "اعتماد الموارد البشرية: مدير الدائرة والمدير العام",
+            "reason": (
+                "تُحال المعاملة بالتزامن إلى مدير دائرة الموارد البشرية ومدير عام "
+                "الإدارة العامة للموارد الإدارية والمالية، ولا تنتقل إلى المرحلة التالية "
+                "إلا بعد رد الطرفين."
+            ),
+            "sla_days": 1,
+        },
+        {
+            "step_order": 4,
             "mode": "SEQUENTIAL",
             "approver_kind": "USER",
             "approver_user_id": secretary_ids[0],
             "approver_role": "SECRETARY_GENERAL",
             "label": "اعتماد الأمين العام",
-            "reason": "اعتماد الأمين العام هو القرار النهائي لمسار نموذج التأخير عن العمل.",
+            "reason": "اعتماد الأمين العام بعد اكتمال اعتمادَي الموارد البشرية.",
+            "sla_days": 1,
+        },
+        {
+            "step_order": 5,
+            "mode": "SEQUENTIAL",
+            "approver_kind": "USER",
+            "approver_user_id": hr_affairs_manager_ids[0],
+            "approver_role": "HR_AFFAIRS_MANAGER",
+            "label": "اعتماد مدير الشؤون البشرية",
+            "reason": "الاعتماد النهائي من مدير الشؤون البشرية بعد اعتماد الأمين العام.",
             "sla_days": 1,
         },
     ]

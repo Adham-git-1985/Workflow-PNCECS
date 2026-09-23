@@ -210,7 +210,11 @@
       {% if current_step.mode == "PARALLEL_SYNC" %}
       <div class="alert alert-info py-2 mb-3">
         {% if attendance_delay_case %}
-          هذه مرحلة اعتماد نهائية لمسار التأخير؛ اعتماد الأمين العام أو أي رفض ينهي المسار، بينما يُحفظ رد الشؤون البشرية ضمن السجل.
+          {% if current_step.approver_role == "ATTENDANCE_DELAY_HR_PARALLEL" %}
+            هذه مرحلة اعتماد متزامنة للموارد البشرية؛ يجب أن يرد مدير دائرة الموارد البشرية ومدير عام الإدارة العامة للموارد الإدارية والمالية قبل الانتقال إلى الأمين العام.
+          {% else %}
+            هذه مرحلة اعتماد لمسار التأخير؛ يُستكمل المسار حسب ترتيب الاعتمادات الظاهر أدناه، وأي رفض ينهي المسار.
+          {% endif %}
         {% else %}
           هذه خطوة <strong>متزامنة</strong>؛ ردّك هنا للتوثيق ولن يغيّر مسار القرار.
         {% endif %}
@@ -697,7 +701,11 @@
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
           <div>
             <strong>👥 متابعة الخطوة المتزامنة (الخطوة {{ current_step.step_order }})</strong>
-            <div class="small text-muted">الردود للتوثيق ولا تغيّر قرار المسار.</div>
+            {% if attendance_delay_case and current_step.approver_role == "ATTENDANCE_DELAY_HR_PARALLEL" %}
+              <div class="small text-muted">لا ينتقل المسار إلى الأمين العام حتى يرد المسؤولان بالموافقة.</div>
+            {% else %}
+              <div class="small text-muted">الردود للتوثيق ولا تغيّر قرار المسار.</div>
+            {% endif %}
           </div>
           <span class="badge bg-info text-dark">متزامن</span>
         </div>

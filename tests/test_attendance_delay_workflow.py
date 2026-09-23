@@ -23,7 +23,12 @@ from models import (
 from portal import portal_bp
 from workflow import workflow_bp
 from workflow.engine import decide_step
-from services.attendance_delay_workflow import process_pending_delay_response_alerts
+from services.attendance_delay_workflow import (
+    attendance_delay_hr_affairs_manager_user_ids,
+    attendance_delay_hr_department_manager_user_ids,
+    attendance_delay_hr_general_director_user_ids,
+    process_pending_delay_response_alerts,
+)
 from services.hr_request_workflow import secretary_general_user_ids
 
 
@@ -68,6 +73,27 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.client = self.app.test_client()
         self.admin = User(email="delay-admin@example.test", name="Delay Admin", password_hash="x", role="SUPER_ADMIN")
         self.hr = User(email="delay-hr@example.test", name="Delay HR", password_hash="x", role="HR")
+        self.hr_department_manager = User(
+            email="delay-hr-department-manager@example.test",
+            name="HR Department Manager",
+            password_hash="x",
+            role="HR_DEPARTMENT_MANAGER",
+            job_title="مدير دائرة الموارد البشرية",
+        )
+        self.hr_general_director = User(
+            email="delay-hr-general-director@example.test",
+            name="HR General Director",
+            password_hash="x",
+            role="HR_GENERAL_DIRECTOR",
+            job_title="مدير عام الإدارة العامة للموارد الإدارية والمالية",
+        )
+        self.hr_affairs_manager = User(
+            email="delay-hr-affairs-manager@example.test",
+            name="HR Affairs Manager",
+            password_hash="x",
+            role="HR_MANAGER",
+            job_title="مدير الشؤون البشرية",
+        )
         self.secretary = User(
             email="delay-secretary@example.test",
             name="Delay Secretary",
@@ -76,7 +102,16 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         self.manager = User(email="delay-manager@example.test", name="Delay Manager", password_hash="x", role="MANAGER")
         self.employee = User(email="delay-employee@example.test", name="Delay Employee", password_hash="x", role="EMPLOYEE")
-        db.session.add_all((self.admin, self.hr, self.secretary, self.manager, self.employee))
+        db.session.add_all((
+            self.admin,
+            self.hr,
+            self.hr_department_manager,
+            self.hr_general_director,
+            self.hr_affairs_manager,
+            self.secretary,
+            self.manager,
+            self.employee,
+        ))
         db.session.flush()
         db.session.add(
             EmployeeFile(
@@ -115,13 +150,18 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         case = HRAttendanceDelayRequest.query.one()
         return case, case.workflow_request
 
-    def test_employee_response_manager_hr_and_secretary_final_path(self):
+    def test_employee_response_manager_hr_secretary_and_hr_affairs_final_path(self):
         case, request_row = self._start()
         steps = WorkflowInstanceStep.query.filter_by(
             instance_id=request_row.workflow_instance.id,
         ).order_by(WorkflowInstanceStep.step_order.asc()).all()
         self.assertEqual([step.approver_user_id for step in steps[:2]], [self.employee.id, self.manager.id])
-        self.assertEqual(steps[2].mode, "SEQUENTIAL")
+        self.assertEqual(len(steps), 5)
+        self.assertEqual(steps[2].mode, "PARALLEL_SYNC")
+        self.assertEqual(steps[2].approver_role, "ATTENDANCE_DELAY_HR_PARALLEL")
+        self.assertEqual(steps[2].approver_user_id, self.hr_department_manager.id)
+        self.assertEqual(steps[3].approver_user_id, self.secretary.id)
+        self.assertEqual(steps[4].approver_user_id, self.hr_affairs_manager.id)
 
         self._login(self.employee)
         response = self.client.post(
@@ -143,23 +183,73 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         )
         db.session.commit()
         self.assertEqual(request_row.workflow_instance.current_step_order, 3)
-        self.assertEqual(steps[2].approver_role, "SECRETARY_GENERAL")
-        self.assertEqual(steps[2].mode, "SEQUENTIAL")
-        self.assertEqual(steps[2].approver_user_id, self.secretary.id)
-        self.assertEqual(WorkflowStepTask.query.filter_by(step_order=3).count(), 0)
+        self.assertEqual(
+            {
+                task.assignee_user_id
+                for task in WorkflowStepTask.query.filter_by(step_order=3).all()
+            },
+            {self.hr_department_manager.id, self.hr_general_director.id},
+        )
 
         decide_step(
             request_row.id,
             3,
+            self.hr_department_manager.id,
+            "APPROVED",
+            note="موافقة مدير الدائرة",
+            effective_user_id=self.hr_department_manager.id,
+        )
+        db.session.commit()
+        self.assertEqual(request_row.workflow_instance.current_step_order, 3)
+
+        decide_step(
+            request_row.id,
+            3,
+            self.hr_general_director.id,
+            "APPROVED",
+            note="موافقة المدير العام",
+            effective_user_id=self.hr_general_director.id,
+        )
+        db.session.commit()
+        self.assertEqual(request_row.workflow_instance.current_step_order, 4)
+
+        decide_step(
+            request_row.id,
+            4,
             self.secretary.id,
             "APPROVED",
-            note="اعتماد نهائي",
+            note="اعتماد الأمين العام",
             effective_user_id=self.secretary.id,
+        )
+        db.session.commit()
+        self.assertEqual(request_row.workflow_instance.current_step_order, 5)
+
+        decide_step(
+            request_row.id,
+            5,
+            self.hr_affairs_manager.id,
+            "APPROVED",
+            note="الاعتماد النهائي",
+            effective_user_id=self.hr_affairs_manager.id,
         )
         db.session.commit()
         self.assertEqual(request_row.status, "APPROVED")
         self.assertTrue(request_row.workflow_instance.is_completed)
         self.assertEqual(case.final_status, "APPROVED")
+
+    def test_attendance_delay_hr_resolvers_match_the_configured_roles(self):
+        self.assertIn(
+            self.hr_department_manager.id,
+            attendance_delay_hr_department_manager_user_ids(),
+        )
+        self.assertIn(
+            self.hr_general_director.id,
+            attendance_delay_hr_general_director_user_ids(),
+        )
+        self.assertIn(
+            self.hr_affairs_manager.id,
+            attendance_delay_hr_affairs_manager_user_ids(),
+        )
 
     def test_two_hour_alert_is_one_time_and_creates_escalation(self):
         case, request_row = self._start()

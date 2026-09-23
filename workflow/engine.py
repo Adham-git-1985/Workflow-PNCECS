@@ -867,9 +867,10 @@ def resolve_parallel_candidate_user_ids(
         getattr(inst, "template_id", None),
         step.step_order,
     )
-    # Attendance-delay requests have a fixed final review audience: the
-    # Secretary-General only.  The explicit resolver keeps this stable even
-    # when the runtime role label is stored differently in a deployment.
+    # Attendance-delay requests have a fixed audience for each special
+    # parallel stage. The explicit resolver keeps new HR stages deterministic
+    # and also preserves the Secretary-General audience for older in-flight
+    # requests.
     assignees += attendance_delay_parallel_candidate_user_ids(req, step)
     return sorted(filter_confidential_workflow_user_ids(
         req,
@@ -2037,9 +2038,9 @@ def decide_step(
             target_id=task.id,
         ))
 
-        # Attendance-delay final review is completed by the Secretary-General.
-        # Keep the rejection branch for compatibility with older in-flight
-        # requests that may still contain an HR task.
+        # A rejection from an attendance-delay parallel approval is final.
+        # The Secretary-General shortcut is retained for older in-flight
+        # requests whose parallel step predates the HR stage.
         delay_workflow = is_attendance_delay_workflow(req)
         secretary_ids = attendance_delay_secretary_user_ids() if delay_workflow else set()
         if delay_workflow and (

@@ -19,10 +19,15 @@ from extensions import db
 from models import (
     ArchivedFile,
     AuditLog,
+    Department,
+    Directorate,
     HRAttendanceDelayRequest,
     Notification,
+    OrgNodeManager,
+    OrgUnitManager,
     RequestAttachment,
     RequestEscalation,
+    SystemSetting,
     User,
     WorkflowInstance,
     WorkflowInstanceStep,
@@ -40,6 +45,242 @@ from utils.notification_links import notification_target_path
 ATTENDANCE_DELAY_WORKFLOW_LABEL = "نموذج تأخير عن العمل"
 ATTENDANCE_DELAY_RESPONSE_LABEL = "نموذج تبرير غياب / تأخير"
 ATTENDANCE_DELAY_OVERDUE_TYPE = "ATTENDANCE_DELAY_OVERDUE"
+
+
+def _compact_attendance_label(value: str | None) -> str:
+    """Normalize Arabic/English role and organization labels for routing."""
+    text = str(value or "").strip().casefold()
+    for source, target in (
+        ("أ", "ا"),
+        ("إ", "ا"),
+        ("آ", "ا"),
+        ("ى", "ي"),
+        ("ة", "ه"),
+        ("ؤ", "و"),
+        ("ئ", "ي"),
+    ):
+        text = text.replace(source, target)
+    return "".join(character for character in text if character.isalnum())
+
+
+def _attendance_delay_setting_user_ids(keys: Iterable[str]) -> set[int]:
+    """Read optional per-installation overrides without requiring a migration."""
+    result: set[int] = set()
+    try:
+        rows = SystemSetting.query.filter(SystemSetting.key.in_(tuple(keys))).all()
+    except Exception:
+        return result
+
+    for row in rows:
+        raw = (getattr(row, "value", None) or "").strip()
+        if not raw:
+            continue
+        try:
+            decoded = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            decoded = raw.replace(";", ",").split(",")
+        values = decoded if isinstance(decoded, (list, tuple, set)) else [decoded]
+        for value in values:
+            try:
+                user_id = int(value)
+            except (TypeError, ValueError):
+                continue
+            if user_id > 0 and db.session.get(User, user_id) is not None:
+                result.add(user_id)
+    return result
+
+
+def _attendance_delay_profile_user_ids(markers: Iterable[str]) -> set[int]:
+    normalized_markers = tuple(
+        _compact_attendance_label(marker) for marker in markers if marker
+    )
+    if not normalized_markers:
+        return set()
+    result: set[int] = set()
+    try:
+        rows = User.query.with_entities(User.id, User.role, User.job_title).all()
+    except Exception:
+        return result
+    for user_id, role, job_title in rows:
+        role_text = _compact_attendance_label(role)
+        title_text = _compact_attendance_label(job_title)
+        if any(marker in role_text or marker in title_text for marker in normalized_markers):
+            result.add(int(user_id))
+    return result
+
+
+def _attendance_delay_node_manager_ids(
+    label_matcher,
+    *,
+    legacy_unit_types: tuple[str, ...] = (),
+) -> set[int]:
+    """Resolve managers from both the approved dynamic chart and legacy units."""
+    result: set[int] = set()
+    try:
+        for assignment in OrgNodeManager.query.all():
+            node = getattr(assignment, "node", None)
+            node_type = getattr(node, "type", None)
+            labels = (
+                getattr(node, "name_ar", None),
+                getattr(node, "name_en", None),
+                getattr(node, "code", None),
+                getattr(node_type, "name_ar", None),
+                getattr(node_type, "name_en", None),
+                getattr(node_type, "code", None),
+            )
+            if assignment.manager_user_id and label_matcher(*labels):
+                result.add(int(assignment.manager_user_id))
+    except Exception:
+        pass
+
+    if not legacy_unit_types:
+        return result
+    try:
+        assignments = OrgUnitManager.query.filter(
+            OrgUnitManager.unit_type.in_(legacy_unit_types)
+        ).all()
+        for assignment in assignments:
+            unit_type = (assignment.unit_type or "").strip().upper()
+            unit = None
+            if unit_type == "DIRECTORATE":
+                unit = db.session.get(Directorate, assignment.unit_id)
+            elif unit_type == "DEPARTMENT":
+                unit = db.session.get(Department, assignment.unit_id)
+            if assignment.manager_user_id and unit and label_matcher(
+                getattr(unit, "name_ar", None),
+                getattr(unit, "name_en", None),
+                getattr(unit, "code", None),
+            ):
+                result.add(int(assignment.manager_user_id))
+    except Exception:
+        pass
+    return result
+
+
+def _attendance_delay_hr_department_label(*values: str | None) -> bool:
+    text = _compact_attendance_label(" ".join(str(value or "") for value in values))
+    return any(
+        _compact_attendance_label(marker) in text
+        for marker in (
+            "دائرة الموارد البشرية",
+            "دائرة الشؤون البشرية",
+            "human resources department",
+            "hr department",
+        )
+    )
+
+
+def _attendance_delay_hr_general_directorate_label(*values: str | None) -> bool:
+    text = _compact_attendance_label(" ".join(str(value or "") for value in values))
+    is_general = any(
+        _compact_attendance_label(marker) in text
+        for marker in (
+            "الإدارة العامة",
+            "general administration",
+            "general directorate",
+            "general director",
+            "DIR_PLAN_HR_FIN",
+        )
+    )
+    has_resources = "موارد" in text or "resources" in text
+    has_people_or_finance = any(
+        _compact_attendance_label(marker) in text
+        for marker in (
+            "البشرية",
+            "الإدارية",
+            "المالية",
+            "humanresources",
+            "administrative",
+            "financial",
+        )
+    )
+    return bool(
+        is_general
+        and (
+            (has_resources and has_people_or_finance)
+            or ("administrative" in text and "financial" in text)
+            or "dirplanhrfin" in text
+        )
+    )
+
+
+def _attendance_delay_hr_affairs_label(*values: str | None) -> bool:
+    text = _compact_attendance_label(" ".join(str(value or "") for value in values))
+    return any(
+        _compact_attendance_label(marker) in text
+        for marker in (
+            "الشؤون البشرية",
+            "شؤون بشرية",
+            "human resources affairs",
+            "personnel affairs",
+        )
+    )
+
+
+def attendance_delay_hr_department_manager_user_ids() -> list[int]:
+    """Return the manager of the Human Resources Department."""
+    ids = _attendance_delay_setting_user_ids((
+        "HR_ATTENDANCE_DELAY_HR_DEPARTMENT_MANAGER_USER_IDS",
+        "HR_DEPARTMENT_MANAGER_USER_IDS",
+    ))
+    ids.update(_attendance_delay_node_manager_ids(
+        _attendance_delay_hr_department_label,
+        legacy_unit_types=("DEPARTMENT",),
+    ))
+    ids.update(_attendance_delay_profile_user_ids((
+        "مدير دائرة الموارد البشرية",
+        "مدير دائرة الشؤون البشرية",
+        "HR_DEPARTMENT_MANAGER",
+        "HUMAN_RESOURCES_DEPARTMENT_MANAGER",
+        "HR_DIRECTOR",
+        "HUMAN_RESOURCES_DIRECTOR",
+        "PERSONNEL_DIRECTOR",
+    )))
+    return sorted(ids)
+
+
+def attendance_delay_hr_general_director_user_ids() -> list[int]:
+    """Return the general director responsible for administrative/financial HR resources."""
+    ids = _attendance_delay_setting_user_ids((
+        "HR_ATTENDANCE_DELAY_HR_GENERAL_DIRECTOR_USER_IDS",
+        "HR_GENERAL_DIRECTOR_USER_IDS",
+    ))
+    ids.update(_attendance_delay_node_manager_ids(
+        _attendance_delay_hr_general_directorate_label,
+        legacy_unit_types=("DIRECTORATE",),
+    ))
+    ids.update(_attendance_delay_profile_user_ids((
+        "مدير عام الإدارة العامة للموارد الإدارية والمالية",
+        "مدير عام الإدارة العامة للتخطيط والموارد البشرية والمالية",
+        "HR_GENERAL_DIRECTOR",
+        "GENERAL_DIRECTOR_HR",
+        "ADMINISTRATIVE_FINANCIAL_GENERAL_DIRECTOR",
+        "GENERAL_DIRECTOR_ADMINISTRATIVE_FINANCIAL",
+    )))
+    return sorted(ids)
+
+
+def attendance_delay_hr_affairs_manager_user_ids() -> list[int]:
+    """Return the final HR Affairs manager for attendance-delay requests."""
+    ids = _attendance_delay_setting_user_ids((
+        "HR_ATTENDANCE_DELAY_HR_AFFAIRS_MANAGER_USER_IDS",
+        "HR_AFFAIRS_MANAGER_USER_IDS",
+    ))
+    ids.update(_attendance_delay_node_manager_ids(
+        _attendance_delay_hr_affairs_label,
+        legacy_unit_types=("DEPARTMENT", "DIRECTORATE"),
+    ))
+    ids.update(_attendance_delay_profile_user_ids((
+        "مدير الشؤون البشرية",
+        "مدير شؤون الموظفين",
+        "مدير الموارد البشرية",
+        "HR_AFFAIRS_MANAGER",
+        "HUMAN_RESOURCES_AFFAIRS_MANAGER",
+        "PERSONNEL_MANAGER",
+        "HUMAN_RESOURCES_MANAGER",
+        "HR_MANAGER",
+    )))
+    return sorted(ids)
 
 
 def _as_ids(values: Iterable[int | None]) -> set[int]:
@@ -104,9 +345,32 @@ def attendance_delay_parallel_candidate_user_ids(
     req: WorkflowRequest | None,
     step: WorkflowInstanceStep | None = None,
 ) -> list[int]:
-    """Return only the Secretary-General candidates for final review."""
+    """Return the fixed candidates for an attendance-delay parallel step.
+
+    New requests use this hook for the two HR approvals.  The Secretary-General
+    fallback is retained for older in-flight requests created before the HR
+    stage was inserted into the route.
+    """
     if not is_attendance_delay_workflow(req):
         return []
+    if (
+        step
+        and (getattr(step, "approver_role", None) or "").strip().upper()
+        == "ATTENDANCE_DELAY_HR_PARALLEL"
+    ):
+        department_ids = attendance_delay_hr_department_manager_user_ids()
+        general_director_ids = attendance_delay_hr_general_director_user_ids()
+        # The runtime step stores the selected department manager. Resolve the
+        # selected general director in the same deterministic order used by
+        # the start route, so a later directory change cannot add extra tasks.
+        selected_ids = set()
+        if getattr(step, "approver_user_id", None):
+            selected_ids.add(int(step.approver_user_id))
+        if general_director_ids:
+            selected_ids.add(int(general_director_ids[0]))
+        if selected_ids:
+            return sorted(selected_ids)
+        return sorted(set(department_ids[:1] + general_director_ids[:1]))
     return sorted(_as_ids(secretary_general_user_ids()))
 
 
