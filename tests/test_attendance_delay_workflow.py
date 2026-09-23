@@ -313,11 +313,15 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
         self.assertIn("التوقيع: Delay Employee", signature_text)
 
         # Repair a stale initial copy when a completed justification is downloaded.
+        stale_file_id = case.completed_justification_archived_file_id
         Path(case.completed_justification_archived_file.file_path).write_bytes(
             blank_justification_bytes
         )
+        case.completed_justification_archived_file_id = None
+        case.blank_justification_archived_file_id = None
+        db.session.commit()
         download = self.client.get(
-            f"/workflow/attachment/{case.completed_justification_archived_file_id}/download"
+            f"/workflow/attachment/{stale_file_id}/download"
         )
         self.assertEqual(download.status_code, 200)
         repaired_document = Document(BytesIO(download.data))

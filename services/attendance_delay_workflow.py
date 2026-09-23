@@ -863,8 +863,21 @@ def archive_delay_workflow_snapshot(
 ) -> tuple[ArchivedFile, str] | None:
     """Archive one editable, stage-aware Word snapshot after a delay workflow action."""
     case = get_delay_case_for_request(getattr(req, "id", None))
-    if not case or not case.employee_responded_at:
+    if not case:
         return None
+    if not case.employee_responded_at:
+        instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
+        employee_step = (
+            WorkflowInstanceStep.query
+            .filter_by(instance_id=instance.id, step_order=1)
+            .first()
+            if instance else None
+        )
+        if not employee_step or (
+            (getattr(employee_step, "status", None) or "PENDING").strip().upper()
+            == "PENDING"
+        ):
+            return None
     try:
         from services.official_request_forms import (
             build_attendance_delay_justification_docx,

@@ -2674,7 +2674,7 @@ def _refresh_attendance_delay_justification(
 ) -> ArchivedFile:
     """Regenerate the current justification before it is opened or downloaded."""
     case = get_delay_case_for_request(getattr(req, "id", None))
-    if not case or not case.employee_responded_at:
+    if not case:
         return file
     justification_ids = {
         int(file_id)
@@ -2684,7 +2684,34 @@ def _refresh_attendance_delay_justification(
         )
         if file_id
     }
-    if int(file.id) not in justification_ids:
+    generated_justification = (
+        AuditLog.query
+        .filter_by(
+            request_id=req.id,
+            action="WORKFLOW_ATTACHMENT_UPLOADED",
+            target_type="ARCHIVE_FILE",
+            target_id=file.id,
+        )
+        .filter(
+            or_(
+                AuditLog.note.contains("source=ATTENDANCE_DELAY_BLANK_JUSTIFICATION"),
+                AuditLog.note.contains("source=ATTENDANCE_DELAY_WORKFLOW_SNAPSHOT"),
+            )
+        )
+        .first()
+        is not None
+    )
+    filename = (getattr(file, "original_name", None) or "").strip()
+    filename_looks_like_justification = (
+        filename.lower().endswith(".docx")
+        and "تبرير" in filename
+        and ("تأخير" in filename or "غياب" in filename)
+    )
+    if (
+        int(file.id) not in justification_ids
+        and not generated_justification
+        and not filename_looks_like_justification
+    ):
         return file
     refreshed = archive_delay_workflow_snapshot(req, owner_id=current_user.id)
     if not refreshed:
