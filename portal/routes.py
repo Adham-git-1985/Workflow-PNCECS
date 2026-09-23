@@ -53,6 +53,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from utils.perms import perm_required
 from utils.permissions import get_effective_user, is_delegated_identity_selected
 from utils.delegation_privacy import (
+    COMPETENT_AUTHORITY_LABEL,
     audit_display_actor,
     audit_display_note,
     audit_principal,
@@ -16320,7 +16321,7 @@ def _attendance_schedule_update_weekly_workflow():
             )
             notify_attendance_schedule_stakeholders(
                 target_user,
-                f"تم اعتماد ونشر جدول دوام {target_user.full_name} مباشرةً من السوبر أدمن.",
+                f"تم اعتماد ونشر جدول دوام {target_user.full_name} مباشرةً من {COMPETENT_AUTHORITY_LABEL}.",
                 level="SUCCESS",
                 link_url=notification_link,
                 manager=manager,
@@ -16526,7 +16527,7 @@ def _attendance_schedule_update_weekly_workflow():
             if is_super_admin:
                 final_message = (
                     f"تم اعتماد طلب تغيير جدول دوام {target_user.full_name} "
-                    "نهائيًا من السوبر أدمن وأصبح نافذًا."
+                    f"نهائيًا من {COMPETENT_AUTHORITY_LABEL} وأصبح نافذًا."
                 )
             notify_attendance_schedule_stakeholders(
                 target_user,
@@ -16544,7 +16545,7 @@ def _attendance_schedule_update_weekly_workflow():
             plan.status = "REJECTED"
             plan.manager_note = (request.form.get("manager_note") or "").strip()[:4000]
             final_reject_message = (
-                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من السوبر أدمن."
+                f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من {COMPETENT_AUTHORITY_LABEL}."
                 if is_super_admin
                 else f"تم رفض طلب تغيير جدول دوام {target_user.full_name} من الأمين العام."
             )
@@ -16652,7 +16653,7 @@ def hr_work_schedule_super_admin_publish_batch():
         for target_user, plan, manager in published:
             notify_attendance_schedule_stakeholders(
                 target_user,
-                f"تم اعتماد ونشر جدول دوام {target_user.full_name} مباشرةً من السوبر أدمن.",
+                f"تم اعتماد ونشر جدول دوام {target_user.full_name} مباشرةً من {COMPETENT_AUTHORITY_LABEL}.",
                 level="SUCCESS",
                 link_url=url_for(
                     "portal.hr_work_schedule",

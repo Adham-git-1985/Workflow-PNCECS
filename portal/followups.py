@@ -60,6 +60,7 @@ from services.hr_request_workflow import (
     secretary_general_user_ids,
 )
 from utils.file_uploads import clean_original_filename, random_storage_name
+from utils.delegation_privacy import COMPETENT_AUTHORITY_LABEL
 from utils.notification_links import notification_target_path
 from utils.role_codes import canonical_role_key
 
@@ -1577,13 +1578,13 @@ def followups_review(report_id: int):
     report.reviewed_at = now
     if action == "return":
         report.status = "NEEDS_REVISION"
-        actor_label = "السوبر أدمن" if is_super_admin_review else "المدير"
+        actor_label = COMPETENT_AUTHORITY_LABEL if is_super_admin_review else "المدير"
         message = f"تمت إعادة تقرير الإنجاز للتعديل مع ملاحظات {actor_label}."
         flash_message = "تمت إعادة التقرير للموظف للتعديل."
         notification_type = "FOLLOWUP_REVISION"
     else:
         report.status = "REVIEWED"
-        actor_label = "السوبر أدمن" if is_super_admin_review else "المدير"
+        actor_label = COMPETENT_AUTHORITY_LABEL if is_super_admin_review else "المدير"
         message = f"تمت مراجعة تقرير الإنجاز واعتماده إلكترونياً من {actor_label}."
         flash_message = "تمت مراجعة التقرير واعتماده إلكترونياً."
         notification_type = "FOLLOWUP_REVIEWED"
