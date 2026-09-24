@@ -183,6 +183,35 @@ class WorkflowMentionHierarchyTests(unittest.TestCase):
         })
         self.assertEqual(blocked, [])
 
+    def test_admin_and_super_admin_are_outside_the_mention_cycle(self):
+        admin = User(
+            email="mention-admin@example.test",
+            name="Mention Admin",
+            password_hash="not-used-in-test",
+            role="ADMIN",
+        )
+        super_admin = User(
+            email="mention-super-admin@example.test",
+            name="Mention Super Admin",
+            password_hash="not-used-in-test",
+            role="SUPER_ADMIN",
+        )
+        db.session.add_all((admin, super_admin))
+        db.session.flush()
+
+        allowed, blocked = _filter_mention_users_by_hierarchy(
+            self.department_user,
+            [self.lower_user, admin, super_admin],
+        )
+
+        self.assertEqual([user.id for user in allowed], [self.lower_user.id])
+        self.assertEqual(
+            {user.id for user in blocked},
+            {admin.id, super_admin.id},
+        )
+        self.assertFalse(_can_mention_user_by_hierarchy(self.department_user, admin))
+        self.assertFalse(_can_mention_user_by_hierarchy(self.department_user, super_admin))
+
     def test_both_directions_are_allowed_across_the_organisation_chart(self):
         self.assertTrue(
             _can_mention_user_by_hierarchy(self.manager_user, self.department_user)

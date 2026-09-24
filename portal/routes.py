@@ -34059,6 +34059,68 @@ def _attendance_recompute_summaries_for_keys(summary_keys) -> int:
     return count
 
 
+def _attendance_refresh_summaries_after_approved_permissions(attendance_rows) -> int:
+    """Refresh cached summaries that predate an approved Masar departure.
+
+    A daily summary may be created while a departure is still pending.  The
+    approval transition normally recomputes that day, but older records (or a
+    transition completed through a legacy path) can retain the pending-time
+    early-exit value.  Limit this repair to summaries whose cached timestamp
+    is older than an approved permission change; all other attendance rules
+    remain untouched.
+    """
+    rows = [
+        row for row in (attendance_rows or [])
+        if getattr(row, "user_id", None) and getattr(row, "day", None)
+    ]
+    if not rows:
+        return 0
+
+    summary_by_key = {
+        (int(row.user_id), str(row.day)): row
+        for row in rows
+    }
+    user_ids = sorted({key[0] for key in summary_by_key})
+    days = sorted({key[1] for key in summary_by_key})
+    if not user_ids or not days:
+        return 0
+
+    approved_permissions = (
+        HRPermissionRequest.query
+        .filter(HRPermissionRequest.user_id.in_(user_ids))
+        .filter(HRPermissionRequest.day.in_(days))
+        .filter(func.upper(HRPermissionRequest.status) == "APPROVED")
+        .all()
+    )
+    if not approved_permissions:
+        return 0
+
+    latest_permission_change: dict[tuple[int, str], datetime] = {}
+    for permission in approved_permissions:
+        key = (int(permission.user_id), str(permission.day))
+        changed_at = (
+            getattr(permission, "decided_at", None)
+            or getattr(permission, "updated_at", None)
+            or getattr(permission, "created_at", None)
+        )
+        if not changed_at:
+            continue
+        previous = latest_permission_change.get(key)
+        if previous is None or changed_at > previous:
+            latest_permission_change[key] = changed_at
+
+    stale_keys = set()
+    for key, changed_at in latest_permission_change.items():
+        summary = summary_by_key.get(key)
+        computed_at = getattr(summary, "computed_at", None) if summary else None
+        if computed_at is None or changed_at > computed_at:
+            stale_keys.add(key)
+
+    if not stale_keys:
+        return 0
+    return _attendance_recompute_summaries_for_keys(stale_keys)
+
+
 def _sort_and_number_attendance_daily_rows(rows):
     """Group summaries by day and number present employees by first check-in."""
     ordered_rows = list(rows)
@@ -34182,6 +34244,7 @@ def _attendance_daily_dashboard_rows(
         .filter(AttendanceDailySummary.day <= end_day.isoformat())
         .all()
     )
+    _attendance_refresh_summaries_after_approved_permissions(summaries)
     _attach_reconciled_departures(summaries, include_pending=True)
     summary_by_key = {
         (int(summary.user_id), summary.day): summary

@@ -629,12 +629,22 @@ def _complete_mention_task_after_contribution(
 def _can_mention_user_by_hierarchy(actor: User, target: User) -> bool:
     """Return whether a user can be added to a workflow comment.
 
-    A mention is an explicit workflow participant, so it must work for every
-    account type and organisational level.  Confidential workflows still use
-    their separate gate in ``_grant_mention_access``.
+    Administrators are deliberately outside the mention cycle.  They retain
+    their normal administrative visibility and controls, but an ordinary
+    workflow participant must not be able to add an Admin or Super Admin as a
+    mention task/participant.  Confidential workflows still use their
+    separate gate in ``_grant_mention_access``.
     """
     try:
-        return bool(int(actor.id) and int(target.id))
+        if not (int(actor.id) and int(target.id)):
+            return False
+
+        # ``has_role("ADMIN")`` intentionally includes SUPER_ADMIN and also
+        # understands the legacy role aliases.  Check only the target: an
+        # administrator may still mention an ordinary employee when needed.
+        if target.has_role("ADMIN") or target.has_role("SUPER_ADMIN"):
+            return False
+        return True
     except (AttributeError, TypeError, ValueError):
         return False
 

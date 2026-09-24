@@ -32,6 +32,7 @@ from portal.routes import (
     _attendance_daily_without_absences,
     _attendance_absence_candidates,
     _attendance_event_date_range,
+    _attendance_refresh_summaries_after_approved_permissions,
     _hr_can_approve_attendance_edit,
     _hr_can_edit_attendance,
     _summary_compute_one,
@@ -517,6 +518,76 @@ class AttendanceManualEditPermissionTests(unittest.TestCase):
         summary = AttendanceDailySummary.query.filter_by(user_id=employee.id, day="2026-09-14").one()
         self.assertIsNone(summary.last_out)
         self.assertEqual(summary.status, "INCOMPLETE")
+
+    def test_approved_permission_refreshes_a_summary_created_while_pending(self):
+        employee = User(
+            email="approved-after-summary@example.test",
+            name="Approved After Summary",
+            password_hash="x",
+            role="USER",
+        )
+        permission_type = HRPermissionType(
+            code="APPROVED_AFTER_SUMMARY",
+            name_ar="مغادرة شخصية",
+            counts_as_work=False,
+        )
+        db.session.add_all((employee, permission_type))
+        db.session.flush()
+        db.session.add_all((
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 9, 7, 52),
+                event_type="I",
+            ),
+            AttendanceEvent(
+                user_id=employee.id,
+                event_dt=datetime(2026, 9, 9, 13, 3),
+                event_type="O",
+            ),
+            HRPermissionRequest(
+                user_id=employee.id,
+                permission_type_id=permission_type.id,
+                day="2026-09-09",
+                from_time="13:00",
+                to_time="14:45",
+                status="APPROVED",
+                decided_at=datetime(2026, 9, 10, 6, 39),
+                updated_at=datetime(2026, 9, 10, 6, 39),
+            ),
+            AttendanceDailySummary(
+                user_id=employee.id,
+                day="2026-09-09",
+                first_in=datetime(2026, 9, 9, 7, 52),
+                last_out=datetime(2026, 9, 9, 13, 3),
+                work_minutes=311,
+                early_leave_minutes=102,
+                status="OK",
+                computed_at=datetime(2026, 9, 9, 12, 6),
+            ),
+        ))
+        db.session.commit()
+
+        summary = AttendanceDailySummary.query.filter_by(
+            user_id=employee.id,
+            day="2026-09-09",
+        ).one()
+        schedule = SimpleNamespace(
+            id=None,
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+            break_minutes=0,
+            grace_minutes=15,
+            start_grace_minutes=15,
+            end_grace_minutes=15,
+            overtime_threshold_minutes=0,
+        )
+        with patch("portal.routes._effective_schedule_for_user", return_value=schedule):
+            refreshed = _attendance_refresh_summaries_after_approved_permissions([summary])
+
+        self.assertEqual(refreshed, 1)
+        self.assertEqual(summary.early_leave_minutes, 0)
+        self.assertEqual(summary.last_out, datetime(2026, 9, 9, 13, 3))
 
     def test_approved_maternity_departure_does_not_create_early_leave_deduction(self):
         employee = User(email="maternity@example.test", name="Maternity Employee", password_hash="x", role="USER")
