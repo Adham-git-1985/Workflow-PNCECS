@@ -14,6 +14,7 @@ from models import (
     Delegation,
     Directorate,
     EmployeeFile,
+    EmployeeResponsibleAssignment,
     EmployeeSecondment,
     HRLeaveRequest,
     HRLeaveType,
@@ -58,6 +59,7 @@ from services.hr_request_workflow import (
     process_pending_approvals,
     request_ids_user_can_act_on,
     hr_notification_user_ids,
+    initial_approval_candidate_names_map,
     hr_approval_user_ids,
     start_request_flow,
 )
@@ -309,6 +311,63 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
             ).all()
         }
         self.assertFalse(cc_ids)
+
+    def test_leave_escalation_keeps_all_original_manager_names_visible(self):
+        second_manager = User(
+            email="second-manager@example.test",
+            name="Second Manager",
+            password_hash="x",
+            role="dept_head",
+        )
+        db.session.add(second_manager)
+        db.session.flush()
+        db.session.add_all((
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=self.manager.id,
+                reason="Primary manager",
+            ),
+            EmployeeResponsibleAssignment(
+                employee_user_id=self.employee.id,
+                responsible_user_id=second_manager.id,
+                reason="Secondary manager",
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_LEAVE, 1, "VALUE"),
+                value="1",
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_LEAVE, 1, "UNIT"),
+                value=ESCALATION_UNIT_MINUTES,
+            ),
+            SystemSetting(
+                key=escalation_setting_key(KIND_LEAVE, 1, "TARGET"),
+                value=f"USER:{self.general_director.id}",
+            ),
+        ))
+        row = self._leave(self.normal_type)
+        assigned_at = datetime(2026, 9, 8, 8, 0)
+        start_request_flow(KIND_LEAVE, row, now=assigned_at)
+        step = current_step(KIND_LEAVE, row.id)
+
+        self.assertEqual(
+            json.loads(step.initial_approver_user_ids),
+            [self.manager.id, second_manager.id],
+        )
+        self.assertEqual(
+            json.loads(step.approver_user_ids),
+            [self.manager.id, second_manager.id],
+        )
+
+        result = process_pending_approvals(
+            now=assigned_at + timedelta(minutes=1),
+            send_notifications=False,
+        )
+        self.assertEqual(result["escalated"], 1)
+        self.assertEqual(
+            initial_approval_candidate_names_map([step])[step.id],
+            [self.manager.full_name, second_manager.full_name],
+        )
 
     def test_explicit_hr_notification_exemption_keeps_direct_tasks_only(self):
         """An HR member can opt out of broad HR routing without losing a direct task."""

@@ -39,10 +39,11 @@
       {% if step_status == 'APPROVED' %}{% set color = 'success' %}{% endif %}
       {% if step_status == 'REJECTED' %}{% set color = 'danger' %}{% endif %}
       {% if step_status == 'VIEW_ONLY' %}{% set color = 'info' %}{% endif %}
+      {% set current_candidate_names = (approval_candidate_names|default({})).get(step.id, []) %}
+      {% set candidate_names = (initial_approval_candidate_names|default({})).get(step.id, current_candidate_names) %}
       <div class="border rounded-3 p-3 {% if step_status == 'PENDING' %}border-warning bg-warning bg-opacity-10{% endif %}">
         <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
           <div>
-            {% set candidate_names = (approval_candidate_names|default({})).get(step.id, []) %}
             <span class="badge bg-{{ color }} ms-2">{{ flow_state.step_no }}</span>
             <span class="fw-semibold">{{ stage_label(step.stage_code) }}</span>
             {% if candidate_names %}
@@ -81,7 +82,9 @@
         {% if step.escalated_at %}
           <div class="small text-danger mt-2">
             <i class="bi bi-arrow-up-circle"></i>
-            تم التصعيد بتاريخ {{ step.escalated_at|local_datetime }}{% if step.escalated_from_user %} من {{ step.escalated_from_user.full_name }}{% endif %}
+            تم التصعيد بتاريخ {{ step.escalated_at|local_datetime }}
+            {% if candidate_names %}من {{ candidate_names|join('، ') }}{% elif step.escalated_from_user %}من {{ step.escalated_from_user.full_name }}{% endif %}
+            {% if current_candidate_names %} إلى {{ current_candidate_names|join('، ') }}{% endif %}
             — لا يُعد التصعيد اعتمادًا تلقائيًا.
           </div>
         {% endif %}

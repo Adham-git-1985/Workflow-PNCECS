@@ -4001,6 +4001,10 @@ class HRRequestApprovalStep(db.Model):
     # JSON snapshot of parallel user approvers. ``approver_user_id`` remains
     # the first approver for compatibility with legacy reports/screens.
     approver_user_ids = db.Column(db.Text, nullable=True)
+    # Immutable snapshot of the candidates assigned when this stage started.
+    # Escalation changes ``approver_user_ids`` to the current escalation target,
+    # but the original manager list must remain visible in the approval trail.
+    initial_approver_user_ids = db.Column(db.Text, nullable=True)
 
     # WAITING/PENDING/VIEW_ONLY/APPROVED/REJECTED/SKIPPED/CANCELLED
     status = db.Column(db.String(20), nullable=False, default="WAITING", index=True)

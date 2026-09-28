@@ -632,10 +632,76 @@ def _step_approver_ids(step: HRRequestApprovalStep | None) -> list[int]:
     return list(dict.fromkeys(values))
 
 
+def _initial_step_approver_ids(step: HRRequestApprovalStep | None) -> list[int]:
+    """Return the candidates assigned before any timed escalation.
+
+    ``approver_user_ids`` is intentionally mutable: it represents the people
+    who may act now.  Escalation replaces it with the new target, so the
+    immutable snapshot is used for employee-facing history and request lists.
+    Older rows do not have the snapshot.  For an already-escalated direct
+    stage, try to reconstruct the responsible-manager list from the request
+    owner before falling back to the current candidate list.
+    """
+    if not step:
+        return []
+    raw = (getattr(step, "initial_approver_user_ids", None) or "").strip()
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            parsed_values = parsed if isinstance(parsed, list) else [parsed]
+            values = [int(value) for value in parsed_values if value]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = [
+                int(value.strip())
+                for value in raw.split(",")
+                if value.strip().isdigit()
+            ]
+        if values:
+            return list(dict.fromkeys(values))
+    if (
+        (getattr(step, "stage_code", None) or "").upper() == STAGE_DIRECT_MANAGER
+        and _configured_escalation_count(step) > 0
+    ):
+        row = _request(step.request_kind, step.request_id)
+        if row:
+            reconstructed_ids = [
+                int(manager.id)
+                for manager in resolve_responsible_managers(int(row.user_id))
+                if manager and int(manager.id) != int(row.user_id)
+            ]
+            if reconstructed_ids:
+                return list(dict.fromkeys(reconstructed_ids))
+    return _step_approver_ids(step)
+
+
 def approval_candidate_names_map(steps: Iterable[HRRequestApprovalStep]) -> dict[int, list[str]]:
     """Return ordered parallel-approver names keyed by approval-step id."""
     step_rows = [step for step in steps if step and step.id]
     ids_by_step = {int(step.id): _step_approver_ids(step) for step in step_rows}
+    all_ids = {user_id for user_ids in ids_by_step.values() for user_id in user_ids}
+    users_by_id = {
+        int(user.id): user
+        for user in User.query.filter(User.id.in_(all_ids)).all()
+    } if all_ids else {}
+    return {
+        step_id: [
+            users_by_id[user_id].full_name or users_by_id[user_id].email or f"#{user_id}"
+            for user_id in user_ids
+            if user_id in users_by_id
+        ]
+        for step_id, user_ids in ids_by_step.items()
+    }
+
+
+def initial_approval_candidate_names_map(
+    steps: Iterable[HRRequestApprovalStep],
+) -> dict[int, list[str]]:
+    """Return the original candidate names, surviving later escalations."""
+    step_rows = [step for step in steps if step and step.id]
+    ids_by_step = {
+        int(step.id): _initial_step_approver_ids(step)
+        for step in step_rows
+    }
     all_ids = {user_id for user_ids in ids_by_step.values() for user_id in user_ids}
     users_by_id = {
         int(user.id): user
@@ -661,7 +727,7 @@ def direct_approver_names_for_requests(kind: str, request_ids: Iterable[int]) ->
         HRRequestApprovalStep.request_id.in_(normalized_ids),
         HRRequestApprovalStep.stage_code == STAGE_DIRECT_MANAGER,
     ).all()
-    names_by_step = approval_candidate_names_map(steps)
+    names_by_step = initial_approval_candidate_names_map(steps)
     return {int(step.request_id): names_by_step.get(int(step.id), []) for step in steps}
 
 
@@ -1235,6 +1301,9 @@ def start_request_flow(
             approver_scope=approver_scope,
             approver_user_id=approver_user_id,
             approver_user_ids=approver_user_ids,
+            initial_approver_user_ids=(
+                approver_user_ids if stage_code == STAGE_DIRECT_MANAGER else None
+            ),
             status="VIEW_ONLY" if is_view_only else ("PENDING" if active else "WAITING"),
             assigned_at=now if (active or is_view_only) else None,
             due_at=_stage_due_at(kind, stage_code, now) if active and not is_view_only else None,

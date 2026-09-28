@@ -1482,6 +1482,8 @@ def _ensure_runtime_schema():
             # SQLite deployments use this runtime sync in addition to Alembic.
             if not _col_exists("hr_request_approval_step", "approver_user_ids"):
                 _add_column_retry("hr_request_approval_step", "approver_user_ids", "TEXT")
+            if not _col_exists("hr_request_approval_step", "initial_approver_user_ids"):
+                _add_column_retry("hr_request_approval_step", "initial_approver_user_ids", "TEXT")
             if not _col_exists("hr_request_approval_step", "flow_revision"):
                 _add_column_retry("hr_request_approval_step", "flow_revision", "INTEGER NOT NULL DEFAULT 1")
             if _col_exists("hr_request_approval_step", "approver_user_ids"):
@@ -1490,6 +1492,23 @@ def _ensure_runtime_schema():
                         "UPDATE hr_request_approval_step "
                         "SET approver_user_ids='[' || CAST(approver_user_id AS TEXT) || ']' "
                         "WHERE approver_user_ids IS NULL AND approver_user_id IS NOT NULL"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+            if _col_exists("hr_request_approval_step", "initial_approver_user_ids"):
+                try:
+                    # Existing, non-escalated rows already contain the
+                    # original candidate list in approver_user_ids.  Do not
+                    # overwrite rows that have a snapshot or have already
+                    # been escalated; their historical list may no longer be
+                    # reconstructable from the current hierarchy.
+                    db.session.execute(text(
+                        "UPDATE hr_request_approval_step "
+                        "SET initial_approver_user_ids=approver_user_ids "
+                        "WHERE initial_approver_user_ids IS NULL "
+                        "AND COALESCE(escalation_count, 0) = 0 "
+                        "AND approver_user_ids IS NOT NULL"
                     ))
                     db.session.commit()
                 except Exception:
