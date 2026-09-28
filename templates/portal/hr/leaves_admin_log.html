@@ -64,6 +64,7 @@
           <th>المكان</th>
           <th>الحالة</th>
           <th>مدخل بواسطة</th>
+          <th>تاريخ ووقت التقديم</th>
           <th>مرفقات</th>
           <th></th>
         </tr>
@@ -83,6 +84,10 @@
           <td>{{ r.admin_status.name_ar if r.admin_status else '—' }}</td>
           <td>
             {% if r.entered_by=='SELF' %}الموظف{% elif r.entered_by=='ADMIN' %}موظف البرنامج الإداري{% else %}بدون تحديد{% endif %}
+            {% if r.created_by %}<div class="small text-muted">{{ r.created_by.full_name or r.created_by.email }}</div>{% endif %}
+          </td>
+          <td class="small text-muted text-nowrap">
+            {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '—') }}
           </td>
           <td>
             {% if r.attachments %}

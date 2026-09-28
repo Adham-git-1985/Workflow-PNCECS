@@ -1,6 +1,25 @@
 {% if approval_steps %}
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="fw-semibold mb-3"><i class="bi bi-diagram-3"></i> مسار الاعتماد</div>
+  {% set submission_actor = r.created_by if r.created_by else r.user %}
+  {% set submission_at = r.submitted_at if r.submitted_at else r.created_at %}
+  <div class="border rounded-3 p-3 mb-2 bg-light">
+    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+      <div>
+        <span class="badge bg-primary ms-2"><i class="bi bi-send"></i></span>
+        <span class="fw-semibold">تقديم الطلب</span>
+      </div>
+      <span class="badge bg-primary">تم الإرسال</span>
+    </div>
+    <div class="small text-muted mt-2">
+      بواسطة
+      {% if submission_actor %}
+        <strong>{{ submission_actor.full_name or submission_actor.email }}</strong>
+        {% if submission_actor.id == r.user_id %}(صاحب الطلب){% else %}(بالنيابة عن الموظف){% endif %}
+      {% else %}-{% endif %}
+      {% if submission_at %} — {{ submission_at|local_datetime }}{% endif %}
+    </div>
+  </div>
   <div class="d-flex flex-column gap-2">
     {% set flow_state = namespace(value=None, step_no=0) %}
     {% for step in approval_steps %}
@@ -51,19 +70,28 @@
           <div class="small text-muted mt-2">موافقة أحد المسؤولين تكفي لإكمال هذه المرحلة.</div>
         {% endif %}
         {% if step.due_at and step_status == 'PENDING' %}
-          <div class="small text-muted mt-2">مهلة الإجراء حتى {{ step.due_at.strftime('%Y-%m-%d %H:%M') }}</div>
+          <div class="small text-muted mt-2">مهلة الإجراء حتى {{ step.due_at|local_datetime }}</div>
+        {% endif %}
+        {% if step.assigned_at %}
+          <div class="small text-muted mt-2">
+            <i class="bi bi-clock-history"></i>
+            بدأت هذه المرحلة بتاريخ {{ step.assigned_at|local_datetime }}
+          </div>
         {% endif %}
         {% if step.escalated_at %}
           <div class="small text-danger mt-2">
             <i class="bi bi-arrow-up-circle"></i>
-            تم التصعيد{% if step.escalated_from_user %} من {{ step.escalated_from_user.full_name }}{% endif %}
+            تم التصعيد بتاريخ {{ step.escalated_at|local_datetime }}{% if step.escalated_from_user %} من {{ step.escalated_from_user.full_name }}{% endif %}
             — لا يُعد التصعيد اعتمادًا تلقائيًا.
           </div>
         {% endif %}
-        {% if step.decided_by %}
+        {% if step.decided_at %}
           <div class="small text-muted mt-2">
-            القرار بواسطة {{ step.decided_by.full_name }}
-            {% if step.decided_at %}بتاريخ {{ step.decided_at.strftime('%Y-%m-%d %H:%M') }}{% endif %}
+            <i class="bi bi-person-check"></i>
+            {% if step_status == 'APPROVED' %}تم اعتماد المرحلة{% elif step_status == 'REJECTED' %}تم رفض المرحلة{% elif step_status == 'CANCELLED' %}تم إلغاء المرحلة{% else %}تم تنفيذ الحركة{% endif %}
+            بواسطة
+            {% if step.decided_by %}<strong>{{ step.decided_by.full_name or step.decided_by.email }}</strong>{% else %}<strong>النظام</strong>{% endif %}
+            بتاريخ {{ step.decided_at|local_datetime }}
           </div>
         {% endif %}
         {% if step.decision_note %}<div class="small mt-1">{{ step.decision_note }}</div>{% endif %}

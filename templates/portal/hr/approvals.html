@@ -55,7 +55,13 @@
                 {% if st == 'CANCELLED' %}{% set badge = 'secondary' %}{% endif %}
                 <tr>
                   <td class="text-muted">{{ r.id }}</td>
-                  <td class="fw-semibold">{{ r.user.full_name if r.user else '-' }}</td>
+                  <td class="fw-semibold">
+                    {{ r.user.full_name if r.user else '-' }}
+                    <div class="small text-muted fw-normal">
+                      التقديم: {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '-') }}
+                      {% if r.created_by %} — {{ r.created_by.full_name or r.created_by.email }}{% endif %}
+                    </div>
+                  </td>
                   <td>
                     {{ r.leave_type.name_ar if r.leave_type else '-' }}
                     {% if r.leave_place == 'EXTERNAL' or (r.leave_type and r.leave_type.is_external) %}
@@ -121,7 +127,13 @@
                 {% if st == 'CANCELLED' %}{% set badge = 'secondary' %}{% endif %}
                 <tr>
                   <td class="text-muted">{{ r.id }}</td>
-                  <td class="fw-semibold">{{ r.user.full_name if r.user else '-' }}</td>
+                  <td class="fw-semibold">
+                    {{ r.user.full_name if r.user else '-' }}
+                    <div class="small text-muted fw-normal">
+                      التقديم: {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '-') }}
+                      {% if r.created_by %} — {{ r.created_by.full_name or r.created_by.email }}{% endif %}
+                    </div>
+                  </td>
                   <td>{{ r.permission_type.name_ar if r.permission_type else '-' }}</td>
                   <td class="small">{{ r.day }}</td>
                   <td class="small">{{ current_stage_labels.get(('PERMISSION', r.id), '-') }}</td>

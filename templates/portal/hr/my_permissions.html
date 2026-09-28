@@ -41,6 +41,7 @@
               <th>{{ portal_sort_link('إلى', 'to_time') }}</th>
               <th>{{ portal_sort_link('ساعات', 'hours') }}</th>
               <th>الحالة</th>
+              <th>التقديم</th>
               <th>المسؤولون على الهيكلية</th>
               <th style="width: 120px;">إجراءات</th>
             </tr>
@@ -63,6 +64,12 @@
                   {% if revision_count %}<div class="small text-warning mt-1">أُعيد للاعتماد {{ revision_count }} مرة</div>{% endif %}
                 </td>
                 <td><span class="badge bg-{{ badge }}">{{ progress.get('label', 'حالة غير محددة') }}</span></td>
+                <td class="text-muted small text-nowrap">
+                  {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '-') }}
+                  <div>
+                    {% if r.created_by %}{{ r.created_by.full_name or r.created_by.email }}{% elif r.user %}{{ r.user.full_name or r.user.email }}{% else %}-{% endif %}
+                  </div>
+                </td>
                 <td class="text-muted small">
                   {% set approver_names = (permission_approver_names|default({})).get(r.id, []) %}
                   {% if approver_names %}
@@ -102,7 +109,7 @@
               {% if r.decision_note %}
                 <tr>
                   <td></td>
-                  <td colspan="8" class="small text-muted">
+                  <td colspan="9" class="small text-muted">
                     <i class="bi bi-chat-left-text"></i> {{ r.decision_note }}
                   </td>
                 </tr>

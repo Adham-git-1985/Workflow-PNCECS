@@ -49,6 +49,7 @@
               <th>{{ portal_sort_link('إلى', 'end_date') }}</th>
               <th>{{ portal_sort_link('أيام', 'days') }}</th>
               <th>الحالة</th>
+              <th>التقديم</th>
               <th style="width:110px">مرفقات</th>
               <th>المسؤولون على الهيكلية</th>
               <th style="width: 120px;">إجراءات</th>
@@ -73,6 +74,13 @@
                 <td>{{ r.end_date }}</td>
                 <td>{{ r.days or '-' }}</td>
                 <td><span class="badge bg-{{ badge }}">{{ progress.get('label', 'حالة غير محددة') }}</span></td>
+
+                <td class="text-muted small text-nowrap">
+                  {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '-') }}
+                  <div>
+                    {% if r.created_by %}{{ r.created_by.full_name or r.created_by.email }}{% elif r.user %}{{ r.user.full_name or r.user.email }}{% else %}-{% endif %}
+                  </div>
+                </td>
 
                 <td>
                   <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#att{{ r.id }}" aria-expanded="false">
@@ -117,7 +125,7 @@
               </tr>
 
               <tr class="collapse" id="att{{ r.id }}">
-                <td colspan="9">
+                <td colspan="10">
                   <div class="p-2 bg-light rounded">
                     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
                       <div class="fw-semibold">المرفقات</div>
@@ -152,7 +160,7 @@
               {% if r.decision_note %}
                 <tr>
                   <td></td>
-                  <td colspan="8" class="small text-muted">
+                  <td colspan="9" class="small text-muted">
                     <i class="bi bi-chat-left-text"></i> {{ r.decision_note }}
                   </td>
                 </tr>

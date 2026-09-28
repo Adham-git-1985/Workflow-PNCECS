@@ -1107,6 +1107,22 @@ def start_request_flow(
     """
     kind = (kind or "").upper()
     now = now or datetime.utcnow()
+    request_created_at = getattr(row, "created_at", None)
+    submission_at = (
+        request_created_at
+        if isinstance(request_created_at, datetime)
+        else now
+    )
+
+    # Keep the request-level submission event populated even for requests
+    # created before the runtime workflow was introduced.  The approval trail
+    # uses this timestamp and creator as its first movement, so a legacy row
+    # must not appear without a submission date or actor.
+    if getattr(row, "submitted_at", None) is None:
+        row.submitted_at = submission_at
+    if getattr(row, "created_by_id", None) is None:
+        row.created_by_id = getattr(row, "user_id", None)
+
     existing = (
         HRRequestApprovalStep.query
         .filter_by(request_kind=kind, request_id=int(row.id))

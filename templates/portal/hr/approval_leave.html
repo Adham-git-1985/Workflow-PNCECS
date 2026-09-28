@@ -55,6 +55,30 @@
     </div>
 
     <div class="col-12 col-md-6">
+      <div class="text-muted small">تاريخ ووقت التقديم</div>
+      <div class="fw-semibold">{{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '-') }}</div>
+      <div class="small text-muted">
+        بواسطة
+        {% if r.created_by %}{{ r.created_by.full_name or r.created_by.email }}{% elif r.user %}{{ r.user.full_name or r.user.email }}{% else %}-{% endif %}
+        {% if r.created_by and r.created_by.id == r.user_id %}(صاحب الطلب){% elif r.created_by %}(بالنيابة عن الموظف){% endif %}
+      </div>
+    </div>
+    {% if r.decided_at %}
+      <div class="col-12 col-md-6">
+        <div class="text-muted small">آخر قرار</div>
+        <div class="fw-semibold">{{ r.decided_at|local_datetime }}</div>
+        <div class="small text-muted">بواسطة {{ r.decided_by.full_name if r.decided_by else '-' }}</div>
+      </div>
+    {% endif %}
+    {% if st == 'CANCELLED' and r.cancelled_at %}
+      <div class="col-12 col-md-6">
+        <div class="text-muted small">الإلغاء</div>
+        <div class="fw-semibold">{{ r.cancelled_at|local_datetime }}</div>
+        <div class="small text-muted">بواسطة {{ r.cancelled_by_user.full_name if r.cancelled_by_user else '-' }}</div>
+      </div>
+    {% endif %}
+
+    <div class="col-12 col-md-6">
       <div class="text-muted small">نوع الإجازة</div>
       <div class="fw-semibold">
         {{ r.leave_type.name_ar if r.leave_type else '-' }}

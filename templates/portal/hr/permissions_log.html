@@ -110,7 +110,7 @@
           <th>من</th>
           <th>إلى</th>
           <th>الحالة</th>
-          <th>مدخل البيانات</th>
+          <th>التقديم</th>
           <th style="width:120px"></th>
         </tr>
       </thead>
@@ -125,7 +125,10 @@
             <td>{{ r.to_time or '-' }}</td>
             {% set progress = (request_progress|default({})).get(r.id, {}) %}
             <td><span class="badge bg-{{ progress.get('badge', 'secondary') }}">{{ progress.get('label', r.status|ui_label) }}</span></td>
-            <td>{{ users[r.created_by_id].full_name if users.get(r.created_by_id) else r.created_by_id }}</td>
+            <td class="small text-muted text-nowrap">
+              {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '-') }}
+              <div>{{ users[r.created_by_id].full_name if users.get(r.created_by_id) else (r.created_by.full_name if r.created_by else '-') }}</div>
+            </td>
             <td class="text-end">
               <div class="d-flex gap-1 flex-wrap justify-content-end">
                 <a class="btn btn-sm btn-outline-info" href="{{ url_for('portal.hr_approval_permission', req_id=r.id) }}"><i class="bi bi-diagram-3"></i> متابعة الاعتماد</a>
