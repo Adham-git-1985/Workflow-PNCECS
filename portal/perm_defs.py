@@ -92,6 +92,12 @@ PERMS: Dict[str, List[PermDef]] = {
 
         PermDef("HR_REQUESTS_READ", "عرض طلباتي", "عرض طلبات الإجازات/المغادرات الخاصة بالموظف.", module="HR_REQUESTS"),
         PermDef("HR_REQUESTS_CREATE", "تقديم طلبات", "تقديم طلب إجازة/مغادرة من صفحة الموظف.", module="HR_REQUESTS"),
+        PermDef(
+            "HR_APPROVALS_VIEW",
+            "عرض صفحة الموافقات",
+            "فتح صندوق موحّد لمراجعة طلبات الإجازات والمغادرات وتغييرات جدول الدوام وتعديلات الدوام اليومية.",
+            module="HR_REQUESTS",
+        ),
         PermDef("HR_REQUESTS_APPROVE", "اعتماد الطلبات", "اعتماد/رفض طلبات الموظفين (مدير مباشر/HR).", module="HR_REQUESTS"),
         PermDef("HR_REQUESTS_VIEW_ALL", "عرض جميع الطلبات", "عرض كل طلبات الموظفين (HR Admin).", module="HR_REQUESTS"),
         PermDef(

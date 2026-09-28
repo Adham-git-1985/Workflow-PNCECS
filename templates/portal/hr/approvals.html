@@ -6,7 +6,7 @@
   <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
     <div>
       <h4 class="mb-1"><i class="bi bi-check2-square"></i> الموافقات</h4>
-      <div class="text-muted">طلبات الإجازات والمغادرات المرسلة إليك للمراجعة.</div>
+      <div class="text-muted">طلبات الإجازات والمغادرات وتغييرات جدول الدوام وتعديلات الدوام اليومية المرسلة إليك للمراجعة.</div>
     </div>
     <div class="d-flex align-items-center gap-2">
       <form method="get" class="d-flex gap-2">
@@ -168,6 +168,113 @@
         {% endfor %}</tbody>
       </table></div>
       {% else %}<div class="text-muted">لا توجد طلبات.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div>
+          <div class="fw-semibold"><i class="bi bi-calendar2-week"></i> طلبات تغيير جدول الدوام</div>
+          <div class="small text-muted">تظهر هنا طلبات تغيير الجدول الأسبوعي قبل أن تصبح نافذة.</div>
+        </div>
+        <span class="badge text-bg-light">{{ attendance_schedule_reqs|length }}</span>
+      </div>
+      {% if attendance_schedule_reqs %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>#</th><th>الموظف</th><th>الفترة</th><th>الطلب</th><th>الحالة</th><th>الإجراء</th></tr></thead>
+          <tbody>
+          {% for r in attendance_schedule_reqs %}
+            {% set schedule_meta = attendance_schedule_status_meta.get(r.status, attendance_schedule_status_meta.DRAFT) %}
+            {% set stage_label = {'MANAGER':'المدير المباشر','GENERAL_DIRECTOR':'المدير العام','FINAL':'الاعتماد النهائي'}.get(r.review_stage, 'للاطلاع') %}
+            <tr>
+              <td class="text-muted">{{ r.id }}</td>
+              <td class="fw-semibold">
+                {{ r.user.full_name if r.user else r.user_id }}
+                <div class="small text-muted fw-normal">تقديم: {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '—') }}</div>
+              </td>
+              <td class="small">{{ r.period_start }} → {{ r.period_end }}</td>
+              <td class="small">
+                {{ r.employee_note or '—' }}
+                <div class="text-muted mt-1">{{ r.days|length }} أيام مقترحة</div>
+              </td>
+              <td><span class="badge text-bg-{{ schedule_meta.class }}">{{ schedule_meta.label }}</span><div class="small text-muted mt-1">{{ stage_label }}</div></td>
+              <td style="min-width:280px">
+                <a class="btn btn-sm btn-outline-primary mb-2" href="{{ url_for('portal.hr_work_schedule', start=r.period_start, employee_id=r.user_id) }}">فتح تفاصيل الجدول</a>
+                {% if r.review_stage %}
+                <form method="post" action="{{ url_for('portal.hr_work_schedule_update') }}" class="d-flex flex-column gap-2">
+                  <input type="hidden" name="target_user_id" value="{{ r.user_id }}">
+                  <input type="hidden" name="period_start" value="{{ r.period_start }}">
+                  <input type="hidden" name="plan_id" value="{{ r.id }}">
+                  <input class="form-control form-control-sm" type="text" name="manager_note" maxlength="4000" placeholder="ملاحظة الاعتماد أو سبب الرفض">
+                  <div class="d-flex gap-1">
+                    {% if r.review_stage == 'MANAGER' %}
+                      <button class="btn btn-sm btn-success" name="action" value="manager_approve" type="submit">اعتماد</button>
+                      <button class="btn btn-sm btn-outline-danger" name="action" value="manager_reject" type="submit">رفض</button>
+                    {% elif r.review_stage == 'GENERAL_DIRECTOR' %}
+                      <button class="btn btn-sm btn-success" name="action" value="general_director_approve" type="submit">اعتماد</button>
+                      <button class="btn btn-sm btn-outline-danger" name="action" value="general_director_reject" type="submit">رفض</button>
+                    {% elif r.review_stage == 'FINAL' %}
+                      <button class="btn btn-sm btn-success" name="action" value="final_approve" type="submit">اعتماد نهائي</button>
+                      <button class="btn btn-sm btn-outline-danger" name="action" value="final_reject" type="submit">رفض</button>
+                    {% endif %}
+                  </div>
+                </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<div class="text-muted">لا توجد طلبات تغيير جدول بانتظار اعتمادك.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="col-12">
+    <div class="bg-white rounded-3 shadow-sm p-3">
+      <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div>
+          <div class="fw-semibold"><i class="bi bi-pencil-square"></i> تعديلات الدوام اليومية</div>
+          <div class="small text-muted">تشمل طلبات تعديل الحضور أو الانصراف، ولا تؤثر في الملخص قبل الاعتماد النهائي.</div>
+        </div>
+        <span class="badge text-bg-light">{{ attendance_manual_reqs|length }}</span>
+      </div>
+      {% if attendance_manual_reqs %}
+      <div class="table-responsive">
+        <table class="table table-sm align-middle">
+          <thead><tr><th>#</th><th>الموظف</th><th>الفترة</th><th>الحضور / الانصراف</th><th>السبب</th><th>الحالة</th><th>الإجراء</th></tr></thead>
+          <tbody>
+          {% for r in attendance_manual_reqs %}
+            {% set manual_status = (r.approval_status or 'PENDING')|upper %}
+            {% set manual_badge = 'warning' if manual_status == 'PENDING' else ('success' if manual_status == 'APPROVED' else ('danger' if manual_status == 'REJECTED' else 'secondary')) %}
+            <tr>
+              <td class="text-muted">{{ r.id }}</td>
+              <td class="fw-semibold">{{ r.user.full_name if r.user else r.user_id }}<div class="small text-muted fw-normal">{{ r.created_at|local_datetime if r.created_at else '—' }}</div></td>
+              <td class="small">{{ r.day }} → {{ r.day_to or r.day }}</td>
+              <td>{{ r.start_time or '—' }} → {{ r.end_time or '—' }}</td>
+              <td class="small">{{ r.note or '—' }}</td>
+              <td><span class="badge text-bg-{{ manual_badge }}">{{ {'PENDING':'بانتظار الاعتماد','APPROVED':'معتمد','REJECTED':'مرفوض'}.get(manual_status, manual_status) }}</span><div class="small text-muted mt-1">{{ 'الأمين العام' if r.review_stage == 'SECRETARY_GENERAL' else ('الشؤون الإدارية' if r.review_stage == 'HR' else '') }}</div></td>
+              <td style="min-width:260px">
+                {% if r.can_review %}
+                <form method="post" action="{{ url_for('portal.hr_attendance_manual_review', row_id=r.id) }}" class="d-flex flex-column gap-2">
+                  <input class="form-control form-control-sm" type="text" name="approval_note" maxlength="1000" placeholder="ملاحظة الاعتماد أو سبب الرفض">
+                  <div class="d-flex gap-1">
+                    <button class="btn btn-sm btn-success" name="action" value="approve" type="submit">اعتماد</button>
+                    <button class="btn btn-sm btn-outline-danger" name="action" value="reject" type="submit">رفض</button>
+                  </div>
+                </form>
+                {% else %}
+                  <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.hr_attendance_manual_edit', user_id=r.user_id, day=r.day, override_id=r.id) }}">فتح الطلب</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}<div class="text-muted">لا توجد تعديلات دوام يومية بانتظار اعتمادك.</div>{% endif %}
     </div>
   </div>
 </div>

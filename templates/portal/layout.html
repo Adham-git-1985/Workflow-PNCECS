@@ -93,6 +93,7 @@
   or au.has_perm('HR_MASTERDATA_MANAGE')
   or au.has_perm('HR_REQUESTS_READ')
   or au.has_perm('HR_REQUESTS_CREATE')
+  or au.has_perm('HR_APPROVALS_VIEW')
   or au.has_perm('HR_REQUESTS_APPROVE')
   or au.has_perm('HR_REQUESTS_VIEW_ALL')
 )) %}
@@ -106,14 +107,14 @@
   or au.has_perm('TRANSPORT_TRACKING_READ')
   or au.has_perm('TRANSPORT_TRACKING_MANAGE')
 )) %}
-{% set can_approve = _flags.get('can_approve', (au.has_perm('HR_REQUESTS_APPROVE') or au.has_perm('HR_REQUESTS_VIEW_ALL'))) %}
+{% set can_approve = _flags.get('can_approve', (au.has_perm('HR_APPROVALS_VIEW') or au.has_perm('HR_REQUESTS_APPROVE') or au.has_perm('HR_REQUESTS_VIEW_ALL') or au.has_perm('HR_ATTENDANCE_EDIT_APPROVE'))) %}
 
 {# Attendance default target (used in HR dropdown). #}
 {% set att_url = url_for('portal.hr_my_attendance') %}
 {% if can_att and au.has_perm('HR_ATTENDANCE_EDIT') %}
   {% set att_url = url_for('portal.hr_attendance_manual_edit') %}
 {% elif can_att and au.has_perm('HR_ATTENDANCE_EDIT_APPROVE') %}
-  {% set att_url = url_for('portal.hr_attendance_manual_approval_queue') %}
+  {% set att_url = url_for('portal.hr_approvals') %}
 {% elif can_att and au.has_perm('HR_ATTENDANCE_CREATE') %}
   {% set att_url = url_for('portal.hr_attendance_import') %}
 {% endif %}

@@ -472,6 +472,7 @@ HR_MASTERDATA_MANAGE = "HR_MASTERDATA_MANAGE"
 # Employee HR requests (self-service + approvals)
 HR_REQUESTS_READ = "HR_REQUESTS_READ"
 HR_REQUESTS_CREATE = "HR_REQUESTS_CREATE"
+HR_APPROVALS_VIEW = "HR_APPROVALS_VIEW"
 HR_REQUESTS_APPROVE = "HR_REQUESTS_APPROVE"
 HR_REQUESTS_VIEW_ALL = "HR_REQUESTS_VIEW_ALL"
 HR_LEAVE_APPROVED_DELETE = "HR_LEAVE_APPROVED_DELETE"
@@ -920,6 +921,7 @@ def _portal_flags():
         has(HR_MASTERDATA_MANAGE),
         has(HR_REQUESTS_READ),
         has(HR_REQUESTS_CREATE),
+        has(HR_APPROVALS_VIEW),
         has(HR_REQUESTS_APPROVE),
         has(HR_SS_READ),
         has(HR_SS_CREATE),
@@ -958,7 +960,8 @@ def _portal_flags():
     except Exception:
         pass
     can_approve = (
-        has(HR_REQUESTS_APPROVE)
+        has(HR_APPROVALS_VIEW)
+        or has(HR_REQUESTS_APPROVE)
         or has(HR_REQUESTS_VIEW_ALL)
         or has(HR_SS_APPROVE)
         or has(HR_SS_WORKFLOWS_MANAGE)
@@ -1240,6 +1243,8 @@ def _inject_portal_context():
                     len(_current_user_approvable_request_ids(KIND_LEAVE))
                     + len(_current_user_approvable_request_ids(KIND_PERMISSION))
                 )
+            schedule_rows, manual_rows = _attendance_approval_inbox_rows("SUBMITTED")
+            approvals_pending += len(schedule_rows) + len(manual_rows)
         except Exception:
             approvals_pending = 0
 
@@ -7538,6 +7543,7 @@ def hr_home():
     hr_keys = [
         HR_READ,
         HR_SS_READ, HR_SS_CREATE, HR_SS_APPROVE,
+        HR_APPROVALS_VIEW,
         HR_DOCS_READ, HR_DOCS_MANAGE,
         HR_PERF_READ, HR_PERF_SUBMIT, HR_PERF_MANAGE, HR_PERF_EXPORT,
         HR_DISCIPLINE_READ, HR_DISCIPLINE_MANAGE,
@@ -7563,6 +7569,7 @@ def hr_home():
     # إذا كان المستخدم لا يملك أي صلاحيات إدارية في HR، نحوله إلى صفحة "ملفي" داخل HR.
     manage_keys = [
         HR_ATT_CREATE,
+        HR_APPROVALS_VIEW,
         HR_REQUESTS_APPROVE,
         HR_ABSENCE_BOARD_VIEW,
         HR_SS_APPROVE, HR_SS_WORKFLOWS_MANAGE,
@@ -7669,7 +7676,20 @@ def hr_home():
         "لوحة التحكم",
     )
     add_item(HR_LEAVE_BALANCES_MANAGE, "تعبئة أرصدة الإجازات", "تعبئة وتعديل الرصيد الافتتاحي السنوي وتسجيل التصحيحات.", "bi-wallet2", "portal.hr_leave_balances", "الإجازات والمهام")
-    add_item(HR_REQUESTS_APPROVE, "الموافقات", "اعتماد/رفض طلبات الموظفين.", "bi-check2-square", "portal.hr_approvals", "الإجازات والمهام")
+    try:
+        if (
+            current_user.has_perm(HR_APPROVALS_VIEW)
+            or current_user.has_perm(HR_REQUESTS_APPROVE)
+            or current_user.has_perm(HR_ATT_EDIT_APPROVE)
+        ):
+            _sec_map["الإجازات والمهام"].append({
+                "title": "الموافقات",
+                "desc": "مراجعة طلبات الإجازات والمغادرات وتغييرات الدوام.",
+                "icon": "bi-check2-square",
+                "url": url_for("portal.hr_approvals"),
+            })
+    except Exception:
+        pass
     add_item(HR_ACHIEVEMENTS_REVIEW, "اعتماد الإنجازات", "مراجعة إنجازات الموظفين وتحديد مستوى الإنجاز ونقاطه.", "bi-award", "portal.hr_achievements_review_queue", "البرامج الفرعية")
     add_item(
         HR_LEAVE_APPROVED_DELETE,
@@ -13653,7 +13673,7 @@ def hr_attendance_manual_edit():
         row.final_approval_note = None
         db.session.flush()
 
-        approval_url = url_for('portal.hr_attendance_manual_approval_queue')
+        approval_url = url_for('portal.hr_approvals')
         notifier_id = int(getattr(current_user, 'id', 0) or 0)
         for approver_id in _attendance_edit_hr_approver_user_ids():
             if approver_id == notifier_id:
@@ -13799,7 +13819,7 @@ def hr_attendance_manual_review(row_id: int):
         else:
             row.approval_status = 'PENDING'
             row.applied = False
-            approval_url = url_for('portal.hr_attendance_manual_approval_queue')
+            approval_url = url_for('portal.hr_approvals')
             for approver_id in final_approver_ids:
                 if approver_id == int(current_user.id):
                     continue
@@ -20743,22 +20763,229 @@ def hr_permission_request_form(req_id: int, form_format: str):
     return response
 
 
+def _hr_approvals_can_open(user=None) -> bool:
+    """Return whether an account may open the unified HR approvals inbox."""
+    selected_user = user or current_user
+    try:
+        if any(
+            selected_user.has_perm(key)
+            for key in (
+                HR_APPROVALS_VIEW,
+                HR_REQUESTS_APPROVE,
+                HR_REQUESTS_VIEW_ALL,
+                HR_ATT_EDIT_APPROVE,
+                HR_SS_APPROVE,
+                HR_SS_WORKFLOWS_MANAGE,
+            )
+        ):
+            return True
+    except Exception:
+        pass
+    try:
+        selected_user_id = int(selected_user.id)
+        if (
+            selected_user_id in set(administrative_affairs_manager_user_ids())
+            or selected_user_id in set(secretary_general_user_ids())
+        ):
+            return True
+    except Exception:
+        pass
+    try:
+        return bool(
+            request_ids_user_can_act_on(selected_user, KIND_LEAVE)
+            or request_ids_user_can_act_on(selected_user, KIND_PERMISSION)
+        )
+    except Exception:
+        return False
+
+
+def _attendance_schedule_review_stage(
+    plan: HRAttendanceSchedulePlan | None,
+    user=None,
+) -> str | None:
+    """Return the unified-inbox action stage available to ``user`` for a plan."""
+    selected_user = user or current_user
+    if not plan or (getattr(plan, "request_type", None) or "BASELINE").upper() != "CHANGE_REQUEST":
+        return None
+
+    status = (getattr(plan, "status", None) or "").upper()
+    if status not in _ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES:
+        return None
+
+    try:
+        user_id = int(selected_user.id)
+    except (AttributeError, TypeError, ValueError):
+        return None
+
+    if _attendance_schedule_is_super_admin(selected_user):
+        return "FINAL"
+
+    if status == "SUBMITTED":
+        if getattr(plan, "manager_user_id", None) and int(plan.manager_user_id) == user_id:
+            return "MANAGER"
+        try:
+            if int(plan.user_id) in {
+                int(report.id)
+                for report in _attendance_schedule_direct_reports(user_id)
+            }:
+                return "MANAGER"
+        except Exception:
+            pass
+        return None
+
+    if status == "MANAGER_APPROVED":
+        if getattr(plan, "general_director_user_id", None):
+            if (
+                int(plan.general_director_user_id) == user_id
+                and _attendance_schedule_is_general_director(selected_user)
+            ):
+                return "GENERAL_DIRECTOR"
+            return None
+        return "FINAL" if _attendance_schedule_is_final_approver(selected_user) else None
+
+    if status == "GENERAL_DIRECTOR_APPROVED":
+        return "FINAL" if _attendance_schedule_is_final_approver(selected_user) else None
+
+    return None
+
+
+def _attendance_schedule_history_visible(plan: HRAttendanceSchedulePlan, user) -> bool:
+    """Keep non-pending schedule history limited to reviewers and HR viewers."""
+    try:
+        if (
+            user.has_perm(HR_REQUESTS_VIEW_ALL)
+            or _attendance_schedule_is_hr_manager(user)
+        ):
+            return True
+        user_id = int(user.id)
+        return user_id in {
+            int(value)
+            for value in (
+                getattr(plan, "manager_user_id", None),
+                getattr(plan, "manager_approved_by_id", None),
+                getattr(plan, "general_director_user_id", None),
+                getattr(plan, "general_director_approved_by_id", None),
+                getattr(plan, "final_approved_by_id", None),
+                getattr(plan, "updated_by_id", None),
+                getattr(plan, "user_id", None),
+            )
+            if value
+        }
+    except Exception:
+        return False
+
+
+def _manual_attendance_history_visible(row: HRAttendanceSpecialCase, user) -> bool:
+    """Keep completed manual-attendance history relevant to the current user."""
+    try:
+        if user.has_perm(HR_REQUESTS_VIEW_ALL):
+            return True
+        user_id = int(user.id)
+        return user_id in {
+            int(value)
+            for value in (
+                getattr(row, "created_by_id", None),
+                getattr(row, "approved_by_id", None),
+                getattr(row, "final_approved_by_id", None),
+                getattr(row, "user_id", None),
+            )
+            if value
+        }
+    except Exception:
+        return False
+
+
+def _attendance_approval_inbox_rows(
+    status: str = "SUBMITTED",
+    user=None,
+) -> tuple[list[HRAttendanceSchedulePlan], list[HRAttendanceSpecialCase]]:
+    """Load schedule-change and daily-attendance requests for the unified inbox."""
+    selected_user = user or current_user
+    normalized_status = (status or "SUBMITTED").strip().upper()
+    schedule_statuses = {
+        "SUBMITTED": set(_ATTENDANCE_SCHEDULE_FINALIZABLE_STATUSES),
+        "APPROVED": {"FINAL_APPROVED"},
+        "REJECTED": {"REJECTED"},
+        "CANCELLED": {"CANCELLED"},
+    }
+    manual_statuses = {
+        "SUBMITTED": {"PENDING"},
+        "APPROVED": {"APPROVED"},
+        "REJECTED": {"REJECTED"},
+        "CANCELLED": set(),
+    }
+    schedule_query = HRAttendanceSchedulePlan.query.filter(
+        HRAttendanceSchedulePlan.request_type == "CHANGE_REQUEST"
+    )
+    if normalized_status in schedule_statuses:
+        schedule_query = schedule_query.filter(
+            HRAttendanceSchedulePlan.status.in_(schedule_statuses[normalized_status])
+        )
+    schedule_rows = schedule_query.order_by(
+        HRAttendanceSchedulePlan.updated_at.desc(),
+        HRAttendanceSchedulePlan.id.desc(),
+    ).limit(500).all()
+
+    manual_query = HRAttendanceSpecialCase.query.filter(
+        HRAttendanceSpecialCase.kind == "MANUAL_ATTENDANCE"
+    )
+    if normalized_status in manual_statuses:
+        manual_values = manual_statuses[normalized_status]
+        manual_query = (
+            manual_query.filter(HRAttendanceSpecialCase.approval_status.in_(manual_values))
+            if manual_values
+            else manual_query.filter(HRAttendanceSpecialCase.id == -1)
+        )
+    manual_rows = manual_query.order_by(
+        HRAttendanceSpecialCase.created_at.desc(),
+        HRAttendanceSpecialCase.id.desc(),
+    ).limit(500).all()
+
+    visible_schedule_rows = []
+    for plan in schedule_rows:
+        stage = _attendance_schedule_review_stage(plan, selected_user)
+        if normalized_status == "SUBMITTED":
+            if not stage:
+                continue
+        elif not (stage or _attendance_schedule_history_visible(plan, selected_user)):
+            continue
+        plan.review_stage = stage
+        visible_schedule_rows.append(plan)
+
+    visible_manual_rows = []
+    for row in manual_rows:
+        stage = _manual_attendance_review_stage(row)
+        can_act = bool(stage and _can_review_manual_attendance(row, selected_user))
+        if normalized_status == "SUBMITTED":
+            if not can_act:
+                continue
+        elif not (can_act or _manual_attendance_history_visible(row, selected_user)):
+            continue
+        row.review_stage = stage
+        row.can_review = can_act
+        visible_manual_rows.append(row)
+
+    return visible_schedule_rows, visible_manual_rows
+
+
 @portal_bp.route("/hr/approvals")
 @login_required
 @_perm(PORTAL_READ)
 def hr_approvals():
-    """Approvals inbox for managers/HR."""
-    try:
-        if not current_user.has_perm(HR_READ):
-            abort(403)
-    except Exception:
+    """Unified approvals inbox for HR requests and attendance changes."""
+    if not _hr_approvals_can_open(current_user):
         abort(403)
 
     can_view_all = False
     can_approve = False
     try:
         can_view_all = current_user.has_perm(HR_REQUESTS_VIEW_ALL)
-        can_approve = current_user.has_perm(HR_REQUESTS_APPROVE) or can_view_all
+        can_approve = (
+            current_user.has_perm(HR_APPROVALS_VIEW)
+            or current_user.has_perm(HR_REQUESTS_APPROVE)
+            or current_user.has_perm(HR_ATT_EDIT_APPROVE)
+            or can_view_all
+        )
     except Exception:
         pass
 
@@ -20788,14 +21015,20 @@ def hr_approvals():
         or has_request_history
     )
 
-    if not can_approve:
-        abort(403)
-
     status = (request.args.get("status") or "SUBMITTED").upper()
     allowed_status = {"SUBMITTED", "APPROVED", "REJECTED", "CANCELLED", "ALL"}
     if status not in allowed_status:
         status = "SUBMITTED"
     maternity_reqs = _visible_maternity_departures(status)
+    attendance_schedule_reqs, attendance_manual_reqs = _attendance_approval_inbox_rows(status)
+    can_approve = bool(
+        can_approve
+        or attendance_schedule_reqs
+        or attendance_manual_reqs
+        or maternity_reqs
+    )
+    if not can_approve:
+        abort(403)
 
     def _visible_ids(kind: str) -> set[int]:
         if status == "SUBMITTED":
@@ -20852,6 +21085,9 @@ def hr_approvals():
         leave_reqs=leave_reqs,
         perm_reqs=perm_reqs,
         maternity_reqs=maternity_reqs,
+        attendance_schedule_reqs=attendance_schedule_reqs,
+        attendance_manual_reqs=attendance_manual_reqs,
+        attendance_schedule_status_meta=_ATTENDANCE_SCHEDULE_STATUS_META,
         deletable_leave_ids=deletable_leave_ids,
         view_only_leave_ids=view_only_leave_ids,
         current_stage_labels=current_stage_labels,
@@ -39699,7 +39935,7 @@ def _portal_perm_presets_defaults():
         },
         "MANAGER": {
             "label": "مدير",
-            "keys": _with_base([HR_REQUESTS_APPROVE, HR_SS_APPROVE]),
+            "keys": _with_base([HR_APPROVALS_VIEW, HR_REQUESTS_APPROVE, HR_SS_APPROVE]),
         },
         "HR_ADMIN": {
             "label": "HR / Admin",
@@ -39710,7 +39946,7 @@ def _portal_perm_presets_defaults():
                 HR_ORG_READ, HR_ORG_MANAGE,
                 HR_LEAVE_BALANCES_MANAGE,
                 HR_MASTERDATA_MANAGE,
-                HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE, HR_ABSENCE_BOARD_VIEW,
+                HR_APPROVALS_VIEW, HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE, HR_ABSENCE_BOARD_VIEW,
                 HR_SS_WORKFLOWS_MANAGE,
                 HR_DOCS_MANAGE,
                 PORTAL_ADMIN_READ, PORTAL_ADMIN_PERMISSIONS_MANAGE,
@@ -39734,6 +39970,7 @@ def _portal_perm_presets_defaults():
                 PORTAL_MEETINGS_MANAGE,
                 CORR_READ,
                 HR_REQUESTS_APPROVE,
+                HR_APPROVALS_VIEW,
                 HR_REQUESTS_VIEW_ALL,
                 HR_ABSENCE_BOARD_VIEW,
                 HR_SS_APPROVE,

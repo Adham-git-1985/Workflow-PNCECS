@@ -7,6 +7,7 @@
       <h5 class="mb-1"><i class="bi bi-check2-square"></i> اعتماد تعديلات الدوام</h5>
       <div class="text-muted small">يمرّ الطلب بالتسلسل: مدير الشؤون الإدارية ثم الأمين العام. لا يطبّق ولا يظهر كحضور إلا بعد الاعتماد النهائي.</div>
     </div>
+    <a class="btn btn-outline-primary" href="{{ url_for('portal.hr_approvals') }}"><i class="bi bi-inboxes"></i> فتح الموافقات الموحدة</a>
     <a class="btn btn-outline-secondary" href="{{ url_for('portal.hr_att_special_log', kind='MANUAL_ATTENDANCE') }}"><i class="bi bi-list-check"></i> سجل التعديلات</a>
   </div>
 
