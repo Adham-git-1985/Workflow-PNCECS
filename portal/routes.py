@@ -6661,6 +6661,41 @@ def meeting_send_reminder(meeting_id: int):
 # Portal: Notifications (simple inbox)
 # -------------------------
 
+_PORTAL_NOTIFICATION_TICKET_NUMBER_RE = re.compile(
+    r"تذكرة(?:\s+دعم)?[^#]{0,80}#\s*(\d+)",
+    re.IGNORECASE,
+)
+
+
+@portal_bp.route("/notifications/<int:notif_id>/open")
+@login_required
+def portal_open_notification(notif_id):
+    """Mark a portal notification read and open its administrative target."""
+    notification = (
+        Notification.query
+        .filter(Notification.id == notif_id)
+        .filter(Notification.user_id == current_user.id)
+        .filter(Notification.source == "portal")
+        .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.is_visible.is_(True))
+        .first_or_404()
+    )
+
+    if not notification.is_read:
+        notification.is_read = True
+        db.session.commit()
+
+    target_url = safe_local_notification_url(getattr(notification, "link_url", None))
+    if not target_url:
+        ticket_match = _PORTAL_NOTIFICATION_TICKET_NUMBER_RE.search(
+            str(getattr(notification, "message", "") or "")
+        )
+        if ticket_match:
+            target_url = notification_target_path("TROUBLE_TICKET", ticket_match.group(1))
+
+    return redirect(target_url or url_for("portal.portal_notifications"))
+
+
 @portal_bp.route("/notifications", methods=["GET", "POST"])
 @login_required
 def portal_notifications():
@@ -6766,6 +6801,7 @@ def portal_admin_notifications():
             .filter(Notification.id.in_(selected_ids))
             .filter(Notification.user_id == target_user.id)
             .filter(Notification.is_mirror.is_(False))
+            .filter(Notification.source == "portal")
             .filter(Notification.is_visible.is_(True))
             .update({"is_visible": False, "is_read": True}, synchronize_session=False)
         )
@@ -6797,6 +6833,7 @@ def portal_admin_notifications():
         )
         .join(Notification, Notification.user_id == User.id)
         .filter(Notification.is_mirror.is_(False))
+        .filter(Notification.source == "portal")
         .filter(Notification.is_visible.is_(True))
     )
     if q:
@@ -6820,6 +6857,7 @@ def portal_admin_notifications():
             Notification.query
             .filter(Notification.user_id == selected_user.id)
             .filter(Notification.is_mirror.is_(False))
+            .filter(Notification.source == "portal")
             .filter(Notification.is_visible.is_(True))
             .order_by(Notification.created_at.desc(), Notification.id.desc())
             .limit(500)

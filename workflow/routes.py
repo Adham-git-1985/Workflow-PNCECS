@@ -3010,6 +3010,27 @@ _NOTIFICATION_REQUEST_NUMBER_RE = re.compile(r"#\s*(\d+)")
 _NOTIFICATION_TICKET_NUMBER_RE = re.compile(r"تذكرة(?:\s+دعم)?[^#]{0,80}#\s*(\d+)", re.IGNORECASE)
 
 
+def _notification_source(value: str | None, default: str = "workflow") -> str:
+    """Normalize the notification stream scope used by the UI."""
+    source = (value or default or "workflow").strip().lower()
+    return source if source in {"workflow", "portal", "all"} else default
+
+
+def _notification_source_filter(source: str):
+    """Return the SQL filter for one notification source.
+
+    Existing rows created before ``Notification.source`` was introduced have
+    a NULL source.  They are legacy Masar notifications and therefore belong
+    to the workflow inbox.
+    """
+    source = _notification_source(source)
+    if source == "portal":
+        return Notification.source == "portal"
+    if source == "all":
+        return None
+    return or_(Notification.source.is_(None), Notification.source == "workflow")
+
+
 def _notification_target_url(notification: Notification) -> str | None:
     """Resolve a safe destination for new and legacy notification rows."""
     direct_url = safe_local_notification_url(getattr(notification, "link_url", None))
@@ -3039,7 +3060,12 @@ def _notification_target_url(notification: Notification) -> str | None:
 def _notification_open_url(notification: Notification) -> str | None:
     # Always pass through the open endpoint: legacy rows can have no safe
     # destination, but opening them must still clear their unread state.
-    return url_for("workflow.open_notification", notif_id=notification.id)
+    endpoint = (
+        "portal.portal_open_notification"
+        if (getattr(notification, "source", None) or "workflow").strip().lower() == "portal"
+        else "workflow.open_notification"
+    )
+    return url_for(endpoint, notif_id=notification.id)
 
 
 @workflow_bp.route("/notifications")
@@ -3065,8 +3091,9 @@ def notifications():
         .filter(Notification.is_mirror.is_(scope == "sent"))
         .filter(Notification.is_visible.is_(True))
     )
-    if scope == "sent":
-        query = query.filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
+    # The Masar inbox must never list administrative-portal notifications.
+    # Keep NULL as workflow for rows created before source separation existed.
+    query = query.filter(_notification_source_filter("workflow"))
 
     if notif_type:
         query = query.filter(Notification.type == notif_type)
@@ -3097,12 +3124,13 @@ def notifications():
     unread_count = (
         Notification.query
         .filter_by(user_id=current_user.id, is_mirror=False, is_read=False, is_visible=True)
+        .filter(_notification_source_filter("workflow"))
         .count()
     )
     pending_sent_count = (
         Notification.query
         .filter_by(user_id=current_user.id, is_mirror=True, is_read=False, is_visible=True)
-        .filter(or_(Notification.source.is_(None), Notification.source == "workflow"))
+        .filter(_notification_source_filter("workflow"))
         .count()
     )
     notification_links = {
@@ -3137,7 +3165,7 @@ def unread_notifications_count():
         is_mirror=False,
         is_read=False,
         is_visible=True,
-    ).count())
+    ).filter(_notification_source_filter("workflow")).count())
     return jsonify({"count": count})
 
 
@@ -3186,6 +3214,7 @@ def mark_all_notifications_read():
                     Notification.is_mirror.is_(False),
                     Notification.is_read.is_(False),
                     Notification.is_visible.is_(True),
+                    _notification_source_filter("workflow"),
                     Notification.event_key.isnot(None)
                 )
                 .distinct()
@@ -3202,6 +3231,7 @@ def mark_all_notifications_read():
                     Notification.is_mirror.is_(False),
                     Notification.is_read.is_(False),
                     Notification.is_visible.is_(True),
+                    _notification_source_filter("workflow"),
                 )
                 .values(is_read=True)
             )
@@ -3235,6 +3265,7 @@ def mark_notification_read(notif_id):
          .filter(Notification.id == notif_id)
          .filter(Notification.user_id == current_user.id)
          .filter(Notification.is_visible.is_(True))
+         .filter(_notification_source_filter("workflow"))
          .first_or_404())
 
     # Mirror (sent-tracking) notifications are read-only (auto-updated)
@@ -3268,14 +3299,21 @@ def open_notification(notif_id):
 
     target_url = _notification_target_url(notification)
     if not target_url:
-        return redirect(url_for("workflow.notifications"))
+        fallback_endpoint = (
+            "portal.portal_notifications"
+            if (getattr(notification, "source", None) or "workflow").strip().lower() == "portal"
+            else "workflow.notifications"
+        )
+        return redirect(url_for(fallback_endpoint))
     return redirect(target_url)
 
 
-def _notification_state_for_user(user_id: int) -> dict:
-    """Return unified unread counts and the latest notification id."""
+def _notification_state_for_user(user_id: int, source: str = "all") -> dict:
+    """Return unread counts and the latest id for a notification scope."""
+    source = _notification_source(source, default="all")
+    scoped_filter = _notification_source_filter(source)
     unread_by_source: dict[str, int] = {}
-    for source, count in (
+    for row_source, count in (
         db.session.query(
             Notification.source,
             func.count(Notification.id),
@@ -3289,26 +3327,34 @@ def _notification_state_for_user(user_id: int) -> dict:
         .group_by(Notification.source)
         .all()
     ):
-        key = (source or "workflow").strip().lower()
+        key = (row_source or "workflow").strip().lower()
         unread_by_source[key] = unread_by_source.get(key, 0) + int(count or 0)
 
     workflow_unread = unread_by_source.get("workflow", 0)
     portal_unread = unread_by_source.get("portal", 0)
-    latest_id = (
+    latest_query = (
         db.session.query(func.max(Notification.id))
         .filter(
             Notification.user_id == int(user_id),
             Notification.is_mirror.is_(False),
             Notification.is_visible.is_(True),
         )
-        .scalar()
+    )
+    if scoped_filter is not None:
+        latest_query = latest_query.filter(scoped_filter)
+    latest_id = latest_query.scalar()
+    scoped_unread = (
+        workflow_unread + portal_unread
+        if source == "all"
+        else (portal_unread if source == "portal" else workflow_unread)
     )
 
     return {
-        "unread": sum(unread_by_source.values()),
+        "unread": scoped_unread,
         "workflow_unread": workflow_unread,
         "portal_unread": portal_unread,
         "latest_id": int(latest_id) if latest_id is not None else None,
+        "source": source,
     }
 
 
@@ -3330,11 +3376,13 @@ def _notification_payload(notification: Notification, state: dict) -> dict:
 def poll_notifications():
     """JSON fallback for browsers or proxies that cannot use EventSource."""
     after_id = request.args.get("after_id", type=int)
-    state = _notification_state_for_user(current_user.id)
+    source = _notification_source(request.args.get("source"), default="workflow")
+    state = _notification_state_for_user(current_user.id, source=source)
     notifications = []
 
     if after_id is not None and int(state.get("latest_id") or 0) > max(after_id, 0):
-        rows = (
+        source_filter = _notification_source_filter(source)
+        rows_query = (
             Notification.query
             .filter(
                 Notification.user_id == current_user.id,
@@ -3342,10 +3390,10 @@ def poll_notifications():
                 Notification.is_visible.is_(True),
                 Notification.id > max(after_id, 0),
             )
-            .order_by(Notification.id.asc())
-            .limit(50)
-            .all()
         )
+        if source_filter is not None:
+            rows_query = rows_query.filter(source_filter)
+        rows = rows_query.order_by(Notification.id.asc()).limit(50).all()
         notifications = [_notification_payload(row, state) for row in rows]
 
     return jsonify({**state, "notifications": notifications})
@@ -3355,17 +3403,18 @@ def poll_notifications():
 @workflow_bp.route("/notifications/stream")
 @login_required
 def event_stream():
+    source = _notification_source(request.args.get("source"), default="workflow")
+
     @stream_with_context
     def gen():
-        # The notification table is the system-wide notification bus.  Watch
-        # every non-mirror notification for the signed-in user, regardless of
-        # whether it originated in Workflow or in the administrative portal.
+        # Each shell watches only its own notification source.  This prevents
+        # portal activity from appearing in Masar and vice versa.
         initialized = False
         last_seen_id = 0
         last_count_signature = None
         while True:
             try:
-                base_payload = _notification_state_for_user(current_user.id)
+                base_payload = _notification_state_for_user(current_user.id, source=source)
                 latest_id = base_payload["latest_id"]
                 count_signature = (
                     base_payload["unread"],
@@ -3381,7 +3430,8 @@ def event_stream():
                 else:
                     new_notifications = []
                     if latest_id is not None and latest_id > int(last_seen_id or 0):
-                        new_notifications = (
+                        source_filter = _notification_source_filter(source)
+                        notifications_query = (
                             Notification.query
                             .filter(
                                 Notification.user_id == current_user.id,
@@ -3389,10 +3439,10 @@ def event_stream():
                                 Notification.is_visible.is_(True),
                                 Notification.id > int(last_seen_id or 0),
                             )
-                            .order_by(Notification.id.asc())
-                            .limit(50)
-                            .all()
                         )
+                        if source_filter is not None:
+                            notifications_query = notifications_query.filter(source_filter)
+                        new_notifications = notifications_query.order_by(Notification.id.asc()).limit(50).all()
 
                     if new_notifications:
                         for notification in new_notifications:

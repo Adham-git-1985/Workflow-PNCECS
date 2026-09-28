@@ -1360,8 +1360,16 @@ def _ensure_runtime_schema():
                     db.session.execute(text(
                         "UPDATE notification SET source='portal' "
                         "WHERE source IS NULL AND ("
-                        "type='PORTAL' OR message LIKE '%بوابة%' OR message LIKE '%HR Self-Service%' OR "
-                        "message LIKE '%Self-Service%' OR message LIKE '%الطلبات الداخلية%'"
+                        "type='PORTAL' OR type LIKE 'HR_%' OR type LIKE 'CORR_%' OR "
+                        "type LIKE 'STORE_%' OR type LIKE 'TRANSPORT_%' OR type LIKE 'TROUBLE_%' OR "
+                        "message LIKE '%بوابة%' OR message LIKE '%HR Self-Service%' OR "
+                        "message LIKE '%Self-Service%' OR message LIKE '%الطلبات الداخلية%' OR "
+                        "message LIKE '%طلب حركة%' OR message LIKE '%المستودع%' OR "
+                        "message LIKE '%المخزون%' OR message LIKE '%إجاز%' OR message LIKE '%دوام%' OR "
+                        "message LIKE '%مراسلة%' OR message LIKE '%وارد%' OR message LIKE '%صادر%' OR "
+                        "message LIKE '%اجتماع%' OR message LIKE '%تذكرة%' OR message LIKE '%صلاحية%' OR "
+                        "message LIKE '%راتب%' OR message LIKE '%تدريب%' OR message LIKE '%عهدة%' OR "
+                        "message LIKE '%الشؤون الإدارية%'"
                         ")"
                     ))
                     db.session.execute(text("UPDATE notification SET source='workflow' WHERE source IS NULL"))
@@ -1548,6 +1556,23 @@ def _ensure_runtime_schema():
 
             if not _col_exists("notification", "link_url"):
                 _add_column_retry("notification", "link_url", "TEXT")
+
+            # Portal links are authoritative for older rows whose source was
+            # written before the source column was introduced (or was written
+            # by a legacy caller with the workflow default).
+            if _col_exists("notification", "source") and _col_exists("notification", "link_url"):
+                try:
+                    db.session.execute(text(
+                        "UPDATE notification SET source='portal' "
+                        "WHERE (source IS NULL OR source='workflow') "
+                        "AND link_url LIKE '/portal/%'"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    try:
+                        db.session.rollback()
+                    except Exception:
+                        pass
 
             if not _col_exists("notification", "email_delivery_mode"):
                 _add_column_retry(

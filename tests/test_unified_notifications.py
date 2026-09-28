@@ -88,7 +88,7 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             session["_user_id"] = str(user_id)
             session["_fresh"] = True
 
-    def test_masar_inbox_includes_workflow_and_portal_notifications(self):
+    def test_masar_inbox_excludes_portal_notifications(self):
         workflow_notification = Notification(
             user_id=self.user.id,
             message="تحديث طلب مسار",
@@ -111,14 +111,56 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             self._login(client, self.user.id)
             response = client.get("/workflow/notifications")
             count_response = client.get("/workflow/notifications/unread-count")
+            portal_response = client.get("/portal/notifications")
 
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
         self.assertIn("تحديث طلب مسار", body)
-        self.assertIn("تذكرة دعم جديدة #42", body)
-        self.assertIn("البوابة الإدارية", body)
-        self.assertIn(f"/workflow/notifications/{portal_notification.id}/open", body)
-        self.assertEqual(count_response.get_json(), {"count": 2})
+        self.assertNotIn("تذكرة دعم جديدة #42", body)
+        self.assertNotIn(f"/portal/notifications/{portal_notification.id}/open", body)
+        self.assertEqual(count_response.get_json(), {"count": 1})
+        self.assertEqual(portal_response.status_code, 200)
+        portal_body = portal_response.get_data(as_text=True)
+        self.assertIn("تذكرة دعم جديدة #42", portal_body)
+        self.assertIn(f"/portal/notifications/{portal_notification.id}/open", portal_body)
+
+    def test_notification_poll_is_scoped_to_requested_source(self):
+        workflow_notification = Notification(
+            user_id=self.user.id,
+            message="تحديث مسار",
+            source="workflow",
+            link_url="/workflow/request/82",
+            is_read=False,
+        )
+        portal_notification = Notification(
+            user_id=self.user.id,
+            message="طلب حركة جديد",
+            source="portal",
+            link_url="/portal/transport/permits/17",
+            is_read=False,
+        )
+        db.session.add_all((workflow_notification, portal_notification))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            workflow_payload = client.get(
+                "/workflow/notifications/poll?source=workflow&after_id=0"
+            ).get_json()
+            portal_payload = client.get(
+                "/workflow/notifications/poll?source=portal&after_id=0"
+            ).get_json()
+
+        self.assertEqual(
+            [row["notification_id"] for row in workflow_payload["notifications"]],
+            [workflow_notification.id],
+        )
+        self.assertEqual(
+            [row["notification_id"] for row in portal_payload["notifications"]],
+            [portal_notification.id],
+        )
+        self.assertEqual(workflow_payload["unread"], 1)
+        self.assertEqual(portal_payload["unread"], 1)
 
     def test_open_notification_marks_portal_row_read_and_redirects_to_ticket(self):
         notification = Notification(
@@ -135,7 +177,7 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
 
         with self.app.test_client() as client:
             self._login(client, self.user.id)
-            response = client.get(f"/workflow/notifications/{notification_id}/open")
+            response = client.get(f"/portal/notifications/{notification_id}/open")
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], "/portal/trouble-tickets/73")
@@ -155,10 +197,10 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
 
         with self.app.test_client() as client:
             self._login(client, self.user.id)
-            response = client.get(f"/workflow/notifications/{notification_id}/open")
+            response = client.get(f"/portal/notifications/{notification_id}/open")
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["Location"], "/workflow/notifications")
+        self.assertEqual(response.headers["Location"], "/portal/notifications")
         self.assertTrue(db.session.get(Notification, notification_id).is_read)
 
     def test_legacy_ticket_number_is_linked_without_matching_a_workflow_request(self):
@@ -179,7 +221,7 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.headers["Location"], "/portal/trouble-tickets/19")
 
-    def test_mark_all_read_includes_portal_notifications(self):
+    def test_mark_all_read_is_limited_to_workflow_notifications(self):
         db.session.add_all((
             Notification(user_id=self.user.id, message="Workflow", source="workflow", is_read=False),
             Notification(user_id=self.user.id, message="Portal", source="portal", is_read=False),
@@ -192,8 +234,18 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
             response = client.post("/workflow/notifications/mark-all-read")
 
         self.assertEqual(response.status_code, 302)
-        own_rows = Notification.query.filter_by(user_id=self.user.id).all()
-        self.assertTrue(all(row.is_read for row in own_rows))
+        self.assertTrue(
+            Notification.query.filter_by(
+                user_id=self.user.id,
+                source="workflow",
+            ).one().is_read
+        )
+        self.assertFalse(
+            Notification.query.filter_by(
+                user_id=self.user.id,
+                source="portal",
+            ).one().is_read
+        )
         self.assertFalse(Notification.query.filter_by(user_id=self.other_user.id).one().is_read)
 
     def test_portal_user_can_delete_own_notification(self):

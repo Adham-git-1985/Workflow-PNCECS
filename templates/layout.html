@@ -25,7 +25,7 @@
 {% set display_user = working_user|default(current_user, true) %}
 
 {% if current_user.is_authenticated and not hide_shell %}
-  {% set unread = get_unread_count(current_user.id, 'all') %}
+  {% set unread = get_unread_count(current_user.id, 'workflow') %}
   {% set unread_msgs = get_unread_messages_count(current_user.id) %}
 {% endif %}
 {% set masar_home_url = (url_for('workflow.work_dashboard') if current_user.is_authenticated and current_user.has_perm('WORKFLOW_DASHBOARD_READ') else url_for('workflow.inbox')) %}
@@ -76,7 +76,8 @@
                     data-notification-transport="{{ config.get('NOTIFICATION_TRANSPORT', 'poll') }}"
                     data-poll-interval-ms="{{ config.get('NOTIFICATION_POLL_INTERVAL_MS', 10000) }}"
                     data-badge-id="notif-badge"
-                    data-badge-scope="all"
+                    data-badge-scope="workflow"
+                    data-notification-source="workflow"
                     data-user-id="{{ current_user.id }}"
                     title="تفعيل صوت التنبيهات"
                     aria-label="تفعيل صوت التنبيهات"

@@ -2,7 +2,6 @@
   "use strict";
 
   const STORAGE_KEY = "masar.notification.sound.enabled.v1";
-  const ALERT_TITLE = "🔔 تنبيه جديد - مسار";
   const toggleButton = document.getElementById("notification-sound-toggle");
 
   if (!toggleButton) return;
@@ -22,8 +21,14 @@
     toggleButton.dataset.portalNotificationsUrl || "/portal/notifications";
   const badgeId = toggleButton.dataset.badgeId || "notif-badge";
   const badgeScope = (toggleButton.dataset.badgeScope || "workflow").toLowerCase();
+  const notificationSource =
+    (toggleButton.dataset.notificationSource || (badgeScope === "portal" ? "portal" : "workflow"))
+      .toLowerCase();
   const userId = toggleButton.dataset.userId || "anonymous";
-  const lastEventStorageKey = `masar.notification.last-event.v1.${userId}`;
+  const lastEventStorageKey = `masar.notification.last-event.v1.${userId}.${notificationSource}`;
+  const ALERT_TITLE = notificationSource === "portal"
+    ? "🔔 تنبيه جديد - البوابة الإدارية"
+    : "🔔 تنبيه جديد - مسار";
   const originalTitle = document.title;
 
   let audioContext = null;
@@ -34,6 +39,18 @@
   let pollingTimer = null;
   let pollingInFlight = false;
   let soundEnabled = readPreference();
+
+  function scopedEndpoint(rawUrl) {
+    try {
+      const url = new URL(rawUrl, window.location.origin);
+      if (notificationSource === "workflow" || notificationSource === "portal") {
+        url.searchParams.set("source", notificationSource);
+      }
+      return url.toString();
+    } catch (_) {
+      return rawUrl;
+    }
+  }
 
   function readPreference() {
     try {
@@ -297,6 +314,15 @@
   }
 
   function handleNotificationData(data) {
+    // Keep the browser-side guard as a second line of defence in case an old
+    // server instance or a cached response still returns both sources.
+    if (
+      data &&
+      data.has_new &&
+      ((data.source || "workflow").toLowerCase() !== notificationSource)
+    ) {
+      return;
+    }
     updateBadge(data);
     if (data.has_new && claimNotification(data.notification_id)) {
       window.dispatchEvent(new CustomEvent("masar:notification", {
@@ -316,7 +342,7 @@
     if (pollingInFlight || !pollUrl || document.hidden) return;
     pollingInFlight = true;
     try {
-      const url = new URL(pollUrl, window.location.origin);
+      const url = new URL(scopedEndpoint(pollUrl), window.location.origin);
       if (pollCursor !== null) {
         url.searchParams.set("after_id", String(pollCursor));
       }
@@ -359,7 +385,7 @@
       return;
     }
 
-    const eventSource = new EventSource(streamUrl);
+    const eventSource = new EventSource(scopedEndpoint(streamUrl));
     let streamHasDelivered = false;
     window.__masarNotificationStream = eventSource;
 
