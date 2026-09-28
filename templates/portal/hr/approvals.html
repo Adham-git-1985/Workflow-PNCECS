@@ -192,9 +192,11 @@
               <td class="text-muted">{{ r.id }}</td>
               <td class="fw-semibold">
                 {{ r.user.full_name if r.user else r.user_id }}
-                <div class="small text-muted fw-normal">تقديم: {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '—') }}</div>
               </td>
-              <td class="small">{{ r.period_start }} → {{ r.period_end }}</td>
+              <td class="small">
+                {{ r.period_start }} → {{ r.period_end }}
+                <div class="text-muted mt-1">وقت التقديم: {{ r.submitted_at|local_datetime if r.submitted_at else (r.created_at|local_datetime if r.created_at else '—') }}</div>
+              </td>
               <td class="small">
                 {{ r.employee_note or '—' }}
                 <div class="text-muted mt-1">{{ r.days|length }} أيام مقترحة</div>
@@ -251,8 +253,11 @@
             {% set manual_badge = 'warning' if manual_status == 'PENDING' else ('success' if manual_status == 'APPROVED' else ('danger' if manual_status == 'REJECTED' else 'secondary')) %}
             <tr>
               <td class="text-muted">{{ r.id }}</td>
-              <td class="fw-semibold">{{ r.user.full_name if r.user else r.user_id }}<div class="small text-muted fw-normal">{{ r.created_at|local_datetime if r.created_at else '—' }}</div></td>
-              <td class="small">{{ r.day }} → {{ r.day_to or r.day }}</td>
+              <td class="fw-semibold">{{ r.user.full_name if r.user else r.user_id }}</td>
+              <td class="small">
+                {{ r.day }} → {{ r.day_to or r.day }}
+                <div class="text-muted mt-1">وقت التقديم: {{ r.created_at|local_datetime if r.created_at else '—' }}</div>
+              </td>
               <td>{{ r.start_time or '—' }} → {{ r.end_time or '—' }}</td>
               <td class="small">{{ r.note or '—' }}</td>
               <td><span class="badge text-bg-{{ manual_badge }}">{{ {'PENDING':'بانتظار الاعتماد','APPROVED':'معتمد','REJECTED':'مرفوض'}.get(manual_status, manual_status) }}</span><div class="small text-muted mt-1">{{ 'الأمين العام' if r.review_stage == 'SECRETARY_GENERAL' else ('الشؤون الإدارية' if r.review_stage == 'HR' else '') }}</div></td>
