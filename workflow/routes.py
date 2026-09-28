@@ -5220,6 +5220,9 @@ def work_dashboard():
     actor_ids = {int(user.id) for user in actor_users if getattr(user, "id", None)}
 
     qry = WorkflowRequest.query.order_by(WorkflowRequest.id.desc())
+    # Keep attendance-delay paths out of the main Masar dashboard.  They have
+    # their own tracking entry point under the portal navigation.
+    qry = qry.filter(~_portal_workflow_scope_clause())
     if search:
         like = f"%{search}%"
         conditions = [
@@ -5586,7 +5589,24 @@ def delayed_workflows():
 @workflow_bp.route("/following")
 @login_required
 def following():
-    """Requests I can follow, with advanced filters."""
+    """Requests I can follow in the main Masar workflow area."""
+    return _following_page()
+
+
+def _portal_workflow_scope_clause():
+    """Return the SQL scope for attendance-delay workflows in the portal."""
+    delay_workflow_exists = db.session.query(HRAttendanceDelayRequest.id).filter(
+        HRAttendanceDelayRequest.workflow_request_id == WorkflowRequest.id,
+    ).exists()
+    return delay_workflow_exists
+
+
+def _following_page(
+    *,
+    portal_only: bool = False,
+    following_endpoint: str = "workflow.following",
+):
+    """Render the shared tracking page for Masar or the administrative portal."""
     search = (request.args.get("q") or "").strip()
     status = (request.args.get("status") or "").strip().upper()
     relation = (request.args.get("relation") or "").strip().lower()
@@ -5782,6 +5802,11 @@ def following():
         .outerjoin(WorkflowInstanceStep, WorkflowInstanceStep.instance_id == WorkflowInstance.id)
         .outerjoin(User, User.id == WorkflowRequest.requester_id)
     )
+
+    # The main Masar screen and the administrative-portal screen are
+    # intentionally disjoint for attendance-delay paths.
+    portal_scope_clause = _portal_workflow_scope_clause()
+    q = q.filter(portal_scope_clause if portal_only else ~portal_scope_clause)
 
     # Visibility filter
     if not _is_admin(_workflow_actor()):
@@ -6032,11 +6057,11 @@ def following():
     pagination_args = request.args.to_dict(flat=True)
     pagination_args.pop("page", None)
     previous_page_url = (
-        url_for("workflow.following", page=page - 1, **pagination_args)
+        url_for(following_endpoint, page=page - 1, **pagination_args)
         if page > 1 else None
     )
     next_page_url = (
-        url_for("workflow.following", page=page + 1, **pagination_args)
+        url_for(following_endpoint, page=page + 1, **pagination_args)
         if page < pages else None
     )
 
@@ -6050,7 +6075,7 @@ def following():
         url_args = dict(summary_url_args)
         if filter_key != "all":
             url_args["summary_filter"] = filter_key
-        summary_urls[filter_key] = url_for("workflow.following", **url_args)
+        summary_urls[filter_key] = url_for(following_endpoint, **url_args)
 
     instance_ids = [int(inst.id) for _req, inst, _tpl in rows if inst and getattr(inst, "id", None)]
     report_steps = [
@@ -6184,6 +6209,8 @@ def following():
         current_step_map=current_step_map,
         current_target_map=current_target_map,
         current_committee_summaries=current_committee_summaries,
+        portal_mode=portal_only,
+        following_endpoint=following_endpoint,
     )
 
 # =========================

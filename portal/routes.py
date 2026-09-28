@@ -628,6 +628,20 @@ def _attendance_delay_perm(f):
     return wrapper
 
 
+@portal_bp.route("/workflow/following")
+@login_required
+def portal_workflow_following():
+    """Track workflow paths that originate in the administrative portal."""
+    # Import lazily to avoid making the portal blueprint depend on workflow
+    # route registration order during application startup.
+    from workflow.routes import _following_page
+
+    return _following_page(
+        portal_only=True,
+        following_endpoint="portal.portal_workflow_following",
+    )
+
+
 
 def _portal_visible_audit_actor_id():
     """SQL actor projection that preserves delegation privacy in portal reports."""

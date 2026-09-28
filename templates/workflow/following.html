@@ -1,7 +1,10 @@
-{% extends "layout.html" %}
+{% extends "portal/layout.html" if portal_mode|default(false) else "layout.html" %}
+{% block title %}{{ 'متابعة مسارات البوابة' if portal_mode|default(false) else 'متابعة المسارات' }}{% endblock %}
 {% block content %}
 {% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
+{% set portal_mode = portal_mode|default(false) %}
+{% set following_endpoint = following_endpoint|default("workflow.following") %}
 {% set filters = filters if filters is defined else {} %}
 {% set summary = summary if summary is defined else {} %}
 {% set status_labels = {
@@ -14,10 +17,17 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
   <div>
-    <h3 class="mb-1">👁️ متابعة المسارات</h3>
-    <small class="text-muted">الطلبات التي أنشأتها أو شاركت في معالجتها أو تتابع سيرها</small>
+    <h3 class="mb-1">👁️ {{ 'متابعة مسارات البوابة' if portal_mode else 'متابعة المسارات' }}</h3>
+    <small class="text-muted">{{ 'مسارات نماذج التأخير في البوابة الإدارية فقط' if portal_mode else 'طلبات نظام مسار التي أنشأتها أو شاركت في معالجتها أو تتابع سيرها' }}</small>
   </div>
 </div>
+
+{% if portal_mode %}
+<div class="alert alert-info d-flex align-items-center gap-2 mb-3">
+  <i class="bi bi-info-circle"></i>
+  <span>هذه القائمة مستقلة عن مسارات نظام مسار وتعرض مسارات نماذج التأخير فقط.</span>
+</div>
+{% endif %}
 
 <div class="card shadow-sm mb-3">
   <div class="card-header bg-light d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -130,7 +140,7 @@
 
       <div class="col-12 d-flex gap-2 flex-wrap">
         <button class="btn btn-primary"><i class="bi bi-funnel"></i> تطبيق الفلتر</button>
-        <a class="btn btn-outline-secondary" href="{{ url_for('workflow.following') }}">تفريغ</a>
+        <a class="btn btn-outline-secondary" href="{{ url_for(following_endpoint) }}">تفريغ</a>
       </div>
     </form>
   </div>
