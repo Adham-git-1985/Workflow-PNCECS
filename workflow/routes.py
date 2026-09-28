@@ -4767,6 +4767,14 @@ def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, Arc
         "WORKFLOW_COMMENT",
         "WORKFLOW_REPLY",
         "DYNAMIC_BRANCH_SELECTED",
+        # The note entered with an approval/rejection is stored on the
+        # corresponding audit row.  Keep it in the activity feed as well;
+        # otherwise users can see that a step was completed but not what was
+        # written while completing it.
+        "STEP_APPROVED",
+        "STEP_REJECTED",
+        "PARALLEL_SYNC_RESPONDED",
+        "PARALLEL_SYNC_AUTHORIZED",
     }
     return _clean_workflow_note(raw_note) if action in note_actions else ""
 
@@ -6459,13 +6467,17 @@ def view_request(request_id):
             "id": log.id,
             "action": log.action,
             "user": log.user,
+            "user_id": log.user_id,
             "on_behalf_of_user": log.on_behalf_of_user,
+            "on_behalf_of_id": log.on_behalf_of_id,
             "actual_user": log.actual_user or log.user,
+            "actual_user_id": log.actual_user_id or log.user_id,
             "acting_for_user": log.acting_for_user or log.on_behalf_of_user,
+            "acting_for_user_id": log.acting_for_user_id or log.on_behalf_of_id,
             "formal_delegation": log.formal_delegation,
             "execution_context": log.execution_context or "SELF",
             "created_at": log.created_at,
-            "note": _strip_workflow_operation_source(log.note),
+            "note": _strip_workflow_operation_source(audit_display_note(log)),
             "is_workflow_comment": (log.action or "").upper()
             in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
         }
@@ -7031,8 +7043,12 @@ def view_request(request_id):
         simple_comments=simple_comments,
         user_audit=user_audit,
         can_delete_workflow_comments=can_delete_workflow_comments,
-        show_detailed_audit=bool(template) and (
-            current_user.has_role("ADMIN") or can_delete_workflow_comments
+        # Dynamic paths do not have a WorkflowTemplate row, but the super admin
+        # must still get the complete audit view.  Keep the existing detailed
+        # view rule for regular admins on predefined template paths.
+        show_detailed_audit=bool(
+            can_delete_workflow_comments
+            or (bool(template) and current_user.has_role("ADMIN"))
         ),
         users_map=users_map,
         user_org_path_map=user_org_path_map,

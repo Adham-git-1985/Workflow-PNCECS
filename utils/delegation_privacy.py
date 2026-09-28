@@ -8,6 +8,7 @@ else sees the principal as the actor of a delegated operation.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any
 
 
@@ -31,6 +32,13 @@ def _user_id(user: Any) -> int | None:
         return int(value) if value is not None else None
     except Exception:
         return None
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    """Read a field from either an ORM object or a serialized audit row."""
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
 
 
 def is_privileged_administrator(user: Any = None) -> bool:
@@ -73,27 +81,27 @@ def audit_principal(log: Any) -> Any:
     """Return the identity on whose behalf an audit operation was performed."""
     if not log:
         return None
-    return getattr(log, "acting_for_user", None) or getattr(log, "on_behalf_of_user", None)
+    return _field(log, "acting_for_user") or _field(log, "on_behalf_of_user")
 
 
 def audit_actual_actor(log: Any) -> Any:
     """Return the account that technically performed the operation."""
     if not log:
         return None
-    return getattr(log, "actual_user", None) or getattr(log, "user", None)
+    return _field(log, "actual_user") or _field(log, "user")
 
 
 def _audit_principal_id(log: Any) -> int | None:
     principal = audit_principal(log)
-    return _user_id(principal) or _user_id(getattr(log, "acting_for_user_id", None)) or _user_id(
-        getattr(log, "on_behalf_of_id", None)
+    return _user_id(principal) or _user_id(_field(log, "acting_for_user_id")) or _user_id(
+        _field(log, "on_behalf_of_id")
     )
 
 
 def _audit_actual_id(log: Any) -> int | None:
     actual = audit_actual_actor(log)
-    return _user_id(actual) or _user_id(getattr(log, "actual_user_id", None)) or _user_id(
-        getattr(log, "user_id", None)
+    return _user_id(actual) or _user_id(_field(log, "actual_user_id")) or _user_id(
+        _field(log, "user_id")
     )
 
 
@@ -130,7 +138,7 @@ def audit_display_actor_id(log: Any, viewer: Any = None) -> int | None:
 
 def audit_display_note(log: Any, viewer: Any = None) -> str:
     """Return an audit note without leaking the real executor to outsiders."""
-    note = str(getattr(log, "note", "") or "")
+    note = str(_field(log, "note", "") or "")
     if not note or not is_delegated_audit(log) or can_view_delegation_details(log, viewer):
         return note
 

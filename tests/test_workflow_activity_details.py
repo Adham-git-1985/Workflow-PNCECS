@@ -24,6 +24,26 @@ class WorkflowActivityDetailsTests(unittest.TestCase):
 
         self.assertEqual(_clean_workflow_note(note), "يرجى المتابعة.")
 
+    def test_step_decision_keeps_the_note_in_the_activity_detail(self):
+        log = SimpleNamespace(
+            target_id=2,
+            note="Step 2: please continue following up\nمصدر العملية: IP=127.0.0.1",
+        )
+
+        detail = _user_facing_audit_note(log, "STEP_APPROVED", {})
+
+        self.assertEqual(detail, "Step 2: please continue following up")
+
+    def test_parallel_response_keeps_the_follow_up_text(self):
+        log = SimpleNamespace(
+            target_id=3,
+            note="Step 3: تم الاطلاع والمتابعة. Please follow up",
+        )
+
+        detail = _user_facing_audit_note(log, "PARALLEL_SYNC_RESPONDED", {})
+
+        self.assertEqual(detail, "Step 3: تم الاطلاع والمتابعة. Please follow up")
+
     def test_attachment_activity_shows_original_filename(self):
         log = SimpleNamespace(
             target_id=18,

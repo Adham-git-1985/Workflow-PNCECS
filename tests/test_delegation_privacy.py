@@ -61,6 +61,21 @@ class DelegationPrivacyTests(unittest.TestCase):
         )
         self.assertIn("Delegate User", audit_display_note(self.log, self.delegate))
 
+    def test_serialized_audit_row_keeps_actor_and_note_details(self):
+        serialized = {
+            "actual_user": self.delegate,
+            "user": self.delegate,
+            "acting_for_user": self.principal,
+            "on_behalf_of_user": self.principal,
+            "note": "completed by Delegate User",
+        }
+
+        self.assertIs(audit_display_actor(serialized, self.admin), self.delegate)
+        self.assertEqual(
+            audit_display_note(serialized, self.admin),
+            "completed by Delegate User",
+        )
+
     def test_super_admin_title_is_replaced_for_an_ordinary_user(self):
         hidden = redact_super_admin_references(
             "السوبر أدمن / Super Admin / SUPER_ADMIN / Super Administrator",

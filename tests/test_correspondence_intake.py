@@ -731,11 +731,14 @@ class CorrespondenceIntakeTests(unittest.TestCase):
 
         self.assertIn("req.status|workflow_status_label", request_template)
         self.assertIn("s.status|workflow_status_label", request_template)
-        self.assertIn("show_detailed_audit=bool(template)", routes)
+        self.assertIn("show_detailed_audit=bool(", routes)
+        self.assertNotIn("show_detailed_audit=bool(template)", routes)
         self.assertIn('"PAGE_VIEW",', routes)
         self.assertIn('"USER_ACTION",', routes)
         self.assertIn('"USER_ACTION_FAILED",', routes)
         self.assertIn('"STEP_APPROVED": "تم الاطلاع والمتابعة"', routes)
+        self.assertIn('"STEP_REJECTED",', routes)
+        self.assertIn('"PARALLEL_SYNC_RESPONDED",', routes)
         self.assertIn('if action in note_actions else ""', routes)
 
 
