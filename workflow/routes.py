@@ -182,7 +182,9 @@ from workflow.engine import (
 )
 from services.attendance_delay_workflow import (
     ATTENDANCE_DELAY_RESPONSE_LABEL,
+    attendance_delay_participant_user_ids,
     archive_delay_workflow_snapshot,
+    can_user_reopen_attendance_delay_workflow,
     get_delay_case_for_request,
     is_attendance_delay_workflow,
 )
@@ -2136,6 +2138,22 @@ def _is_admin(user) -> bool:
     return role in ("ADMIN", "SUPER_ADMIN")
 
 
+def _user_can_reopen_workflow_request(req: WorkflowRequest, user: User | None) -> bool:
+    """Resolve the normal reopen permission plus delay-path participation.
+
+    The automatic grant is deliberately limited to attendance-delay requests;
+    all other workflow types keep the existing explicit permission boundary.
+    """
+    if not user:
+        return False
+    try:
+        if _is_admin(user) or user.has_perm("WORKFLOW_REOPEN_TO_STEP"):
+            return True
+    except Exception:
+        pass
+    return can_user_reopen_attendance_delay_workflow(req, user)
+
+
 def _user_can_act_on_step(user, step: WorkflowInstanceStep) -> bool:
     # PARALLEL_SYNC: allow response only for assignees who still have a PENDING task
     try:
@@ -3740,6 +3758,17 @@ def _user_can_view_request(user, req: WorkflowRequest) -> bool:
             .first()
             is not None
         ):
+            return True
+    except Exception:
+        pass
+
+    # Attendance-delay paths are a fixed administrative procedure.  Every
+    # frozen participant may inspect the path even before a later sequential
+    # stage becomes active; this is what makes the request-scoped reopen grant
+    # reachable by all parties in the path.  The employee remains a viewer,
+    # but the reopen helper applies the separate employee exception.
+    try:
+        if user_id in attendance_delay_participant_user_ids(req):
             return True
     except Exception:
         pass
@@ -6503,9 +6532,9 @@ def view_request(request_id):
     can_reopen_workflow = bool(inst and steps)
     if can_reopen_workflow:
         if execution.get("execution_context") == "SELF":
-            can_reopen_workflow = bool(
-                _is_admin(current_user)
-                or current_user.has_perm("WORKFLOW_REOPEN_TO_STEP")
+            can_reopen_workflow = _user_can_reopen_workflow_request(
+                req,
+                _workflow_actor(),
             )
         else:
             can_reopen_workflow = can_execute_action(
@@ -7319,7 +7348,7 @@ def reopen_request_to_step(request_id):
     working_user = _workflow_actor()
     explicit_decision = None
     if execution.get("execution_context") == "SELF":
-        if not (_is_admin(working_user) or working_user.has_perm("WORKFLOW_REOPEN_TO_STEP")):
+        if not _user_can_reopen_workflow_request(req, working_user):
             abort(403)
     else:
         try:

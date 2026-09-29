@@ -388,6 +388,87 @@ def attendance_delay_secretary_user_ids() -> set[int]:
     return _as_ids(secretary_general_user_ids())
 
 
+def attendance_delay_participant_user_ids(req: WorkflowRequest | None) -> set[int]:
+    """Return every user participating in an attendance-delay workflow.
+
+    Delay routes are created as frozen runtime steps.  The primary user on a
+    sequential step is therefore a participant even before that step becomes
+    active.  The HR parallel step is slightly different: its second audience
+    member may only exist in the candidate resolver (and may not have a task
+    yet), so include both the resolver candidates and any persisted tasks.
+    """
+    case = get_delay_case_for_request(getattr(req, "id", None))
+    if not case:
+        return set()
+
+    participant_ids = _as_ids(
+        (
+            getattr(req, "requester_id", None),
+            getattr(case, "initiated_by_id", None),
+            getattr(case, "employee_id", None),
+            getattr(case, "final_decision_by_id", None),
+        )
+    )
+    instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    if not instance:
+        return participant_ids
+
+    steps = (
+        WorkflowInstanceStep.query
+        .filter_by(instance_id=instance.id)
+        .order_by(WorkflowInstanceStep.step_order.asc())
+        .all()
+    )
+    for step in steps:
+        participant_ids.update(_as_ids((getattr(step, "approver_user_id", None),)))
+        if (getattr(step, "mode", "") or "").strip().upper() == "PARALLEL_SYNC":
+            participant_ids.update(attendance_delay_parallel_candidate_user_ids(req, step))
+        participant_ids.update(_as_ids((getattr(step, "decided_by_id", None),)))
+
+    participant_ids.update(
+        _as_ids(
+            user_id
+            for (user_id,) in (
+                db.session.query(WorkflowStepTask.assignee_user_id)
+                .filter_by(instance_id=instance.id)
+                .all()
+            )
+        )
+    )
+    return participant_ids
+
+
+def can_user_reopen_attendance_delay_workflow(
+    req: WorkflowRequest | None,
+    user: User | None,
+) -> bool:
+    """Return whether a path participant gets delay-path reopen access.
+
+    ``WORKFLOW_REOPEN_TO_STEP`` remains the explicit global permission.  This
+    helper only supplies the automatic, request-scoped grant for delay paths;
+    the employee named in the delay case is deliberately excluded unless the
+    caller already has that explicit permission (or an administrator role).
+    """
+    if not req or not user or not is_attendance_delay_workflow(req):
+        return False
+
+    try:
+        user_id = int(user.id)
+    except (TypeError, ValueError):
+        return False
+
+    try:
+        if user.has_perm("WORKFLOW_REOPEN_TO_STEP"):
+            return True
+    except Exception:
+        pass
+
+    case = get_delay_case_for_request(getattr(req, "id", None))
+    if not case or user_id == int(getattr(case, "employee_id", 0) or 0):
+        return False
+    return user_id in attendance_delay_participant_user_ids(req)
+
+
 def mark_delay_case_final(
     req: WorkflowRequest | None,
     *,

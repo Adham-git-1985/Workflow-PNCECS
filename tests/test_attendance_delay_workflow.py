@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 
 from docx import Document
 from flask import Flask
@@ -21,16 +22,19 @@ from models import (
     RequestAttachment,
     RequestEscalation,
     User,
+    UserPermission,
     WorkflowInstanceStep,
     WorkflowStepTask,
 )
 from portal import portal_bp
 from workflow import workflow_bp
+from workflow import routes as workflow_routes
 from workflow.engine import decide_step
 from services.attendance_delay_workflow import (
     attendance_delay_hr_affairs_manager_user_ids,
     attendance_delay_hr_department_manager_user_ids,
     attendance_delay_hr_general_director_user_ids,
+    can_user_reopen_attendance_delay_workflow,
     process_pending_delay_response_alerts,
 )
 from services.hr_request_workflow import secretary_general_user_ids
@@ -351,6 +355,106 @@ class AttendanceDelayWorkflowTests(unittest.TestCase):
             self.hr_affairs_manager.id,
             attendance_delay_hr_affairs_manager_user_ids(),
         )
+
+    def test_delay_reopen_is_granted_to_path_participants_except_employee(self):
+        case, request_row = self._start()
+
+        for participant in (
+            self.manager,
+            self.hr_department_manager,
+            self.hr_general_director,
+            self.secretary,
+            self.hr_affairs_manager,
+        ):
+            with self.subTest(participant=participant.email):
+                self.assertTrue(
+                    can_user_reopen_attendance_delay_workflow(request_row, participant)
+                )
+
+        self.assertFalse(
+            can_user_reopen_attendance_delay_workflow(request_row, self.employee)
+        )
+
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REOPEN_TO_STEP",
+            is_allowed=True,
+        ))
+        db.session.commit()
+        self.assertTrue(
+            can_user_reopen_attendance_delay_workflow(request_row, self.employee)
+        )
+
+    def test_delay_reopen_button_and_post_are_scoped_to_participants(self):
+        _case, request_row = self._start()
+
+        # The manager is a later participant, while the employee is the
+        # subject of the delay path. Both can view the request, but only the
+        # participant receives the request-scoped reopen action.
+        def view_context(user):
+            rendered = {}
+
+            def capture_render(_template, **context):
+                rendered.update(context)
+                return "ok"
+
+            self._login(user)
+            with patch.object(
+                workflow_routes,
+                "render_template",
+                side_effect=capture_render,
+            ):
+                response = self.client.get(
+                    f"/workflow/request/{request_row.id}"
+                )
+            return response, rendered
+
+        response, manager_context = view_context(self.manager)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(manager_context["can_reopen_workflow"])
+
+        response, employee_context = view_context(self.employee)
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(employee_context["can_reopen_workflow"])
+
+        self._login(self.manager)
+        response = self.client.post(
+            f"/workflow/request/{request_row.id}/reopen",
+            data={
+                "target_step_order": "1",
+                "reason": "مراجعة مسار التأخير",
+                "sla_mode": "PRESERVE",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
+        self._login(self.employee)
+        response = self.client.post(
+            f"/workflow/request/{request_row.id}/reopen",
+            data={
+                "target_step_order": "1",
+                "reason": "محاولة الموظف",
+                "sla_mode": "PRESERVE",
+            },
+        )
+        self.assertEqual(response.status_code, 403)
+
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_REOPEN_TO_STEP",
+            is_allowed=True,
+        ))
+        db.session.commit()
+        response = self.client.post(
+            f"/workflow/request/{request_row.id}/reopen",
+            data={
+                "target_step_order": "1",
+                "reason": "إعادة فتح بصلاحية صريحة",
+                "sla_mode": "PRESERVE",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+
 
     def test_two_hour_alert_is_one_time_and_creates_escalation(self):
         case, request_row = self._start()
