@@ -65,6 +65,12 @@
                 </td>
                 <td class="text-center">
                   <a class="btn btn-sm btn-outline-primary" href="{{ url_for('portal.inventory_admin_warehouses', edit_id=w.id) }}">تعديل</a>
+                  <form method="post" class="d-inline" onsubmit="return confirm('حذف المخزن؟ إذا كان مستخدمًا سيتم تعطيله بدلًا من حذفه.');">
+                    <input type="hidden" name="action" value="delete">
+                    <input type="hidden" name="id" value="{{ w.id }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() if csrf_token is defined else '' }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit">حذف</button>
+                  </form>
                 </td>
               </tr>
               {% else %}

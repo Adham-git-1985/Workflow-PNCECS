@@ -46028,6 +46028,57 @@ def inventory_return_attachment_download(att_id: int):
     return send_from_directory(directory, filename, as_attachment=True, download_name=att.original_name)
 
 
+def _inventory_reference_columns(table_name: str, record_id: int) -> list[tuple[str, str]]:
+    """Find existing rows that point at an inventory master-data record."""
+    references: list[tuple[str, str]] = []
+    target_table = db.metadata.tables.get(table_name)
+    if target_table is None:
+        return references
+
+    for table in db.metadata.tables.values():
+        if table is target_table:
+            continue
+        for column in table.columns:
+            points_to_target = any(
+                foreign_key.column.table.name == table_name
+                and foreign_key.column.name == "id"
+                for foreign_key in column.foreign_keys
+            )
+            if not points_to_target:
+                continue
+            if db.session.query(column).filter(column == record_id).first() is not None:
+                references.append((table.name, column.name))
+    return references
+
+
+def _inventory_delete_or_disable(record, table_name: str, label: str) -> bool:
+    """Delete an unused master record, otherwise deactivate it safely."""
+    references = _inventory_reference_columns(table_name, record.id)
+    if references:
+        record.is_active = False
+        db.session.commit()
+        flash(f"لا يمكن حذف {label} لأنه مستخدم في بيانات مرتبطة؛ تم تعطيله بدلاً من حذفه.", "warning")
+        return False
+
+    try:
+        db.session.delete(record)
+        db.session.commit()
+    except IntegrityError:
+        # Protect against a database-level reference not represented in the
+        # current metadata. Keep the historical record and disable it.
+        db.session.rollback()
+        current = type(record).query.get(record.id)
+        if current is None:
+            raise
+        current.is_active = False
+        db.session.commit()
+        flash(f"لا يمكن حذف {label} بسبب ارتباطات موجودة؛ تم تعطيله بدلاً من حذفه.", "warning")
+        return False
+
+    flash(f"تم حذف {label}.", "success")
+    return True
+
+
 @portal_bp.route("/inventory/admin/warehouses", methods=["GET", "POST"])
 @login_required
 @_perm(STORE_MANAGE)
@@ -46041,9 +46092,7 @@ def inventory_admin_warehouses():
             wid = request.form.get("id")
             w = InvWarehouse.query.get(int(wid)) if (wid and wid.isdigit()) else None
             if w:
-                db.session.delete(w)
-                db.session.commit()
-                flash("تم حذف المخزن.", "success")
+                _inventory_delete_or_disable(w, "inv_warehouse", "المخزن")
             return redirect(url_for("portal.inventory_admin_warehouses"))
 
         name = (request.form.get("name") or "").strip()
@@ -47757,9 +47806,7 @@ def inventory_admin_suppliers():
             sid = request.form.get("id")
             s = InvSupplier.query.get(int(sid)) if (sid and sid.isdigit()) else None
             if s:
-                db.session.delete(s)
-                db.session.commit()
-                flash("تم حذف المورد.", "success")
+                _inventory_delete_or_disable(s, "inv_supplier", "المورد")
             return redirect(url_for("portal.inventory_admin_suppliers"))
 
         name = (request.form.get("name") or "").strip()
@@ -47863,9 +47910,7 @@ def inventory_admin_rooms():
             rid = request.form.get("id")
             r = InvRoom.query.get(int(rid)) if (rid and rid.isdigit()) else None
             if r:
-                db.session.delete(r)
-                db.session.commit()
-                flash("تم حذف الغرفة.", "success")
+                _inventory_delete_or_disable(r, "inv_room", "الغرفة")
             return redirect(url_for("portal.inventory_admin_rooms"))
 
         name = (request.form.get("name") or "").strip()
