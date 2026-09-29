@@ -1,13 +1,13 @@
 """Convert Word and Excel attachments to an inline PDF preview.
 
-LibreOffice is preferred because it preserves the original Office layout.  A
-small, dependency-local renderer is kept as a fallback for modern ``.docx``
-and ``.xlsx`` files so the preview still works on hosts where LibreOffice has
-not been installed yet.
+On Windows, installed Microsoft Word/Excel are preferred to preserve the
+source document's layout. LibreOffice is the portable secondary converter, and
+a local renderer remains available for modern ``.docx`` and ``.xlsx`` files.
 """
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -88,6 +88,115 @@ def find_libreoffice_executable() -> str | None:
     return None
 
 
+def _office_application_available(extension: str) -> bool:
+    """Return whether the locally installed Microsoft Office app can export PDF."""
+    if os.name != "nt":
+        return False
+
+    executable = "EXCEL.EXE" if extension in {"xls", "xlsx", "xlsm"} else "WINWORD.EXE"
+    program_files = [
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")),
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")),
+    ]
+    for root in program_files:
+        for relative in (
+            Path("Microsoft Office") / "Office16" / executable,
+            Path("Microsoft Office") / "root" / "Office16" / executable,
+        ):
+            if (root / relative).is_file():
+                return True
+    return False
+
+
+def _powershell_literal(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _convert_with_windows_office(
+    source_path: str | os.PathLike[str],
+    original_name: str | None,
+) -> bytes:
+    """Export with locally installed Word/Excel, preserving Office formatting."""
+    extension = office_extension(original_name) or Path(source_path).suffix.lower().lstrip(".")
+    if not _office_application_available(extension):
+        raise OfficePreviewError("Microsoft Office غير متوفر لتحويل الملف")
+
+    application = "Excel" if extension in {"xls", "xlsx", "xlsm"} else "Word"
+    with tempfile.TemporaryDirectory(prefix="office_native_preview_") as temp_dir:
+        temp_root = Path(temp_dir)
+        input_path = temp_root / f"document.{extension}"
+        output_path = temp_root / "document.pdf"
+        shutil.copyfile(source_path, input_path)
+        source_literal = _powershell_literal(str(input_path))
+        output_literal = _powershell_literal(str(output_path))
+
+        if application == "Excel":
+            script = f"""
+$ErrorActionPreference = 'Stop'
+$excel = $null
+$workbook = $null
+try {{
+  $excel = New-Object -ComObject Excel.Application
+  $excel.Visible = $false
+  $excel.DisplayAlerts = $false
+  try {{ $excel.AutomationSecurity = 3 }} catch {{ }}
+  $workbook = $excel.Workbooks.Open({source_literal}, 0, $true)
+  $workbook.ExportAsFixedFormat(0, {output_literal}, 0, $true, $false)
+}} finally {{
+  if ($workbook) {{ $workbook.Close($false); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($workbook) }}
+  if ($excel) {{ $excel.Quit(); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel) }}
+}}
+"""
+        else:
+            script = f"""
+$ErrorActionPreference = 'Stop'
+$word = $null
+$document = $null
+try {{
+  $word = New-Object -ComObject Word.Application
+  $word.Visible = $false
+  $word.DisplayAlerts = 0
+  try {{ $word.AutomationSecurity = 3 }} catch {{ }}
+  $document = $word.Documents.Open({source_literal}, $false, $true, $false)
+  $document.ExportAsFixedFormat({output_literal}, 17)
+}} finally {{
+  if ($document) {{ $document.Close($false); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($document) }}
+  if ($word) {{ $word.Quit(); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) }}
+}}
+"""
+
+        encoded_script = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+        command = [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded_script,
+        ]
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise OfficePreviewError("تعذر تشغيل محوّل Microsoft Office") from exc
+
+        if completed.returncode != 0 or not output_path.exists():
+            detail = (completed.stderr or completed.stdout or "").strip()[-500:]
+            message = f"فشل تحويل الملف بواسطة {application}"
+            raise OfficePreviewError(f"{message}: {detail}" if detail else message)
+
+        pdf_bytes = output_path.read_bytes()
+        if not pdf_bytes.startswith(b"%PDF"):
+            raise OfficePreviewError("نتيجة تحويل Microsoft Office ليست ملف PDF صالحاً")
+        return pdf_bytes
+
+
 def _convert_with_libreoffice(
     source_path: str | os.PathLike[str],
     original_name: str | None,
@@ -164,16 +273,16 @@ def _preview_pdf_fonts(pdfmetrics, ttfont) -> tuple[str, str]:
     project_root = Path(__file__).resolve().parents[1]
     windows_fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
     candidates = [
+        windows_fonts / "majalla.ttf",
         project_root / "assets" / "fonts" / "DejaVuSans.ttf",
         windows_fonts / "arial.ttf",
         windows_fonts / "tahoma.ttf",
-        windows_fonts / "majalla.ttf",
     ]
     bold_candidates = [
+        windows_fonts / "majallab.ttf",
         project_root / "assets" / "fonts" / "DejaVuSans-Bold.ttf",
         windows_fonts / "arialbd.ttf",
         windows_fonts / "tahomabd.ttf",
-        windows_fonts / "majallab.ttf",
     ]
 
     regular_name = "OfficePreviewRegular"
@@ -298,8 +407,8 @@ def _convert_with_reportlab_fallback(
     body_style = ParagraphStyle(
         "OfficePreviewBody",
         fontName=regular_font,
-        fontSize=9.5,
-        leading=14,
+        fontSize=16,
+        leading=21,
         alignment=TA_RIGHT,
         wordWrap="RTL",
         spaceAfter=5,
@@ -308,8 +417,8 @@ def _convert_with_reportlab_fallback(
         "OfficePreviewHeading",
         parent=body_style,
         fontName=bold_font,
-        fontSize=13,
-        leading=18,
+        fontSize=18,
+        leading=24,
         spaceBefore=8,
         spaceAfter=6,
     )
@@ -317,16 +426,16 @@ def _convert_with_reportlab_fallback(
         "OfficePreviewTitle",
         parent=body_style,
         fontName=bold_font,
-        fontSize=16,
-        leading=22,
+        fontSize=20,
+        leading=26,
         alignment=TA_CENTER,
         spaceAfter=8,
     )
     note_style = ParagraphStyle(
         "OfficePreviewNote",
         parent=body_style,
-        fontSize=8.5,
-        leading=12,
+        fontSize=16,
+        leading=21,
         textColor=colors.HexColor("#1e40af"),
         backColor=colors.HexColor("#eff6ff"),
         borderColor=colors.HexColor("#bfdbfe"),
@@ -337,8 +446,8 @@ def _convert_with_reportlab_fallback(
     cell_style = ParagraphStyle(
         "OfficePreviewCell",
         parent=body_style,
-        fontSize=7.5 if ext in {"xlsx", "xlsm"} else 8.5,
-        leading=10 if ext in {"xlsx", "xlsm"} else 12,
+        fontSize=16,
+        leading=21,
         spaceAfter=0,
     )
 
@@ -435,6 +544,15 @@ def convert_office_to_pdf(
         or is_office_previewable(str(source_path))
     ):
         raise OfficePreviewError("نوع الملف غير مدعوم للمعاينة بصيغة PDF")
+
+    extension = office_extension(original_name) or Path(source_path).suffix.lower().lstrip(".")
+    if _office_application_available(extension):
+        try:
+            return _convert_with_windows_office(source_path, original_name)
+        except OfficePreviewError:
+            # Service accounts without interactive Office automation can still
+            # use LibreOffice or the local PDF fallback below.
+            pass
 
     executable = find_libreoffice_executable()
     if executable:

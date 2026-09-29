@@ -19,7 +19,10 @@ class OfficePreviewTests(unittest.TestCase):
             document.add_paragraph("محتوى تجريبي للمعاينة")
             document.save(path)
 
-            with patch("utils.office_preview.find_libreoffice_executable", return_value=None):
+            with (
+                patch("utils.office_preview._office_application_available", return_value=False),
+                patch("utils.office_preview.find_libreoffice_executable", return_value=None),
+            ):
                 pdf_bytes = convert_office_to_pdf(path, original_name=path.name)
                 embedded_pdf_bytes = convert_office_bytes_to_pdf(
                     path.read_bytes(),
@@ -41,7 +44,10 @@ class OfficePreviewTests(unittest.TestCase):
             sheet.append(["اختبار", 42])
             workbook.save(path)
 
-            with patch("utils.office_preview.find_libreoffice_executable", return_value=None):
+            with (
+                patch("utils.office_preview._office_application_available", return_value=False),
+                patch("utils.office_preview.find_libreoffice_executable", return_value=None),
+            ):
                 pdf_bytes = convert_office_to_pdf(path, original_name=path.name)
 
         self.assertTrue(pdf_bytes.startswith(b"%PDF"))
