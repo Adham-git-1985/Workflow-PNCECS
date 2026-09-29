@@ -160,8 +160,10 @@ try {{
   $workbook = $excel.Workbooks.Open({source_literal}, 0, $true)
   $workbook.ExportAsFixedFormat(0, {output_literal}, 0, $true, $false)
 }} finally {{
-  if ($workbook) {{ $workbook.Close($false); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($workbook) }}
-  if ($excel) {{ $excel.Quit(); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel) }}
+  # Office 2007 can lose its RPC connection while closing, after the PDF was
+  # already exported.  Cleanup must not turn a successful export into a fail.
+  if ($workbook) {{ try {{ $workbook.Close($false) }} catch {{ }}; try {{ [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($workbook) }} catch {{ }} }}
+  if ($excel) {{ try {{ $excel.Quit() }} catch {{ }}; try {{ [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($excel) }} catch {{ }} }}
 }}
 """
         else:
@@ -177,8 +179,10 @@ try {{
   $document = $word.Documents.Open({source_literal}, $false, $true, $false)
   $document.ExportAsFixedFormat({output_literal}, 17)
 }} finally {{
-  if ($document) {{ $document.Close($false); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($document) }}
-  if ($word) {{ $word.Quit(); [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) }}
+  # Office 2007 can lose its RPC connection while closing, after the PDF was
+  # already exported.  Cleanup must not turn a successful export into a fail.
+  if ($document) {{ try {{ $document.Close($false) }} catch {{ }}; try {{ [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($document) }} catch {{ }} }}
+  if ($word) {{ try {{ $word.Quit() }} catch {{ }}; try {{ [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($word) }} catch {{ }} }}
 }}
 """
 
@@ -203,7 +207,7 @@ try {{
         except (OSError, subprocess.SubprocessError) as exc:
             raise OfficePreviewError("تعذر تشغيل محوّل Microsoft Office") from exc
 
-        if completed.returncode != 0 or not output_path.exists():
+        if not output_path.exists():
             detail = (completed.stderr or completed.stdout or "").strip()[-500:]
             message = f"فشل تحويل الملف بواسطة {application}"
             raise OfficePreviewError(f"{message}: {detail}" if detail else message)
@@ -211,6 +215,12 @@ try {{
         pdf_bytes = output_path.read_bytes()
         if not pdf_bytes.startswith(b"%PDF"):
             raise OfficePreviewError("نتيجة تحويل Microsoft Office ليست ملف PDF صالحاً")
+        if completed.returncode != 0:
+            logger.warning(
+                "%s reported an error after exporting the PDF; keeping valid output: %s",
+                application,
+                (completed.stderr or completed.stdout or "").strip()[-500:],
+            )
         return pdf_bytes
 
 
