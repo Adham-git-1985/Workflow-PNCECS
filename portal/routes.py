@@ -10761,6 +10761,17 @@ def _administrative_affairs_daily_rows(
             events = events_map.get(key, [])
             leave = leave_map.get(key)
             pending_leave = pending_leave_map.get(key)
+            if (
+                pending_leave
+                and pending_leave.source == ATTENDANCE_RECONCILIATION_LEAVE_SOURCE
+                and _is_sick_leave_type(getattr(pending_leave, "leave_type", None))
+                and leave
+                and leave.source == ATTENDANCE_AUTO_LEAVE_SOURCE
+            ):
+                # Show the pending sick request as the current reconciliation
+                # result while the automatic annual row remains as a safety
+                # fallback until final approval.
+                leave = None
             schedule_day = schedule_map.get(key)
             exemption = exemption_map.get(key)
             schedule_day_kind = _attendance_schedule_day_kind(schedule_day)
@@ -11029,6 +11040,15 @@ def _process_unrecorded_office_attendance(
         row for row in existing_match_rows
         if row.source == ATTENDANCE_AUTO_LEAVE_SOURCE
     ]
+    existing_reconciliation_rows = [
+        row for row in existing_match_rows
+        if row.source == ATTENDANCE_RECONCILIATION_LEAVE_SOURCE
+    ]
+    existing_reconciliation_by_key = {
+        (int(row.user_id), row.source_attendance_day): row
+        for row in existing_reconciliation_rows
+        if row.user_id and row.source_attendance_day
+    }
     user_ids = sorted(
         {key[0] for key in office_keys}
         | {int(row.user_id) for row in existing_match_rows}
@@ -11067,7 +11087,8 @@ def _process_unrecorded_office_attendance(
         .order_by(HRLeaveRequest.id.desc())
         .all()
     )
-    active_leave_keys = set(_period_rows_by_user_day(active_leave_rows, start_day, end_day))
+    active_leave_map = _period_rows_by_user_day(active_leave_rows, start_day, end_day)
+    active_leave_keys = set(active_leave_map)
     replacement_leave_map = _period_rows_by_user_day(
         [
             row for row in active_leave_rows
@@ -11213,8 +11234,20 @@ def _process_unrecorded_office_attendance(
         if _is_annual_balance_type(selected_leave_type)
         else ATTENDANCE_RECONCILIATION_LEAVE_SOURCE
     )
-    selected_is_annual = selected_source == ATTENDANCE_AUTO_LEAVE_SOURCE
+    selected_is_sick = _is_sick_leave_type(selected_leave_type)
+    if selected_is_sick:
+        _ensure_sick_leave_balance_policy(selected_leave_type)
+    # A sick type must never be treated as an automatic annual charge even if
+    # legacy metadata happens to point it at an annual balance.
+    selected_is_annual = (
+        selected_source == ATTENDANCE_AUTO_LEAVE_SOURCE
+        and not selected_is_sick
+    )
+    if selected_is_sick:
+        selected_source = ATTENDANCE_RECONCILIATION_LEAVE_SOURCE
+    defer_sick_approval = bool(force_review and selected_is_sick)
     created = 0
+    medical_report_requested = 0
     reviewed = 0
     for user_id, day_text in sorted(office_keys, key=lambda key: (key[1], key[0])):
         reviewed += 1
@@ -11232,11 +11265,20 @@ def _process_unrecorded_office_attendance(
             continue
 
         match_replaced = False
+        keep_annual_fallback = False
         previous_match = active_reconciliation_rows.get(key)
         if previous_match:
             if int(previous_match.leave_type_id) == int(selected_leave_type.id):
                 continue
-            if previous_match.source == ATTENDANCE_AUTO_LEAVE_SOURCE:
+            if (
+                defer_sick_approval
+                and previous_match.source == ATTENDANCE_AUTO_LEAVE_SOURCE
+            ):
+                # Keep the automatic annual row as a fallback until the
+                # employee uploads the medical report and the sick request is
+                # approved through the normal workflow.
+                keep_annual_fallback = True
+            elif previous_match.source == ATTENDANCE_AUTO_LEAVE_SOURCE:
                 _release_attendance_auto_annual_leave_row(
                     previous_match,
                     reason="RECONCILIATION_TYPE_CHANGED",
@@ -11264,7 +11306,9 @@ def _process_unrecorded_office_attendance(
         if previous_auto:
             if selected_is_annual and int(previous_auto.leave_type_id) == int(selected_leave_type.id):
                 continue
-            if not selected_is_annual:
+            if defer_sick_approval:
+                keep_annual_fallback = True
+            elif not selected_is_annual:
                 _release_attendance_auto_annual_leave_row(
                     previous_auto,
                     reason="RECONCILIATION_TYPE_CHANGED",
@@ -11278,36 +11322,116 @@ def _process_unrecorded_office_attendance(
             # match. Switching explicitly to sick is handled above.
             continue
         if key in active_leave_keys:
-            continue
+            active_row = active_leave_map.get(key)
+            if not (
+                keep_annual_fallback
+                and active_row
+                and previous_auto
+                and int(active_row.id) == int(previous_auto.id)
+            ):
+                continue
+            active_leave_keys.discard(key)
 
         now_utc = datetime.utcnow()
-        leave_row = HRLeaveRequest(
-            user_id=user_id,
-            leave_type_id=selected_leave_type.id,
-            start_date=day_text,
-            end_date=day_text,
-            days=max(1, _calculate_leave_days(selected_leave_type, day_text, day_text, user_id=user_id)),
-            entered_by="SYSTEM" if selected_is_annual else "ADMIN",
-            created_by_id=actor_id,
-            source=selected_source,
-            source_attendance_day=day_text,
-            note="احتساب آلي لإجازة سنوية: يوم دوام مكتبي معتمد دون تسجيل بصمة حضور.",
-            status="APPROVED",
-            submitted_at=now_utc,
-            decided_at=now_utc,
-            updated_at=now_utc,
-        )
-        if not selected_is_annual:
-            leave_row.note = "مطابقة غياب إدارية: تم تسجيل إجازة مرضية بالنوع المختار للمطابقة."
-        db.session.add(leave_row)
-        db.session.flush()
-        notification_text = (
-            f"تمت مطابقة غياب الموظف {user.full_name} بتاريخ {day_text} وتسجيل "
-            f"{selected_leave_type.name_ar} ضمن الإجازات المعتمدة."
-            if not selected_is_annual
+        pending_sick_request = bool(defer_sick_approval and not selected_is_annual)
+        request_status = "SUBMITTED" if pending_sick_request else "APPROVED"
+        request_note = (
+            "مطابقة غياب إدارية: تم إنشاء طلب إجازة مرضية؛ يرجى رفع التقرير الطبي "
+            "واعتماد الطلب نهائياً قبل تسجيل الخصم من رصيد الإجازة المرضية."
+            if pending_sick_request
             else (
-                f"احتسب النظام إجازة سنوية تلقائياً للموظف {user.full_name} بتاريخ {day_text} "
-                "لوجود دوام مكتبي معتمد دون تسجيل بصمة. يمكن استبدالها بمرضية بعد تقديم المستند واعتماد الطلب نهائياً."
+                "مطابقة غياب إدارية: تم تسجيل إجازة مرضية بالنوع المختار للمطابقة."
+                if not selected_is_annual
+                else "احتساب آلي لإجازة سنوية: يوم دوام مكتبي معتمد دون تسجيل بصمة حضور."
+            )
+        )
+        reusable_row = None
+        if not selected_is_annual:
+            candidate = existing_reconciliation_by_key.get(key)
+            if candidate and (
+                (candidate.status or "").upper() in {"REJECTED", "CANCELLED"}
+                or candidate.replaced_at
+            ):
+                reusable_row = candidate
+
+        if reusable_row:
+            leave_row = reusable_row
+            leave_row.user_id = user_id
+            leave_row.leave_type_id = selected_leave_type.id
+            leave_row.leave_type = selected_leave_type
+            leave_row.start_date = day_text
+            leave_row.end_date = day_text
+            leave_row.days = max(
+                1,
+                _calculate_leave_days(
+                    selected_leave_type,
+                    day_text,
+                    day_text,
+                    user_id=user_id,
+                ),
+            )
+            leave_row.entered_by = "SYSTEM" if selected_is_annual else "ADMIN"
+            if actor_id is not None:
+                leave_row.created_by_id = actor_id
+            leave_row.source = selected_source
+            leave_row.source_attendance_day = day_text
+            leave_row.note = request_note
+            leave_row.status = request_status
+            leave_row.submitted_at = now_utc
+            leave_row.decided_at = now_utc if request_status == "APPROVED" else None
+            leave_row.decided_by_id = actor_id if request_status == "APPROVED" else None
+            leave_row.approver_user_id = None
+            leave_row.decision_note = None
+            leave_row.covering_employee_name = None
+            leave_row.cancelled_at = None
+            leave_row.cancelled_by_id = None
+            leave_row.cancelled_from_status = None
+            leave_row.cancel_note = None
+            leave_row.cancel_effective_date = None
+            leave_row.replaced_by_leave_request_id = None
+            leave_row.replaced_at = None
+            leave_row.replacement_reason = None
+            leave_row.updated_at = now_utc
+        else:
+            leave_row = HRLeaveRequest(
+                user_id=user_id,
+                leave_type_id=selected_leave_type.id,
+                leave_type=selected_leave_type,
+                start_date=day_text,
+                end_date=day_text,
+                days=max(1, _calculate_leave_days(selected_leave_type, day_text, day_text, user_id=user_id)),
+                entered_by="SYSTEM" if selected_is_annual else "ADMIN",
+                created_by_id=actor_id,
+                source=selected_source,
+                source_attendance_day=day_text,
+                note=request_note,
+                status=request_status,
+                submitted_at=now_utc,
+                decided_at=now_utc if request_status == "APPROVED" else None,
+                decided_by_id=actor_id if request_status == "APPROVED" else None,
+                updated_at=now_utc,
+            )
+            db.session.add(leave_row)
+        db.session.flush()
+        if pending_sick_request:
+            start_request_flow(
+                KIND_LEAVE,
+                leave_row,
+                now=now_utc,
+                restart=bool(reusable_row),
+            )
+        notification_text = (
+            f"أنشأت الشؤون الإدارية طلب إجازة مرضية للموظف {user.full_name} بتاريخ {day_text}. "
+            "يرجى رفع التقرير الطبي من صفحة إجازاتي؛ لن يُخصم من الرصيد قبل الاعتماد النهائي."
+            if pending_sick_request
+            else (
+                f"تمت مطابقة غياب الموظف {user.full_name} بتاريخ {day_text} وتسجيل "
+                f"{selected_leave_type.name_ar} ضمن الإجازات المعتمدة."
+                if not selected_is_annual
+                else (
+                    f"احتسب النظام إجازة سنوية تلقائياً للموظف {user.full_name} بتاريخ {day_text} "
+                    "لوجود دوام مكتبي معتمد دون تسجيل بصمة. يمكن استبدالها بمرضية بعد تقديم المستند واعتماد الطلب نهائياً."
+                )
             )
         )
         _add_attendance_leave_notifications(
@@ -11316,7 +11440,11 @@ def _process_unrecorded_office_attendance(
             event_key=(
                 f"att-auto-leave-{day_text}-{user_id}"
                 if selected_is_annual
-                else f"att-reconciliation-leave-{day_text}-{user_id}"
+                else (
+                    f"att-reconciliation-sick-report-{day_text}-{user_id}-{leave_row.id}"
+                    if pending_sick_request
+                    else f"att-reconciliation-leave-{day_text}-{user_id}"
+                )
             ),
             link_url=f"/portal/hr/approvals/leaves/{leave_row.id}",
         )
@@ -11326,12 +11454,18 @@ def _process_unrecorded_office_attendance(
                 if selected_is_annual
                 else "HR_ATTENDANCE_RECONCILIATION_LEAVE"
             ),
-            f"user_id={user_id}; day={day_text}; leave_id={leave_row.id}; leave_type_id={selected_leave_type.id}",
+            (
+                f"user_id={user_id}; day={day_text}; leave_id={leave_row.id}; "
+                f"leave_type_id={selected_leave_type.id}; status={leave_row.status}; "
+                f"medical_report_required={int(pending_sick_request)}"
+            ),
             target_type="LEAVE_REQUEST",
             target_id=leave_row.id,
         )
         _upsert_summary(_summary_compute_one(user_id, day_text))
         created += 1
+        if pending_sick_request:
+            medical_report_requested += 1
     return {
         "created": created,
         "reversed": reversed_count,
@@ -11340,6 +11474,7 @@ def _process_unrecorded_office_attendance(
         "missing_annual_type": 0,
         "invalid_leave_type": 0,
         "leave_type_id": int(selected_leave_type.id),
+        "medical_report_requested": medical_report_requested,
     }
 
 
@@ -11475,11 +11610,20 @@ def hr_report_administrative_affairs_reconcile():
             if target_user_id is not None
             else "لجميع الموظفين"
         )
-        flash(
-            f"اكتملت المطابقة {scope_label}: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
-            f"{result['created']} {selected_leave_type.name_ar}، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
-            "success",
-        )
+        if result.get("medical_report_requested", 0):
+            flash(
+                f"اكتملت المطابقة {scope_label}: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
+                f"{result['medical_report_requested']} طلب إجازة مرضية بانتظار رفع التقرير الطبي "
+                "والاعتماد النهائي. لم يُخصم الرصيد قبل الاعتماد، "
+                f"وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
+                "success",
+            )
+        else:
+            flash(
+                f"اكتملت المطابقة {scope_label}: تمت مراجعة {result['reviewed']} حالة، وإنشاء "
+                f"{result['created']} {selected_leave_type.name_ar}، وإلغاء {result.get('reversed', 0)} احتساب بعد ثبوت الحضور.",
+                "success",
+            )
     return redirect(url_for(
         "portal.hr_report_administrative_affairs_daily",
         from_date=start_day.isoformat(),
@@ -19279,6 +19423,7 @@ def hr_my_balances_deductions():
             "attendance_deduction_used": deduction_used if deducts else None,
             "used": used,
             "remaining": (total - used) if deducts else None,
+            "is_sick": _is_sick_leave_type(leave_type),
         })
 
     items = (
@@ -21291,6 +21436,9 @@ def hr_approval_leave(req_id: int):
         action = (request.form.get("action") or "").strip().upper()
         note = (request.form.get("decision_note") or "").strip()
         if action == "APPROVE":
+            # Normalize legacy sick types before the final decision so an
+            # approved request is always reflected in the sick-leave balance.
+            _ensure_sick_leave_balance_policy(r.leave_type)
             one_time_error = _one_time_leave_error(
                 r.user_id,
                 r.leave_type,
@@ -21428,6 +21576,7 @@ def hr_approval_leave(req_id: int):
         request_progress=request_progress(KIND_LEAVE, r, active_step=step),
         exceptional=exceptional,
         requires_hr=exceptional,
+        requires_supporting_document=_leave_type_requires_supporting_document(r.leave_type),
         note_required=note_required,
         stage_label=hr_stage_label,
     )
@@ -30923,6 +31072,42 @@ def _is_sick_leave_type(leave_type: HRLeaveType | None) -> bool:
     )
 
 
+def _ensure_sick_leave_balance_policy(leave_type: HRLeaveType | None) -> bool:
+    """Make a selected sick type report-backed and balance-consuming.
+
+    Older installations may contain a sick type created before the leave
+    balance policy columns were introduced, or one whose metadata was left at
+    the old non-deductible default.  Administrative reconciliation is an
+    explicit sick-leave decision, so normalize that type before the request is
+    created.  The balance owner is normalized as well when the type uses an
+    alias, while the configured owner link itself is preserved.
+    """
+    if not _is_sick_leave_type(leave_type):
+        return False
+
+    changed = False
+    targets = [leave_type]
+    balance_owner = _leave_balance_source_type(leave_type)
+    if balance_owner and balance_owner is not leave_type:
+        targets.append(balance_owner)
+
+    for target in targets:
+        if not bool(getattr(target, "deduct_from_balance", False)):
+            target.deduct_from_balance = True
+            changed = True
+        if _leave_balance_renewal_policy(target) != LEAVE_BALANCE_RENEWAL_YEARLY:
+            target.balance_renewal_policy = LEAVE_BALANCE_RENEWAL_YEARLY
+            changed = True
+
+    if not bool(getattr(leave_type, "requires_documents", False)):
+        leave_type.requires_documents = True
+        changed = True
+    if not (getattr(leave_type, "documents_hint", None) or "").strip():
+        leave_type.documents_hint = "تقرير طبي مختوم"
+        changed = True
+    return changed
+
+
 def _attendance_reconciliation_leave_types() -> list[HRLeaveType]:
     """Return active annual and sick types available to absence matching."""
     rows = HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all()
@@ -32560,6 +32745,7 @@ def hr_leave_balances():
                 'remaining': rem,
                 'deducts_from_balance': deducts_from_balance,
                 'is_compensatory': _is_compensatory_leave_type(lt),
+                'is_sick': _is_sick_leave_type(lt),
             })
 
     adjustments = []
@@ -43962,7 +44148,7 @@ def hr_leaves_admin_edit(row_id: int):
     types_meta = {
         str(t.id): {
             "is_external": bool(getattr(t, "is_external", False)),
-            "requires_documents": bool(getattr(t, "requires_documents", False)),
+            "requires_documents": bool(getattr(t, "requires_documents", False)) or _leave_type_requires_medical_report(t),
             "documents_hint": (getattr(t, "documents_hint", None) or ""),
             "deduct_from_balance": _leave_type_deducts_from_balance(t),
             "balance_source_name": _leave_type_balance_source_name(t),

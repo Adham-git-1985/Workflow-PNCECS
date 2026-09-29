@@ -140,7 +140,9 @@
 
                     {% if atts|length == 0 %}
                       <div class="text-muted small mt-2">لا توجد مرفقات.</div>
-                      {% if r.leave_type and r.leave_type.requires_documents %}
+                      {% set leave_code = (r.leave_type.code or '')|upper if r.leave_type else '' %}
+                      {% set requires_leave_document = r.leave_type and (r.leave_type.requires_documents or leave_code in ['S', 'SICK', 'SICK_LEAVE', 'MEDICAL']) %}
+                      {% if requires_leave_document %}
                         <div class="text-danger small mt-1"><i class="bi bi-exclamation-triangle"></i> هذا النوع يتطلب إرفاق تقرير/مستند.</div>
                       {% endif %}
                     {% else %}

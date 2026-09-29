@@ -86,7 +86,7 @@
           <span class="badge bg-info text-dark ms-1"><i class="bi bi-globe2"></i> إجازة خارجية</span>
         {% endif %}
       </div>
-      {% if r.leave_type and r.leave_type.requires_documents and r.leave_type.documents_hint %}
+      {% if requires_supporting_document and r.leave_type.documents_hint %}
         <div class="text-muted small">ملاحظة: {{ r.leave_type.documents_hint }}</div>
       {% endif %}
     </div>
@@ -128,12 +128,12 @@
 <div class="bg-white rounded-3 shadow-sm p-3 mb-3">
   <div class="d-flex justify-content-between align-items-center mb-2">
     <div class="fw-semibold"><i class="bi bi-paperclip"></i> المرفقات</div>
-    {% if r.leave_type and r.leave_type.requires_documents and (attachments|length == 0) %}
+    {% if requires_supporting_document and (attachments|length == 0) %}
       <span class="badge bg-danger">مطلوب</span>
     {% endif %}
   </div>
 
-  {% if r.leave_type and r.leave_type.requires_documents and (attachments|length == 0) %}
+  {% if requires_supporting_document and (attachments|length == 0) %}
     <div class="alert alert-danger mb-2">
       هذا النوع من الإجازات يتطلب إرفاق تقرير/مستند. يمكن للموظف رفع المرفقات من صفحة "إجازاتي" حتى بعد إرسال الطلب.
     </div>

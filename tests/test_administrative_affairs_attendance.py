@@ -574,6 +574,60 @@ class AdministrativeAffairsAttendanceTests(unittest.TestCase):
         self.assertEqual(matched.status, "CANCELLED")
         self.assertEqual(annual_match.leave_type_id, annual.id)
 
+    def test_manual_sick_reconciliation_waits_for_report_before_deducting_balance(self):
+        employee = self._user("pending-sick@example.test", "موظف مرضي بانتظار التقرير")
+        sick = HRLeaveType(
+            code="SICK",
+            name_ar="إجازة مرضية",
+            default_balance_days=10,
+            requires_documents=False,
+            deduct_from_balance=False,
+        )
+        schedule = WorkSchedule(
+            name="دوام طلب مرضي",
+            kind="FIXED",
+            start_time="08:00",
+            end_time="15:00",
+        )
+        db.session.add_all((sick, schedule))
+        db.session.flush()
+        self._final_schedule_day(employee, "2026-09-14", "WORK", schedule=schedule)
+        db.session.commit()
+
+        result = _process_unrecorded_office_attendance(
+            reference_dt=datetime(2026, 9, 14, 17, 0),
+            day_from=date(2026, 9, 14),
+            day_to=date(2026, 9, 14),
+            target_user_id=employee.id,
+            leave_type_id=sick.id,
+            actor_id=employee.id,
+            force_review=True,
+        )
+        db.session.commit()
+
+        request_row = HRLeaveRequest.query.filter_by(
+            user_id=employee.id,
+            source=ATTENDANCE_RECONCILIATION_LEAVE_SOURCE,
+            source_attendance_day="2026-09-14",
+        ).one()
+        report_row = _administrative_affairs_daily_rows(
+            date(2026, 9, 14),
+            date(2026, 9, 14),
+            user_ids=[employee.id],
+        )[0]
+
+        self.assertEqual(result["medical_report_requested"], 1)
+        self.assertEqual(request_row.status, "SUBMITTED")
+        self.assertTrue(sick.requires_documents)
+        self.assertTrue(sick.deduct_from_balance)
+        self.assertEqual(_leave_used_days(employee.id, sick.id, 2026), 0.0)
+        self.assertEqual(report_row["category"], "LEAVE_PENDING")
+
+        # The balance allocator sees the request only after final approval.
+        request_row.status = "APPROVED"
+        db.session.commit()
+        self.assertEqual(_leave_used_days(employee.id, sick.id, 2026), 1.0)
+
     def test_hr_cancelling_automatic_leave_releases_its_full_balance_charge(self):
         administrator = self._user(
             "automatic-cancel-admin@example.test",

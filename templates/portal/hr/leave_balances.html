@@ -141,7 +141,14 @@
               </td>
               <td>{% if r.deducts_from_balance %}<span class="{{ 'text-success' if r.adjustments_total > 0 else ('text-danger' if r.adjustments_total < 0 else 'text-muted') }}">{{ "%+.2f"|format(r.adjustments_total or 0) }}</span>{% else %}—{% endif %}</td>
               <td>{{ "%.2f"|format(r.total or 0) if r.deducts_from_balance else '—' }}</td>
-              <td>{{ "%.2f"|format(r.used or 0) if r.deducts_from_balance else '—' }}</td>
+              <td>
+                {% if r.deducts_from_balance %}
+                  {{ "%.2f"|format(r.used or 0) }}
+                  {% if r.is_sick %}
+                    <a class="d-block small" href="{{ url_for('portal.hr_leaves_report', year=year, status='APPROVED', user_id=selected_user.id, leave_type_id=r.lt.id) }}">عرض الإجازات المرضية المستهلكة</a>
+                  {% endif %}
+                {% else %}—{% endif %}
+              </td>
               <td>
                 {% if not r.deducts_from_balance %}
                   —

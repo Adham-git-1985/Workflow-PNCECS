@@ -30,7 +30,12 @@
               <td>{{ "%.2f"|format(row.total or 0) }} يوم</td>
               <td>{{ "%.2f"|format(row.leave_request_used or 0) }} يوم</td>
               <td>{{ "%.2f"|format(row.attendance_deduction_used or 0) }} يوم</td>
-              <td>{{ "%.2f"|format(row.used or 0) }} يوم</td>
+              <td>
+                {{ "%.2f"|format(row.used or 0) }} يوم
+                {% if row.is_sick %}
+                  <a class="d-block small" href="{{ url_for('portal.hr_my_leaves', leave_type_id=row.leave_type.id, status='APPROVED', date_from=(year|string ~ '-01-01'), date_to=(year|string ~ '-12-31')) }}">عرض الإجازات المرضية المستهلكة</a>
+                {% endif %}
+              </td>
               <td><span class="badge {{ 'text-bg-danger' if row.remaining <= 0 else ('text-bg-warning' if row.remaining <= 2 else 'text-bg-success') }}">{{ "%.2f"|format(row.remaining or 0) }} يوم</span></td>
             {% else %}
               <td colspan="7"><span class="badge text-bg-secondary">هذا النوع لا يُخصم من الرصيد</span></td>
