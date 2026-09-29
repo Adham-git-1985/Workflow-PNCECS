@@ -61,8 +61,24 @@
         </div>
         <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.portal_admin_notifications', q=q) }}">إلغاء اختيار الموظف</a>
       </div>
+      <form method="get" class="row g-2 mb-3" id="notification-search-form">
+        <input type="hidden" name="q" value="{{ q }}" />
+        <input type="hidden" name="user_id" value="{{ selected_user.id }}" />
+        <div class="col-md-8">
+          <label class="form-label" for="notification_q">بحث داخل إشعارات الموظف</label>
+          <input id="notification_q" name="notification_q" class="form-control" value="{{ notification_q }}" placeholder="نص الإشعار أو النوع" />
+        </div>
+        <div class="col-md-4 d-flex align-items-end gap-2">
+          <button class="btn btn-outline-primary" type="submit"><i class="bi bi-search"></i> بحث في الإشعارات</button>
+          {% if notification_q %}
+            <a class="btn btn-outline-secondary" href="{{ url_for('portal.portal_admin_notifications', q=q, user_id=selected_user.id) }}">إلغاء</a>
+          {% endif %}
+        </div>
+      </form>
       <form method="post" id="notification-delete-form" onsubmit="return confirm('سيتم حذف الإشعارات المحددة فقط من حساب هذا الموظف. هل تريد المتابعة؟');">
         <input type="hidden" name="target_user_id" value="{{ selected_user.id }}" />
+        <input type="hidden" name="q" value="{{ q }}" />
+        <input type="hidden" name="notification_q" value="{{ notification_q }}" />
         {% if notifications %}
           <div class="table-responsive">
             <table class="table table-hover align-middle">
@@ -88,7 +104,13 @@
           </div>
           <button class="btn btn-danger" type="submit"><i class="bi bi-trash"></i> حذف الإشعارات المحددة</button>
         {% else %}
-          <div class="alert alert-light border mb-0">لا توجد إشعارات ظاهرة لهذا الموظف.</div>
+          <div class="alert alert-light border mb-0">
+            {% if notification_q %}
+              لا توجد إشعارات ظاهرة مطابقة للبحث لهذا الموظف.
+            {% else %}
+              لا توجد إشعارات ظاهرة لهذا الموظف.
+            {% endif %}
+          </div>
         {% endif %}
       </form>
     </div>

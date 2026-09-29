@@ -6797,9 +6797,13 @@ def portal_admin_notifications():
 
         if not selected_ids:
             flash("اختر إشعاراً واحداً على الأقل.", "warning")
+            post_q = (request.form.get("q") or "").strip()
+            post_notification_q = (request.form.get("notification_q") or "").strip()
             return redirect(url_for(
                 "portal.portal_admin_notifications",
+                q=post_q,
                 user_id=target_user.id,
+                notification_q=post_notification_q,
             ))
 
         hidden_count = (
@@ -6819,12 +6823,17 @@ def portal_admin_notifications():
         )
         db.session.commit()
         flash(f"تم حذف {hidden_count} إشعاراً محدداً من حساب {target_user.full_name}.", "success")
+        post_q = (request.form.get("q") or "").strip()
+        post_notification_q = (request.form.get("notification_q") or "").strip()
         return redirect(url_for(
             "portal.portal_admin_notifications",
+            q=post_q,
             user_id=target_user.id,
+            notification_q=post_notification_q,
         ))
 
     q = (request.args.get("q") or "").strip()
+    notification_q = (request.args.get("notification_q") or "").strip()
     try:
         selected_user_id = int(request.args.get("user_id") or 0)
     except (TypeError, ValueError):
@@ -6859,12 +6868,21 @@ def portal_admin_notifications():
     )
     notifications = []
     if selected_user:
-        notifications = (
+        notifications_query = (
             Notification.query
             .filter(Notification.user_id == selected_user.id)
             .filter(Notification.is_mirror.is_(False))
             .filter(Notification.source == "portal")
             .filter(Notification.is_visible.is_(True))
+        )
+        if notification_q:
+            notification_needle = f"%{notification_q}%"
+            notifications_query = notifications_query.filter(or_(
+                Notification.message.ilike(notification_needle),
+                Notification.type.ilike(notification_needle),
+            ))
+        notifications = (
+            notifications_query
             .order_by(Notification.created_at.desc(), Notification.id.desc())
             .limit(500)
             .all()
@@ -6873,6 +6891,7 @@ def portal_admin_notifications():
         "portal/admin/notifications.html",
         users=users,
         q=q,
+        notification_q=notification_q,
         selected_user=selected_user,
         notifications=notifications,
     )

@@ -356,6 +356,42 @@ class UnifiedNotificationRouteTests(unittest.TestCase):
         self.assertEqual(get_response.status_code, 403)
         self.assertEqual(post_response.status_code, 403)
 
+    def test_admin_notification_search_filters_selected_employee_notifications(self):
+        matching_notification = Notification(
+            user_id=self.other_user.id,
+            message="HR request routing error for leave request 94",
+            type="HR_REQUEST_ROUTING_ERROR",
+            source="portal",
+            is_read=False,
+        )
+        other_notification = Notification(
+            user_id=self.other_user.id,
+            message="A different portal notification",
+            type="INFO",
+            source="portal",
+            is_read=False,
+        )
+        db.session.add_all((matching_notification, other_notification))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client, self.user.id)
+            response = client.get(
+                "/portal/admin/notifications",
+                query_string={
+                    "q": self.other_user.name,
+                    "user_id": self.other_user.id,
+                    "notification_q": "ROUTING_ERROR",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn(matching_notification.message, body)
+        self.assertNotIn(other_notification.message, body)
+        self.assertIn('name="notification_q"', body)
+        self.assertIn("ROUTING_ERROR", body)
+
     def test_opening_circular_clears_its_portal_notification(self):
         circular = PortalCircular(
             title="تعميم موحد",
