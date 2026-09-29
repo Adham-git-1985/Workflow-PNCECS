@@ -143,8 +143,18 @@
             <input class="form-control" name="request_type">
           </div>
           <div class="col-12">
-            <label class="form-label">الإجراءات التشغيلية المسموحة</label>
-            <div class="d-flex flex-wrap gap-3">
+            <div class="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-2">
+              <label class="form-label mb-0">الإجراءات التشغيلية المسموحة</label>
+              <div class="btn-group btn-group-sm" role="group" aria-label="التحكم في الصلاحيات">
+                <button type="button" class="btn btn-outline-primary" id="select-all-acting-permissions">
+                  <i class="bi bi-check2-all"></i> جميع الصلاحيات
+                </button>
+                <button type="button" class="btn btn-outline-secondary" id="clear-all-acting-permissions">
+                  <i class="bi bi-x-circle"></i> إلغاء الكل
+                </button>
+              </div>
+            </div>
+            <div class="d-flex flex-wrap gap-3" id="acting-permission-options">
               {% for action, label in action_labels.items() if action in ['VIEW','CREATE','EDIT','FORWARD','FOLLOW_UP','COMPLETE','EXECUTE_TASK','REOPEN','REJECT','CANCEL','CLOSE'] %}
               <label class="form-check">
                 <input class="form-check-input" type="checkbox" name="actions" value="{{ action }}">
@@ -318,5 +328,27 @@
 <div class="card shadow-sm mt-3"><div class="card-header bg-light"><strong>العمليات المنفذة بالنيابة عني</strong></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>المنفذ الفعلي</th><th>الإجراء</th><th>المعاملة</th><th>الصلاحية/التفويض</th><th>التاريخ</th><th>السياق</th></tr></thead><tbody>{% for log in operations_for_me %}<tr><td>{{ log.actual_user.full_name if log.actual_user else (log.user.full_name if log.user else 'النظام') }}</td><td>{{ log.action_type or log.action }}</td><td>{% if log.request_id %}<a href="{{ url_for('workflow.view_request', request_id=log.request_id) }}">#{{ log.request_id }}</a>{% else %}—{% endif %}</td><td>{% if log.acting_permission_id %}#{{ log.acting_permission_id }}{% elif log.formal_delegation_id %}تفويض #{{ log.formal_delegation_id }}{% else %}—{% endif %}</td><td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{{ log.execution_context or 'ACTING' }}</td></tr>{% else %}<tr><td colspan="6" class="text-center text-muted py-3">لا توجد عمليات.</td></tr>{% endfor %}</tbody></table></div></div></div>
 
 <div class="card shadow-sm mt-3"><div class="card-header bg-light"><strong>العمليات المنفذة بالنيابة عني أو بموجب تفويض مني</strong></div><div class="card-body p-0"><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>المنفذ الفعلي</th><th>الإجراء</th><th>المعاملة</th><th>المرجع</th><th>التاريخ</th></tr></thead><tbody>{% for log in delegated_operations_by_me %}<tr><td>{{ log.actual_user.full_name if log.actual_user else (log.user.full_name if log.user else 'النظام') }}</td><td>{{ log.action_type or log.action }}</td><td>{% if log.request_id %}<a href="{{ url_for('workflow.view_request', request_id=log.request_id) }}">#{{ log.request_id }}</a>{% else %}—{% endif %}</td><td>{{ log.formal_delegation.decision_number if log.formal_delegation else '—' }}</td><td>{{ log.created_at.strftime('%Y-%m-%d %H:%M') }}</td></tr>{% else %}<tr><td colspan="5" class="text-center text-muted py-3">لا توجد عمليات.</td></tr>{% endfor %}</tbody></table></div></div></div>
+
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const permissionOptions = document.querySelectorAll('#acting-permission-options input[name="actions"]');
+    const selectAllButton = document.getElementById('select-all-acting-permissions');
+    const clearAllButton = document.getElementById('clear-all-acting-permissions');
+
+    if (!permissionOptions.length || !selectAllButton || !clearAllButton) return;
+
+    selectAllButton.addEventListener('click', function () {
+      permissionOptions.forEach(function (checkbox) {
+        checkbox.checked = true;
+      });
+    });
+
+    clearAllButton.addEventListener('click', function () {
+      permissionOptions.forEach(function (checkbox) {
+        checkbox.checked = false;
+      });
+    });
+  });
+</script>
 
 {% endblock %}
