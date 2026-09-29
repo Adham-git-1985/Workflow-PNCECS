@@ -215,6 +215,86 @@ class WorkflowDashboardPermissionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("The specifically selected recipient", response.get_data(as_text=True))
 
+    def test_dashboard_filters_paths_by_pending_assignee(self):
+        first_assignee = User(
+            email="first-dashboard-assignee@example.test",
+            name="First Dashboard Assignee",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        second_assignee = User(
+            email="second-dashboard-assignee@example.test",
+            name="Second Dashboard Assignee",
+            password_hash="not-used-in-test",
+            role="EMPLOYEE",
+        )
+        db.session.add_all((first_assignee, second_assignee))
+        db.session.flush()
+
+        requests = []
+        for title, assignee in (
+            ("Path assigned to first employee", first_assignee),
+            ("Path assigned to second employee", second_assignee),
+        ):
+            request_row = WorkflowRequest(
+                requester_id=self.employee.id,
+                title=title,
+                description="",
+                status="IN_PROGRESS",
+            )
+            db.session.add(request_row)
+            db.session.flush()
+            instance = WorkflowInstance(
+                request_id=request_row.id,
+                current_step_order=1,
+                is_completed=False,
+            )
+            db.session.add(instance)
+            db.session.flush()
+            db.session.add(WorkflowInstanceStep(
+                instance_id=instance.id,
+                step_order=1,
+                approver_kind="USER",
+                approver_user_id=assignee.id,
+                status="PENDING",
+            ))
+            requests.append(request_row)
+
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_DASHBOARD_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            with patch("workflow.routes.render_template", return_value="ok") as render:
+                response = client.get(
+                    f"/workflow/work?assignee_id={first_assignee.id}"
+                )
+                rows = render.call_args.kwargs["rows"]
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["req"].title for row in rows], [requests[0].title])
+
+    def test_dashboard_all_queue_is_available_in_the_search_toolbar(self):
+        db.session.add(UserPermission(
+            user_id=self.employee.id,
+            key="WORKFLOW_DASHBOARD_READ",
+            is_allowed=True,
+        ))
+        db.session.commit()
+
+        with self.app.test_client() as client:
+            self._login(client)
+            response = client.get("/workflow/work?queue=all")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn("جميع المسارات", body)
+        self.assertIn("عرض جميع المسارات", body)
+
     def test_org_node_manager_sees_pending_step_in_inbox(self):
         assistant = User(
             email="assistant-secretary@example.test",

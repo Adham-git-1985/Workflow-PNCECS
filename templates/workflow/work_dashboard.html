@@ -15,9 +15,9 @@
 </div>
 
 <div class="row g-2 mb-3">
-  {% for queue, label in queue_labels.items() %}
+  {% for queue, label in queue_cards.items() %}
     <div class="col-xl-3 col-lg-4 col-md-6">
-      <a class="text-decoration-none" href="{{ url_for('workflow.work_dashboard', queue=queue) }}">
+      <a class="text-decoration-none" href="{{ url_for('workflow.work_dashboard', queue=queue, q=q, assignee_id=selected_assignee_id) }}">
         <div class="card h-100 {{ 'border-primary bg-primary bg-opacity-10' if selected_queue == queue else '' }}">
           <div class="card-body py-3 d-flex align-items-center justify-content-between">
             <div class="text-body-secondary">{{ label }}</div>
@@ -31,14 +31,36 @@
 
 <div class="card shadow-sm">
   <div class="card-header bg-white d-flex flex-wrap align-items-center justify-content-between gap-2">
-    <div>
-      <strong>{{ queue_labels.get(selected_queue) }}</strong>
+    <div class="d-flex align-items-center gap-2 flex-wrap text-nowrap">
+      <strong>{{ queue_labels.get(selected_queue, 'جميع المسارات') }}</strong>
       <span class="badge text-bg-secondary me-2">{{ total }}</span>
+      {% if selected_assignee %}
+        <span class="badge text-bg-info">
+          <i class="bi bi-person"></i> الموظف: {{ selected_assignee.full_name }}
+        </span>
+      {% endif %}
     </div>
-    <form method="get" class="d-flex gap-2">
+    <form method="get" class="d-flex align-items-center gap-2 flex-nowrap flex-grow-1 justify-content-end">
       <input type="hidden" name="queue" value="{{ selected_queue }}">
-      <input class="form-control form-control-sm" type="search" name="q" value="{{ q or '' }}" placeholder="رقم الطلب أو العنوان…">
-      <button class="btn btn-sm btn-outline-primary">بحث</button>
+      <div class="flex-grow-1" style="min-width: 180px; max-width: 360px;">
+        <label class="visually-hidden" for="workflow-dashboard-search">بحث في المسارات</label>
+        <input id="workflow-dashboard-search" class="form-control form-control-sm" type="search" name="q" value="{{ q or '' }}" placeholder="رقم الطلب أو العنوان…">
+      </div>
+      <div style="min-width: 220px; max-width: 300px;">
+        <label class="visually-hidden" for="workflow-dashboard-assignee">المسارات المطلوبة من الموظف</label>
+        <select id="workflow-dashboard-assignee" class="form-select form-select-sm" name="assignee_id" title="المسارات المطلوبة من موظف معين">
+          <option value="">كل الموظفين</option>
+          {% for user in assignee_users %}
+            <option value="{{ user.id }}" {% if selected_assignee_id == user.id %}selected{% endif %}>
+              {{ user.full_name }}{% if user.job_title %} — {{ user.job_title }}{% endif %}
+            </option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap"><i class="bi bi-search"></i> بحث</button>
+      <a class="btn btn-sm btn-outline-secondary text-nowrap" href="{{ url_for('workflow.work_dashboard', queue='all') }}" title="إظهار جميع المسارات التي يمكنك رؤيتها">
+        <i class="bi bi-list-ul"></i> عرض جميع المسارات
+      </a>
     </form>
   </div>
   <div class="table-responsive">
@@ -127,7 +149,7 @@
     <div class="card-footer bg-white">
       <nav><ul class="pagination pagination-sm mb-0">
         {% for p in range(1, pages + 1) %}
-          <li class="page-item {{ 'active' if p == page else '' }}"><a class="page-link" href="{{ url_for('workflow.work_dashboard', queue=selected_queue, q=q, page=p) }}">{{ p }}</a></li>
+          <li class="page-item {{ 'active' if p == page else '' }}"><a class="page-link" href="{{ url_for('workflow.work_dashboard', queue=selected_queue, q=q, assignee_id=selected_assignee_id, page=p) }}">{{ p }}</a></li>
         {% endfor %}
       </ul></nav>
     </div>

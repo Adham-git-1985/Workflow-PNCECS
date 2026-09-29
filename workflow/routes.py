@@ -5252,6 +5252,8 @@ _WORKFLOW_DASHBOARD_QUEUES = {
     "correspondence": "قادمة من الصادر والوارد",
     "overdue": "متأخرة",
 }
+_WORKFLOW_DASHBOARD_ALL_QUEUE = "all"
+_WORKFLOW_DASHBOARD_ALL_LABEL = "جميع المسارات"
 
 
 @workflow_bp.route("/work")
@@ -5260,9 +5262,23 @@ _WORKFLOW_DASHBOARD_QUEUES = {
 def work_dashboard():
     """Procedural Workflow dashboard for tasks, tracking, and correspondence."""
     selected_queue = (request.args.get("queue") or "my_action").strip().lower()
-    if selected_queue not in _WORKFLOW_DASHBOARD_QUEUES:
+    if selected_queue not in {*_WORKFLOW_DASHBOARD_QUEUES, _WORKFLOW_DASHBOARD_ALL_QUEUE}:
         selected_queue = "my_action"
     search = (request.args.get("q") or "").strip()
+    selected_assignee_id = request.args.get("assignee_id", type=int)
+    if selected_assignee_id is not None and selected_assignee_id <= 0:
+        selected_assignee_id = None
+    selected_assignee = (
+        db.session.get(User, selected_assignee_id)
+        if selected_assignee_id else None
+    )
+    if selected_assignee is None:
+        selected_assignee_id = None
+    elif selected_queue == "my_action":
+        # Selecting an employee means "their pending work", not the signed-in
+        # actor's personal queue.  Other queue cards (for example overdue)
+        # remain available when the user wants an additional restriction.
+        selected_queue = _WORKFLOW_DASHBOARD_ALL_QUEUE
 
     execution = get_execution_context()
     actor_users = _workflow_actor_users()
@@ -5318,6 +5334,47 @@ def work_dashboard():
         except Exception:
             pass
 
+    assignee_ids_by_signature = {}
+
+    def _current_step_assignee_ids(step, instance) -> list[int]:
+        """Return employees who still have to act on the current step."""
+        if not step or (step.status or "").strip().upper() != "PENDING":
+            return []
+
+        mentioned_user_ids = access_snapshot.pending_mentions(
+            getattr(instance, "id", None)
+        )
+        if (step.mode or "").strip().upper() == "PARALLEL_SYNC" and instance:
+            assignee_ids = access_snapshot.pending_task_users_by_step.get(
+                (int(instance.id), int(step.step_order)),
+                set(),
+            )
+        else:
+            signature = (
+                (step.approver_kind or "").strip().upper(),
+                step.approver_user_id,
+                (step.approver_role or "").strip().casefold(),
+                step.approver_department_id,
+                step.approver_directorate_id,
+                step.approver_unit_id,
+                step.approver_section_id,
+                step.approver_division_id,
+                step.approver_org_node_id,
+                step.approver_committee_id,
+                (step.committee_delivery_mode or "").strip().upper(),
+            )
+            if signature not in assignee_ids_by_signature:
+                try:
+                    assignee_ids_by_signature[signature] = resolve_step_approver_user_ids(step)
+                except Exception:
+                    assignee_ids_by_signature[signature] = []
+            assignee_ids = assignee_ids_by_signature[signature]
+
+        return list(dict.fromkeys([
+            *assignee_ids,
+            *sorted(mentioned_user_ids),
+        ]))
+
     rows = []
     now = datetime.utcnow()
     for req in requests:
@@ -5340,6 +5397,7 @@ def work_dashboard():
             continue
         inst = access_snapshot.instance_for(req.id)
         current_step = access_snapshot.current_step_for(inst)
+        current_step_assignee_ids = _current_step_assignee_ids(current_step, inst)
 
         mentioned_task_user_ids = access_snapshot.pending_mentions(getattr(inst, "id", None))
         mentioned_task_for_actor = bool(actor_ids.intersection(mentioned_task_user_ids))
@@ -5377,9 +5435,14 @@ def work_dashboard():
             "correspondence": bool(corr_source),
             "corr_source": corr_source,
             "overdue": overdue,
+            "assignee_ids": set(current_step_assignee_ids),
         })
 
     def matches(row: dict, queue: str) -> bool:
+        if selected_assignee_id and selected_assignee_id not in row["assignee_ids"]:
+            return False
+        if queue == _WORKFLOW_DASHBOARD_ALL_QUEUE:
+            return True
         return {
             "my_action": row["needs_action"],
             "created": row["created"],
@@ -5395,6 +5458,9 @@ def work_dashboard():
         queue: sum(1 for row in rows if matches(row, queue))
         for queue in _WORKFLOW_DASHBOARD_QUEUES
     }
+    counts[_WORKFLOW_DASHBOARD_ALL_QUEUE] = sum(
+        1 for row in rows if matches(row, _WORKFLOW_DASHBOARD_ALL_QUEUE)
+    )
     filtered = [row for row in rows if matches(row, selected_queue)]
     page = max(1, request.args.get("page", type=int, default=1))
     try:
@@ -5418,7 +5484,6 @@ def work_dashboard():
     except (TypeError, ValueError):
         assignee_preview_limit = 8
 
-    assignee_ids_by_signature = {}
     page_user_ids = {
         int(row["req"].requester_id)
         for row in page_rows
@@ -5430,45 +5495,21 @@ def work_dashboard():
         if row["inst"] and row["inst"].template_id
     }
     for row in page_rows:
-        step = row["step"]
-        instance = row["inst"]
-        mentioned_user_ids = access_snapshot.pending_mentions(
-            getattr(instance, "id", None)
-        )
-        assignee_ids = []
-        if step:
-            if (step.mode or "").strip().upper() == "PARALLEL_SYNC" and instance:
-                assignee_ids = sorted(
-                    access_snapshot.pending_task_users_by_step.get(
-                        (int(instance.id), int(step.step_order)),
-                        set(),
-                    )
-                )
-            else:
-                signature = (
-                    (step.approver_kind or "").strip().upper(),
-                    step.approver_user_id,
-                    (step.approver_role or "").strip().casefold(),
-                    step.approver_department_id,
-                    step.approver_directorate_id,
-                    step.approver_unit_id,
-                    step.approver_section_id,
-                    step.approver_division_id,
-                    step.approver_org_node_id,
-                    step.approver_committee_id,
-                    (step.committee_delivery_mode or "").strip().upper(),
-                )
-                if signature not in assignee_ids_by_signature:
-                    assignee_ids_by_signature[signature] = resolve_step_approver_user_ids(step)
-                assignee_ids = list(assignee_ids_by_signature[signature])
-            assignee_ids = list(dict.fromkeys([
-                *assignee_ids,
-                *sorted(mentioned_user_ids),
-            ]))
+        assignee_ids = list(row.get("assignee_ids") or [])
 
         row["step_assignee_overflow"] = max(0, len(assignee_ids) - assignee_preview_limit)
-        row["_step_assignee_ids"] = assignee_ids[:assignee_preview_limit]
+        preview_ids = assignee_ids[:assignee_preview_limit]
+        if (
+            selected_assignee_id
+            and selected_assignee_id in assignee_ids
+            and selected_assignee_id not in preview_ids
+            and preview_ids
+        ):
+            preview_ids[-1] = selected_assignee_id
+        row["_step_assignee_ids"] = preview_ids
         page_user_ids.update(row["_step_assignee_ids"])
+        if selected_assignee_id and selected_assignee_id in assignee_ids:
+            page_user_ids.add(selected_assignee_id)
 
     page_users = (
         User.query.filter(User.id.in_(page_user_ids)).all()
@@ -5496,13 +5537,13 @@ def work_dashboard():
         req = row["req"]
         instance = row["inst"]
         step = row["step"]
+        mentioned_user_ids = access_snapshot.pending_mentions(
+            getattr(instance, "id", None)
+        )
         row["requester"] = page_user_map.get(int(req.requester_id or 0))
         row["template"] = (
             template_map.get(int(instance.template_id))
             if instance and instance.template_id else None
-        )
-        mentioned_user_ids = access_snapshot.pending_mentions(
-            getattr(instance, "id", None)
         )
         step_assignees = [
             page_user_map[user_id]
@@ -5540,9 +5581,20 @@ def work_dashboard():
         "workflow/work_dashboard.html",
         rows=page_rows,
         counts=counts,
-        queue_labels=_WORKFLOW_DASHBOARD_QUEUES,
+        queue_labels={
+            **_WORKFLOW_DASHBOARD_QUEUES,
+            _WORKFLOW_DASHBOARD_ALL_QUEUE: _WORKFLOW_DASHBOARD_ALL_LABEL,
+        },
+        queue_cards=_WORKFLOW_DASHBOARD_QUEUES,
         selected_queue=selected_queue,
         q=search,
+        assignee_users=(
+            User.query
+            .order_by(User.name.asc(), User.username.asc(), User.email.asc(), User.id.asc())
+            .all()
+        ),
+        selected_assignee_id=selected_assignee_id,
+        selected_assignee=selected_assignee,
         total=total,
         page=page,
         pages=pages,
