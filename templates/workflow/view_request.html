@@ -1,6 +1,24 @@
 {# templates/workflow/view_request.html #}
 {% extends "layout.html" %}
 {% block title %}عرض الطلب{% endblock %}
+{% block extra_css %}
+<style>
+  .workflow-note-card { border: 1px solid #f0cf82; border-right: 4px solid #d89b12; border-radius: .7rem; background: linear-gradient(135deg, #fffdf7, #fff8e8); }
+  .workflow-note-card summary { cursor: pointer; list-style: none; }
+  .workflow-note-card summary::-webkit-details-marker { display: none; }
+  .workflow-note-preview { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; color: #665126; }
+  .workflow-note-card details[open] .workflow-note-preview { display: none; }
+  .workflow-note-full { white-space: pre-wrap; line-height: 1.85; font-size: 1rem; color: #332a18; }
+  .workflow-attachments summary { cursor: pointer; color: var(--bs-primary); }
+  .workflow-story-progress { height: .45rem; background: #e9ecef; border-radius: 1rem; overflow: hidden; }
+  .workflow-story-progress > div { height: 100%; background: linear-gradient(90deg, #0d6efd, #42b883); transition: width .2s ease; }
+  .workflow-story-stage .workflow-step-card { box-shadow: 0 .3rem 1.2rem rgba(33, 37, 41, .12); border-color: #b9d4ff !important; }
+  .workflow-story-stage .workflow-step-card:not(.workflow-story-active) { display: none; }
+  .workflow-story-stage .workflow-note-card details { display: block; }
+  .workflow-story-stage .workflow-note-card summary { display: none; }
+  @media (max-width: 575.98px) { .workflow-story-modal .modal-dialog { margin: .35rem; } }
+</style>
+{% endblock %}
 {% block content %}
 {% from "workflow/_committee_people_summary.html" import committee_people_summary %}
 
@@ -16,6 +34,11 @@
   </div>
 
   <div class="d-flex gap-2">
+    {% if steps %}
+    <button type="button" class="btn btn-sm btn-primary workflow-story-launcher" data-bs-toggle="modal" data-bs-target="#workflowStoryModal">
+      <i class="bi bi-play-circle"></i> قصة المسار
+    </button>
+    {% endif %}
     <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
       <i class="bi bi-printer"></i> طباعة الطلب
     </a>
@@ -503,9 +526,9 @@
             <hr class="my-2">
           {% endif %}
 
-          <div class="list-group mb-0">
+          <div class="list-group mb-0" id="workflowRouteSteps" data-current-step="{{ inst.current_step_order if inst else '' }}">
             {% for s in steps %}
-              <div class="list-group-item border rounded-3 mb-2 ps-3">
+              <div class="list-group-item border rounded-3 mb-2 ps-3 workflow-step-card" data-step-order="{{ s.step_order }}">
                 <div class="d-flex justify-content-between">
                   <div>
                     <strong>الخطوة {{ s.step_order }}</strong>
@@ -626,9 +649,18 @@
                   </div>
                 {% endif %}
                 {% if s.note %}
-                  <div class="alert alert-warning py-2 mt-2 mb-1">
+                  <div class="workflow-note-card p-3 mt-3 mb-1">
                     <strong><i class="bi bi-chat-right-text"></i> التعليق:</strong>
-                    <span style="white-space:pre-wrap">{{ s.note }}</span>
+                    <button type="button" class="btn btn-sm btn-outline-warning text-dark float-start workflow-note-reader" title="قراءة التعليق بوضوح">
+                      <i class="bi bi-arrows-fullscreen"></i><span class="d-none d-sm-inline ms-1">قراءة مريحة</span>
+                    </button>
+                    <details class="mt-2">
+                      <summary>
+                        <div class="workflow-note-preview">{{ s.note }}</div>
+                        <span class="small fw-semibold text-primary"><i class="bi bi-chevron-down"></i> عرض التعليق كاملاً</span>
+                      </summary>
+                      <div class="workflow-note-full pt-2">{{ s.note }}</div>
+                    </details>
                   </div>
                 {% endif %}
 
@@ -1515,6 +1547,87 @@
     });
     });
   });
+</script>
+
+{# قارئ موجز يحوّل المسار إلى قصة خطوة بخطوة دون فتح صفحة جديدة #}
+<div class="modal fade workflow-story-modal" id="workflowStoryModal" tabindex="-1" aria-labelledby="workflowStoryModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <div>
+          <h5 class="modal-title" id="workflowStoryModalLabel"><i class="bi bi-signpost-split"></i> قصة المسار</h5>
+          <div class="small text-muted">استعرض كل خطوة، تعليقها ومرفقاتها بتسلسل واضح.</div>
+        </div>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex align-items-center justify-content-between gap-3 mb-2">
+          <span id="workflowStoryCounter" class="small fw-semibold"></span>
+          <span id="workflowStoryStepLabel" class="badge text-bg-primary"></span>
+        </div>
+        <div class="workflow-story-progress mb-4"><div id="workflowStoryProgress"></div></div>
+        <div id="workflowStoryStage" class="workflow-story-stage"></div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button type="button" class="btn btn-outline-secondary" id="workflowStoryNext"><i class="bi bi-arrow-right"></i> السابق</button>
+        <button type="button" class="btn btn-outline-primary" id="workflowStoryPrev">التالي <i class="bi bi-arrow-left"></i></button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const modal = document.getElementById('workflowStoryModal');
+  const source = document.getElementById('workflowRouteSteps');
+  if (!modal || !source) return;
+  const stage = document.getElementById('workflowStoryStage');
+  const counter = document.getElementById('workflowStoryCounter');
+  const label = document.getElementById('workflowStoryStepLabel');
+  const progress = document.getElementById('workflowStoryProgress');
+  const next = document.getElementById('workflowStoryNext');
+  const prev = document.getElementById('workflowStoryPrev');
+  let active = 0;
+  let cards = [];
+
+  function cleanClone(card) {
+    const clone = card.cloneNode(true);
+    clone.querySelectorAll('form, .workflow-note-reader').forEach(el => el.remove());
+    clone.querySelectorAll('details').forEach(el => { el.open = true; });
+    clone.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+    return clone;
+  }
+  function show(index) {
+    if (!cards.length) return;
+    active = Math.max(0, Math.min(index, cards.length - 1));
+    cards.forEach((card, i) => card.classList.toggle('workflow-story-active', i === active));
+    const order = cards[active].dataset.stepOrder || active + 1;
+    counter.textContent = `خطوة ${active + 1} من ${cards.length}`;
+    label.textContent = `الخطوة ${order}`;
+    progress.style.width = `${((active + 1) / cards.length) * 100}%`;
+    next.disabled = active === 0;
+    prev.disabled = active === cards.length - 1;
+  }
+  modal.addEventListener('show.bs.modal', event => {
+    if (event.relatedTarget && event.relatedTarget.classList.contains('workflow-story-launcher')) {
+      modal.dataset.stepOrder = '';
+    }
+    const requested = Number(modal.dataset.stepOrder || source.dataset.currentStep || 0);
+    stage.replaceChildren();
+    cards = [...source.querySelectorAll('.workflow-step-card')].map(cleanClone);
+    cards.forEach(card => stage.appendChild(card));
+    const matching = cards.findIndex(card => Number(card.dataset.stepOrder) === requested);
+    show(matching >= 0 ? matching : 0);
+  });
+  next.addEventListener('click', () => show(active - 1));
+  prev.addEventListener('click', () => show(active + 1));
+  document.addEventListener('click', event => {
+    const reader = event.target.closest('.workflow-note-reader');
+    if (!reader) return;
+    const card = reader.closest('.workflow-step-card');
+    modal.dataset.stepOrder = card ? card.dataset.stepOrder : '';
+    bootstrap.Modal.getOrCreateInstance(modal).show();
+  });
+})();
 </script>
 
 {% endblock %}
