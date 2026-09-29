@@ -7020,6 +7020,7 @@ def view_request(request_id):
     mentioned_users = []
     mentioned_task_statuses = {}
     mention_removable_user_ids = set()
+    story_mentions_by_step = {}
     try:
         mentioned_users = [
             users_map[uid]
@@ -7046,10 +7047,24 @@ def view_request(request_id):
                 user_id = int(mention_task.assignee_user_id or 0)
                 if user_id and user_id not in mentioned_task_statuses:
                     mentioned_task_statuses[user_id] = mention_task.status
+
+        # Keep the participant beside the step where they were mentioned so
+        # the story reader explains who joined the workflow and why.
+        for user_id, mention_log in active_mention_logs.items():
+            user = users_map.get(int(user_id))
+            if not user:
+                continue
+            step_order, _source = _parse_attachment_meta(getattr(mention_log, "note", None))
+            try:
+                step_order = int(step_order) if step_order is not None else 0
+            except (TypeError, ValueError):
+                step_order = 0
+            story_mentions_by_step.setdefault(step_order, []).append(user)
     except Exception:
         mentioned_users = []
         mentioned_task_statuses = {}
         mention_removable_user_ids = set()
+        story_mentions_by_step = {}
 
     def _human_size(num_bytes):
         try:
@@ -7330,6 +7345,7 @@ def view_request(request_id):
         mentioned_users=mentioned_users,
         mentioned_task_statuses=mentioned_task_statuses,
         mention_removable_user_ids=mention_removable_user_ids,
+        story_mentions_by_step=story_mentions_by_step,
         corr_source=corr_source,
         corr_status_labels=CORR_STATUS_LABELS,
         corr_action_labels=CORR_ACTION_LABELS,

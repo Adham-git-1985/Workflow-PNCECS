@@ -16,6 +16,8 @@
   .workflow-story-stage .workflow-step-card:not(.workflow-story-active) { display: none; }
   .workflow-story-stage .workflow-note-card details { display: block; }
   .workflow-story-stage .workflow-note-card summary { display: none; }
+  .workflow-story-only { display: none; }
+  .workflow-story-stage .workflow-story-only { display: block; }
   @media (max-width: 575.98px) { .workflow-story-modal .modal-dialog { margin: .35rem; } }
 </style>
 {% endblock %}
@@ -661,6 +663,40 @@
                       </summary>
                       <div class="workflow-note-full pt-2">{{ s.note }}</div>
                     </details>
+                  </div>
+                {% endif %}
+
+                {# يظهر هذا القسم داخل قارئ القصة فقط: الأشخاص الذين أُضيفوا بالمنشن لهذه الخطوة. #}
+                {% set story_mentions = story_mentions_by_step.get(s.step_order, []) if story_mentions_by_step else [] %}
+                {% if story_mentions %}
+                  <div class="workflow-story-only border rounded-3 bg-info bg-opacity-10 p-3 mt-3">
+                    <div class="fw-semibold text-primary mb-2"><i class="bi bi-at"></i> أشخاص أُضيفوا بالمنشن في هذه الخطوة</div>
+                    <div class="d-flex flex-wrap gap-2">
+                      {% for mentioned_user in story_mentions %}
+                        <span class="badge rounded-pill text-bg-light border text-dark px-3 py-2">
+                          <i class="bi bi-person-plus text-primary"></i>
+                          {{ mentioned_user.full_name or mentioned_user.email }}
+                          {% if mentioned_user.job_title %}<small class="text-muted">— {{ mentioned_user.job_title }}</small>{% endif %}
+                        </span>
+                      {% endfor %}
+                    </div>
+                  </div>
+                {% endif %}
+
+                {# المرفقات تظهر صراحةً داخل القصة حتى لا تضيع بين تفاصيل بطاقة الخطوة. #}
+                {% set story_items = (step_att_items.get(s.step_order) if step_att_items else []) %}
+                {% if story_items or (loop.first and pre_att_items) %}
+                  <div class="workflow-story-only border rounded-3 bg-light p-3 mt-3">
+                    <div class="fw-semibold mb-2"><i class="bi bi-paperclip text-primary"></i> مرفقات هذه المرحلة</div>
+                    {% if loop.first and pre_att_items %}
+                      <div class="small text-muted mb-1">مرفقات بداية الطلب</div>
+                      {% for it in pre_att_items %}
+                        <a class="d-block text-decoration-none mb-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}"><i class="bi bi-file-earmark"></i> {{ it.name }} <span class="text-muted">· {{ it.size_human }}</span></a>
+                      {% endfor %}
+                    {% endif %}
+                    {% for it in story_items %}
+                      <a class="d-block text-decoration-none mb-2" target="_blank" href="{{ url_for('workflow.preview_workflow_attachment', file_id=it.file_id) }}"><i class="bi bi-file-earmark"></i> {{ it.name }} <span class="text-muted">· {{ it.size_human }}{% if it.uploaded_by %} · أرفقه {{ it.uploaded_by }}{% endif %}</span></a>
+                    {% endfor %}
                   </div>
                 {% endif %}
 
