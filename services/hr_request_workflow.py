@@ -83,6 +83,7 @@ ESCALATION_TARGET_GENERAL_DIRECTOR = "GENERAL_DIRECTOR"
 ESCALATION_TARGET_HR = "HR"
 ESCALATION_TARGET_SECRETARY_GENERAL = "SECRETARY_GENERAL"
 ESCALATION_TARGET_USER_PREFIX = "USER:"
+ESCALATION_REASON_NO_TARGET = "NO_ESCALATION_TARGET"
 ESCALATION_FIXED_TARGETS = frozenset({
     ESCALATION_TARGET_NONE,
     ESCALATION_TARGET_AUTO_NEXT,
@@ -232,6 +233,8 @@ def _configured_escalation_count(step: HRRequestApprovalStep) -> int:
 
 
 def _next_escalation_level(step: HRRequestApprovalStep) -> int | None:
+    if (getattr(step, "escalation_reason", None) or "").strip().upper() == ESCALATION_REASON_NO_TARGET:
+        return None
     level = _configured_escalation_count(step) + 1
     return level if level in ESCALATION_LEVELS else None
 
@@ -1990,12 +1993,14 @@ def process_pending_approvals(*, now: datetime | None = None, send_notifications
                 )
             escalated += 1
         else:
-            # Keep it pending and alert only the request parties; never approve it.
-            step.due_at = _add_escalation_period(
-                now,
-                int(policy["value"]),
-                str(policy["unit"]),
-            )
+            # There is no valid escalation target (for example, the direct
+            # manager is already the Secretary-General).  This is a terminal
+            # routing outcome for this step: keep the request pending for the
+            # current approver, but do not schedule the same failed attempt
+            # again on the next worker run.
+            step.due_at = None
+            step.escalation_reason = ESCALATION_REASON_NO_TARGET
+            step.updated_at = now
             if send_notifications:
                 _notify(
                     [row.user_id, *_step_approver_ids(step)],

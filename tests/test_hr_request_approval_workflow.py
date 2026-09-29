@@ -57,6 +57,7 @@ from services.hr_request_workflow import (
     escalation_setting_key,
     _notify,
     process_pending_approvals,
+    refresh_pending_escalation_deadlines,
     request_ids_user_can_act_on,
     hr_notification_user_ids,
     initial_approval_candidate_names_map,
@@ -921,6 +922,52 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         self.assertEqual(step.status, "PENDING")
         self.assertEqual(step.approver_user_id, self.general_director.id)
         self.assertEqual(step.escalation_reason, "SLA_1_GENERAL_DIRECTOR")
+
+    def test_missing_escalation_target_is_terminal_and_not_repeated(self):
+        employee_file = EmployeeFile.query.filter_by(user_id=self.employee.id).one()
+        employee_file.direct_manager_user_id = self.secretary.id
+        OrgUnitManager.query.delete(synchronize_session=False)
+        db.session.flush()
+
+        row = self._leave(self.normal_type)
+        assigned_at = datetime(2026, 9, 8, 8, 0)
+        start_request_flow(KIND_LEAVE, row, now=assigned_at)
+        step = current_step(KIND_LEAVE, row.id)
+        self.assertEqual(step.approver_user_id, self.secretary.id)
+        first_due_at = step.due_at
+        self.assertIsNotNone(first_due_at)
+
+        first_result = process_pending_approvals(
+            now=first_due_at,
+            send_notifications=True,
+        )
+
+        self.assertEqual(first_result["unresolved"], 1)
+        self.assertIsNone(step.due_at)
+        self.assertEqual(step.escalation_reason, "NO_ESCALATION_TARGET")
+        first_error_count = Notification.query.filter_by(
+            user_id=self.secretary.id,
+            type="HR_REQUEST_ROUTING_ERROR",
+        ).count()
+        self.assertEqual(first_error_count, 1)
+
+        # Refreshing policy deadlines must not reopen a terminal no-target
+        # escalation, and a later worker run must remain silent.
+        refresh_pending_escalation_deadlines(now=first_due_at + timedelta(days=1))
+        self.assertIsNone(step.due_at)
+        second_result = process_pending_approvals(
+            now=first_due_at + timedelta(days=2),
+            send_notifications=True,
+        )
+
+        self.assertEqual(second_result["unresolved"], 0)
+        self.assertEqual(
+            Notification.query.filter_by(
+                user_id=self.secretary.id,
+                type="HR_REQUEST_ROUTING_ERROR",
+            ).count(),
+            first_error_count,
+        )
 
     def test_overdue_permission_step_is_not_escalated(self):
         row = self._permission()
