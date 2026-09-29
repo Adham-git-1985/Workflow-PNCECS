@@ -2,10 +2,12 @@
 {% block title %}معاينة المرفق{% endblock %}
 
 {% block content %}
+{% set display_name = preview_name or file.original_name %}
+{% set display_mime = preview_mime or mime %}
 <div class="d-flex justify-content-between align-items-center mb-3">
   <div>
     <h3 class="mb-1">👁️ معاينة المرفق</h3>
-    <small class="text-muted">هذا النوع من الملفات لا يدعم المعاينة داخل المتصفح. يمكنك تنزيله لفتحه على جهازك.</small>
+    <small class="text-muted">تعذرت المعاينة المباشرة لهذا النوع من الملفات. يمكنك تنزيله لفتحه على جهازك.</small>
   </div>
   <div class="d-flex gap-2">
     {% if back_url %}
@@ -23,11 +25,11 @@
       <div class="col-md-8">
         <div class="mb-2">
           <strong>الملف:</strong>
-          <span class="ms-1">{{ file.original_name }}</span>
+          <span class="ms-1">{{ display_name }}</span>
         </div>
         <div class="d-flex flex-wrap gap-2">
           <span class="badge bg-dark">{{ file.file_type or "FILE" }}</span>
-          <span class="badge bg-secondary">{{ mime }}</span>
+          <span class="badge bg-secondary">{{ display_mime }}</span>
           {% if file.file_size %}
             <span class="badge bg-info text-dark">{{ (file.file_size / 1024) | round(1) }} KB</span>
           {% endif %}
@@ -36,11 +38,15 @@
           {% endif %}
         </div>
 
+        {% if preview_error %}
+          <div class="alert alert-danger mt-3 mb-0">{{ preview_error }}</div>
+        {% endif %}
+
         <div class="alert alert-warning mt-3 mb-0">
           <div class="fw-semibold mb-1">⚠️ لا توجد معاينة مباشرة لهذا الملف</div>
           <div>
-            ملفات مثل <strong>Word/Excel/PowerPoint</strong> غالبًا لا يمكن عرضها داخل المتصفح بدون إضافات.
-            استخدم زر <strong>تنزيل</strong> لفتحها.
+            تُحوّل ملفات <strong>Word/Excel</strong> إلى PDF تلقائياً عند توفر محوّل Office.
+            إذا تعذرت المعاينة، استخدم زر <strong>تنزيل</strong> لفتح الملف الأصلي.
           </div>
         </div>
       </div>

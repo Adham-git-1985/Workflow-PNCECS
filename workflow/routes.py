@@ -53,6 +53,13 @@ from utils.file_uploads import (
     is_safe_inline_mimetype,
     random_storage_name,
 )
+from utils.office_preview import (
+    OfficePreviewError,
+    convert_office_bytes_to_pdf,
+    convert_office_to_pdf,
+    is_office_previewable,
+    office_pdf_filename,
+)
 from utils.ui_labels import ui_label, ui_text, workflow_status_label
 from utils.delegation_privacy import (
     audit_display_actor,
@@ -2872,7 +2879,7 @@ def _workflow_eml_attachment_response(
     *,
     force_download: bool,
 ):
-    file, _ = _workflow_attachment_context(file_id)
+    file, req = _workflow_attachment_context(file_id)
     if not _is_eml_attachment(file, _guess_mime_for_file(file)):
         abort(404)
 
@@ -2893,6 +2900,53 @@ def _workflow_eml_attachment_response(
 
     mimetype = embedded.mimetype or mimetypes.guess_type(embedded.filename)[0]
     mimetype = mimetype or "application/octet-stream"
+
+    if not force_download and is_office_previewable(embedded.filename, mimetype):
+        try:
+            pdf_bytes = convert_office_bytes_to_pdf(
+                embedded.payload,
+                original_name=embedded.filename,
+            )
+        except (OfficePreviewError, OSError) as exc:
+            current_app.logger.warning(
+                "Office preview failed for embedded workflow attachment %s/%s: %s",
+                file.id,
+                attachment_index,
+                exc,
+            )
+            return render_template(
+                "workflow/attachment_preview.html",
+                file=file,
+                mime=mimetype,
+                request_obj=req,
+                preview_name=embedded.filename,
+                preview_mime=mimetype,
+                preview_error="تعذر إنشاء معاينة PDF لهذا الملف. يمكنك تنزيل الملف الأصلي.",
+                download_url=url_for(
+                    "workflow.download_workflow_eml_attachment",
+                    file_id=file.id,
+                    attachment_index=attachment_index,
+                ),
+                back_url=url_for("workflow.request_attachments", request_id=req.id),
+            )
+        else:
+            pdf_name = office_pdf_filename(embedded.filename)
+            response = send_file(
+                BytesIO(pdf_bytes),
+                mimetype="application/pdf",
+                as_attachment=False,
+                download_name=pdf_name,
+                conditional=False,
+            )
+            response.headers["Content-Disposition"] = (
+                f"inline; filename*=UTF-8''{quote(pdf_name)}"
+            )
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+
     as_attachment = force_download or not is_safe_inline_mimetype(mimetype)
     response = send_file(
         BytesIO(embedded.payload),
@@ -2937,7 +2991,8 @@ def preview_workflow_attachment(file_id):
     """Preview workflow attachment.
 
     - For previewable types (PDF/images/text): streams inline.
-    - For non-previewable types (e.g., DOCX): shows a safe HTML page with a download button.
+    - Word and Excel files are converted to an inline PDF preview.
+    - Other non-previewable types show a safe HTML page with a download button.
 
     This prevents the UX confusion where "Preview" triggers a download for unsupported types.
     """
@@ -2993,6 +3048,38 @@ def preview_workflow_attachment(file_id):
             back_url=url_for("workflow.request_attachments", request_id=req.id),
         )
 
+    # Word/Excel files are not consistently renderable by browsers.  Convert
+    # them server-side and keep the generated PDF inline so the user can
+    # inspect it before choosing to download the original Office file.
+    preview_error = None
+    if is_office_previewable(file.original_name, mime):
+        try:
+            pdf_bytes = convert_office_to_pdf(
+                file.file_path,
+                original_name=file.original_name,
+            )
+        except (OfficePreviewError, OSError) as exc:
+            preview_error = "تعذر إنشاء معاينة PDF لهذا الملف. يمكنك تنزيل الملف الأصلي."
+            current_app.logger.warning(
+                "Office preview failed for workflow attachment %s: %s",
+                file.id,
+                exc,
+            )
+        else:
+            pdf_name = office_pdf_filename(file.original_name)
+            response = send_file(
+                BytesIO(pdf_bytes),
+                mimetype="application/pdf",
+                as_attachment=False,
+                download_name=pdf_name,
+                conditional=False,
+            )
+            response.headers["Content-Disposition"] = (
+                f"inline; filename*=UTF-8''{quote(pdf_name)}"
+            )
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
+
     # Stream inline for types browsers usually can render
     if _is_inline_previewable(mime):
         resp = send_file(
@@ -3015,6 +3102,7 @@ def preview_workflow_attachment(file_id):
         request_obj=req,
         download_url=url_for("workflow.download_workflow_attachment", file_id=file.id),
         back_url=url_for("workflow.request_attachments", request_id=req.id),
+        preview_error=preview_error,
     )
 
 

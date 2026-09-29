@@ -6,7 +6,8 @@ import re
 import uuid
 import zipfile
 from datetime import datetime, timedelta
-from urllib.parse import urlencode
+from io import BytesIO
+from urllib.parse import quote, urlencode
 from xml.etree import ElementTree as ET
 
 from flask import (
@@ -34,6 +35,12 @@ from utils.file_uploads import (
     is_allowed_attachment,
     is_safe_inline_mimetype,
     random_storage_name,
+)
+from utils.office_preview import (
+    OfficePreviewError,
+    convert_office_to_pdf,
+    is_office_previewable,
+    office_pdf_filename,
 )
 
 from models import (
@@ -326,6 +333,31 @@ def _render_archive_preview(file, download_endpoint: str):
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
+
+    if is_office_previewable(file.original_name, mime_type):
+        try:
+            pdf_bytes = convert_office_to_pdf(
+                disk_path,
+                original_name=file.original_name,
+            )
+        except (OfficePreviewError, OSError):
+            # Keep the existing text extraction fallback below for hosts that
+            # do not have LibreOffice and for malformed Office documents.
+            pass
+        else:
+            pdf_name = office_pdf_filename(file.original_name)
+            response = send_file(
+                BytesIO(pdf_bytes),
+                mimetype="application/pdf",
+                as_attachment=False,
+                download_name=pdf_name,
+                conditional=False,
+            )
+            response.headers["Content-Disposition"] = (
+                f"inline; filename*=UTF-8''{quote(pdf_name)}"
+            )
+            response.headers["X-Content-Type-Options"] = "nosniff"
+            return response
 
     if ext in TEXT_PREVIEW_EXTENSIONS or mime_compare.startswith("text/"):
         preview_text, truncated = _read_text_preview(disk_path, ext)
