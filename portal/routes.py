@@ -475,6 +475,7 @@ HR_REQUESTS_CREATE = "HR_REQUESTS_CREATE"
 HR_APPROVALS_VIEW = "HR_APPROVALS_VIEW"
 HR_REQUESTS_APPROVE = "HR_REQUESTS_APPROVE"
 HR_REQUESTS_VIEW_ALL = "HR_REQUESTS_VIEW_ALL"
+HR_LEAVE_ADMIN_ENTRY = "HR_LEAVE_ADMIN_ENTRY"
 HR_LEAVE_APPROVED_DELETE = "HR_LEAVE_APPROVED_DELETE"
 HR_ABSENCE_BOARD_VIEW = "HR_ABSENCE_BOARD_VIEW"
 
@@ -13197,6 +13198,23 @@ def _hr_can_manage() -> bool:
         return False
 
 
+def _hr_can_enter_admin_leave() -> bool:
+    """Whether the current user may enter a leave on behalf of an employee.
+
+    ``HR_LEAVE_ADMIN_ENTRY`` is the dedicated permission.  The two existing
+    HR-management permissions remain accepted as a compatibility fallback for
+    legacy HR administrators who have not yet received the new direct grant.
+    """
+    try:
+        return bool(
+            current_user.has_perm(HR_LEAVE_ADMIN_ENTRY)
+            or current_user.has_perm(HR_MASTERDATA_MANAGE)
+            or current_user.has_perm(HR_EMP_MANAGE)
+        )
+    except Exception:
+        return False
+
+
 def _hr_can_manage_attendance() -> bool:
     try:
         # Managers (HR_REQUESTS_APPROVE) can also manage attendance-related actions
@@ -17935,6 +17953,7 @@ def hr_system_screens():
     return render_template(
         'portal/hr/system_screens.html',
         can_manage=can_manage,
+        can_enter_admin_leave=_hr_can_enter_admin_leave(),
         can_approve=can_approve,
         schedule=schedule,
         cfg=cfg,
@@ -39964,6 +39983,7 @@ def _portal_perm_presets_defaults():
                 HR_EMP_READ, HR_EMP_MANAGE, HR_EMP_ATTACH,
                 HR_ORG_READ, HR_ORG_MANAGE,
                 HR_LEAVE_BALANCES_MANAGE,
+                HR_LEAVE_ADMIN_ENTRY,
                 HR_MASTERDATA_MANAGE,
                 HR_APPROVALS_VIEW, HR_REQUESTS_VIEW_ALL, HR_REQUESTS_APPROVE, HR_ABSENCE_BOARD_VIEW,
                 HR_SS_WORKFLOWS_MANAGE,
@@ -43542,7 +43562,7 @@ def _save_mission_attachment(mission_id: int, f):
 # ===== Leaves Admin =====
 @portal_bp.route('/hr/leaves/admin', methods=['GET'])
 @login_required
-@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
+@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE, HR_EMP_MANAGE, HR_LEAVE_ADMIN_ENTRY)
 def hr_leaves_admin_log():
     from models import EmployeeFile
     q = HRLeaveRequest.query
@@ -43593,7 +43613,7 @@ def hr_leaves_admin_log():
         users=_list_hr_users(exclude_attendance_exempt=True),
         leave_types=HRLeaveType.query.filter_by(is_active=True).order_by(HRLeaveType.id.asc()).all(),
         status_defs=_ensure_status_defs("LEAVE"),
-        can_manage=_hr_can_manage(),
+        can_manage=_hr_can_enter_admin_leave(),
         can_delete_approved_leave=can_delete_approved_leave,
         deletable_leave_ids=deletable_leave_ids,
         cancelable_leave_ids=cancelable_leave_ids,
@@ -43602,11 +43622,11 @@ def hr_leaves_admin_log():
 
 @portal_bp.route('/hr/leaves/admin/new', methods=['GET','POST'])
 @login_required
-@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
+@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE, HR_EMP_MANAGE, HR_LEAVE_ADMIN_ENTRY)
 def hr_leaves_admin_new():
     _ensure_compensatory_leave_type()
     if request.method == 'POST':
-        if not _hr_can_manage():
+        if not _hr_can_enter_admin_leave():
             abort(403)
 
         user_id = (request.form.get('user_id') or '').strip()
@@ -43777,10 +43797,10 @@ def hr_leaves_admin_new():
 
 @portal_bp.route('/hr/leaves/admin/<int:row_id>/edit', methods=['GET','POST'])
 @login_required
-@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
+@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE, HR_EMP_MANAGE, HR_LEAVE_ADMIN_ENTRY)
 def hr_leaves_admin_edit(row_id: int):
     _ensure_compensatory_leave_type()
-    if not _hr_can_manage():
+    if not _hr_can_enter_admin_leave():
         abort(403)
     row = HRLeaveRequest.query.get_or_404(row_id)
     if _is_attendance_exempt_user(row.user_id):
@@ -43966,7 +43986,7 @@ def hr_leaves_admin_edit(row_id: int):
 
 @portal_bp.route('/hr/leaves/admin/attachments/<int:att_id>/download')
 @login_required
-@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE)
+@_perm_any(HR_READ, HR_REQUESTS_VIEW_ALL, HR_MASTERDATA_MANAGE, HR_EMP_MANAGE, HR_LEAVE_ADMIN_ENTRY)
 def hr_leave_attachment_download_admin(att_id: int):
     att = HRLeaveAttachment.query.get_or_404(att_id)
     folder = _leaves_upload_dir(att.request_id)

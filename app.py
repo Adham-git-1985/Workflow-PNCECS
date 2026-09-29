@@ -1905,6 +1905,111 @@ def _ensure_runtime_schema():
                     db.session.rollback()
                 except Exception:
                     pass
+
+            # Administrative Affairs may enter a leave on behalf of an
+            # employee.  Keep this as a dedicated permission while granting
+            # it automatically to the HR/Administrative Affairs audience in
+            # existing installations.  An explicit deny row is preserved.
+            try:
+                from sqlalchemy import func
+                from models import RolePermission, UserPermission
+
+                permission_key = "HR_LEAVE_ADMIN_ENTRY"
+                administrative_roles = {
+                    "HR",
+                    "HR_ADMIN",
+                    "HRADMIN",
+                    "HR_MANAGER",
+                    "HRMANAGER",
+                    "ADMINISTRATIVE_AFFAIRS_MANAGER",
+                    "ADMINISTRATIVEAFFAIRSMANAGER",
+                }
+                role_permission_codes = tuple(sorted(administrative_roles))
+                administrative_department_ids = set()
+                department_markers = (
+                    "human resources",
+                    "hr dept",
+                    "hr department",
+                    "administrative affairs",
+                    "\u0627\u0644\u0645\u0648\u0627\u0631\u062f \u0627\u0644\u0628\u0634\u0631\u064a\u0629",
+                    "\u0627\u0644\u0634\u0624\u0648\u0646 \u0627\u0644\u0625\u062f\u0627\u0631\u064a\u0629",
+                    "\u0627\u0644\u0634\u0624\u0646 \u0627\u0644\u0625\u062f\u0627\u0631\u064a\u0629",
+                )
+                for department in Department.query.filter_by(is_active=True).all():
+                    label = " ".join(
+                        (
+                            getattr(department, "name_ar", "") or "",
+                            getattr(department, "name_en", "") or "",
+                            getattr(department, "code", "") or "",
+                        )
+                    ).casefold()
+                    if any(marker.casefold() in label for marker in department_markers):
+                        administrative_department_ids.add(int(department.id))
+
+                assigned_manager_ids = set()
+                try:
+                    from services.hr_request_workflow import administrative_affairs_manager_user_ids
+
+                    assigned_manager_ids.update(administrative_affairs_manager_user_ids())
+                except Exception:
+                    pass
+
+                changed = 0
+                for user in User.query.all():
+                    role_code = (getattr(user, "role", "") or "").strip().upper()
+                    role_code = role_code.replace("-", "_").replace(" ", "_")
+                    is_administrative_affairs_user = bool(
+                        role_code in administrative_roles
+                        or int(getattr(user, "id", 0) or 0) in assigned_manager_ids
+                        or getattr(user, "department_id", None) in administrative_department_ids
+                    )
+                    if not is_administrative_affairs_user:
+                        continue
+
+                    row = UserPermission.query.filter_by(
+                        user_id=user.id,
+                        key=permission_key,
+                    ).first()
+                    if row is None:
+                        db.session.add(
+                            UserPermission(
+                                user_id=user.id,
+                                key=permission_key,
+                                is_allowed=True,
+                            )
+                        )
+                        changed += 1
+
+                # Also cover future accounts that use the conventional HR
+                # role codes instead of a department assignment.
+                for role_code in role_permission_codes:
+                    exists = (
+                        RolePermission.query
+                        .filter(func.lower(RolePermission.role) == role_code.lower())
+                        .filter(RolePermission.permission == permission_key)
+                        .first()
+                    )
+                    if not exists:
+                        db.session.add(
+                            RolePermission(
+                                role=role_code,
+                                permission=permission_key,
+                            )
+                        )
+                        changed += 1
+
+                if changed:
+                    db.session.commit()
+                    logger.info(
+                        "Seeded %s for %s Administrative Affairs users/roles",
+                        permission_key,
+                        changed,
+                    )
+            except Exception:
+                try:
+                    db.session.rollback()
+                except Exception:
+                    pass
     except Exception:
         # do not block app startup
         try:

@@ -129,8 +129,8 @@
                 {% if current_user.has_perm('HR_LEAVE_BALANCES_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_REQUESTS_VIEW_ALL') %}<li><a class="dropdown-item" href="{{ url_for('portal.hr_leave_balances') }}">تعبئة وتعديل أرصدة الموظفين</a></li>{% endif %}
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_absence_board', view='leaves') }}">لوحة المجازين والمغادرين</a></li>
                 <li><a class="dropdown-item" href="{{ url_for('portal.hr_masterdata_index') }}">أنواع الإجازات</a></li>
-                {% if current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') %}
-                <li><a class="dropdown-item" href="{{ url_for('portal.hr_leaves_admin_log') }}"><i class="bi bi-list-check"></i> إدارة الإجازات</a></li>
+                {% if current_user.has_perm('HR_LEAVE_ADMIN_ENTRY') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('HR_EMPLOYEE_MANAGE') %}
+                <li><a class="dropdown-item" href="{{ url_for('portal.hr_leaves_admin_new') }}"><i class="bi bi-person-plus"></i> إدخال إجازة لموظف</a></li>
                 {% endif %}
               </ul>
             </li>

@@ -101,6 +101,12 @@ PERMS: Dict[str, List[PermDef]] = {
         PermDef("HR_REQUESTS_APPROVE", "اعتماد الطلبات", "اعتماد/رفض طلبات الموظفين (مدير مباشر/HR).", module="HR_REQUESTS"),
         PermDef("HR_REQUESTS_VIEW_ALL", "عرض جميع الطلبات", "عرض كل طلبات الموظفين (HR Admin).", module="HR_REQUESTS"),
         PermDef(
+            "HR_LEAVE_ADMIN_ENTRY",
+            "إدخال إجازة نيابة عن موظف",
+            "فتح شاشة إدخال إجازة/مرضية/طارئة لموظف وإرسالها إلى مسار الاعتماد.",
+            module="HR_REQUESTS",
+        ),
+        PermDef(
             "HR_NOTIFICATIONS_EXEMPT",
             "استثناء من إشعارات الموارد البشرية",
             "يُمنح لمستخدم محدد فقط لاستبعاده من التلقي العام لإشعارات الموارد البشرية، مع بقاء إشعارات طلبه أو مهمته أو صلاحياته الأخرى المباشرة.",
