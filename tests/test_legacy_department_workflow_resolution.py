@@ -10,11 +10,16 @@ from models import (
     OrgNode,
     OrgNodeManager,
     OrgNodeType,
+    Notification,
     User,
+    WorkflowRequest,
     WorkflowTemplate,
     WorkflowTemplateStep,
 )
-from workflow.engine import resolve_template_parallel_candidate_user_ids
+from workflow.engine import (
+    resolve_template_parallel_candidate_user_ids,
+    start_workflow_for_request,
+)
 
 
 class LegacyDepartmentWorkflowResolutionTests(unittest.TestCase):
@@ -114,6 +119,56 @@ class LegacyDepartmentWorkflowResolutionTests(unittest.TestCase):
         self.assertEqual(
             resolve_template_parallel_candidate_user_ids(template, 1),
             [deputy.id],
+        )
+
+    def test_secretary_general_role_alias_receives_first_step_notification(self):
+        requester = User(
+            email="requester@example.test",
+            password_hash="not-used",
+            role="employee",
+        )
+        secretary = User(
+            email="secretary@example.test",
+            password_hash="not-used",
+            role="SECRETARY_GENERAL",
+        )
+        db.session.add_all([requester, secretary])
+        db.session.flush()
+
+        template = WorkflowTemplate(name="secretary alias route", is_active=True)
+        db.session.add(template)
+        db.session.flush()
+        db.session.add(WorkflowTemplateStep(
+            template_id=template.id,
+            step_order=1,
+            mode="SEQUENTIAL",
+            approver_kind="ROLE",
+            approver_role="General_secretary",
+        ))
+
+        request = WorkflowRequest(
+            title="alias notification regression",
+            status="DRAFT",
+            requester_id=requester.id,
+        )
+        db.session.add(request)
+        db.session.flush()
+
+        start_workflow_for_request(
+            request,
+            template,
+            created_by_user_id=requester.id,
+            auto_commit=False,
+        )
+        db.session.flush()
+
+        self.assertEqual(
+            Notification.query.filter_by(
+                user_id=secretary.id,
+                source="workflow",
+                link_url=f"/workflow/request/{request.id}",
+            ).count(),
+            1,
         )
 
 

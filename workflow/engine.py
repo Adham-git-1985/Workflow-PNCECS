@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 
 from extensions import db
 from utils.notification_links import notification_target_path
+from utils.role_codes import role_storage_variants
 from utils.ui_labels import workflow_status_label
 from models import (
     AuditLog,
@@ -143,40 +144,14 @@ def _activate_step_sla(step, started_at=None, reset=True):
 from sqlalchemy import or_
 
 
-def _norm_role(value: str | None) -> str:
-    s = (value or '').strip().lower()
-    if not s:
-        return ''
-    s = s.replace('-', '_').replace(' ', '_')
-    while '__' in s:
-        s = s.replace('__', '_')
-    return s.strip('_')
-
-
 def _role_variants(role: str | None) -> list[str]:
-    raw = (role or '').strip()
-    if not raw:
-        return []
-    base = _norm_role(raw)
-    variants = {
-        raw,
-        raw.lower(),
-        raw.upper(),
-        base,
-        base.replace('_', ' '),
-        base.replace('_', '-'),
-        base.replace('_', ''),
-    }
-    if '_' in raw:
-        variants.add(raw.replace('_', ' '))
-        variants.add(raw.replace('_', '-'))
-    if '-' in raw:
-        variants.add(raw.replace('-', '_'))
-        variants.add(raw.replace('-', ' '))
-    if ' ' in raw:
-        variants.add(raw.replace(' ', '_'))
-        variants.add(raw.replace(' ', '-'))
-    return [v.strip() for v in variants if v and str(v).strip()]
+    """Return all persisted spellings for a workflow role.
+
+    The inbox already uses ``role_storage_variants``.  Reusing the same
+    resolver here keeps first-step notifications aligned with inbox access,
+    including the legacy ``General_secretary``/``SECRETARY_GENERAL`` names.
+    """
+    return sorted(role_storage_variants(role))
 
 
 def _resolve_committee_users(committee_id: int | None, delivery_mode: str | None) -> list[int]:
