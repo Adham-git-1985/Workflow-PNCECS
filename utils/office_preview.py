@@ -8,6 +8,7 @@ a local renderer remains available for modern ``.docx`` and ``.xlsx`` files.
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import shutil
 import subprocess
@@ -17,6 +18,9 @@ from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 from utils.file_uploads import clean_original_filename
+
+
+logger = logging.getLogger(__name__)
 
 
 OFFICE_PREVIEW_EXTENSIONS = frozenset({
@@ -108,6 +112,22 @@ def _office_application_available(extension: str) -> bool:
     return False
 
 
+def _powershell_executable() -> str:
+    """Return an absolute PowerShell path when Windows runs the web service.
+
+    Windows services frequently have a reduced PATH.  Using SystemRoot avoids
+    silently falling back to the simplified ReportLab renderer for that reason.
+    """
+    if os.name != "nt":
+        return "powershell.exe"
+
+    system_root = Path(os.environ.get("SystemRoot", r"C:\\Windows"))
+    system_powershell = system_root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if system_powershell.is_file():
+        return str(system_powershell)
+    return shutil.which("powershell.exe") or "powershell.exe"
+
+
 def _powershell_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -118,9 +138,6 @@ def _convert_with_windows_office(
 ) -> bytes:
     """Export with locally installed Word/Excel, preserving Office formatting."""
     extension = office_extension(original_name) or Path(source_path).suffix.lower().lstrip(".")
-    if not _office_application_available(extension):
-        raise OfficePreviewError("Microsoft Office غير متوفر لتحويل الملف")
-
     application = "Excel" if extension in {"xls", "xlsx", "xlsm"} else "Word"
     with tempfile.TemporaryDirectory(prefix="office_native_preview_") as temp_dir:
         temp_root = Path(temp_dir)
@@ -167,7 +184,7 @@ try {{
 
         encoded_script = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
         command = [
-            "powershell.exe",
+            _powershell_executable(),
             "-NoLogo",
             "-NoProfile",
             "-NonInteractive",
@@ -546,13 +563,18 @@ def convert_office_to_pdf(
         raise OfficePreviewError("نوع الملف غير مدعوم للمعاينة بصيغة PDF")
 
     extension = office_extension(original_name) or Path(source_path).suffix.lower().lstrip(".")
-    if _office_application_available(extension):
+    # Do not use the executable-path check as a gate.  Click-to-Run and
+    # 32-bit Office installations can register Word/Excel COM correctly while
+    # keeping their executable outside the two historical Office16 paths.
+    # Attempting COM is the authoritative check and preserves the original
+    # document formatting whenever Word/Excel is available to this process.
+    if os.name == "nt":
         try:
             return _convert_with_windows_office(source_path, original_name)
-        except OfficePreviewError:
+        except OfficePreviewError as exc:
             # Service accounts without interactive Office automation can still
             # use LibreOffice or the local PDF fallback below.
-            pass
+            logger.warning("Native %s PDF preview unavailable; using fallback: %s", extension, exc)
 
     executable = find_libreoffice_executable()
     if executable:

@@ -7,7 +7,7 @@ import fitz
 from docx import Document
 from openpyxl import Workbook
 
-from utils.office_preview import convert_office_bytes_to_pdf, convert_office_to_pdf
+from utils.office_preview import OfficePreviewError, convert_office_bytes_to_pdf, convert_office_to_pdf
 
 
 class OfficePreviewTests(unittest.TestCase):
@@ -20,7 +20,10 @@ class OfficePreviewTests(unittest.TestCase):
             document.save(path)
 
             with (
-                patch("utils.office_preview._office_application_available", return_value=False),
+                patch(
+                    "utils.office_preview._convert_with_windows_office",
+                    side_effect=OfficePreviewError("native converter unavailable"),
+                ),
                 patch("utils.office_preview.find_libreoffice_executable", return_value=None),
             ):
                 pdf_bytes = convert_office_to_pdf(path, original_name=path.name)
@@ -45,7 +48,10 @@ class OfficePreviewTests(unittest.TestCase):
             workbook.save(path)
 
             with (
-                patch("utils.office_preview._office_application_available", return_value=False),
+                patch(
+                    "utils.office_preview._convert_with_windows_office",
+                    side_effect=OfficePreviewError("native converter unavailable"),
+                ),
                 patch("utils.office_preview.find_libreoffice_executable", return_value=None),
             ):
                 pdf_bytes = convert_office_to_pdf(path, original_name=path.name)
