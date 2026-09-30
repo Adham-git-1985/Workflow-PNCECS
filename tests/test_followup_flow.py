@@ -1,8 +1,10 @@
 from datetime import date, datetime
+from io import BytesIO
 import tempfile
 import unittest
 from pathlib import Path
 
+from docx import Document
 from flask import Flask
 from flask_login import LoginManager
 from jinja2 import ChoiceLoader, DictLoader
@@ -452,6 +454,54 @@ class FollowupFlowTests(unittest.TestCase):
         with self.app.app_context():
             item = EmployeeFollowupReport.query.get(report_id).items[0]
             self.assertEqual(item.title, long_title.strip())
+
+    def test_uploading_report_docx_replaces_the_previous_version(self):
+        with self.app.app_context():
+            report = EmployeeFollowupReport(
+                employee_user_id=self.employee_id,
+                manager_user_id=self.manager_id,
+                period_start=date(2026, 9, 1),
+                period_end=date(2026, 9, 5),
+                status="DRAFT",
+            )
+            db.session.add(report)
+            db.session.commit()
+            report_id = report.id
+
+        def docx_upload(name: str, text: str):
+            document = Document()
+            document.add_paragraph(text)
+            content = BytesIO()
+            document.save(content)
+            content.seek(0)
+            return content, name
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/attachments",
+            data={"report_docx": docx_upload("first.docx", "first version")},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            first_attachment = EmployeeFollowupReport.query.get(report_id).attachments[0]
+            first_path = (
+                Path(self.app.instance_path) / "uploads" / "employee_followups"
+                / str(report_id) / first_attachment.stored_name
+            )
+            self.assertTrue(first_path.is_file())
+
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/attachments",
+            data={"report_docx": docx_upload("second.docx", "second version")},
+        )
+        self.assertEqual(response.status_code, 302)
+        with self.app.app_context():
+            attachments = EmployeeFollowupReport.query.get(report_id).attachments
+            report_attachments = [
+                attachment for attachment in attachments if attachment.kind == "REPORT_DOCX"
+            ]
+            self.assertEqual(len(report_attachments), 1)
+            self.assertEqual(report_attachments[0].original_name, "second.docx")
+            self.assertFalse(first_path.exists())
 
     def test_employee_can_edit_and_apply_suggestions_to_manual_and_system_items(self):
         with self.app.app_context():

@@ -1378,17 +1378,26 @@ def followups_add_item(report_id: int):
     elif request.form.get("completed_on") and not item_date:
         flash("يرجى إدخال تاريخ صحيح.", "warning")
     else:
-        db.session.add(EmployeeFollowupItem(
-            report_id=report.id,
-            source_type="MANUAL",
-            title=title,
-            description=None,
-            completed_on=item_date,
-            status=status if status in ITEM_STATUS_LABELS else "COMPLETED",
-            is_included=True,
-        ))
-        db.session.commit()
-        flash("تمت إضافة البند.", "success")
+        try:
+            db.session.add(EmployeeFollowupItem(
+                report_id=report.id,
+                source_type="MANUAL",
+                title=title,
+                description=None,
+                completed_on=item_date,
+                status=status if status in ITEM_STATUS_LABELS else "COMPLETED",
+                is_included=True,
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+            current_app.logger.exception(
+                "Failed to add manual accomplishment to followup report %s",
+                report_id,
+            )
+            flash("تعذرت إضافة الإنجاز حالياً.", "danger")
+        else:
+            flash("تمت إضافة البند.", "success")
     return redirect(url_for("portal.followups_view", report_id=report.id))
 
 
@@ -1414,6 +1423,7 @@ def followups_upload_attachments(report_id: int):
     if not _employee_can_edit(report):
         abort(403)
     saved_paths: list[Path] = []
+    replaced_paths: list[Path] = []
     try:
         uploads = (
             (request.files.get("letterhead_docx"), "LETTERHEAD"),
@@ -1422,9 +1432,21 @@ def followups_upload_attachments(report_id: int):
         added = 0
         for upload, kind in uploads:
             if upload and getattr(upload, "filename", ""):
+                # A report document and letterhead each have one current
+                # version. Remove every previous version only after the new
+                # upload has been saved and validated successfully.
+                previous_attachments = EmployeeFollowupAttachment.query.filter_by(
+                    report_id=report.id,
+                    kind=kind,
+                ).all()
                 attachment = _save_attachment(report, upload, kind)
                 if attachment:
                     saved_paths.append(_report_storage_dir(report.id) / attachment.stored_name)
+                    for previous_attachment in previous_attachments:
+                        replaced_paths.append(
+                            _report_storage_dir(report.id) / previous_attachment.stored_name
+                        )
+                        db.session.delete(previous_attachment)
                     added += 1
         for upload in request.files.getlist("supporting_files"):
             if upload and getattr(upload, "filename", ""):
@@ -1436,6 +1458,14 @@ def followups_upload_attachments(report_id: int):
             flash("اختر ملفاً واحداً على الأقل للرفع.", "warning")
         else:
             db.session.commit()
+            for replaced_path in replaced_paths:
+                try:
+                    replaced_path.unlink(missing_ok=True)
+                except OSError:
+                    current_app.logger.warning(
+                        "Failed to remove replaced followup attachment %s",
+                        replaced_path,
+                    )
             flash(f"تم رفع {added} مرفق.", "success")
     except ValueError:
         db.session.rollback()
