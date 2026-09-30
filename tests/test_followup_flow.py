@@ -468,17 +468,19 @@ class FollowupFlowTests(unittest.TestCase):
             db.session.commit()
             report_id = report.id
 
-        def docx_upload(name: str, text: str):
+        def docx_content(text: str) -> bytes:
             document = Document()
             document.add_paragraph(text)
             content = BytesIO()
             document.save(content)
-            content.seek(0)
-            return content, name
+            return content.getvalue()
+
+        first_document = docx_content("first version")
+        second_document = docx_content("second version")
 
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/attachments",
-            data={"report_docx": docx_upload("first.docx", "first version")},
+            data={"report_docx": (BytesIO(first_document), "first.docx")},
         )
         self.assertEqual(response.status_code, 302)
         with self.app.app_context():
@@ -491,7 +493,7 @@ class FollowupFlowTests(unittest.TestCase):
 
         response = self.employee_client.post(
             f"/portal/followups/{report_id}/attachments",
-            data={"report_docx": docx_upload("second.docx", "second version")},
+            data={"report_docx": (BytesIO(second_document), "second.docx")},
         )
         self.assertEqual(response.status_code, 302)
         with self.app.app_context():
@@ -502,6 +504,28 @@ class FollowupFlowTests(unittest.TestCase):
             self.assertEqual(len(report_attachments), 1)
             self.assertEqual(report_attachments[0].original_name, "second.docx")
             self.assertFalse(first_path.exists())
+
+        # Saving the draft after uploading the revised file must not generate
+        # a different document or replace the employee-approved DOCX.
+        response = self.employee_client.post(
+            f"/portal/followups/{report_id}/update",
+            data={"action": "save", "employee_summary": "Updated draft fields"},
+        )
+        self.assertEqual(response.status_code, 302)
+        download = self.employee_client.get(f"/portal/followups/{report_id}/export.docx")
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(download.data, second_document)
+        self.assertIn("second.docx", download.headers["Content-Disposition"])
+
+        with self.app.app_context():
+            report = db.session.get(EmployeeFollowupReport, report_id)
+            report.status = "SUBMITTED"
+            db.session.commit()
+        manager_download = self.manager_client.get(
+            f"/portal/followups/{report_id}/export.docx"
+        )
+        self.assertEqual(manager_download.status_code, 200)
+        self.assertEqual(manager_download.data, second_document)
 
     def test_employee_can_edit_and_apply_suggestions_to_manual_and_system_items(self):
         with self.app.app_context():

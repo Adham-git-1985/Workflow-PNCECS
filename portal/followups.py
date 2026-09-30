@@ -1507,6 +1507,21 @@ def followups_download_attachment(report_id: int, attachment_id: int):
 def followups_export_docx(report_id: int):
     _require_followups_access()
     report, _ = _get_report_or_abort(report_id)
+    approved_report = _followup_attachment_for_kind(report, "REPORT_DOCX")
+    if approved_report:
+        approved_path = _report_storage_dir(report.id) / approved_report.stored_name
+        if approved_path.is_file():
+            # An uploaded revised report is the approved document for this
+            # report. Draft saves only update database fields; they never
+            # regenerate or replace this employee-provided DOCX.
+            return send_from_directory(
+                str(_report_storage_dir(report.id)),
+                approved_report.stored_name,
+                mimetype=approved_report.mime_type or DOCX_MIME,
+                as_attachment=True,
+                download_name=approved_report.original_name,
+                max_age=0,
+            )
     letterhead = _followup_attachment_for_kind(report, "LETTERHEAD")
     template_path = _report_storage_dir(report.id) / letterhead.stored_name if letterhead else None
     try:
