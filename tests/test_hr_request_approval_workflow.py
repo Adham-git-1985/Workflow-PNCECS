@@ -313,6 +313,35 @@ class HRRequestApprovalWorkflowTests(unittest.TestCase):
         }
         self.assertFalse(cc_ids)
 
+    def test_official_departure_requires_secretary_general_final_approval(self):
+        official_type = HRPermissionType(
+            code="OFFICIAL_DEPARTURE",
+            name_ar="مغادرة رسمية",
+            requires_approval=True,
+            counts_as_work=True,
+            is_active=True,
+        )
+        db.session.add(official_type)
+        db.session.flush()
+        row = self._permission()
+        row.permission_type_id = official_type.id
+        row.permission_type = official_type
+
+        steps = start_request_flow(KIND_PERMISSION, row)
+        self.assertEqual(
+            [step.stage_code for step in steps],
+            ["DIRECT_MANAGER", STAGE_SECRETARY_GENERAL],
+        )
+        self.assertEqual(steps[0].status, "PENDING")
+        self.assertEqual(steps[1].status, "WAITING")
+        self.assertEqual(steps[1].approver_user_id, self.secretary.id)
+
+        self.assertEqual(decide_request(KIND_PERMISSION, row, self.manager, "APPROVE"), "NEXT")
+        self.assertEqual(row.status, "SUBMITTED")
+        self.assertEqual(steps[1].status, "PENDING")
+        self.assertEqual(decide_request(KIND_PERMISSION, row, self.secretary, "APPROVE"), "APPROVED")
+        self.assertEqual(row.status, "APPROVED")
+
     def test_leave_escalation_keeps_all_original_manager_names_visible(self):
         second_manager = User(
             email="second-manager@example.test",

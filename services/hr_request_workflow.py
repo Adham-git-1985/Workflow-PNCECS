@@ -1089,6 +1089,29 @@ def is_compensatory_leave(row: HRLeaveRequest | None) -> bool:
     )
 
 
+def is_official_permission(row: HRPermissionRequest | None) -> bool:
+    """Whether a departure request is an official departure.
+
+    Permission types have historically been configured by code in some
+    deployments and by their Arabic/English name in others, so retain both
+    forms when choosing the approval route.
+    """
+    permission_type = getattr(row, "permission_type", None) if row else None
+    code = _normalize(getattr(permission_type, "code", None))
+    names = " ".join((
+        getattr(permission_type, "name_ar", None) or "",
+        getattr(permission_type, "name_en", None) or "",
+    )).casefold()
+    return (
+        code in {
+            "OFFICIAL", "OFFICIALDEPARTURE", "OFFICIALPERMISSION",
+            "OFFICIALLEAVE", "MISSION",
+        }
+        or "مغادرة رسمية" in names
+        or "official departure" in names
+    )
+
+
 def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
     """Whether this requester must obtain the Secretary-General's approval.
 
@@ -1138,6 +1161,13 @@ def requires_secretary_general_leave_approval(row: HRLeaveRequest) -> bool:
 
 def _step_specs(kind: str, row) -> list[tuple[str, str]]:
     specs = [(STAGE_DIRECT_MANAGER, SCOPE_USER)]
+    if kind == KIND_PERMISSION and is_official_permission(row):
+        # Official departures remain subject to the responsible manager's
+        # review, then require the Secretary-General's final approval.
+        return [
+            (STAGE_DIRECT_MANAGER, SCOPE_USER),
+            (STAGE_SECRETARY_GENERAL, SCOPE_SECRETARY_GENERAL),
+        ]
     if kind == KIND_LEAVE and is_compensatory_leave(row):
         # Compensatory leave is a separately controlled balance.  It must be
         # reviewed in the employee's operational hierarchy, then by
