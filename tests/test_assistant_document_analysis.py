@@ -58,6 +58,45 @@ class AssistantDocumentAnalysisTests(unittest.TestCase):
         self.assertIn("meeting.txt", result["reply"])
         self.assertIn("The meeting starts", result["reply"])
 
+    def test_translation_is_local_only_and_instructs_model_to_return_arabic(self):
+        app = Flask(__name__)
+        app.config.update(
+            ASSISTANT_LOCAL_AI_ENABLED="1",
+            ASSISTANT_LOCAL_AI_MODEL="qwen2.5:3b",
+            ASSISTANT_LOCAL_AI_URL="http://127.0.0.1:11434/api/chat",
+        )
+        opener = MagicMock()
+        response = MagicMock()
+        response.__enter__.return_value = response
+        response.read.return_value = '{"message":{"content":"ترجمة عربية."}}'.encode("utf-8")
+        opener.open.return_value = response
+
+        with (
+            app.app_context(),
+            patch("assistant.service.build_opener", return_value=opener),
+            patch("assistant.service._try_external_ai", side_effect=AssertionError("must remain local")),
+        ):
+            result = summarize_content(
+                _FakeUser(),
+                "The meeting starts at 10:00.",
+                analysis_mode="translate_ar",
+            )
+
+        self.assertEqual(result["reply"], "ترجمة عربية.")
+        self.assertIn("translate_ar", result["intents"])
+        request = opener.open.call_args.args[0]
+        self.assertIn("Translate the supplied content into clear Modern Standard Arabic".encode("utf-8"), request.data)
+
+    def test_rephrase_fallback_keeps_content_local(self):
+        app = Flask(__name__)
+        app.config.update(ASSISTANT_LOCAL_AI_ENABLED="0")
+        content = "النص الأصلي الذي يجب مراجعته."
+        with app.app_context():
+            result = summarize_content(_FakeUser(), content, analysis_mode="rephrase")
+
+        self.assertIn(content, result["reply"])
+        self.assertIn("rephrase", result["intents"])
+
     def test_actions_and_draft_fallback_is_review_only_and_never_uses_external_ai(self):
         app = Flask(__name__)
         app.config.update(

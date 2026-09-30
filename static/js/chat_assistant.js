@@ -54,6 +54,20 @@
           compose: "ألصق النص هنا، أو اختر مرفقًا من زر مشبك الورق...",
         },
         {
+          icon: "bi-translate",
+          title: "ترجمة إلى العربية",
+          desc: "ألصق النص بأي لغة أو أرفق ملفًا، وسيعيد عارف ترجمته إلى العربية.",
+          analysisMode: "translate_ar",
+          compose: "ألصق النص المراد ترجمته إلى العربية، أو أرفق ملفًا...",
+        },
+        {
+          icon: "bi-pencil-square",
+          title: "إعادة صياغة",
+          desc: "حوّل النص إلى صياغة عربية واضحة واحترافية مع الحفاظ على معناه.",
+          analysisMode: "rephrase",
+          compose: "ألصق النص الذي تريد إعادة صياغته، أو أرفق ملفًا...",
+        },
+        {
           icon: "bi-list-task",
           title: "استخرج مهامًا ومسودة",
           desc: "حلّل مرفقًا أو نصًا، ثم راجع المهام والمسودة قبل أن تستخدمها.",
@@ -428,8 +442,9 @@
   }
 
   function selectedAnalysisMode() {
-    return analysisModeInput && analysisModeInput.value === "actions_draft"
-      ? "actions_draft"
+    const mode = analysisModeInput ? analysisModeInput.value : "summary";
+    return ["summary", "actions_draft", "translate_ar", "rephrase"].includes(mode)
+      ? mode
       : "summary";
   }
 
@@ -439,6 +454,12 @@
       const base = "حلّل المحتوى، واستخرج المهام والإجراءات والمواعيد المذكورة صراحة، ثم أنشئ مسودة رسمية للمراجعة فقط دون إرسال أو إنشاء أي معاملة.";
       return attachment && requested ? `${base}\nتوجيه إضافي من المستخدم: ${requested}` : base;
     }
+    if (mode === "translate_ar") {
+      return "ترجم المحتوى كاملًا إلى العربية الفصحى، مع الحفاظ على الأسماء والأرقام والتواريخ والتنسيق، ولا تضف شرحًا أو تلخيصًا.";
+    }
+    if (mode === "rephrase") {
+      return "أعد صياغة المحتوى بالعربية بصياغة واضحة واحترافية مع الحفاظ التام على المعنى والحقائق والأسماء والأرقام والتواريخ، ولا تضف معلومات أو تلخيصًا.";
+    }
     return attachment && requested ? requested : "حلّل هذا المحتوى ولخّصه بوضوح.";
   }
 
@@ -447,7 +468,7 @@
     const attachment = selectedAttachment();
     if ((!message && !attachment) || busy) return;
     const analysisMode = selectedAnalysisMode();
-    const isAnalysis = Boolean(attachment) || analysisMode === "actions_draft" || message.length > maxMessageChars;
+    const isAnalysis = Boolean(attachment) || analysisMode !== "summary" || message.length > maxMessageChars;
     if (isAnalysis && !analyzeUrl) {
       appendMessage("assistant", "تعذر فتح خدمة تحليل المرفقات. حدّث الصفحة وحاول مجددًا.", [], "masar-assistant__message--error");
       return;
@@ -464,14 +485,21 @@
     const previousHistory = history.slice(-8);
     const defaultAnalysisRequest = analysisMode === "actions_draft"
       ? "استخرج المهام وأنشئ مسودة للمراجعة فقط."
-      : "حلّل هذا المرفق ولخّصه.";
+      : analysisMode === "translate_ar"
+        ? "ترجم هذا المرفق إلى العربية."
+        : analysisMode === "rephrase"
+          ? "أعد صياغة هذا المرفق بالعربية."
+          : "حلّل هذا المرفق ولخّصه.";
     const visibleMessage = attachment
       ? `📎 ${attachment.name}${message ? `\n${message}` : `\n${defaultAnalysisRequest}`}`
       : message;
     const historyMessage = isAnalysis
       ? (attachment
         ? `تحليل مرفق: ${attachment.name}${analysisMode === "actions_draft" ? " (مهام ومسودة)" : ""}`
-        : analysisMode === "actions_draft" ? "تحليل نص واستخراج مهام ومسودة للمراجعة" : "تلخيص نص طويل أرسله المستخدم")
+        : analysisMode === "actions_draft" ? "تحليل نص واستخراج مهام ومسودة للمراجعة"
+          : analysisMode === "translate_ar" ? "ترجمة نص إلى العربية"
+            : analysisMode === "rephrase" ? "إعادة صياغة نص"
+              : "تلخيص نص طويل أرسله المستخدم")
       : message;
     appendMessage("user", visibleMessage);
     history.push({ role: "user", content: historyMessage });

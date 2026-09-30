@@ -15,7 +15,7 @@
 
     <!-- Global CSS (cache-bust) -->
     <link rel="stylesheet" href="{{ url_for('static', filename='css/main.css') }}?v=20260827-header-align1">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/chat_assistant.css') }}?v=20260905-analysis1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/chat_assistant.css') }}?v=20260930-language-tools">
 
     {% block extra_css %}{% endblock %}
 </head>
@@ -307,7 +307,7 @@
 
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
     <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260908-performance1"></script>
-<script src="{{ url_for('static', filename='js/chat_assistant.js') }}?v=20260905-analysis1"></script>
+<script src="{{ url_for('static', filename='js/chat_assistant.js') }}?v=20260930-language-tools"></script>
 {% if current_user.is_authenticated and not hide_shell %}
 <script src="{{ url_for('static', filename='js/user_presence.js') }}?v=20260827r1"
         data-presence-url="{{ url_for('users.presence_heartbeat') }}"

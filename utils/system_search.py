@@ -119,6 +119,14 @@ def visible_items_for_user(user) -> List[SearchItem]:
             keywords=("ابدأ", "دليل شامل", "system", "master"),
         ),
         SearchItem(
+            id="help_aref",
+            title="دليل عارف: الترجمة والتلخيص وإعادة الصياغة",
+            desc="استخدام عارف لشرح الإجراءات ومعالجة النصوص والمرفقات محليًا.",
+            category="الأدلة",
+            endpoint="users.help_aref_guide",
+            keywords=("عارف", "ترجمة", "تلخيص", "إعادة صياغة", "مساعدة", "translation", "summary", "rewrite"),
+        ),
+        SearchItem(
             id="help_employee",
             title="دليل الموظف",
             desc="استخدام مسار: الطلبات والمتابعة والإشعارات.",

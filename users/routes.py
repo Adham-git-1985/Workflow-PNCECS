@@ -169,6 +169,13 @@ def help_index():
     return render_template('help/index.html')
 
 
+@users_bp.route('/help/aref', methods=['GET'])
+@login_required
+def help_aref_guide():
+    """دليل استخدام عارف للمساعدة وإعداد النصوص محليًا."""
+    return render_template('help/aref_guide.html')
+
+
 def _has_any_perm(*keys: str) -> bool:
     for k in keys:
         if not k:

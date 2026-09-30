@@ -146,6 +146,28 @@ class AssistantAnalysisRouteTests(unittest.TestCase):
         self.assertEqual(payload["analysis"]["mode"], "actions_draft")
         self.assertEqual(summarize.call_args.kwargs["analysis_mode"], "actions_draft")
 
+    def test_translation_mode_is_passed_to_local_only_analysis(self):
+        expected = {
+            "reply": "ترجمة عربية",
+            "mode": "local",
+            "links": [],
+            "sources": [],
+            "suggestions": [],
+        }
+        with (
+            patch("assistant.routes.validate_csrf"),
+            patch("assistant.routes.summarize_content", return_value=expected.copy()) as summarize,
+        ):
+            response = self._client().post(
+                "/api/assistant/analyze",
+                json={"text": "Hello", "analysis_mode": "translate_ar"},
+                headers={"X-CSRFToken": "test"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["analysis"]["mode"], "translate_ar")
+        self.assertEqual(summarize.call_args.kwargs["analysis_mode"], "translate_ar")
+
 
 if __name__ == "__main__":
     unittest.main()

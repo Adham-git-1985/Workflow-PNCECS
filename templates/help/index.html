@@ -28,6 +28,19 @@
       </div>
     </div>
 
+    <div class="col-md-6 col-lg-4">
+      <div class="card h-100 shadow-sm border-info">
+        <div class="card-body">
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <span>✨</span><h6 class="mb-0">دليل عارف</h6>
+            <span class="badge bg-info text-dark ms-auto">جديد</span>
+          </div>
+          <div class="text-muted small mb-3">شرح كل إجراء داخل النظام، وترجمة النصوص إلى العربية، وتلخيصها وإعادة صياغتها محليًا.</div>
+          <a class="btn btn-sm btn-outline-info" href="{{ url_for('users.help_aref_guide') }}">فتح الدليل</a>
+        </div>
+      </div>
+    </div>
+
 
     {% if current_user.has_perm('HR_ORG_DYNAMIC_GUIDE_VIEW') or current_user.has_perm('HR_ORGSTRUCTURE_MANAGE') or current_user.has_perm('HR_MASTERDATA_MANAGE') or current_user.has_perm('PORTAL_ADMIN_PERMISSIONS_MANAGE') or current_user.has_role('HR_ADMIN') or current_user.has_role('ADMIN') or current_user.has_role('SUPER_ADMIN') or current_user.has_role('SUPERADMIN') or (current_user.role and 'أدمن' in current_user.role and ('الموارد' in current_user.role or 'الموارد البشرية' in current_user.role)) %}
     <div class="col-md-6 col-lg-4">
