@@ -1396,6 +1396,52 @@ class Notification(db.Model):
 # ======================
 # Internal Messaging
 # ======================
+class ChatConversation(db.Model):
+    """Real-time-style internal chat thread, optionally tied to a workflow request."""
+    __tablename__ = "chat_conversation"
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(200), nullable=True)
+    kind = db.Column(db.String(20), nullable=False, default="DIRECT", index=True)
+    workflow_request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"), nullable=True, index=True)
+    created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    participants = db.relationship("ChatParticipant", back_populates="conversation", cascade="all, delete-orphan")
+    chat_messages = db.relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
+    workflow_request = db.relationship("WorkflowRequest", foreign_keys=[workflow_request_id])
+    created_by = db.relationship("User", foreign_keys=[created_by_id])
+
+
+class ChatParticipant(db.Model):
+    __tablename__ = "chat_participant"
+
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("chat_conversation.id"), nullable=False, index=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    last_read_at = db.Column(db.DateTime, nullable=True)
+    is_muted = db.Column(db.Boolean, default=False, nullable=False)
+
+    conversation = db.relationship("ChatConversation", back_populates="participants")
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
+    __table_args__ = (db.UniqueConstraint("conversation_id", "user_id", name="uq_chat_participant"),)
+
+
+class ChatMessage(db.Model):
+    __tablename__ = "chat_message"
+
+    id = db.Column(db.Integer, primary_key=True)
+    conversation_id = db.Column(db.Integer, db.ForeignKey("chat_conversation.id"), nullable=False, index=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    body = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    conversation = db.relationship("ChatConversation", back_populates="chat_messages")
+    sender = db.relationship("User", foreign_keys=[sender_id], lazy="joined")
+
+
 class Message(db.Model):
     __tablename__ = "messages"
 

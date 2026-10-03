@@ -57,6 +57,7 @@ from archive.routes import archive_bp
 from audit.routes import audit_bp
 from users.routes import users_bp
 from messages import messages_bp
+from chats import chats_bp
 from delegation import delegation_bp
 from store import store_bp
 from assistant import assistant_bp
@@ -2129,6 +2130,7 @@ except Exception as _e:
     app.logger.exception("Failed to wire background jobs: %s", _e)
 app.register_blueprint(masterdata_bp)
 app.register_blueprint(messages_bp)
+app.register_blueprint(chats_bp)
 app.register_blueprint(delegation_bp)
 
 

@@ -213,6 +213,13 @@
             🔔 الإشعارات
         </a>
 
+        {% if can_open_chats|default(false) %}
+        <a href="{{ url_for('chats.inbox') }}"
+           class="{% if request.path.startswith('/chats') %}active{% endif %}">
+            <i class="bi bi-chat-dots-fill"></i> المحادثات
+        </a>
+        {% endif %}
+
         <a href="{{ url_for('messages.inbox') }}"
            class="{% if request.path.startswith('/messages') %}active{% endif %}">
             💬 المراسلات
