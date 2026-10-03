@@ -213,6 +213,7 @@
             🔔 الإشعارات
         </a>
 
+        {% if can_open_messages|default(false) %}
         <a href="{{ url_for('messages.inbox') }}"
            class="{% if request.path.startswith('/messages') %}active{% endif %}">
             💬 المراسلات
@@ -220,6 +221,7 @@
               <span class="badge bg-danger ms-2">{{ unread_msgs }}</span>
             {% endif %}
         </a>
+        {% endif %}
 
         <h4 class="sidebar-title mt-4">
             <i class="bi bi-archive"></i>
