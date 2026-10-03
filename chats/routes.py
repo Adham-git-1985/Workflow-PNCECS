@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 import mimetypes
+import shutil
 import uuid
 
 from flask import abort, current_app, flash, jsonify, redirect, render_template, request, send_from_directory, url_for
@@ -154,6 +155,117 @@ def _attachment_file_path(message_id, stored_name):
         / str(message_id)
         / Path(stored_name).name
     )
+
+
+def _conversation_label(conversation, viewer_id):
+    """Return a safe, familiar label for a conversation the viewer belongs to."""
+    title = (conversation.title or "").strip()
+    if title:
+        return title
+    other_names = [
+        participant.user.full_name
+        for participant in conversation.participants
+        if participant.user_id != viewer_id and participant.user
+    ]
+    return "، ".join(other_names) or "محادثة"
+
+
+def _forward_targets(exclude_conversation_id=None):
+    """Only return conversations that the current user is already allowed to see."""
+    query = (
+        ChatConversation.query
+        .join(ChatParticipant)
+        .filter(ChatParticipant.user_id == current_user.id)
+    )
+    if exclude_conversation_id:
+        query = query.filter(ChatConversation.id != exclude_conversation_id)
+    conversations = query.order_by(ChatConversation.updated_at.desc()).all()
+    return [
+        {
+            "id": conversation.id,
+            "label": _conversation_label(conversation, current_user.id),
+            "kind": conversation.kind,
+        }
+        for conversation in conversations
+    ]
+
+
+def _forward_users_without_direct_chat():
+    """Offer chat-enabled people only when a direct thread does not exist yet."""
+    direct_conversation_ids = (
+        db.session.query(ChatConversation.id)
+        .join(ChatParticipant)
+        .filter(
+            ChatConversation.kind == "DIRECT",
+            ChatParticipant.user_id == current_user.id,
+        )
+    )
+    existing_direct_user_ids = {
+        user_id for (user_id,) in
+        db.session.query(ChatParticipant.user_id)
+        .filter(
+            ChatParticipant.conversation_id.in_(direct_conversation_ids),
+            ChatParticipant.user_id != current_user.id,
+        )
+        .all()
+    }
+    explicit_ids = _explicit_chat_user_ids()
+    return [
+        user for user in User.query.order_by(User.name.asc(), User.email.asc()).all()
+        if user.id != current_user.id
+        and user.id in explicit_ids
+        and user.id not in existing_direct_user_ids
+    ]
+
+
+def _can_clear_conversation(conversation):
+    """Keep a group/workflow history from being erased by an ordinary member."""
+    return conversation.kind == "DIRECT" or conversation.created_by_id == current_user.id
+
+
+def _copy_forwarded_attachments(source_message, destination_message, created_paths, created_dirs):
+    """Copy forwardable attachment bytes into the destination message folder."""
+    if not source_message.attachments:
+        return
+
+    target_dir = Path(current_app.instance_path) / "uploads" / "chats" / str(destination_message.id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    created_dirs.add(target_dir)
+    for attachment in source_message.attachments:
+        source_path = _attachment_file_path(source_message.id, attachment.stored_name)
+        if not source_path.is_file():
+            raise FileNotFoundError(f"Missing chat attachment {attachment.id}")
+
+        stored_name = random_storage_name(uuid.uuid4().hex, attachment.original_name)
+        target_path = target_dir / stored_name
+        created_paths.append(target_path)
+        shutil.copy2(source_path, target_path)
+        size = target_path.stat().st_size
+        if size > MAX_ATTACHMENT_BYTES:
+            raise ValueError("Forwarded attachment exceeds the maximum size")
+        db.session.add(ChatAttachment(
+            message_id=destination_message.id,
+            original_name=attachment.original_name,
+            stored_name=stored_name,
+            mime_type=attachment.mime_type,
+            file_size=size,
+        ))
+
+
+def _remove_files_and_empty_dirs(paths, directories=()):
+    """Best-effort cleanup limited to known chat attachment files."""
+    for file_path in paths:
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            current_app.logger.warning("Could not remove chat attachment %s", file_path)
+    for directory in sorted(set(directories), key=lambda item: len(item.parts), reverse=True):
+        try:
+            directory.rmdir()
+        except OSError:
+            # Leave non-empty folders intact; they may contain a file from a
+            # concurrent, valid operation and must never be removed broadly.
+            pass
 
 
 @chats_bp.route("/")
@@ -521,6 +633,7 @@ def message_updates(conversation_id):
             {"message_id": message.id, "status": _message_receipt_status(conversation, message)}
             for message in receipt_messages
         ],
+        "cleared_at": conversation.cleared_at.isoformat() if conversation.cleared_at else None,
     })
     response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
@@ -541,7 +654,25 @@ def conversation(conversation_id):
         if not body and not uploads:
             flash("اكتب رسالة أولاً.", "warning")
             return redirect(url_for("chats.conversation", conversation_id=conversation_id))
-        msg = ChatMessage(conversation_id=conversation_id, sender_id=current_user.id, body=body)
+
+        reply_to_id = request.form.get("reply_to_message_id", type=int)
+        reply_to = None
+        if reply_to_id:
+            reply_to = ChatMessage.query.filter_by(
+                id=reply_to_id,
+                conversation_id=conversation_id,
+                is_deleted=False,
+            ).first()
+            if not reply_to:
+                flash("لا يمكن الرد على رسالة غير متاحة في هذه المحادثة.", "warning")
+                return redirect(url_for("chats.conversation", conversation_id=conversation_id))
+
+        msg = ChatMessage(
+            conversation_id=conversation_id,
+            sender_id=current_user.id,
+            body=body,
+            reply_to_id=reply_to.id if reply_to else None,
+        )
         conversation.updated_at = datetime.utcnow()
         db.session.add(msg); db.session.flush()
         upload_dir = Path(current_app.instance_path) / "uploads" / "chats" / str(msg.id)
@@ -578,7 +709,196 @@ def conversation(conversation_id):
     }
     explicit_ids = _explicit_chat_user_ids()
     direct_peer = next((p.user for p in conversation.participants if p.user_id != current_user.id), None) if conversation.kind == "DIRECT" else None
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages, receipt_statuses=receipt_statuses, is_muted=membership.is_muted, is_pinned=membership.is_pinned, direct_peer=direct_peer, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.id in explicit_ids])
+    return render_template(
+        "chats/conversation.html",
+        conversation=conversation,
+        messages=messages,
+        receipt_statuses=receipt_statuses,
+        is_muted=membership.is_muted,
+        is_pinned=membership.is_pinned,
+        direct_peer=direct_peer,
+        can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id),
+        can_clear_conversation=_can_clear_conversation(conversation),
+        forward_targets=_forward_targets(exclude_conversation_id=conversation.id),
+        forward_users=_forward_users_without_direct_chat(),
+        eligible_users=[
+            user for user in User.query.order_by(User.name.asc()).all()
+            if user.id != current_user.id and user.id in explicit_ids
+        ],
+    )
+
+
+@chats_bp.route("/message/forward", methods=["POST"])
+@login_required
+@chat_access_required
+def forward_message():
+    """Copy a visible message into one or more conversations of its sender.
+
+    A forward never grants access to either the source conversation or its
+    participants.  The current user must already be a participant in both the
+    source and every destination conversation.
+    """
+    message_id = request.form.get("source_message_id", type=int)
+    if not message_id:
+        abort(400)
+    source = ChatMessage.query.get_or_404(message_id)
+    if source.is_deleted or not _participant(source.conversation_id):
+        abort(403)
+    source_conversation_id = source.conversation_id
+    if not (source.body or source.attachments):
+        flash("لا يمكن توجيه رسالة فارغة.", "warning")
+        return redirect(url_for("chats.conversation", conversation_id=source_conversation_id))
+
+    target_ids = {
+        int(value) for value in request.form.getlist("target_conversation_ids")
+        if value.isdigit() and int(value) != source.conversation_id
+    }
+    target_user_ids = {
+        int(value) for value in request.form.getlist("target_user_ids")
+        if value.isdigit() and int(value) != current_user.id
+    }
+    if not target_ids and not target_user_ids:
+        flash("اختر محادثة أو مستخدمًا واحدًا على الأقل لتوجيه الرسالة إليها.", "warning")
+        return redirect(url_for("chats.conversation", conversation_id=source_conversation_id))
+
+    existing_targets = (
+        ChatConversation.query
+        .join(ChatParticipant)
+        .filter(
+            ChatConversation.id.in_(target_ids),
+            ChatParticipant.user_id == current_user.id,
+        )
+        .all()
+    )
+    if len(existing_targets) != len(target_ids):
+        abort(403)
+
+    target_users = User.query.filter(User.id.in_(target_user_ids)).all() if target_user_ids else []
+    explicit_ids = _explicit_chat_user_ids()
+    if (
+        len(target_users) != len(target_user_ids)
+        or any(user.id not in explicit_ids for user in target_users)
+    ):
+        abort(403)
+
+    created_paths = []
+    created_dirs = set()
+    try:
+        targets_by_id = {target.id: target for target in existing_targets}
+        for user in target_users:
+            direct = _direct_conversation(user.id)
+            if not direct:
+                direct = ChatConversation(kind="DIRECT", created_by_id=current_user.id)
+                db.session.add(direct)
+                db.session.flush()
+                db.session.add_all([
+                    ChatParticipant(conversation_id=direct.id, user_id=current_user.id),
+                    ChatParticipant(conversation_id=direct.id, user_id=user.id),
+                ])
+                emit_event(
+                    actor_id=current_user.id,
+                    action="CHAT_STARTED",
+                    message="بدأ محادثة جديدة معك",
+                    target_type="ChatConversation",
+                    target_id=direct.id,
+                    notify_user_id=user.id,
+                    level="INFO",
+                    auto_commit=False,
+                )
+            if direct.id != source_conversation_id:
+                targets_by_id[direct.id] = direct
+
+        targets = list(targets_by_id.values())
+        if not targets:
+            flash("لا يمكن توجيه الرسالة إلى المحادثة نفسها.", "warning")
+            return redirect(url_for("chats.conversation", conversation_id=source_conversation_id))
+
+        for target in targets:
+            forwarded = ChatMessage(
+                conversation_id=target.id,
+                sender_id=current_user.id,
+                body=source.body,
+                forwarded_from_message_id=source.id,
+                is_forwarded=True,
+            )
+            db.session.add(forwarded)
+            db.session.flush()
+            _copy_forwarded_attachments(source, forwarded, created_paths, created_dirs)
+            target.updated_at = datetime.utcnow()
+
+        db.session.add(AuditLog(
+            user_id=current_user.id,
+            action="CHAT_MESSAGE_FORWARDED",
+            target_type="ChatMessage",
+            target_id=source.id,
+            note=f"destination_count={len(targets)}",
+        ))
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        _remove_files_and_empty_dirs(created_paths, created_dirs)
+        current_app.logger.exception("Unable to forward chat message %s", message_id)
+        flash("تعذر توجيه الرسالة أو أحد مرفقاتها.", "danger")
+        return redirect(url_for("chats.conversation", conversation_id=source_conversation_id))
+
+    flash("تم توجيه الرسالة.", "success")
+    return redirect(url_for("chats.conversation", conversation_id=source_conversation_id))
+
+
+@chats_bp.route("/<int:conversation_id>/clear", methods=["POST"])
+@login_required
+@chat_access_required
+def clear_conversation(conversation_id):
+    """Permanently remove a chat's shared content and its attachment files."""
+    conversation = ChatConversation.query.get_or_404(conversation_id)
+    if not _participant(conversation_id) or not _can_clear_conversation(conversation):
+        abort(403)
+
+    message_ids = [
+        message_id for (message_id,) in
+        db.session.query(ChatMessage.id).filter_by(conversation_id=conversation_id).all()
+    ]
+    if not message_ids:
+        flash("المحادثة فارغة بالفعل.", "info")
+        return redirect(url_for("chats.conversation", conversation_id=conversation_id))
+
+    attachments = ChatAttachment.query.filter(ChatAttachment.message_id.in_(message_ids)).all()
+    attachment_paths = [
+        _attachment_file_path(attachment.message_id, attachment.stored_name)
+        for attachment in attachments
+    ]
+    attachment_dirs = {path.parent for path in attachment_paths}
+
+    # Other messages may cite a deleted source through a reply or a forward.
+    # Clear those internal pointers before removing the message records while
+    # keeping the copied text/files in their already-authorized destination.
+    db.session.query(ChatMessage).filter(ChatMessage.reply_to_id.in_(message_ids)).update(
+        {ChatMessage.reply_to_id: None}, synchronize_session=False
+    )
+    db.session.query(ChatMessage).filter(ChatMessage.forwarded_from_message_id.in_(message_ids)).update(
+        {ChatMessage.forwarded_from_message_id: None}, synchronize_session=False
+    )
+    ChatAttachment.query.filter(ChatAttachment.message_id.in_(message_ids)).delete(synchronize_session=False)
+    ChatMessage.query.filter(ChatMessage.id.in_(message_ids)).delete(synchronize_session=False)
+    ChatTyping.query.filter_by(conversation_id=conversation_id).delete(synchronize_session=False)
+    for participant in conversation.participants:
+        participant.last_read_at = None
+        participant.last_delivered_at = None
+    cleared_at = datetime.utcnow()
+    conversation.updated_at = cleared_at
+    conversation.cleared_at = cleared_at
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action="CHAT_CONVERSATION_CLEARED",
+        target_type="ChatConversation",
+        target_id=conversation_id,
+        note="content_and_attachments_removed",
+    ))
+    db.session.commit()
+    _remove_files_and_empty_dirs(attachment_paths, attachment_dirs)
+
+    flash("تم مسح محتوى المحادثة وحذف مرفقاتها لدى جميع المشاركين.", "success")
+    return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")

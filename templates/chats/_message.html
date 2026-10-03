@@ -1,3 +1,9 @@
+{% set message_preview = (message.body or '')|trim %}
+{% if not message_preview and message.attachments %}
+  {% set message_preview = 'مرفق: ' ~ message.attachments[0].original_name %}
+{% endif %}
+{% if not message_preview %}{% set message_preview = 'رسالة' %}{% endif %}
+
 <div class="dm-row chat-message {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}" data-message-id="{{ message.id }}">
   <div class="dm-bubble {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}">
     {% if conversation.kind == 'GROUP' and message.sender_id != current_user.id %}
@@ -7,6 +13,23 @@
     {% if message.is_deleted %}
       <div class="message-deleted"><i class="bi bi-slash-circle"></i> تم حذف هذه الرسالة</div>
     {% else %}
+      {% if message.is_forwarded %}
+        <div class="message-forwarded-label"><i class="bi bi-forward-fill"></i> تمت إعادة التوجيه</div>
+      {% endif %}
+
+      {% if message.reply_to %}
+        {% set reply_preview = (message.reply_to.body or '')|trim %}
+        {% if not reply_preview and message.reply_to.attachments %}
+          {% set reply_preview = 'مرفق: ' ~ message.reply_to.attachments[0].original_name %}
+        {% endif %}
+        <button type="button" class="message-reply-preview" data-scroll-to-message="{{ message.reply_to_id }}" title="الانتقال إلى الرسالة الأصلية">
+          <span class="message-reply-preview-sender"><i class="bi bi-reply-fill"></i> ردًا على {{ message.reply_to.sender.full_name }}</span>
+          <span class="message-reply-preview-body">
+            {% if message.reply_to.is_deleted %}تم حذف هذه الرسالة{% else %}{{ reply_preview|default('رسالة', true)|truncate(160, true, '…') }}{% endif %}
+          </span>
+        </button>
+      {% endif %}
+
       {% if message.body %}<div class="message-body" style="white-space:pre-wrap">{{ message.body }}</div>{% endif %}
       {% for attachment in message.attachments %}
         <div class="d-flex gap-2 align-items-center mt-2 attachment-line">
@@ -22,11 +45,17 @@
 
     <div class="dm-meta">
       <small class="dm-time"><i class="bi bi-clock"></i> {{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}{% set receipt_labels = {'sent': 'تم الإرسال', 'delivered': 'تم الوصول', 'read': 'تمت القراءة'} %}<i class="bi {% if message_receipt_status == 'sent' %}bi-check2{% else %}bi-check2-all{% endif %} message-receipt {{ message_receipt_status }}" data-message-receipt="{{ message.id }}" title="{{ receipt_labels.get(message_receipt_status, 'تم الإرسال') }}" aria-label="{{ receipt_labels.get(message_receipt_status, 'تم الإرسال') }}"></i>{% endif %}</small>
-      {% if message.sender_id == current_user.id and not message.is_deleted %}
-        <form method="post" action="{{ url_for('chats.delete_message', message_id=message.id) }}" class="message-delete-form">
-          <button class="btn btn-sm btn-link p-0 text-reset" title="حذف الرسالة" aria-label="حذف الرسالة" onclick="return confirm('حذف هذه الرسالة لدى جميع المشاركين؟')"><i class="bi bi-trash3"></i></button>
-        </form>
-      {% endif %}
+      <div class="message-action-list">
+        {% if not message.is_deleted %}
+          <button type="button" class="btn btn-sm btn-link p-0 text-reset" data-chat-action="reply" data-message-id="{{ message.id }}" data-message-sender="{{ message.sender.full_name }}" data-message-preview="{{ message_preview|truncate(160, true, '…') }}" title="رد" aria-label="رد على هذه الرسالة"><i class="bi bi-reply-fill"></i> رد</button>
+          <button type="button" class="btn btn-sm btn-link p-0 text-reset" data-chat-action="forward" data-message-id="{{ message.id }}" data-message-sender="{{ message.sender.full_name }}" data-message-preview="{{ message_preview|truncate(160, true, '…') }}" title="توجيه" aria-label="توجيه هذه الرسالة"><i class="bi bi-forward-fill"></i> توجيه</button>
+        {% endif %}
+        {% if message.sender_id == current_user.id and not message.is_deleted %}
+          <form method="post" action="{{ url_for('chats.delete_message', message_id=message.id) }}" class="message-delete-form">
+            <button class="btn btn-sm btn-link p-0 text-reset" title="حذف الرسالة" aria-label="حذف الرسالة" onclick="return confirm('حذف هذه الرسالة لدى جميع المشاركين؟')"><i class="bi bi-trash3"></i></button>
+          </form>
+        {% endif %}
+      </div>
     </div>
   </div>
 </div>

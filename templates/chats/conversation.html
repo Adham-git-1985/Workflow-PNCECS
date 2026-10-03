@@ -21,6 +21,26 @@
   .message-delete-form { opacity:.72; }
   .message-delete-form:hover { opacity:1; }
   .message-deleted { opacity:.76; font-style:italic; min-width:150px; }
+  .message-action-list { display:flex; align-items:center; gap:.55rem; }
+  .message-action-list .btn { opacity:.76; }
+  .message-action-list .btn:hover, .message-action-list .btn:focus { opacity:1; }
+  .message-forwarded-label { display:flex; align-items:center; gap:.35rem; margin-bottom:.35rem; font-size:.78rem; opacity:.84; }
+  .message-reply-preview { display:block; width:100%; margin:0 0 .55rem; padding:.42rem .58rem; border:0; border-inline-start:3px solid currentColor; border-radius:.4rem; background:rgba(15,23,42,.12); color:inherit; text-align:start; line-height:1.35; cursor:pointer; }
+  .dm-bubble.theirs .message-reply-preview { background:#eef2f7; color:#334155; }
+  .message-reply-preview:hover, .message-reply-preview:focus { filter:brightness(.96); outline:0; }
+  .message-reply-preview-sender, .message-reply-preview-body { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .message-reply-preview-sender { font-size:.77rem; font-weight:700; }
+  .message-reply-preview-body { font-size:.8rem; opacity:.86; }
+  .chat-message.reply-highlight .dm-bubble { outline:3px solid rgba(13,110,253,.45); outline-offset:2px; }
+  .composer-reply { display:none; align-items:center; justify-content:space-between; gap:.75rem; margin-bottom:.55rem; padding:.48rem .65rem; border-inline-start:4px solid #0d6efd; border-radius:.45rem; background:#edf5ff; }
+  .composer-reply.show { display:flex; }
+  .composer-reply-text { min-width:0; }
+  .composer-reply-title, .composer-reply-preview { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .composer-reply-title { font-size:.78rem; font-weight:700; color:#0b5394; }
+  .composer-reply-preview { font-size:.82rem; color:#475569; }
+  .forward-target { cursor:pointer; }
+  .forward-target .form-check-input { margin-top:.5rem; }
+  .forward-source-preview { border-inline-start:4px solid #0d6efd; background:#f4f8fd; }
   .emoji-anchor { position:relative; display:flex; flex:0 0 auto; }
   .emoji-tray { display:none; position:absolute; bottom:calc(100% + .5rem); inset-inline-start:0; width:min(360px, calc(100vw - 2.25rem)); max-height:min(460px, calc(100vh - 180px)); overflow-y:auto; padding:.45rem; background:#fff; border:1px solid #dee2e6; border-radius:.75rem; box-shadow:0 .5rem 1rem rgba(0,0,0,.15); z-index:5; direction:ltr; }
   .emoji-tray.show { display:block; }
@@ -40,7 +60,7 @@
 </style>
 {% endblock %}
 {% block content %}
-<div class="card shadow-sm dm-card" id="chatConversation" data-conversation-id="{{ conversation.id }}">
+<div class="card shadow-sm dm-card" id="chatConversation" data-conversation-id="{{ conversation.id }}" data-last-clear-at="{{ conversation.cleared_at.isoformat() if conversation.cleared_at else '' }}" data-empty-message="ابدأ المحادثة مع {{ direct_peer.full_name if direct_peer else 'المجموعة' }} برسالة بسيطة.">
   <div class="card-header bg-white dm-header d-flex align-items-center gap-3">
     <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('chats.inbox') }}" title="العودة للمحادثات" aria-label="العودة للمحادثات"><i class="bi bi-arrow-right"></i></a>
     {% if direct_peer %}
@@ -52,6 +72,7 @@
     <form method="post" action="{{ url_for('chats.toggle_pin', conversation_id=conversation.id) }}"><button class="btn btn-sm btn-outline-secondary" title="تثبيت" aria-label="تثبيت"><i class="bi {% if is_pinned %}bi-pin-fill{% else %}bi-pin{% endif %}"></i></button></form>
     <form method="post" action="{{ url_for('chats.toggle_mute', conversation_id=conversation.id) }}"><button class="btn btn-sm btn-outline-secondary" title="كتم" aria-label="كتم"><i class="bi {% if is_muted %}bi-bell-slash{% else %}bi-bell{% endif %}"></i></button></form>
     {% if conversation.kind == 'GROUP' %}<button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#membersModal"><i class="bi bi-people"></i> الأعضاء</button>{% endif %}
+    {% if can_clear_conversation %}<button class="btn btn-sm btn-outline-danger" data-bs-toggle="modal" data-bs-target="#clearConversationModal" title="مسح المحادثة" aria-label="مسح محتوى المحادثة"><i class="bi bi-trash3"></i></button>{% endif %}
   </div>
 
   <div class="card-body dm-window" id="chatWindow">
@@ -70,6 +91,14 @@
   {% set quick_emojis = ['😀', '😊', '😂', '😍', '👍', '❤️', '🎉', '✅', '🙏', '🔥', '💬', '🇵🇸'] %}
   {% set extended_emojis = ['😃', '😄', '😁', '😆', '🥹', '🙂', '😉', '😘', '😎', '🤔', '🤝', '👎', '👏', '🙌', '💪', '💔', '✨', '🎯', '❌', '⚠️', '📌', '📎', '📢', '🚀', '💡', '📅', '⏰', '👀', '😢', '😭', '😡', '😅', '🤣', '😴', '🤗', '🌟', '🎊', '☕', '🌹', '😇', '🥳', '🤩', '😋', '🤓', '🤨', '😐', '🙄', '😬', '😮', '😯', '😲', '🥺', '😔', '😕', '🙃', '🤭', '🫡', '🫶', '👌', '✌️', '🤞', '👋', '💯', '🎈', '🎁', '🏆', '📚', '📝', '📞', '📧', '🔔', '🔒', '🔍', '⚡', '🌈', '✅', '❗', '❓'] %}
   <form method="post" enctype="multipart/form-data" class="card-footer bg-white position-relative" id="messageForm">
+    <input type="hidden" name="reply_to_message_id" id="replyToMessageId">
+    <div id="composerReply" class="composer-reply" aria-live="polite">
+      <div class="composer-reply-text">
+        <span id="composerReplyTitle" class="composer-reply-title"></span>
+        <span id="composerReplyPreview" class="composer-reply-preview"></span>
+      </div>
+      <button type="button" id="cancelReply" class="btn btn-sm btn-link text-secondary p-0" title="إلغاء الرد" aria-label="إلغاء الرد"><i class="bi bi-x-lg"></i></button>
+    </div>
     <div id="attachmentPreview" class="attachment-preview mb-2" aria-live="polite"></div>
     <div class="input-group">
       <div class="emoji-anchor">
@@ -87,6 +116,75 @@
   </form>
 </div>
 
+<div class="modal fade" id="forwardMessageModal" tabindex="-1" aria-hidden="true" aria-labelledby="forwardMessageModalTitle">
+  <div class="modal-dialog modal-dialog-scrollable">
+    <form method="post" action="{{ url_for('chats.forward_message') }}" class="modal-content" id="forwardMessageForm">
+      <input type="hidden" name="source_message_id" id="forwardMessageId">
+      <div class="modal-header">
+        <h5 class="modal-title" id="forwardMessageModalTitle"><i class="bi bi-forward-fill"></i> توجيه رسالة</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <div class="forward-source-preview rounded p-2 mb-3">
+          <div id="forwardMessageSender" class="small fw-bold text-primary"></div>
+          <div id="forwardMessagePreview" class="small text-muted text-break"></div>
+        </div>
+        {% if forward_targets or forward_users %}
+          <p class="small text-muted mb-2">اختر المحادثات التي تريد توجيه الرسالة إليها.</p>
+          {% if forward_targets %}
+          <div class="list-group list-group-flush">
+            {% for target in forward_targets %}
+            <label class="list-group-item d-flex align-items-center gap-2 forward-target">
+              <input class="form-check-input flex-shrink-0" type="checkbox" name="target_conversation_ids" value="{{ target.id }}">
+              <span class="flex-grow-1"><i class="bi {% if target.kind == 'GROUP' %}bi-people{% elif target.kind == 'WORKFLOW' %}bi-diagram-3{% else %}bi-person{% endif %} me-1"></i>{{ target.label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% if forward_users %}
+          <div class="small text-muted mt-3 mb-2"><i class="bi bi-person-plus"></i> بدء محادثة جديدة والتوجيه إليها</div>
+          <div class="list-group list-group-flush border-top">
+            {% for user in forward_users %}
+            <label class="list-group-item d-flex align-items-center gap-2 forward-target">
+              <input class="form-check-input flex-shrink-0" type="checkbox" name="target_user_ids" value="{{ user.id }}">
+              <span class="flex-grow-1"><i class="bi bi-person me-1"></i>{{ user.full_name }}{% if user.job_title %}<small class="text-muted"> · {{ user.job_title }}</small>{% endif %}</span>
+            </label>
+            {% endfor %}
+          </div>
+          {% endif %}
+        {% else %}
+          <div class="alert alert-info mb-0">لا توجد محادثة أخرى يمكنك التوجيه إليها حاليًا. ابدأ محادثة جديدة أولًا.</div>
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button type="submit" class="btn btn-primary"{% if not forward_targets and not forward_users %} disabled{% endif %}><i class="bi bi-forward-fill"></i> توجيه</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if can_clear_conversation %}
+<div class="modal fade" id="clearConversationModal" tabindex="-1" aria-hidden="true" aria-labelledby="clearConversationModalTitle">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" action="{{ url_for('chats.clear_conversation', conversation_id=conversation.id) }}" class="modal-content">
+      <div class="modal-header border-danger">
+        <h5 class="modal-title text-danger" id="clearConversationModalTitle"><i class="bi bi-exclamation-triangle"></i> مسح المحادثة</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">سيتم حذف جميع الرسائل والمرفقات من هذه المحادثة لدى كل المشاركين.</p>
+        <p class="text-danger small mb-0">هذا الإجراء نهائي ولا يمكن التراجع عنه.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button type="submit" class="btn btn-danger"><i class="bi bi-trash3"></i> مسح نهائي</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if can_manage_group %}
 <div class="modal fade" id="membersModal" tabindex="-1" aria-hidden="true"><div class="modal-dialog"><form method="post" action="{{ url_for('chats.update_members', conversation_id=conversation.id) }}" class="modal-content"><div class="modal-header"><h5 class="modal-title">إدارة أعضاء المجموعة</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button></div><div class="modal-body"><label class="form-label">اسم المجموعة</label><input name="title" class="form-control mb-3" value="{{ conversation.title or '' }}"><label class="form-label">الأعضاء</label><select name="user_ids" class="form-select" multiple size="8"><option value="{{ current_user.id }}" selected>{{ current_user.full_name }} (أنت)</option>{% for user in eligible_users %}<option value="{{ user.id }}" {% if conversation.participants|selectattr('user_id','equalto',user.id)|list %}selected{% endif %}>{{ user.full_name }}</option>{% endfor %}</select></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button class="btn btn-primary">حفظ</button></div></form></div></div>
 {% endif %}
@@ -95,7 +193,9 @@
 {% block extra_js %}
 <script>
 (() => {
-  const conversationId = Number(document.getElementById('chatConversation').dataset.conversationId || 0);
+  const conversationElement = document.getElementById('chatConversation');
+  const conversationId = Number(conversationElement.dataset.conversationId || 0);
+  const emptyConversationMessage = conversationElement.dataset.emptyMessage || '';
   const box = document.getElementById('chatBody');
   const win = document.getElementById('chatWindow');
   const list = document.getElementById('messageList');
@@ -106,10 +206,20 @@
   const attachmentInput = document.getElementById('attachmentInput');
   const attachmentPreview = document.getElementById('attachmentPreview');
   const typingIndicator = document.getElementById('typingIndicator');
+  const replyToMessageId = document.getElementById('replyToMessageId');
+  const composerReply = document.getElementById('composerReply');
+  const composerReplyTitle = document.getElementById('composerReplyTitle');
+  const composerReplyPreview = document.getElementById('composerReplyPreview');
+  const cancelReply = document.getElementById('cancelReply');
+  const forwardMessageModal = document.getElementById('forwardMessageModal');
+  const forwardMessageId = document.getElementById('forwardMessageId');
+  const forwardMessageSender = document.getElementById('forwardMessageSender');
+  const forwardMessagePreview = document.getElementById('forwardMessagePreview');
   const updatesUrl = {{ url_for('chats.message_updates', conversation_id=conversation.id)|tojson }};
   const typingUrl = {{ url_for('chats.typing', conversation_id=conversation.id)|tojson }};
   const typingStatusUrl = {{ url_for('chats.typing_status', conversation_id=conversation.id)|tojson }};
   let lastMessageId = Number(list.dataset.lastMessageId || 0);
+  let lastClearAt = conversationElement.dataset.lastClearAt || '';
   let updatesInFlight = false;
   let lastTypingAt = 0;
   let typingStopTimer = null;
@@ -117,6 +227,69 @@
   const scrollToLatest = () => { win.scrollTop = win.scrollHeight; };
   const nearBottom = () => win.scrollHeight - win.scrollTop - win.clientHeight < 130;
   scrollToLatest();
+
+  function clearReply() {
+    replyToMessageId.value = '';
+    composerReply.classList.remove('show');
+    composerReplyTitle.textContent = '';
+    composerReplyPreview.textContent = '';
+  }
+  function selectReply(button) {
+    const messageId = Number(button.dataset.messageId || 0);
+    if (!messageId) return;
+    replyToMessageId.value = String(messageId);
+    composerReplyTitle.textContent = `ردًا على ${button.dataset.messageSender || 'رسالة'}`;
+    composerReplyPreview.textContent = button.dataset.messagePreview || 'رسالة';
+    composerReply.classList.add('show');
+    box.focus();
+  }
+  function openForward(button) {
+    const messageId = Number(button.dataset.messageId || 0);
+    if (!messageId || !forwardMessageModal) return;
+    forwardMessageId.value = String(messageId);
+    forwardMessageSender.textContent = `رسالة من ${button.dataset.messageSender || 'مستخدم'}`;
+    forwardMessagePreview.textContent = button.dataset.messagePreview || 'رسالة';
+    forwardMessageModal.querySelectorAll('input[name="target_conversation_ids"], input[name="target_user_ids"]').forEach((input) => { input.checked = false; });
+    if (window.bootstrap && window.bootstrap.Modal) {
+      window.bootstrap.Modal.getOrCreateInstance(forwardMessageModal).show();
+    }
+  }
+  function scrollToMessage(messageId) {
+    const row = list.querySelector(`.chat-message[data-message-id="${Number(messageId)}"]`);
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.remove('reply-highlight');
+    window.requestAnimationFrame(() => row.classList.add('reply-highlight'));
+    window.setTimeout(() => row.classList.remove('reply-highlight'), 1800);
+  }
+  cancelReply.addEventListener('click', clearReply);
+  list.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-chat-action]');
+    if (action) {
+      event.preventDefault();
+      if (action.dataset.chatAction === 'reply') selectReply(action);
+      if (action.dataset.chatAction === 'forward') openForward(action);
+      return;
+    }
+    const quote = event.target.closest('[data-scroll-to-message]');
+    if (quote) {
+      event.preventDefault();
+      scrollToMessage(quote.dataset.scrollToMessage);
+    }
+  });
+  function resetAfterRemoteClear(clearAt) {
+    list.replaceChildren();
+    const empty = document.createElement('div');
+    empty.id = 'emptyConversation';
+    empty.className = 'text-center text-muted pt-5';
+    empty.textContent = emptyConversationMessage;
+    list.append(empty);
+    lastMessageId = 0;
+    list.dataset.lastMessageId = '0';
+    lastClearAt = clearAt || '';
+    conversationElement.dataset.lastClearAt = lastClearAt;
+    scrollToLatest();
+  }
 
   function insertEmoji(emoji) {
     const start = Number.isInteger(box.selectionStart) ? box.selectionStart : box.value.length;
@@ -242,6 +415,8 @@
       const response = await fetch(`${updatesUrl}?after_id=${encodeURIComponent(lastMessageId)}`, { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } });
       if (!response.ok) return;
       const data = await response.json();
+      const clearedAt = String(data.cleared_at || '');
+      if (clearedAt && clearedAt !== lastClearAt) resetAfterRemoteClear(clearedAt);
       let appended = false;
       (Array.isArray(data.messages) ? data.messages : []).forEach((item) => {
         const node = htmlToElement(item.html);

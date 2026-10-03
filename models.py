@@ -1409,6 +1409,8 @@ class ChatConversation(db.Model):
     created_by_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    # Lets open clients remove hard-deleted content without a page reload.
+    cleared_at = db.Column(db.DateTime, nullable=True)
 
     participants = db.relationship("ChatParticipant", back_populates="conversation", cascade="all, delete-orphan")
     chat_messages = db.relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan")
@@ -1442,12 +1444,21 @@ class ChatMessage(db.Model):
     conversation_id = db.Column(db.Integer, db.ForeignKey("chat_conversation.id"), nullable=False, index=True)
     sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     body = db.Column(db.Text, nullable=False)
+    # A reply remains inside the same protected conversation.  The route
+    # verifies that invariant before a value is stored.
+    reply_to_id = db.Column(db.Integer, db.ForeignKey("chat_message.id"), nullable=True, index=True)
+    # Kept for provenance only; the UI deliberately does not expose the
+    # source conversation, which could be private to a different audience.
+    forwarded_from_message_id = db.Column(db.Integer, db.ForeignKey("chat_message.id"), nullable=True, index=True)
+    is_forwarded = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
     is_deleted = db.Column(db.Boolean, default=False, nullable=False, index=True)
     deleted_at = db.Column(db.DateTime, nullable=True)
 
     conversation = db.relationship("ChatConversation", back_populates="chat_messages")
     sender = db.relationship("User", foreign_keys=[sender_id], lazy="joined")
+    reply_to = db.relationship("ChatMessage", remote_side=[id], foreign_keys=[reply_to_id])
+    forwarded_from = db.relationship("ChatMessage", remote_side=[id], foreign_keys=[forwarded_from_message_id])
     attachments = db.relationship("ChatAttachment", back_populates="message", cascade="all, delete-orphan", lazy="selectin")
 
 
