@@ -134,6 +134,21 @@ def update_members(conversation_id):
     return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
 
+@chats_bp.route("/<int:conversation_id>/delete", methods=["POST"])
+@login_required
+def delete_group(conversation_id):
+    """Administrative deletion without granting the administrator message access."""
+    if not (current_user.has_role("ADMIN") or current_user.has_role("SUPER_ADMIN") or current_user.has_role("SUPERADMIN")):
+        abort(403)
+    conversation = ChatConversation.query.get_or_404(conversation_id)
+    if conversation.kind != "GROUP":
+        abort(400)
+    db.session.delete(conversation)
+    db.session.commit()
+    flash("تم حذف المجموعة إداريًا.", "success")
+    return redirect(url_for("chats.inbox"))
+
+
 @chats_bp.route("/group", methods=["POST"])
 @login_required
 @chat_access_required
