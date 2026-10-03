@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from functools import wraps
 import mimetypes
 import re
 from pathlib import Path
@@ -24,17 +23,6 @@ MESSAGE_ATTACHMENT_MAX_FILES = 10
 MESSAGE_ATTACHMENT_MAX_FILE_BYTES = 25 * 1024 * 1024
 MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
 MESSAGE_ATTACHMENT_MAX_REQUEST_BYTES = MESSAGE_ATTACHMENT_MAX_TOTAL_BYTES + (2 * 1024 * 1024)
-MESSAGES_ACCESS_PERMISSION = "MESSAGES_ACCESS"
-
-
-def messages_access_required(view):
-    """Limit internal messages to individually authorized pilot users."""
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if not current_user.has_perm(MESSAGES_ACCESS_PERMISSION):
-            abort(403)
-        return view(*args, **kwargs)
-    return wrapped
 
 
 def _message_attachment_dir(message_id: int) -> Path:
@@ -172,7 +160,6 @@ def _find_recent_duplicate_message(sender_id, target_kind, target_id, subject, b
 
 @messages_bp.route("/inbox")
 @login_required
-@messages_access_required
 def inbox():
     page = request.args.get("page", 1, type=int)
     search = (request.args.get("q") or "").strip()
@@ -223,7 +210,6 @@ def inbox():
 
 @messages_bp.route("/inbox/mark-all-read", methods=["POST"])
 @login_required
-@messages_access_required
 def mark_all_messages_read():
     """Mark every non-deleted correspondence message for the current recipient as read."""
     try:
@@ -257,7 +243,6 @@ def mark_all_messages_read():
 
 @messages_bp.route("/sent")
 @login_required
-@messages_access_required
 def sent():
     page = request.args.get("page", 1, type=int)
     search = (request.args.get("q") or "").strip()
@@ -301,7 +286,6 @@ def sent():
 
 @messages_bp.route("/compose", methods=["GET", "POST"])
 @login_required
-@messages_access_required
 def compose():
     users = User.query.order_by(User.email.asc()).all()
     departments = Department.query.order_by(Department.name_ar.asc()).all()
@@ -488,7 +472,6 @@ def compose():
 
 @messages_bp.route("/reply/<int:message_id>", methods=["GET", "POST"])
 @login_required
-@messages_access_required
 def reply(message_id):
     original = Message.query.get_or_404(message_id)
 
@@ -606,7 +589,6 @@ def reply(message_id):
 
 @messages_bp.route("/attachment/<int:attachment_id>/download")
 @login_required
-@messages_access_required
 def download_attachment(attachment_id: int):
     attachment = MessageAttachment.query.get_or_404(attachment_id)
     message = Message.query.get_or_404(attachment.message_id)
@@ -632,7 +614,6 @@ def download_attachment(attachment_id: int):
 
 @messages_bp.route("/delete/<int:message_id>", methods=["POST"])
 @login_required
-@messages_access_required
 def delete_message(message_id):
     msg = Message.query.get_or_404(message_id)
 
@@ -676,7 +657,6 @@ def delete_message(message_id):
 
 @messages_bp.route("/view/<int:message_id>")
 @login_required
-@messages_access_required
 def view_message(message_id):
     # Allow both:
     # - recipient opens the message (mark as read)

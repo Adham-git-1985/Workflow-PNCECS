@@ -26,8 +26,7 @@
 
 {% if current_user.is_authenticated and not hide_shell %}
   {% set unread = get_unread_count(current_user.id, 'workflow') %}
-  {% set can_open_messages = current_user.has_perm('MESSAGES_ACCESS') %}
-  {% set unread_msgs = get_unread_messages_count(current_user.id) if can_open_messages else 0 %}
+  {% set unread_msgs = get_unread_messages_count(current_user.id) %}
 {% endif %}
 {% set masar_home_url = (url_for('workflow.work_dashboard') if current_user.is_authenticated and current_user.has_perm('WORKFLOW_DASHBOARD_READ') else url_for('workflow.inbox')) %}
 

@@ -22,15 +22,6 @@ class PermDef:
 # - *_MANAGE implies CRUD (handled by User.has_perm()).
 # - *_EXPORT is separate because export is sensitive in many orgs.
 PERMS: Dict[str, List[PermDef]] = {
-    "المحادثات الفورية": [
-        PermDef(
-            "MESSAGES_ACCESS",
-            "فتح المحادثات الداخلية",
-            "تمنح للمستخدم المحدد فقط لفتح المراسلات الداخلية وإرسال الرسائل. لا تُمنح للأدوار بشكل جماعي، لتبقى مناسبة للتفعيل التجريبي.",
-            module="MESSAGES",
-            user_only=True,
-        ),
-    ],
     "الوصول والتنقل": [
         PermDef("PORTAL_READ", "الدخول للبوابة", "السماح بالدخول للبوابة الإدارية (Portal).", module="PORTAL"),
         PermDef("PORTAL_ADMIN_READ", "الدخول لقسم إدارة البوابة", "إظهار/الدخول إلى قسم إدارة البوابة.", module="PORTAL_ADMIN"),
