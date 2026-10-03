@@ -70,7 +70,7 @@
             {% if can_open_chats|default(false) %}
             <a href="{{ url_for('chats.inbox') }}" class="nav-link position-relative text-white p-0" title="المحادثات" aria-label="المحادثات">
                 <i class="bi bi-chat-dots-fill fs-5"></i>
-                {% if unread_chats|default(0) > 0 %}<span class="badge bg-danger position-absolute top-0 start-100 translate-middle">{{ unread_chats }}</span>{% endif %}
+                <span id="chat-unread-badge" class="badge bg-danger position-absolute top-0 start-100 translate-middle"{% if unread_chats|default(0) == 0 %} style="display:none"{% endif %}>{{ unread_chats or '' }}</span>
             </a>
             {% endif %}
 
@@ -291,6 +291,10 @@
 
 {% include 'partials/chat_assistant.html' %}
 {% include 'partials/delegation_identity_chooser.html' %}
+
+{% if can_open_chats|default(false) %}<script>
+setInterval(function(){fetch('{{ url_for("chats.unread_count") }}',{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');if(!b)return;b.textContent=d.count||'';b.style.display=d.count?'inline-block':'none'}).catch(function(){})},5000);
+</script>{% endif %}
 
 <!-- ================= FOOTER ================= -->
 <footer class="main-footer">

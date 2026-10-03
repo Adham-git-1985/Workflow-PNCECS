@@ -208,6 +208,9 @@ def start_group():
     conversation = ChatConversation(title=title or "مجموعة جديدة", kind="GROUP", created_by_id=current_user.id)
     db.session.add(conversation); db.session.flush()
     db.session.add_all([ChatParticipant(conversation_id=conversation.id, user_id=user.id) for user in users])
+    for user in users:
+        if user.id != current_user.id:
+            emit_event(actor_id=current_user.id, action="CHAT_STARTED", message="تمت إضافتك إلى مجموعة محادثة جديدة", target_type="ChatConversation", target_id=conversation.id, notify_user_id=user.id, level="INFO", auto_commit=False)
     db.session.commit()
     return redirect(url_for("chats.conversation", conversation_id=conversation.id))
 
@@ -228,6 +231,7 @@ def start_direct(user_id):
             ChatParticipant(conversation_id=conversation.id, user_id=current_user.id),
             ChatParticipant(conversation_id=conversation.id, user_id=other.id),
         ])
+        emit_event(actor_id=current_user.id, action="CHAT_STARTED", message="بدأ محادثة جديدة معك", target_type="ChatConversation", target_id=conversation.id, notify_user_id=other.id, level="INFO", auto_commit=False)
         db.session.commit()
     return redirect(url_for("chats.conversation", conversation_id=conversation.id))
 
