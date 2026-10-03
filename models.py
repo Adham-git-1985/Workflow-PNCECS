@@ -1440,6 +1440,8 @@ class ChatMessage(db.Model):
     sender_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     body = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    is_deleted = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    deleted_at = db.Column(db.DateTime, nullable=True)
 
     conversation = db.relationship("ChatConversation", back_populates="chat_messages")
     sender = db.relationship("User", foreign_keys=[sender_id], lazy="joined")
@@ -1467,6 +1469,8 @@ class ChatTyping(db.Model):
     conversation_id = db.Column(db.Integer, db.ForeignKey("chat_conversation.id"), nullable=False, index=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
     __table_args__ = (db.UniqueConstraint("conversation_id", "user_id", name="uq_chat_typing"),)
 
 

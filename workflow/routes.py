@@ -3476,7 +3476,10 @@ def _notification_payload(notification: Notification, state: dict) -> dict:
         "link_url": open_url,
         "target_type": notification.target_type,
         "target_id": notification.target_id,
-        "action": notification.action,
+        # Notifications predate an action column.  Keep the transport payload
+        # backwards compatible instead of failing the live stream for every
+        # newly emitted notification.
+        "action": getattr(notification, "action", None),
     }
 
 

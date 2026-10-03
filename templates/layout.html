@@ -293,7 +293,11 @@
 {% include 'partials/delegation_identity_chooser.html' %}
 
 {% if can_open_chats|default(false) %}<script>
-setInterval(function(){fetch('{{ url_for("chats.unread_count") }}',{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');if(!b)return;b.textContent=d.count||'';b.style.display=d.count?'inline-block':'none'}).catch(function(){})},5000);
+(function(){
+  function refreshChatUnreadBadge(){fetch('{{ url_for("chats.unread_count") }}',{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(function(r){return r.json()}).then(function(d){var b=document.getElementById('chat-unread-badge');if(!b)return;b.textContent=d.count||'';b.style.display=d.count?'inline-block':'none'}).catch(function(){})}
+  setInterval(refreshChatUnreadBadge,5000);
+  window.addEventListener('masar:notification',function(event){var detail=event.detail||{};if(detail.targetType==='ChatConversation')refreshChatUnreadBadge()});
+})();
 </script>{% endif %}
 
 <!-- ================= FOOTER ================= -->
@@ -319,7 +323,7 @@ setInterval(function(){fetch('{{ url_for("chats.unread_count") }}',{headers:{'X-
 <script src="{{ url_for('static', filename='js/searchable_select.js') }}?v=20260816-bounded1"></script>
 
 <script src="{{ url_for('static', filename='js/responsive_helpers.js') }}?v=20260216r1"></script>
-    <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20260908-performance1"></script>
+    <script src="{{ url_for('static', filename='js/notification_alerts.js') }}?v=20261003-chat-targets1"></script>
 <script src="{{ url_for('static', filename='js/chat_assistant.js') }}?v=20260930-language-tools"></script>
 {% if current_user.is_authenticated and not hide_shell %}
 <script src="{{ url_for('static', filename='js/user_presence.js') }}?v=20260827r1"

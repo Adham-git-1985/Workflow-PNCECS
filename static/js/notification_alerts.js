@@ -333,6 +333,9 @@
           type: data.type || "INFO",
           source: data.source || "workflow",
           link_url: data.link_url || "",
+          targetType: data.target_type || data.targetType || "",
+          targetId: Number(data.target_id || data.targetId || 0),
+          action: data.action || "",
         },
       }));
     }

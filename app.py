@@ -385,6 +385,10 @@ def _ensure_runtime_schema():
                 if not _col_exists("notification", _chat_notif_col):
                     _add_column_retry("notification", _chat_notif_col, _chat_notif_type)
 
+            for _chat_message_col, _chat_message_type in (("is_deleted", "BOOLEAN NOT NULL DEFAULT 0"), ("deleted_at", "DATETIME")):
+                if not _col_exists("chat_message", _chat_message_col):
+                    _add_column_retry("chat_message", _chat_message_col, _chat_message_type)
+
             def _ensure_attendance_email_delivery_slots() -> bool:
                 """Upgrade the legacy one-delivery-per-day table in place.
 

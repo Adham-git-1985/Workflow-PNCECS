@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 import mimetypes
@@ -47,12 +47,44 @@ def _unread_count(user_id):
     rows = ChatParticipant.query.filter_by(user_id=user_id).all()
     total = 0
     for row in rows:
-        query = ChatMessage.query.filter(ChatMessage.conversation_id == row.conversation_id, ChatMessage.sender_id != user_id)
+        query = ChatMessage.query.filter(
+            ChatMessage.conversation_id == row.conversation_id,
+            ChatMessage.sender_id != user_id,
+            ChatMessage.is_deleted.is_(False),
+        )
         if row.last_read_at:
             query = query.filter(ChatMessage.created_at > row.last_read_at)
         if query.first():
             total += 1
     return total
+
+
+def _message_read_by_all(conversation, message):
+    """Whether every current recipient has opened this message."""
+    return all(
+        participant.user_id == message.sender_id
+        or (participant.last_read_at and participant.last_read_at >= message.created_at)
+        for participant in conversation.participants
+    )
+
+
+def _message_fragment(conversation, message):
+    return render_template(
+        "chats/_message.html",
+        conversation=conversation,
+        message=message,
+        message_read_by_all=_message_read_by_all(conversation, message),
+    )
+
+
+def _attachment_file_path(message_id, stored_name):
+    return (
+        Path(current_app.instance_path)
+        / "uploads"
+        / "chats"
+        / str(message_id)
+        / Path(stored_name).name
+    )
 
 
 @chats_bp.route("/")
@@ -66,7 +98,10 @@ def inbox():
     conversations.sort(key=lambda c: (not bool(next((p.is_pinned for p in c.participants if p.user_id == current_user.id), False)), c.updated_at))
     if search:
         needle = f"%{search}%"
-        matching_ids = db.session.query(ChatMessage.conversation_id).filter(ChatMessage.body.ilike(needle))
+        matching_ids = db.session.query(ChatMessage.conversation_id).filter(
+            ChatMessage.is_deleted.is_(False),
+            ChatMessage.body.ilike(needle),
+        )
         conversations = [c for c in conversations if c.id in set(cid for (cid,) in matching_ids.all()) or search.lower() in (c.title or "").lower()]
     users = User.query.order_by(User.name.asc(), User.email.asc()).all()
     explicit_ids = _explicit_chat_user_ids()
@@ -87,13 +122,20 @@ def unread_count():
 def typing(conversation_id):
     if not _participant(conversation_id):
         abort(403)
+    active_value = str(request.values.get("active", "1")).strip().lower()
+    is_active = active_value not in {"0", "false", "no", "off"}
     row = ChatTyping.query.filter_by(conversation_id=conversation_id, user_id=current_user.id).first()
+    if not is_active:
+        if row:
+            db.session.delete(row)
+            db.session.commit()
+        return jsonify({"ok": True, "active": False})
     if not row:
         row = ChatTyping(conversation_id=conversation_id, user_id=current_user.id)
         db.session.add(row)
     row.updated_at = datetime.utcnow()
     db.session.commit()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "active": True})
 
 
 @chats_bp.route("/<int:conversation_id>/typing/status")
@@ -102,7 +144,7 @@ def typing(conversation_id):
 def typing_status(conversation_id):
     if not _participant(conversation_id):
         abort(403)
-    cutoff = datetime.utcnow() - __import__("datetime").timedelta(seconds=4)
+    cutoff = datetime.utcnow() - timedelta(seconds=5)
     rows = ChatTyping.query.filter(ChatTyping.conversation_id == conversation_id, ChatTyping.user_id != current_user.id, ChatTyping.updated_at >= cutoff).all()
     return jsonify({"users": [row.user.full_name for row in rows]})
 
@@ -263,6 +305,46 @@ def open_workflow_chat(request_id):
     return redirect(url_for("chats.conversation", conversation_id=conversation.id))
 
 
+@chats_bp.route("/<int:conversation_id>/updates")
+@login_required
+@chat_access_required
+def message_updates(conversation_id):
+    """Return only the new (or subsequently deleted) messages for an open chat.
+
+    The browser uses this as a small, reliable fallback when a corporate proxy
+    buffers the global EventSource connection.  It never exposes a message to
+    anyone who is not already a participant in its conversation.
+    """
+    conversation = ChatConversation.query.get_or_404(conversation_id)
+    membership = _participant(conversation_id)
+    if not membership:
+        abort(403)
+
+    after_id = max(0, request.args.get("after_id", type=int) or 0)
+    rows = (
+        ChatMessage.query
+        .filter(
+            ChatMessage.conversation_id == conversation_id,
+            or_(ChatMessage.id > after_id, ChatMessage.is_deleted.is_(True)),
+        )
+        .order_by(ChatMessage.created_at.asc())
+        .all()
+    )
+    # The normal page view records the initial read.  Subsequent short polls
+    # only write when a newly delivered, non-deleted message actually arrived.
+    if any(row.sender_id != current_user.id and not row.is_deleted for row in rows):
+        membership.last_read_at = datetime.utcnow()
+        db.session.commit()
+    last_id = max([after_id, *[row.id for row in rows]])
+    return jsonify({
+        "messages": [
+            {"id": row.id, "deleted": bool(row.is_deleted), "html": _message_fragment(conversation, row)}
+            for row in rows
+        ],
+        "last_id": last_id,
+    })
+
+
 @chats_bp.route("/<int:conversation_id>", methods=["GET", "POST"])
 @login_required
 @chat_access_required
@@ -297,6 +379,9 @@ def conversation(conversation_id):
         for row in conversation.participants:
             if row.user_id != current_user.id and not row.is_muted:
                 emit_event(actor_id=current_user.id, action="CHAT_MESSAGE_SENT", message="رسالة محادثة جديدة", target_type="ChatConversation", target_id=conversation_id, notify_user_id=row.user_id, level="INFO", auto_commit=False)
+        typing_row = ChatTyping.query.filter_by(conversation_id=conversation_id, user_id=current_user.id).first()
+        if typing_row:
+            db.session.delete(typing_row)
         db.session.commit()
         return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
@@ -304,7 +389,7 @@ def conversation(conversation_id):
     db.session.commit()
     messages = ChatMessage.query.filter_by(conversation_id=conversation_id).order_by(ChatMessage.created_at.asc()).all()
     read_by_all = {
-        message.id: all(p.user_id == message.sender_id or (p.last_read_at and p.last_read_at >= message.created_at) for p in conversation.participants)
+        message.id: _message_read_by_all(conversation, message)
         for message in messages if message.sender_id == current_user.id
     }
     explicit_ids = _explicit_chat_user_ids()
@@ -317,7 +402,7 @@ def conversation(conversation_id):
 @chat_access_required
 def download_attachment(attachment_id):
     attachment = ChatAttachment.query.get_or_404(attachment_id)
-    if not _participant(attachment.message.conversation_id):
+    if attachment.message.is_deleted or not _participant(attachment.message.conversation_id):
         abort(403)
     folder = Path(current_app.instance_path) / "uploads" / "chats" / str(attachment.message_id)
     return send_from_directory(str(folder), attachment.stored_name, as_attachment=not is_safe_inline_mimetype(attachment.mime_type), download_name=attachment.original_name, mimetype=attachment.mime_type or None)
@@ -329,13 +414,47 @@ def download_attachment(attachment_id):
 def delete_attachment(attachment_id):
     attachment = ChatAttachment.query.get_or_404(attachment_id)
     message = attachment.message
-    if message.sender_id != current_user.id or not _participant(message.conversation_id):
+    if message.is_deleted or message.sender_id != current_user.id or not _participant(message.conversation_id):
         abort(403)
-    file_path = Path(current_app.instance_path) / "uploads" / "chats" / str(message.id) / Path(attachment.stored_name).name
+    file_path = _attachment_file_path(message.id, attachment.stored_name)
     db.session.delete(attachment)
     db.session.commit()
     try:
         file_path.unlink(missing_ok=True)
     except OSError:
         current_app.logger.warning("Could not remove chat attachment %s", file_path)
+    return redirect(url_for("chats.conversation", conversation_id=message.conversation_id))
+
+
+@chats_bp.route("/message/<int:message_id>/delete", methods=["POST"])
+@login_required
+@chat_access_required
+def delete_message(message_id):
+    message = ChatMessage.query.get_or_404(message_id)
+    if message.sender_id != current_user.id or not _participant(message.conversation_id):
+        abort(403)
+    if message.is_deleted:
+        return redirect(url_for("chats.conversation", conversation_id=message.conversation_id))
+
+    attachment_paths = [
+        _attachment_file_path(message.id, attachment.stored_name)
+        for attachment in message.attachments
+    ]
+    for attachment in list(message.attachments):
+        db.session.delete(attachment)
+    message.is_deleted = True
+    message.deleted_at = datetime.utcnow()
+    db.session.add(AuditLog(
+        user_id=current_user.id,
+        action="CHAT_MESSAGE_DELETED",
+        target_type="ChatMessage",
+        target_id=message.id,
+        note=f"conversation={message.conversation_id}",
+    ))
+    db.session.commit()
+    for file_path in attachment_paths:
+        try:
+            file_path.unlink(missing_ok=True)
+        except OSError:
+            current_app.logger.warning("Could not remove chat attachment %s", file_path)
     return redirect(url_for("chats.conversation", conversation_id=message.conversation_id))

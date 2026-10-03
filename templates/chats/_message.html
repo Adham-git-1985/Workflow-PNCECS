@@ -1,0 +1,32 @@
+<div class="dm-row chat-message {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}" data-message-id="{{ message.id }}">
+  <div class="dm-bubble {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}">
+    {% if conversation.kind == 'GROUP' and message.sender_id != current_user.id %}
+      <div class="small fw-bold mb-1">{{ message.sender.full_name }}</div>
+    {% endif %}
+
+    {% if message.is_deleted %}
+      <div class="message-deleted"><i class="bi bi-slash-circle"></i> تم حذف هذه الرسالة</div>
+    {% else %}
+      {% if message.body %}<div class="message-body" style="white-space:pre-wrap">{{ message.body }}</div>{% endif %}
+      {% for attachment in message.attachments %}
+        <div class="d-flex gap-2 align-items-center mt-2 attachment-line">
+          <a class="text-reset" href="{{ url_for('chats.download_attachment', attachment_id=attachment.id) }}"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</a>
+          {% if message.sender_id == current_user.id %}
+            <form method="post" action="{{ url_for('chats.delete_attachment', attachment_id=attachment.id) }}">
+              <button class="btn btn-sm btn-link text-reset p-0" title="حذف المرفق" aria-label="حذف المرفق" onclick="return confirm('حذف هذا المرفق؟')"><i class="bi bi-trash"></i></button>
+            </form>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <div class="dm-meta">
+      <small class="dm-time"><i class="bi bi-clock"></i> {{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}<i class="bi {% if message_read_by_all %}bi-check2-all{% else %}bi-check2{% endif %}"></i>{% endif %}</small>
+      {% if message.sender_id == current_user.id and not message.is_deleted %}
+        <form method="post" action="{{ url_for('chats.delete_message', message_id=message.id) }}" class="message-delete-form">
+          <button class="btn btn-sm btn-link p-0 text-reset" title="حذف الرسالة" aria-label="حذف الرسالة" onclick="return confirm('حذف هذه الرسالة لدى جميع المشاركين؟')"><i class="bi bi-trash3"></i></button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
