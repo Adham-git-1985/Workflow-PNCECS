@@ -120,6 +120,7 @@ from services.delivery_controls import (
 from services.workflow_task_email import resolve_user_delivery_email
 from services.user_calendar import (
     CALENDAR_EVENT_TYPE_LABELS,
+    CALENDAR_REMINDER_OPTIONS,
     USER_EDITABLE_CALENDAR_EVENT_TYPES,
     calendar_event_form_values,
     parse_calendar_event_input,
@@ -3800,6 +3801,12 @@ def _calendar_next_month(value: date) -> date:
     return (value.replace(day=28) + timedelta(days=4)).replace(day=1)
 
 
+def _calendar_day_in_month(month: date, preferred_day: int) -> date:
+    """Preserve a selected day when moving between months where possible."""
+    last_day = calendar.monthrange(month.year, month.month)[1]
+    return month.replace(day=min(max(int(preferred_day or 1), 1), last_day))
+
+
 def _calendar_time_label(start_at: datetime | None, end_at: datetime | None, all_day: bool) -> str:
     if all_day:
         return "طوال اليوم"
@@ -3870,15 +3877,26 @@ def _calendar_save_event_values(row: UserCalendarEvent, event_input) -> None:
     row.start_at = event_input.start_at
     row.end_at = event_input.end_at
     row.all_day = event_input.all_day
+    row.reminder_minutes_before = event_input.reminder_minutes_before
 
 
 @portal_bp.route("/calendar")
 @login_required
 def user_calendar():
     """Show a private calendar that combines personal, meeting and task data."""
-    selected_month = _calendar_selected_month(request.args.get("month"))
+    selected_day = _parse_date_field(request.args.get("date"))
+    selected_month = (
+        selected_day.replace(day=1)
+        if selected_day
+        else _calendar_selected_month(request.args.get("month"))
+    )
+    if selected_day is None:
+        today = _calendar_local_today()
+        selected_day = today if today.month == selected_month.month and today.year == selected_month.year else selected_month
     next_month = _calendar_next_month(selected_month)
     previous_month = (selected_month - timedelta(days=1)).replace(day=1)
+    previous_date = _calendar_day_in_month(previous_month, selected_day.day)
+    next_date = _calendar_day_in_month(next_month, selected_day.day)
 
     # Saturday is the first visual day in the RTL work calendar.
     calendar_weeks = calendar.Calendar(firstweekday=5).monthdatescalendar(
@@ -3893,7 +3911,7 @@ def user_calendar():
     month_end_local = datetime.combine(next_month, dt_time.min)
 
     events_by_day: dict[date, list[dict]] = {}
-    calendar_url = url_for("portal.user_calendar", month=selected_month.strftime("%Y-%m"))
+    calendar_url = url_for("portal.user_calendar", date=selected_day.isoformat())
 
     # Private entries are the only rows stored specifically for a user.
     personal_events = (
@@ -4010,6 +4028,7 @@ def user_calendar():
                 "date": day,
                 "in_month": day.month == selected_month.month,
                 "is_today": day == _calendar_local_today(),
+                "is_selected": day == selected_day,
                 "events": events_by_day.get(day, []),
             }
             for day in week
@@ -4019,8 +4038,11 @@ def user_calendar():
     return render_template(
         "portal/calendar/index.html",
         selected_month=selected_month,
+        selected_day=selected_day,
         previous_month=previous_month,
         next_month=next_month,
+        previous_date=previous_date,
+        next_date=next_date,
         weeks=weeks,
         event_type_labels=CALENDAR_EVENT_TYPE_LABELS,
         source_labels=CALENDAR_SOURCE_LABELS,
@@ -4065,6 +4087,7 @@ def user_calendar_new():
         return_to=return_to,
         editable_event_types=USER_EDITABLE_CALENDAR_EVENT_TYPES,
         event_type_labels=CALENDAR_EVENT_TYPE_LABELS,
+        calendar_reminder_options=CALENDAR_REMINDER_OPTIONS,
         is_workflow_event=False,
     )
 
@@ -4108,6 +4131,7 @@ def user_calendar_edit(event_id: int):
         return_to=return_to,
         editable_event_types=USER_EDITABLE_CALENDAR_EVENT_TYPES,
         event_type_labels=CALENDAR_EVENT_TYPE_LABELS,
+        calendar_reminder_options=CALENDAR_REMINDER_OPTIONS,
         is_workflow_event=is_workflow_event,
     )
 

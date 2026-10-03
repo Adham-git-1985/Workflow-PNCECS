@@ -155,6 +155,7 @@ class UserCalendarTests(unittest.TestCase):
         row = UserCalendarEvent.query.filter_by(title="موعد خاص").one()
         self.assertEqual(row.owner_user_id, self.owner.id)
         self.assertEqual(row.event_type, "REVIEW")
+        self.assertEqual(row.reminder_minutes_before, 1440)
 
         self._login(client, self.other.id)
         self.assertEqual(
@@ -181,6 +182,20 @@ class UserCalendarTests(unittest.TestCase):
         self.assertIn("مهمة متابعة تقويمية".encode("utf-8"), response.data)
         self.assertNotIn("موعد مستخدم آخر".encode("utf-8"), response.data)
 
+    def test_calendar_can_jump_to_an_explicit_day_month_and_year(self):
+        client = self.app.test_client()
+        self._login(client, self.owner.id)
+
+        response = client.get("/portal/calendar?date=2028-04-15")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b'value="2028-04-15"', response.data)
+        self.assertIn(b"calendar-selected", response.data)
+        self.assertIn(b"/portal/calendar/new?date=2028-04-15", response.data)
+
+        form_response = client.get("/portal/calendar/new?date=2028-04-15")
+        self.assertEqual(form_response.status_code, 200)
+        self.assertIn(b'name="reminder_minutes_before"', form_response.data)
+
     def test_workflow_shortcut_creates_a_private_linked_event(self):
         client = self.app.test_client()
         self._login(client, self.owner.id)
@@ -200,6 +215,7 @@ class UserCalendarTests(unittest.TestCase):
         row = UserCalendarEvent.query.filter_by(title="متابعة المسار").one()
         self.assertEqual(row.owner_user_id, self.owner.id)
         self.assertEqual(row.event_type, "WORKFLOW")
+        self.assertEqual(row.reminder_minutes_before, 1440)
         self.assertEqual(row.workflow_request_id, self.workflow_request.id)
         self.assertEqual(row.workflow_step_order, 1)
 

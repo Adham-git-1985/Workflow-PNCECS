@@ -109,7 +109,15 @@
             <label class="form-label" for="workflow-calendar-date">التاريخ</label>
             <input class="form-control" id="workflow-calendar-date" type="date" name="event_date" value="{{ calendar_suggested_date }}" required>
           </div>
-          <div class="col-md-6 d-flex align-items-end">
+          <div class="col-md-6">
+            <label class="form-label" for="workflow-calendar-reminder">التذكير</label>
+            <select class="form-select" id="workflow-calendar-reminder" name="reminder_minutes_before">
+              {% for value, label in calendar_reminder_options %}
+              <option value="{{ value }}" {% if value == '1440' %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="col-12 d-flex align-items-end">
             <div class="form-check form-switch mb-2">
               <input class="form-check-input" id="workflow-calendar-all-day" type="checkbox" name="all_day" value="1" checked>
               <label class="form-check-label" for="workflow-calendar-all-day">طوال اليوم</label>

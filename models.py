@@ -977,6 +977,11 @@ class UserCalendarEvent(db.Model):
             "workflow_request_id",
             "workflow_step_order",
         ),
+        db.Index(
+            "ix_user_calendar_events_reminder",
+            "start_at",
+            "reminder_sent_for_start_at",
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -991,6 +996,12 @@ class UserCalendarEvent(db.Model):
     start_at = db.Column(db.DateTime, nullable=False)
     end_at = db.Column(db.DateTime, nullable=True)
     all_day = db.Column(db.Boolean, nullable=False, default=False)
+    # ``None`` explicitly disables a reminder.  The default is one day before
+    # the event, while ``reminder_sent_for_start_at`` lets a rescheduled event
+    # become eligible for one new reminder without duplicating the old one.
+    reminder_minutes_before = db.Column(db.Integer, nullable=True, default=1440)
+    reminder_sent_at = db.Column(db.DateTime, nullable=True)
+    reminder_sent_for_start_at = db.Column(db.DateTime, nullable=True)
 
     # A linked workflow entry remains a personal calendar item: changing or
     # removing it never changes the workflow itself.

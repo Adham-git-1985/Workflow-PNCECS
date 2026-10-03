@@ -48,8 +48,18 @@
               <input class="form-control" id="calendar-date" type="date" name="event_date" value="{{ form.event_date }}" required>
             </div>
 
-            <div class="col-12">
-              <div class="form-check form-switch">
+            <div class="col-md-6">
+              <label class="form-label" for="calendar-reminder">التذكير</label>
+              <select class="form-select" id="calendar-reminder" name="reminder_minutes_before">
+                {% for value, label in calendar_reminder_options %}
+                <option value="{{ value }}" {% if form.reminder_minutes_before == value %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+              </select>
+              <div class="form-text">يصل الإشعار والبريد الإلكتروني حسب الخيار المحدد.</div>
+            </div>
+
+            <div class="col-md-6 d-flex align-items-end">
+              <div class="form-check form-switch mb-2">
                 <input class="form-check-input" id="calendar-all-day" type="checkbox" name="all_day" value="1" {% if form.all_day %}checked{% endif %}>
                 <label class="form-check-label" for="calendar-all-day">طوال اليوم</label>
               </div>

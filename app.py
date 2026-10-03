@@ -1621,6 +1621,26 @@ def _ensure_runtime_schema():
             if not _col_exists("employee_followup_reports", "manager_user_ids"):
                 _add_column_retry("employee_followup_reports", "manager_user_ids", "TEXT")
 
+            # Personal-calendar reminders were added after the initial
+            # calendar table.  Keep existing SQLite deployments usable when
+            # they rely on the runtime schema sync instead of Alembic.
+            if _col_exists("user_calendar_events", "id"):
+                for _col, _ctype in [
+                    ("reminder_minutes_before", "INTEGER DEFAULT 1440"),
+                    ("reminder_sent_at", "DATETIME"),
+                    ("reminder_sent_for_start_at", "DATETIME"),
+                ]:
+                    if not _col_exists("user_calendar_events", _col):
+                        _add_column_retry("user_calendar_events", _col, _ctype)
+                try:
+                    db.session.execute(text(
+                        "CREATE INDEX IF NOT EXISTS ix_user_calendar_events_reminder "
+                        "ON user_calendar_events (start_at, reminder_sent_for_start_at)"
+                    ))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+
             if not _col_exists("notification", "link_url"):
                 _add_column_retry("notification", "link_url", "TEXT")
 
@@ -2165,6 +2185,7 @@ try:
     from jobs.backup_job import start_automatic_backup_job
     from jobs.workflow_task_email_job import start_workflow_task_email_job
     from jobs.workflow_delay_summary_job import start_workflow_delay_summary_job
+    from jobs.user_calendar_reminder_job import start_user_calendar_reminder_job
 
     _jobs_started = False
 
@@ -2188,6 +2209,7 @@ try:
         # process.
         background_jobs = (
             ("workflow task email", start_workflow_task_email_job),
+            ("user calendar reminders", start_user_calendar_reminder_job),
             ("workflow delay summary", start_workflow_delay_summary_job),
             ("automatic backup", start_automatic_backup_job),
             ("timeclock sync", start_timeclock_auto_sync),

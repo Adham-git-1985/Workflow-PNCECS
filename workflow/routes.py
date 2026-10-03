@@ -69,7 +69,7 @@ from utils.delegation_privacy import (
     can_view_delegation_details,
 )
 from utils.timezone import app_timezone, local_day_start_utc, to_local_time
-from services.user_calendar import parse_calendar_event_input
+from services.user_calendar import CALENDAR_REMINDER_OPTIONS, parse_calendar_event_input
 from utils.committee_display import build_committee_summaries
 from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
@@ -7446,6 +7446,7 @@ def view_request(request_id):
         calendar_suggested_due_at=calendar_suggested_due_at,
         calendar_suggested_date=calendar_suggested_date,
         calendar_suggested_time=calendar_suggested_time,
+        calendar_reminder_options=CALENDAR_REMINDER_OPTIONS,
         secretary_endorsements=(
             _get_secretary_endorsements(
                 seed_defaults=can_manage_quick_endorsements,
@@ -7517,6 +7518,7 @@ def add_request_to_calendar(request_id: int):
         start_at=event_input.start_at,
         end_at=event_input.end_at,
         all_day=event_input.all_day,
+        reminder_minutes_before=event_input.reminder_minutes_before,
         workflow_request_id=req.id,
         workflow_step_order=getattr(current_step, "step_order", None),
     )

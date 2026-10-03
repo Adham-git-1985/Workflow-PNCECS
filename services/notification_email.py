@@ -42,6 +42,12 @@ _TROUBLE_TICKET_NOTIFICATION_TYPE = "TROUBLE_TICKET"
 _TROUBLE_TICKET_REQUESTER_NOTIFICATION_TYPE = "TROUBLE_TICKET_REQUESTER_UPDATE"
 ATTENDANCE_SCHEDULE_EMAIL_MODE = "ATTENDANCE_SCHEDULE"
 DELEGATION_SENSITIVE_EMAIL_MODE = "DELEGATION_SENSITIVE"
+CALENDAR_REMINDER_EMAIL_MODE = "CALENDAR_REMINDER"
+_EMAIL_DELIVERY_MODES = {
+    ATTENDANCE_SCHEDULE_EMAIL_MODE,
+    DELEGATION_SENSITIVE_EMAIL_MODE,
+    CALENDAR_REMINDER_EMAIL_MODE,
+}
 NOTIFICATION_EMAILS_DISABLED_REASON = "Notification emails are disabled; the notification remains available in the system."
 EMAIL_UNAVAILABLE_CANCELLED_REASON = "Skipped: recipient has no configured delivery email address."
 STALE_DELIVERY_RETRY_REASON = "Previous email worker stopped before completion; retrying once."
@@ -130,8 +136,13 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
     recipient_name = (user.full_name or user.name or user.email or "المستخدم").strip()
     message = (notification.message or "لديك تحديث جديد في نظام مسار.").strip()
     notification_url = _portal_url(notification.link_url)
-    subject = f"تحديث جديد في نظام مسار — {message}"[:200]
-    action_text = "فتح التحديث في النظام"
+    is_calendar_reminder = (
+        (notification.email_delivery_mode or "").strip().upper()
+        == CALENDAR_REMINDER_EMAIL_MODE
+    )
+    heading = "تذكير بموعد في نظام مسار" if is_calendar_reminder else "تحديث جديد في نظام مسار"
+    subject = f"{heading} — {message}"[:200]
+    action_text = "فتح تقويمي" if is_calendar_reminder else "فتح التحديث في النظام"
 
     text_body = "\n".join((
         f"السلام عليكم {recipient_name}،",
@@ -144,7 +155,7 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
     ))
     html_body = f"""\
     <html><body dir="rtl" style="font-family:Arial,sans-serif;color:#1f2937;line-height:1.8">
-      <h2 style="color:#0f766e">تحديث جديد في نظام مسار</h2>
+      <h2 style="color:#0f766e">{heading}</h2>
       <p>السلام عليكم {escape(recipient_name)}،</p>
       <p>{escape(message)}</p>
       <p><a href="{escape(notification_url, quote=True)}" style="display:inline-block;padding:10px 18px;background:#0f766e;color:#ffffff;text-decoration:none;border-radius:5px">{action_text}</a></p>
@@ -155,11 +166,11 @@ def _email_content(user: User, notification: Notification) -> tuple[str, str, st
 
 
 def enqueue_notification_email(notification: Notification) -> bool:
-    """Queue email for explicitly enabled attendance or sensitive delegation notifications."""
+    """Queue email for notification types that explicitly opt into delivery."""
     if not notification:
         return False
     mode = (notification.email_delivery_mode or "").strip().upper()
-    if mode not in {ATTENDANCE_SCHEDULE_EMAIL_MODE, DELEGATION_SENSITIVE_EMAIL_MODE}:
+    if mode not in _EMAIL_DELIVERY_MODES:
         return False
     if not email_delivery_enabled():
         return False
@@ -250,7 +261,7 @@ def send_pending_notification_emails(limit: int = 100, now: datetime | None = No
         mode = (
             getattr(delivery.notification, "email_delivery_mode", "") or ""
         ).strip().upper()
-        if mode in {ATTENDANCE_SCHEDULE_EMAIL_MODE, DELEGATION_SENSITIVE_EMAIL_MODE}:
+        if mode in _EMAIL_DELIVERY_MODES:
             eligible_deliveries.append(delivery)
         else:
             legacy_deliveries.append(delivery)

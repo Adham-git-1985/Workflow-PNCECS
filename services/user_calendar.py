@@ -29,6 +29,22 @@ USER_EDITABLE_CALENDAR_EVENT_TYPES = (
     "REVIEW",
 )
 
+# A reminder is a property of the user's private calendar entry.  Meetings
+# retain their own reminder policy in the meetings module.
+NO_CALENDAR_REMINDER_VALUE = "NONE"
+DEFAULT_CALENDAR_REMINDER_MINUTES = 24 * 60
+CALENDAR_REMINDER_OPTIONS = (
+    (NO_CALENDAR_REMINDER_VALUE, "بدون تذكير"),
+    ("60", "قبل ساعة"),
+    (str(DEFAULT_CALENDAR_REMINDER_MINUTES), "قبل يوم"),
+    ("10080", "قبل أسبوع"),
+)
+_ALLOWED_CALENDAR_REMINDER_MINUTES = {
+    int(value)
+    for value, _label in CALENDAR_REMINDER_OPTIONS
+    if value != NO_CALENDAR_REMINDER_VALUE
+}
+
 
 @dataclass(frozen=True)
 class CalendarEventInput:
@@ -38,6 +54,7 @@ class CalendarEventInput:
     all_day: bool
     start_at: datetime
     end_at: datetime | None
+    reminder_minutes_before: int | None
 
 
 def _text(value) -> str:
@@ -62,13 +79,30 @@ def _parse_time(value) -> time | None:
         return None
 
 
-def _local_to_utc(value: datetime) -> datetime:
+def local_datetime_to_utc(value: datetime) -> datetime:
+    """Convert a local, naive browser datetime into naive UTC for storage."""
     timezone_value = app_timezone()
     if hasattr(timezone_value, "localize"):
         local_value = timezone_value.localize(value)
     else:
         local_value = value.replace(tzinfo=timezone_value)
     return local_value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _parse_reminder_minutes(value) -> tuple[int | None, str | None]:
+    """Return a supported lead time or a user-facing validation error."""
+    raw_value = _text(value)
+    if not raw_value:
+        return DEFAULT_CALENDAR_REMINDER_MINUTES, None
+    if raw_value.upper() == NO_CALENDAR_REMINDER_VALUE:
+        return None, None
+    try:
+        minutes = int(raw_value)
+    except (TypeError, ValueError):
+        return None, "خيار التذكير غير صالح."
+    if minutes not in _ALLOWED_CALENDAR_REMINDER_MINUTES:
+        return None, "خيار التذكير غير صالح."
+    return minutes, None
 
 
 def parse_calendar_event_input(values, *, forced_event_type: str | None = None):
@@ -85,6 +119,9 @@ def parse_calendar_event_input(values, *, forced_event_type: str | None = None):
     start_time = _parse_time(values.get("start_time"))
     end_time_raw = _text(values.get("end_time"))
     end_time = _parse_time(end_time_raw) if end_time_raw else None
+    reminder_minutes_before, reminder_error = _parse_reminder_minutes(
+        values.get("reminder_minutes_before"),
+    )
 
     errors: list[str] = []
     if not title:
@@ -97,6 +134,8 @@ def parse_calendar_event_input(values, *, forced_event_type: str | None = None):
         errors.append("وقت البداية مطلوب للموعد المحدد بوقت.")
     if end_time_raw and not end_time:
         errors.append("وقت النهاية غير صالح.")
+    if reminder_error:
+        errors.append(reminder_error)
     if errors:
         return None, errors
 
@@ -110,8 +149,9 @@ def parse_calendar_event_input(values, *, forced_event_type: str | None = None):
         event_type=event_type,
         description=_text(values.get("description")) or None,
         all_day=all_day,
-        start_at=_local_to_utc(start_local),
-        end_at=_local_to_utc(end_local) if end_local else None,
+        start_at=local_datetime_to_utc(start_local),
+        end_at=local_datetime_to_utc(end_local) if end_local else None,
+        reminder_minutes_before=reminder_minutes_before,
     ), []
 
 
@@ -121,6 +161,11 @@ def calendar_event_form_values(event=None, *, default_date: date | None = None) 
         start_local = to_local_time(getattr(event, "start_at", None))
         end_local = to_local_time(getattr(event, "end_at", None))
         all_day = bool(getattr(event, "all_day", False))
+        reminder_minutes = getattr(
+            event,
+            "reminder_minutes_before",
+            DEFAULT_CALENDAR_REMINDER_MINUTES,
+        )
         return {
             "title": getattr(event, "title", "") or "",
             "event_type": getattr(event, "event_type", "PERSONAL") or "PERSONAL",
@@ -129,6 +174,11 @@ def calendar_event_form_values(event=None, *, default_date: date | None = None) 
             "end_time": "" if all_day or not end_local else end_local.strftime("%H:%M"),
             "all_day": all_day,
             "description": getattr(event, "description", "") or "",
+            "reminder_minutes_before": (
+                NO_CALENDAR_REMINDER_VALUE
+                if reminder_minutes is None
+                else str(int(reminder_minutes))
+            ),
         }
 
     day = default_date or datetime.now(app_timezone()).date()
@@ -140,13 +190,22 @@ def calendar_event_form_values(event=None, *, default_date: date | None = None) 
         "end_time": "",
         "all_day": True,
         "description": "",
+        "reminder_minutes_before": str(DEFAULT_CALENDAR_REMINDER_MINUTES),
     }
 
 
 def submitted_calendar_event_form_values(values, *, fallback: dict | None = None) -> dict:
     """Preserve submitted fields when validation returns the form to a user."""
     result = dict(fallback or calendar_event_form_values())
-    for name in ("title", "event_type", "event_date", "start_time", "end_time", "description"):
+    for name in (
+        "title",
+        "event_type",
+        "event_date",
+        "start_time",
+        "end_time",
+        "description",
+        "reminder_minutes_before",
+    ):
         if name in values:
             result[name] = _text(values.get(name))
     result["all_day"] = _checked(values.get("all_day"))
