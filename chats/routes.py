@@ -59,6 +59,7 @@ def inbox():
     conversations = (ChatConversation.query.join(ChatParticipant)
         .filter(ChatParticipant.user_id == current_user.id)
         .order_by(ChatConversation.updated_at.desc()).all())
+    conversations.sort(key=lambda c: (not bool(next((p.is_pinned for p in c.participants if p.user_id == current_user.id), False)), c.updated_at))
     if search:
         needle = f"%{search}%"
         matching_ids = db.session.query(ChatMessage.conversation_id).filter(ChatMessage.body.ilike(needle))
@@ -83,6 +84,49 @@ def toggle_mute(conversation_id):
     if not participant:
         abort(403)
     participant.is_muted = not participant.is_muted
+    db.session.commit()
+    return redirect(url_for("chats.conversation", conversation_id=conversation_id))
+
+
+@chats_bp.route("/<int:conversation_id>/pin", methods=["POST"])
+@login_required
+@chat_access_required
+def toggle_pin(conversation_id):
+    participant = _participant(conversation_id)
+    if not participant:
+        abort(403)
+    participant.is_pinned = not participant.is_pinned
+    db.session.commit()
+    return redirect(url_for("chats.conversation", conversation_id=conversation_id))
+
+
+@chats_bp.route("/<int:conversation_id>/leave", methods=["POST"])
+@login_required
+@chat_access_required
+def leave_group(conversation_id):
+    conversation = ChatConversation.query.get_or_404(conversation_id)
+    participant = _participant(conversation_id)
+    if not participant or conversation.kind != "GROUP":
+        abort(403)
+    db.session.delete(participant)
+    db.session.commit()
+    return redirect(url_for("chats.inbox"))
+
+
+@chats_bp.route("/<int:conversation_id>/members", methods=["POST"])
+@login_required
+@chat_access_required
+def update_members(conversation_id):
+    conversation = ChatConversation.query.get_or_404(conversation_id)
+    if conversation.kind != "GROUP" or conversation.created_by_id != current_user.id:
+        abort(403)
+    ids = {int(v) for v in request.form.getlist("user_ids") if v.isdigit()}
+    ids.add(current_user.id)
+    users = User.query.filter(User.id.in_(ids)).all()
+    if any(not u.has_perm(CHAT_ACCESS) for u in users):
+        abort(403)
+    ChatParticipant.query.filter_by(conversation_id=conversation_id).delete(synchronize_session=False)
+    db.session.add_all([ChatParticipant(conversation_id=conversation_id, user_id=u.id) for u in users])
     db.session.commit()
     return redirect(url_for("chats.conversation", conversation_id=conversation_id))
 
@@ -199,7 +243,7 @@ def conversation(conversation_id):
         message.id: all(p.user_id == message.sender_id or (p.last_read_at and p.last_read_at >= message.created_at) for p in conversation.participants)
         for message in messages if message.sender_id == current_user.id
     }
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted)
+    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted, is_pinned=membership.is_pinned, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.has_perm(CHAT_ACCESS)])
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")

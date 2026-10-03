@@ -376,6 +376,11 @@ def _ensure_runtime_schema():
                         return False
                 return False
 
+            if _col_exists("chat_participant", "is_pinned"):
+                pass
+            else:
+                _add_column_retry("chat_participant", "is_pinned", "BOOLEAN NOT NULL DEFAULT 0")
+
             def _ensure_attendance_email_delivery_slots() -> bool:
                 """Upgrade the legacy one-delivery-per-day table in place.
 

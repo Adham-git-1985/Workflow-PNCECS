@@ -1423,6 +1423,7 @@ class ChatParticipant(db.Model):
     joined_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     last_read_at = db.Column(db.DateTime, nullable=True)
     is_muted = db.Column(db.Boolean, default=False, nullable=False)
+    is_pinned = db.Column(db.Boolean, default=False, nullable=False)
 
     conversation = db.relationship("ChatConversation", back_populates="participants")
     user = db.relationship("User", foreign_keys=[user_id], lazy="joined")
