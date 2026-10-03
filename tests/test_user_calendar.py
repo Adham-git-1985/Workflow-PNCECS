@@ -172,6 +172,70 @@ class UserCalendarTests(unittest.TestCase):
         )
         self.assertEqual(db.session.get(UserCalendarEvent, row.id).title, "موعد خاص")
 
+    def test_owner_can_update_and_delete_own_calendar_event(self):
+        client = self.app.test_client()
+        event = UserCalendarEvent(
+            owner_user_id=self.owner.id,
+            title="Original private event",
+            event_type="PERSONAL",
+            start_at=datetime(2026, 10, 20, 8, 0),
+            all_day=True,
+        )
+        db.session.add(event)
+        db.session.commit()
+
+        self._login(client, self.owner.id)
+        updated = client.post(
+            f"/portal/calendar/{event.id}/edit",
+            data={
+                "title": "Updated private event",
+                "event_type": "REVIEW",
+                "event_date": "2026-10-21",
+                "all_day": "1",
+                "description": "Updated description",
+                "reminder_minutes_before": "60",
+                "return_to": "/portal/calendar?date=2026-10-21",
+            },
+        )
+        self.assertEqual(updated.status_code, 302)
+        db.session.expire_all()
+        event = db.session.get(UserCalendarEvent, event.id)
+        self.assertEqual(event.title, "Updated private event")
+        self.assertEqual(event.event_type, "REVIEW")
+        self.assertEqual(event.reminder_minutes_before, 60)
+
+        self._login(client, self.other.id)
+        denied = client.post(f"/portal/calendar/{event.id}/delete")
+        self.assertEqual(denied.status_code, 404)
+        self.assertIsNotNone(db.session.get(UserCalendarEvent, event.id))
+
+        self._login(client, self.owner.id)
+        deleted = client.post(
+            f"/portal/calendar/{event.id}/delete",
+            data={"return_to": "/portal/calendar?date=2026-10-21"},
+        )
+        self.assertEqual(deleted.status_code, 302)
+        self.assertIsNone(db.session.get(UserCalendarEvent, event.id))
+
+    def test_calendar_shows_direct_manage_actions_for_owned_events(self):
+        client = self.app.test_client()
+        event = UserCalendarEvent(
+            owner_user_id=self.owner.id,
+            title="Manage from calendar",
+            event_type="PERSONAL",
+            start_at=datetime(2026, 10, 20, 8, 0),
+            all_day=True,
+        )
+        db.session.add(event)
+        db.session.commit()
+
+        self._login(client, self.owner.id)
+        response = client.get("/portal/calendar?date=2026-10-20")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b"data-calendar-event-actions"), 1)
+        self.assertIn(f"/portal/calendar/{event.id}/edit".encode(), response.data)
+        self.assertIn(f"/portal/calendar/{event.id}/delete".encode(), response.data)
+
     def test_calendar_aggregates_only_visible_meetings_and_my_tasks(self):
         client = self.app.test_client()
         self._login(client, self.owner.id)

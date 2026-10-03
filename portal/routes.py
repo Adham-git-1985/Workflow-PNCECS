@@ -3929,6 +3929,11 @@ def user_calendar():
         start_at = _calendar_local_naive(row.start_at)
         end_at = _calendar_local_naive(row.end_at)
         source = (row.event_type or "PERSONAL").upper()
+        edit_url = url_for(
+            "portal.user_calendar_edit",
+            event_id=row.id,
+            return_to=calendar_url,
+        )
         workflow_url = None
         if row.workflow_request_id:
             workflow_url = url_for(
@@ -3945,11 +3950,9 @@ def user_calendar():
             "end_at": end_at,
             "all_day": bool(row.all_day),
             "time_label": _calendar_time_label(start_at, end_at, bool(row.all_day)),
-            "url": url_for(
-                "portal.user_calendar_edit",
-                event_id=row.id,
-                return_to=calendar_url,
-            ),
+            "url": edit_url,
+            "edit_url": edit_url,
+            "delete_url": url_for("portal.user_calendar_delete", event_id=row.id),
             "workflow_url": workflow_url,
             "editable": True,
         }, grid_start, grid_end)

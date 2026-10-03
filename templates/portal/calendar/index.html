@@ -24,6 +24,9 @@
   .user-calendar .calendar-event--meeting { border-color: #6f42c1; background: #f0ecff; }
   .user-calendar .calendar-event--meeting_task { border-color: #d97706; background: #fff4e5; }
   .user-calendar .calendar-workflow-link { font-size: .68rem; color: #0d6efd !important; }
+  .user-calendar .calendar-event-actions { display: flex; align-items: center; gap: .25rem; margin-top: .3rem; }
+  .user-calendar .calendar-event-actions form { margin: 0; }
+  .user-calendar .calendar-event-actions .btn { --bs-btn-padding-y: .05rem; --bs-btn-padding-x: .3rem; font-size: .68rem; line-height: 1.35; }
   .user-calendar .calendar-legend { display: flex; gap: .45rem; flex-wrap: wrap; }
   .user-calendar .calendar-legend span { display: inline-flex; align-items: center; gap: .3rem; font-size: .78rem; }
   .user-calendar .calendar-legend i { width: .7rem; height: .7rem; border-radius: 999px; display: inline-block; }
@@ -100,6 +103,20 @@
                 <span class="calendar-event-meta">{{ item.source_label }}{% if item.time_label %} · {{ item.time_label }}{% endif %}</span>
                 {% if item.workflow_url %}
                 <a class="calendar-workflow-link" href="{{ item.workflow_url }}"><i class="bi bi-box-arrow-up-left"></i> فتح المسار</a>
+                {% endif %}
+                {% if item.editable %}
+                <div class="calendar-event-actions" data-calendar-event-actions>
+                  <a class="btn btn-sm btn-outline-primary" href="{{ item.edit_url }}" aria-label="تعديل {{ item.title }}">
+                    <i class="bi bi-pencil"></i> تعديل
+                  </a>
+                  <form method="post" action="{{ item.delete_url }}" onsubmit="return confirm('هل تريد حذف هذا الموعد من تقويمك؟');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="return_to" value="{{ url_for('portal.user_calendar', date=selected_day.isoformat()) }}">
+                    <button class="btn btn-sm btn-outline-danger" type="submit" aria-label="حذف {{ item.title }}">
+                      <i class="bi bi-trash"></i> حذف
+                    </button>
+                  </form>
+                </div>
                 {% endif %}
               </div>
               {% endfor %}
