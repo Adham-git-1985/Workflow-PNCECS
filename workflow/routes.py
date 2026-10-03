@@ -4942,6 +4942,7 @@ def _user_facing_audit_note(log: AuditLog, action: str, files_map: dict[int, Arc
         "STEP_REJECTED",
         "PARALLEL_SYNC_RESPONDED",
         "PARALLEL_SYNC_AUTHORIZED",
+        "WORKFLOW_REOPENED_TO_STEP",
     }
     return _clean_workflow_note(raw_note) if action in note_actions else ""
 
@@ -6705,7 +6706,6 @@ def view_request(request_id):
         AuditLog.query
         .filter_by(request_id=req.id)
         .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
-        .limit(200)
         .all()
     )
     detailed_audit = [
@@ -6776,6 +6776,11 @@ def view_request(request_id):
         "WORKFLOW_ATTACHMENT_DELETED": "تم حذف مرفق من المسار",
     }
     user_audit = []
+    # The activity feed is displayed newest-first, while the story reader
+    # needs the same authoritative events in their actual chronological order.
+    # Keep a separate, uncollapsed representation so no comment, mention,
+    # attachment, or reopen event disappears from the story.
+    story_events = []
     for log in audit:
         action = (log.action or "").upper()
         if action in technical_actions:
@@ -6800,25 +6805,37 @@ def view_request(request_id):
             attachment_name = attachment_note
             if attachment_name.startswith("اسم المرفق:"):
                 attachment_name = attachment_name.split(":", 1)[1].strip()
-        user_audit.append({
+        event = {
             "id": log.id,
             "action": action_labels.get(action, ui_label(log.action)),
             "author": audit_author,
             "created_at": log.created_at,
             "note": attachment_note,
             "is_workflow_comment": action in {"WORKFLOW_COMMENT", "WORKFLOW_REPLY"},
+            "attachment_file_id": (
+                int(log.target_id)
+                if attachment_activity
+                and getattr(log, "target_id", None) in active_attachment_file_ids
+                else None
+            ),
             "_is_attachment_activity": attachment_activity,
             "_attachment_group_key": (
                 _attachment_activity_group_key(log) if attachment_activity else None
             ),
             "_attachment_name": attachment_name,
             "_attachment_action_code": action if attachment_activity else None,
+        }
+        user_audit.append(event)
+        story_events.append({
+            key: value for key, value in event.items()
+            if not key.startswith("_")
         })
 
     # A single upload request can contain many files.  Keep one readable card
     # in the normal activity feed while preserving the individual AuditLog
     # rows above for technical audit, attachment lookup, and deletion safety.
     user_audit = _collapse_attachment_activity_entries(user_audit)
+    story_events.reverse()
     if not audit:
         decided_steps = [row for row in steps if getattr(row, "decided_at", None)]
         if decided_steps:
@@ -7303,6 +7320,7 @@ def view_request(request_id):
         simple_audit=simple_audit,
         simple_comments=simple_comments,
         user_audit=user_audit,
+        story_events=story_events,
         can_delete_workflow_comments=can_delete_workflow_comments,
         # Dynamic paths do not have a WorkflowTemplate row, but the super admin
         # must still get the complete audit view.  Keep the existing detailed
