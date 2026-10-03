@@ -12,7 +12,7 @@
   .dm-bubble { max-width: 72%; border-radius: 18px; padding: .7rem .9rem; box-shadow:0 1px 2px rgba(15,23,42,.08); }
   .dm-bubble.mine { background:#1867db; color:#fff; border-bottom-left-radius:4px; }
   .dm-bubble.theirs { background:#fff; color:#1f2937; border-bottom-right-radius:4px; }
-  .dm-time { display:block; font-size:.72rem; margin-top:.35rem; opacity:.72; }
+  .dm-time { display:block; font-size:.78rem; margin-top:.45rem; opacity:.85; direction:rtl; }
   .emoji-tray { display:none; position:absolute; bottom:72px; left:0; padding:.4rem; background:white; border:1px solid #dee2e6; border-radius:.75rem; box-shadow:0 .5rem 1rem rgba(0,0,0,.15); z-index:5; }
   .emoji-tray.show { display:flex; gap:.2rem; }
   .emoji-btn { border:0; background:transparent; font-size:1.2rem; padding:.25rem .4rem; }
@@ -38,7 +38,7 @@
         {% if conversation.kind == 'GROUP' and message.sender_id != current_user.id %}<div class="small fw-bold mb-1">{{ message.sender.full_name }}</div>{% endif %}
         {% if message.body %}<div style="white-space:pre-wrap">{{ message.body }}</div>{% endif %}
         {% for attachment in message.attachments %}<a class="d-block mt-2 text-reset" href="{{ url_for('chats.download_attachment', attachment_id=attachment.id) }}"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</a>{% endfor %}
-        <small class="dm-time">{{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}<i class="bi {% if read_by_all.get(message.id) %}bi-check2-all{% else %}bi-check2{% endif %}"></i>{% endif %}</small>
+        <small class="dm-time"><i class="bi bi-clock"></i> {{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}<i class="bi {% if read_by_all.get(message.id) %}bi-check2-all{% else %}bi-check2{% endif %}"></i>{% endif %}</small>
       </div></div>
     {% else %}<div class="text-center text-muted pt-5">ابدأ المحادثة مع {{ direct_peer.full_name if direct_peer else 'المجموعة' }} برسالة بسيطة.</div>{% endfor %}
   </div>
