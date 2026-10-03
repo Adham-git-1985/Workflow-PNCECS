@@ -957,6 +957,66 @@ class WorkflowRequest(db.Model):
     )
 
 
+class UserCalendarEvent(db.Model):
+    """A private calendar entry, optionally linked to one workflow request.
+
+    Meetings and their follow-up tasks deliberately remain in their existing
+    tables.  The calendar screen reads those sources directly, avoiding a
+    duplicate event row for every meeting participant.
+    """
+
+    __tablename__ = "user_calendar_events"
+    __table_args__ = (
+        db.Index(
+            "ix_user_calendar_events_owner_start",
+            "owner_user_id",
+            "start_at",
+        ),
+        db.Index(
+            "ix_user_calendar_events_workflow",
+            "workflow_request_id",
+            "workflow_step_order",
+        ),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    owner_user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title = db.Column(db.String(255), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    event_type = db.Column(db.String(30), nullable=False, default="PERSONAL")
+    start_at = db.Column(db.DateTime, nullable=False)
+    end_at = db.Column(db.DateTime, nullable=True)
+    all_day = db.Column(db.Boolean, nullable=False, default=False)
+
+    # A linked workflow entry remains a personal calendar item: changing or
+    # removing it never changes the workflow itself.
+    workflow_request_id = db.Column(
+        db.Integer,
+        db.ForeignKey("workflow_request.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    workflow_step_order = db.Column(db.Integer, nullable=True)
+
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(
+        db.DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    owner = db.relationship("User", foreign_keys=[owner_user_id], lazy="joined")
+    workflow_request = db.relationship(
+        "WorkflowRequest",
+        foreign_keys=[workflow_request_id],
+        lazy="joined",
+    )
+
+
 class Approval(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     request_id = db.Column(db.Integer, db.ForeignKey("workflow_request.id"))

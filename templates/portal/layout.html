@@ -503,6 +503,12 @@
         </li>
         {% endif %}
 
+        <li class="nav-item">
+          <a class="nav-link" href="{{ url_for('portal.user_calendar') }}">
+            <i class="bi bi-calendar3"></i> تقويمي
+          </a>
+        </li>
+
         {% if au.has_perm('PORTAL_MEETINGS_MANAGE') or (portal_meetings_week_count is defined and portal_meetings_week_count|int > 0) or (portal_meeting_tasks_open is defined and portal_meeting_tasks_open|int > 0) %}
         <li class="nav-item">
           <a class="nav-link" href="{{ url_for('portal.meetings_dashboard') }}">

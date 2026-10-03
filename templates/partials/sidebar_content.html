@@ -45,8 +45,13 @@
         </a>
 
         <a href="{{ url_for('portal.portal_entry') }}"
-           class="{% if request.path.startswith('/portal') %}active{% endif %}">
+           class="{% if request.path.startswith('/portal') and not request.path.startswith('/portal/calendar') %}active{% endif %}">
             🧩 البوابة الإدارية
+        </a>
+
+        <a href="{{ url_for('portal.user_calendar') }}"
+           class="{% if request.path.startswith('/portal/calendar') %}active{% endif %}">
+            <i class="bi bi-calendar3"></i> تقويمي
         </a>
 
         <a href="{{ url_for('portal.trouble_tickets') }}"

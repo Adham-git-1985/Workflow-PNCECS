@@ -46,6 +46,9 @@
       <i class="bi bi-play-circle"></i> قصة المسار
     </button>
     {% endif %}
+    <button type="button" class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#addWorkflowCalendarModal">
+      <i class="bi bi-calendar-plus"></i> إضافة إلى تقويمي
+    </button>
     <a class="btn btn-sm btn-outline-secondary" target="_blank" href="{{ url_for('workflow.request_pdf', request_id=req.id) }}">
       <i class="bi bi-printer"></i> طباعة الطلب
     </a>
@@ -81,6 +84,73 @@
     {% endif %}
   </div>
 </div>
+
+<div class="modal fade" id="addWorkflowCalendarModal" tabindex="-1" aria-labelledby="addWorkflowCalendarModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <form method="post" action="{{ url_for('workflow.add_request_to_calendar', request_id=req.id) }}" class="modal-content">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="return_to" value="{{ url_for('portal.user_calendar') }}">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addWorkflowCalendarModalLabel"><i class="bi bi-calendar-plus"></i> إضافة موعد للمسار</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button>
+      </div>
+      <div class="modal-body">
+        {% if calendar_suggested_due_at %}
+        <div class="alert alert-info py-2 small">
+          <i class="bi bi-lightbulb"></i> تم اقتراح تاريخ مهلة الخطوة الحالية: <strong>{{ calendar_suggested_due_at|local_datetime }}</strong>.
+        </div>
+        {% endif %}
+        <div class="mb-3">
+          <label class="form-label" for="workflow-calendar-title">العنوان</label>
+          <input class="form-control" id="workflow-calendar-title" name="title" maxlength="255" value="{{ req.title or '' }}" required>
+        </div>
+        <div class="row g-2">
+          <div class="col-md-6">
+            <label class="form-label" for="workflow-calendar-date">التاريخ</label>
+            <input class="form-control" id="workflow-calendar-date" type="date" name="event_date" value="{{ calendar_suggested_date }}" required>
+          </div>
+          <div class="col-md-6 d-flex align-items-end">
+            <div class="form-check form-switch mb-2">
+              <input class="form-check-input" id="workflow-calendar-all-day" type="checkbox" name="all_day" value="1" checked>
+              <label class="form-check-label" for="workflow-calendar-all-day">طوال اليوم</label>
+            </div>
+          </div>
+          <div class="col-md-6 workflow-calendar-time-fields d-none">
+            <label class="form-label" for="workflow-calendar-start-time">وقت البداية</label>
+            <input class="form-control" id="workflow-calendar-start-time" type="time" name="start_time" value="{{ calendar_suggested_time }}">
+          </div>
+          <div class="col-md-6 workflow-calendar-time-fields d-none">
+            <label class="form-label" for="workflow-calendar-end-time">وقت النهاية <span class="text-muted">(اختياري)</span></label>
+            <input class="form-control" id="workflow-calendar-end-time" type="time" name="end_time">
+          </div>
+        </div>
+        <div class="mt-3">
+          <label class="form-label" for="workflow-calendar-description">الشرح</label>
+          <textarea class="form-control" id="workflow-calendar-description" name="description" rows="4">{{ req.description or '' }}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">إلغاء</button>
+        <button type="submit" class="btn btn-primary"><i class="bi bi-calendar-check"></i> إضافة إلى تقويمي</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script>
+(() => {
+  const allDay = document.getElementById('workflow-calendar-all-day');
+  const startTime = document.getElementById('workflow-calendar-start-time');
+  const timeFields = document.querySelectorAll('.workflow-calendar-time-fields');
+  if (!allDay || !startTime) return;
+  const syncTimes = () => {
+    const show = !allDay.checked;
+    timeFields.forEach((field) => field.classList.toggle('d-none', !show));
+    startTime.required = show;
+  };
+  allDay.addEventListener('change', syncTimes);
+  syncTimes();
+})();
+</script>
 
 {% if can_reopen_workflow %}
 <div class="modal fade" id="reopenWorkflowModal" tabindex="-1" aria-labelledby="reopenWorkflowModalLabel" aria-hidden="true">

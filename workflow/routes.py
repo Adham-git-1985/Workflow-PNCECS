@@ -68,7 +68,8 @@ from utils.delegation_privacy import (
     audit_principal,
     can_view_delegation_details,
 )
-from utils.timezone import local_day_start_utc
+from utils.timezone import app_timezone, local_day_start_utc, to_local_time
+from services.user_calendar import parse_calendar_event_input
 from utils.committee_display import build_committee_summaries
 from services.workflow_confidentiality import (
     can_user_pass_confidential_workflow_gate,
@@ -102,6 +103,7 @@ from filters.request_filters import get_sla_days
 
 from models import (
     WorkflowRequest,
+    UserCalendarEvent,
     HRAttendanceDelayRequest,
     ArchivedFile,
     AuditLog,
@@ -7357,6 +7359,18 @@ def view_request(request_id):
     can_use_secretary_endorsements = _can_use_secretary_endorsements(current_user)
     can_use_employee_endorsements = _can_use_employee_endorsements(current_user)
 
+    # The calendar shortcut is intentionally manual, but it saves users from
+    # re-entering the active step's SLA deadline when one is available.
+    calendar_suggested_due_at = getattr(current_step, "due_at", None) if current_step else None
+    try:
+        calendar_suggested_local = to_local_time(calendar_suggested_due_at)
+    except Exception:
+        calendar_suggested_local = None
+    if calendar_suggested_local is None:
+        calendar_suggested_local = datetime.now(app_timezone())
+    calendar_suggested_date = calendar_suggested_local.strftime("%Y-%m-%d")
+    calendar_suggested_time = calendar_suggested_local.strftime("%H:%M")
+
     return render_template(
         "workflow/view_request.html",
         req=req,
@@ -7429,6 +7443,9 @@ def view_request(request_id):
         attendance_delay_response_label=ATTENDANCE_DELAY_RESPONSE_LABEL,
         execution_can_approve=execution_can_approve,
         execution_can_reject=execution_can_reject,
+        calendar_suggested_due_at=calendar_suggested_due_at,
+        calendar_suggested_date=calendar_suggested_date,
+        calendar_suggested_time=calendar_suggested_time,
         secretary_endorsements=(
             _get_secretary_endorsements(
                 seed_defaults=can_manage_quick_endorsements,
@@ -7447,6 +7464,81 @@ def view_request(request_id):
         can_manage_quick_endorsements=can_manage_quick_endorsements,
     )
 
+
+
+@workflow_bp.route("/request/<int:request_id>/calendar", methods=["POST"])
+@login_required
+def add_request_to_calendar(request_id: int):
+    """Create a private calendar entry after validating workflow visibility."""
+    req = WorkflowRequest.query.get_or_404(request_id)
+    execution = get_execution_context()
+    actor_users = _workflow_actor_users()
+
+    if execution.get("execution_context") != "SELF":
+        try:
+            authorize_action(
+                "VIEW",
+                module_id=_workflow_authorization_module(req),
+                request_obj=req,
+                require_formal=False,
+            )
+        except AuthorizationError:
+            abort(403)
+
+    if not _actor_context_can_view_request(req, actor_users):
+        abort(403)
+
+    event_input, errors = parse_calendar_event_input(
+        request.form,
+        forced_event_type="WORKFLOW",
+    )
+    if errors:
+        for error in errors:
+            flash(error, "warning")
+        return redirect(url_for("workflow.view_request", request_id=req.id))
+
+    instance = WorkflowInstance.query.filter_by(request_id=req.id).first()
+    current_step = None
+    if instance:
+        current_step = (
+            WorkflowInstanceStep.query
+            .filter_by(
+                instance_id=instance.id,
+                step_order=instance.current_step_order,
+            )
+            .first()
+        )
+
+    row = UserCalendarEvent(
+        owner_user_id=current_user.id,
+        title=event_input.title,
+        description=event_input.description,
+        event_type="WORKFLOW",
+        start_at=event_input.start_at,
+        end_at=event_input.end_at,
+        all_day=event_input.all_day,
+        workflow_request_id=req.id,
+        workflow_step_order=getattr(current_step, "step_order", None),
+    )
+    db.session.add(row)
+    db.session.flush()
+    db.session.add(AuditLog(
+        request_id=req.id,
+        user_id=current_user.id,
+        action="WORKFLOW_CALENDAR_EVENT_CREATED",
+        note=(
+            f"calendar_event_id={row.id} "
+            f"step_order={getattr(current_step, 'step_order', None)}"
+        ),
+        target_type="USER_CALENDAR_EVENT",
+        target_id=row.id,
+        created_at=datetime.utcnow(),
+    ))
+    db.session.commit()
+
+    flash("تمت إضافة الموعد المرتبط بالمسار إلى تقويمك.", "success")
+    return_to = safe_local_notification_url(request.form.get("return_to"))
+    return redirect(return_to or url_for("portal.user_calendar"))
 
 
 @workflow_bp.route("/request/<int:request_id>/close", methods=["POST"])
@@ -8059,6 +8151,18 @@ def delete_request(request_id):
                 AuditLog.target_id: rid,
             },
             synchronize_session=False
+        )
+
+        # Preserve a user's personal calendar history while removing the
+        # foreign-key reference to the workflow that is being deleted.
+        UserCalendarEvent.query.filter(
+            UserCalendarEvent.workflow_request_id == rid,
+        ).update(
+            {
+                UserCalendarEvent.workflow_request_id: None,
+                UserCalendarEvent.workflow_step_order: None,
+            },
+            synchronize_session=False,
         )
 
         # Delete dependent workflow rows

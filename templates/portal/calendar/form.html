@@ -1,0 +1,126 @@
+{% extends "layout.html" %}
+{% block title %}{{ 'تعديل موعد' if event else 'إضافة موعد' }}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-xl-8 col-lg-10">
+    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+      <div>
+        <h3 class="mb-1"><i class="bi bi-calendar-event"></i> {{ 'تعديل موعد' if event else 'إضافة موعد إلى تقويمي' }}</h3>
+        <div class="text-muted small">هذا الموعد خاص بك. الاجتماعات ومهامها تُدار من شاشة الاجتماعات.</div>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ return_to }}"><i class="bi bi-arrow-right"></i> رجوع</a>
+    </div>
+
+    {% if is_workflow_event %}
+    <div class="alert alert-primary py-2 small">
+      <i class="bi bi-diagram-3"></i> هذا موعد مرتبط بمسار. يمكنك تغيير توقيته أو ملاحظته، دون تغيير بيانات المسار نفسه.
+    </div>
+    {% endif %}
+
+    <div class="card shadow-sm">
+      <div class="card-body p-4">
+        <form method="post" novalidate>
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_to" value="{{ return_to }}">
+
+          <div class="row g-3">
+            <div class="col-12">
+              <label class="form-label" for="calendar-title">العنوان</label>
+              <input class="form-control" id="calendar-title" name="title" maxlength="255" value="{{ form.title }}" required autofocus>
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label" for="calendar-type">النوع</label>
+              {% if is_workflow_event %}
+              <input class="form-control" id="calendar-type" value="{{ event_type_labels['WORKFLOW'] }}" disabled>
+              {% else %}
+              <select class="form-select" id="calendar-type" name="event_type" required>
+                {% for event_type in editable_event_types %}
+                <option value="{{ event_type }}" {% if form.event_type == event_type %}selected{% endif %}>{{ event_type_labels[event_type] }}</option>
+                {% endfor %}
+              </select>
+              {% endif %}
+            </div>
+
+            <div class="col-md-6">
+              <label class="form-label" for="calendar-date">التاريخ</label>
+              <input class="form-control" id="calendar-date" type="date" name="event_date" value="{{ form.event_date }}" required>
+            </div>
+
+            <div class="col-12">
+              <div class="form-check form-switch">
+                <input class="form-check-input" id="calendar-all-day" type="checkbox" name="all_day" value="1" {% if form.all_day %}checked{% endif %}>
+                <label class="form-check-label" for="calendar-all-day">طوال اليوم</label>
+              </div>
+            </div>
+
+            <div class="col-md-6 calendar-time-fields">
+              <label class="form-label" for="calendar-start-time">وقت البداية</label>
+              <input class="form-control" id="calendar-start-time" type="time" name="start_time" value="{{ form.start_time }}">
+            </div>
+            <div class="col-md-6 calendar-time-fields">
+              <label class="form-label" for="calendar-end-time">وقت النهاية <span class="text-muted">(اختياري)</span></label>
+              <input class="form-control" id="calendar-end-time" type="time" name="end_time" value="{{ form.end_time }}">
+            </div>
+
+            <div class="col-12">
+              <label class="form-label" for="calendar-description">الشرح أو الملاحظة</label>
+              <textarea class="form-control" id="calendar-description" name="description" rows="4" placeholder="تفاصيل الموعد أو ما يلزم تحضيره">{{ form.description }}</textarea>
+            </div>
+          </div>
+
+          <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap mt-4">
+            <div>
+              {% if event %}
+              <button class="btn btn-outline-danger" type="button" data-bs-toggle="modal" data-bs-target="#deleteCalendarEventModal">
+                <i class="bi bi-trash"></i> حذف
+              </button>
+              {% endif %}
+            </div>
+            <div class="d-flex gap-2">
+              <a class="btn btn-outline-secondary" href="{{ return_to }}">إلغاء</a>
+              <button class="btn btn-primary" type="submit"><i class="bi bi-check2"></i> {{ 'حفظ التعديلات' if event else 'إضافة إلى التقويم' }}</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if event %}
+<div class="modal fade" id="deleteCalendarEventModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">حذف الموعد</h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="إغلاق"></button></div>
+      <div class="modal-body">هل تريد حذف «{{ event.title }}» من تقويمك؟</div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" type="button" data-bs-dismiss="modal">إلغاء</button>
+        <form method="post" action="{{ url_for('portal.user_calendar_delete', event_id=event.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="return_to" value="{{ return_to }}">
+          <button class="btn btn-danger" type="submit">حذف الموعد</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+(() => {
+  const allDay = document.getElementById('calendar-all-day');
+  const timeFields = document.querySelectorAll('.calendar-time-fields');
+  const startTime = document.getElementById('calendar-start-time');
+  if (!allDay || !startTime) return;
+  const syncTimes = () => {
+    const hidden = allDay.checked;
+    timeFields.forEach((field) => field.classList.toggle('d-none', hidden));
+    startTime.required = !hidden;
+  };
+  allDay.addEventListener('change', syncTimes);
+  syncTimes();
+})();
+</script>
+{% endblock %}

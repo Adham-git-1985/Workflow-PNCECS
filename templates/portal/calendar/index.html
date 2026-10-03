@@ -1,0 +1,103 @@
+{% extends "layout.html" %}
+{% block title %}تقويمي{% endblock %}
+
+{% block extra_css %}
+<style>
+  .user-calendar { --calendar-border: #dbe4ee; }
+  .user-calendar .calendar-shell { overflow-x: auto; }
+  .user-calendar .calendar-grid { min-width: 850px; table-layout: fixed; border-color: var(--calendar-border); }
+  .user-calendar .calendar-grid th { background: #f4f7fb; color: #526174; font-size: .86rem; text-align: center; }
+  .user-calendar .calendar-grid td { width: 14.285%; height: 144px; padding: .45rem; vertical-align: top; background: #fff; }
+  .user-calendar .calendar-grid td.calendar-outside { background: #f8fafc; color: #aab4c1; }
+  .user-calendar .calendar-grid td.calendar-today { box-shadow: inset 0 0 0 2px #0d6efd; }
+  .user-calendar .calendar-day-number { font-weight: 700; margin-bottom: .35rem; }
+  .user-calendar .calendar-event { border-radius: .45rem; border-inline-start: 3px solid #6c757d; background: #f4f6f8; padding: .18rem .35rem; margin-bottom: .25rem; line-height: 1.25; overflow: hidden; }
+  .user-calendar .calendar-event a { color: inherit; text-decoration: none; }
+  .user-calendar .calendar-event-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .79rem; font-weight: 600; }
+  .user-calendar .calendar-event-meta { display: block; font-size: .68rem; color: #5d6977; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .user-calendar .calendar-event--personal { border-color: #6c757d; background: #f1f3f5; }
+  .user-calendar .calendar-event--task { border-color: #d99a00; background: #fff7df; }
+  .user-calendar .calendar-event--conference { border-color: #7b4bb7; background: #f4edff; }
+  .user-calendar .calendar-event--review { border-color: #0f8a86; background: #e7f7f6; }
+  .user-calendar .calendar-event--workflow { border-color: #0d6efd; background: #eaf3ff; }
+  .user-calendar .calendar-event--meeting { border-color: #6f42c1; background: #f0ecff; }
+  .user-calendar .calendar-event--meeting_task { border-color: #d97706; background: #fff4e5; }
+  .user-calendar .calendar-workflow-link { font-size: .68rem; color: #0d6efd !important; }
+  .user-calendar .calendar-legend { display: flex; gap: .45rem; flex-wrap: wrap; }
+  .user-calendar .calendar-legend span { display: inline-flex; align-items: center; gap: .3rem; font-size: .78rem; }
+  .user-calendar .calendar-legend i { width: .7rem; height: .7rem; border-radius: 999px; display: inline-block; }
+  @media (max-width: 767.98px) { .user-calendar .calendar-grid td { height: 126px; } }
+</style>
+{% endblock %}
+
+{% block content %}
+{% set month_names = ['كانون الثاني', 'شباط', 'آذار', 'نيسان', 'أيار', 'حزيران', 'تموز', 'آب', 'أيلول', 'تشرين الأول', 'تشرين الثاني', 'كانون الأول'] %}
+<div class="user-calendar">
+  <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+    <div>
+      <h3 class="mb-1"><i class="bi bi-calendar3"></i> تقويمي</h3>
+      <div class="text-muted small">مواعيدك الخاصة، المسارات التي أضفتها، اجتماعاتك، ومهام المتابعة.</div>
+    </div>
+    <a class="btn btn-primary" href="{{ url_for('portal.user_calendar_new', date=selected_month.isoformat()) }}">
+      <i class="bi bi-plus-circle"></i> إضافة موعد
+    </a>
+  </div>
+
+  <div class="card shadow-sm mb-3">
+    <div class="card-body d-flex justify-content-between align-items-center flex-wrap gap-2">
+      <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.user_calendar', month=previous_month.strftime('%Y-%m')) }}" aria-label="الشهر السابق">
+        <i class="bi bi-chevron-right"></i> السابق
+      </a>
+      <div class="fw-bold fs-5">{{ month_names[selected_month.month - 1] }} {{ selected_month.year }}</div>
+      <div class="d-flex gap-2">
+        <a class="btn btn-outline-primary btn-sm" href="{{ url_for('portal.user_calendar') }}">اليوم</a>
+        <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('portal.user_calendar', month=next_month.strftime('%Y-%m')) }}" aria-label="الشهر التالي">
+          التالي <i class="bi bi-chevron-left"></i>
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <div class="calendar-legend mb-3" aria-label="دليل ألوان التقويم">
+    <span><i style="background:#6c757d"></i> موعد شخصي</span>
+    <span><i style="background:#0d6efd"></i> مسار</span>
+    <span><i style="background:#6f42c1"></i> اجتماع</span>
+    <span><i style="background:#d97706"></i> مهمة متابعة</span>
+  </div>
+
+  <div class="card shadow-sm">
+    <div class="calendar-shell">
+      <table class="table table-bordered mb-0 calendar-grid" aria-label="تقويم {{ month_names[selected_month.month - 1] }}">
+        <thead>
+          <tr>
+            <th>السبت</th><th>الأحد</th><th>الاثنين</th><th>الثلاثاء</th><th>الأربعاء</th><th>الخميس</th><th>الجمعة</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for week in weeks %}
+          <tr>
+            {% for cell in week %}
+            <td class="{% if not cell.in_month %}calendar-outside{% endif %}{% if cell.is_today %} calendar-today{% endif %}">
+              <div class="calendar-day-number">{{ cell.date.day }}</div>
+              {% for item in cell.events %}
+              <div class="calendar-event calendar-event--{{ item.source|lower }}" title="{{ item.description or item.title }}">
+                <a href="{{ item.url }}" class="calendar-event-title">
+                  {% if item.source == 'MEETING' %}<i class="bi bi-people"></i>{% elif item.source == 'MEETING_TASK' %}<i class="bi bi-check2-square"></i>{% elif item.source == 'WORKFLOW' %}<i class="bi bi-diagram-3"></i>{% else %}<i class="bi bi-calendar-event"></i>{% endif %}
+                  {{ item.title }}
+                </a>
+                <span class="calendar-event-meta">{{ item.source_label }}{% if item.time_label %} · {{ item.time_label }}{% endif %}</span>
+                {% if item.workflow_url %}
+                <a class="calendar-workflow-link" href="{{ item.workflow_url }}"><i class="bi bi-box-arrow-up-left"></i> فتح المسار</a>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

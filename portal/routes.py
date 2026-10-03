@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import wraps
 from types import SimpleNamespace
 
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, time as dt_time
 import os
 import re
 import io
@@ -61,7 +61,7 @@ from utils.delegation_privacy import (
     is_privileged_administrator,
 )
 from utils.role_codes import canonical_role_key, role_storage_variants
-from utils.timezone import app_timezone
+from utils.timezone import app_timezone, local_day_start_utc, to_local_time
 from utils.corr_stamps import CorrStampOptions, apply_corr_stamp, is_stampable_file
 from utils.corr_refs import correspondence_reference_label
 from utils.file_uploads import (
@@ -118,6 +118,13 @@ from services.delivery_controls import (
     notifications_enabled,
 )
 from services.workflow_task_email import resolve_user_delivery_email
+from services.user_calendar import (
+    CALENDAR_EVENT_TYPE_LABELS,
+    USER_EDITABLE_CALENDAR_EVENT_TYPES,
+    calendar_event_form_values,
+    parse_calendar_event_input,
+    submitted_calendar_event_form_values,
+)
 from services.attendance_schedule import (
     ATTENDANCE_SCHEDULE_DAY_TYPES,
     ATTENDANCE_SCHEDULE_PERIOD_DAYS,
@@ -215,6 +222,7 @@ from models import (
     ArchivedFile,
     RequestAttachment,
     WorkflowRequest,
+    UserCalendarEvent,
     WorkflowInstance,
     WorkflowInstanceStep,
     WorkflowStepTask,
@@ -3755,6 +3763,373 @@ def _send_due_meeting_reminders() -> int:
         except Exception:
             pass
         return 0
+
+
+# -------------------------
+# Personal calendar
+# -------------------------
+CALENDAR_SOURCE_LABELS = {
+    "PERSONAL": "موعد شخصي",
+    "TASK": "مهمة",
+    "CONFERENCE": "مؤتمر",
+    "REVIEW": "مراجعة",
+    "WORKFLOW": "مسار",
+    "MEETING": "اجتماع",
+    "MEETING_TASK": "مهمة متابعة",
+}
+
+
+def _calendar_local_today() -> date:
+    try:
+        return datetime.now(app_timezone()).date()
+    except Exception:
+        return date.today()
+
+
+def _calendar_selected_month(raw_value: str | None) -> date:
+    value = (raw_value or "").strip()
+    if value:
+        try:
+            return datetime.strptime(value, "%Y-%m").date().replace(day=1)
+        except ValueError:
+            pass
+    return _calendar_local_today().replace(day=1)
+
+
+def _calendar_next_month(value: date) -> date:
+    return (value.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+
+def _calendar_time_label(start_at: datetime | None, end_at: datetime | None, all_day: bool) -> str:
+    if all_day:
+        return "طوال اليوم"
+    if not start_at:
+        return ""
+    label = start_at.strftime("%H:%M")
+    if end_at:
+        label += f" - {end_at.strftime('%H:%M')}"
+    return label
+
+
+def _calendar_local_naive(value: datetime | None) -> datetime | None:
+    """Normalize newly stored UTC timestamps for comparison with portal rows.
+
+    Legacy meeting records are displayed as local naive datetimes elsewhere in
+    the Portal.  The personal calendar stores new rows as UTC, so normalizing
+    only at the view boundary keeps the combined list sortable.
+    """
+    local_value = to_local_time(value)
+    return local_value.replace(tzinfo=None) if local_value else None
+
+
+def _calendar_add_to_days(
+    events_by_day: dict[date, list[dict]],
+    event: dict,
+    grid_start: date,
+    grid_end: date,
+) -> None:
+    """Project one source event onto every visible calendar day it occupies."""
+    start_at = event.get("start_at")
+    if not start_at:
+        return
+    start_day = start_at.date()
+    end_at = event.get("end_at")
+    end_day = end_at.date() if end_at else start_day
+    # Midnight at the start of the following day is an exclusive end value.
+    if end_at and end_at.time() == dt_time.min and end_day > start_day:
+        end_day -= timedelta(days=1)
+    if end_day < start_day:
+        end_day = start_day
+
+    current_day = max(start_day, grid_start)
+    last_day = min(end_day, grid_end)
+    while current_day <= last_day:
+        events_by_day.setdefault(current_day, []).append(event)
+        current_day += timedelta(days=1)
+
+
+def _calendar_event_form_return(value: str | None, default: str) -> str:
+    return safe_local_notification_url(value) or default
+
+
+def _calendar_owned_event_or_404(event_id: int) -> UserCalendarEvent:
+    return (
+        UserCalendarEvent.query
+        .filter(
+            UserCalendarEvent.id == int(event_id),
+            UserCalendarEvent.owner_user_id == int(current_user.id),
+        )
+        .first_or_404()
+    )
+
+
+def _calendar_save_event_values(row: UserCalendarEvent, event_input) -> None:
+    row.title = event_input.title
+    row.description = event_input.description
+    row.event_type = event_input.event_type
+    row.start_at = event_input.start_at
+    row.end_at = event_input.end_at
+    row.all_day = event_input.all_day
+
+
+@portal_bp.route("/calendar")
+@login_required
+def user_calendar():
+    """Show a private calendar that combines personal, meeting and task data."""
+    selected_month = _calendar_selected_month(request.args.get("month"))
+    next_month = _calendar_next_month(selected_month)
+    previous_month = (selected_month - timedelta(days=1)).replace(day=1)
+
+    # Saturday is the first visual day in the RTL work calendar.
+    calendar_weeks = calendar.Calendar(firstweekday=5).monthdatescalendar(
+        selected_month.year,
+        selected_month.month,
+    )
+    grid_start = calendar_weeks[0][0]
+    grid_end = calendar_weeks[-1][-1]
+    month_start_utc = local_day_start_utc(selected_month)
+    month_end_utc = local_day_start_utc(next_month)
+    month_start_local = datetime.combine(selected_month, dt_time.min)
+    month_end_local = datetime.combine(next_month, dt_time.min)
+
+    events_by_day: dict[date, list[dict]] = {}
+    calendar_url = url_for("portal.user_calendar", month=selected_month.strftime("%Y-%m"))
+
+    # Private entries are the only rows stored specifically for a user.
+    personal_events = (
+        UserCalendarEvent.query
+        .filter(UserCalendarEvent.owner_user_id == current_user.id)
+        .filter(UserCalendarEvent.start_at < month_end_utc)
+        .filter(or_(
+            UserCalendarEvent.end_at.is_(None),
+            UserCalendarEvent.end_at >= month_start_utc,
+        ))
+        .order_by(UserCalendarEvent.start_at.asc(), UserCalendarEvent.id.asc())
+        .all()
+    )
+    for row in personal_events:
+        start_at = _calendar_local_naive(row.start_at)
+        end_at = _calendar_local_naive(row.end_at)
+        source = (row.event_type or "PERSONAL").upper()
+        workflow_url = None
+        if row.workflow_request_id:
+            workflow_url = url_for(
+                "workflow.view_request",
+                request_id=row.workflow_request_id,
+            )
+        _calendar_add_to_days(events_by_day, {
+            "id": f"personal-{row.id}",
+            "title": row.title,
+            "description": row.description,
+            "source": source,
+            "source_label": CALENDAR_SOURCE_LABELS.get(source, source),
+            "start_at": start_at,
+            "end_at": end_at,
+            "all_day": bool(row.all_day),
+            "time_label": _calendar_time_label(start_at, end_at, bool(row.all_day)),
+            "url": url_for(
+                "portal.user_calendar_edit",
+                event_id=row.id,
+                return_to=calendar_url,
+            ),
+            "workflow_url": workflow_url,
+            "editable": True,
+        }, grid_start, grid_end)
+
+    # Meetings remain their own source of truth and are visible only to their
+    # organizer or explicitly invited participants.
+    visible_meetings = (
+        _meeting_visible_query(PortalMeeting.query)
+        .filter(PortalMeeting.status != "CANCELLED")
+        .filter(PortalMeeting.start_at < month_end_local)
+        .filter(or_(PortalMeeting.end_at.is_(None), PortalMeeting.end_at >= month_start_local))
+        .order_by(PortalMeeting.start_at.asc(), PortalMeeting.id.asc())
+        .all()
+    )
+    for row in visible_meetings:
+        start_at = row.start_at
+        end_at = row.end_at
+        _calendar_add_to_days(events_by_day, {
+            "id": f"meeting-{row.id}",
+            "title": row.title,
+            "description": row.description,
+            "source": "MEETING",
+            "source_label": CALENDAR_SOURCE_LABELS["MEETING"],
+            "start_at": start_at,
+            "end_at": end_at,
+            "all_day": False,
+            "time_label": _calendar_time_label(start_at, end_at, False),
+            "url": url_for("portal.meeting_view", meeting_id=row.id),
+            "workflow_url": None,
+            "editable": False,
+        }, grid_start, grid_end)
+
+    # A post-meeting task belongs on the calendar of its assignee, without
+    # granting anyone else access to the private meeting.
+    meeting_tasks = (
+        PortalMeetingTask.query
+        .join(PortalMeeting, PortalMeeting.id == PortalMeetingTask.meeting_id)
+        .filter(PortalMeetingTask.assignee_user_id == current_user.id)
+        .filter(PortalMeetingTask.status.in_(("OPEN", "IN_PROGRESS")))
+        .filter(PortalMeetingTask.due_date.isnot(None))
+        .filter(PortalMeetingTask.due_date >= selected_month)
+        .filter(PortalMeetingTask.due_date < next_month)
+        .filter(_meeting_access_condition(current_user.id))
+        .order_by(PortalMeetingTask.due_date.asc(), PortalMeetingTask.id.asc())
+        .all()
+    )
+    for task in meeting_tasks:
+        due_at = datetime.combine(task.due_date, dt_time.min)
+        _calendar_add_to_days(events_by_day, {
+            "id": f"meeting-task-{task.id}",
+            "title": task.title,
+            "description": task.description,
+            "source": "MEETING_TASK",
+            "source_label": CALENDAR_SOURCE_LABELS["MEETING_TASK"],
+            "start_at": due_at,
+            "end_at": None,
+            "all_day": True,
+            "time_label": "تاريخ الاستحقاق",
+            "url": url_for("portal.meeting_view", meeting_id=task.meeting_id),
+            "workflow_url": None,
+            "editable": False,
+        }, grid_start, grid_end)
+
+    for day_events in events_by_day.values():
+        day_events.sort(
+            key=lambda item: (
+                not bool(item.get("all_day")),
+                item.get("start_at") or datetime.max,
+                item.get("title") or "",
+            )
+        )
+
+    weeks = [
+        [
+            {
+                "date": day,
+                "in_month": day.month == selected_month.month,
+                "is_today": day == _calendar_local_today(),
+                "events": events_by_day.get(day, []),
+            }
+            for day in week
+        ]
+        for week in calendar_weeks
+    ]
+    return render_template(
+        "portal/calendar/index.html",
+        selected_month=selected_month,
+        previous_month=previous_month,
+        next_month=next_month,
+        weeks=weeks,
+        event_type_labels=CALENDAR_EVENT_TYPE_LABELS,
+        source_labels=CALENDAR_SOURCE_LABELS,
+    )
+
+
+@portal_bp.route("/calendar/new", methods=["GET", "POST"])
+@login_required
+def user_calendar_new():
+    default_return = url_for("portal.user_calendar")
+    return_to = _calendar_event_form_return(request.values.get("return_to"), default_return)
+    requested_day = _parse_date_field(request.args.get("date")) or _calendar_local_today()
+    form = calendar_event_form_values(default_date=requested_day)
+
+    if request.method == "POST":
+        event_input, errors = parse_calendar_event_input(request.form)
+        form = submitted_calendar_event_form_values(request.form, fallback=form)
+        if event_input and event_input.event_type not in USER_EDITABLE_CALENDAR_EVENT_TYPES:
+            errors = ["لا يمكن إنشاء هذا النوع من الموعد من التقويم الشخصي."]
+        if errors:
+            for error in errors:
+                flash(error, "warning")
+        else:
+            row = UserCalendarEvent(owner_user_id=current_user.id)
+            _calendar_save_event_values(row, event_input)
+            db.session.add(row)
+            db.session.flush()
+            _portal_audit(
+                "USER_CALENDAR_EVENT_CREATED",
+                note=f"event_type={row.event_type}",
+                target_type="USER_CALENDAR_EVENT",
+                target_id=row.id,
+            )
+            db.session.commit()
+            flash("تمت إضافة الموعد إلى تقويمك.", "success")
+            return redirect(return_to)
+
+    return render_template(
+        "portal/calendar/form.html",
+        form=form,
+        event=None,
+        return_to=return_to,
+        editable_event_types=USER_EDITABLE_CALENDAR_EVENT_TYPES,
+        event_type_labels=CALENDAR_EVENT_TYPE_LABELS,
+        is_workflow_event=False,
+    )
+
+
+@portal_bp.route("/calendar/<int:event_id>/edit", methods=["GET", "POST"])
+@login_required
+def user_calendar_edit(event_id: int):
+    row = _calendar_owned_event_or_404(event_id)
+    default_return = url_for("portal.user_calendar")
+    return_to = _calendar_event_form_return(request.values.get("return_to"), default_return)
+    form = calendar_event_form_values(row)
+    is_workflow_event = (row.event_type or "").upper() == "WORKFLOW"
+
+    if request.method == "POST":
+        event_input, errors = parse_calendar_event_input(
+            request.form,
+            forced_event_type="WORKFLOW" if is_workflow_event else None,
+        )
+        form = submitted_calendar_event_form_values(request.form, fallback=form)
+        if event_input and not is_workflow_event and event_input.event_type not in USER_EDITABLE_CALENDAR_EVENT_TYPES:
+            errors = ["لا يمكن اختيار هذا النوع من الموعد هنا."]
+        if errors:
+            for error in errors:
+                flash(error, "warning")
+        else:
+            _calendar_save_event_values(row, event_input)
+            _portal_audit(
+                "USER_CALENDAR_EVENT_UPDATED",
+                note=f"event_type={row.event_type}",
+                target_type="USER_CALENDAR_EVENT",
+                target_id=row.id,
+            )
+            db.session.commit()
+            flash("تم تحديث الموعد.", "success")
+            return redirect(return_to)
+
+    return render_template(
+        "portal/calendar/form.html",
+        form=form,
+        event=row,
+        return_to=return_to,
+        editable_event_types=USER_EDITABLE_CALENDAR_EVENT_TYPES,
+        event_type_labels=CALENDAR_EVENT_TYPE_LABELS,
+        is_workflow_event=is_workflow_event,
+    )
+
+
+@portal_bp.route("/calendar/<int:event_id>/delete", methods=["POST"])
+@login_required
+def user_calendar_delete(event_id: int):
+    row = _calendar_owned_event_or_404(event_id)
+    return_to = _calendar_event_form_return(
+        request.form.get("return_to"),
+        url_for("portal.user_calendar"),
+    )
+    _portal_audit(
+        "USER_CALENDAR_EVENT_DELETED",
+        note=f"event_type={row.event_type}",
+        target_type="USER_CALENDAR_EVENT",
+        target_id=row.id,
+    )
+    db.session.delete(row)
+    db.session.commit()
+    flash("تم حذف الموعد من تقويمك.", "success")
+    return redirect(return_to)
 
 
 # -------------------------
