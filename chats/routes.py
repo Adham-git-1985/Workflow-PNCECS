@@ -308,7 +308,8 @@ def conversation(conversation_id):
         for message in messages if message.sender_id == current_user.id
     }
     explicit_ids = _explicit_chat_user_ids()
-    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted, is_pinned=membership.is_pinned, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.id in explicit_ids])
+    direct_peer = next((p.user for p in conversation.participants if p.user_id != current_user.id), None) if conversation.kind == "DIRECT" else None
+    return render_template("chats/conversation.html", conversation=conversation, messages=messages, read_by_all=read_by_all, is_muted=membership.is_muted, is_pinned=membership.is_pinned, direct_peer=direct_peer, can_manage_group=(conversation.kind == "GROUP" and conversation.created_by_id == current_user.id), eligible_users=[u for u in User.query.order_by(User.name.asc()).all() if u.id != current_user.id and u.id in explicit_ids])
 
 
 @chats_bp.route("/attachment/<int:attachment_id>")

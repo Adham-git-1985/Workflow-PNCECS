@@ -1,19 +1,55 @@
 {% extends "layout.html" %}
-{% block title %}المحادثة{% endblock %}
+{% block title %}{{ direct_peer.full_name if direct_peer else (conversation.title or 'المحادثة') }}{% endblock %}
+{% block extra_css %}
+<style>
+  .dm-card { max-width: 1040px; margin: 0 auto; overflow: hidden; border: 0; }
+  .dm-header { min-height: 82px; }
+  .dm-avatar { width: 46px; height: 46px; object-fit: cover; border-radius: 50%; background:#e9ecef; }
+  .dm-window { height: calc(100vh - 315px); min-height: 420px; overflow-y: auto; background: linear-gradient(145deg,#f8fafc,#eef4fa); }
+  .dm-row { display:flex; margin: .7rem 0; }
+  .dm-row.mine { justify-content:flex-start; }
+  .dm-row.theirs { justify-content:flex-end; }
+  .dm-bubble { max-width: 72%; border-radius: 18px; padding: .7rem .9rem; box-shadow:0 1px 2px rgba(15,23,42,.08); }
+  .dm-bubble.mine { background:#1867db; color:#fff; border-bottom-left-radius:4px; }
+  .dm-bubble.theirs { background:#fff; color:#1f2937; border-bottom-right-radius:4px; }
+  .dm-time { display:block; font-size:.72rem; margin-top:.35rem; opacity:.72; }
+  .emoji-tray { display:none; position:absolute; bottom:72px; left:0; padding:.4rem; background:white; border:1px solid #dee2e6; border-radius:.75rem; box-shadow:0 .5rem 1rem rgba(0,0,0,.15); z-index:5; }
+  .emoji-tray.show { display:flex; gap:.2rem; }
+  .emoji-btn { border:0; background:transparent; font-size:1.2rem; padding:.25rem .4rem; }
+</style>
+{% endblock %}
 {% block content %}
-<div class="card shadow-sm">
-  <div class="card-header bg-white d-flex gap-2 align-items-center">
-    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('chats.inbox') }}"><i class="bi bi-arrow-right"></i></a>
-    <span class="fw-semibold me-auto">{{ conversation.title or 'محادثة' }}</span>
+<div class="card shadow-sm dm-card">
+  <div class="card-header bg-white dm-header d-flex align-items-center gap-3">
+    <a class="btn btn-sm btn-outline-secondary" href="{{ url_for('chats.inbox') }}" title="العودة للمحادثات"><i class="bi bi-arrow-right"></i></a>
+    {% if direct_peer %}
+      <img class="dm-avatar" src="{% if direct_peer.avatar_filename %}{{ url_for('static', filename='uploads/avatars/' ~ direct_peer.avatar_filename) }}{% else %}{{ url_for('static', filename='images/avatar_default.svg') }}{% endif %}" alt="">
+      <div class="me-auto"><div class="fw-bold">{{ direct_peer.full_name }}</div><small class="text-muted">محادثة مباشرة{% if direct_peer.job_title %} · {{ direct_peer.job_title }}{% endif %}</small></div>
+    {% else %}
+      <div class="me-auto"><div class="fw-bold">{{ conversation.title or 'مجموعة' }}</div><small class="text-muted">{{ conversation.participants|length }} أعضاء</small></div>
+    {% endif %}
     <form method="post" action="{{ url_for('chats.toggle_pin', conversation_id=conversation.id) }}"><button class="btn btn-sm btn-outline-secondary" title="تثبيت"><i class="bi {% if is_pinned %}bi-pin-fill{% else %}bi-pin{% endif %}"></i></button></form>
     <form method="post" action="{{ url_for('chats.toggle_mute', conversation_id=conversation.id) }}"><button class="btn btn-sm btn-outline-secondary" title="كتم"><i class="bi {% if is_muted %}bi-bell-slash{% else %}bi-bell{% endif %}"></i></button></form>
-    {% if conversation.kind == 'GROUP' %}<button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#membersModal"><i class="bi bi-people"></i> الأعضاء</button><form method="post" action="{{ url_for('chats.leave_group', conversation_id=conversation.id) }}"><button class="btn btn-sm btn-outline-danger">مغادرة</button></form>{% endif %}
+    {% if conversation.kind == 'GROUP' %}<button class="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#membersModal"><i class="bi bi-people"></i> الأعضاء</button>{% endif %}
   </div>
-  <div id="chatWindow" class="card-body" style="height:55vh;overflow:auto">
-  {% for m in messages %}<div class="p-2 mb-2 rounded {% if m.sender_id==current_user.id %}bg-primary text-white ms-auto{% else %}bg-light{% endif %}" style="max-width:75%">{% if m.sender_id != current_user.id %}<strong>{{ m.sender.full_name }}</strong><br>{% endif %}{% if m.body %}{{ m.body }}{% endif %}{% for a in m.attachments %}<a class="d-block" href="{{ url_for('chats.download_attachment',attachment_id=a.id) }}">📎 {{ a.original_name }}</a>{% endfor %}<small>{{ m.created_at|local_datetime }}</small></div>{% else %}<div class="text-muted text-center">ابدأ المحادثة بإرسال رسالة.</div>{% endfor %}
+  <div class="card-body dm-window" id="chatWindow">
+    {% for message in messages %}
+      <div class="dm-row {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}"><div class="dm-bubble {% if message.sender_id == current_user.id %}mine{% else %}theirs{% endif %}">
+        {% if conversation.kind == 'GROUP' and message.sender_id != current_user.id %}<div class="small fw-bold mb-1">{{ message.sender.full_name }}</div>{% endif %}
+        {% if message.body %}<div style="white-space:pre-wrap">{{ message.body }}</div>{% endif %}
+        {% for attachment in message.attachments %}<a class="d-block mt-2 text-reset" href="{{ url_for('chats.download_attachment', attachment_id=attachment.id) }}"><i class="bi bi-paperclip"></i> {{ attachment.original_name }}</a>{% endfor %}
+        <small class="dm-time">{{ message.created_at|local_datetime }} {% if message.sender_id == current_user.id %}<i class="bi {% if read_by_all.get(message.id) %}bi-check2-all{% else %}bi-check2{% endif %}"></i>{% endif %}</small>
+      </div></div>
+    {% else %}<div class="text-center text-muted pt-5">ابدأ المحادثة مع {{ direct_peer.full_name if direct_peer else 'المجموعة' }} برسالة بسيطة.</div>{% endfor %}
   </div>
-  <form method="post" enctype="multipart/form-data" class="card-footer"><div><button type="button" class="emoji btn btn-light">🙂</button><button type="button" class="emoji btn btn-light">👍</button><button type="button" class="emoji btn btn-light">✅</button><button type="button" class="emoji btn btn-light">😊</button><button type="button" class="emoji btn btn-light">📎</button></div><textarea name="body" class="form-control" placeholder="اكتب رسالة…"></textarea><input type="file" name="attachments" multiple><button class="btn btn-primary mt-2">إرسال</button></form>
+  <form method="post" enctype="multipart/form-data" class="card-footer bg-white position-relative" id="messageForm">
+    <div id="emojiTray" class="emoji-tray"><button type="button" class="emoji-btn">🙂</button><button type="button" class="emoji-btn">👍</button><button type="button" class="emoji-btn">✅</button><button type="button" class="emoji-btn">😊</button><button type="button" class="emoji-btn">🎉</button><button type="button" class="emoji-btn">🙏</button></div>
+    <div class="input-group"><button type="button" id="emojiToggle" class="btn btn-outline-secondary" title="إيموجي">😊</button><textarea name="body" id="chatBody" class="form-control" rows="2" placeholder="اكتب رسالة إلى {{ direct_peer.full_name if direct_peer else 'المجموعة' }}…"></textarea><label class="btn btn-outline-secondary" title="إرفاق ملف"><i class="bi bi-paperclip"></i><input type="file" name="attachments" multiple hidden></label><button class="btn btn-primary px-4" type="submit"><i class="bi bi-send"></i> إرسال</button></div>
+  </form>
 </div>
 {% if can_manage_group %}<div class="modal fade" id="membersModal" tabindex="-1"><div class="modal-dialog"><form method="post" action="{{ url_for('chats.update_members', conversation_id=conversation.id) }}" class="modal-content"><div class="modal-header"><h5 class="modal-title">إدارة أعضاء المجموعة</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><label class="form-label">اسم المجموعة</label><input name="title" class="form-control mb-3" value="{{ conversation.title or '' }}"><label class="form-label">الأعضاء</label><select name="user_ids" class="form-select" multiple size="8"><option value="{{ current_user.id }}" selected>{{ current_user.full_name }} (أنت)</option>{% for user in eligible_users %}<option value="{{ user.id }}" {% if conversation.participants|selectattr('user_id','equalto',user.id)|list %}selected{% endif %}>{{ user.full_name }}</option>{% endfor %}</select></div><div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">إلغاء</button><button class="btn btn-primary">حفظ</button></div></form></div></div>{% endif %}
 {% endblock %}
-{% block scripts %}{{ super() }}<script>const b=document.querySelector('textarea'),w=document.getElementById('chatWindow');w.scrollTop=w.scrollHeight;document.querySelectorAll('.emoji').forEach(x=>x.onclick=()=>{b.value+=x.textContent;b.focus()});const s=new EventSource(document.getElementById('notification-sound-toggle')?.dataset.streamUrl||'');s.onmessage=e=>{try{let x=JSON.parse(e.data);if(x.target_type==='ChatConversation'&&+x.target_id==={{ conversation.id }}){document.title='🔔 رسالة جديدة';if(Notification?.permission==='granted')new Notification('رسالة جديدة');location.reload()}}catch(_){}};</script>{% endblock %}
+{% block scripts %}{{ super() }}<script>
+const box=document.getElementById('chatBody'),win=document.getElementById('chatWindow'),tray=document.getElementById('emojiTray');win.scrollTop=win.scrollHeight;
+document.getElementById('emojiToggle').onclick=()=>tray.classList.toggle('show');document.querySelectorAll('.emoji-btn').forEach(b=>b.onclick=()=>{box.value+=b.textContent;box.focus();tray.classList.remove('show')});
+</script>{% endblock %}
